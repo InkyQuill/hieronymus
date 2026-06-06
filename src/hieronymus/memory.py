@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
 from hieronymus.db import connect
 from hieronymus.models import MemoryEntry
 
+_MAX_SEARCH_LIMIT = 50
+_FTS_OPERATORS = frozenset({"and", "or", "not", "near"})
+_TOKEN_RE = re.compile(r"\w+")
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _search_expression(query: str) -> str:
+    tokens = [token for token in _TOKEN_RE.findall(query) if token.casefold() not in _FTS_OPERATORS]
+    return " ".join(f'"{token}"' for token in tokens)
 
 
 class MemoryStore:
@@ -16,6 +26,11 @@ class MemoryStore:
         self.database_path = database_path
 
     def add(self, *, kind: str, text: str, source_ref: str = "", importance: int = 3) -> int:
+        if not kind.strip():
+            raise ValueError("kind must not be empty")
+        if not text.strip():
+            raise ValueError("text must not be empty")
+
         now = _now()
         with connect(self.database_path) as conn:
             cursor = conn.execute(
@@ -34,6 +49,14 @@ class MemoryStore:
         return memory_id
 
     def search(self, query: str, *, limit: int = 5) -> list[MemoryEntry]:
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+
+        expression = _search_expression(query)
+        if not expression:
+            return []
+
+        bounded_limit = min(limit, _MAX_SEARCH_LIMIT)
         with connect(self.database_path) as conn:
             rows = conn.execute(
                 """
@@ -44,7 +67,7 @@ class MemoryStore:
                 order by memories.importance desc, bm25(memories_fts)
                 limit ?
                 """,
-                (query, limit),
+                (expression, bounded_limit),
             ).fetchall()
         return [
             MemoryEntry(
