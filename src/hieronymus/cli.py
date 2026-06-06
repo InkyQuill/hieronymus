@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 import click
 
@@ -8,6 +9,16 @@ from hieronymus.config import load_config
 from hieronymus.memory import MemoryStore
 from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
+
+
+def _error_message(error: KeyError | ValueError) -> str:
+    if isinstance(error, KeyError) and error.args:
+        return str(error.args[0])
+    return str(error)
+
+
+def _raise_click_error(error: KeyError | ValueError) -> None:
+    raise click.ClickException(_error_message(error)) from error
 
 
 @click.group()
@@ -26,12 +37,15 @@ def main(ctx: click.Context, data_root: str | None) -> None:
 def init_series(
     ctx: click.Context, slug: str, title: str, source_language: str, target_language: str
 ) -> None:
-    series = Registry(ctx.obj["config"]).create_series(
-        slug=slug,
-        title=title,
-        source_language=source_language,
-        target_language=target_language,
-    )
+    try:
+        series = Registry(ctx.obj["config"]).create_series(
+            slug=slug,
+            title=title,
+            source_language=source_language,
+            target_language=target_language,
+        )
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
     click.echo(
         json.dumps(
             {"slug": series.slug, "database_path": str(series.database_path)}, ensure_ascii=False
@@ -54,32 +68,44 @@ def propose_term(
     translation: str,
     tags: tuple[str, ...],
 ) -> None:
-    series = Registry(ctx.obj["config"]).get_series(series_slug)
-    term_id = Termbase(series.database_path).propose(
-        category=category,
-        source_text=source_text,
-        canonical_translation=translation,
-        tags=list(tags),
-    )
+    try:
+        series = Registry(ctx.obj["config"]).get_series(series_slug)
+        term_id = Termbase(series.database_path).propose(
+            category=category,
+            source_text=source_text,
+            canonical_translation=translation,
+            tags=list(tags),
+        )
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
     click.echo(json.dumps({"term_id": term_id}, ensure_ascii=False))
 
 
 @main.command("validate")
 @click.argument("series_slug")
-@click.option("--raw-file", type=click.Path(exists=True), required=True)
-@click.option("--translated-file", type=click.Path(exists=True), required=True)
+@click.option(
+    "--raw-file", type=click.Path(exists=True, dir_okay=False, readable=True), required=True
+)
+@click.option(
+    "--translated-file",
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    required=True,
+)
 @click.pass_context
 def validate(ctx: click.Context, series_slug: str, raw_file: str, translated_file: str) -> None:
-    series = Registry(ctx.obj["config"]).get_series(series_slug)
-    with (
-        open(raw_file, encoding="utf-8") as raw,
-        open(translated_file, encoding="utf-8") as translated,
-    ):
-        findings = Termbase(series.database_path).validate(
-            raw_text=raw.read(),
-            translated_text=translated.read(),
-        )
-    click.echo(json.dumps([finding.__dict__ for finding in findings], ensure_ascii=False, indent=2))
+    try:
+        series = Registry(ctx.obj["config"]).get_series(series_slug)
+        with (
+            open(raw_file, encoding="utf-8") as raw,
+            open(translated_file, encoding="utf-8") as translated,
+        ):
+            findings = Termbase(series.database_path).validate(
+                raw_text=raw.read(),
+                translated_text=translated.read(),
+            )
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+    click.echo(json.dumps([asdict(finding) for finding in findings], ensure_ascii=False, indent=2))
 
 
 @main.command("remember")
@@ -89,6 +115,11 @@ def validate(ctx: click.Context, series_slug: str, raw_file: str, translated_fil
 @click.option("--source-ref", default="")
 @click.pass_context
 def remember(ctx: click.Context, series_slug: str, kind: str, text: str, source_ref: str) -> None:
-    series = Registry(ctx.obj["config"]).get_series(series_slug)
-    memory_id = MemoryStore(series.database_path).add(kind=kind, text=text, source_ref=source_ref)
+    try:
+        series = Registry(ctx.obj["config"]).get_series(series_slug)
+        memory_id = MemoryStore(series.database_path).add(
+            kind=kind, text=text, source_ref=source_ref
+        )
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
     click.echo(json.dumps({"memory_id": memory_id}, ensure_ascii=False))
