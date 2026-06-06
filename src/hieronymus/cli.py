@@ -9,6 +9,7 @@ from hieronymus.config import load_config
 from hieronymus.dreaming import DeterministicDreamProvider, DreamService
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
+from hieronymus.presentation import GUIDE_ICON, render_greeting
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
@@ -92,6 +93,20 @@ def main(ctx: click.Context, data_root: str | None) -> None:
     if config.data_root.exists() and not config.data_root.is_dir():
         raise click.ClickException(f"data root is not a directory: {config.data_root}")
     ctx.obj = {"config": config}
+
+
+@main.command("help")
+def help_command() -> None:
+    click.echo(render_greeting())
+    click.echo()
+    click.echo(f"{GUIDE_ICON} Common commands")
+    click.echo("  hiero                  Start or connect to the local service")
+    click.echo("  hiero status           Show daemon and provider status")
+    click.echo("  hiero doctor           Check configuration and service health")
+    click.echo("  hiero restart          Restart the local daemon")
+    click.echo("  hiero admin            Open the memory management TUI")
+    click.echo("  hiero config           Open the configuration TUI")
+    click.echo("  hiero install codex --dry-run")
 
 
 @main.command("init-series")
