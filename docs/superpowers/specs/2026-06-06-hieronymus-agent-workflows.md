@@ -87,6 +87,68 @@ The agent skills should teach:
 - how to trigger or defer dreaming
 - how to treat lessons as guidance, not hard rules unless promoted to soft validation
 
+## Coding Agent Hooks
+
+Hieronymus should provide integration hooks for coding agents such as Claude, Codex, opencode, and
+similar local coding assistants. These hooks should make the MCP memory layer easy to use from an
+agent session without requiring the agent to know Hieronymus internals.
+
+Hook responsibilities:
+
+- expose the active project, series, source language, and target language context where available
+- call recall before translation, review, terminology, or documentation work
+- make relevant crystals and strict concepts available to the agent
+- record important user corrections as high-confidence short-term memories
+- record task outcomes and influence citations for later dreaming
+- avoid writing raw source text into long-term memory unless a learning workflow explicitly asks for it
+
+Coding-agent hooks should stay thin. They should call MCP tools and skills; they should not
+reimplement storage, scoring, dreaming, or validation.
+
+## Learning and Reading Skills
+
+The agent workflow needs two ingestion modes: thorough learning and casual reading.
+
+### Learn Skill
+
+The `learn` skill commits material into short-term memory for later dreaming. It is used when the
+user wants Hieronymus to absorb a document, chapter, review, conversation, style guide, glossary, or
+other substantial source.
+
+The skill should:
+
+- split input into coherent blocks
+- preserve source references and provenance
+- classify blocks by source role, such as mundane, mentor, user, or system
+- write short-term memories into the active task/session workspace
+- mark the material as eligible for dreaming and crystallization
+- avoid making strict concepts/renderings active directly
+
+Dreaming later turns these short-term memories into crystals, lessons, erudition, and strict
+concept/rendering proposals.
+
+### Read Skill
+
+The `read` skill inspects material without committing the whole source into memory. It is used for
+casual lookup, temporary understanding, or one-off extraction.
+
+The skill should:
+
+- read the material for the current task
+- extract useful concepts, source forms, candidate renderings, and uncertainty
+- return structured findings to the agent
+- optionally create explicit proposals if the user or workflow asks for them
+- avoid storing every block as short-term memory by default
+
+The `read` skill can still produce a small number of deliberate short-term observations, but it must
+not behave like `learn`. Its default posture is "understand now, do not remember everything."
+
+### Skill Split
+
+Use `learn` when the user says to absorb, remember, study, ingest, import, or learn from a source.
+Use `read` when the user asks to inspect, summarize, extract terms, check a file, or understand a
+source for the current task only.
+
 ## Prompt Contracts
 
 Each role should have a concise prompt contract.
@@ -111,6 +173,14 @@ Orchestrator contract:
 - collect short-term memories
 - trigger dreaming based on config/manual instruction
 
+Coding-agent hook contract:
+
+- establish current project and translation context
+- call recall before memory-sensitive work
+- use `read` for temporary extraction
+- use `learn` for material that should feed future dreaming
+- do not bypass MCP APIs for memory writes
+
 ## Integration With Memory/Dreaming
 
 Agent actions should produce event traces:
@@ -130,4 +200,3 @@ These traces feed dream cycles. Mere recall protects from decay but does not rei
 - Do not make agents auto-approve strict concept/rendering proposals.
 - Do not require the Management TUI before agents can use the service.
 - Do not treat lessons as hard validation failures by default.
-

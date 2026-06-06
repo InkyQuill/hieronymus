@@ -22,6 +22,8 @@ agent workflows, and later a management TUI.
    - Define how translators, reviewers, mentors, and orchestrators use Hieronymus.
    - Specify recall, short-term memory writes, influence citation, concept proposals, validation,
      and dream triggering.
+   - Add hooks and skills for coding agents such as Claude, Codex, and opencode so they can call
+     the MCP for project memories and translation knowledge.
    - Keep agents productive before investing in a full management UI.
 
 3. **Management TUI**
