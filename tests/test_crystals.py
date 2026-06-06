@@ -89,6 +89,34 @@ def test_search_prefers_higher_strength_when_text_relevance_matches(
     assert [result.id for result in results[:2]] == [high_id, low_id]
 
 
+def test_search_scored_exposes_weighted_scores_without_changing_search_api(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    low_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.1,
+        confidence=0.5,
+    )
+    high_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.9,
+        confidence=0.5,
+    )
+
+    plain_results = store.search(context, "guarded crafting")
+    scored_results = store.search_scored(context, "guarded crafting")
+
+    assert [result.id for result in plain_results[:2]] == [high_id, low_id]
+    assert [crystal.id for crystal, _score in scored_results[:2]] == [high_id, low_id]
+    assert scored_results[0][1] > scored_results[1][1]
+
+
 def test_search_blends_quality_with_text_relevance(config: HieronymusConfig) -> None:
     context = _context(config)
     store = CrystalStore(config)

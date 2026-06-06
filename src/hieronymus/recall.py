@@ -15,10 +15,6 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _rank_score(rank: int) -> float:
-    return 1.0 / rank
-
-
 class RecallService:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
@@ -37,15 +33,15 @@ class RecallService:
         if limit < 1:
             raise ValueError("limit must be at least 1")
 
-        crystals = self.crystals.search(context, query, limit=limit)
+        scored_crystals = self.crystals.search_scored(context, query, limit=limit)
         results = [
             RecallResult(
                 crystal=crystal,
                 rank=rank,
-                score=_rank_score(rank),
+                score=score,
                 reason=_RECALL_REASON,
             )
-            for rank, crystal in enumerate(crystals, start=1)
+            for rank, (crystal, score) in enumerate(scored_crystals, start=1)
         ]
 
         now = _now()

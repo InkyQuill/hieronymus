@@ -156,6 +156,15 @@ class CrystalStore:
         *,
         limit: int = 10,
     ) -> list[CrystalRecord]:
+        return [crystal for crystal, _score in self.search_scored(context, query, limit=limit)]
+
+    def search_scored(
+        self,
+        context: TranslationContext,
+        query: str,
+        *,
+        limit: int = 10,
+    ) -> list[tuple[CrystalRecord, float]]:
         if limit < 1:
             raise ValueError("limit must be at least 1")
 
@@ -213,7 +222,7 @@ class CrystalStore:
                     bounded_limit,
                 ),
             ).fetchall()
-        return [_row_to_crystal(row) for row in rows]
+        return [(_row_to_crystal(row), float(row["search_score"])) for row in rows]
 
     def _validate_crystal_type(self, crystal_type: str) -> None:
         if crystal_type not in _ALLOWED_CRYSTAL_TYPES:

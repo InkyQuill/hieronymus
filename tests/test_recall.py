@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from hieronymus.config import HieronymusConfig
@@ -56,7 +58,7 @@ def test_recall_records_activation_without_reinforcing(config: HieronymusConfig)
             "session_id": session.id,
             "recall_query": "inventory labels",
             "rank": 1,
-            "score": 1.0,
+            "score": pytest.approx(results[0].score),
             "reason": "weighted search match",
             "cycle_id": None,
         }
@@ -73,7 +75,7 @@ def test_recall_adds_system_short_term_trace_with_metadata(config: HieronymusCon
         text="Render Sense as сенс in this series.",
     )
 
-    RecallService(config).recall(session.id, context, "Sense")
+    results = RecallService(config).recall(session.id, context, "Sense")
 
     memories = workspace.list_short_term_memories(session.id)
     assert len(memories) == 1
@@ -83,7 +85,7 @@ def test_recall_adds_system_short_term_trace_with_metadata(config: HieronymusCon
     assert memories[0].metadata == {
         "crystal_id": crystal_id,
         "rank": 1,
-        "score": 1.0,
+        "score": results[0].score,
     }
 
 
@@ -110,10 +112,9 @@ def test_recall_records_ranked_activations_ordered_by_search_results(
 
     results = RecallService(config).recall(session.id, context, "guarded crafting")
 
-    assert [(result.crystal.id, result.rank, result.score) for result in results] == [
-        (stronger_id, 1, 1.0),
-        (weaker_id, 2, 0.5),
-    ]
+    assert [result.crystal.id for result in results] == [stronger_id, weaker_id]
+    assert [result.rank for result in results] == [1, 2]
+    assert results[0].score > results[1].score
     with connect(config.database_path) as conn:
         rows = conn.execute(
             """
@@ -122,10 +123,40 @@ def test_recall_records_ranked_activations_ordered_by_search_results(
             order by rank
             """
         ).fetchall()
-    assert [(row["crystal_id"], row["rank"], row["score"]) for row in rows] == [
-        (stronger_id, 1, 1.0),
-        (weaker_id, 2, 0.5),
-    ]
+    assert [row["crystal_id"] for row in rows] == [stronger_id, weaker_id]
+    assert [row["rank"] for row in rows] == [1, 2]
+    assert [row["score"] for row in rows] == pytest.approx([result.score for result in results])
+
+
+def test_recall_activation_score_matches_weighted_search_score(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    session = WorkspaceStore(config).start_session(context)
+    crystals = CrystalStore(config)
+    crystal_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.7,
+        confidence=0.8,
+    )
+    expected_crystal, expected_score = crystals.search_scored(context, "guarded crafting")[0]
+
+    results = RecallService(config).recall(session.id, context, "guarded crafting")
+
+    assert expected_crystal.id == crystal_id
+    assert results[0].score == expected_score
+    with connect(config.database_path) as conn:
+        activation = conn.execute("select crystal_id, score from crystal_activations").fetchone()
+        memory = conn.execute("select metadata_json from short_term_memories").fetchone()
+    assert activation["crystal_id"] == crystal_id
+    assert activation["score"] == expected_score
+    assert json.loads(memory["metadata_json"]) == {
+        "crystal_id": crystal_id,
+        "rank": 1,
+        "score": expected_score,
+    }
 
 
 def test_recall_unknown_session_raises_key_error(config: HieronymusConfig) -> None:
