@@ -13,6 +13,14 @@ class HieronymusConfig:
     def database_path(self) -> Path:
         return self.data_root / "hieronymus.sqlite"
 
+    @property
+    def config_root(self) -> Path:
+        return self.data_root
+
+    @property
+    def backups_root(self) -> Path:
+        return self.config_root / "backups"
+
 
 def load_config(data_root: str | Path | None = None) -> HieronymusConfig:
     if data_root is not None:
