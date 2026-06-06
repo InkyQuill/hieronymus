@@ -5,8 +5,8 @@ for local coding agents. The generated assets teach agents to recall memory, dis
 from advisory memory, write short-term observations, learn material deliberately, and read material
 casually.
 
-This task only defines the asset bundle. Installer behavior, host config patching, backups,
-availability checks, and idempotent install status are handled by later agent integration work.
+Installers write the asset bundle under the global Hieronymus config root, patch host config files
+with backups, and report installed status only when both assets and host config entries are present.
 
 ## Integrations
 
@@ -22,6 +22,7 @@ The common bundle includes:
 - `claude`: `.claude-plugin/plugin.json`.
 - `gemini`: `gemini-extension.json`.
 - `opencode`: `opencode/plugin.json`.
+- `openclaw`: `openclaw/plugin.json`.
 
 The MCP config invokes `hieronymus-mcp`. Codex hooks currently invoke
 `python -m hieronymus.agent_hooks session-start` and
@@ -47,3 +48,24 @@ not silently override an approved concept contract.
 
 Agents must not approve terminology proposals themselves. They may record proposals, uncertainty,
 conflicts, and supporting evidence, then leave approval to the human workflow.
+
+## Installing Agent Integrations
+
+Use `hiero install --json` or `hiero install list` to see detected agent hosts and whether the
+Hieronymus plugin is installed.
+
+Use `hiero install codex --dry-run` to inspect planned changes. Use `hiero install codex` to write
+plugin assets and patch the host config with backups under `~/.config/hieronymus/backups`.
+
+Supported install targets in this pass:
+
+- `claude`
+- `codex`
+- `openclaw`
+- `opencode`
+- `gemini`
+
+Reserved detectable targets:
+
+- `pi`
+- `hermes`

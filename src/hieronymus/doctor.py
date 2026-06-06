@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import asdict, dataclass
 
+from hieronymus.agent_plugins import available_plugins
 from hieronymus.config import HieronymusConfig
 from hieronymus.service_manager import ServiceManager
 
@@ -31,6 +32,7 @@ class Doctor:
         self._check_config_root(report, autofix=autofix)
         self._check_database(report)
         self._check_daemon(report)
+        self._check_agent_plugins(report)
 
         return report
 
@@ -102,6 +104,21 @@ class Doctor:
                 message="Hieronymus daemon is not running.",
             )
         )
+
+    def _check_agent_plugins(self, report: DoctorReport) -> None:
+        for plugin in available_plugins():
+            availability = plugin.availability(self.config)
+            if not availability.available or availability.installed:
+                continue
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="agent-plugin-available",
+                    message=(
+                        f"{availability.display_name} is available but Hieronymus is not installed"
+                    ),
+                )
+            )
 
 
 def report_to_json(report: DoctorReport) -> dict[str, list[dict[str, object]]]:

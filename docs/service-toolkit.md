@@ -37,10 +37,13 @@ identity line, while automation should use `--json`.
 - `hiero config` shows config paths for now; the TUI is separate work.
 - `hiero admin` reports that the management TUI is separate work.
 - `hiero install <app> --dry-run` shows the safe installer plan for an agent.
+- `hiero install <app>` writes plugin assets and patches supported agent host config.
 
 ## Agent Install Boundary
 
-This pass provides the installer framework and stubs. Real Claude, Codex, OpenClaw, opencode, Gemini
-CLI, Pi, and Hermes integrations belong to follow-up specs based on:
+This pass provides real Claude, Codex, OpenClaw, opencode, and Gemini CLI installer wiring. Pi and
+Hermes are reserved detectable targets until their host config formats are known.
 
 `docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md`
+
+`hiero doctor` also reports detected agent hosts where Hieronymus has not been installed yet.
