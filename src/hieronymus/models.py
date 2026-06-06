@@ -22,3 +22,12 @@ class ValidationFinding:
     expected: str
     observed: str
     message: str
+
+
+@dataclass(frozen=True)
+class MemoryEntry:
+    id: int
+    kind: str
+    text: str
+    importance: int
+    source_ref: str
