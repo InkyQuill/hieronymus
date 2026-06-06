@@ -77,8 +77,22 @@ def test_codex_availability_detects_assets_and_managed_marker(
     home = tmp_path / "home"
     codex = home / ".codex"
     codex.mkdir(parents=True)
-    (codex / "config.toml").write_text("[hieronymus]\nmanaged = true\n", encoding="utf-8")
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    (codex / "config.toml").write_text(
+        "\n".join(
+            [
+                "[hieronymus]",
+                "managed = true",
+                "[mcp_servers.hieronymus]",
+                'command = "hieronymus-mcp"',
+                "args = []",
+                "[plugins.hieronymus]",
+                f'path = "{config.agent_plugins_root / "codex"}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     (config.agent_plugins_root / "codex" / ".codex-plugin").mkdir(parents=True)
     (config.agent_plugins_root / "codex" / "skills" / "hieronymus-recall").mkdir(parents=True)
     (config.agent_plugins_root / "codex" / ".codex-plugin" / "plugin.json").write_text(
@@ -96,6 +110,32 @@ def test_codex_availability_detects_assets_and_managed_marker(
     assert availability.installed is True
 
 
+def test_codex_availability_rejects_stale_marker_without_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    codex.mkdir(parents=True)
+    (codex / "config.toml").write_text("[hieronymus]\nmanaged = true\n", encoding="utf-8")
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    (config.agent_plugins_root / "codex" / ".codex-plugin").mkdir(parents=True)
+    (config.agent_plugins_root / "codex" / "skills" / "hieronymus-recall").mkdir(parents=True)
+    (config.agent_plugins_root / "codex" / ".codex-plugin" / "plugin.json").write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
+    (config.agent_plugins_root / "codex" / ".mcp.json").write_text("{}\n", encoding="utf-8")
+    (config.agent_plugins_root / "codex" / "skills" / "hieronymus-recall" / "SKILL.md").write_text(
+        "recall\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    availability = resolve_plugin("codex").availability(config)
+
+    assert availability.installed is False
+
+
 def test_codex_availability_rejects_incomplete_asset_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -106,6 +146,47 @@ def test_codex_availability_rejects_incomplete_asset_directory(
     (codex / "config.toml").write_text("[hieronymus]\nmanaged = true\n", encoding="utf-8")
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     (config.agent_plugins_root / "codex").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    availability = resolve_plugin("codex").availability(config)
+
+    assert availability.installed is False
+
+
+def test_codex_availability_rejects_symlink_required_asset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    codex.mkdir(parents=True)
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    (codex / "config.toml").write_text(
+        "\n".join(
+            [
+                "[hieronymus]",
+                "managed = true",
+                "[mcp_servers.hieronymus]",
+                'command = "hieronymus-mcp"',
+                "args = []",
+                "[plugins.hieronymus]",
+                f'path = "{config.agent_plugins_root / "codex"}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    plugin_root = config.agent_plugins_root / "codex"
+    (plugin_root / ".codex-plugin").mkdir(parents=True)
+    (plugin_root / "skills" / "hieronymus-recall").mkdir(parents=True)
+    outside = tmp_path / "outside-plugin.json"
+    outside.write_text("{}\n", encoding="utf-8")
+    (plugin_root / ".codex-plugin" / "plugin.json").symlink_to(outside)
+    (plugin_root / ".mcp.json").write_text("{}\n", encoding="utf-8")
+    (plugin_root / "skills" / "hieronymus-recall" / "SKILL.md").write_text(
+        "recall\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("HOME", str(home))
 
     availability = resolve_plugin("codex").availability(config)

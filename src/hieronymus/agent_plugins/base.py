@@ -91,6 +91,9 @@ class AgentPlugin(Protocol):
     installs_managed_config: bool
     required_asset_paths: tuple[str, ...]
 
+    def has_expected_config(self, config: HieronymusConfig) -> bool:
+        raise NotImplementedError
+
     def availability(self, config: HieronymusConfig) -> AgentAvailability:
         raise NotImplementedError
 
@@ -198,10 +201,25 @@ def has_hieronymus_marker(path: Path) -> bool:
     return False
 
 
+def _path_has_no_symlink_parts(path: Path) -> bool:
+    current = Path(path.anchor) if path.is_absolute() else Path()
+    for part in path.parts:
+        if path.is_absolute() and part == path.anchor:
+            continue
+        current = current / part
+        if current.is_symlink():
+            return False
+    return True
+
+
 def has_required_assets(root: Path, required_paths: tuple[str, ...]) -> bool:
-    if not root.is_dir() or root.is_symlink():
+    if not root.is_dir() or not _path_has_no_symlink_parts(root):
         return False
-    return all((root / relative).is_file() for relative in required_paths)
+    for relative in required_paths:
+        asset = root / relative
+        if not _path_has_no_symlink_parts(asset) or not asset.is_file():
+            return False
+    return True
 
 
 def write_plugin_assets(
@@ -219,6 +237,8 @@ def write_plugin_assets(
         raise ValueError(f"plugin target must be a simple name: {target}")
 
     plugin_root = config.agent_plugins_root / target
+    if config.agent_plugins_root.is_symlink():
+        raise ValueError(f"agent plugins root must not be a symlink: {config.agent_plugins_root}")
     if plugin_root.is_symlink():
         raise ValueError(f"plugin root must not be a symlink: {plugin_root}")
 
@@ -259,6 +279,10 @@ class BaseAgentPlugin:
         self._require_non_empty_paths()
         return self.config_paths[0]
 
+    def has_expected_config(self, config: HieronymusConfig) -> bool:
+        _ = config
+        return False
+
     def availability(self, config: HieronymusConfig) -> AgentAvailability:
         self._require_non_empty_paths()
         install_path = config.agent_plugins_root / self.name
@@ -266,7 +290,7 @@ class BaseAgentPlugin:
         installed = (
             self.installs_managed_config
             and has_required_assets(install_path, self.required_asset_paths)
-            and any(has_hieronymus_marker(expand_user(path)) for path in self.config_paths)
+            and self.has_expected_config(config)
         )
         return AgentAvailability(
             target=self.name,

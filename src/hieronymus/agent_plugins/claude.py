@@ -29,6 +29,22 @@ class ClaudePlugin(BaseAgentPlugin):
         "skills/hieronymus-recall/SKILL.md",
     )
 
+    def has_expected_config(self, config: HieronymusConfig) -> bool:
+        config_path = expand_user(self.config_paths[0])
+        try:
+            payload = load_json_object(config_path)
+        except (OSError, ValueError):
+            return False
+        marker = payload.get("hieronymus")
+        mcp_servers = payload.get("mcpServers")
+        return (
+            isinstance(marker, dict)
+            and marker.get("managed") is True
+            and marker.get("pluginPath") == str(config.agent_plugins_root / self.name)
+            and isinstance(mcp_servers, dict)
+            and mcp_servers.get("hieronymus") == {"command": "hieronymus-mcp", "args": []}
+        )
+
     def install(self, config: HieronymusConfig, *, force: bool = False) -> InstallPlan:
         config_path = expand_user(self.config_paths[0])
         payload = load_json_object(config_path)

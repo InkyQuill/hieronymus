@@ -71,6 +71,19 @@ def test_write_plugin_assets_rejects_symlink_plugin_root(tmp_path: Path) -> None
     assert not (escaped_root / "asset.txt").exists()
 
 
+def test_write_plugin_assets_rejects_symlink_agent_plugins_root(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    escaped_root = tmp_path / "escaped"
+    escaped_root.mkdir()
+    config.config_root.mkdir(parents=True)
+    config.agent_plugins_root.symlink_to(escaped_root, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="agent plugins root must not be a symlink"):
+        write_plugin_assets(config, "codex", {"asset.txt": "bad"})
+
+    assert not (escaped_root / "codex" / "asset.txt").exists()
+
+
 def test_codex_install_writes_assets_and_reports_installed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
