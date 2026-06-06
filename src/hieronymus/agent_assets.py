@@ -136,8 +136,39 @@ def render_agent_plugin_assets(target: str) -> dict[str, str]:
     }
 
     if target == "codex":
-        plugin_json["hooks"] = "./hooks/hooks.codex.json"
-        assets[".codex-plugin/plugin.json"] = _json(plugin_json)
+        assets[".mcp.json"] = _json(MCP_CONFIG)
+        assets[".codex-plugin/plugin.json"] = _json(
+            {
+                **plugin_json,
+                "author": {
+                    "email": "me@inkyquill.net",
+                    "name": "Pavel Obruchnikov",
+                },
+                "interface": {
+                    "capabilities": [
+                        "translation memory recall",
+                        "terminology boundary guidance",
+                        "literary translation workflow skills",
+                    ],
+                    "category": "productivity",
+                    "defaultPrompt": (
+                        "Use Hieronymus skills and MCP tools when translation memory, "
+                        "terminology boundaries, or literary workflow context matter."
+                    ),
+                    "developerName": "Pavel Obruchnikov",
+                    "displayName": "Hieronymus",
+                    "longDescription": (
+                        "Hieronymus packages local-first translation memory workflows, "
+                        "strict terminology boundary guidance, and MCP recall for literary "
+                        "translation agents."
+                    ),
+                    "shortDescription": (
+                        "Local-first translation memory and terminology workflows for agents."
+                    ),
+                },
+                "mcpServers": "./.mcp.json",
+            }
+        )
         return assets
     if target == "claude":
         assets[".claude-plugin/plugin.json"] = _json(plugin_json)

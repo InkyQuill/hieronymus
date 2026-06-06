@@ -18,14 +18,15 @@ The common bundle includes:
 
 `render_agent_plugin_assets(target)` adds one target-specific manifest:
 
-- `codex`: `.codex-plugin/plugin.json`, including the Codex hooks entry.
+- `codex`: `.codex-plugin/plugin.json`, plus a root `.mcp.json` for Codex plugin validation.
 - `claude`: `.claude-plugin/plugin.json`.
 - `gemini`: `gemini-extension.json`.
 - `opencode`: `opencode/plugin.json`.
 
 The MCP config invokes `hieronymus-mcp`. Codex hooks currently invoke
 `python -m hieronymus.agent_hooks session-start` and
-`python -m hieronymus.agent_hooks session-end`; the hook module is implemented in a later task.
+`python -m hieronymus.agent_hooks session-end`; the hook asset is packaged separately for later
+installer wiring and is not referenced from the Codex plugin manifest.
 
 ## Learn vs Read
 

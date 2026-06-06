@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 
 import pytest
 
 from hieronymus.agent_assets import asset_map, render_agent_plugin_assets
+
+CODEX_VALIDATOR = Path("/home/inky/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py")
 
 
 def test_asset_map_contains_required_skills() -> None:
@@ -69,6 +73,7 @@ def test_render_agent_plugin_assets_includes_agent_name() -> None:
     assert assets[".codex-plugin/plugin.json"].startswith("{")
     assert '"name": "hieronymus"' in assets[".codex-plugin/plugin.json"]
     assert "hieronymus-mcp" in assets["mcp/hieronymus.mcp.json"]
+    assert "hieronymus-mcp" in assets[".mcp.json"]
 
 
 @pytest.mark.parametrize(
@@ -91,11 +96,35 @@ def test_render_agent_plugin_assets_adds_target_manifest(
     assert "mcp/hieronymus.mcp.json" in assets
 
 
-def test_codex_manifest_includes_hooks_entry() -> None:
+def test_codex_manifest_uses_validator_supported_fields() -> None:
     assets = render_agent_plugin_assets("codex")
     manifest = json.loads(assets[".codex-plugin/plugin.json"])
 
-    assert manifest["hooks"] == "./hooks/hooks.codex.json"
+    assert "hooks" not in manifest
+    assert manifest["mcpServers"] == "./.mcp.json"
+    assert manifest["author"]["name"] == "Pavel Obruchnikov"
+    assert manifest["interface"]["displayName"] == "Hieronymus"
+    assert "hooks/hooks.codex.json" in assets
+
+
+def test_codex_generated_bundle_passes_local_validator(tmp_path: Path) -> None:
+    if not CODEX_VALIDATOR.is_file():
+        pytest.skip(f"Codex plugin validator is missing: {CODEX_VALIDATOR}")
+
+    assets = render_agent_plugin_assets("codex")
+    for relative_path, contents in assets.items():
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents, encoding="utf-8")
+
+    result = subprocess.run(
+        ["/usr/bin/python3", str(CODEX_VALIDATOR), str(tmp_path)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_render_agent_plugin_assets_rejects_unknown_target() -> None:
