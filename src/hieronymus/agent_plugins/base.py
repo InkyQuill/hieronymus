@@ -103,6 +103,22 @@ def any_path_exists(paths: tuple[str, ...]) -> bool:
     return any(expand_user(path).exists() for path in paths)
 
 
+def write_plugin_assets(
+    config: HieronymusConfig,
+    target: str,
+    assets: dict[str, str],
+) -> list[Path]:
+    root = (config.agent_plugins_root / target).resolve()
+    written: list[Path] = []
+    for relative, text in assets.items():
+        destination = (root / relative).resolve()
+        if destination != root and root not in destination.parents:
+            raise ValueError(f"asset path escapes plugin root: {relative}")
+        atomic_write_text(destination, text)
+        written.append(destination)
+    return written
+
+
 class BaseAgentPlugin:
     name: str
     display_name: str
