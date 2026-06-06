@@ -260,36 +260,115 @@ def test_claude_install_is_idempotent_for_config_entries(
     assert payload["hieronymus"]["pluginPath"] == str(config.agent_plugins_root / "claude")
 
 
-def test_deferred_provider_install_remains_stub_and_non_mutating(
+@pytest.mark.parametrize(
+    (
+        "target",
+        "host_dir",
+        "config_path",
+        "existing_payload",
+        "backup_glob",
+        "manifest_path",
+        "registration_key",
+    ),
+    [
+        (
+            "openclaw",
+            ".openclaw",
+            ".openclaw/openclaw.json",
+            {"theme": "dark"},
+            "openclaw-openclaw-*.json",
+            "openclaw/plugin.json",
+            "plugins",
+        ),
+        (
+            "opencode",
+            ".config/opencode",
+            ".config/opencode/plugin.json",
+            {"mode": "fast"},
+            "opencode-plugin-*.json",
+            "opencode/plugin.json",
+            "plugins",
+        ),
+        (
+            "gemini",
+            ".gemini",
+            ".gemini/settings.json",
+            {"ui": {"theme": "dark"}},
+            "gemini-settings-*.json",
+            "gemini-extension.json",
+            "extensions",
+        ),
+    ],
+)
+def test_json_agent_install_patches_config_and_reports_installed(
+    target: str,
+    host_dir: str,
+    config_path: str,
+    existing_payload: dict[str, object],
+    backup_glob: str,
+    manifest_path: str,
+    registration_key: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     home = tmp_path / "home"
-    (home / ".openclaw").mkdir(parents=True)
+    (home / host_dir).mkdir(parents=True)
+    absolute_config_path = home / config_path
+    existing_text = json.dumps(existing_payload, sort_keys=True) + "\n"
+    absolute_config_path.write_text(existing_text, encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
-    plan = resolve_plugin("openclaw").install(config)
+    plan = resolve_plugin(target).install(config)
 
-    assert plan.result_kind == "stub"
-    assert plan.availability.installed is False
-    assert not (config.agent_plugins_root / "openclaw").exists()
-    assert not (home / ".openclaw" / "openclaw.json").exists()
+    payload = json.loads(absolute_config_path.read_text(encoding="utf-8"))
+    assert plan.result_kind == "installed"
+    assert plan.availability.installed is True
+    for key, value in existing_payload.items():
+        assert payload[key] == value
+    assert payload["mcpServers"]["hieronymus"] == {
+        "args": [],
+        "command": "hieronymus-mcp",
+    }
+    assert payload[registration_key]["hieronymus"] == {
+        "path": str(config.agent_plugins_root / target),
+    }
+    assert payload["hieronymus"] == {"managed": True, "version": "0.1.0"}
+    assert (config.agent_plugins_root / target / manifest_path).exists()
+    assert resolve_plugin(target).availability(config).installed is True
+    backups = list(config.backups_root.glob(backup_glob))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == existing_text
 
 
-def test_deferred_provider_stale_assets_do_not_count_as_installed(
+@pytest.mark.parametrize(
+    ("target", "host_dir", "config_path", "registration_key"),
+    [
+        ("openclaw", ".openclaw", ".openclaw/openclaw.json", "plugins"),
+        ("opencode", ".config/opencode", ".config/opencode/plugin.json", "plugins"),
+        ("gemini", ".gemini", ".gemini/settings.json", "extensions"),
+    ],
+)
+def test_json_agent_install_is_idempotent_for_config_entries(
+    target: str,
+    host_dir: str,
+    config_path: str,
+    registration_key: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     home = tmp_path / "home"
-    openclaw = home / ".openclaw"
-    openclaw.mkdir(parents=True)
-    (openclaw / "openclaw.json").write_text("{}", encoding="utf-8")
+    (home / host_dir).mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    (config.agent_plugins_root / "openclaw").mkdir(parents=True)
+    plugin = resolve_plugin(target)
 
-    availability = resolve_plugin("openclaw").availability(config)
+    first = plugin.install(config)
+    second = plugin.install(config)
 
-    assert availability.available is True
-    assert availability.installed is False
+    payload = json.loads((home / config_path).read_text(encoding="utf-8"))
+    assert first.result_kind == "installed"
+    assert second.result_kind == "installed"
+    assert sorted(payload["mcpServers"]) == ["hieronymus"]
+    assert sorted(payload[registration_key]) == ["hieronymus"]
+    assert payload["hieronymus"]["managed"] is True

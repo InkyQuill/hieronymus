@@ -192,5 +192,8 @@ def render_agent_plugin_assets(target: str) -> dict[str, str]:
             }
         )
         return assets
+    if target == "openclaw":
+        assets["openclaw/plugin.json"] = _json(plugin_json)
+        return assets
 
     raise ValueError(f"Unsupported agent plugin target: {target}")
