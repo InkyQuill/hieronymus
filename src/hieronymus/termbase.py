@@ -155,34 +155,51 @@ class Termbase:
 
     def validate(self, *, raw_text: str, translated_text: str) -> list[ValidationFinding]:
         findings: list[ValidationFinding] = []
-        for term in self.contract(raw_text):
-            for forbidden in term.forbidden_variants:
-                if forbidden in translated_text:
+        contracted_terms = self.contract(raw_text)
+        with connect(self.database_path) as conn:
+            for term in contracted_terms:
+                forbidden_rows = conn.execute(
+                    """
+                    select text, case_sensitive
+                    from term_aliases
+                    where term_id = ? and kind = 'forbidden_variant'
+                    order by id
+                    """,
+                    (term.id,),
+                ).fetchall()
+                for forbidden in forbidden_rows:
+                    alias_text = forbidden["text"]
+                    if not _contains(
+                        translated_text,
+                        alias_text,
+                        case_sensitive=bool(forbidden["case_sensitive"]),
+                    ):
+                        continue
                     findings.append(
                         ValidationFinding(
                             term_id=term.id,
                             kind="forbidden_variant",
                             severity="high",
                             expected=term.canonical_translation,
-                            observed=forbidden,
+                            observed=alias_text,
                             message=(
                                 f"Use {term.canonical_translation!r} for {term.source_text!r}; "
-                                f"{forbidden!r} is forbidden."
+                                f"{alias_text!r} is forbidden."
                             ),
                         )
                     )
-            if term.canonical_translation not in translated_text:
-                findings.append(
-                    ValidationFinding(
-                        term_id=term.id,
-                        kind="missing_canonical",
-                        severity="medium",
-                        expected=term.canonical_translation,
-                        observed="",
-                        message=(
-                            f"Raw text contains {term.source_text!r}, but translation does not "
-                            f"contain approved form {term.canonical_translation!r}."
-                        ),
+                if term.canonical_translation not in translated_text:
+                    findings.append(
+                        ValidationFinding(
+                            term_id=term.id,
+                            kind="missing_canonical",
+                            severity="medium",
+                            expected=term.canonical_translation,
+                            observed="",
+                            message=(
+                                f"Raw text contains {term.source_text!r}, but translation does "
+                                f"not contain approved form {term.canonical_translation!r}."
+                            ),
+                        )
                     )
-                )
         return findings

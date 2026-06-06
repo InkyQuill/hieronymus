@@ -24,9 +24,49 @@ def test_validate_flags_forbidden_variant(config):
         translated_text="You should pick up Attack Increase.",
     )
 
-    assert findings[0].severity == "high"
-    assert findings[0].observed == "Attack Increase"
-    assert findings[0].expected == "ATK Up"
+    finding = findings[0]
+    assert finding.term_id == term_id
+    assert finding.kind == "forbidden_variant"
+    assert finding.severity == "high"
+    assert finding.expected == "ATK Up"
+    assert finding.observed == "Attack Increase"
+    assert "is forbidden" in finding.message
+
+
+def test_validate_flags_case_insensitive_forbidden_variant(config):
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    termbase = Termbase(series.database_path)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+    )
+    termbase.add_alias(
+        term_id,
+        kind="forbidden_variant",
+        text="Attack Increase",
+        language="en",
+        case_sensitive=False,
+    )
+    termbase.approve(term_id)
+
+    findings = termbase.validate(
+        raw_text="攻撃力上昇を取るべきだ。",
+        translated_text="You should pick up attack increase.",
+    )
+
+    finding = findings[0]
+    assert finding.term_id == term_id
+    assert finding.kind == "forbidden_variant"
+    assert finding.severity == "high"
+    assert finding.expected == "ATK Up"
+    assert finding.observed == "Attack Increase"
+    assert "is forbidden" in finding.message
 
 
 def test_validate_flags_missing_canonical_when_source_present(config):
@@ -46,5 +86,58 @@ def test_validate_flags_missing_canonical_when_source_present(config):
 
     findings = termbase.validate(raw_text="ガンツが笑った。", translated_text="Gantz laughed.")
 
-    assert findings[0].kind == "missing_canonical"
-    assert findings[0].expected == "Ganz"
+    finding = findings[0]
+    assert finding.term_id == term_id
+    assert finding.kind == "missing_canonical"
+    assert finding.severity == "medium"
+    assert finding.expected == "Ganz"
+    assert finding.observed == ""
+    assert "approved form 'Ganz'" in finding.message
+
+
+def test_validate_returns_no_findings_for_clean_translation(config):
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    termbase = Termbase(series.database_path)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+    )
+    termbase.add_alias(term_id, kind="forbidden_variant", text="Attack Increase", language="en")
+    termbase.approve(term_id)
+
+    findings = termbase.validate(
+        raw_text="攻撃力上昇を取るべきだ。",
+        translated_text="You should pick up ATK Up.",
+    )
+
+    assert findings == []
+
+
+def test_validate_returns_no_findings_without_contracted_term(config):
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    termbase = Termbase(series.database_path)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+    )
+    termbase.add_alias(term_id, kind="forbidden_variant", text="Attack Increase", language="en")
+    termbase.approve(term_id)
+
+    findings = termbase.validate(
+        raw_text="敏捷性上昇を取るべきだ。",
+        translated_text="You should pick up Attack Increase.",
+    )
+
+    assert findings == []
