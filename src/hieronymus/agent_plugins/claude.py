@@ -23,7 +23,6 @@ class ClaudePlugin(BaseAgentPlugin):
 
     def install(self, config: HieronymusConfig, *, force: bool = False) -> InstallPlan:
         _ = force
-        write_plugin_assets(config, self.name, render_agent_plugin_assets(self.name))
         config_path = expand_user(self.config_paths[0])
         payload = load_json_object(config_path)
         payload.setdefault("mcpServers", {})["hieronymus"] = {
@@ -35,6 +34,7 @@ class ClaudePlugin(BaseAgentPlugin):
             "version": "0.1.0",
             "pluginPath": str(config.agent_plugins_root / self.name),
         }
+        write_plugin_assets(config, self.name, render_agent_plugin_assets(self.name))
         patch_json_config(config, config_path, agent=self.name, payload=payload)
         plan = self.plan(config)
         return InstallPlan(

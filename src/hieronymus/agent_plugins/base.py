@@ -249,7 +249,16 @@ class BaseAgentPlugin:
 
     def install(self, config: HieronymusConfig, *, force: bool = False) -> InstallPlan:
         _ = force
-        return self.plan(config)
+        plan = self.plan(config)
+        return InstallPlan(
+            target=plan.target,
+            display_name=plan.display_name,
+            protocol_note=plan.protocol_note,
+            docs=plan.docs,
+            result_kind="stub",
+            steps=plan.steps,
+            availability=plan.availability,
+        )
 
 
 def atomic_write_text(path: Path, text: str) -> None:

@@ -186,3 +186,92 @@ def test_claude_install_patches_json_config(
     backups = list(config.backups_root.glob("claude-.claude-*.json"))
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == '{"theme": "dark"}\n'
+
+
+def test_claude_install_creates_missing_json_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    resolve_plugin("claude").install(config)
+
+    payload = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+    assert payload["mcpServers"]["hieronymus"]["command"] == "hieronymus-mcp"
+    assert payload["hieronymus"]["managed"] is True
+    assert not config.backups_root.exists()
+
+
+def test_claude_install_handles_empty_json_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    claude_json = home / ".claude.json"
+    claude_json.write_text("\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    resolve_plugin("claude").install(config)
+
+    payload = json.loads(claude_json.read_text(encoding="utf-8"))
+    assert payload["mcpServers"]["hieronymus"]["command"] == "hieronymus-mcp"
+    backups = list(config.backups_root.glob("claude-.claude-*.json"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "\n"
+
+
+def test_claude_install_rejects_non_object_json_without_writing_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude.json").write_text("[]\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    with pytest.raises(ValueError, match="expected JSON object"):
+        resolve_plugin("claude").install(config)
+
+    assert not (config.agent_plugins_root / "claude").exists()
+    assert json.loads((home / ".claude.json").read_text(encoding="utf-8")) == []
+
+
+def test_claude_install_is_idempotent_for_config_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    plugin = resolve_plugin("claude")
+
+    plugin.install(config)
+    plugin.install(config)
+
+    payload = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+    assert sorted(payload["mcpServers"]) == ["hieronymus"]
+    assert payload["hieronymus"]["pluginPath"] == str(config.agent_plugins_root / "claude")
+
+
+def test_deferred_provider_install_remains_stub_and_non_mutating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".openclaw").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    plan = resolve_plugin("openclaw").install(config)
+
+    assert plan.result_kind == "stub"
+    assert plan.availability.installed is False
+    assert not (config.agent_plugins_root / "openclaw").exists()
+    assert not (home / ".openclaw" / "openclaw.json").exists()

@@ -216,8 +216,9 @@ def install_command(
 
     click.echo(render_greeting())
     click.echo()
-    action_label = "Planning" if dry_run else "Installed"
-    changes_label = "Planned changes" if dry_run else "Applied changes"
+    installed = plan.result_kind == "installed"
+    action_label = "Installed" if installed else "Planning"
+    changes_label = "Applied changes" if installed else "Planned changes"
     click.echo(f"{action_label} {plan.display_name} integration")
     click.echo(plan.protocol_note)
     click.echo(f"{changes_label}:")

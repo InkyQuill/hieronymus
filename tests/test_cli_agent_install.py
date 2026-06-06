@@ -87,3 +87,25 @@ def test_install_codex_json_installs_but_dry_run_does_not_mutate(
     assert "Installed Codex integration" in human_result.output
     assert "Applied changes:" in human_result.output
     assert "Result: installed." in human_result.output
+
+
+def test_install_deferred_provider_human_output_remains_plan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".openclaw").mkdir(parents=True)
+    data_root = tmp_path / "hieronymus"
+    monkeypatch.setenv("HOME", str(home))
+
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "install", "openclaw"],
+    )
+
+    assert result.exit_code == 0
+    assert "Planning OpenClaw integration" in result.output
+    assert "Planned changes:" in result.output
+    assert "Result: stub; real integration is deferred" in result.output
+    assert not (data_root / "agent-plugins" / "openclaw").exists()
+    assert not (home / ".openclaw" / "openclaw.json").exists()
