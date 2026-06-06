@@ -311,7 +311,12 @@ class DreamService:
         return int(row[0])
 
     def _validate_output(self, output: DreamOutput, allowed_memory_ids: set[int]) -> None:
+        if not isinstance(output, DreamOutput):
+            raise ValueError("provider output must be a DreamOutput")
+
         for candidate in output.crystals:
+            if not isinstance(candidate, DreamCrystalCandidate):
+                raise ValueError("provider crystals must contain only DreamCrystalCandidate items")
             if candidate.crystal_type not in _ALLOWED_CRYSTAL_TYPES:
                 raise ValueError(f"unknown crystal_type: {candidate.crystal_type}")
             if not candidate.text.strip():
@@ -327,6 +332,10 @@ class DreamService:
                 raise ValueError(f"unknown source_memory_ids: {sorted(unknown_ids)}")
 
         for proposal in output.concept_proposals:
+            if not isinstance(proposal, DreamConceptProposal):
+                raise ValueError(
+                    "provider concept_proposals must contain only DreamConceptProposal items"
+                )
             if not proposal.concept_text.strip():
                 raise ValueError("proposal concept_text must not be empty")
             if not proposal.source_form.strip():

@@ -163,6 +163,68 @@ def test_dreaming_records_failed_run_for_invalid_provider_output(
     assert session_row["cycle_id"] is None
 
 
+def test_dreaming_records_failed_run_when_provider_returns_none(
+    config: HieronymusConfig,
+) -> None:
+    class NoneProvider:
+        name = "none"
+
+        def crystallize(self, context, memories):
+            return None
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "Valid input.")
+    workspace.complete_session(session.id)
+
+    with pytest.raises(ValueError, match="DreamOutput"):
+        DreamService(config, NoneProvider()).run_cycle()
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select * from dream_runs").fetchone()
+        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
+        session_row = conn.execute("select status, cycle_id from task_sessions").fetchone()
+
+    assert run["status"] == "failed"
+    assert "DreamOutput" in run["error"]
+    assert run["completed_at"]
+    assert crystal_count == 0
+    assert session_row["status"] == "completed"
+    assert session_row["cycle_id"] is None
+
+
+def test_dreaming_records_failed_run_when_provider_returns_invalid_crystal_item(
+    config: HieronymusConfig,
+) -> None:
+    class InvalidCrystalItemProvider:
+        name = "invalid-item"
+
+        def crystallize(self, context, memories):
+            return DreamOutput(crystals=[{"text": "Not a candidate."}], concept_proposals=[])
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "Valid input.")
+    workspace.complete_session(session.id)
+
+    with pytest.raises(ValueError, match="DreamCrystalCandidate"):
+        DreamService(config, InvalidCrystalItemProvider()).run_cycle()
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select * from dream_runs").fetchone()
+        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
+        session_row = conn.execute("select status, cycle_id from task_sessions").fetchone()
+
+    assert run["status"] == "failed"
+    assert "DreamCrystalCandidate" in run["error"]
+    assert run["completed_at"]
+    assert crystal_count == 0
+    assert session_row["status"] == "completed"
+    assert session_row["cycle_id"] is None
+
+
 def test_deterministic_provider_maps_roles_to_crystal_types(config: HieronymusConfig) -> None:
     context = _context(config)
     workspace = WorkspaceStore(config)
