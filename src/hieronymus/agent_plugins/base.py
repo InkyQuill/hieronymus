@@ -19,10 +19,14 @@ class AgentAvailability:
     display_name: str
     available: bool
     installed: bool
-    detect_paths: list[str]
-    config_paths: list[str]
+    detect_paths: tuple[str, ...]
+    config_paths: tuple[str, ...]
     install_path: str
     reason: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "detect_paths", tuple(self.detect_paths))
+        object.__setattr__(self, "config_paths", tuple(self.config_paths))
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -30,8 +34,8 @@ class AgentAvailability:
             "display_name": self.display_name,
             "available": self.available,
             "installed": self.installed,
-            "detect_paths": self.detect_paths,
-            "config_paths": self.config_paths,
+            "detect_paths": list(self.detect_paths),
+            "config_paths": list(self.config_paths),
             "install_path": self.install_path,
             "reason": self.reason,
         }
@@ -107,15 +111,24 @@ class BaseAgentPlugin:
     docs = AGENT_WORKFLOW_SPEC
     protocol_note: str
 
+    def _require_non_empty_paths(self) -> None:
+        if not self.detect_paths:
+            raise ValueError(f"{self.name} plugin must define at least one detect path")
+        if not self.config_paths:
+            raise ValueError(f"{self.name} plugin must define at least one config path")
+
     @property
     def detect_path(self) -> str:
+        self._require_non_empty_paths()
         return self.detect_paths[0]
 
     @property
     def config_path(self) -> str:
+        self._require_non_empty_paths()
         return self.config_paths[0]
 
     def availability(self, config: HieronymusConfig) -> AgentAvailability:
+        self._require_non_empty_paths()
         install_path = config.agent_plugins_root / self.name
         available = any_path_exists(self.detect_paths)
         installed = install_path.exists()
@@ -124,13 +137,14 @@ class BaseAgentPlugin:
             display_name=self.display_name,
             available=available,
             installed=installed,
-            detect_paths=list(self.detect_paths),
-            config_paths=list(self.config_paths),
+            detect_paths=self.detect_paths,
+            config_paths=self.config_paths,
             install_path=str(install_path),
             reason="host detected" if available else "host config path not found",
         )
 
     def plan(self, config: HieronymusConfig) -> InstallPlan:
+        self._require_non_empty_paths()
         return InstallPlan(
             target=self.name,
             display_name=self.display_name,
