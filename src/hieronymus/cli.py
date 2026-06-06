@@ -8,7 +8,7 @@ import click
 from hieronymus.config import load_config
 from hieronymus.doctor import Doctor, report_to_json
 from hieronymus.dreaming import DeterministicDreamProvider, DreamService
-from hieronymus.install import plan_install
+from hieronymus.install import agent_install_candidates, plan_install
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
 from hieronymus.presentation import GUIDE_ICON, render_greeting, render_json
@@ -176,16 +176,32 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
 
 
 @main.command("install")
-@click.argument("app")
+@click.argument("app", required=False)
 @click.option("--dry-run", is_flag=True)
 @click.option("--force", is_flag=True)
 @click.option("--json", "as_json", is_flag=True)
 @click.pass_context
 def install_command(
-    ctx: click.Context, app: str, dry_run: bool, force: bool, as_json: bool
+    ctx: click.Context, app: str | None, dry_run: bool, force: bool, as_json: bool
 ) -> None:
+    config = ctx.obj["config"]
+    if app is None or app == "list":
+        payload = {"candidates": agent_install_candidates(config)}
+        if as_json:
+            click.echo(render_json(payload))
+            return
+
+        click.echo(render_greeting())
+        click.echo()
+        click.echo("Agent integration candidates:")
+        for item in payload["candidates"]:
+            available = "available" if item["available"] else "not found"
+            installed = "installed" if item["installed"] else "not installed"
+            click.echo(f"- {item['display_name']}: {available}, {installed}")
+        return
+
     try:
-        plan = plan_install(ctx.obj["config"], app)
+        plan = plan_install(config, app)
     except ValueError as error:
         raise click.ClickException(str(error)) from error
 

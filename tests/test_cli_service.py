@@ -142,7 +142,7 @@ def test_admin_json_returns_tui_placeholder(tmp_path: Path) -> None:
     assert json.loads(result.output) == {"tui": "not-available-in-this-pass"}
 
 
-def test_install_json_returns_stub_plan(tmp_path: Path) -> None:
+def test_install_json_returns_dry_run_plan(tmp_path: Path) -> None:
     runner = CliRunner()
 
     result = runner.invoke(
@@ -160,15 +160,12 @@ def test_install_json_returns_stub_plan(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["target"] == "codex"
-    assert payload["result_kind"] == "stub"
+    assert payload["result_kind"] == "installable"
     assert payload["dry_run"] is True
-    assert (
-        payload["steps"][1]["path"]
-        == "docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md"
-    )
+    assert payload["steps"][1]["path"] == "~/.codex/config.toml"
 
 
-def test_install_human_output_is_honest_stub_plan(tmp_path: Path) -> None:
+def test_install_human_output_is_honest_dry_run_plan(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         main,
         ["--data-root", str(tmp_path / "hieronymus"), "install", "codex"],
@@ -177,7 +174,7 @@ def test_install_human_output_is_honest_stub_plan(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Planning Codex integration" in result.output
     assert "Installing Codex integration" not in result.output
-    assert "Result: stub; real integration is deferred" in result.output
+    assert "Planned changes:" in result.output
 
 
 def test_install_unknown_target_returns_clean_error(tmp_path: Path) -> None:

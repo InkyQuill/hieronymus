@@ -50,6 +50,7 @@ __all__ = [
     "InstallPlan",
     "InstallStep",
     "TARGETS",
+    "agent_install_candidates",
     "atomic_write_text",
     "backup_file",
     "known_targets",
@@ -69,6 +70,10 @@ def resolve_target(name: str) -> InstallTarget:
             return target
     resolve_plugin(name)
     raise AssertionError("resolve_plugin returned for an unknown target")
+
+
+def agent_install_candidates(config: HieronymusConfig) -> list[dict[str, object]]:
+    return [plugin.availability(config).to_json_dict() for plugin in available_plugins()]
 
 
 def plan_install(config: HieronymusConfig, target_name: str) -> InstallPlan:
