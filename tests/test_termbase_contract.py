@@ -20,6 +20,21 @@ def _create_termbase(config) -> Termbase:
     )
 
 
+def _termbase_for_series(config, slug: str, title: str) -> Termbase:
+    series = Registry(config).create_series(
+        slug=slug,
+        title=title,
+        source_language="ja",
+        target_language="en",
+    )
+    return Termbase(
+        config.database_path,
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+    )
+
+
 def _propose_sense_name(termbase: Termbase) -> int:
     return termbase.propose(
         category="ability_name",
@@ -81,6 +96,30 @@ def test_add_alias_rejects_empty_text(config):
 
     with pytest.raises(ValueError, match="alias text must not be empty"):
         termbase.add_alias(term_id, kind="source_variant", text="   ", language="ja")
+
+
+def test_add_alias_rejects_term_from_another_series(config):
+    series_a = _termbase_for_series(config, "series-a", "Series A")
+    series_b = _termbase_for_series(config, "series-b", "Series B")
+    term_id = series_b.propose(
+        category="spell",
+        source_text="魔法",
+        canonical_translation="Magic",
+    )
+    series_b.approve(term_id)
+
+    with pytest.raises(KeyError, match=f"unknown term: {term_id}"):
+        series_a.add_alias(
+            term_id,
+            kind="forbidden_variant",
+            text="Sorcery",
+            language="en",
+        )
+
+    contract = series_b.contract("魔法を使った。")
+
+    assert len(contract) == 1
+    assert contract[0].forbidden_variants == []
 
 
 def test_approve_rejects_unknown_term(config):

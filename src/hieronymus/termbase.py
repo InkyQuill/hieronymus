@@ -127,6 +127,19 @@ class Termbase:
             raise ValueError("alias text must not be empty")
 
         with connect(self.database_path) as conn:
+            term = conn.execute(
+                """
+                select id
+                from strict_terms
+                where id = ?
+                  and series_slug = ?
+                  and source_language = ?
+                  and target_language = ?
+                """,
+                (term_id, self.series_slug, self.source_language, self.target_language),
+            ).fetchone()
+            if term is None:
+                raise KeyError(f"unknown term: {term_id}")
             conn.execute(
                 """
                 insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
