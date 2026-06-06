@@ -209,3 +209,43 @@ def test_no_subcommand_ensures_service_and_prints_greeting(tmp_path: Path) -> No
     assert "🪶 Hieronymus v" in result.output
     assert "running: yes" in result.output
     assert "port: 32199" in result.output
+
+
+def test_status_start_stop_lifecycle_with_real_daemon(tmp_path: Path) -> None:
+    data_root = tmp_path / "hieronymus"
+
+    start_result = subprocess.run(
+        ["uv", "run", "hiero", "--data-root", str(data_root)],
+        check=False,
+        cwd=Path.cwd(),
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    try:
+        assert start_result.returncode == 0
+        assert "🪶 Hieronymus v" in start_result.stdout
+
+        status_result = subprocess.run(
+            ["uv", "run", "hiero", "--data-root", str(data_root), "status", "--json"],
+            check=False,
+            cwd=Path.cwd(),
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        assert status_result.returncode == 0
+        status_payload = json.loads(status_result.stdout)
+        assert status_payload["running"] is True
+        assert status_payload["host"] == "127.0.0.1"
+        assert status_payload["database_path"] == str(data_root / "hieronymus.sqlite")
+    finally:
+        stop_result = subprocess.run(
+            ["uv", "run", "hiero", "--data-root", str(data_root), "stop", "--json"],
+            check=False,
+            cwd=Path.cwd(),
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        assert stop_result.returncode == 0
