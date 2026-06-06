@@ -39,6 +39,11 @@ class Termbase:
         tags: list[str] | None = None,
         notes: str = "",
     ) -> int:
+        if not source_text.strip():
+            raise ValueError("source_text must not be empty")
+        if not canonical_translation.strip():
+            raise ValueError("canonical_translation must not be empty")
+
         now = _now()
         with connect(self.database_path) as conn:
             cursor = conn.execute(
@@ -89,6 +94,8 @@ class Termbase:
     ) -> None:
         if kind not in _VALID_ALIAS_KINDS:
             raise ValueError(f"unknown alias kind: {kind}")
+        if not text.strip():
+            raise ValueError("alias text must not be empty")
 
         with connect(self.database_path) as conn:
             conn.execute(

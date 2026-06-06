@@ -1,5 +1,6 @@
 import pytest
 
+from hieronymus.db import connect
 from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
 
@@ -45,6 +46,36 @@ def test_add_alias_rejects_unknown_kind(config):
 
     with pytest.raises(ValueError, match="unknown alias kind: typo_variant"):
         termbase.add_alias(term_id, kind="typo_variant", text="Attack Increase", language="en")
+
+
+def test_propose_rejects_empty_source_text(config):
+    termbase = _create_termbase(config)
+
+    with pytest.raises(ValueError, match="source_text must not be empty"):
+        termbase.propose(
+            category="ability_name",
+            source_text="   ",
+            canonical_translation="ATK Up",
+        )
+
+
+def test_propose_rejects_empty_canonical_translation(config):
+    termbase = _create_termbase(config)
+
+    with pytest.raises(ValueError, match="canonical_translation must not be empty"):
+        termbase.propose(
+            category="ability_name",
+            source_text="攻撃力上昇",
+            canonical_translation="   ",
+        )
+
+
+def test_add_alias_rejects_empty_text(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+
+    with pytest.raises(ValueError, match="alias text must not be empty"):
+        termbase.add_alias(term_id, kind="source_variant", text="   ", language="ja")
 
 
 def test_approve_rejects_unknown_term(config):
@@ -95,3 +126,15 @@ def test_contract_returns_empty_list_when_no_terms_match(config):
     termbase.approve(term_id)
 
     assert termbase.contract("ユンは防御力上昇を取るべきだと言われた。") == []
+
+
+def test_propose_maintains_terms_fts_row(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+
+    with connect(termbase.database_path) as conn:
+        row = conn.execute("select * from terms_fts where rowid = ?", (term_id,)).fetchone()
+
+    assert row["source_text"] == "攻撃力上昇"
+    assert row["canonical_translation"] == "ATK Up"
+    assert row["notes"] == "OSO Sense name."
