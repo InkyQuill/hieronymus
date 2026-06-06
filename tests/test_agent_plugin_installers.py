@@ -275,3 +275,21 @@ def test_deferred_provider_install_remains_stub_and_non_mutating(
     assert plan.availability.installed is False
     assert not (config.agent_plugins_root / "openclaw").exists()
     assert not (home / ".openclaw" / "openclaw.json").exists()
+
+
+def test_deferred_provider_stale_assets_do_not_count_as_installed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    openclaw = home / ".openclaw"
+    openclaw.mkdir(parents=True)
+    (openclaw / "openclaw.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    (config.agent_plugins_root / "openclaw").mkdir(parents=True)
+
+    availability = resolve_plugin("openclaw").availability(config)
+
+    assert availability.available is True
+    assert availability.installed is False

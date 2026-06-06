@@ -46,7 +46,7 @@ def test_config_has_agent_plugins_root(tmp_path: Path) -> None:
     assert config.agent_plugins_root == tmp_path / "hieronymus" / "agent-plugins"
 
 
-def test_codex_availability_detects_host_and_plugin_install(
+def test_codex_availability_requires_host_marker_for_install(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -62,12 +62,29 @@ def test_codex_availability_detects_host_and_plugin_install(
         target="codex",
         display_name="Codex",
         available=True,
-        installed=True,
+        installed=False,
         detect_paths=("~/.codex",),
         config_paths=("~/.codex/config.toml",),
         install_path=str(config.agent_plugins_root / "codex"),
         reason="host detected",
     )
+
+
+def test_codex_availability_detects_assets_and_managed_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    codex.mkdir(parents=True)
+    (codex / "config.toml").write_text("[hieronymus]\nmanaged = true\n", encoding="utf-8")
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    (config.agent_plugins_root / "codex").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    availability = resolve_plugin("codex").availability(config)
+
+    assert availability.installed is True
 
 
 def test_claude_availability_checks_all_detect_paths(

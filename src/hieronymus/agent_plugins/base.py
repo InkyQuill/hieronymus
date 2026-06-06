@@ -155,6 +155,26 @@ def any_path_exists(paths: tuple[str, ...]) -> bool:
     return any(expand_user(path).exists() for path in paths)
 
 
+def has_hieronymus_marker(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        if path.suffix == ".toml":
+            payload = load_toml_object(path)
+        elif path.suffix == ".json":
+            payload = load_json_object(path)
+        else:
+            text = path.read_text(encoding="utf-8")
+            return "BEGIN HIERONYMUS MANAGED BLOCK" in text
+    except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError):
+        return False
+
+    marker = payload.get("hieronymus")
+    if isinstance(marker, dict) and marker.get("managed") is True:
+        return True
+    return False
+
+
 def write_plugin_assets(
     config: HieronymusConfig,
     target: str,
@@ -212,7 +232,9 @@ class BaseAgentPlugin:
         self._require_non_empty_paths()
         install_path = config.agent_plugins_root / self.name
         available = any_path_exists(self.detect_paths)
-        installed = install_path.exists()
+        installed = install_path.exists() and any(
+            has_hieronymus_marker(expand_user(path)) for path in self.config_paths
+        )
         return AgentAvailability(
             target=self.name,
             display_name=self.display_name,
