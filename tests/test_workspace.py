@@ -48,6 +48,21 @@ def test_workspace_records_short_term_memory(config: HieronymusConfig) -> None:
     assert memories[0].metadata == {"importance": 4, "tags": ["term"]}
 
 
+def test_short_term_memory_accepts_positional_public_fields(
+    config: HieronymusConfig,
+) -> None:
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    memory_id = store.add_short_term_memory(session.id, "user", "note", "Some text")
+
+    memories = store.list_short_term_memories(session.id)
+    assert memories[0].id == memory_id
+    assert memories[0].source_role == "user"
+    assert memories[0].kind == "note"
+    assert memories[0].text == "Some text"
+
+
 def test_complete_session_marks_session_completed(config: HieronymusConfig) -> None:
     store = WorkspaceStore(config)
     session = store.start_session(_context(config))

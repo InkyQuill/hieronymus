@@ -83,7 +83,6 @@ class WorkspaceStore:
     def add_short_term_memory(
         self,
         session_id: int,
-        *,
         source_role: str,
         kind: str,
         text: str,
