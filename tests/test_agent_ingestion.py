@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hieronymus.agent_ingestion import IngestionService, split_learning_blocks
 from hieronymus.config import HieronymusConfig
 from hieronymus.memory_models import TranslationContext
@@ -46,6 +48,22 @@ def test_split_learning_blocks_splits_long_paragraph_on_sentence_boundaries() ->
     assert [block.index for block in blocks] == [1, 2]
     assert blocks[0].text == "First sentence is short. Second sentence is also short."
     assert blocks[1].text == "Third sentence ends it."
+
+
+def test_split_learning_blocks_bounds_punctuation_free_text() -> None:
+    blocks = split_learning_blocks(
+        " ".join(f"word{index}" for index in range(80)),
+        max_chars=45,
+    )
+
+    assert blocks
+    assert all(len(block.text) <= 45 for block in blocks)
+
+
+def test_split_learning_blocks_bounds_unbroken_long_text() -> None:
+    blocks = split_learning_blocks("x" * 137, max_chars=40)
+
+    assert [len(block.text) for block in blocks] == [40, 40, 40, 17]
 
 
 def test_learn_writes_short_term_memories(tmp_path: Path) -> None:
@@ -93,6 +111,28 @@ def test_read_extracts_candidates_without_writing_by_default(tmp_path: Path) -> 
     assert result.candidate_terms == ["Gantz", "Soumen"]
     assert result.findings == ["candidate_term:Gantz", "candidate_term:Soumen"]
     assert WorkspaceStore(config).list_short_term_memories(session_id) == []
+
+
+def test_read_validates_unknown_session_without_writing(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    with pytest.raises(KeyError, match="unknown session: 999"):
+        IngestionService(config).read(
+            session_id=999,
+            text="lowercase only",
+        )
+
+
+def test_read_rejects_completed_session_without_findings(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    session_id = _session(config, task_type="reading")
+    WorkspaceStore(config).complete_session(session_id)
+
+    with pytest.raises(ValueError, match="read ingestion requires an active session"):
+        IngestionService(config).read(
+            session_id=session_id,
+            text="lowercase only",
+        )
 
 
 def test_read_can_store_deliberate_observation_when_requested(tmp_path: Path) -> None:

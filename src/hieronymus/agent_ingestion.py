@@ -32,6 +32,9 @@ class ReadResult:
 
 
 def split_learning_blocks(text: str, max_chars: int = 1200) -> list[LearningBlock]:
+    if max_chars < 1:
+        raise ValueError("max_chars must be positive")
+
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
     block_texts: list[str] = []
 
@@ -44,6 +47,13 @@ def split_learning_blocks(text: str, max_chars: int = 1200) -> list[LearningBloc
         for sentence in SENTENCE_BOUNDARY_PATTERN.split(paragraph):
             sentence = sentence.strip()
             if not sentence:
+                continue
+
+            if len(sentence) > max_chars:
+                if current:
+                    block_texts.append(current)
+                    current = ""
+                block_texts.extend(_split_oversized_text(sentence, max_chars))
                 continue
 
             candidate = sentence if not current else f"{current} {sentence}"
@@ -62,7 +72,38 @@ def split_learning_blocks(text: str, max_chars: int = 1200) -> list[LearningBloc
     ]
 
 
+def _split_oversized_text(text: str, max_chars: int) -> list[str]:
+    chunks: list[str] = []
+    current = ""
+
+    for word in text.split():
+        if len(word) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(
+                word[index : index + max_chars] for index in range(0, len(word), max_chars)
+            )
+            continue
+
+        candidate = word if not current else f"{current} {word}"
+        if len(candidate) > max_chars:
+            chunks.append(current)
+            current = word
+        else:
+            current = candidate
+
+    if current:
+        chunks.append(current)
+
+    if chunks:
+        return chunks
+
+    return [text[index : index + max_chars] for index in range(0, len(text), max_chars)]
+
+
 def extract_candidate_terms(text: str) -> list[str]:
+    """Return lightweight heuristic read findings for initial agent ingestion."""
     terms: list[str] = []
     seen: set[str] = set()
     for match in TERM_PATTERN.finditer(text):
@@ -121,13 +162,18 @@ class IngestionService:
         source_ref: str = "",
         store_observation: bool = False,
     ) -> ReadResult:
+        workspace = WorkspaceStore(self.config)
+        session = workspace.get_session(session_id)
+        if session.status != "active":
+            raise ValueError("read ingestion requires an active session")
+
         candidate_terms = extract_candidate_terms(text)
         findings = [f"candidate_term:{term}" for term in candidate_terms]
         stored_memory_ids: list[int] = []
 
         if store_observation and findings:
             stored_memory_ids.append(
-                WorkspaceStore(self.config).add_short_term_memory(
+                workspace.add_short_term_memory(
                     session_id=session_id,
                     source_role="mundane",
                     kind="read_observation",
