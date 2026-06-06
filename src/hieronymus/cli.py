@@ -25,7 +25,10 @@ def _raise_click_error(error: KeyError | ValueError) -> None:
 @click.option("--data-root", type=click.Path(file_okay=False, dir_okay=True), default=None)
 @click.pass_context
 def main(ctx: click.Context, data_root: str | None) -> None:
-    ctx.obj = {"config": load_config(data_root)}
+    config = load_config(data_root)
+    if config.data_root.exists() and not config.data_root.is_dir():
+        raise click.ClickException(f"data root is not a directory: {config.data_root}")
+    ctx.obj = {"config": config}
 
 
 @main.command("init-series")

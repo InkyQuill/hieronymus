@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -79,6 +80,33 @@ def test_data_root_rejects_existing_file_without_traceback(tmp_path):
 
     assert result.returncode != 0
     assert "Invalid value for '--data-root'" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_env_data_root_rejects_existing_file_without_traceback(tmp_path):
+    data_root = tmp_path / "env-data-root-file"
+    data_root.write_text("not a directory", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "hieronymus",
+            "init-series",
+            "only-sense-online",
+            "--title",
+            "Only Sense Online",
+        ],
+        check=False,
+        cwd=Path.cwd(),
+        env={**os.environ, "HIERONYMUS_DATA_ROOT": str(data_root)},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert "data root is not a directory" in result.stderr
+    assert str(data_root) in result.stderr
     assert "Traceback" not in result.stderr
 
 
