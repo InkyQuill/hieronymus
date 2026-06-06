@@ -58,6 +58,19 @@ def test_user_confirmation_immediately_reinforces_crystal(config: HieronymusConf
     assert crystal.status == "active"
 
 
+def test_user_confirmation_accepts_positional_required_args(
+    config: HieronymusConfig,
+) -> None:
+    crystal_id = _add_crystal(config, strength=0.4, confidence=0.5)
+
+    event_id = FeedbackStore(config).record(crystal_id, "confirmed_by_user", "user")
+
+    crystal = CrystalStore(config).get(crystal_id)
+    assert event_id > 0
+    assert crystal.strength == pytest.approx(0.55)
+    assert crystal.confidence == pytest.approx(0.7)
+
+
 def test_passive_event_is_recorded_but_not_applied_immediately(config: HieronymusConfig) -> None:
     crystal_id = _add_crystal(config, strength=0.4, confidence=0.5)
 

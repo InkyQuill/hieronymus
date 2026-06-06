@@ -38,7 +38,6 @@ class FeedbackStore:
 
     def record(
         self,
-        *,
         crystal_id: int,
         event_type: str,
         source_role: str,
