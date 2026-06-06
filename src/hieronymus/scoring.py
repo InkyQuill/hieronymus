@@ -52,7 +52,8 @@ class FeedbackStore:
         with connect(self.config.database_path) as conn:
             crystal = conn.execute(
                 """
-                select strength, confidence, status
+                select series_slug, source_language, target_language,
+                       strength, confidence, status
                 from crystals
                 where id = ?
                 """,
@@ -60,6 +61,19 @@ class FeedbackStore:
             ).fetchone()
             if crystal is None:
                 raise KeyError(f"unknown crystal: {crystal_id}")
+
+            if session_id is not None:
+                session = conn.execute(
+                    """
+                    select series_slug, source_language, target_language
+                    from task_sessions
+                    where id = ?
+                    """,
+                    (session_id,),
+                ).fetchone()
+                if session is None:
+                    raise KeyError(f"unknown session: {session_id}")
+                self._validate_session_context(crystal, session)
 
             cursor = conn.execute(
                 """
@@ -122,3 +136,11 @@ class FeedbackStore:
         if event_type in PASSIVE_EVENT_DELTAS:
             return PASSIVE_EVENT_DELTAS[event_type]
         raise ValueError(f"unknown event_type: {event_type}")
+
+    def _validate_session_context(self, crystal, session) -> None:
+        if session["series_slug"] != crystal["series_slug"]:
+            raise ValueError("feedback session series_slug does not match crystal context")
+        if crystal["source_language"] and session["source_language"] != crystal["source_language"]:
+            raise ValueError("feedback session source_language does not match crystal context")
+        if crystal["target_language"] and session["target_language"] != crystal["target_language"]:
+            raise ValueError("feedback session target_language does not match crystal context")

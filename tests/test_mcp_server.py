@@ -12,6 +12,7 @@ from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
+from hieronymus.workspace import WorkspaceStore
 
 
 def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
@@ -478,6 +479,55 @@ def test_mcp_feedback_returns_event_id(monkeypatch, tmp_path):
     )
 
     assert event == {"event_id": 1}
+
+
+def test_mcp_feedback_rejects_mismatched_session_without_event(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    alpha_series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    Registry(config).create_series(
+        slug="beta-series",
+        title="Beta Series",
+        source_language="ja",
+        target_language="en",
+    )
+    beta_session = WorkspaceStore(config).start_session(
+        TranslationContext(
+            series_slug="beta-series",
+            source_language="ja",
+            target_language="en",
+            task_type="translation",
+        )
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        TranslationContext(
+            series_slug=alpha_series.slug,
+            source_language="ja",
+            target_language="en",
+            task_type="translation",
+        ),
+        crystal_type="lesson",
+        text="Keep UI labels concise.",
+    )
+
+    from hieronymus import mcp_server
+
+    with pytest.raises(ValueError, match="series_slug"):
+        mcp_server.hieronymus_feedback(
+            crystal_id,
+            event_type="confirmed_by_user",
+            source_role="user",
+            session_id=beta_session.id,
+        )
+
+    with connect(config.database_path) as conn:
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+    assert event_count == 0
 
 
 def test_mcp_concept_proposals_list_returns_pending(monkeypatch, tmp_path):

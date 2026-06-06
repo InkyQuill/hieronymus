@@ -11,6 +11,7 @@ from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
+from hieronymus.workspace import WorkspaceStore
 
 
 def _create_series(data_root: Path) -> TranslationContext:
@@ -512,6 +513,55 @@ def test_feedback_outputs_event_id_json(tmp_path):
 
     assert result.exit_code == 0
     assert json.loads(result.output)["event_id"] > 0
+
+
+def test_feedback_rejects_mismatched_session_without_event(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    alpha_context = _create_series(data_root)
+    config = HieronymusConfig(data_root=data_root)
+    Registry(config).create_series(
+        slug="beta-series",
+        title="Beta Series",
+        source_language="ja",
+        target_language="en",
+    )
+    beta_session = WorkspaceStore(config).start_session(
+        TranslationContext(
+            series_slug="beta-series",
+            source_language="ja",
+            target_language="en",
+            task_type="translation",
+        )
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        alpha_context,
+        crystal_type="lesson",
+        text="Use Sense as a technical UI term.",
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "feedback",
+            str(crystal_id),
+            "--event",
+            "confirmed_by_user",
+            "--role",
+            "user",
+            "--session-id",
+            str(beta_session.id),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: feedback session series_slug does not match crystal context" in result.output
+    assert "Traceback" not in result.output
+    with connect(data_root / "hieronymus.sqlite") as conn:
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+    assert event_count == 0
 
 
 def test_dream_unsupported_provider_returns_clean_click_error(tmp_path):

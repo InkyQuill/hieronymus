@@ -6,6 +6,7 @@ from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
+from hieronymus.workspace import WorkspaceStore
 
 
 def _context(config: HieronymusConfig) -> TranslationContext:
@@ -38,6 +39,79 @@ def _add_crystal(
         strength=strength,
         confidence=confidence,
     )
+
+
+def test_feedback_session_context_match_is_accepted(config: HieronymusConfig) -> None:
+    context = _context(config)
+    session = WorkspaceStore(config).start_session(context)
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use consistent Russian phrasing for crafting menu labels.",
+    )
+
+    event_id = FeedbackStore(config).record(
+        crystal_id=crystal_id,
+        event_type="confirmed_by_user",
+        source_role="user",
+        session_id=session.id,
+    )
+
+    with connect(config.database_path) as conn:
+        row = conn.execute(
+            "select crystal_id, session_id from memory_events where id = ?",
+            (event_id,),
+        ).fetchone()
+    assert row["crystal_id"] == crystal_id
+    assert row["session_id"] == session.id
+
+
+def test_feedback_rejects_cross_series_session_without_event(
+    config: HieronymusConfig,
+) -> None:
+    alpha_context = _context(config)
+    Registry(config).create_series(
+        slug="beta-series",
+        title="Beta Series",
+        source_language="ja",
+        target_language="ru",
+    )
+    beta_context = TranslationContext(
+        series_slug="beta-series",
+        source_language="ja",
+        target_language="ru",
+        task_type="translate",
+    )
+    beta_session = WorkspaceStore(config).start_session(beta_context)
+    crystal_id = CrystalStore(config).add_crystal(
+        alpha_context,
+        crystal_type="lesson",
+        text="Use consistent Russian phrasing for crafting menu labels.",
+    )
+
+    with pytest.raises(ValueError, match="series_slug"):
+        FeedbackStore(config).record(
+            crystal_id=crystal_id,
+            event_type="confirmed_by_user",
+            source_role="user",
+            session_id=beta_session.id,
+        )
+
+    with connect(config.database_path) as conn:
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+    assert event_count == 0
+
+
+def test_feedback_rejects_unknown_session(config: HieronymusConfig) -> None:
+    crystal_id = _add_crystal(config)
+
+    with pytest.raises(KeyError, match="session"):
+        FeedbackStore(config).record(
+            crystal_id=crystal_id,
+            event_type="confirmed_by_user",
+            source_role="user",
+            session_id=999,
+        )
 
 
 def test_user_confirmation_immediately_reinforces_crystal(config: HieronymusConfig) -> None:
