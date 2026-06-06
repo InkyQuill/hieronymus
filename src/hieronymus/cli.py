@@ -6,6 +6,7 @@ from dataclasses import asdict
 import click
 
 from hieronymus.config import load_config
+from hieronymus.doctor import Doctor, report_to_json
 from hieronymus.dreaming import DeterministicDreamProvider, DreamService
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
@@ -184,6 +185,32 @@ def admin(json_output: bool) -> None:
     click.echo(render_greeting())
     click.echo()
     click.echo(f"tui: {payload['tui']}")
+
+
+@main.command("doctor")
+@click.option("--fix", "autofix", is_flag=True)
+@click.option("--json", "as_json", is_flag=True)
+@click.pass_context
+def doctor_command(ctx: click.Context, autofix: bool, as_json: bool) -> None:
+    report = Doctor(ctx.obj["config"]).run(autofix=autofix)
+    payload = report_to_json(report)
+    if as_json:
+        click.echo(render_json(payload))
+        return
+
+    click.echo(render_greeting())
+    click.echo()
+    for title, key in (
+        ("Autofixed", "autofixed"),
+        ("Doctor warnings", "warnings"),
+        ("Doctor errors", "errors"),
+    ):
+        click.echo(f"{title}:")
+        findings = payload[key]
+        if not findings:
+            click.echo("  none")
+        for finding in findings:
+            click.echo(f"  - {finding['message']}")
 
 
 @main.command("help")

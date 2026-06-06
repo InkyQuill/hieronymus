@@ -138,6 +138,24 @@ def test_admin_json_returns_tui_placeholder(tmp_path: Path) -> None:
     assert json.loads(result.output) == {"tui": "not-available-in-this-pass"}
 
 
+def test_doctor_json_has_expected_sections(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        result = runner.invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "doctor", "--json"],
+        )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert sorted(payload.keys()) == ["autofixed", "errors", "warnings"]
+
+
 def test_no_subcommand_ensures_service_and_prints_greeting(tmp_path: Path) -> None:
     runner = CliRunner()
 
