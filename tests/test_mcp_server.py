@@ -6,6 +6,7 @@ import tomllib
 import pytest
 
 from hieronymus.config import load_config
+from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
 
@@ -35,10 +36,13 @@ def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
     assert approved == {"term_id": 1, "approved": True}
 
     termbase = Termbase(
-        load_config().database_path,
-        series_slug=series.slug,
-        source_language=series.source_language,
-        target_language=series.target_language,
+        load_config(),
+        TranslationContext(
+            series_slug=series.slug,
+            source_language=series.source_language,
+            target_language=series.target_language,
+            task_type="translation",
+        ),
     )
     termbase.add_alias(
         proposed["term_id"],
@@ -102,7 +106,7 @@ def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
             "kind": "translation_rationale",
             "text": "Use Yun for ユン.",
             "importance": 4,
-            "source_ref": "chapter-1",
+            "source_ref": "",
         }
     ]
 

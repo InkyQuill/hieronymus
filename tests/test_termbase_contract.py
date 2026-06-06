@@ -1,23 +1,28 @@
 import pytest
 
 from hieronymus.db import connect
+from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
 
 
-def _create_termbase(config) -> Termbase:
+def _context_for_series(series, *, target_language: str | None = None) -> TranslationContext:
+    return TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=target_language or series.target_language,
+        task_type="translation",
+    )
+
+
+def _create_termbase(config, *, target_language: str | None = None) -> Termbase:
     series = Registry(config).create_series(
         slug="only-sense-online",
         title="Only Sense Online",
         source_language="ja",
         target_language="en",
     )
-    return Termbase(
-        config.database_path,
-        series_slug=series.slug,
-        source_language=series.source_language,
-        target_language=series.target_language,
-    )
+    return Termbase(config, _context_for_series(series, target_language=target_language))
 
 
 def _termbase_for_series(config, slug: str, title: str) -> Termbase:
@@ -27,12 +32,7 @@ def _termbase_for_series(config, slug: str, title: str) -> Termbase:
         source_language="ja",
         target_language="en",
     )
-    return Termbase(
-        config.database_path,
-        series_slug=series.slug,
-        source_language=series.source_language,
-        target_language=series.target_language,
-    )
+    return Termbase(config, _context_for_series(series))
 
 
 def _propose_sense_name(termbase: Termbase) -> int:
@@ -153,6 +153,29 @@ def test_contract_excludes_pending_terms(config):
     assert termbase.contract("ユンは攻撃力上昇を取るべきだと言われた。") == []
 
 
+def test_contract_isolated_by_target_language(config):
+    english = _create_termbase(config, target_language="en")
+    russian = _create_termbase(config, target_language="ru")
+    english_id = english.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+    )
+    russian_id = russian.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="Усиление атаки",
+    )
+    english.approve(english_id)
+    russian.approve(russian_id)
+
+    english_contract = english.contract("ユンは攻撃力上昇を取るべきだと言われた。")
+    russian_contract = russian.contract("ユンは攻撃力上昇を取るべきだと言われた。")
+
+    assert [term.canonical_translation for term in english_contract] == ["ATK Up"]
+    assert [term.canonical_translation for term in russian_contract] == ["Усиление атаки"]
+
+
 def test_contract_matches_source_variant(config):
     termbase = _create_termbase(config)
     term_id = _propose_sense_name(termbase)
@@ -176,7 +199,7 @@ def test_propose_maintains_terms_fts_row(config):
     termbase = _create_termbase(config)
     term_id = _propose_sense_name(termbase)
 
-    with connect(termbase.database_path) as conn:
+    with connect(termbase.config.database_path) as conn:
         row = conn.execute("select * from strict_terms_fts where rowid = ?", (term_id,)).fetchone()
 
     assert row["source_text"] == "攻撃力上昇"

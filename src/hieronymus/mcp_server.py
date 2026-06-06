@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 
 from hieronymus.config import HieronymusConfig, load_config
 from hieronymus.memory import MemoryStore
+from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry, Series
 from hieronymus.termbase import Termbase
 
@@ -27,11 +28,19 @@ def _series_context(series_slug: str) -> tuple[HieronymusConfig, Series]:
 
 
 def _termbase(config: HieronymusConfig, series: Series) -> Termbase:
-    return Termbase(
-        config.database_path,
+    return Termbase(config, _translation_context(series))
+
+
+def _memory(config: HieronymusConfig, series: Series) -> MemoryStore:
+    return MemoryStore(config, _translation_context(series))
+
+
+def _translation_context(series: Series) -> TranslationContext:
+    return TranslationContext(
         series_slug=series.slug,
         source_language=series.source_language,
         target_language=series.target_language,
+        task_type="translation",
     )
 
 
@@ -89,7 +98,7 @@ def hieronymus_termbase_approve(series_slug: str, term_id: int) -> dict[str, int
 def hieronymus_memory_search(series_slug: str, query: str, limit: int = 5) -> list[dict[str, Any]]:
     """Search translation memory entries for a series."""
     config, series = _series_context(series_slug)
-    memories = MemoryStore(config.database_path, series_slug=series.slug).search(query, limit=limit)
+    memories = _memory(config, series).search(query, limit=limit)
     return [asdict(memory) for memory in memories]
 
 
@@ -103,7 +112,7 @@ def hieronymus_memory_add(
 ) -> dict[str, int]:
     """Add a translation memory entry for a series."""
     config, series = _series_context(series_slug)
-    memory_id = MemoryStore(config.database_path, series_slug=series.slug).add(
+    memory_id = _memory(config, series).add(
         kind=kind,
         text=text,
         source_ref=source_ref,

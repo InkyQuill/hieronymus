@@ -1,14 +1,19 @@
+from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
 
 
-def _termbase_for_series(config, series) -> Termbase:
-    return Termbase(
-        config.database_path,
+def _context_for_series(series, *, target_language: str | None = None) -> TranslationContext:
+    return TranslationContext(
         series_slug=series.slug,
         source_language=series.source_language,
-        target_language=series.target_language,
+        target_language=target_language or series.target_language,
+        task_type="translation",
     )
+
+
+def _termbase_for_series(config, series, *, target_language: str | None = None) -> Termbase:
+    return Termbase(config, _context_for_series(series, target_language=target_language))
 
 
 def test_validate_flags_forbidden_variant(config):
@@ -168,6 +173,36 @@ def test_validate_returns_no_findings_without_contracted_term(config):
     findings = termbase.validate(
         raw_text="敏捷性上昇を取るべきだ。",
         translated_text="You should pick up Attack Increase.",
+    )
+
+    assert findings == []
+
+
+def test_validate_isolated_by_target_language(config):
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    english = _termbase_for_series(config, series, target_language="en")
+    russian = _termbase_for_series(config, series, target_language="ru")
+    english_id = english.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+    )
+    russian_id = russian.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="Усиление атаки",
+    )
+    english.approve(english_id)
+    russian.approve(russian_id)
+
+    findings = english.validate(
+        raw_text="攻撃力上昇を取るべきだ。",
+        translated_text="You should pick up ATK Up.",
     )
 
     assert findings == []

@@ -1,6 +1,7 @@
 import pytest
 
 from hieronymus.memory import MemoryStore
+from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 
 
@@ -11,12 +12,18 @@ def _create_memory_store(config) -> MemoryStore:
         source_language="ja",
         target_language="en",
     )
-    return MemoryStore(config.database_path, series_slug=series.slug)
+    context = TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type="translation",
+    )
+    return MemoryStore(config, context)
 
 
 def test_memory_search_returns_relevant_entries(config):
     store = _create_memory_store(config)
-    store.add(
+    memory_id = store.add(
         kind="translation_rationale",
         text="Satou's system messages should stay concise and game-like.",
         source_ref="user:2026-06-06",
@@ -25,7 +32,11 @@ def test_memory_search_returns_relevant_entries(config):
 
     results = store.search("system messages")
 
+    assert results[0].id == memory_id
+    assert results[0].kind == "translation_rationale"
     assert results[0].text == "Satou's system messages should stay concise and game-like."
+    assert results[0].importance == 4
+    assert results[0].source_ref == ""
 
 
 @pytest.mark.parametrize("query", ["game-like", "Satou's", "system OR"])

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 
+from hieronymus.config import HieronymusConfig
 from hieronymus.db import connect
+from hieronymus.memory_models import TranslationContext
 from hieronymus.models import ContractTerm, ValidationFinding
 
 _VALID_ALIAS_KINDS = frozenset(
@@ -27,18 +28,21 @@ def _contains(raw_text: str, text: str, *, case_sensitive: bool) -> bool:
 
 
 class Termbase:
-    def __init__(
-        self,
-        database_path: Path,
-        *,
-        series_slug: str,
-        source_language: str,
-        target_language: str,
-    ) -> None:
-        self.database_path = database_path
-        self.series_slug = series_slug
-        self.source_language = source_language
-        self.target_language = target_language
+    def __init__(self, config: HieronymusConfig, context: TranslationContext) -> None:
+        self.config = config
+        self.context = context
+
+    @property
+    def series_slug(self) -> str:
+        return self.context.series_slug
+
+    @property
+    def source_language(self) -> str:
+        return self.context.source_language
+
+    @property
+    def target_language(self) -> str:
+        return self.context.target_language
 
     def propose(
         self,
@@ -55,7 +59,7 @@ class Termbase:
             raise ValueError("canonical_translation must not be empty")
 
         now = _now()
-        with connect(self.database_path) as conn:
+        with connect(self.config.database_path) as conn:
             cursor = conn.execute(
                 """
                 insert into strict_terms(
@@ -99,14 +103,23 @@ class Termbase:
         return term_id
 
     def approve(self, term_id: int) -> None:
-        with connect(self.database_path) as conn:
+        with connect(self.config.database_path) as conn:
             cursor = conn.execute(
                 """
                 update strict_terms
                 set status = 'approved', updated_at = ?
-                where id = ? and series_slug = ?
+                where id = ?
+                  and series_slug = ?
+                  and source_language = ?
+                  and target_language = ?
                 """,
-                (_now(), term_id, self.series_slug),
+                (
+                    _now(),
+                    term_id,
+                    self.series_slug,
+                    self.source_language,
+                    self.target_language,
+                ),
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"unknown term: {term_id}")
@@ -126,7 +139,7 @@ class Termbase:
         if not text.strip():
             raise ValueError("alias text must not be empty")
 
-        with connect(self.database_path) as conn:
+        with connect(self.config.database_path) as conn:
             term = conn.execute(
                 """
                 select id
@@ -150,15 +163,18 @@ class Termbase:
             conn.commit()
 
     def contract(self, raw_text: str) -> list[ContractTerm]:
-        with connect(self.database_path) as conn:
+        with connect(self.config.database_path) as conn:
             rows = conn.execute(
                 """
                 select *
                 from strict_terms
-                where status = 'approved' and series_slug = ?
+                where status = 'approved'
+                  and series_slug = ?
+                  and source_language = ?
+                  and target_language = ?
                 order by id
                 """,
-                (self.series_slug,),
+                (self.series_slug, self.source_language, self.target_language),
             ).fetchall()
             result: list[ContractTerm] = []
             for row in rows:
@@ -204,7 +220,7 @@ class Termbase:
     def validate(self, *, raw_text: str, translated_text: str) -> list[ValidationFinding]:
         findings: list[ValidationFinding] = []
         contracted_terms = self.contract(raw_text)
-        with connect(self.database_path) as conn:
+        with connect(self.config.database_path) as conn:
             for term in contracted_terms:
                 forbidden_rows = conn.execute(
                     """

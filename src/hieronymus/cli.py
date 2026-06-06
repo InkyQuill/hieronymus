@@ -7,6 +7,7 @@ import click
 
 from hieronymus.config import load_config
 from hieronymus.memory import MemoryStore
+from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
 
@@ -19,6 +20,15 @@ def _error_message(error: KeyError | ValueError) -> str:
 
 def _raise_click_error(error: KeyError | ValueError) -> None:
     raise click.ClickException(_error_message(error)) from error
+
+
+def _series_context(series, *, task_type: str) -> TranslationContext:
+    return TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type=task_type,
+    )
 
 
 @click.group()
@@ -74,12 +84,11 @@ def propose_term(
 ) -> None:
     try:
         series = Registry(ctx.obj["config"]).get_series(series_slug)
-        term_id = Termbase(
-            ctx.obj["config"].database_path,
-            series_slug=series.slug,
-            source_language=series.source_language,
-            target_language=series.target_language,
-        ).propose(
+        termbase = Termbase(
+            ctx.obj["config"],
+            _series_context(series, task_type="translation"),
+        )
+        term_id = termbase.propose(
             category=category,
             source_text=source_text,
             canonical_translation=translation,
@@ -109,10 +118,8 @@ def validate(ctx: click.Context, series_slug: str, raw_file: str, translated_fil
             open(translated_file, encoding="utf-8") as translated,
         ):
             findings = Termbase(
-                ctx.obj["config"].database_path,
-                series_slug=series.slug,
-                source_language=series.source_language,
-                target_language=series.target_language,
+                ctx.obj["config"],
+                _series_context(series, task_type="translation"),
             ).validate(
                 raw_text=raw.read(),
                 translated_text=translated.read(),
@@ -131,9 +138,10 @@ def validate(ctx: click.Context, series_slug: str, raw_file: str, translated_fil
 def remember(ctx: click.Context, series_slug: str, kind: str, text: str, source_ref: str) -> None:
     try:
         series = Registry(ctx.obj["config"]).get_series(series_slug)
-        memory_id = MemoryStore(ctx.obj["config"].database_path, series_slug=series.slug).add(
-            kind=kind, text=text, source_ref=source_ref
-        )
+        memory_id = MemoryStore(
+            ctx.obj["config"],
+            _series_context(series, task_type="translation"),
+        ).add(kind=kind, text=text, source_ref=source_ref)
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
     click.echo(json.dumps({"memory_id": memory_id}, ensure_ascii=False))
