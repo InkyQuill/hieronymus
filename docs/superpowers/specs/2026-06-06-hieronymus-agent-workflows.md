@@ -89,9 +89,10 @@ The agent skills should teach:
 
 ## Coding Agent Hooks
 
-Hieronymus should provide integration hooks for coding agents such as Claude, Codex, opencode, and
-similar local coding assistants. These hooks should make the MCP memory layer easy to use from an
-agent session without requiring the agent to know Hieronymus internals.
+Hieronymus should provide integration hooks for coding agents such as Claude, Codex, OpenClaw,
+opencode, Gemini CLI, and similar local coding assistants. Future targets may include agents such as
+Pi and Hermes. These hooks should make the MCP memory layer easy to use from an agent session without
+requiring the agent to know Hieronymus internals.
 
 Hook responsibilities:
 
@@ -104,6 +105,11 @@ Hook responsibilities:
 
 Coding-agent hooks should stay thin. They should call MCP tools and skills; they should not
 reimplement storage, scoring, dreaming, or validation.
+
+Concrete per-agent integrations are separate implementation work from the service/toolkit pass. The
+service/toolkit pass may create the shared installer framework and honest stubs, but real host-specific
+hooks, skills, lifecycle mappings, and config patches should be specified and implemented here or in
+per-agent follow-up specs.
 
 ## Learning and Reading Skills
 

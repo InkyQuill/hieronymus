@@ -164,6 +164,11 @@ The model should leave room for later targets such as `pi` and `hermes`.
 Each install target has its own detector, planner, installer, verifier, and future uninstaller. The
 planner produces a human-readable and machine-readable change plan before mutation.
 
+This service/toolkit pass should implement the installer framework and safe planning surface, not the
+full real integrations for every agent. Concrete per-agent integration behavior, prompt contracts,
+hooks, and workflow semantics belong to the agent workflow spec and later per-agent implementation
+specs.
+
 Possible integration assets:
 
 - MCP configuration pointing the agent at a Hieronymus adapter
@@ -174,6 +179,45 @@ Possible integration assets:
 
 Installed integrations must stay thin. They must not reimplement storage, scoring, dreaming,
 validation, strict terminology logic, or provider behavior.
+
+## Installer Framework
+
+The first tooling pass should provide the shared install framework:
+
+- a target registry that resolves names such as `codex`, `openclaw`, `opencode`, and `gemini`
+- target metadata with display name, detected paths, protocol note, and docs link
+- `detect`, `plan`, `install`, `verify`, and future `uninstall` boundaries
+- result kinds such as installed, already installed, planned, skipped, conflict, and failed
+- `--dry-run`, `--force`, and `--json` support
+- atomic writes for JSON/TOML-style config files
+- backups under `~/.config/hieronymus/backups`
+- confirmation before risky or ambiguous patches
+- tests that use temporary fake home directories, never the real user config
+
+Reference implementations worth learning from:
+
+- Socraticode uses separate MCP manifests, hook manifests, skills, and agent instruction files.
+- Agentmemory uses a registry of per-agent connect adapters with detection, protocol notes, dry runs,
+  backups, atomic config writes, and verification.
+
+Hieronymus should copy the shape of those patterns, not their product-specific behavior.
+
+## Integration Scope Boundary
+
+For this pass, `hiero install <app>` may expose targets and produce honest plans or stubs for targets
+whose real integration has not been implemented yet. A stub is acceptable when it explains what will be
+needed later and points to the agent workflow spec.
+
+Real integrations are out of scope for this pass when they require:
+
+- writing final Claude/Codex/OpenClaw/opencode/Gemini hook behavior
+- installing complete skills or prompt packs
+- defining per-agent lifecycle event mappings
+- adding per-agent capture/recall policy
+- implementing uninstall for every target
+- making host-specific workarounds such as global hook fallbacks
+
+Those belong to later specs based on `2026-06-06-hieronymus-agent-workflows.md`.
 
 ## Data Flow
 
