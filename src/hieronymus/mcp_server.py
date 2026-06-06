@@ -205,8 +205,8 @@ def hieronymus_memory_add(
 @server.tool()
 def hieronymus_session_start(
     series_slug: str,
-    source_language: str = "ja",
-    target_language: str = "en",
+    source_language: str | None = None,
+    target_language: str | None = None,
     task_type: str = "translation",
     volume: str = "",
     chapter: str = "",
@@ -260,8 +260,8 @@ def hieronymus_recall(
     session_id: int,
     series_slug: str,
     query: str,
-    source_language: str = "ja",
-    target_language: str = "en",
+    source_language: str | None = None,
+    target_language: str | None = None,
     task_type: str = "translation",
     volume: str = "",
     chapter: str = "",
@@ -269,15 +269,15 @@ def hieronymus_recall(
 ) -> list[dict[str, Any]]:
     """Recall long-term crystals for the exact stored session context."""
     config, series = _series_context(series_slug)
+    session = WorkspaceStore(config).get_session(session_id)
     context = _translation_context(
         series,
-        source_language=source_language,
-        target_language=target_language,
+        source_language=source_language or session.context.source_language,
+        target_language=target_language or session.context.target_language,
         task_type=task_type,
         volume=volume,
         chapter=chapter,
     )
-    session = WorkspaceStore(config).get_session(session_id)
     if session.context != context:
         raise ValueError("session context mismatch")
 

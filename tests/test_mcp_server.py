@@ -195,6 +195,27 @@ def test_mcp_session_memory_complete_and_dream_happy_path(monkeypatch, tmp_path)
     assert dreamed == {"cycle_id": 1, "status": "completed"}
 
 
+def test_mcp_session_start_without_languages_uses_registry_pair(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="spice-and-wolf",
+        title="Spice and Wolf",
+        source_language="de",
+        target_language="ru",
+    )
+
+    from hieronymus import mcp_server
+
+    started = mcp_server.hieronymus_session_start(series.slug)
+
+    with connect(config.database_path) as conn:
+        session = conn.execute("select * from task_sessions where id = ?", (1,)).fetchone()
+    assert started == {"session_id": 1}
+    assert session["source_language"] == "de"
+    assert session["target_language"] == "ru"
+
+
 def test_mcp_recall_returns_expected_dict(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     config = load_config()
@@ -241,6 +262,41 @@ def test_mcp_recall_returns_expected_dict(monkeypatch, tmp_path):
     ]
 
 
+def test_mcp_recall_without_languages_uses_stored_non_default_session_context(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="spice-and-wolf",
+        title="Spice and Wolf",
+        source_language="de",
+        target_language="ru",
+    )
+
+    from hieronymus import mcp_server
+
+    session_id = mcp_server.hieronymus_session_start(series.slug)["session_id"]
+    context = TranslationContext(
+        series_slug=series.slug,
+        source_language="de",
+        target_language="ru",
+        task_type="translation",
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Render Holo as Horo in this translation.",
+        title="Horo Name",
+    )
+
+    recalled = mcp_server.hieronymus_recall(session_id, series.slug, "Holo")
+
+    assert recalled[0]["crystal_id"] == crystal_id
+    assert recalled[0]["text"] == "Render Holo as Horo in this translation."
+
+
 def test_mcp_recall_rejects_mismatched_session_context_without_activation(
     monkeypatch,
     tmp_path,
@@ -264,6 +320,36 @@ def test_mcp_recall_rejects_mismatched_session_context_without_activation(
             series.slug,
             "Sense",
             volume="2",
+        )
+
+    with connect(config.database_path) as conn:
+        activation_count = conn.execute("select count(*) from crystal_activations").fetchone()[0]
+    assert activation_count == 0
+
+
+def test_mcp_recall_rejects_explicit_language_mismatch_without_activation(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="spice-and-wolf",
+        title="Spice and Wolf",
+        source_language="de",
+        target_language="ru",
+    )
+
+    from hieronymus import mcp_server
+
+    session_id = mcp_server.hieronymus_session_start(series.slug)["session_id"]
+
+    with pytest.raises(ValueError, match="source_language"):
+        mcp_server.hieronymus_recall(
+            session_id,
+            series.slug,
+            "Holo",
+            source_language="ja",
         )
 
     with connect(config.database_path) as conn:
