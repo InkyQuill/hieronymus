@@ -45,8 +45,17 @@ def _row_to_crystal(row) -> CrystalRecord:
     )
 
 
-def _quality_score_sql() -> str:
-    return "(crystals.strength * 0.7) + (crystals.confidence * 0.3)"
+def _weighted_search_score(
+    raw_bm25: float,
+    strength: float,
+    confidence: float,
+    scope_type: str,
+) -> float:
+    # SQLite FTS5 bm25 is lower-is-better and commonly negative; negating it
+    # produces a higher-is-better relevance component for a descending sort.
+    fts_component = max(-raw_bm25, 0.0)
+    scope_bonus = 0.05 if scope_type == "series" else 0.0
+    return fts_component + (strength * 0.35) + (confidence * 0.20) + scope_bonus
 
 
 class CrystalStore:
@@ -156,9 +165,22 @@ class CrystalStore:
 
         bounded_limit = min(limit, _MAX_SEARCH_LIMIT)
         with connect(self.config.database_path) as conn:
+            conn.create_function(
+                "weighted_search_score",
+                4,
+                _weighted_search_score,
+                deterministic=True,
+            )
             rows = conn.execute(
-                f"""
-                select crystals.*
+                """
+                select
+                  crystals.*,
+                  weighted_search_score(
+                    bm25(crystals_fts),
+                    crystals.strength,
+                    crystals.confidence,
+                    crystals.scope_type
+                  ) as search_score
                 from crystals_fts
                 join crystals on crystals.id = crystals_fts.rowid
                 where crystals_fts match ?
@@ -179,8 +201,7 @@ class CrystalStore:
                     or crystals.target_language = ''
                   )
                 order by
-                  bm25(crystals_fts),
-                  {_quality_score_sql()} desc,
+                  search_score desc,
                   crystals.id
                 limit ?
                 """,

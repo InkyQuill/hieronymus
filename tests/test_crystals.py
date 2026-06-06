@@ -89,6 +89,32 @@ def test_search_prefers_higher_strength_when_text_relevance_matches(
     assert [result.id for result in results[:2]] == [high_id, low_id]
 
 
+def test_search_blends_quality_with_text_relevance(config: HieronymusConfig) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    low_quality_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Guarded crafting.",
+        strength=0.0,
+        confidence=0.0,
+    )
+    high_quality_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text=(
+            "Guarded crafting guidance applies when the prose needs slower, "
+            "more careful framing around failed item creation and retries."
+        ),
+        strength=1.0,
+        confidence=1.0,
+    )
+
+    results = store.search(context, "guarded crafting")
+
+    assert [result.id for result in results[:2]] == [high_quality_id, low_quality_id]
+
+
 def test_search_excludes_other_series_crystals(config: HieronymusConfig) -> None:
     context = _context(config)
     other_context = _context(config, slug="another-series")
