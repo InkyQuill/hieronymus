@@ -9,10 +9,11 @@ from hieronymus.config import load_config
 from hieronymus.dreaming import DeterministicDreamProvider, DreamService
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
-from hieronymus.presentation import GUIDE_ICON, render_greeting
+from hieronymus.presentation import GUIDE_ICON, render_greeting, render_json
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
+from hieronymus.service_manager import ServiceManager
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
@@ -85,7 +86,15 @@ def _series_context(series, *, task_type: str) -> TranslationContext:
     )
 
 
-@click.group()
+def _echo_status_lines(status: dict[str, object]) -> None:
+    click.echo("running: yes" if status.get("running") else "running: no")
+    if "pid" in status:
+        click.echo(f"pid: {status['pid']}")
+    if "port" in status:
+        click.echo(f"port: {status['port']}")
+
+
+@click.group(invoke_without_command=True)
 @click.option("--data-root", type=click.Path(file_okay=False, dir_okay=True), default=None)
 @click.pass_context
 def main(ctx: click.Context, data_root: str | None) -> None:
@@ -93,6 +102,88 @@ def main(ctx: click.Context, data_root: str | None) -> None:
     if config.data_root.exists() and not config.data_root.is_dir():
         raise click.ClickException(f"data root is not a directory: {config.data_root}")
     ctx.obj = {"config": config}
+    if ctx.invoked_subcommand is None:
+        result = ServiceManager(config).ensure_running()
+        status = result["status"]
+        click.echo(render_greeting())
+        click.echo()
+        _echo_status_lines(status)
+
+
+@main.command("status")
+@click.option("--json", "json_output", is_flag=True)
+@click.pass_context
+def status(ctx: click.Context, json_output: bool) -> None:
+    payload = ServiceManager(ctx.obj["config"]).status()
+    if json_output:
+        click.echo(render_json(payload))
+        return
+
+    click.echo(render_greeting())
+    click.echo()
+    _echo_status_lines(payload)
+
+
+@main.command("stop")
+@click.option("--json", "json_output", is_flag=True)
+@click.pass_context
+def stop(ctx: click.Context, json_output: bool) -> None:
+    payload = ServiceManager(ctx.obj["config"]).stop()
+    if json_output:
+        click.echo(render_json(payload))
+        return
+
+    click.echo(render_greeting())
+    click.echo()
+    _echo_status_lines(payload)
+
+
+@main.command("restart")
+@click.option("--json", "json_output", is_flag=True)
+@click.pass_context
+def restart(ctx: click.Context, json_output: bool) -> None:
+    payload = ServiceManager(ctx.obj["config"]).restart()
+    if json_output:
+        click.echo(render_json(payload))
+        return
+
+    click.echo(render_greeting())
+    click.echo()
+    _echo_status_lines(payload["status"])
+
+
+@main.command("config")
+@click.option("--json", "json_output", is_flag=True)
+@click.pass_context
+def config_command(ctx: click.Context, json_output: bool) -> None:
+    config = ctx.obj["config"]
+    payload = {
+        "config_root": str(config.config_root),
+        "database_path": str(config.database_path),
+        "tui": "not-available-in-this-pass",
+    }
+    if json_output:
+        click.echo(render_json(payload))
+        return
+
+    click.echo(render_greeting())
+    click.echo()
+    click.echo(f"config_root: {payload['config_root']}")
+    click.echo(f"database_path: {payload['database_path']}")
+    click.echo(f"tui: {payload['tui']}")
+
+
+@main.command("admin")
+@click.option("--json", "json_output", is_flag=True)
+def admin(json_output: bool) -> None:
+    payload = {"tui": "not-available-in-this-pass"}
+    if json_output:
+        click.echo(render_json(payload))
+        return
+
+    click.echo(render_greeting())
+    click.echo()
+    click.echo(f"tui: {payload['tui']}")
 
 
 @main.command("help")
