@@ -8,6 +8,7 @@ from click.testing import CliRunner
 from hieronymus.cli import main
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
+from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 
@@ -196,6 +197,60 @@ def test_session_start_outputs_session_id_json(tmp_path):
     assert session_id > 0
 
 
+def test_session_start_uses_registry_languages_when_options_are_omitted(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    _create_series(data_root)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "session-start",
+            "only-sense-online",
+            "--task-type",
+            "translation",
+        ],
+    )
+
+    assert result.exit_code == 0
+    session_id = json.loads(result.output)["session_id"]
+    with connect(data_root / "hieronymus.sqlite") as conn:
+        row = conn.execute(
+            "select source_language, target_language from task_sessions where id = ?",
+            (session_id,),
+        ).fetchone()
+    assert row["source_language"] == "ja"
+    assert row["target_language"] == "en"
+
+
+def test_session_start_rejects_language_mismatch(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    _create_series(data_root)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "session-start",
+            "only-sense-online",
+            "--source-language",
+            "ko",
+            "--target-language",
+            "en",
+            "--task-type",
+            "translation",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: source_language does not match series source_language: ja" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_session_complete_outputs_completed_json(tmp_path):
     data_root = tmp_path / "hieronymus"
     _create_series(data_root)
@@ -322,6 +377,111 @@ def test_recall_outputs_ranked_crystal_results(tmp_path):
     assert payload[0]["rank"] == 1
     assert payload[0]["score"] > 0
     assert payload[0]["reason"] == "weighted search match"
+
+
+def test_recall_rejects_series_mismatch_without_writing_trace(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    _create_series(data_root)
+    config = HieronymusConfig(data_root=data_root)
+    other_series = Registry(config).create_series(
+        slug="another-series",
+        title="Another Series",
+        source_language="ja",
+        target_language="en",
+    )
+    other_context = TranslationContext(
+        series_slug=other_series.slug,
+        source_language=other_series.source_language,
+        target_language=other_series.target_language,
+        task_type="translation",
+        volume="01",
+        chapter="002",
+    )
+    CrystalStore(config).add_crystal(
+        other_context,
+        crystal_type="lesson",
+        text="Use Sense as a different-series term.",
+    )
+    runner = CliRunner()
+    session_id = _start_session(runner, data_root)
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "recall",
+            str(session_id),
+            "--series",
+            "another-series",
+            "--query",
+            "Sense",
+            "--source-language",
+            "ja",
+            "--target-language",
+            "en",
+            "--task-type",
+            "translation",
+            "--volume",
+            "01",
+            "--chapter",
+            "002",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: recall series_slug does not match session context" in result.output
+    assert "Traceback" not in result.output
+    with connect(data_root / "hieronymus.sqlite") as conn:
+        activation_count = conn.execute("select count(*) from crystal_activations").fetchone()[0]
+        memory_count = conn.execute("select count(*) from short_term_memories").fetchone()[0]
+    assert activation_count == 0
+    assert memory_count == 0
+
+
+def test_recall_rejects_language_mismatch_without_writing_trace(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    context = _create_series(data_root)
+    CrystalStore(HieronymusConfig(data_root=data_root)).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use Sense as a technical UI term.",
+    )
+    runner = CliRunner()
+    session_id = _start_session(runner, data_root)
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "recall",
+            str(session_id),
+            "--series",
+            "only-sense-online",
+            "--query",
+            "Sense",
+            "--source-language",
+            "ko",
+            "--target-language",
+            "en",
+            "--task-type",
+            "translation",
+            "--volume",
+            "01",
+            "--chapter",
+            "002",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: recall source_language does not match session context" in result.output
+    assert "Traceback" not in result.output
+    with connect(data_root / "hieronymus.sqlite") as conn:
+        activation_count = conn.execute("select count(*) from crystal_activations").fetchone()[0]
+        memory_count = conn.execute("select count(*) from short_term_memories").fetchone()[0]
+    assert activation_count == 0
+    assert memory_count == 0
 
 
 def test_feedback_outputs_event_id_json(tmp_path):

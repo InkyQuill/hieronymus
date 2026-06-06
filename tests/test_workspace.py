@@ -79,6 +79,15 @@ def test_complete_session_marks_session_completed(config: HieronymusConfig) -> N
     assert row["completed_at"]
 
 
+def test_get_session_returns_record_with_context(config: HieronymusConfig) -> None:
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    loaded = store.get_session(session.id)
+
+    assert loaded == session
+
+
 def test_short_term_memory_rejects_unknown_role(config: HieronymusConfig) -> None:
     store = WorkspaceStore(config)
     session = store.start_session(_context(config))

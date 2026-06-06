@@ -65,6 +65,32 @@ class WorkspaceStore:
             cycle_id=None,
         )
 
+    def get_session(self, session_id: int) -> TaskSessionRecord:
+        with connect(self.config.database_path) as conn:
+            row = conn.execute(
+                """
+                select *
+                from task_sessions
+                where id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown session: {session_id}")
+        return TaskSessionRecord(
+            id=row["id"],
+            context=TranslationContext(
+                series_slug=row["series_slug"],
+                source_language=row["source_language"],
+                target_language=row["target_language"],
+                task_type=row["task_type"],
+                volume=row["volume"],
+                chapter=row["chapter"],
+            ),
+            status=row["status"],
+            cycle_id=row["cycle_id"],
+        )
+
     def complete_session(self, session_id: int) -> None:
         with connect(self.config.database_path) as conn:
             cursor = conn.execute(

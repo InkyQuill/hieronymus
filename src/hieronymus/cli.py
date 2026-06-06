@@ -45,6 +45,36 @@ def _context(
     )
 
 
+def _validate_provided_match(
+    *,
+    field_name: str,
+    provided: str | None,
+    expected: str,
+    owner: str,
+) -> str:
+    if provided is not None and provided != expected:
+        raise ValueError(f"{field_name} does not match {owner}: {expected}")
+    return expected
+
+
+def _validate_context_match(
+    *,
+    provided: TranslationContext,
+    expected: TranslationContext,
+    owner: str,
+) -> None:
+    for field_name in (
+        "series_slug",
+        "source_language",
+        "target_language",
+        "task_type",
+        "volume",
+        "chapter",
+    ):
+        if getattr(provided, field_name) != getattr(expected, field_name):
+            raise ValueError(f"{owner} {field_name} does not match session context")
+
+
 def _series_context(series, *, task_type: str) -> TranslationContext:
     return TranslationContext(
         series_slug=series.slug,
@@ -172,8 +202,8 @@ def remember(ctx: click.Context, series_slug: str, kind: str, text: str, source_
 
 @main.command("session-start")
 @click.argument("series_slug")
-@click.option("--source-language", required=True)
-@click.option("--target-language", required=True)
+@click.option("--source-language", default=None)
+@click.option("--target-language", default=None)
 @click.option("--task-type", required=True)
 @click.option("--volume", default="")
 @click.option("--chapter", default="")
@@ -188,12 +218,24 @@ def session_start(
     chapter: str,
 ) -> None:
     try:
-        Registry(ctx.obj["config"]).get_series(series_slug)
+        series = Registry(ctx.obj["config"]).get_series(series_slug)
+        resolved_source_language = _validate_provided_match(
+            field_name="source_language",
+            provided=source_language,
+            expected=series.source_language,
+            owner="series source_language",
+        )
+        resolved_target_language = _validate_provided_match(
+            field_name="target_language",
+            provided=target_language,
+            expected=series.target_language,
+            owner="series target_language",
+        )
         session = WorkspaceStore(ctx.obj["config"]).start_session(
             _context(
                 series_slug=series_slug,
-                source_language=source_language,
-                target_language=target_language,
+                source_language=resolved_source_language,
+                target_language=resolved_target_language,
                 task_type=task_type,
                 volume=volume,
                 chapter=chapter,
@@ -268,16 +310,24 @@ def recall(
 ) -> None:
     try:
         Registry(ctx.obj["config"]).get_series(series_slug)
+        workspace = WorkspaceStore(ctx.obj["config"])
+        session = workspace.get_session(session_id)
+        provided_context = _context(
+            series_slug=series_slug,
+            source_language=source_language,
+            target_language=target_language,
+            task_type=task_type,
+            volume=volume,
+            chapter=chapter,
+        )
+        _validate_context_match(
+            provided=provided_context,
+            expected=session.context,
+            owner="recall",
+        )
         results = RecallService(ctx.obj["config"]).recall(
             session_id,
-            _context(
-                series_slug=series_slug,
-                source_language=source_language,
-                target_language=target_language,
-                task_type=task_type,
-                volume=volume,
-                chapter=chapter,
-            ),
+            session.context,
             query,
             limit=limit,
         )
