@@ -214,15 +214,15 @@ def test_no_subcommand_ensures_service_and_prints_greeting(tmp_path: Path) -> No
 def test_status_start_stop_lifecycle_with_real_daemon(tmp_path: Path) -> None:
     data_root = tmp_path / "hieronymus"
 
-    start_result = subprocess.run(
-        ["uv", "run", "hiero", "--data-root", str(data_root)],
-        check=False,
-        cwd=Path.cwd(),
-        text=True,
-        capture_output=True,
-        timeout=10,
-    )
     try:
+        start_result = subprocess.run(
+            ["uv", "run", "hiero", "--data-root", str(data_root)],
+            check=False,
+            cwd=Path.cwd(),
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
         assert start_result.returncode == 0
         assert "🪶 Hieronymus v" in start_result.stdout
 
