@@ -8,6 +8,7 @@ import click
 from hieronymus.config import load_config
 from hieronymus.doctor import Doctor, report_to_json
 from hieronymus.dreaming import DeterministicDreamProvider, DreamService
+from hieronymus.install import plan_install
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
 from hieronymus.presentation import GUIDE_ICON, render_greeting, render_json
@@ -172,6 +173,39 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
     click.echo(f"config_root: {payload['config_root']}")
     click.echo(f"database_path: {payload['database_path']}")
     click.echo(f"tui: {payload['tui']}")
+
+
+@main.command("install")
+@click.argument("app")
+@click.option("--dry-run", is_flag=True)
+@click.option("--force", is_flag=True)
+@click.option("--json", "as_json", is_flag=True)
+@click.pass_context
+def install_command(
+    ctx: click.Context, app: str, dry_run: bool, force: bool, as_json: bool
+) -> None:
+    try:
+        plan = plan_install(ctx.obj["config"], app)
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
+
+    payload = plan.to_json_dict()
+    payload["dry_run"] = dry_run
+    payload["force"] = force
+    if as_json:
+        click.echo(render_json(payload))
+        return
+
+    click.echo(render_greeting())
+    click.echo()
+    click.echo(f"Installing {plan.display_name} integration")
+    click.echo(plan.protocol_note)
+    click.echo("Planned changes:")
+    for step in plan.steps:
+        click.echo(f"- {step.action}: {step.path}")
+        click.echo(f"  {step.description}")
+    if plan.result_kind == "stub":
+        click.echo("Result: stub; real integration is deferred to the agent workflow spec.")
 
 
 @main.command("admin")

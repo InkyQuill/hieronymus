@@ -138,6 +138,45 @@ def test_admin_json_returns_tui_placeholder(tmp_path: Path) -> None:
     assert json.loads(result.output) == {"tui": "not-available-in-this-pass"}
 
 
+def test_install_json_returns_stub_plan(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(tmp_path / "hieronymus"),
+            "install",
+            "codex",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["target"] == "codex"
+    assert payload["result_kind"] == "stub"
+    assert payload["dry_run"] is True
+    assert (
+        payload["steps"][1]["path"]
+        == "docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md"
+    )
+
+
+def test_install_unknown_target_returns_clean_error(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main,
+        ["--data-root", str(tmp_path / "hieronymus"), "install", "unknown-agent"],
+    )
+
+    assert result.exit_code == 1
+    assert "unknown install target: unknown-agent" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_doctor_json_has_expected_sections(tmp_path: Path) -> None:
     runner = CliRunner()
 
