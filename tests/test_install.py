@@ -36,47 +36,51 @@ def test_resolve_target_has_metadata_for_codex() -> None:
 
 def test_resolve_target_has_complete_metadata_for_all_targets() -> None:
     expected = {
-        "claude": ("Claude Code", "~/.claude.json", "~/.claude.json"),
-        "codex": ("Codex", "~/.codex", "~/.codex/config.toml"),
-        "openclaw": ("OpenClaw", "~/.openclaw", "~/.openclaw/openclaw.json"),
+        "claude": (
+            "Claude Code / Claude Desktop",
+            ("~/.claude", "~/.claude.json"),
+            ("~/.claude.json",),
+        ),
+        "codex": ("Codex", ("~/.codex",), ("~/.codex/config.toml",)),
+        "openclaw": ("OpenClaw", ("~/.openclaw",), ("~/.openclaw/openclaw.json",)),
         "opencode": (
             "opencode",
-            "~/.config/opencode",
-            "~/.config/opencode/plugin.json",
+            ("~/.config/opencode",),
+            ("~/.config/opencode/plugin.json",),
         ),
-        "gemini": ("Gemini CLI", "~/.gemini", "~/.gemini/settings.json"),
-        "pi": ("Pi", "~/.pi", "~/.pi/config.json"),
-        "hermes": ("Hermes", "~/.hermes", "~/.hermes/config.json"),
+        "gemini": ("Gemini CLI", ("~/.gemini",), ("~/.gemini/settings.json",)),
+        "pi": ("Pi", ("~/.pi",), ("~/.pi/config.json",)),
+        "hermes": ("Hermes", ("~/.hermes",), ("~/.hermes/config.json",)),
     }
 
-    for name, (display_name, detect_path, config_path) in expected.items():
+    for name, (display_name, detect_paths, config_paths) in expected.items():
         target = resolve_target(name)
 
         assert target.display_name == display_name
-        assert target.detect_path == detect_path
-        assert target.config_path == config_path
+        assert target.detect_paths == detect_paths
+        assert target.config_paths == config_paths
         assert target.docs == "docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md"
         assert target.protocol_note
 
 
-def test_plan_install_returns_honest_stub_for_codex(tmp_path: Path) -> None:
+def test_plan_install_returns_provider_plan_for_codex(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
     plan = plan_install(config, "codex")
 
     assert isinstance(plan, InstallPlan)
     assert plan.target == "codex"
-    assert plan.result_kind == "stub"
+    assert plan.result_kind == "installable"
     assert plan.steps == [
         InstallStep(
-            action="inspect",
-            path="~/.codex/config.toml",
-            description="Detect existing Codex MCP configuration.",
+            action="write-assets",
+            path=str(config.agent_plugins_root / "codex"),
+            description="Write plugin assets.",
         ),
         InstallStep(
-            action="defer",
-            path="docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md",
-            description="Real Codex hooks and skills are specified separately.",
+            action="patch-config",
+            path="~/.codex/config.toml",
+            description="Register the Hieronymus plugin.",
         ),
     ]
 
@@ -87,20 +91,21 @@ def test_plan_install_json_includes_docs_for_codex(tmp_path: Path) -> None:
     payload = plan_install(config, "codex").to_json_dict()
 
     assert payload["docs"] == "docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md"
+    assert payload["availability"]["target"] == "codex"
 
 
 def test_resolve_target_has_reserved_pi_paths() -> None:
     target = resolve_target("pi")
 
-    assert target.detect_path == "~/.pi"
-    assert target.config_path == "~/.pi/config.json"
+    assert target.detect_paths == ("~/.pi",)
+    assert target.config_paths == ("~/.pi/config.json",)
 
 
 def test_resolve_target_has_reserved_hermes_paths() -> None:
     target = resolve_target("hermes")
 
-    assert target.detect_path == "~/.hermes"
-    assert target.config_path == "~/.hermes/config.json"
+    assert target.detect_paths == ("~/.hermes",)
+    assert target.config_paths == ("~/.hermes/config.json",)
 
 
 def test_atomic_write_text_creates_parent_and_replaces_file(tmp_path: Path) -> None:

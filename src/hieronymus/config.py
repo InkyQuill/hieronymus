@@ -21,6 +21,10 @@ class HieronymusConfig:
     def backups_root(self) -> Path:
         return self.config_root / "backups"
 
+    @property
+    def agent_plugins_root(self) -> Path:
+        return self.config_root / "agent-plugins"
+
 
 def load_config(data_root: str | Path | None = None) -> HieronymusConfig:
     if data_root is not None:
