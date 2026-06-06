@@ -52,3 +52,15 @@ hieronymus recall 2 --series oso --source-language ja --target-language en --tas
 
 The final recall command uses session `2` because recall must run inside a new
 active session after session `1` has been completed and dreamed.
+
+## Service Commands
+
+```bash
+hiero
+hiero status --json
+hiero doctor
+hiero install codex --dry-run
+hiero stop
+```
+
+`hiero` is an alias for `hieronymus`; all subcommands work with either command.
