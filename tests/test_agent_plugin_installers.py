@@ -36,6 +36,39 @@ def test_write_plugin_assets_rejects_path_escape(tmp_path: Path) -> None:
         write_plugin_assets(config, "codex", {"../escape": "bad"})
 
 
+def test_write_plugin_assets_rejects_target_traversal(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    escaped = config.agent_plugins_root.parent / "escaped" / "asset.txt"
+
+    with pytest.raises(ValueError, match="plugin target must be a simple name"):
+        write_plugin_assets(config, "../escaped", {"asset.txt": "bad"})
+
+    assert not escaped.exists()
+
+
+def test_write_plugin_assets_rejects_absolute_target(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    escaped = tmp_path / "escaped" / "asset.txt"
+
+    with pytest.raises(ValueError, match="plugin target must be a simple name"):
+        write_plugin_assets(config, str(tmp_path / "escaped"), {"asset.txt": "bad"})
+
+    assert not escaped.exists()
+
+
+def test_write_plugin_assets_rejects_symlink_plugin_root(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    escaped_root = tmp_path / "escaped"
+    escaped_root.mkdir()
+    config.agent_plugins_root.mkdir(parents=True)
+    (config.agent_plugins_root / "codex").symlink_to(escaped_root, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="plugin root must not be a symlink"):
+        write_plugin_assets(config, "codex", {"asset.txt": "bad"})
+
+    assert not (escaped_root / "asset.txt").exists()
+
+
 def test_codex_install_writes_assets_and_reports_installed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

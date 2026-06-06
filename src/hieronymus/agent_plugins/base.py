@@ -108,7 +108,20 @@ def write_plugin_assets(
     target: str,
     assets: dict[str, str],
 ) -> list[Path]:
-    root = (config.agent_plugins_root / target).resolve()
+    if (
+        not target
+        or Path(target).is_absolute()
+        or ".." in target
+        or "/" in target
+        or "\\" in target
+    ):
+        raise ValueError(f"plugin target must be a simple name: {target}")
+
+    plugin_root = config.agent_plugins_root / target
+    if plugin_root.is_symlink():
+        raise ValueError(f"plugin root must not be a symlink: {plugin_root}")
+
+    root = plugin_root.resolve()
     written: list[Path] = []
     for relative, text in assets.items():
         destination = (root / relative).resolve()
