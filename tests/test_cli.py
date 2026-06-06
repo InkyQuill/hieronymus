@@ -6,6 +6,53 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from hieronymus.cli import main
+from hieronymus.config import HieronymusConfig
+from hieronymus.crystals import CrystalStore
+from hieronymus.memory_models import TranslationContext
+from hieronymus.registry import Registry
+
+
+def _create_series(data_root: Path) -> TranslationContext:
+    config = HieronymusConfig(data_root=data_root)
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    return TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type="translation",
+        volume="01",
+        chapter="002",
+    )
+
+
+def _start_session(runner: CliRunner, data_root: Path) -> int:
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "session-start",
+            "only-sense-online",
+            "--source-language",
+            "ja",
+            "--target-language",
+            "en",
+            "--task-type",
+            "translation",
+            "--volume",
+            "01",
+            "--chapter",
+            "002",
+        ],
+    )
+
+    assert result.exit_code == 0
+    return json.loads(result.output)["session_id"]
 
 
 def test_init_series_outputs_json_and_creates_database(tmp_path):
@@ -137,3 +184,185 @@ def test_console_entrypoint_init_series_outputs_json(tmp_path):
         "slug": "only-sense-online",
         "database_path": str(data_root / "hieronymus.sqlite"),
     }
+
+
+def test_session_start_outputs_session_id_json(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    _create_series(data_root)
+    runner = CliRunner()
+
+    session_id = _start_session(runner, data_root)
+
+    assert session_id > 0
+
+
+def test_session_complete_outputs_completed_json(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    _create_series(data_root)
+    runner = CliRunner()
+    session_id = _start_session(runner, data_root)
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "session-complete",
+            str(session_id),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == {"session_id": session_id, "completed": True}
+
+
+def test_remember_short_outputs_memory_id_json(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    _create_series(data_root)
+    runner = CliRunner()
+    session_id = _start_session(runner, data_root)
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "remember-short",
+            str(session_id),
+            "--role",
+            "user",
+            "--kind",
+            "correction",
+            "--text",
+            "Use Sense, not Feeling, in UI references.",
+            "--source-ref",
+            "v01c002",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["memory_id"] > 0
+
+
+def test_dream_outputs_completed_cycle_after_completed_session_with_memory(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    _create_series(data_root)
+    runner = CliRunner()
+    session_id = _start_session(runner, data_root)
+    runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "remember-short",
+            str(session_id),
+            "--role",
+            "user",
+            "--kind",
+            "correction",
+            "--text",
+            "Use Sense, not Feeling, in UI references.",
+        ],
+    )
+    runner.invoke(
+        main,
+        ["--data-root", str(data_root), "session-complete", str(session_id)],
+    )
+
+    result = runner.invoke(
+        main,
+        ["--data-root", str(data_root), "dream", "--provider", "deterministic"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload == {"cycle_id": 1, "status": "completed"}
+
+
+def test_recall_outputs_ranked_crystal_results(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    context = _create_series(data_root)
+    crystal_id = CrystalStore(HieronymusConfig(data_root=data_root)).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use Sense as a technical UI term.",
+        strength=0.7,
+        confidence=0.8,
+    )
+    runner = CliRunner()
+    session_id = _start_session(runner, data_root)
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "recall",
+            str(session_id),
+            "--series",
+            "only-sense-online",
+            "--query",
+            "Sense UI",
+            "--source-language",
+            "ja",
+            "--target-language",
+            "en",
+            "--task-type",
+            "translation",
+            "--volume",
+            "01",
+            "--chapter",
+            "002",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload[0]["crystal_id"] == crystal_id
+    assert payload[0]["rank"] == 1
+    assert payload[0]["score"] > 0
+    assert payload[0]["reason"] == "weighted search match"
+
+
+def test_feedback_outputs_event_id_json(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    context = _create_series(data_root)
+    crystal_id = CrystalStore(HieronymusConfig(data_root=data_root)).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use Sense as a technical UI term.",
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "feedback",
+            str(crystal_id),
+            "--event",
+            "confirmed_by_user",
+            "--role",
+            "user",
+            "--evidence",
+            "Accepted during review.",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["event_id"] > 0
+
+
+def test_dream_unsupported_provider_returns_clean_click_error(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main,
+        ["--data-root", str(data_root), "dream", "--provider", "llm"],
+    )
+
+    assert result.exit_code == 1
+    assert "Error: unsupported dream provider: llm" in result.output
+    assert "Traceback" not in result.output

@@ -6,10 +6,14 @@ from dataclasses import asdict
 import click
 
 from hieronymus.config import load_config
+from hieronymus.dreaming import DeterministicDreamProvider, DreamService
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
+from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
+from hieronymus.scoring import FeedbackStore
 from hieronymus.termbase import Termbase
+from hieronymus.workspace import WorkspaceStore
 
 
 def _error_message(error: KeyError | ValueError) -> str:
@@ -20,6 +24,25 @@ def _error_message(error: KeyError | ValueError) -> str:
 
 def _raise_click_error(error: KeyError | ValueError) -> None:
     raise click.ClickException(_error_message(error)) from error
+
+
+def _context(
+    *,
+    series_slug: str,
+    source_language: str,
+    target_language: str,
+    task_type: str,
+    volume: str,
+    chapter: str,
+) -> TranslationContext:
+    return TranslationContext(
+        series_slug=series_slug,
+        source_language=source_language,
+        target_language=target_language,
+        task_type=task_type,
+        volume=volume,
+        chapter=chapter,
+    )
 
 
 def _series_context(series, *, task_type: str) -> TranslationContext:
@@ -145,3 +168,183 @@ def remember(ctx: click.Context, series_slug: str, kind: str, text: str, source_
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
     click.echo(json.dumps({"memory_id": memory_id}, ensure_ascii=False))
+
+
+@main.command("session-start")
+@click.argument("series_slug")
+@click.option("--source-language", required=True)
+@click.option("--target-language", required=True)
+@click.option("--task-type", required=True)
+@click.option("--volume", default="")
+@click.option("--chapter", default="")
+@click.pass_context
+def session_start(
+    ctx: click.Context,
+    series_slug: str,
+    source_language: str,
+    target_language: str,
+    task_type: str,
+    volume: str,
+    chapter: str,
+) -> None:
+    try:
+        Registry(ctx.obj["config"]).get_series(series_slug)
+        session = WorkspaceStore(ctx.obj["config"]).start_session(
+            _context(
+                series_slug=series_slug,
+                source_language=source_language,
+                target_language=target_language,
+                task_type=task_type,
+                volume=volume,
+                chapter=chapter,
+            )
+        )
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+    click.echo(json.dumps({"session_id": session.id}, ensure_ascii=False))
+
+
+@main.command("session-complete")
+@click.argument("session_id", type=int)
+@click.pass_context
+def session_complete(ctx: click.Context, session_id: int) -> None:
+    try:
+        WorkspaceStore(ctx.obj["config"]).complete_session(session_id)
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+    click.echo(json.dumps({"session_id": session_id, "completed": True}, ensure_ascii=False))
+
+
+@main.command("remember-short")
+@click.argument("session_id", type=int)
+@click.option("--role", required=True)
+@click.option("--kind", required=True)
+@click.option("--text", required=True)
+@click.option("--source-ref", default="")
+@click.pass_context
+def remember_short(
+    ctx: click.Context,
+    session_id: int,
+    role: str,
+    kind: str,
+    text: str,
+    source_ref: str,
+) -> None:
+    try:
+        memory_id = WorkspaceStore(ctx.obj["config"]).add_short_term_memory(
+            session_id=session_id,
+            source_role=role,
+            kind=kind,
+            text=text,
+            source_ref=source_ref,
+        )
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+    click.echo(json.dumps({"memory_id": memory_id}, ensure_ascii=False))
+
+
+@main.command("recall")
+@click.argument("session_id", type=int)
+@click.option("--series", "series_slug", required=True)
+@click.option("--query", required=True)
+@click.option("--source-language", required=True)
+@click.option("--target-language", required=True)
+@click.option("--task-type", required=True)
+@click.option("--volume", default="")
+@click.option("--chapter", default="")
+@click.option("--limit", default=10, type=int)
+@click.pass_context
+def recall(
+    ctx: click.Context,
+    session_id: int,
+    series_slug: str,
+    query: str,
+    source_language: str,
+    target_language: str,
+    task_type: str,
+    volume: str,
+    chapter: str,
+    limit: int,
+) -> None:
+    try:
+        Registry(ctx.obj["config"]).get_series(series_slug)
+        results = RecallService(ctx.obj["config"]).recall(
+            session_id,
+            _context(
+                series_slug=series_slug,
+                source_language=source_language,
+                target_language=target_language,
+                task_type=task_type,
+                volume=volume,
+                chapter=chapter,
+            ),
+            query,
+            limit=limit,
+        )
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+    click.echo(
+        json.dumps(
+            [
+                {
+                    "crystal_id": result.crystal.id,
+                    "text": result.crystal.text,
+                    "rank": result.rank,
+                    "score": result.score,
+                    "reason": result.reason,
+                }
+                for result in results
+            ],
+            ensure_ascii=False,
+        )
+    )
+
+
+@main.command("feedback")
+@click.argument("crystal_id", type=int)
+@click.option("--event", "event_type", required=True)
+@click.option("--role", "source_role", required=True)
+@click.option("--evidence", default="")
+@click.option("--session-id", type=int, default=None)
+@click.pass_context
+def feedback(
+    ctx: click.Context,
+    crystal_id: int,
+    event_type: str,
+    source_role: str,
+    evidence: str,
+    session_id: int | None,
+) -> None:
+    try:
+        event_id = FeedbackStore(ctx.obj["config"]).record(
+            crystal_id=crystal_id,
+            event_type=event_type,
+            source_role=source_role,
+            evidence=evidence,
+            session_id=session_id,
+        )
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+    click.echo(json.dumps({"event_id": event_id}, ensure_ascii=False))
+
+
+@main.command("dream")
+@click.option("--provider", default="deterministic")
+@click.pass_context
+def dream(ctx: click.Context, provider: str) -> None:
+    if provider != "deterministic":
+        raise click.ClickException(f"unsupported dream provider: {provider}")
+
+    try:
+        run = DreamService(
+            ctx.obj["config"],
+            DeterministicDreamProvider(),
+        ).run_cycle()
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+    click.echo(
+        json.dumps(
+            {"cycle_id": run.cycle_id, "status": run.status},
+            ensure_ascii=False,
+        )
+    )
