@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
+
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 @dataclass(frozen=True)
@@ -19,6 +22,14 @@ class Series:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _validate_slug(slug: str) -> None:
+    if not _SLUG_PATTERN.fullmatch(slug):
+        raise ValueError(
+            "invalid series slug: use lowercase letters, numbers, and hyphens, "
+            "starting with a letter or number"
+        )
 
 
 class Registry:
@@ -36,8 +47,13 @@ class Registry:
         source_language: str,
         target_language: str,
     ) -> Series:
+        _validate_slug(slug)
         database_path = self.config.series_dir / f"{slug}.sqlite"
         now = _now()
+
+        with connect(database_path) as conn:
+            apply_migration(conn, "series.sql")
+
         with connect(self.config.registry_path) as conn:
             conn.execute(
                 """
@@ -61,9 +77,6 @@ class Registry:
                 (slug, title, source_language, target_language, str(database_path), now, now),
             )
             conn.commit()
-
-        with connect(database_path) as conn:
-            apply_migration(conn, "series.sql")
 
         return Series(slug, title, source_language, target_language, database_path)
 
