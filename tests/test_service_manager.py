@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -128,6 +130,30 @@ def test_start_returns_without_spawning_when_service_is_healthy(tmp_path: Path) 
     with patch("hieronymus.service_manager.subprocess.Popen") as popen:
         manager.start()
 
+    popen.assert_not_called()
+
+
+def test_start_rechecks_status_after_acquiring_start_lock(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config, pid=os.getpid())
+    manager = ServiceManager(config, client=FakeClient(healthy=True))
+    lock_was_held = False
+
+    @contextmanager
+    def fake_start_lock(lock_config: HieronymusConfig) -> Iterator[None]:
+        nonlocal lock_was_held
+        assert lock_config == config
+        lock_was_held = True
+        write_server_state(config, state)
+        yield
+
+    with (
+        patch("hieronymus.service_manager.server_start_lock", fake_start_lock),
+        patch("hieronymus.service_manager.subprocess.Popen") as popen,
+    ):
+        manager.start()
+
+    assert lock_was_held is True
     popen.assert_not_called()
 
 

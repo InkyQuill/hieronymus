@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -11,15 +12,28 @@ from hieronymus.service_http import HieronymusHTTPServer, build_server
 from hieronymus.service_state import ServerState
 
 
-def _read_json(url: str) -> dict[str, object]:
-    with urllib.request.urlopen(url, timeout=2) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-def _post_json(url: str) -> dict[str, object]:
-    request = urllib.request.Request(url, method="POST")
+def _request_json(
+    url: str,
+    *,
+    method: str = "GET",
+    token: str = "local-test-token",
+) -> dict[str, object]:
+    request = urllib.request.Request(url, method=method)
+    request.add_header("X-Hieronymus-Token", token)
     with urllib.request.urlopen(request, timeout=2) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _assert_unauthorized(url: str, *, method: str = "GET", token: str | None = None) -> None:
+    request = urllib.request.Request(url, method=method)
+    if token is not None:
+        request.add_header("X-Hieronymus-Token", token)
+    try:
+        urllib.request.urlopen(request, timeout=2)
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 401
+        return
+    raise AssertionError("request should have been rejected")
 
 
 def _make_state(config: HieronymusConfig) -> ServerState:
@@ -55,7 +69,7 @@ def test_health_endpoint_returns_daemon_identity(tmp_path: Path) -> None:
     assert isinstance(server, HieronymusHTTPServer)
     thread, base_url = _serve(server)
     try:
-        payload = _read_json(f"{base_url}/health")
+        payload = _request_json(f"{base_url}/health")
     finally:
         _stop_server(server, thread)
 
@@ -70,7 +84,7 @@ def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:
     server = build_server(config, state)
     thread, base_url = _serve(server)
     try:
-        payload = _read_json(f"{base_url}/status")
+        payload = _request_json(f"{base_url}/status")
     finally:
         _stop_server(server, thread)
 
@@ -94,7 +108,7 @@ def test_shutdown_endpoint_stops_server(tmp_path: Path) -> None:
     server = build_server(config, state)
     thread, base_url = _serve(server)
     try:
-        payload: dict[str, Any] = _post_json(f"{base_url}/shutdown")
+        payload: dict[str, Any] = _request_json(f"{base_url}/shutdown", method="POST")
         thread.join(timeout=2)
     finally:
         if thread.is_alive():
@@ -104,3 +118,16 @@ def test_shutdown_endpoint_stops_server(tmp_path: Path) -> None:
 
     assert payload == {"ok": True, "stopping": True}
     assert not thread.is_alive()
+
+
+def test_service_endpoints_reject_missing_or_wrong_token(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = _make_state(config)
+    server = build_server(config, state)
+    thread, base_url = _serve(server)
+    try:
+        _assert_unauthorized(f"{base_url}/health", token=None)
+        _assert_unauthorized(f"{base_url}/status", token="wrong-token")
+        _assert_unauthorized(f"{base_url}/shutdown", method="POST", token="wrong-token")
+    finally:
+        _stop_server(server, thread)

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import socket
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -100,6 +103,18 @@ def write_server_state(config: HieronymusConfig, state: ServerState) -> None:
     paths.server_pid.write_text(f"{state.pid}\n", encoding="utf-8")
 
 
+@contextmanager
+def server_start_lock(config: HieronymusConfig) -> Iterator[None]:
+    paths = runtime_paths(config)
+    paths.config_root.mkdir(parents=True, exist_ok=True)
+    with paths.server_lock.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def remove_server_state(
     config: HieronymusConfig,
     expected_state: ServerState | None = None,
@@ -112,7 +127,7 @@ def remove_server_state(
             return False
 
     paths = runtime_paths(config)
-    for path in (paths.server_json, paths.server_pid, paths.server_lock):
+    for path in (paths.server_json, paths.server_pid):
         try:
             path.unlink()
         except FileNotFoundError:

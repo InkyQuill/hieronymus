@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +31,9 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
             self._send_json(
                 {
                     "ok": True,
@@ -39,12 +43,18 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if self.path == "/status":
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
             self._send_json(status_payload(self.server.config, self.server.state))
             return
         self._send_json({"error": "not_found", "path": self.path}, status=HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
         if self.path == "/shutdown":
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
             self._send_json({"ok": True, "stopping": True})
             self.server.shutdown()
             return
@@ -57,6 +67,10 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _is_authorized(self) -> bool:
+        token = self.headers.get("X-Hieronymus-Token", "")
+        return secrets.compare_digest(token, self.server.state.token)
 
 
 def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, Any]:

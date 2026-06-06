@@ -12,6 +12,7 @@ from hieronymus.service_state import (
     cleanup_stale_state,
     read_server_state,
     remove_server_state,
+    server_start_lock,
 )
 
 
@@ -46,6 +47,7 @@ class ServiceManager:
         if state is None:
             return {"running": False, "reason": "no-state"}
         try:
+            self.client.health(state)
             return self.client.status(state)
         except (OSError, ServiceClientError):
             remove_server_state(self.config, expected_state=state)
@@ -62,35 +64,39 @@ class ServiceManager:
         current = self.status()
         if current.get("running") is True:
             return
-        self.config.data_root.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hieronymus.service_daemon",
-                "--data-root",
-                str(self.config.data_root),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        deadline = time.monotonic() + self.startup_timeout
-        last_state: ServerState | None = None
-        while time.monotonic() < deadline:
-            state = read_server_state(self.config)
-            if state is not None:
-                last_state = state
-                try:
-                    self.client.health(state)
-                except (OSError, ServiceClientError):
-                    pass
-                else:
-                    return
-            time.sleep(self.poll_interval)
-        if last_state is not None:
-            remove_server_state(self.config, expected_state=last_state)
-        raise RuntimeError("hieronymus service daemon did not become healthy")
+        with server_start_lock(self.config):
+            current = self.status()
+            if current.get("running") is True:
+                return
+            self.config.data_root.mkdir(parents=True, exist_ok=True)
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hieronymus.service_daemon",
+                    "--data-root",
+                    str(self.config.data_root),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            deadline = time.monotonic() + self.startup_timeout
+            last_state: ServerState | None = None
+            while time.monotonic() < deadline:
+                state = read_server_state(self.config)
+                if state is not None:
+                    last_state = state
+                    try:
+                        self.client.health(state)
+                    except (OSError, ServiceClientError):
+                        pass
+                    else:
+                        return
+                time.sleep(self.poll_interval)
+            if last_state is not None:
+                remove_server_state(self.config, expected_state=last_state)
+            raise RuntimeError("hieronymus service daemon did not become healthy")
 
     def stop(self) -> dict[str, Any]:
         state = read_server_state(self.config)

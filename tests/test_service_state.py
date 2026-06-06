@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import os
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from hieronymus.service_state import (
     read_server_state,
     remove_server_state,
     runtime_paths,
+    server_start_lock,
     write_server_state,
 )
 
@@ -66,7 +68,7 @@ def test_cleanup_stale_state_removes_dead_pid_files(tmp_path: Path) -> None:
     assert removed is True
     assert read_server_state(config) is None
     assert not paths.server_pid.exists()
-    assert not paths.server_lock.exists()
+    assert paths.server_lock.exists()
 
 
 def test_remove_server_state_preserves_different_owner(tmp_path: Path) -> None:
@@ -122,7 +124,24 @@ def test_remove_server_state_removes_matching_owner(tmp_path: Path) -> None:
 
     assert read_server_state(config) is None
     assert not paths.server_pid.exists()
-    assert not paths.server_lock.exists()
+    assert paths.server_lock.exists()
+
+
+def test_server_start_lock_holds_advisory_lock_without_unlinking(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    paths = runtime_paths(config)
+
+    with server_start_lock(config), paths.server_lock.open("a+", encoding="utf-8") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            blocked = True
+        else:
+            blocked = False
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    assert blocked is True
+    assert paths.server_lock.exists()
 
 
 def test_current_process_pid_is_running() -> None:

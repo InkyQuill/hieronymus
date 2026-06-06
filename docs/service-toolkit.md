@@ -16,9 +16,10 @@ short status surface. The identity portion looks like this:
 Remembers things for you.
 ```
 
-The daemon is the only normal owner of the global SQLite store. Thin CLI commands and future agent
-adapters discover it through runtime files under the configured root, defaulting to
-`~/.config/hieronymus`. `--data-root` and `HIERONYMUS_DATA_ROOT` move these files:
+The daemon is the normal service surface for the global SQLite store. Some legacy and debug CLI
+commands still access storage directly in this pass; future agent adapters should discover the daemon
+through runtime files under the configured root, defaulting to `~/.config/hieronymus`. `--data-root`
+and `HIERONYMUS_DATA_ROOT` move these files:
 
 - `server.json`
 - `server.pid`
