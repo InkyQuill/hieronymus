@@ -6,7 +6,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from hieronymus.config import load_config
+from hieronymus.config import HieronymusConfig, load_config
 from hieronymus.memory import MemoryStore
 from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
@@ -14,13 +14,21 @@ from hieronymus.termbase import Termbase
 server = FastMCP("hieronymus")
 
 
+def _load_validated_config() -> HieronymusConfig:
+    config = load_config()
+    if config.data_root.exists() and not config.data_root.is_dir():
+        raise ValueError(f"data root is not a directory: {config.data_root}")
+    return config
+
+
 def _series_database_path(series_slug: str) -> Path:
-    series = Registry(load_config()).get_series(series_slug)
+    series = Registry(_load_validated_config()).get_series(series_slug)
     return series.database_path
 
 
 @server.tool()
 def hieronymus_termbase_contract(series_slug: str, raw_text: str) -> list[dict[str, Any]]:
+    """Return approved termbase entries required by raw source text."""
     database_path = _series_database_path(series_slug)
     terms = Termbase(database_path).contract(raw_text)
     return [asdict(term) for term in terms]
@@ -30,6 +38,7 @@ def hieronymus_termbase_contract(series_slug: str, raw_text: str) -> list[dict[s
 def hieronymus_termbase_validate(
     series_slug: str, raw_text: str, translated_text: str
 ) -> list[dict[str, Any]]:
+    """Validate translated text against approved termbase entries."""
     database_path = _series_database_path(series_slug)
     findings = Termbase(database_path).validate(
         raw_text=raw_text,
@@ -47,6 +56,7 @@ def hieronymus_termbase_propose(
     tags: list[str] | None = None,
     notes: str = "",
 ) -> dict[str, int]:
+    """Propose a pending termbase entry for a series."""
     database_path = _series_database_path(series_slug)
     term_id = Termbase(database_path).propose(
         category=category,
@@ -60,6 +70,7 @@ def hieronymus_termbase_propose(
 
 @server.tool()
 def hieronymus_termbase_approve(series_slug: str, term_id: int) -> dict[str, int | bool]:
+    """Approve a pending termbase entry for a series."""
     database_path = _series_database_path(series_slug)
     Termbase(database_path).approve(term_id)
     return {"term_id": term_id, "approved": True}
@@ -67,6 +78,7 @@ def hieronymus_termbase_approve(series_slug: str, term_id: int) -> dict[str, int
 
 @server.tool()
 def hieronymus_memory_search(series_slug: str, query: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Search translation memory entries for a series."""
     database_path = _series_database_path(series_slug)
     memories = MemoryStore(database_path).search(query, limit=limit)
     return [asdict(memory) for memory in memories]
@@ -80,6 +92,7 @@ def hieronymus_memory_add(
     source_ref: str = "",
     importance: int = 3,
 ) -> dict[str, int]:
+    """Add a translation memory entry for a series."""
     database_path = _series_database_path(series_slug)
     memory_id = MemoryStore(database_path).add(
         kind=kind,

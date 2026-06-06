@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import tomllib
+
+import pytest
 
 from hieronymus.config import load_config
 from hieronymus.registry import Registry
@@ -104,3 +107,35 @@ def test_mcp_script_entrypoint_is_declared():
         data = tomllib.load(pyproject)
 
     assert data["project"]["scripts"]["hieronymus-mcp"] == "hieronymus.mcp_server:main"
+
+
+def test_mcp_main_is_callable():
+    from hieronymus.mcp_server import main
+
+    assert callable(main)
+
+
+def test_mcp_tools_raise_clear_error_when_data_root_is_file(monkeypatch, tmp_path):
+    data_root = tmp_path / "data-root-file"
+    data_root.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(data_root))
+
+    from hieronymus import mcp_server
+
+    with pytest.raises(ValueError, match=f"data root is not a directory: {data_root}"):
+        mcp_server.hieronymus_memory_search("only-sense-online", "Yun")
+
+
+def test_mcp_server_registers_expected_tool_names():
+    from hieronymus.mcp_server import server
+
+    tools = asyncio.run(server.list_tools())
+
+    assert {tool.name for tool in tools} == {
+        "hieronymus_termbase_contract",
+        "hieronymus_termbase_validate",
+        "hieronymus_termbase_propose",
+        "hieronymus_termbase_approve",
+        "hieronymus_memory_search",
+        "hieronymus_memory_add",
+    }
