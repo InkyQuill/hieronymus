@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import shutil
+import tempfile
+import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 from hieronymus.config import HieronymusConfig
@@ -159,15 +161,43 @@ def plan_install(config: HieronymusConfig, target_name: str) -> InstallPlan:
 
 def atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(text, encoding="utf-8")
-    temporary.replace(path)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            delete=False,
+            dir=path.parent,
+            encoding="utf-8",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(text)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        temporary_path.replace(path)
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def backup_file(config: HieronymusConfig, source: Path, *, agent: str, extension: str) -> Path:
     config.backups_root.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     suffix = extension.removeprefix(".")
-    backup = config.backups_root / f"{agent}-{source.stem}-{timestamp}.{suffix}"
-    shutil.copy2(source, backup)
-    return backup
+    for attempt in range(100):
+        unique = f"{time.time_ns()}-{os.getpid()}-{attempt}"
+        backup = config.backups_root / f"{agent}-{source.stem}-{unique}.{suffix}"
+        try:
+            descriptor = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+        except FileExistsError:
+            continue
+        else:
+            os.close(descriptor)
+            try:
+                shutil.copy2(source, backup)
+            except Exception:
+                backup.unlink(missing_ok=True)
+                raise
+            return backup
+    raise FileExistsError(f"could not create unique backup path for {source}")

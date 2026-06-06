@@ -34,6 +34,31 @@ def test_resolve_target_has_metadata_for_codex() -> None:
     assert "MCP" in target.protocol_note
 
 
+def test_resolve_target_has_complete_metadata_for_all_targets() -> None:
+    expected = {
+        "claude": ("Claude Code", "~/.claude.json", "~/.claude.json"),
+        "codex": ("Codex", "~/.codex", "~/.codex/config.toml"),
+        "openclaw": ("OpenClaw", "~/.openclaw", "~/.openclaw/openclaw.json"),
+        "opencode": (
+            "opencode",
+            "~/.config/opencode",
+            "~/.config/opencode/plugin.json",
+        ),
+        "gemini": ("Gemini CLI", "~/.gemini", "~/.gemini/settings.json"),
+        "pi": ("Pi", "~/.pi", "~/.pi/config.json"),
+        "hermes": ("Hermes", "~/.hermes", "~/.hermes/config.json"),
+    }
+
+    for name, (display_name, detect_path, config_path) in expected.items():
+        target = resolve_target(name)
+
+        assert target.display_name == display_name
+        assert target.detect_path == detect_path
+        assert target.config_path == config_path
+        assert target.docs == "docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md"
+        assert target.protocol_note
+
+
 def test_plan_install_returns_honest_stub_for_codex(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
@@ -95,3 +120,18 @@ def test_backup_file_writes_under_hieronymus_backups(tmp_path: Path) -> None:
 
     assert backup.parent == config.backups_root
     assert backup.read_text(encoding="utf-8") == '{"old": true}\n'
+
+
+def test_backup_file_returns_unique_existing_paths_for_same_source(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    source = tmp_path / "agent.json"
+    source.write_text('{"old": true}\n', encoding="utf-8")
+
+    first = backup_file(config, source, agent="codex", extension="json")
+    second = backup_file(config, source, agent="codex", extension="json")
+
+    assert first != second
+    assert first.exists()
+    assert second.exists()
