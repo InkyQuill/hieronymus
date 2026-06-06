@@ -88,6 +88,8 @@ class AgentPlugin(Protocol):
     config_paths: tuple[str, ...]
     docs: str
     protocol_note: str
+    installs_managed_config: bool
+    required_asset_paths: tuple[str, ...]
 
     def availability(self, config: HieronymusConfig) -> AgentAvailability:
         raise NotImplementedError
@@ -155,6 +157,27 @@ def any_path_exists(paths: tuple[str, ...]) -> bool:
     return any(expand_user(path).exists() for path in paths)
 
 
+def get_object_section(payload: dict[str, Any], section: str, path: Path) -> dict[str, Any]:
+    value = payload.setdefault(section, {})
+    if not isinstance(value, dict):
+        raise ValueError(f"expected object at {section} in {path}")
+    return value
+
+
+def set_managed_entry(
+    section: dict[str, Any],
+    key: str,
+    value: dict[str, Any],
+    *,
+    path: Path,
+    force: bool,
+) -> None:
+    existing = section.get(key)
+    if existing is not None and existing != value and not force:
+        raise ValueError(f"refusing to overwrite existing {key} entry in {path}; use --force")
+    section[key] = value
+
+
 def has_hieronymus_marker(path: Path) -> bool:
     if not path.exists():
         return False
@@ -173,6 +196,12 @@ def has_hieronymus_marker(path: Path) -> bool:
     if isinstance(marker, dict) and marker.get("managed") is True:
         return True
     return False
+
+
+def has_required_assets(root: Path, required_paths: tuple[str, ...]) -> bool:
+    if not root.is_dir() or root.is_symlink():
+        return False
+    return all((root / relative).is_file() for relative in required_paths)
 
 
 def write_plugin_assets(
@@ -212,6 +241,7 @@ class BaseAgentPlugin:
     docs = AGENT_WORKFLOW_SPEC
     protocol_note: str
     installs_managed_config = False
+    required_asset_paths: tuple[str, ...] = ()
 
     def _require_non_empty_paths(self) -> None:
         if not self.detect_paths:
@@ -235,7 +265,7 @@ class BaseAgentPlugin:
         available = any_path_exists(self.detect_paths)
         installed = (
             self.installs_managed_config
-            and install_path.exists()
+            and has_required_assets(install_path, self.required_asset_paths)
             and any(has_hieronymus_marker(expand_user(path)) for path in self.config_paths)
         )
         return AgentAvailability(

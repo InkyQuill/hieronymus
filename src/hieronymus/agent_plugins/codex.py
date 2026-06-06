@@ -5,8 +5,10 @@ from hieronymus.agent_plugins.base import (
     BaseAgentPlugin,
     InstallPlan,
     expand_user,
+    get_object_section,
     load_toml_object,
     patch_toml_config,
+    set_managed_entry,
     write_plugin_assets,
 )
 from hieronymus.config import HieronymusConfig
@@ -19,18 +21,29 @@ class CodexPlugin(BaseAgentPlugin):
     config_paths = ("~/.codex/config.toml",)
     protocol_note = "Codex integration installs Hieronymus skills, MCP config, and hooks."
     installs_managed_config = True
+    required_asset_paths = (
+        ".codex-plugin/plugin.json",
+        ".mcp.json",
+        "skills/hieronymus-recall/SKILL.md",
+    )
 
     def install(self, config: HieronymusConfig, *, force: bool = False) -> InstallPlan:
-        _ = force
         config_path = expand_user(self.config_paths[0])
         payload = load_toml_object(config_path)
-        payload.setdefault("mcp_servers", {})["hieronymus"] = {
-            "command": "hieronymus-mcp",
-            "args": [],
-        }
-        payload.setdefault("plugins", {})["hieronymus"] = {
-            "path": str(config.agent_plugins_root / self.name),
-        }
+        set_managed_entry(
+            get_object_section(payload, "mcp_servers", config_path),
+            "hieronymus",
+            {"command": "hieronymus-mcp", "args": []},
+            path=config_path,
+            force=force,
+        )
+        set_managed_entry(
+            get_object_section(payload, "plugins", config_path),
+            "hieronymus",
+            {"path": str(config.agent_plugins_root / self.name)},
+            path=config_path,
+            force=force,
+        )
         payload["hieronymus"] = {"managed": True, "version": "0.1.0"}
         write_plugin_assets(config, self.name, render_agent_plugin_assets(self.name))
         patch_toml_config(config, config_path, agent=self.name, payload=payload)

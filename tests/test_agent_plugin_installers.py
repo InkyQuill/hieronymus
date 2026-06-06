@@ -372,3 +372,66 @@ def test_json_agent_install_is_idempotent_for_config_entries(
     assert sorted(payload["mcpServers"]) == ["hieronymus"]
     assert sorted(payload[registration_key]) == ["hieronymus"]
     assert payload["hieronymus"]["managed"] is True
+
+
+def test_codex_install_rejects_conflicting_mcp_without_force(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    codex.mkdir(parents=True)
+    config_path = codex / "config.toml"
+    config_path.write_text(
+        '[mcp_servers.hieronymus]\ncommand = "custom-hiero"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    with pytest.raises(ValueError, match="refusing to overwrite existing hieronymus entry"):
+        resolve_plugin("codex").install(config, force=False)
+
+    payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["mcp_servers"]["hieronymus"]["command"] == "custom-hiero"
+    assert not (config.agent_plugins_root / "codex").exists()
+
+
+def test_codex_install_force_overwrites_conflicting_mcp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    codex.mkdir(parents=True)
+    config_path = codex / "config.toml"
+    config_path.write_text(
+        '[mcp_servers.hieronymus]\ncommand = "custom-hiero"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    plan = resolve_plugin("codex").install(config, force=True)
+
+    payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert plan.availability.installed is True
+    assert payload["mcp_servers"]["hieronymus"]["command"] == "hieronymus-mcp"
+
+
+def test_json_agent_install_rejects_malformed_section_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".gemini").mkdir(parents=True)
+    settings = home / ".gemini" / "settings.json"
+    settings.write_text('{"mcpServers": []}\n', encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    with pytest.raises(ValueError, match="expected object at mcpServers"):
+        resolve_plugin("gemini").install(config)
+
+    assert json.loads(settings.read_text(encoding="utf-8")) == {"mcpServers": []}
+    assert not (config.agent_plugins_root / "gemini").exists()

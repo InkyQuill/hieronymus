@@ -5,8 +5,10 @@ from hieronymus.agent_plugins.base import (
     BaseAgentPlugin,
     InstallPlan,
     expand_user,
+    get_object_section,
     load_json_object,
     patch_json_config,
+    set_managed_entry,
     write_plugin_assets,
 )
 from hieronymus.config import HieronymusConfig
@@ -21,15 +23,22 @@ class ClaudePlugin(BaseAgentPlugin):
         "Claude Code integration uses MCP; host-specific hooks are deferred to a later pass."
     )
     installs_managed_config = True
+    required_asset_paths = (
+        ".claude-plugin/plugin.json",
+        "mcp/hieronymus.mcp.json",
+        "skills/hieronymus-recall/SKILL.md",
+    )
 
     def install(self, config: HieronymusConfig, *, force: bool = False) -> InstallPlan:
-        _ = force
         config_path = expand_user(self.config_paths[0])
         payload = load_json_object(config_path)
-        payload.setdefault("mcpServers", {})["hieronymus"] = {
-            "command": "hieronymus-mcp",
-            "args": [],
-        }
+        set_managed_entry(
+            get_object_section(payload, "mcpServers", config_path),
+            "hieronymus",
+            {"command": "hieronymus-mcp", "args": []},
+            path=config_path,
+            force=force,
+        )
         payload["hieronymus"] = {
             "managed": True,
             "version": "0.1.0",

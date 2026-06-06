@@ -79,12 +79,58 @@ def test_codex_availability_detects_assets_and_managed_marker(
     codex.mkdir(parents=True)
     (codex / "config.toml").write_text("[hieronymus]\nmanaged = true\n", encoding="utf-8")
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    (config.agent_plugins_root / "codex").mkdir(parents=True)
+    (config.agent_plugins_root / "codex" / ".codex-plugin").mkdir(parents=True)
+    (config.agent_plugins_root / "codex" / "skills" / "hieronymus-recall").mkdir(parents=True)
+    (config.agent_plugins_root / "codex" / ".codex-plugin" / "plugin.json").write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
+    (config.agent_plugins_root / "codex" / ".mcp.json").write_text("{}\n", encoding="utf-8")
+    (config.agent_plugins_root / "codex" / "skills" / "hieronymus-recall" / "SKILL.md").write_text(
+        "recall\n", encoding="utf-8"
+    )
     monkeypatch.setenv("HOME", str(home))
 
     availability = resolve_plugin("codex").availability(config)
 
     assert availability.installed is True
+
+
+def test_codex_availability_rejects_incomplete_asset_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    codex.mkdir(parents=True)
+    (codex / "config.toml").write_text("[hieronymus]\nmanaged = true\n", encoding="utf-8")
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    (config.agent_plugins_root / "codex").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    availability = resolve_plugin("codex").availability(config)
+
+    assert availability.installed is False
+
+
+def test_codex_availability_rejects_symlink_asset_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    codex.mkdir(parents=True)
+    (codex / "config.toml").write_text("[hieronymus]\nmanaged = true\n", encoding="utf-8")
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.agent_plugins_root.mkdir(parents=True)
+    escaped = tmp_path / "escaped-codex"
+    escaped.mkdir()
+    (config.agent_plugins_root / "codex").symlink_to(escaped, target_is_directory=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    availability = resolve_plugin("codex").availability(config)
+
+    assert availability.installed is False
 
 
 def test_reserved_provider_ignores_stale_managed_marker(

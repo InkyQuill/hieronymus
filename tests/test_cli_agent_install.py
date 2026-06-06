@@ -109,3 +109,22 @@ def test_install_deferred_provider_human_output_remains_plan(
     assert "Result: stub; real integration is deferred" in result.output
     assert not (data_root / "agent-plugins" / "pi").exists()
     assert not (home / ".pi" / "config.json").exists()
+
+
+def test_install_malformed_config_returns_clean_error(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    (home / ".gemini").mkdir(parents=True)
+    (home / ".gemini" / "settings.json").write_text(
+        '{"mcpServers": []}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(tmp_path / "hieronymus"), "install", "gemini"],
+    )
+
+    assert result.exit_code == 1
+    assert "expected object at mcpServers" in result.output
+    assert "Traceback" not in result.output
