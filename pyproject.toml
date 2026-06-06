@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 hieronymus = "hieronymus.cli:main"
+hieronymus-mcp = "hieronymus.mcp_server:main"
 
 [dependency-groups]
 dev = [
