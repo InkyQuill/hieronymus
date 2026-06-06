@@ -168,6 +168,18 @@ def test_install_json_returns_stub_plan(tmp_path: Path) -> None:
     )
 
 
+def test_install_human_output_is_honest_stub_plan(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(tmp_path / "hieronymus"), "install", "codex"],
+    )
+
+    assert result.exit_code == 0
+    assert "Planning Codex integration" in result.output
+    assert "Installing Codex integration" not in result.output
+    assert "Result: stub; real integration is deferred" in result.output
+
+
 def test_install_unknown_target_returns_clean_error(tmp_path: Path) -> None:
     runner = CliRunner()
 

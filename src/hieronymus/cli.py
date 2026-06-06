@@ -198,7 +198,7 @@ def install_command(
 
     click.echo(render_greeting())
     click.echo()
-    click.echo(f"Installing {plan.display_name} integration")
+    click.echo(f"Planning {plan.display_name} integration")
     click.echo(plan.protocol_note)
     click.echo("Planned changes:")
     for step in plan.steps:

@@ -4,7 +4,7 @@
 
 **Goal:** Build the Python service/toolkit layer for Hieronymus: `hieronymus`/`hiero` aliases, one local daemon, thin lifecycle CLI commands, doctor checks, and a safe installer framework with stubs for future agent integrations.
 
-**Architecture:** Keep memory ownership inside one local Python daemon that exposes a small `127.0.0.1` HTTP JSON API. CLI commands discover daemon state in `~/.config/hieronymus`, start or stop the daemon through a service manager, and render either human-friendly output or stable JSON. Agent installs are represented by a shared target registry and safe plan/install result model; real host-specific integrations remain separate follow-up work.
+**Architecture:** Keep service-managed memory access centered on one local Python daemon that exposes a small `127.0.0.1` HTTP JSON API. Lifecycle CLI commands discover daemon state in `~/.config/hieronymus`, start or stop the daemon through a service manager, and render either human-friendly output or stable JSON. Existing legacy/debug CLI commands may still access storage directly in this pass. Agent installs are represented by a shared target registry and safe plan/install result model; real host-specific integrations remain separate follow-up work.
 
 **Tech Stack:** Python 3.12+, uv, Click, stdlib `http.server`, stdlib `urllib.request`, SQLite-backed existing services, pytest, ruff.
 
@@ -1985,8 +1985,9 @@ short status surface:
 Remembers things for you.
 ```
 
-The daemon is the only normal owner of the global SQLite store. Thin CLI commands and future agent
-adapters discover it through runtime files under `~/.config/hieronymus`:
+The daemon is the normal service surface for the global SQLite store. Some legacy and debug CLI
+commands still access storage directly in this pass; future agent adapters discover it through
+runtime files under `~/.config/hieronymus`:
 
 - `server.json`
 - `server.pid`

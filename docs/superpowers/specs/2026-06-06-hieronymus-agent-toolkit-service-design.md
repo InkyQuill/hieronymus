@@ -40,7 +40,7 @@ human-facing status.
 
 ## Service Shape
 
-Hieronymus runs as one local daemon process. It owns:
+Hieronymus runs as one local daemon process. For service-managed operations, it owns:
 
 - the global SQLite store
 - memory providers
@@ -49,8 +49,9 @@ Hieronymus runs as one local daemon process. It owns:
 - MCP-facing memory operations
 - runtime health state
 
-All other processes are thin clients. They discover the active daemon, start it when appropriate, call
-the local API, and render output.
+New lifecycle commands, TUIs, agent hooks, and future adapters are thin clients. They discover the
+active daemon, start it when appropriate, call the local API, and render output. Existing legacy and
+debug CLI commands may still access storage directly in this pass.
 
 The daemon exposes a local HTTP JSON API bound to `127.0.0.1`. The port can be configured or selected
 automatically. The active server state is stored under `~/.config/hieronymus`, preserving the global
@@ -75,8 +76,9 @@ Startup is idempotent:
 4. If another live process owns the lock, report the conflict clearly.
 5. If no daemon is running, start one and write fresh state.
 
-Only the daemon should write directly to the global store during normal operation. CLI commands, TUIs,
-and agent hooks call the daemon.
+Only the daemon should write directly to the global store for service-managed operations. Existing
+legacy and debug CLI commands may still write directly until a later pass routes them through the
+daemon; TUIs and agent hooks should call the daemon.
 
 ## Presentation Contract
 
