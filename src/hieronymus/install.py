@@ -29,6 +29,7 @@ class InstallPlan:
     target: str
     display_name: str
     protocol_note: str
+    docs: str
     result_kind: str
     steps: list[InstallStep]
 
@@ -37,6 +38,7 @@ class InstallPlan:
             "target": self.target,
             "display_name": self.display_name,
             "protocol_note": self.protocol_note,
+            "docs": self.docs,
             "result_kind": self.result_kind,
             "steps": [step.to_json_dict() for step in self.steps],
         }
@@ -49,6 +51,7 @@ class InstallTarget:
     detect_path: str
     config_path: str
     protocol_note: str
+    docs: str
 
 
 TARGETS = [
@@ -60,6 +63,7 @@ TARGETS = [
         protocol_note=(
             "Claude Code integration uses MCP; host-specific hooks are deferred to a later pass."
         ),
+        docs=AGENT_WORKFLOW_SPEC,
     ),
     InstallTarget(
         name="codex",
@@ -67,6 +71,7 @@ TARGETS = [
         detect_path="~/.codex",
         config_path="~/.codex/config.toml",
         protocol_note="Codex integration uses MCP; real hooks and skills are a follow-up.",
+        docs=AGENT_WORKFLOW_SPEC,
     ),
     InstallTarget(
         name="openclaw",
@@ -74,6 +79,7 @@ TARGETS = [
         detect_path="~/.openclaw",
         config_path="~/.openclaw/openclaw.json",
         protocol_note="OpenClaw integration is reserved for future MCP configuration support.",
+        docs=AGENT_WORKFLOW_SPEC,
     ),
     InstallTarget(
         name="opencode",
@@ -83,6 +89,7 @@ TARGETS = [
         protocol_note=(
             "opencode integration is reserved for future MCP plugin configuration support."
         ),
+        docs=AGENT_WORKFLOW_SPEC,
     ),
     InstallTarget(
         name="gemini",
@@ -90,20 +97,23 @@ TARGETS = [
         detect_path="~/.gemini",
         config_path="~/.gemini/settings.json",
         protocol_note="Gemini CLI integration is reserved for future MCP configuration support.",
+        docs=AGENT_WORKFLOW_SPEC,
     ),
     InstallTarget(
         name="pi",
         display_name="Pi",
-        detect_path="",
-        config_path="",
+        detect_path="~/.pi",
+        config_path="~/.pi/config.json",
         protocol_note="Pi is a reserved future integration target.",
+        docs=AGENT_WORKFLOW_SPEC,
     ),
     InstallTarget(
         name="hermes",
         display_name="Hermes",
-        detect_path="",
-        config_path="",
+        detect_path="~/.hermes",
+        config_path="~/.hermes/config.json",
         protocol_note="Hermes is a reserved future integration target.",
+        docs=AGENT_WORKFLOW_SPEC,
     ),
 ]
 
@@ -128,6 +138,7 @@ def plan_install(config: HieronymusConfig, target_name: str) -> InstallPlan:
         target=target.name,
         display_name=target.display_name,
         protocol_note=target.protocol_note,
+        docs=target.docs,
         result_kind="stub",
         steps=[
             InstallStep(

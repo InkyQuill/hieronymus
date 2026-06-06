@@ -56,6 +56,28 @@ def test_plan_install_returns_honest_stub_for_codex(tmp_path: Path) -> None:
     ]
 
 
+def test_plan_install_json_includes_docs_for_codex(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    payload = plan_install(config, "codex").to_json_dict()
+
+    assert payload["docs"] == "docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md"
+
+
+def test_resolve_target_has_reserved_pi_paths() -> None:
+    target = resolve_target("pi")
+
+    assert target.detect_path == "~/.pi"
+    assert target.config_path == "~/.pi/config.json"
+
+
+def test_resolve_target_has_reserved_hermes_paths() -> None:
+    target = resolve_target("hermes")
+
+    assert target.detect_path == "~/.hermes"
+    assert target.config_path == "~/.hermes/config.json"
+
+
 def test_atomic_write_text_creates_parent_and_replaces_file(tmp_path: Path) -> None:
     target = tmp_path / "nested" / "config.json"
 
