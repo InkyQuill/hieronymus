@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,8 +23,55 @@ def _search_expression(query: str) -> str:
 
 
 class MemoryStore:
-    def __init__(self, database_path: Path) -> None:
+    def __init__(self, database_path: Path, *, series_slug: str) -> None:
         self.database_path = database_path
+        self.series_slug = series_slug
+
+    def _session_id(self, conn) -> int:
+        row = conn.execute(
+            """
+            select id
+            from task_sessions
+            where series_slug = ? and task_type = 'memory'
+            order by id
+            limit 1
+            """,
+            (self.series_slug,),
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+
+        now = _now()
+        series = conn.execute(
+            """
+            select default_source_language, default_target_language
+            from series
+            where slug = ?
+            """,
+            (self.series_slug,),
+        ).fetchone()
+        if series is None:
+            raise KeyError(f"unknown series: {self.series_slug}")
+        cursor = conn.execute(
+            """
+            insert into task_sessions(
+              series_slug,
+              source_language,
+              target_language,
+              task_type,
+              status,
+              created_at
+            )
+            values (?, ?, ?, 'memory', 'active', ?)
+            """,
+            (
+                self.series_slug,
+                series["default_source_language"],
+                series["default_target_language"],
+                now,
+            ),
+        )
+        return int(cursor.lastrowid)
 
     def add(self, *, kind: str, text: str, source_ref: str = "", importance: int = 3) -> int:
         if not kind.strip():
@@ -33,16 +81,26 @@ class MemoryStore:
 
         now = _now()
         with connect(self.database_path) as conn:
+            session_id = self._session_id(conn)
+            metadata_json = json.dumps({"importance": importance}, separators=(",", ":"))
             cursor = conn.execute(
                 """
-                insert into memories(kind, text, importance, source_ref, created_at, updated_at)
-                values (?, ?, ?, ?, ?, ?)
+                insert into short_term_memories(
+                  session_id,
+                  source_role,
+                  kind,
+                  text,
+                  source_ref,
+                  metadata_json,
+                  created_at
+                )
+                values (?, 'user', ?, ?, ?, ?, ?)
                 """,
-                (kind, text, importance, source_ref, now, now),
+                (session_id, kind, text, source_ref, metadata_json, now),
             )
             memory_id = int(cursor.lastrowid)
             conn.execute(
-                "insert into memories_fts(rowid, text) values (?, ?)",
+                "insert into short_term_memories_fts(rowid, text) values (?, ?)",
                 (memory_id, text),
             )
             conn.commit()
@@ -60,21 +118,29 @@ class MemoryStore:
         with connect(self.database_path) as conn:
             rows = conn.execute(
                 """
-                select memories.*
-                from memories_fts
-                join memories on memories.id = memories_fts.rowid
-                where memories_fts match ?
-                order by memories.importance desc, bm25(memories_fts)
+                select short_term_memories.*
+                from short_term_memories_fts
+                join short_term_memories on short_term_memories.id = short_term_memories_fts.rowid
+                join task_sessions on task_sessions.id = short_term_memories.session_id
+                where short_term_memories_fts match ?
+                  and task_sessions.series_slug = ?
+                  and short_term_memories.archived_at is null
+                order by
+                  cast(
+                    json_extract(short_term_memories.metadata_json, '$.importance')
+                    as integer
+                  ) desc,
+                  bm25(short_term_memories_fts)
                 limit ?
                 """,
-                (expression, bounded_limit),
+                (expression, self.series_slug, bounded_limit),
             ).fetchall()
         return [
             MemoryEntry(
                 id=row["id"],
                 kind=row["kind"],
                 text=row["text"],
-                importance=row["importance"],
+                importance=int(json.loads(row["metadata_json"]).get("importance", 3)),
                 source_ref=row["source_ref"],
             )
             for row in rows

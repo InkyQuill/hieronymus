@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from hieronymus.config import HieronymusConfig, load_config
 from hieronymus.memory import MemoryStore
-from hieronymus.registry import Registry
+from hieronymus.registry import Registry, Series
 from hieronymus.termbase import Termbase
 
 server = FastMCP("hieronymus")
@@ -21,16 +20,26 @@ def _load_validated_config() -> HieronymusConfig:
     return config
 
 
-def _series_database_path(series_slug: str) -> Path:
-    series = Registry(_load_validated_config()).get_series(series_slug)
-    return series.database_path
+def _series_context(series_slug: str) -> tuple[HieronymusConfig, Series]:
+    config = _load_validated_config()
+    series = Registry(config).get_series(series_slug)
+    return config, series
+
+
+def _termbase(config: HieronymusConfig, series: Series) -> Termbase:
+    return Termbase(
+        config.database_path,
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+    )
 
 
 @server.tool()
 def hieronymus_termbase_contract(series_slug: str, raw_text: str) -> list[dict[str, Any]]:
     """Return approved termbase entries required by raw source text."""
-    database_path = _series_database_path(series_slug)
-    terms = Termbase(database_path).contract(raw_text)
+    config, series = _series_context(series_slug)
+    terms = _termbase(config, series).contract(raw_text)
     return [asdict(term) for term in terms]
 
 
@@ -39,8 +48,8 @@ def hieronymus_termbase_validate(
     series_slug: str, raw_text: str, translated_text: str
 ) -> list[dict[str, Any]]:
     """Validate translated text against approved termbase entries."""
-    database_path = _series_database_path(series_slug)
-    findings = Termbase(database_path).validate(
+    config, series = _series_context(series_slug)
+    findings = _termbase(config, series).validate(
         raw_text=raw_text,
         translated_text=translated_text,
     )
@@ -57,8 +66,8 @@ def hieronymus_termbase_propose(
     notes: str = "",
 ) -> dict[str, int]:
     """Propose a pending termbase entry for a series."""
-    database_path = _series_database_path(series_slug)
-    term_id = Termbase(database_path).propose(
+    config, series = _series_context(series_slug)
+    term_id = _termbase(config, series).propose(
         category=category,
         source_text=source_text,
         canonical_translation=canonical_translation,
@@ -71,16 +80,16 @@ def hieronymus_termbase_propose(
 @server.tool()
 def hieronymus_termbase_approve(series_slug: str, term_id: int) -> dict[str, int | bool]:
     """Approve a pending termbase entry for a series."""
-    database_path = _series_database_path(series_slug)
-    Termbase(database_path).approve(term_id)
+    config, series = _series_context(series_slug)
+    _termbase(config, series).approve(term_id)
     return {"term_id": term_id, "approved": True}
 
 
 @server.tool()
 def hieronymus_memory_search(series_slug: str, query: str, limit: int = 5) -> list[dict[str, Any]]:
     """Search translation memory entries for a series."""
-    database_path = _series_database_path(series_slug)
-    memories = MemoryStore(database_path).search(query, limit=limit)
+    config, series = _series_context(series_slug)
+    memories = MemoryStore(config.database_path, series_slug=series.slug).search(query, limit=limit)
     return [asdict(memory) for memory in memories]
 
 
@@ -93,8 +102,8 @@ def hieronymus_memory_add(
     importance: int = 3,
 ) -> dict[str, int]:
     """Add a translation memory entry for a series."""
-    database_path = _series_database_path(series_slug)
-    memory_id = MemoryStore(database_path).add(
+    config, series = _series_context(series_slug)
+    memory_id = MemoryStore(config.database_path, series_slug=series.slug).add(
         kind=kind,
         text=text,
         source_ref=source_ref,

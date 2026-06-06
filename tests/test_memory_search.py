@@ -11,7 +11,7 @@ def _create_memory_store(config) -> MemoryStore:
         source_language="ja",
         target_language="en",
     )
-    return MemoryStore(series.database_path)
+    return MemoryStore(config.database_path, series_slug=series.slug)
 
 
 def test_memory_search_returns_relevant_entries(config):

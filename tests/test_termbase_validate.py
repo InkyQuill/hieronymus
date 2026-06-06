@@ -2,6 +2,15 @@ from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
 
 
+def _termbase_for_series(config, series) -> Termbase:
+    return Termbase(
+        config.database_path,
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+    )
+
+
 def test_validate_flags_forbidden_variant(config):
     series = Registry(config).create_series(
         slug="only-sense-online",
@@ -9,7 +18,7 @@ def test_validate_flags_forbidden_variant(config):
         source_language="ja",
         target_language="en",
     )
-    termbase = Termbase(series.database_path)
+    termbase = _termbase_for_series(config, series)
     term_id = termbase.propose(
         category="ability_name",
         source_text="攻撃力上昇",
@@ -40,7 +49,7 @@ def test_validate_flags_case_insensitive_forbidden_variant(config):
         source_language="ja",
         target_language="en",
     )
-    termbase = Termbase(series.database_path)
+    termbase = _termbase_for_series(config, series)
     term_id = termbase.propose(
         category="ability_name",
         source_text="攻撃力上昇",
@@ -76,7 +85,7 @@ def test_validate_flags_missing_canonical_when_source_present(config):
         source_language="ja",
         target_language="en",
     )
-    termbase = Termbase(series.database_path)
+    termbase = _termbase_for_series(config, series)
     term_id = termbase.propose(
         category="person_name",
         source_text="ガンツ",
@@ -102,7 +111,7 @@ def test_validate_accepts_approved_variant_as_final_form(config):
         source_language="ja",
         target_language="en",
     )
-    termbase = Termbase(series.database_path)
+    termbase = _termbase_for_series(config, series)
     term_id = termbase.propose(
         category="person_name",
         source_text="ガンツ",
@@ -123,7 +132,7 @@ def test_validate_returns_no_findings_for_clean_translation(config):
         source_language="ja",
         target_language="en",
     )
-    termbase = Termbase(series.database_path)
+    termbase = _termbase_for_series(config, series)
     term_id = termbase.propose(
         category="ability_name",
         source_text="攻撃力上昇",
@@ -147,7 +156,7 @@ def test_validate_returns_no_findings_without_contracted_term(config):
         source_language="ja",
         target_language="en",
     )
-    termbase = Termbase(series.database_path)
+    termbase = _termbase_for_series(config, series)
     term_id = termbase.propose(
         category="ability_name",
         source_text="攻撃力上昇",

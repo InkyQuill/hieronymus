@@ -34,7 +34,12 @@ def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
     approved = mcp_server.hieronymus_termbase_approve(series.slug, proposed["term_id"])
     assert approved == {"term_id": 1, "approved": True}
 
-    termbase = Termbase(series.database_path)
+    termbase = Termbase(
+        load_config().database_path,
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+    )
     termbase.add_alias(
         proposed["term_id"],
         kind="forbidden_variant",

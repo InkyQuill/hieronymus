@@ -27,8 +27,18 @@ def _contains(raw_text: str, text: str, *, case_sensitive: bool) -> bool:
 
 
 class Termbase:
-    def __init__(self, database_path: Path) -> None:
+    def __init__(
+        self,
+        database_path: Path,
+        *,
+        series_slug: str,
+        source_language: str,
+        target_language: str,
+    ) -> None:
         self.database_path = database_path
+        self.series_slug = series_slug
+        self.source_language = source_language
+        self.target_language = target_language
 
     def propose(
         self,
@@ -48,25 +58,40 @@ class Termbase:
         with connect(self.database_path) as conn:
             cursor = conn.execute(
                 """
-                insert into terms(
+                insert into strict_terms(
+                  series_slug,
+                  source_language,
+                  target_language,
                   category,
                   source_text,
                   canonical_translation,
                   status,
-                  scope,
                   notes,
                   created_at,
                   updated_at
                 )
-                values (?, ?, ?, 'pending', 'series', ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
                 """,
-                (category, source_text, canonical_translation, notes, now, now),
+                (
+                    self.series_slug,
+                    self.source_language,
+                    self.target_language,
+                    category,
+                    source_text,
+                    canonical_translation,
+                    notes,
+                    now,
+                    now,
+                ),
             )
             term_id = int(cursor.lastrowid)
             for tag in tags or []:
-                conn.execute("insert into term_tags(term_id, tag) values (?, ?)", (term_id, tag))
+                conn.execute(
+                    "insert into strict_term_tags(term_id, tag) values (?, ?)",
+                    (term_id, tag),
+                )
             conn.execute(
-                "insert into terms_fts(rowid, source_text, canonical_translation, notes) "
+                "insert into strict_terms_fts(rowid, source_text, canonical_translation, notes) "
                 "values (?, ?, ?, ?)",
                 (term_id, source_text, canonical_translation, notes),
             )
@@ -76,8 +101,12 @@ class Termbase:
     def approve(self, term_id: int) -> None:
         with connect(self.database_path) as conn:
             cursor = conn.execute(
-                "update terms set status = 'approved', updated_at = ? where id = ?",
-                (_now(), term_id),
+                """
+                update strict_terms
+                set status = 'approved', updated_at = ?
+                where id = ? and series_slug = ?
+                """,
+                (_now(), term_id, self.series_slug),
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"unknown term: {term_id}")
@@ -100,7 +129,7 @@ class Termbase:
         with connect(self.database_path) as conn:
             conn.execute(
                 """
-                insert into term_aliases(term_id, language, text, kind, case_sensitive)
+                insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
                 values (?, ?, ?, ?, ?)
                 """,
                 (term_id, language, text, kind, int(case_sensitive)),
@@ -110,12 +139,18 @@ class Termbase:
     def contract(self, raw_text: str) -> list[ContractTerm]:
         with connect(self.database_path) as conn:
             rows = conn.execute(
-                "select * from terms where status = 'approved' order by id"
+                """
+                select *
+                from strict_terms
+                where status = 'approved' and series_slug = ?
+                order by id
+                """,
+                (self.series_slug,),
             ).fetchall()
             result: list[ContractTerm] = []
             for row in rows:
                 alias_rows = conn.execute(
-                    "select * from term_aliases where term_id = ? order by id",
+                    "select * from strict_term_aliases where term_id = ? order by id",
                     (row["id"],),
                 ).fetchall()
                 source_variant_aliases = [
@@ -133,7 +168,7 @@ class Termbase:
                 tags = [
                     tag_row["tag"]
                     for tag_row in conn.execute(
-                        "select tag from term_tags where term_id = ? order by tag",
+                        "select tag from strict_term_tags where term_id = ? order by tag",
                         (row["id"],),
                     )
                 ]
@@ -161,7 +196,7 @@ class Termbase:
                 forbidden_rows = conn.execute(
                     """
                     select text, case_sensitive
-                    from term_aliases
+                    from strict_term_aliases
                     where term_id = ? and kind = 'forbidden_variant'
                     order by id
                     """,
@@ -191,7 +226,7 @@ class Termbase:
                 approved_variant_rows = conn.execute(
                     """
                     select text, case_sensitive
-                    from term_aliases
+                    from strict_term_aliases
                     where term_id = ? and kind = 'approved_variant'
                     order by id
                     """,

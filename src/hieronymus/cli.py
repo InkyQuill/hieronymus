@@ -51,7 +51,8 @@ def init_series(
         _raise_click_error(error)
     click.echo(
         json.dumps(
-            {"slug": series.slug, "database_path": str(series.database_path)}, ensure_ascii=False
+            {"slug": series.slug, "database_path": str(ctx.obj["config"].database_path)},
+            ensure_ascii=False,
         )
     )
 
@@ -73,7 +74,12 @@ def propose_term(
 ) -> None:
     try:
         series = Registry(ctx.obj["config"]).get_series(series_slug)
-        term_id = Termbase(series.database_path).propose(
+        term_id = Termbase(
+            ctx.obj["config"].database_path,
+            series_slug=series.slug,
+            source_language=series.source_language,
+            target_language=series.target_language,
+        ).propose(
             category=category,
             source_text=source_text,
             canonical_translation=translation,
@@ -102,7 +108,12 @@ def validate(ctx: click.Context, series_slug: str, raw_file: str, translated_fil
             open(raw_file, encoding="utf-8") as raw,
             open(translated_file, encoding="utf-8") as translated,
         ):
-            findings = Termbase(series.database_path).validate(
+            findings = Termbase(
+                ctx.obj["config"].database_path,
+                series_slug=series.slug,
+                source_language=series.source_language,
+                target_language=series.target_language,
+            ).validate(
                 raw_text=raw.read(),
                 translated_text=translated.read(),
             )
@@ -120,7 +131,7 @@ def validate(ctx: click.Context, series_slug: str, raw_file: str, translated_fil
 def remember(ctx: click.Context, series_slug: str, kind: str, text: str, source_ref: str) -> None:
     try:
         series = Registry(ctx.obj["config"]).get_series(series_slug)
-        memory_id = MemoryStore(series.database_path).add(
+        memory_id = MemoryStore(ctx.obj["config"].database_path, series_slug=series.slug).add(
             kind=kind, text=text, source_ref=source_ref
         )
     except (KeyError, ValueError) as error:

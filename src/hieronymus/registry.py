@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
@@ -17,7 +16,6 @@ class Series:
     title: str
     source_language: str
     target_language: str
-    database_path: Path
 
 
 def _now() -> str:
@@ -71,7 +69,7 @@ class Registry:
             )
             conn.commit()
 
-        return Series(slug, title, source_language, target_language, self.config.database_path)
+        return Series(slug, title, source_language, target_language)
 
     def get_series(self, slug: str) -> Series:
         with connect(self.config.database_path) as conn:
@@ -83,5 +81,17 @@ class Registry:
             title=row["title"],
             source_language=row["default_source_language"],
             target_language=row["default_target_language"],
-            database_path=self.config.database_path,
         )
+
+    def list_series(self) -> list[Series]:
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute("select * from series order by slug").fetchall()
+        return [
+            Series(
+                slug=row["slug"],
+                title=row["title"],
+                source_language=row["default_source_language"],
+                target_language=row["default_target_language"],
+            )
+            for row in rows
+        ]

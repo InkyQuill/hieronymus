@@ -12,7 +12,12 @@ def _create_termbase(config) -> Termbase:
         source_language="ja",
         target_language="en",
     )
-    return Termbase(series.database_path)
+    return Termbase(
+        config.database_path,
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+    )
 
 
 def _propose_sense_name(termbase: Termbase) -> int:
@@ -133,7 +138,7 @@ def test_propose_maintains_terms_fts_row(config):
     term_id = _propose_sense_name(termbase)
 
     with connect(termbase.database_path) as conn:
-        row = conn.execute("select * from terms_fts where rowid = ?", (term_id,)).fetchone()
+        row = conn.execute("select * from strict_terms_fts where rowid = ?", (term_id,)).fetchone()
 
     assert row["source_text"] == "攻撃力上昇"
     assert row["canonical_translation"] == "ATK Up"

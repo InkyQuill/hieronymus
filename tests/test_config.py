@@ -65,3 +65,31 @@ def test_global_migration_creates_memory_dreaming_schema(tmp_path: Path) -> None
         "strict_term_aliases",
         "strict_terms_fts",
     } <= tables
+    assert (
+        not {
+            "terms",
+            "term_tags",
+            "term_aliases",
+            "term_evidence",
+            "memories",
+            "terms_fts",
+            "memories_fts",
+        }
+        & tables
+    )
+
+
+def test_global_migration_allows_cycle_less_records(tmp_path: Path) -> None:
+    with connect(tmp_path / "hieronymus.sqlite") as conn:
+        apply_migration(conn, "global.sql")
+        nullable = {
+            table: {
+                row["name"]: not row["notnull"]
+                for row in conn.execute(f"pragma table_info({table})")
+            }
+            for table in ("task_sessions", "crystal_activations", "memory_events")
+        }
+
+    assert nullable["task_sessions"]["cycle_id"]
+    assert nullable["crystal_activations"]["cycle_id"]
+    assert nullable["memory_events"]["cycle_id"]

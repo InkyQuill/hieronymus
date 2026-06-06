@@ -15,9 +15,10 @@ def test_create_series_initializes_global_database(config):
     )
 
     assert series.slug == "only-sense-online"
-    assert series.database_path == config.database_path
+    assert not hasattr(series, "database_path")
     assert config.database_path.exists()
     assert registry.get_series("only-sense-online").title == "Only Sense Online"
+    assert registry.list_series() == [series]
 
 
 @pytest.mark.parametrize("slug", ["../../escape", "bad/slug"])
