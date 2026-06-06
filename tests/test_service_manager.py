@@ -26,6 +26,12 @@ class FakeClient:
         return {"ok": True, "stopping": True}
 
 
+def test_manager_uses_planned_startup_timeout(tmp_path: Path) -> None:
+    manager = ServiceManager(HieronymusConfig(data_root=tmp_path / "hieronymus"))
+
+    assert manager.startup_timeout == 5.0
+
+
 def test_status_reports_not_running_without_state(tmp_path: Path) -> None:
     manager = ServiceManager(HieronymusConfig(data_root=tmp_path / "hieronymus"))
 
