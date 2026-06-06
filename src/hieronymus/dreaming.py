@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
+from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
@@ -116,6 +117,7 @@ class DreamService:
     def __init__(self, config: HieronymusConfig, provider: DreamProvider) -> None:
         self.config = config
         self.provider = provider
+        self.concept_proposals = ConceptProposalStore(config)
         with connect(self.config.database_path) as conn:
             apply_migration(conn, "global.sql")
 
@@ -499,41 +501,19 @@ class DreamService:
     ) -> None:
         if not proposals:
             return
-        now = _now()
         for proposal in proposals:
-            conn.execute(
-                """
-                insert into strict_concept_proposals(
-                  dream_run_id,
-                  series_slug,
-                  source_language,
-                  target_language,
-                  concept_text,
-                  source_form,
-                  canonical_rendering,
-                  approved_variants_json,
-                  forbidden_variants_json,
-                  rationale,
-                  status,
-                  created_at,
-                  updated_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-                """,
-                (
-                    run_id,
-                    proposal.series_slug,
-                    proposal.source_language,
-                    proposal.target_language,
-                    proposal.concept_text,
-                    proposal.source_form,
-                    proposal.canonical_rendering,
-                    json.dumps(proposal.approved_variants, ensure_ascii=False),
-                    json.dumps(proposal.forbidden_variants, ensure_ascii=False),
-                    proposal.rationale,
-                    now,
-                    now,
-                ),
+            self.concept_proposals._create_with_connection(
+                conn,
+                dream_run_id=run_id,
+                series_slug=proposal.series_slug,
+                source_language=proposal.source_language,
+                target_language=proposal.target_language,
+                concept_text=proposal.concept_text,
+                source_form=proposal.source_form,
+                canonical_rendering=proposal.canonical_rendering,
+                approved_variants=proposal.approved_variants,
+                forbidden_variants=proposal.forbidden_variants,
+                rationale=proposal.rationale,
             )
 
     def _next_cycle_id(self, conn) -> int:
