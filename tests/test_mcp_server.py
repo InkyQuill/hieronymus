@@ -5,7 +5,10 @@ import tomllib
 
 import pytest
 
+from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import load_config
+from hieronymus.crystals import CrystalStore
+from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
@@ -147,4 +150,199 @@ def test_mcp_server_registers_expected_tool_names():
         "hieronymus_termbase_approve",
         "hieronymus_memory_search",
         "hieronymus_memory_add",
+        "hieronymus_session_start",
+        "hieronymus_session_complete",
+        "hieronymus_short_term_add",
+        "hieronymus_recall",
+        "hieronymus_feedback",
+        "hieronymus_dream",
+        "hieronymus_concept_proposals_list",
     }
+
+
+def test_mcp_session_memory_complete_and_dream_happy_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    series = Registry(load_config()).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+
+    from hieronymus import mcp_server
+
+    started = mcp_server.hieronymus_session_start(
+        series.slug,
+        volume="1",
+        chapter="2",
+    )
+    assert started == {"session_id": 1}
+
+    added = mcp_server.hieronymus_short_term_add(
+        started["session_id"],
+        source_role="user",
+        kind="correction",
+        text="Use Sense as a game-system term.",
+        source_ref="chapter-2",
+        metadata={"line": 12},
+    )
+    assert added == {"memory_id": 1}
+
+    completed = mcp_server.hieronymus_session_complete(started["session_id"])
+    assert completed == {"session_id": 1, "completed": True}
+
+    dreamed = mcp_server.hieronymus_dream()
+    assert dreamed == {"cycle_id": 1, "status": "completed"}
+
+
+def test_mcp_recall_returns_expected_dict(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+
+    from hieronymus import mcp_server
+
+    session_id = mcp_server.hieronymus_session_start(series.slug)["session_id"]
+    context = TranslationContext(
+        series_slug=series.slug,
+        source_language="ja",
+        target_language="en",
+        task_type="translation",
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Render Sense as Sense in UI references.",
+        title="Sense Rendering",
+        strength=0.8,
+        confidence=0.9,
+    )
+
+    recalled = mcp_server.hieronymus_recall(
+        session_id,
+        series.slug,
+        "Sense UI",
+        limit=5,
+    )
+
+    assert recalled == [
+        {
+            "crystal_id": crystal_id,
+            "text": "Render Sense as Sense in UI references.",
+            "rank": 1,
+            "score": pytest.approx(recalled[0]["score"]),
+            "reason": "weighted search match",
+        }
+    ]
+
+
+def test_mcp_recall_rejects_mismatched_session_context_without_activation(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+
+    from hieronymus import mcp_server
+
+    session_id = mcp_server.hieronymus_session_start(series.slug, volume="1")["session_id"]
+
+    with pytest.raises(ValueError, match="session context mismatch"):
+        mcp_server.hieronymus_recall(
+            session_id,
+            series.slug,
+            "Sense",
+            volume="2",
+        )
+
+    with connect(config.database_path) as conn:
+        activation_count = conn.execute("select count(*) from crystal_activations").fetchone()[0]
+    assert activation_count == 0
+
+
+def test_mcp_feedback_returns_event_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    context = TranslationContext(
+        series_slug=series.slug,
+        source_language="ja",
+        target_language="en",
+        task_type="translation",
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Keep UI labels concise.",
+    )
+
+    from hieronymus import mcp_server
+
+    event = mcp_server.hieronymus_feedback(
+        crystal_id,
+        event_type="confirmed_by_user",
+        source_role="user",
+        evidence="Applied in chapter 1.",
+    )
+
+    assert event == {"event_id": 1}
+
+
+def test_mcp_concept_proposals_list_returns_pending(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    store = ConceptProposalStore(load_config())
+    store.create(
+        dream_run_id=None,
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="en",
+        concept_text="Sense",
+        source_form="センス",
+        canonical_rendering="Sense",
+        approved_variants=["Sense"],
+        forbidden_variants=["Senses"],
+        rationale="User correction.",
+    )
+
+    from hieronymus import mcp_server
+
+    assert mcp_server.hieronymus_concept_proposals_list() == [
+        {
+            "id": 1,
+            "series_slug": "only-sense-online",
+            "source_language": "ja",
+            "target_language": "en",
+            "concept_text": "Sense",
+            "source_form": "センス",
+            "canonical_rendering": "Sense",
+            "approved_variants": ["Sense"],
+            "forbidden_variants": ["Senses"],
+            "rationale": "User correction.",
+            "status": "pending",
+        }
+    ]
+
+
+def test_mcp_dream_rejects_unsupported_provider(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+
+    from hieronymus import mcp_server
+
+    with pytest.raises(ValueError, match="unsupported dream provider"):
+        mcp_server.hieronymus_dream(provider="external")
