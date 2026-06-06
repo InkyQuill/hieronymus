@@ -6,9 +6,10 @@ It keeps strict terminology stable per series while also giving translator agent
 
 ## Status
 
-Design and implementation planning are in progress.
+MVP implementation exists for local series setup, strict termbase validation, memory import/search, and MCP/CLI workflows.
 
 ## Documents
 
+- [Usage guide](docs/usage.md)
 - [Design spec](docs/superpowers/specs/2026-06-06-hieronymus-design.md)
 - [Implementation plan](docs/superpowers/plans/2026-06-06-hieronymus-mvp.md)

@@ -188,7 +188,24 @@ class Termbase:
                             ),
                         )
                     )
-                if term.canonical_translation not in translated_text:
+                approved_variant_rows = conn.execute(
+                    """
+                    select text, case_sensitive
+                    from term_aliases
+                    where term_id = ? and kind = 'approved_variant'
+                    order by id
+                    """,
+                    (term.id,),
+                ).fetchall()
+                has_approved_form = term.canonical_translation in translated_text or any(
+                    _contains(
+                        translated_text,
+                        approved_variant["text"],
+                        case_sensitive=bool(approved_variant["case_sensitive"]),
+                    )
+                    for approved_variant in approved_variant_rows
+                )
+                if not has_approved_form:
                     findings.append(
                         ValidationFinding(
                             term_id=term.id,
