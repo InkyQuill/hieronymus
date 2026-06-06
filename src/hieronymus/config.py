@@ -10,15 +10,15 @@ class HieronymusConfig:
     data_root: Path
 
     @property
-    def registry_path(self) -> Path:
-        return self.data_root / "registry.sqlite"
-
-    @property
-    def series_dir(self) -> Path:
-        return self.data_root / "series"
+    def database_path(self) -> Path:
+        return self.data_root / "hieronymus.sqlite"
 
 
-def load_config(data_root: str | None = None) -> HieronymusConfig:
-    raw_root = data_root or os.environ.get("HIERONYMUS_DATA_ROOT")
-    root = Path(raw_root).expanduser() if raw_root else Path.home() / ".hieronymus"
+def load_config(data_root: str | Path | None = None) -> HieronymusConfig:
+    if data_root is not None:
+        root = Path(data_root).expanduser()
+    elif env_root := os.environ.get("HIERONYMUS_DATA_ROOT"):
+        root = Path(env_root).expanduser()
+    else:
+        root = Path.home() / ".config" / "hieronymus"
     return HieronymusConfig(data_root=root)

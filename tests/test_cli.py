@@ -28,9 +28,9 @@ def test_init_series_outputs_json_and_creates_database(tmp_path):
     payload = json.loads(result.output)
     assert payload == {
         "slug": "only-sense-online",
-        "database_path": str(data_root / "series" / "only-sense-online.sqlite"),
+        "database_path": str(data_root / "hieronymus.sqlite"),
     }
-    assert (data_root / "series" / "only-sense-online.sqlite").exists()
+    assert (data_root / "hieronymus.sqlite").exists()
 
 
 def test_unknown_series_returns_clean_click_error(tmp_path):
@@ -135,5 +135,5 @@ def test_console_entrypoint_init_series_outputs_json(tmp_path):
     payload = json.loads(result.stdout)
     assert payload == {
         "slug": "only-sense-online",
-        "database_path": str(data_root / "series" / "only-sense-online.sqlite"),
+        "database_path": str(data_root / "hieronymus.sqlite"),
     }

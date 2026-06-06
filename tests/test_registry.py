@@ -4,7 +4,7 @@ from hieronymus import registry as registry_module
 from hieronymus.registry import Registry
 
 
-def test_create_series_initializes_registry_and_series_database(config):
+def test_create_series_initializes_global_database(config):
     registry = Registry(config)
 
     series = registry.create_series(
@@ -15,8 +15,8 @@ def test_create_series_initializes_registry_and_series_database(config):
     )
 
     assert series.slug == "only-sense-online"
-    assert config.registry_path.exists()
-    assert (config.series_dir / "only-sense-online.sqlite").exists()
+    assert series.database_path == config.database_path
+    assert config.database_path.exists()
     assert registry.get_series("only-sense-online").title == "Only Sense Online"
 
 
@@ -33,28 +33,20 @@ def test_create_series_rejects_filename_unsafe_slugs(config, slug):
         )
 
     assert not (config.data_root.parent / "escape.sqlite").exists()
-    assert not (config.series_dir / "bad" / "slug.sqlite").exists()
-    assert list(config.series_dir.rglob("*.sqlite")) == []
+    assert list(config.data_root.rglob("*.sqlite")) == [config.database_path]
+    with pytest.raises(KeyError, match=f"unknown series: {slug}"):
+        registry.get_series(slug)
 
 
-def test_create_series_does_not_record_series_when_series_migration_fails(config, monkeypatch):
-    registry = Registry(config)
+def test_registry_raises_when_global_migration_fails(config, monkeypatch):
     original_apply_migration = registry_module.apply_migration
 
-    def fail_series_migration(conn, name):
-        if name == "series.sql":
-            raise RuntimeError("series migration failed")
+    def fail_global_migration(conn, name):
+        if name == "global.sql":
+            raise RuntimeError("global migration failed")
         original_apply_migration(conn, name)
 
-    monkeypatch.setattr(registry_module, "apply_migration", fail_series_migration)
+    monkeypatch.setattr(registry_module, "apply_migration", fail_global_migration)
 
-    with pytest.raises(RuntimeError, match="series migration failed"):
-        registry.create_series(
-            slug="migration-failure",
-            title="Migration Failure",
-            source_language="ja",
-            target_language="en",
-        )
-
-    with pytest.raises(KeyError, match="unknown series: migration-failure"):
-        registry.get_series("migration-failure")
+    with pytest.raises(RuntimeError, match="global migration failed"):
+        Registry(config)
