@@ -10,6 +10,7 @@ from hieronymus.service_state import (
     cleanup_stale_state,
     is_pid_running,
     read_server_state,
+    remove_server_state,
     runtime_paths,
     write_server_state,
 )
@@ -63,6 +64,62 @@ def test_cleanup_stale_state_removes_dead_pid_files(tmp_path: Path) -> None:
     removed = cleanup_stale_state(config)
 
     assert removed is True
+    assert read_server_state(config) is None
+    assert not paths.server_pid.exists()
+    assert not paths.server_lock.exists()
+
+
+def test_remove_server_state_preserves_different_owner(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    old_state = ServerState(
+        pid=11111,
+        host="127.0.0.1",
+        port=32199,
+        version="0.1.0",
+        started_at="2026-06-06T12:00:00Z",
+        data_root=str(config.data_root),
+        database_path=str(config.database_path),
+        token="old-token",
+    )
+    new_state = ServerState(
+        pid=22222,
+        host="127.0.0.1",
+        port=32200,
+        version="0.1.0",
+        started_at="2026-06-06T12:00:01Z",
+        data_root=str(config.data_root),
+        database_path=str(config.database_path),
+        token="new-token",
+    )
+    paths = runtime_paths(config)
+    write_server_state(config, new_state)
+    paths.server_lock.write_text("22222", encoding="utf-8")
+
+    remove_server_state(config, expected_state=old_state)
+
+    assert read_server_state(config) == new_state
+    assert paths.server_pid.exists()
+    assert paths.server_lock.exists()
+
+
+def test_remove_server_state_removes_matching_owner(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = ServerState(
+        pid=12345,
+        host="127.0.0.1",
+        port=32199,
+        version="0.1.0",
+        started_at="2026-06-06T12:00:00Z",
+        data_root=str(config.data_root),
+        database_path=str(config.database_path),
+        token="local-test-token",
+    )
+    paths = runtime_paths(config)
+    write_server_state(config, state)
+    paths.server_lock.write_text("12345", encoding="utf-8")
+
+    remove_server_state(config, expected_state=state)
+
     assert read_server_state(config) is None
     assert not paths.server_pid.exists()
     assert not paths.server_lock.exists()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -76,4 +77,8 @@ def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, An
 
 
 def build_server(config: HieronymusConfig, state: ServerState) -> HieronymusHTTPServer:
-    return HieronymusHTTPServer((state.host, state.port), config, state)
+    server = HieronymusHTTPServer((state.host, state.port), config, state)
+    actual_port = int(server.server_address[1])
+    if actual_port != state.port:
+        server.state = replace(state, port=actual_port)
+    return server

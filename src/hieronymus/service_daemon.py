@@ -10,7 +10,6 @@ from hieronymus.presentation import package_version
 from hieronymus.service_http import build_server
 from hieronymus.service_state import (
     ServerState,
-    allocate_loopback_port,
     remove_server_state,
     write_server_state,
 )
@@ -27,24 +26,24 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     config = load_config(args.data_root)
     config.data_root.mkdir(parents=True, exist_ok=True)
-    port = args.port if args.port > 0 else allocate_loopback_port()
     state = ServerState(
         pid=os.getpid(),
         host="127.0.0.1",
-        port=port,
+        port=args.port if args.port > 0 else 0,
         version=package_version(),
         started_at=datetime.now(UTC).isoformat(),
         data_root=str(config.data_root),
         database_path=str(config.database_path),
         token=secrets.token_hex(16),
     )
-    write_server_state(config, state)
     server = build_server(config, state)
+    state = server.state
+    write_server_state(config, state)
     try:
         server.serve_forever()
     finally:
         server.server_close()
-        remove_server_state(config)
+        remove_server_state(config, expected_state=state)
 
 
 if __name__ == "__main__":

@@ -100,13 +100,24 @@ def write_server_state(config: HieronymusConfig, state: ServerState) -> None:
     paths.server_pid.write_text(f"{state.pid}\n", encoding="utf-8")
 
 
-def remove_server_state(config: HieronymusConfig) -> None:
+def remove_server_state(
+    config: HieronymusConfig,
+    expected_state: ServerState | None = None,
+) -> bool:
+    if expected_state is not None:
+        current_state = read_server_state(config)
+        if current_state is None:
+            return False
+        if current_state.pid != expected_state.pid or current_state.token != expected_state.token:
+            return False
+
     paths = runtime_paths(config)
     for path in (paths.server_json, paths.server_pid, paths.server_lock):
         try:
             path.unlink()
         except FileNotFoundError:
             pass
+    return True
 
 
 def cleanup_stale_state(config: HieronymusConfig) -> bool:
@@ -115,8 +126,7 @@ def cleanup_stale_state(config: HieronymusConfig) -> bool:
         return False
     if is_pid_running(state.pid):
         return False
-    remove_server_state(config)
-    return True
+    return remove_server_state(config, expected_state=state)
 
 
 def allocate_loopback_port() -> int:

@@ -4,10 +4,11 @@ import json
 import threading
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.service_http import HieronymusHTTPServer, build_server
-from hieronymus.service_state import ServerState, allocate_loopback_port
+from hieronymus.service_state import ServerState
 
 
 def _read_json(url: str) -> dict[str, object]:
@@ -15,28 +16,48 @@ def _read_json(url: str) -> dict[str, object]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def test_health_endpoint_returns_daemon_identity(tmp_path: Path) -> None:
-    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    state = ServerState(
+def _post_json(url: str) -> dict[str, object]:
+    request = urllib.request.Request(url, method="POST")
+    with urllib.request.urlopen(request, timeout=2) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _make_state(config: HieronymusConfig) -> ServerState:
+    return ServerState(
         pid=12345,
         host="127.0.0.1",
-        port=allocate_loopback_port(),
+        port=0,
         version="0.1.0",
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
         token="local-test-token",
     )
-    server = build_server(config, state)
-    assert isinstance(server, HieronymusHTTPServer)
+
+
+def _serve(server: HieronymusHTTPServer) -> tuple[threading.Thread, str]:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    host, port = server.server_address
+    return thread, f"http://{host}:{port}"
+
+
+def _stop_server(server: HieronymusHTTPServer, thread: threading.Thread) -> None:
+    server.shutdown()
+    thread.join(timeout=2)
+    server.server_close()
+
+
+def test_health_endpoint_returns_daemon_identity(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = _make_state(config)
+    server = build_server(config, state)
+    assert isinstance(server, HieronymusHTTPServer)
+    thread, base_url = _serve(server)
     try:
-        payload = _read_json(f"http://127.0.0.1:{state.port}/health")
+        payload = _read_json(f"{base_url}/health")
     finally:
-        server.shutdown()
-        thread.join(timeout=2)
-        server.server_close()
+        _stop_server(server, thread)
 
     assert payload["ok"] is True
     assert payload["service"] == "hieronymus"
@@ -45,27 +66,41 @@ def test_health_endpoint_returns_daemon_identity(tmp_path: Path) -> None:
 
 def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    state = ServerState(
-        pid=12345,
-        host="127.0.0.1",
-        port=allocate_loopback_port(),
-        version="0.1.0",
-        started_at="2026-06-06T12:00:00Z",
-        data_root=str(config.data_root),
-        database_path=str(config.database_path),
-        token="local-test-token",
-    )
+    state = _make_state(config)
     server = build_server(config, state)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread, base_url = _serve(server)
     try:
-        payload = _read_json(f"http://127.0.0.1:{state.port}/status")
+        payload = _read_json(f"{base_url}/status")
     finally:
-        server.shutdown()
-        thread.join(timeout=2)
-        server.server_close()
+        _stop_server(server, thread)
 
     assert payload["running"] is True
     assert payload["pid"] == 12345
+    assert payload["host"] == "127.0.0.1"
+    assert payload["port"] == server.server_address[1]
+    assert payload["version"] == "0.1.0"
+    assert payload["started_at"] == "2026-06-06T12:00:00Z"
     assert payload["data_root"] == str(config.data_root)
     assert payload["database_path"] == str(config.database_path)
+    assert payload["config_path"] == str(config.config_root)
+    assert payload["providers"] == []
+    assert payload["mcp_adapter"] == {"available": True, "mode": "local-http"}
+    assert payload["housekeeping"] == {"last_cycle": None, "pending": False}
+
+
+def test_shutdown_endpoint_stops_server(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = _make_state(config)
+    server = build_server(config, state)
+    thread, base_url = _serve(server)
+    try:
+        payload: dict[str, Any] = _post_json(f"{base_url}/shutdown")
+        thread.join(timeout=2)
+    finally:
+        if thread.is_alive():
+            server.shutdown()
+            thread.join(timeout=2)
+        server.server_close()
+
+    assert payload == {"ok": True, "stopping": True}
+    assert not thread.is_alive()
