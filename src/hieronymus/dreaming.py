@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 
@@ -109,7 +108,6 @@ class DreamService:
     def __init__(self, config: HieronymusConfig, provider: DreamProvider) -> None:
         self.config = config
         self.provider = provider
-        self.crystals = CrystalStore(config)
         with connect(self.config.database_path) as conn:
             apply_migration(conn, "global.sql")
 
@@ -133,61 +131,22 @@ class DreamService:
                 (context, session_id, memories, self.provider.crystallize(context, memories))
                 for session_id, context, memories in groups
             ]
-            for _context, _session_id, memories, output in outputs:
-                self._validate_output(output, {memory.id for memory in memories})
+            for context, _session_id, memories, output in outputs:
+                self._validate_output(output, context, {memory.id for memory in memories})
 
-            created_crystal_count = 0
-            proposal_count = 0
-            for context, _session_id, _memories, output in outputs:
-                for candidate in output.crystals:
-                    self.crystals.add_crystal(
-                        context,
-                        crystal_type=candidate.crystal_type,
-                        title=candidate.title,
-                        text=candidate.text,
-                        strength=candidate.strength,
-                        confidence=candidate.confidence,
-                        source_memory_ids=candidate.source_memory_ids,
-                    )
-                    created_crystal_count += 1
-                proposal_count += self._insert_concept_proposals(run_id, output.concept_proposals)
-
-            with connect(self.config.database_path) as conn:
-                session_ids = [session_id for session_id, _context, _memories in groups]
-                for session_id in session_ids:
-                    conn.execute(
-                        """
-                        update task_sessions
-                        set status = 'dreamed',
-                            cycle_id = ?
-                        where id = ?
-                        """,
-                        (cycle_id, session_id),
-                    )
-                conn.execute(
-                    """
-                    update dream_runs
-                    set status = 'completed',
-                        input_count = ?,
-                        created_crystal_count = ?,
-                        proposal_count = ?,
-                        completed_at = ?
-                    where id = ?
-                    """,
-                    (
-                        sum(len(memories) for _sid, _context, memories in groups),
-                        created_crystal_count,
-                        proposal_count,
-                        _now(),
-                        run_id,
-                    ),
-                )
-                conn.commit()
+            input_count = sum(len(memories) for _sid, _context, memories in groups)
+            created_crystal_count, proposal_count = self._apply_outputs(
+                run_id=run_id,
+                cycle_id=cycle_id,
+                groups=groups,
+                outputs=outputs,
+                input_count=input_count,
+            )
             return DreamRunRecord(
                 id=run_id,
                 cycle_id=cycle_id,
                 status="completed",
-                input_count=sum(len(memories) for _sid, _context, memories in groups),
+                input_count=input_count,
                 created_crystal_count=created_crystal_count,
                 proposal_count=proposal_count,
             )
@@ -259,60 +218,186 @@ class DreamService:
                 )
         return groups
 
-    def _insert_concept_proposals(
+    def _apply_outputs(
         self,
+        *,
         run_id: int,
-        proposals: list[DreamConceptProposal],
-    ) -> int:
-        if not proposals:
-            return 0
-        now = _now()
+        cycle_id: int,
+        groups: list[tuple[int, TranslationContext, list[ShortTermMemoryRecord]]],
+        outputs: list[tuple[TranslationContext, int, list[ShortTermMemoryRecord], DreamOutput]],
+        input_count: int,
+    ) -> tuple[int, int]:
+        created_crystal_count = 0
+        proposal_count = 0
         with connect(self.config.database_path) as conn:
-            for proposal in proposals:
+            try:
+                for context, _session_id, _memories, output in outputs:
+                    for candidate in output.crystals:
+                        self._insert_crystal_for_dream(conn, context, candidate)
+                        created_crystal_count += 1
+                    self._insert_concept_proposals(conn, run_id, output.concept_proposals)
+                    proposal_count += len(output.concept_proposals)
+
+                for session_id, _context, _memories in groups:
+                    conn.execute(
+                        """
+                        update task_sessions
+                        set status = 'dreamed',
+                            cycle_id = ?
+                        where id = ?
+                        """,
+                        (cycle_id, session_id),
+                    )
                 conn.execute(
                     """
-                    insert into strict_concept_proposals(
-                      dream_run_id,
-                      series_slug,
-                      source_language,
-                      target_language,
-                      concept_text,
-                      source_form,
-                      canonical_rendering,
-                      approved_variants_json,
-                      forbidden_variants_json,
-                      rationale,
-                      status,
-                      created_at,
-                      updated_at
-                    )
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                    update dream_runs
+                    set status = 'completed',
+                        input_count = ?,
+                        created_crystal_count = ?,
+                        proposal_count = ?,
+                        completed_at = ?
+                    where id = ?
                     """,
                     (
+                        input_count,
+                        created_crystal_count,
+                        proposal_count,
+                        _now(),
                         run_id,
-                        proposal.series_slug,
-                        proposal.source_language,
-                        proposal.target_language,
-                        proposal.concept_text,
-                        proposal.source_form,
-                        proposal.canonical_rendering,
-                        json.dumps(proposal.approved_variants, ensure_ascii=False),
-                        json.dumps(proposal.forbidden_variants, ensure_ascii=False),
-                        proposal.rationale,
-                        now,
-                        now,
                     ),
                 )
-            conn.commit()
-        return len(proposals)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return created_crystal_count, proposal_count
+
+    def _insert_crystal_for_dream(
+        self,
+        conn,
+        context: TranslationContext,
+        candidate: DreamCrystalCandidate,
+    ) -> int:
+        return self._insert_crystal(conn, context, candidate)
+
+    def _insert_crystal(
+        self,
+        conn,
+        context: TranslationContext,
+        candidate: DreamCrystalCandidate,
+    ) -> int:
+        now = _now()
+        cursor = conn.execute(
+            """
+            insert into crystals(
+              crystal_type,
+              text,
+              title,
+              scope_type,
+              scope_key,
+              series_slug,
+              source_language,
+              target_language,
+              tags_json,
+              strength,
+              confidence,
+              status,
+              created_at,
+              updated_at
+            )
+            values (?, ?, ?, 'series', ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            """,
+            (
+                candidate.crystal_type,
+                candidate.text,
+                candidate.title,
+                context.scope_key,
+                context.series_slug,
+                context.source_language,
+                context.target_language,
+                json.dumps(list(context.tags), ensure_ascii=False, sort_keys=True),
+                candidate.strength,
+                candidate.confidence,
+                now,
+                now,
+            ),
+        )
+        crystal_id = int(cursor.lastrowid)
+        conn.execute(
+            "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
+            (crystal_id, candidate.title, candidate.text),
+        )
+        for memory_id in candidate.source_memory_ids:
+            conn.execute(
+                """
+                insert into crystal_sources(crystal_id, short_term_memory_id)
+                values (?, ?)
+                """,
+                (crystal_id, memory_id),
+            )
+        return crystal_id
+
+    def _insert_concept_proposals(
+        self,
+        conn,
+        run_id: int,
+        proposals: list[DreamConceptProposal],
+    ) -> None:
+        if not proposals:
+            return
+        now = _now()
+        for proposal in proposals:
+            conn.execute(
+                """
+                insert into strict_concept_proposals(
+                  dream_run_id,
+                  series_slug,
+                  source_language,
+                  target_language,
+                  concept_text,
+                  source_form,
+                  canonical_rendering,
+                  approved_variants_json,
+                  forbidden_variants_json,
+                  rationale,
+                  status,
+                  created_at,
+                  updated_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    run_id,
+                    proposal.series_slug,
+                    proposal.source_language,
+                    proposal.target_language,
+                    proposal.concept_text,
+                    proposal.source_form,
+                    proposal.canonical_rendering,
+                    json.dumps(proposal.approved_variants, ensure_ascii=False),
+                    json.dumps(proposal.forbidden_variants, ensure_ascii=False),
+                    proposal.rationale,
+                    now,
+                    now,
+                ),
+            )
 
     def _next_cycle_id(self, conn) -> int:
         row = conn.execute("select coalesce(max(cycle_id), 0) + 1 from dream_runs").fetchone()
         return int(row[0])
 
-    def _validate_output(self, output: DreamOutput, allowed_memory_ids: set[int]) -> None:
+    def _validate_output(
+        self,
+        output: DreamOutput,
+        context: TranslationContext,
+        allowed_memory_ids: set[int],
+    ) -> None:
         if not isinstance(output, DreamOutput):
             raise ValueError("provider output must be a DreamOutput")
+        if not isinstance(output.crystals, list):
+            raise ValueError("provider output crystals must be a list")
+        if not isinstance(output.concept_proposals, list):
+            raise ValueError("provider output concept_proposals must be a list")
 
         for candidate in output.crystals:
             if not isinstance(candidate, DreamCrystalCandidate):
@@ -336,12 +421,32 @@ class DreamService:
                 raise ValueError(
                     "provider concept_proposals must contain only DreamConceptProposal items"
                 )
+            if proposal.series_slug != context.series_slug:
+                raise ValueError("proposal series_slug must match context")
+            if proposal.source_language != context.source_language:
+                raise ValueError("proposal source_language must match context")
+            if proposal.target_language != context.target_language:
+                raise ValueError("proposal target_language must match context")
+            if not isinstance(proposal.concept_text, str):
+                raise ValueError("proposal concept_text must be a string")
+            if not isinstance(proposal.source_form, str):
+                raise ValueError("proposal source_form must be a string")
+            if not isinstance(proposal.canonical_rendering, str):
+                raise ValueError("proposal canonical_rendering must be a string")
             if not proposal.concept_text.strip():
                 raise ValueError("proposal concept_text must not be empty")
             if not proposal.source_form.strip():
                 raise ValueError("proposal source_form must not be empty")
             if not proposal.canonical_rendering.strip():
                 raise ValueError("proposal canonical_rendering must not be empty")
+            if not isinstance(proposal.approved_variants, list):
+                raise ValueError("proposal approved_variants must be a list")
+            if not all(isinstance(variant, str) for variant in proposal.approved_variants):
+                raise ValueError("proposal approved_variants must contain only strings")
+            if not isinstance(proposal.forbidden_variants, list):
+                raise ValueError("proposal forbidden_variants must be a list")
+            if not all(isinstance(variant, str) for variant in proposal.forbidden_variants):
+                raise ValueError("proposal forbidden_variants must contain only strings")
 
 
 def _normalize_candidate_text(text: str) -> str:

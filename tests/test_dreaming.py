@@ -225,6 +225,180 @@ def test_dreaming_records_failed_run_when_provider_returns_invalid_crystal_item(
     assert session_row["cycle_id"] is None
 
 
+def test_dreaming_rolls_back_applied_outputs_when_crystal_insert_fails(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TwoCrystalProvider:
+        name = "two-crystals"
+
+        def crystallize(self, context, memories):
+            return DreamOutput(
+                crystals=[
+                    DreamCrystalCandidate(
+                        crystal_type="lesson",
+                        title="First",
+                        text="First valid candidate.",
+                        strength=0.5,
+                        confidence=0.5,
+                        source_memory_ids=[memories[0].id],
+                    ),
+                    DreamCrystalCandidate(
+                        crystal_type="lesson",
+                        title="Second",
+                        text="Second valid candidate.",
+                        strength=0.5,
+                        confidence=0.5,
+                        source_memory_ids=[memories[0].id],
+                    ),
+                ],
+                concept_proposals=[
+                    DreamConceptProposal(
+                        series_slug=context.series_slug,
+                        source_language=context.source_language,
+                        target_language=context.target_language,
+                        concept_text="Sense",
+                        source_form="センス",
+                        canonical_rendering="Сенс",
+                        approved_variants=["Сенс"],
+                        forbidden_variants=[],
+                        rationale="Valid proposal.",
+                    )
+                ],
+            )
+
+    calls = 0
+
+    def fail_after_first_crystal(self, conn, context, candidate):
+        nonlocal calls
+        calls += 1
+        crystal_id = self._insert_crystal(conn, context, candidate)
+        if calls == 2:
+            raise RuntimeError("apply failure")
+        return crystal_id
+
+    monkeypatch.setattr(
+        DreamService,
+        "_insert_crystal_for_dream",
+        fail_after_first_crystal,
+        raising=False,
+    )
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "Valid input.")
+    workspace.complete_session(session.id)
+
+    with pytest.raises(RuntimeError, match="apply failure"):
+        DreamService(config, TwoCrystalProvider()).run_cycle()
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select * from dream_runs").fetchone()
+        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
+        proposal_count = conn.execute("select count(*) from strict_concept_proposals").fetchone()[0]
+        session_row = conn.execute("select status, cycle_id from task_sessions").fetchone()
+
+    assert run["status"] == "failed"
+    assert run["completed_at"]
+    assert crystal_count == 0
+    assert proposal_count == 0
+    assert session_row["status"] == "completed"
+    assert session_row["cycle_id"] is None
+
+
+def test_dreaming_rejects_concept_proposal_with_mismatched_scope(
+    config: HieronymusConfig,
+) -> None:
+    class MismatchedProposalProvider:
+        name = "mismatched-proposal"
+
+        def crystallize(self, context, memories):
+            return DreamOutput(
+                crystals=[],
+                concept_proposals=[
+                    DreamConceptProposal(
+                        series_slug="other-series",
+                        source_language=context.source_language,
+                        target_language=context.target_language,
+                        concept_text="Sense",
+                        source_form="センス",
+                        canonical_rendering="Сенс",
+                        approved_variants=["Сенс"],
+                        forbidden_variants=[],
+                        rationale="Wrong scope.",
+                    )
+                ],
+            )
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "mundane", "term", "Valid input.")
+    workspace.complete_session(session.id)
+
+    with pytest.raises(ValueError, match="series_slug"):
+        DreamService(config, MismatchedProposalProvider()).run_cycle()
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select * from dream_runs").fetchone()
+        proposal_count = conn.execute("select count(*) from strict_concept_proposals").fetchone()[0]
+        session_row = conn.execute("select status, cycle_id from task_sessions").fetchone()
+
+    assert run["status"] == "failed"
+    assert "series_slug" in run["error"]
+    assert run["completed_at"]
+    assert proposal_count == 0
+    assert session_row["status"] == "completed"
+    assert session_row["cycle_id"] is None
+
+
+def test_dreaming_rejects_concept_proposal_with_non_string_variant(
+    config: HieronymusConfig,
+) -> None:
+    class InvalidVariantProvider:
+        name = "invalid-variant"
+
+        def crystallize(self, context, memories):
+            return DreamOutput(
+                crystals=[],
+                concept_proposals=[
+                    DreamConceptProposal(
+                        series_slug=context.series_slug,
+                        source_language=context.source_language,
+                        target_language=context.target_language,
+                        concept_text="Sense",
+                        source_form="センス",
+                        canonical_rendering="Сенс",
+                        approved_variants=["Сенс", 42],
+                        forbidden_variants=[],
+                        rationale="Invalid variant type.",
+                    )
+                ],
+            )
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "mundane", "term", "Valid input.")
+    workspace.complete_session(session.id)
+
+    with pytest.raises(ValueError, match="approved_variants"):
+        DreamService(config, InvalidVariantProvider()).run_cycle()
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select * from dream_runs").fetchone()
+        proposal_count = conn.execute("select count(*) from strict_concept_proposals").fetchone()[0]
+        session_row = conn.execute("select status, cycle_id from task_sessions").fetchone()
+
+    assert run["status"] == "failed"
+    assert "approved_variants" in run["error"]
+    assert run["completed_at"]
+    assert proposal_count == 0
+    assert session_row["status"] == "completed"
+    assert session_row["cycle_id"] is None
+
+
 def test_deterministic_provider_maps_roles_to_crystal_types(config: HieronymusConfig) -> None:
     context = _context(config)
     workspace = WorkspaceStore(config)
