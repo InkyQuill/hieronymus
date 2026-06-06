@@ -6,8 +6,9 @@
 ## Purpose
 
 The agent toolkit and service layer make Hieronymus easy to install, start, inspect, and connect to
-coding agents. Hieronymus should feel like a reliable local tool: one service owns memory state, while
-CLI commands, TUIs, MCP adapters, and agent hooks act as thin clients.
+coding agents. Hieronymus should feel like a reliable local tool: one service owns
+service-managed memory access, while lifecycle commands, TUIs, MCP adapters, and agent hooks act as
+thin clients. Existing legacy and debug CLI commands may still access storage directly in this pass.
 
 ## Core Decision
 
