@@ -20,6 +20,7 @@ class ClaudePlugin(BaseAgentPlugin):
     protocol_note = (
         "Claude Code integration uses MCP; host-specific hooks are deferred to a later pass."
     )
+    installs_managed_config = True
 
     def install(self, config: HieronymusConfig, *, force: bool = False) -> InstallPlan:
         _ = force

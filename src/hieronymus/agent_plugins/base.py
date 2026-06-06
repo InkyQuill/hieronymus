@@ -211,6 +211,7 @@ class BaseAgentPlugin:
     config_paths: tuple[str, ...]
     docs = AGENT_WORKFLOW_SPEC
     protocol_note: str
+    installs_managed_config = False
 
     def _require_non_empty_paths(self) -> None:
         if not self.detect_paths:
@@ -232,8 +233,10 @@ class BaseAgentPlugin:
         self._require_non_empty_paths()
         install_path = config.agent_plugins_root / self.name
         available = any_path_exists(self.detect_paths)
-        installed = install_path.exists() and any(
-            has_hieronymus_marker(expand_user(path)) for path in self.config_paths
+        installed = (
+            self.installs_managed_config
+            and install_path.exists()
+            and any(has_hieronymus_marker(expand_user(path)) for path in self.config_paths)
         )
         return AgentAvailability(
             target=self.name,

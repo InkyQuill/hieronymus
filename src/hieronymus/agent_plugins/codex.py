@@ -18,6 +18,7 @@ class CodexPlugin(BaseAgentPlugin):
     detect_paths = ("~/.codex",)
     config_paths = ("~/.codex/config.toml",)
     protocol_note = "Codex integration installs Hieronymus skills, MCP config, and hooks."
+    installs_managed_config = True
 
     def install(self, config: HieronymusConfig, *, force: bool = False) -> InstallPlan:
         _ = force

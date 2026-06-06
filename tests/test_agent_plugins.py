@@ -87,6 +87,27 @@ def test_codex_availability_detects_assets_and_managed_marker(
     assert availability.installed is True
 
 
+def test_reserved_provider_ignores_stale_managed_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    pi = home / ".pi"
+    pi.mkdir(parents=True)
+    (pi / "config.json").write_text(
+        '{"hieronymus": {"managed": true}}\n',
+        encoding="utf-8",
+    )
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    (config.agent_plugins_root / "pi").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    availability = resolve_plugin("pi").availability(config)
+
+    assert availability.available is True
+    assert availability.installed is False
+
+
 def test_claude_availability_checks_all_detect_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

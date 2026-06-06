@@ -94,18 +94,18 @@ def test_install_deferred_provider_human_output_remains_plan(
     monkeypatch,
 ) -> None:
     home = tmp_path / "home"
-    (home / ".openclaw").mkdir(parents=True)
+    (home / ".pi").mkdir(parents=True)
     data_root = tmp_path / "hieronymus"
     monkeypatch.setenv("HOME", str(home))
 
     result = CliRunner().invoke(
         main,
-        ["--data-root", str(data_root), "install", "openclaw"],
+        ["--data-root", str(data_root), "install", "pi"],
     )
 
     assert result.exit_code == 0
-    assert "Planning OpenClaw integration" in result.output
+    assert "Planning Pi integration" in result.output
     assert "Planned changes:" in result.output
     assert "Result: stub; real integration is deferred" in result.output
-    assert not (data_root / "agent-plugins" / "openclaw").exists()
-    assert not (home / ".openclaw" / "openclaw.json").exists()
+    assert not (data_root / "agent-plugins" / "pi").exists()
+    assert not (home / ".pi" / "config.json").exists()
