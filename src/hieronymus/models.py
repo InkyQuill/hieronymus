@@ -12,3 +12,13 @@ class ContractTerm:
     forbidden_variants: list[str]
     tags: list[str]
     notes: str
+
+
+@dataclass(frozen=True)
+class ValidationFinding:
+    term_id: int
+    kind: str
+    severity: str
+    expected: str
+    observed: str
+    message: str

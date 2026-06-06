@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from hieronymus.db import connect
-from hieronymus.models import ContractTerm
+from hieronymus.models import ContractTerm, ValidationFinding
 
 _VALID_ALIAS_KINDS = frozenset(
     {
@@ -152,3 +152,37 @@ class Termbase:
                     )
                 )
         return result
+
+    def validate(self, *, raw_text: str, translated_text: str) -> list[ValidationFinding]:
+        findings: list[ValidationFinding] = []
+        for term in self.contract(raw_text):
+            for forbidden in term.forbidden_variants:
+                if forbidden in translated_text:
+                    findings.append(
+                        ValidationFinding(
+                            term_id=term.id,
+                            kind="forbidden_variant",
+                            severity="high",
+                            expected=term.canonical_translation,
+                            observed=forbidden,
+                            message=(
+                                f"Use {term.canonical_translation!r} for {term.source_text!r}; "
+                                f"{forbidden!r} is forbidden."
+                            ),
+                        )
+                    )
+            if term.canonical_translation not in translated_text:
+                findings.append(
+                    ValidationFinding(
+                        term_id=term.id,
+                        kind="missing_canonical",
+                        severity="medium",
+                        expected=term.canonical_translation,
+                        observed="",
+                        message=(
+                            f"Raw text contains {term.source_text!r}, but translation does not "
+                            f"contain approved form {term.canonical_translation!r}."
+                        ),
+                    )
+                )
+        return findings
