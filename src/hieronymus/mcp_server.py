@@ -49,8 +49,8 @@ def _translation_context(
     volume: str = "",
     chapter: str = "",
 ) -> TranslationContext:
-    source = source_language or series.source_language
-    target = target_language or series.target_language
+    source = series.source_language if source_language is None else source_language
+    target = series.target_language if target_language is None else target_language
     if source != series.source_language:
         raise ValueError(
             f"source_language {source!r} does not match registry default "
@@ -77,6 +77,8 @@ def hieronymus_termbase_contract(
     raw_text: str,
     source_language: str | None = None,
     target_language: str | None = None,
+    volume: str = "",
+    chapter: str = "",
 ) -> list[dict[str, Any]]:
     """Return approved termbase entries required by raw source text."""
     config, series = _series_context(series_slug)
@@ -84,6 +86,8 @@ def hieronymus_termbase_contract(
         series,
         source_language=source_language,
         target_language=target_language,
+        volume=volume,
+        chapter=chapter,
     )
     terms = _termbase(config, series, context).contract(raw_text)
     return [asdict(term) for term in terms]
@@ -96,6 +100,8 @@ def hieronymus_termbase_validate(
     translated_text: str,
     source_language: str | None = None,
     target_language: str | None = None,
+    volume: str = "",
+    chapter: str = "",
 ) -> list[dict[str, Any]]:
     """Validate translated text against approved termbase entries."""
     config, series = _series_context(series_slug)
@@ -103,6 +109,8 @@ def hieronymus_termbase_validate(
         series,
         source_language=source_language,
         target_language=target_language,
+        volume=volume,
+        chapter=chapter,
     )
     findings = _termbase(config, series, context).validate(
         raw_text=raw_text,
@@ -121,6 +129,8 @@ def hieronymus_termbase_propose(
     notes: str = "",
     source_language: str | None = None,
     target_language: str | None = None,
+    volume: str = "",
+    chapter: str = "",
 ) -> dict[str, int]:
     """Propose a pending termbase entry for a series."""
     config, series = _series_context(series_slug)
@@ -128,6 +138,8 @@ def hieronymus_termbase_propose(
         series,
         source_language=source_language,
         target_language=target_language,
+        volume=volume,
+        chapter=chapter,
     )
     term_id = _termbase(config, series, context).propose(
         category=category,
@@ -145,6 +157,8 @@ def hieronymus_termbase_approve(
     term_id: int,
     source_language: str | None = None,
     target_language: str | None = None,
+    volume: str = "",
+    chapter: str = "",
 ) -> dict[str, int | bool]:
     """Approve a pending termbase entry for a series."""
     config, series = _series_context(series_slug)
@@ -152,6 +166,8 @@ def hieronymus_termbase_approve(
         series,
         source_language=source_language,
         target_language=target_language,
+        volume=volume,
+        chapter=chapter,
     )
     _termbase(config, series, context).approve(term_id)
     return {"term_id": term_id, "approved": True}
@@ -262,9 +278,9 @@ def hieronymus_recall(
     query: str,
     source_language: str | None = None,
     target_language: str | None = None,
-    task_type: str = "translation",
-    volume: str = "",
-    chapter: str = "",
+    task_type: str | None = None,
+    volume: str | None = None,
+    chapter: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """Recall long-term crystals for the exact stored session context."""
@@ -272,11 +288,15 @@ def hieronymus_recall(
     session = WorkspaceStore(config).get_session(session_id)
     context = _translation_context(
         series,
-        source_language=source_language or session.context.source_language,
-        target_language=target_language or session.context.target_language,
-        task_type=task_type,
-        volume=volume,
-        chapter=chapter,
+        source_language=(
+            session.context.source_language if source_language is None else source_language
+        ),
+        target_language=(
+            session.context.target_language if target_language is None else target_language
+        ),
+        task_type=session.context.task_type if task_type is None else task_type,
+        volume=session.context.volume if volume is None else volume,
+        chapter=session.context.chapter if chapter is None else chapter,
     )
     if session.context != context:
         raise ValueError("session context mismatch")

@@ -114,6 +114,52 @@ def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
     ]
 
 
+def test_mcp_termbase_contract_accepts_volume_and_chapter(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    series = Registry(load_config()).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+
+    from hieronymus import mcp_server
+
+    proposed = mcp_server.hieronymus_termbase_propose(
+        series.slug,
+        "character",
+        "ユン",
+        "Yun",
+        volume="1",
+        chapter="2",
+    )
+    mcp_server.hieronymus_termbase_approve(
+        series.slug,
+        proposed["term_id"],
+        volume="1",
+        chapter="2",
+    )
+
+    contract = mcp_server.hieronymus_termbase_contract(
+        series.slug,
+        "ユン walked home.",
+        volume="1",
+        chapter="2",
+    )
+
+    assert contract == [
+        {
+            "id": 1,
+            "category": "character",
+            "source_text": "ユン",
+            "canonical_translation": "Yun",
+            "forbidden_variants": [],
+            "tags": [],
+            "notes": "",
+        }
+    ]
+
+
 def test_mcp_script_entrypoint_is_declared():
     with open("pyproject.toml", "rb") as pyproject:
         data = tomllib.load(pyproject)
@@ -295,6 +341,50 @@ def test_mcp_recall_without_languages_uses_stored_non_default_session_context(
 
     assert recalled[0]["crystal_id"] == crystal_id
     assert recalled[0]["text"] == "Render Holo as Horo in this translation."
+
+
+def test_mcp_recall_without_context_args_uses_stored_session_context(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+
+    from hieronymus import mcp_server
+
+    session_id = mcp_server.hieronymus_session_start(
+        series.slug,
+        task_type="revision",
+        volume="1",
+        chapter="2",
+    )["session_id"]
+    context = TranslationContext(
+        series_slug=series.slug,
+        source_language="ja",
+        target_language="en",
+        task_type="revision",
+        volume="1",
+        chapter="2",
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Keep revised UI labels concise.",
+        title="Revision Labels",
+    )
+
+    recalled = mcp_server.hieronymus_recall(session_id, series.slug, "revised labels")
+
+    assert recalled[0]["crystal_id"] == crystal_id
+    with connect(config.database_path) as conn:
+        activation_count = conn.execute("select count(*) from crystal_activations").fetchone()[0]
+    assert activation_count == 1
 
 
 def test_mcp_recall_rejects_mismatched_session_context_without_activation(
