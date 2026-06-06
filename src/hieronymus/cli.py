@@ -22,7 +22,7 @@ def _raise_click_error(error: KeyError | ValueError) -> None:
 
 
 @click.group()
-@click.option("--data-root", type=click.Path(), default=None)
+@click.option("--data-root", type=click.Path(file_okay=False, dir_okay=True), default=None)
 @click.pass_context
 def main(ctx: click.Context, data_root: str | None) -> None:
     ctx.obj = {"config": load_config(data_root)}
