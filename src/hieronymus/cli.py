@@ -5,10 +5,11 @@ from dataclasses import asdict
 
 import click
 
+from hieronymus.agent_plugins import resolve_plugin
 from hieronymus.config import load_config
 from hieronymus.doctor import Doctor, report_to_json
 from hieronymus.dreaming import DeterministicDreamProvider, DreamService
-from hieronymus.install import agent_install_candidates, plan_install
+from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
 from hieronymus.presentation import GUIDE_ICON, render_greeting, render_json
@@ -201,7 +202,8 @@ def install_command(
         return
 
     try:
-        plan = plan_install(config, app)
+        plugin = resolve_plugin(app)
+        plan = plugin.plan(config) if dry_run else plugin.install(config, force=force)
     except ValueError as error:
         raise click.ClickException(str(error)) from error
 
@@ -214,14 +216,18 @@ def install_command(
 
     click.echo(render_greeting())
     click.echo()
-    click.echo(f"Planning {plan.display_name} integration")
+    action_label = "Planning" if dry_run else "Installed"
+    changes_label = "Planned changes" if dry_run else "Applied changes"
+    click.echo(f"{action_label} {plan.display_name} integration")
     click.echo(plan.protocol_note)
-    click.echo("Planned changes:")
+    click.echo(f"{changes_label}:")
     for step in plan.steps:
         click.echo(f"- {step.action}: {step.path}")
         click.echo(f"  {step.description}")
     if plan.result_kind == "stub":
         click.echo("Result: stub; real integration is deferred to the agent workflow spec.")
+    else:
+        click.echo(f"Result: {plan.result_kind}.")
 
 
 @main.command("admin")

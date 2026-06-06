@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -109,3 +111,78 @@ def test_codex_install_is_idempotent_for_identical_assets(
     assert first.result_kind == "installed"
     assert second.result_kind == "installed"
     assert manifest.read_text(encoding="utf-8") == first_text
+
+
+def test_codex_install_patches_toml_mcp_and_plugin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    codex.mkdir(parents=True)
+    config_path = codex / "config.toml"
+    config_path.write_text('[profile]\nname = "default"\n', encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    resolve_plugin("codex").install(config)
+
+    payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["profile"]["name"] == "default"
+    assert payload["mcp_servers"]["hieronymus"]["command"] == "hieronymus-mcp"
+    assert payload["mcp_servers"]["hieronymus"]["args"] == []
+    assert payload["plugins"]["hieronymus"]["path"] == str(config.agent_plugins_root / "codex")
+    assert payload["hieronymus"] == {"managed": True, "version": "0.1.0"}
+    backups = list(config.backups_root.glob("codex-config-*.toml"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == '[profile]\nname = "default"\n'
+
+
+def test_codex_install_keeps_toml_config_valid_on_repeated_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    plugin = resolve_plugin("codex")
+
+    plugin.install(config)
+    plugin.install(config)
+
+    payload = tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    assert sorted(payload["mcp_servers"]) == ["hieronymus"]
+    assert sorted(payload["plugins"]) == ["hieronymus"]
+
+
+def test_claude_install_patches_json_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    claude_json = home / ".claude.json"
+    claude_json.write_text('{"theme": "dark"}\n', encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    plan = resolve_plugin("claude").install(config)
+
+    payload = json.loads(claude_json.read_text(encoding="utf-8"))
+    assert plan.result_kind == "installed"
+    assert plan.availability.installed is True
+    assert payload["theme"] == "dark"
+    assert payload["mcpServers"]["hieronymus"] == {
+        "args": [],
+        "command": "hieronymus-mcp",
+    }
+    assert payload["hieronymus"] == {
+        "managed": True,
+        "pluginPath": str(config.agent_plugins_root / "claude"),
+        "version": "0.1.0",
+    }
+    assert (config.agent_plugins_root / "claude" / ".claude-plugin" / "plugin.json").exists()
+    backups = list(config.backups_root.glob("claude-.claude-*.json"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == '{"theme": "dark"}\n'

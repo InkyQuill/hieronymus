@@ -168,12 +168,12 @@ def test_install_json_returns_dry_run_plan(tmp_path: Path) -> None:
 def test_install_human_output_is_honest_dry_run_plan(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         main,
-        ["--data-root", str(tmp_path / "hieronymus"), "install", "codex"],
+        ["--data-root", str(tmp_path / "hieronymus"), "install", "codex", "--dry-run"],
     )
 
     assert result.exit_code == 0
     assert "Planning Codex integration" in result.output
-    assert "Installing Codex integration" not in result.output
+    assert "Installed Codex integration" not in result.output
     assert "Planned changes:" in result.output
 
 

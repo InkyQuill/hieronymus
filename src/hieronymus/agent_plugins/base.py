@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
 import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
+
+import tomli_w
 
 from hieronymus.config import HieronymusConfig
 
@@ -97,6 +101,54 @@ class AgentPlugin(Protocol):
 
 def expand_user(path: str) -> Path:
     return Path(path).expanduser()
+
+
+def load_json_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    text = path.read_text(encoding="utf-8")
+    if text.strip() == "":
+        return {}
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected JSON object in {path}")
+    return payload
+
+
+def patch_json_config(
+    config: HieronymusConfig,
+    path: Path,
+    *,
+    agent: str,
+    payload: dict[str, Any],
+) -> None:
+    if path.exists():
+        backup_file(config, path, agent=agent, extension=".json")
+    atomic_write_text(
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
+
+
+def load_toml_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    text = path.read_text(encoding="utf-8")
+    if text.strip() == "":
+        return {}
+    return tomllib.loads(text)
+
+
+def patch_toml_config(
+    config: HieronymusConfig,
+    path: Path,
+    *,
+    agent: str,
+    payload: dict[str, Any],
+) -> None:
+    if path.exists():
+        backup_file(config, path, agent=agent, extension=".toml")
+    atomic_write_text(path, tomli_w.dumps(payload))
 
 
 def any_path_exists(paths: tuple[str, ...]) -> bool:
