@@ -6,9 +6,24 @@ from pathlib import Path
 from hieronymus.db import connect
 from hieronymus.models import ContractTerm
 
+_VALID_ALIAS_KINDS = frozenset(
+    {
+        "source_variant",
+        "approved_variant",
+        "forbidden_variant",
+        "search_alias",
+    }
+)
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _contains(raw_text: str, text: str, *, case_sensitive: bool) -> bool:
+    if case_sensitive:
+        return text in raw_text
+    return text.casefold() in raw_text.casefold()
 
 
 class Termbase:
@@ -55,10 +70,12 @@ class Termbase:
 
     def approve(self, term_id: int) -> None:
         with connect(self.database_path) as conn:
-            conn.execute(
+            cursor = conn.execute(
                 "update terms set status = 'approved', updated_at = ? where id = ?",
                 (_now(), term_id),
             )
+            if cursor.rowcount == 0:
+                raise KeyError(f"unknown term: {term_id}")
             conn.commit()
 
     def add_alias(
@@ -70,6 +87,9 @@ class Termbase:
         language: str,
         case_sensitive: bool = True,
     ) -> None:
+        if kind not in _VALID_ALIAS_KINDS:
+            raise ValueError(f"unknown alias kind: {kind}")
+
         with connect(self.database_path) as conn:
             conn.execute(
                 """
@@ -87,15 +107,21 @@ class Termbase:
             ).fetchall()
             result: list[ContractTerm] = []
             for row in rows:
-                source_forms = [row["source_text"]]
                 alias_rows = conn.execute(
-                    "select * from term_aliases where term_id = ?",
+                    "select * from term_aliases where term_id = ? order by id",
                     (row["id"],),
                 ).fetchall()
-                source_forms.extend(
-                    alias["text"] for alias in alias_rows if alias["kind"] == "source_variant"
-                )
-                if not any(form in raw_text for form in source_forms):
+                source_variant_aliases = [
+                    alias for alias in alias_rows if alias["kind"] == "source_variant"
+                ]
+                if row["source_text"] not in raw_text and not any(
+                    _contains(
+                        raw_text,
+                        alias["text"],
+                        case_sensitive=bool(alias["case_sensitive"]),
+                    )
+                    for alias in source_variant_aliases
+                ):
                     continue
                 tags = [
                     tag_row["tag"]
