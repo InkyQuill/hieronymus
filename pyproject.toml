@@ -14,6 +14,7 @@ dependencies = [
 [project.scripts]
 hiero = "hieronymus.cli:main"
 hieronymus = "hieronymus.cli:main"
+hieronymus-agent-hook = "hieronymus.agent_hooks:main"
 hieronymus-mcp = "hieronymus.mcp_server:main"
 
 [dependency-groups]
