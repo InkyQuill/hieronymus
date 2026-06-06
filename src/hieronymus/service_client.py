@@ -7,6 +7,10 @@ from typing import Any
 from hieronymus.service_state import ServerState
 
 
+class ServiceClientError(RuntimeError):
+    pass
+
+
 class ServiceClient:
     def __init__(self, timeout: float = 2.0) -> None:
         self.timeout = timeout
@@ -23,7 +27,10 @@ class ServiceClient:
     def _json(self, method: str, state: ServerState, path: str) -> dict[str, Any]:
         request = urllib.request.Request(f"{state.base_url}{path}", method=method)
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+            try:
+                payload = json.loads(response.read().decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise ServiceClientError(f"invalid JSON response from {path}") from exc
         if not isinstance(payload, dict):
-            raise ValueError(f"expected JSON object from {path}")
+            raise ServiceClientError(f"expected JSON object from {path}")
         return payload

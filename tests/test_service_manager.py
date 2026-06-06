@@ -2,10 +2,30 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.service_client import ServiceClientError
 from hieronymus.service_manager import ServiceManager
 from hieronymus.service_state import ServerState, read_server_state, write_server_state
+
+
+def server_state(
+    config: HieronymusConfig,
+    *,
+    pid: int = 12345,
+    token: str = "local-test-token",
+) -> ServerState:
+    return ServerState(
+        pid=pid,
+        host="127.0.0.1",
+        port=32199,
+        version="0.1.0",
+        started_at="2026-06-06T12:00:00Z",
+        data_root=str(config.data_root),
+        database_path=str(config.database_path),
+        token=token,
+    )
 
 
 class FakeClient:
@@ -19,10 +39,32 @@ class FakeClient:
         return {"ok": True, "service": "hieronymus"}
 
     def status(self, state: ServerState) -> dict[str, object]:
+        if not self.healthy:
+            raise OSError("connection refused")
         return {"running": True, "pid": state.pid}
 
     def shutdown(self, state: ServerState) -> dict[str, object]:
         self.shutdown_called = True
+        return {"ok": True, "stopping": True}
+
+
+class BadStatusClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__(healthy=False)
+
+    def status(self, state: ServerState) -> dict[str, object]:
+        raise ServiceClientError("bad status payload")
+
+
+class ReplacingShutdownClient(FakeClient):
+    def __init__(self, config: HieronymusConfig, replacement: ServerState) -> None:
+        super().__init__(healthy=True)
+        self.config = config
+        self.replacement = replacement
+
+    def shutdown(self, state: ServerState) -> dict[str, object]:
+        self.shutdown_called = True
+        write_server_state(self.config, self.replacement)
         return {"ok": True, "stopping": True}
 
 
@@ -43,16 +85,7 @@ def test_status_reports_not_running_without_state(tmp_path: Path) -> None:
 
 def test_status_uses_existing_healthy_state(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    state = ServerState(
-        pid=os.getpid(),
-        host="127.0.0.1",
-        port=32199,
-        version="0.1.0",
-        started_at="2026-06-06T12:00:00Z",
-        data_root=str(config.data_root),
-        database_path=str(config.database_path),
-        token="local-test-token",
-    )
+    state = server_state(config, pid=os.getpid())
     write_server_state(config, state)
     manager = ServiceManager(config, client=FakeClient(healthy=True))
 
@@ -60,6 +93,42 @@ def test_status_uses_existing_healthy_state(tmp_path: Path) -> None:
 
     assert status["running"] is True
     assert status["pid"] == os.getpid()
+
+
+def test_status_removes_unreachable_live_state(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config, pid=os.getpid())
+    write_server_state(config, state)
+    manager = ServiceManager(config, client=FakeClient(healthy=False))
+
+    status = manager.status()
+
+    assert status == {"running": False, "reason": "unreachable"}
+    assert read_server_state(config) is None
+
+
+def test_status_removes_bad_service_client_payload_state(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config, pid=os.getpid())
+    write_server_state(config, state)
+    manager = ServiceManager(config, client=BadStatusClient())
+
+    status = manager.status()
+
+    assert status == {"running": False, "reason": "unreachable"}
+    assert read_server_state(config) is None
+
+
+def test_start_returns_without_spawning_when_service_is_healthy(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config, pid=os.getpid())
+    write_server_state(config, state)
+    manager = ServiceManager(config, client=FakeClient(healthy=True))
+
+    with patch("hieronymus.service_manager.subprocess.Popen") as popen:
+        manager.start()
+
+    popen.assert_not_called()
 
 
 def test_stop_without_state_is_clean_result(tmp_path: Path) -> None:
@@ -72,16 +141,7 @@ def test_stop_without_state_is_clean_result(tmp_path: Path) -> None:
 
 def test_stop_calls_shutdown_for_existing_state(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    state = ServerState(
-        pid=12345,
-        host="127.0.0.1",
-        port=32199,
-        version="0.1.0",
-        started_at="2026-06-06T12:00:00Z",
-        data_root=str(config.data_root),
-        database_path=str(config.database_path),
-        token="local-test-token",
-    )
+    state = server_state(config)
     write_server_state(config, state)
     client = FakeClient(healthy=True)
     manager = ServiceManager(config, client=client)
@@ -91,3 +151,18 @@ def test_stop_calls_shutdown_for_existing_state(tmp_path: Path) -> None:
     assert client.shutdown_called is True
     assert result["stopped"] is True
     assert read_server_state(config) is None
+
+
+def test_stop_preserves_newer_state_written_during_shutdown(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    old_state = server_state(config, pid=11111, token="old-token")
+    new_state = server_state(config, pid=22222, token="new-token")
+    write_server_state(config, old_state)
+    client = ReplacingShutdownClient(config, new_state)
+    manager = ServiceManager(config, client=client)
+
+    result = manager.stop()
+
+    assert client.shutdown_called is True
+    assert result["stopped"] is True
+    assert read_server_state(config) == new_state

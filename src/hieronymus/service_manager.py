@@ -6,7 +6,7 @@ import time
 from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.service_client import ServiceClient
+from hieronymus.service_client import ServiceClient, ServiceClientError
 from hieronymus.service_state import (
     ServerState,
     cleanup_stale_state,
@@ -47,7 +47,7 @@ class ServiceManager:
             return {"running": False, "reason": "no-state"}
         try:
             return self.client.status(state)
-        except OSError:
+        except (OSError, ServiceClientError):
             remove_server_state(self.config, expected_state=state)
             return {"running": False, "reason": "unreachable"}
 
@@ -59,6 +59,9 @@ class ServiceManager:
         return {"started": True, "status": self.status()}
 
     def start(self) -> None:
+        current = self.status()
+        if current.get("running") is True:
+            return
         self.config.data_root.mkdir(parents=True, exist_ok=True)
         subprocess.Popen(
             [
@@ -80,7 +83,7 @@ class ServiceManager:
                 last_state = state
                 try:
                     self.client.health(state)
-                except OSError:
+                except (OSError, ServiceClientError):
                     pass
                 else:
                     return
@@ -95,7 +98,7 @@ class ServiceManager:
             return {"running": False, "stopped": False, "reason": "not-running"}
         try:
             self.client.shutdown(state)
-        except OSError:
+        except (OSError, ServiceClientError):
             remove_server_state(self.config, expected_state=state)
             return {"running": False, "stopped": False, "reason": "unreachable"}
         remove_server_state(self.config, expected_state=state)
