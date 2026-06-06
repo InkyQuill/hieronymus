@@ -1,6 +1,7 @@
 import pytest
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
@@ -10,7 +11,9 @@ from hieronymus.dreaming import (
     DreamService,
 )
 from hieronymus.memory_models import TranslationContext
+from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
+from hieronymus.scoring import FeedbackStore
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -29,6 +32,40 @@ def _context(config: HieronymusConfig, *, slug: str = "only-sense-online") -> Tr
         volume="1",
         chapter="2",
     )
+
+
+class EmptyDreamProvider:
+    name = "empty"
+
+    def crystallize(self, context, memories):
+        return DreamOutput(crystals=[], concept_proposals=[])
+
+
+def _add_crystal(
+    config: HieronymusConfig,
+    context: TranslationContext,
+    *,
+    text: str,
+    strength: float = 0.5,
+    confidence: float = 0.5,
+    status: str = "active",
+) -> int:
+    return CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text=text,
+        strength=strength,
+        confidence=confidence,
+        status=status,
+    )
+
+
+def _completed_session(config: HieronymusConfig, context: TranslationContext) -> int:
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "A completed dream input.")
+    workspace.complete_session(session.id)
+    return session.id
 
 
 def test_dreaming_crystallizes_completed_short_term_memory(config: HieronymusConfig) -> None:
@@ -462,3 +499,193 @@ def test_dreaming_inserts_strict_concept_proposals_from_provider_output(
     assert proposal["concept_text"] == "Sense"
     assert proposal["approved_variants_json"] == '["Сенс"]'
     assert proposal["forbidden_variants_json"] == '["Чувство"]'
+
+
+def test_dreaming_decays_inactive_crystals_but_not_recalled_crystals(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    inactive_id = _add_crystal(
+        config,
+        context,
+        text="Inactive crafting label memory.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    recalled_id = _add_crystal(
+        config,
+        context,
+        text="Guarded crafting recall memory.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    RecallService(config).recall(session.id, context, "guarded crafting", limit=1)
+    workspace.complete_session(session.id)
+
+    run = DreamService(config, EmptyDreamProvider()).run_cycle()
+
+    inactive = CrystalStore(config).get(inactive_id)
+    recalled = CrystalStore(config).get(recalled_id)
+    with connect(config.database_path) as conn:
+        recalled_cycle = conn.execute(
+            "select last_activated_cycle from crystals where id = ?",
+            (recalled_id,),
+        ).fetchone()[0]
+
+    assert inactive.strength == pytest.approx(0.47)
+    assert inactive.confidence == pytest.approx(0.5)
+    assert recalled.strength == pytest.approx(0.5)
+    assert recalled.confidence == pytest.approx(0.5)
+    assert recalled_cycle == run.cycle_id
+
+
+def test_passive_positive_event_reinforces_and_prevents_decay_in_same_cycle(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    crystal_id = _add_crystal(
+        config,
+        context,
+        text="Positive passive reinforcement memory.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    FeedbackStore(config).record(crystal_id, "used_in_translation", "system")
+    run = DreamService(config, EmptyDreamProvider()).run_cycle()
+
+    crystal = CrystalStore(config).get(crystal_id)
+    with connect(config.database_path) as conn:
+        event = conn.execute("select applied, cycle_id from memory_events").fetchone()
+        last_reinforced_cycle = conn.execute(
+            "select last_reinforced_cycle from crystals where id = ?",
+            (crystal_id,),
+        ).fetchone()[0]
+
+    assert crystal.strength == pytest.approx(0.55)
+    assert crystal.confidence == pytest.approx(0.52)
+    assert event["applied"] == 1
+    assert event["cycle_id"] == run.cycle_id
+    assert last_reinforced_cycle == run.cycle_id
+
+
+def test_passive_negative_event_applies_and_does_not_protect_from_decay(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    crystal_id = _add_crystal(
+        config,
+        context,
+        text="Negative passive correction memory.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    FeedbackStore(config).record(crystal_id, "caused_correction", "user")
+    run = DreamService(config, EmptyDreamProvider()).run_cycle()
+
+    crystal = CrystalStore(config).get(crystal_id)
+    with connect(config.database_path) as conn:
+        row = conn.execute(
+            "select applied, cycle_id from memory_events where crystal_id = ?",
+            (crystal_id,),
+        ).fetchone()
+
+    assert crystal.strength == pytest.approx(0.37)
+    assert crystal.confidence == pytest.approx(0.38)
+    assert row["applied"] == 1
+    assert row["cycle_id"] == run.cycle_id
+
+
+def test_confidence_decays_only_after_strength_below_threshold(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    above_id = _add_crystal(
+        config,
+        context,
+        text="Strength lands exactly on threshold.",
+        strength=0.23,
+        confidence=0.5,
+    )
+    below_id = _add_crystal(
+        config,
+        context,
+        text="Strength lands below threshold.",
+        strength=0.22,
+        confidence=0.5,
+    )
+    _completed_session(config, context)
+
+    DreamService(config, EmptyDreamProvider()).run_cycle()
+
+    above = CrystalStore(config).get(above_id)
+    below = CrystalStore(config).get(below_id)
+    assert above.strength == pytest.approx(0.2)
+    assert above.confidence == pytest.approx(0.5)
+    assert below.strength == pytest.approx(0.19)
+    assert below.confidence == pytest.approx(0.49)
+
+
+def test_decay_skips_archived_or_rejected_crystals(config: HieronymusConfig) -> None:
+    context = _context(config)
+    archived_id = _add_crystal(
+        config,
+        context,
+        text="Archived memory.",
+        strength=0.5,
+        confidence=0.5,
+        status="archived",
+    )
+    rejected_id = _add_crystal(
+        config,
+        context,
+        text="Rejected memory.",
+        strength=0.5,
+        confidence=0.5,
+        status="rejected",
+    )
+    active_id = _add_crystal(
+        config,
+        context,
+        text="Active memory.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    _completed_session(config, context)
+
+    DreamService(config, EmptyDreamProvider()).run_cycle()
+
+    assert CrystalStore(config).get(archived_id).strength == pytest.approx(0.5)
+    assert CrystalStore(config).get(rejected_id).strength == pytest.approx(0.5)
+    assert CrystalStore(config).get(active_id).strength == pytest.approx(0.47)
+
+
+def test_activation_rows_get_cycle_id_when_dream_processes_session(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    crystal_id = _add_crystal(
+        config,
+        context,
+        text="Guarded crafting activation memory.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    RecallService(config).recall(session.id, context, "guarded crafting", limit=1)
+    workspace.complete_session(session.id)
+
+    run = DreamService(config, EmptyDreamProvider()).run_cycle()
+
+    with connect(config.database_path) as conn:
+        activation = conn.execute("select crystal_id, cycle_id from crystal_activations").fetchone()
+        last_activated_cycle = conn.execute(
+            "select last_activated_cycle from crystals where id = ?",
+            (crystal_id,),
+        ).fetchone()[0]
+
+    assert activation["crystal_id"] == crystal_id
+    assert activation["cycle_id"] == run.cycle_id
+    assert last_activated_cycle == run.cycle_id

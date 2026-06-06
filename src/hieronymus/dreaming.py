@@ -9,8 +9,12 @@ from typing import Protocol
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
+from hieronymus.scoring import PASSIVE_EVENT_DELTAS
 
 _ALLOWED_CRYSTAL_TYPES = frozenset({"lesson", "concept", "erudition"})
+STRENGTH_DECAY_PER_CYCLE = 0.03
+CONFIDENCE_DECAY_AFTER_STRENGTH_BELOW = 0.20
+CONFIDENCE_DECAY_PER_CYCLE = 0.01
 _ROLE_TYPES = {
     "user": "lesson",
     "mentor": "erudition",
@@ -26,6 +30,10 @@ _SENTENCE_RE = re.compile(r"[^.!?。！？]+[.!?。！？]?")
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _clamp_score(value: float) -> float:
+    return min(max(value, 0.0), 1.0)
 
 
 @dataclass(frozen=True)
@@ -233,10 +241,26 @@ class DreamService:
             try:
                 for context, _session_id, _memories, output in outputs:
                     for candidate in output.crystals:
-                        self._insert_crystal_for_dream(conn, context, candidate)
+                        crystal_id = self._insert_crystal_for_dream(conn, context, candidate)
+                        conn.execute(
+                            """
+                            update crystals
+                            set created_cycle = ?
+                            where id = ?
+                            """,
+                            (cycle_id, crystal_id),
+                        )
                         created_crystal_count += 1
                     self._insert_concept_proposals(conn, run_id, output.concept_proposals)
                     proposal_count += len(output.concept_proposals)
+
+                self._apply_passive_events(conn, cycle_id)
+                self._mark_activations_for_cycle(
+                    conn,
+                    cycle_id,
+                    [session_id for session_id, _context, _memories in groups],
+                )
+                self._apply_cycle_decay(conn, cycle_id)
 
                 for session_id, _context, _memories in groups:
                     conn.execute(
@@ -271,6 +295,136 @@ class DreamService:
                 conn.rollback()
                 raise
         return created_crystal_count, proposal_count
+
+    def _apply_passive_events(self, conn, cycle_id: int) -> None:
+        now = _now()
+        rows = conn.execute(
+            """
+            select *
+            from memory_events
+            where applied = 0
+            order by id
+            """
+        ).fetchall()
+        for event in rows:
+            crystal_id = event["crystal_id"]
+            if crystal_id is not None:
+                crystal = conn.execute(
+                    """
+                    select strength, confidence
+                    from crystals
+                    where id = ?
+                    """,
+                    (crystal_id,),
+                ).fetchone()
+                if crystal is not None:
+                    strength_delta = float(event["strength_delta"])
+                    confidence_delta = float(event["confidence_delta"])
+                    strength = _clamp_score(float(crystal["strength"]) + strength_delta)
+                    confidence = _clamp_score(float(crystal["confidence"]) + confidence_delta)
+                    last_reinforced_cycle = (
+                        cycle_id
+                        if strength_delta > 0 and event["event_type"] in PASSIVE_EVENT_DELTAS
+                        else None
+                    )
+                    if last_reinforced_cycle is None:
+                        conn.execute(
+                            """
+                            update crystals
+                            set strength = ?,
+                                confidence = ?,
+                                updated_at = ?
+                            where id = ?
+                            """,
+                            (strength, confidence, now, crystal_id),
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            update crystals
+                            set strength = ?,
+                                confidence = ?,
+                                last_reinforced_cycle = ?,
+                                updated_at = ?
+                            where id = ?
+                            """,
+                            (strength, confidence, last_reinforced_cycle, now, crystal_id),
+                        )
+            conn.execute(
+                """
+                update memory_events
+                set applied = 1,
+                    cycle_id = ?
+                where id = ?
+                """,
+                (cycle_id, event["id"]),
+            )
+
+    def _mark_activations_for_cycle(
+        self,
+        conn,
+        cycle_id: int,
+        session_ids: list[int],
+    ) -> None:
+        if not session_ids:
+            return
+        now = _now()
+        placeholders = ", ".join("?" for _ in session_ids)
+        conn.execute(
+            f"""
+            update crystal_activations
+            set cycle_id = ?
+            where session_id in ({placeholders})
+            """,
+            (cycle_id, *session_ids),
+        )
+        conn.execute(
+            f"""
+            update crystals
+            set last_activated_cycle = ?,
+                updated_at = ?
+            where id in (
+              select distinct crystal_id
+              from crystal_activations
+              where session_id in ({placeholders})
+            )
+            """,
+            (cycle_id, now, *session_ids),
+        )
+
+    def _apply_cycle_decay(self, conn, cycle_id: int) -> None:
+        now = _now()
+        rows = conn.execute(
+            """
+            select id, strength, confidence
+            from crystals
+            where status in ('active', 'candidate')
+              and created_cycle != ?
+              and coalesce(last_activated_cycle, -1) != ?
+              and coalesce(last_reinforced_cycle, -1) != ?
+            order by id
+            """,
+            (cycle_id, cycle_id, cycle_id),
+        ).fetchall()
+        for crystal in rows:
+            strength = _clamp_score(float(crystal["strength"]) - STRENGTH_DECAY_PER_CYCLE)
+            # Confidence decay is based on strength after this cycle's strength decay.
+            confidence_delta = (
+                CONFIDENCE_DECAY_PER_CYCLE
+                if strength < CONFIDENCE_DECAY_AFTER_STRENGTH_BELOW
+                else 0.0
+            )
+            confidence = _clamp_score(float(crystal["confidence"]) - confidence_delta)
+            conn.execute(
+                """
+                update crystals
+                set strength = ?,
+                    confidence = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (strength, confidence, now, crystal["id"]),
+            )
 
     def _insert_crystal_for_dream(
         self,
