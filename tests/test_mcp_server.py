@@ -200,6 +200,8 @@ def test_mcp_server_registers_expected_tool_names():
         "hieronymus_session_start",
         "hieronymus_session_complete",
         "hieronymus_short_term_add",
+        "hieronymus_learn",
+        "hieronymus_read",
         "hieronymus_recall",
         "hieronymus_feedback",
         "hieronymus_dream",
