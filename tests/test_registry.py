@@ -21,6 +21,29 @@ def test_create_series_initializes_global_database(config):
     assert registry.list_series() == [series]
 
 
+def test_create_series_upserts_existing_slug(config):
+    registry = Registry(config)
+    registry.create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+
+    updated = registry.create_series(
+        slug="only-sense-online",
+        title="Only Sense Online Rebuild",
+        source_language="jp",
+        target_language="ru",
+    )
+
+    assert updated.title == "Only Sense Online Rebuild"
+    assert updated.source_language == "jp"
+    assert updated.target_language == "ru"
+    assert registry.get_series("only-sense-online") == updated
+    assert registry.list_series() == [updated]
+
+
 @pytest.mark.parametrize("slug", ["../../escape", "bad/slug"])
 def test_create_series_rejects_filename_unsafe_slugs(config, slug):
     registry = Registry(config)
