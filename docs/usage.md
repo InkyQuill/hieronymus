@@ -47,7 +47,7 @@ hieronymus remember-short 1 --role user --kind correction --text "Define obscure
 hieronymus session-complete 1
 hieronymus dream --provider deterministic
 hieronymus session-start oso --source-language ja --target-language en --task-type translation --volume 01 --chapter 002
-hieronymus recall 2 --series oso --source-language ja --target-language en --task-type translation --volume 01 --chapter 002 --query "cultural terms and footnotes"
+hieronymus recall 2 --series oso --source-language ja --target-language en --task-type translation --volume 01 --chapter 002 --query "cultural terms"
 ```
 
 The final recall command uses session `2` because recall must run inside a new

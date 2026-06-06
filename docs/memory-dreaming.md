@@ -105,7 +105,7 @@ hieronymus session-start oso --source-language ja --target-language en --task-ty
 Recall the crystallized lesson in that new active session:
 
 ```bash
-hieronymus recall 2 --series oso --source-language ja --target-language en --task-type translation --volume 01 --chapter 002 --query "cultural terms and footnotes"
+hieronymus recall 2 --series oso --source-language ja --target-language en --task-type translation --volume 01 --chapter 002 --query "cultural terms"
 ```
 
 ## MCP Tools
