@@ -9,7 +9,7 @@ Every subcommand works through either command. For example, `hieronymus status` 
 call the same CLI entry point.
 
 Running `hiero` with no subcommand starts the local daemon if it is not already running, then prints a
-short status surface:
+short status surface. The identity portion looks like this:
 
 ```text
 🪶 Hieronymus v0.1.0
@@ -17,7 +17,8 @@ Remembers things for you.
 ```
 
 The daemon is the only normal owner of the global SQLite store. Thin CLI commands and future agent
-adapters discover it through runtime files under `~/.config/hieronymus`:
+adapters discover it through runtime files under the configured root, defaulting to
+`~/.config/hieronymus`. `--data-root` and `HIERONYMUS_DATA_ROOT` move these files:
 
 - `server.json`
 - `server.pid`

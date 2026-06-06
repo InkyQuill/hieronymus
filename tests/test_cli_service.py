@@ -51,6 +51,10 @@ def test_cli_help_mentions_service_commands() -> None:
     assert result.exit_code == 0
     assert "hiero status" in result.output
     assert "hiero install codex --dry-run" in result.output
+    assert "Open the memory management TUI" not in result.output
+    assert "Open the configuration TUI" not in result.output
+    assert "Show admin TUI placeholder" in result.output
+    assert "Show config paths and TUI placeholder" in result.output
 
 
 def test_status_json_returns_manager_payload(tmp_path: Path) -> None:
