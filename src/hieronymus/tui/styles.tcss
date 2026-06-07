@@ -1,0 +1,43 @@
+Screen {
+    background: #101214;
+    color: #d8dee6;
+}
+
+ViewTabs {
+    dock: top;
+    height: 1;
+    padding: 0 1;
+    background: #171a1f;
+    color: #9aa4b2;
+}
+
+ViewTabs:focus {
+    background: #20252d;
+}
+
+StatsBar {
+    dock: top;
+    height: 1;
+    padding: 0 1;
+    background: #12161a;
+    color: #8e99a8;
+}
+
+#workspace {
+    height: 1fr;
+}
+
+AdminTable {
+    width: 2fr;
+    height: 100%;
+    background: #101214;
+}
+
+DetailPane {
+    width: 1fr;
+    height: 100%;
+    padding: 1 2;
+    border-left: solid #2a313a;
+    background: #13171b;
+    color: #d8dee6;
+}
