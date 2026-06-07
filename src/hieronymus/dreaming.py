@@ -409,14 +409,16 @@ class DreamService:
             (cycle_id, cycle_id, cycle_id),
         ).fetchall()
         for crystal in rows:
-            strength = _clamp_score(float(crystal["strength"]) - STRENGTH_DECAY_PER_CYCLE)
+            original_strength = float(crystal["strength"])
+            original_confidence = float(crystal["confidence"])
+            strength = _clamp_score(original_strength - STRENGTH_DECAY_PER_CYCLE)
             # Confidence decay is based on strength after this cycle's strength decay.
             confidence_delta = (
                 CONFIDENCE_DECAY_PER_CYCLE
                 if strength < CONFIDENCE_DECAY_AFTER_STRENGTH_BELOW
                 else 0.0
             )
-            confidence = _clamp_score(float(crystal["confidence"]) - confidence_delta)
+            confidence = _clamp_score(original_confidence - confidence_delta)
             conn.execute(
                 """
                 update crystals
@@ -427,6 +429,33 @@ class DreamService:
                 """,
                 (strength, confidence, now, crystal["id"]),
             )
+            strength_delta = strength - original_strength
+            confidence_delta = confidence - original_confidence
+            if strength_delta != 0.0 or confidence_delta != 0.0:
+                conn.execute(
+                    """
+                    insert into memory_events(
+                      crystal_id,
+                      session_id,
+                      event_type,
+                      source_role,
+                      evidence,
+                      strength_delta,
+                      confidence_delta,
+                      applied,
+                      cycle_id,
+                      created_at
+                    )
+                    values (?, null, 'cycle_decay', 'system', 'cycle decay', ?, ?, 1, ?, ?)
+                    """,
+                    (
+                        crystal["id"],
+                        strength_delta,
+                        confidence_delta,
+                        cycle_id,
+                        now,
+                    ),
+                )
 
     def _insert_crystal_for_dream(
         self,

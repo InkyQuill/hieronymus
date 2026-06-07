@@ -4,9 +4,18 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 
-from hieronymus.admin_models import ActionResult, AdminDetail, AdminRow, AdminSnapshot, AdminStats
+from hieronymus.admin_models import (
+    ActionResult,
+    AdminDetail,
+    AdminRow,
+    AdminSnapshot,
+    AdminStats,
+    DreamReview,
+    ProvenanceDetail,
+)
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
+from hieronymus.dreaming import DeterministicDreamProvider, DreamRunRecord, DreamService
 from hieronymus.service_manager import ServiceManager
 
 ADMIN_VIEWS = (
@@ -40,6 +49,154 @@ class AdminStore:
             "counts": self.stats().as_dict(),
             "service": ServiceManager(self.config).status(),
         }
+
+    def provenance_for_crystal(self, crystal_id: int) -> ProvenanceDetail:
+        with connect(self.config.database_path) as conn:
+            crystal = self._get_crystal(conn, crystal_id)
+            rows = conn.execute(
+                """
+                select
+                  m.id,
+                  m.session_id,
+                  m.source_role,
+                  m.kind,
+                  m.text,
+                  m.source_ref
+                from crystal_sources as s
+                join short_term_memories as m
+                  on m.id = s.short_term_memory_id
+                where s.crystal_id = ?
+                order by m.id
+                """,
+                (crystal_id,),
+            ).fetchall()
+        return ProvenanceDetail(
+            title=crystal["title"] or _excerpt(crystal["text"]),
+            sources=[
+                {
+                    "id": str(row["id"]),
+                    "session_id": str(row["session_id"]),
+                    "source_role": row["source_role"],
+                    "kind": row["kind"],
+                    "text": row["text"],
+                    "source_ref": row["source_ref"],
+                }
+                for row in rows
+            ],
+        )
+
+    def recall_reasons_for_crystal(self, crystal_id: int) -> list[dict[str, str]]:
+        with connect(self.config.database_path) as conn:
+            self._get_crystal(conn, crystal_id)
+            rows = conn.execute(
+                """
+                select session_id, recall_query, rank, score, reason
+                from crystal_activations
+                where crystal_id = ?
+                order by id desc
+                """,
+                (crystal_id,),
+            ).fetchall()
+        return [
+            {
+                "session_id": str(row["session_id"]),
+                "query": row["recall_query"],
+                "rank": str(row["rank"]),
+                "score": f"{float(row['score']):.3f}",
+                "reason": row["reason"],
+            }
+            for row in rows
+        ]
+
+    def run_manual_dreaming(self) -> DreamRunRecord:
+        run = DreamService(self.config, DeterministicDreamProvider()).run_cycle()
+        self._audit("run", "dream", run.id, note="manual dreaming")
+        return run
+
+    def dream_review(self, run_id: int) -> DreamReview:
+        with connect(self.config.database_path) as conn:
+            run = self._get_dream_run(conn, run_id)
+            cycle_id = int(run["cycle_id"])
+            source_sessions = [
+                int(row["id"])
+                for row in conn.execute(
+                    """
+                    select id
+                    from task_sessions
+                    where cycle_id = ?
+                    order by id
+                    """,
+                    (cycle_id,),
+                ).fetchall()
+            ]
+            consumed_memories = [
+                row["text"]
+                for row in conn.execute(
+                    """
+                    select m.text
+                    from short_term_memories as m
+                    join task_sessions as s
+                      on s.id = m.session_id
+                    where s.cycle_id = ?
+                    order by m.id
+                    """,
+                    (cycle_id,),
+                ).fetchall()
+            ]
+            created_crystals = [
+                row["text"]
+                for row in conn.execute(
+                    """
+                    select text
+                    from crystals
+                    where created_cycle = ?
+                    order by id
+                    """,
+                    (cycle_id,),
+                ).fetchall()
+            ]
+            strict_proposals = [
+                row["concept_text"]
+                for row in conn.execute(
+                    """
+                    select concept_text
+                    from strict_concept_proposals
+                    where dream_run_id = ?
+                    order by id
+                    """,
+                    (run_id,),
+                ).fetchall()
+            ]
+            decayed_crystals = [
+                row["label"]
+                for row in conn.execute(
+                    """
+                    select coalesce(nullif(c.title, ''), c.text, m.crystal_id) as label
+                    from memory_events as m
+                    left join crystals as c
+                      on c.id = m.crystal_id
+                    where m.cycle_id = ?
+                      and m.applied = 1
+                      and m.event_type = 'cycle_decay'
+                      and (m.strength_delta < 0 or m.confidence_delta < 0)
+                    order by m.id
+                    """,
+                    (cycle_id,),
+                ).fetchall()
+            ]
+
+        failed_outputs = [run["error"]] if run["status"] == "failed" and run["error"] else []
+        return DreamReview(
+            run_id=run_id,
+            source_sessions=source_sessions,
+            consumed_memories=consumed_memories,
+            created_crystals=created_crystals,
+            updated_crystals=[],
+            decayed_crystals=decayed_crystals,
+            strict_proposals=strict_proposals,
+            failed_outputs=failed_outputs,
+            validation_errors=[],
+        )
 
     def reinforce_crystal(self, crystal_id: int, *, evidence: str) -> ActionResult:
         with connect(self.config.database_path) as conn:
@@ -1114,6 +1271,12 @@ class AdminStore:
         ).fetchone()
         if row is None:
             raise KeyError(f"unknown concept proposal: {proposal_id}")
+        return row
+
+    def _get_dream_run(self, conn: sqlite3.Connection, run_id: int) -> sqlite3.Row:
+        row = conn.execute("select * from dream_runs where id = ?", (run_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown dream run: {run_id}")
         return row
 
     def _replace_crystal_fts(

@@ -5,6 +5,7 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
+from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.workspace import WorkspaceStore
 
@@ -199,3 +200,274 @@ def test_snapshot_smoke_for_admin_views(config: HieronymusConfig, view: str) -> 
     snapshot = AdminStore(config).snapshot(view)
 
     assert snapshot.view == view
+
+
+def test_admin_exposes_crystal_provenance_and_recall_reason(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    memory_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="term-note",
+        text="Inventory UI labels should stay compact.",
+        source_ref="mentor:v1c2",
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Inventory UI",
+        text="Inventory UI labels should stay compact.",
+        source_memory_ids=[memory_id],
+    )
+    RecallService(config).recall(session.id, context, "inventory compact", limit=1)
+
+    admin = AdminStore(config)
+    provenance = admin.provenance_for_crystal(crystal_id)
+    recall = admin.recall_reasons_for_crystal(crystal_id)
+
+    assert provenance.title == "Inventory UI"
+    assert provenance.sources[0]["source_ref"] == "mentor:v1c2"
+    assert "Inventory UI labels should stay compact." in provenance.sources[0]["text"]
+    assert recall[0]["query"] == "inventory compact"
+    assert recall[0]["reason"]
+
+
+def test_admin_runs_manual_dreaming_and_reviews_outputs(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Keep crafting result messages quiet and precise.",
+    )
+    workspace.complete_session(session.id)
+
+    admin = AdminStore(config)
+    run = admin.run_manual_dreaming()
+    review = admin.dream_review(run.id)
+
+    assert run.status == "completed"
+    assert review.run_id == run.id
+    assert review.consumed_memories == ["Keep crafting result messages quiet and precise."]
+    assert review.created_crystals == ["Keep crafting result messages quiet and precise."]
+    assert review.failed_outputs == []
+    assert review.validation_errors == []
+
+
+def test_dream_review_excludes_manual_decay_audit_from_unrelated_run(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Manual decay",
+        text="Manual decay should not appear in dream review.",
+        strength=0.5,
+        confidence=0.5,
+        status="archived",
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Unrelated dream input.",
+    )
+    workspace.complete_session(session.id)
+
+    admin = AdminStore(config)
+    admin.decay_crystal(crystal_id, evidence="Manual correction outside dreaming.")
+    run = admin.run_manual_dreaming()
+
+    assert admin.dream_review(run.id).decayed_crystals == []
+
+
+def test_dream_review_reports_real_cycle_decay_and_excludes_manual_audit(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    decayed_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Real cycle decay",
+        text="Real cycle decay should appear in dream review.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    manual_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Manual-only decay",
+        text="Manual-only audit should not appear in dream review.",
+        strength=0.5,
+        confidence=0.5,
+        status="archived",
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Dream input that triggers a real cycle.",
+    )
+    workspace.complete_session(session.id)
+
+    admin = AdminStore(config)
+    admin.decay_crystal(manual_id, evidence="Manual correction outside dreaming.")
+    run = admin.run_manual_dreaming()
+    review = admin.dream_review(run.id)
+
+    assert decayed_id != manual_id
+    assert review.decayed_crystals == ["Real cycle decay"]
+
+
+def test_dream_review_reports_confidence_only_cycle_decay(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Confidence-only decay",
+        text="Confidence-only cycle decay should appear in dream review.",
+        strength=0.0,
+        confidence=0.5,
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Dream input that triggers confidence-only decay.",
+    )
+    workspace.complete_session(session.id)
+
+    admin = AdminStore(config)
+    run = admin.run_manual_dreaming()
+    review = admin.dream_review(run.id)
+
+    with connect(config.database_path) as conn:
+        event = conn.execute(
+            """
+            select strength_delta, confidence_delta
+            from memory_events
+            where crystal_id = ?
+              and event_type = 'cycle_decay'
+              and cycle_id = ?
+            """,
+            (crystal_id, run.cycle_id),
+        ).fetchone()
+
+    assert event["strength_delta"] == pytest.approx(0.0)
+    assert event["confidence_delta"] < 0
+    assert review.decayed_crystals == ["Confidence-only decay"]
+
+
+def test_dream_review_reports_only_cycle_scoped_decay_events(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    included_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Cycle decay",
+        text="Cycle-scoped decay should appear.",
+        strength=0.5,
+        confidence=0.5,
+        status="archived",
+    )
+    excluded_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Other cycle decay",
+        text="Other cycle decay should not appear.",
+        strength=0.5,
+        confidence=0.5,
+        status="archived",
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Dream input for scoped review.",
+    )
+    workspace.complete_session(session.id)
+    run = AdminStore(config).run_manual_dreaming()
+
+    with connect(config.database_path) as conn:
+        conn.execute(
+            """
+            insert into memory_events(
+              crystal_id,
+              session_id,
+              event_type,
+              source_role,
+              evidence,
+              strength_delta,
+              confidence_delta,
+              applied,
+              cycle_id,
+              created_at
+            )
+            values (
+              ?,
+              null,
+              'cycle_decay',
+              'system',
+              'cycle decay',
+              -0.1,
+              -0.12,
+              1,
+              ?,
+              '2026-06-07T00:00:00+00:00'
+            )
+            """,
+            (included_id, run.cycle_id),
+        )
+        conn.execute(
+            """
+            insert into memory_events(
+              crystal_id,
+              session_id,
+              event_type,
+              source_role,
+              evidence,
+              strength_delta,
+              confidence_delta,
+              applied,
+              cycle_id,
+              created_at
+            )
+            values (
+              ?,
+              null,
+              'cycle_decay',
+              'system',
+              'cycle decay',
+              -0.1,
+              -0.12,
+              1,
+              ?,
+              '2026-06-07T00:00:01+00:00'
+            )
+            """,
+            (excluded_id, run.cycle_id + 1),
+        )
+        conn.commit()
+
+    review = AdminStore(config).dream_review(run.id)
+
+    assert review.decayed_crystals == ["Cycle decay"]

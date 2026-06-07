@@ -62,3 +62,22 @@ class ActionResult:
     entity_id: int | str
     action: str
     message: str
+
+
+@dataclass(frozen=True)
+class ProvenanceDetail:
+    title: str
+    sources: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class DreamReview:
+    run_id: int
+    source_sessions: list[int]
+    consumed_memories: list[str]
+    created_crystals: list[str]
+    updated_crystals: list[str]
+    decayed_crystals: list[str]
+    strict_proposals: list[str]
+    failed_outputs: list[str]
+    validation_errors: list[str]
