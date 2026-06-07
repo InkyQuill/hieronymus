@@ -18,6 +18,10 @@ class HieronymusConfig:
         return self.data_root
 
     @property
+    def settings_path(self) -> Path:
+        return self.config_root / "settings.toml"
+
+    @property
     def backups_root(self) -> Path:
         return self.config_root / "backups"
 
