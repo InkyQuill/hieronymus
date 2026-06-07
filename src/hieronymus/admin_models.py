@@ -54,3 +54,11 @@ class AdminStats:
             "pending_proposals": self.pending_proposals,
             "audit_events": self.audit_events,
         }
+
+
+@dataclass(frozen=True)
+class ActionResult:
+    entity_type: str
+    entity_id: int | str
+    action: str
+    message: str

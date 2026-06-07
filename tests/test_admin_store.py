@@ -156,11 +156,23 @@ def test_view_snapshot_selects_row_when_selected_id_is_string(
     assert "Second Crystal" in snapshot.detail.body
 
 
-def test_status_payload_counts_memory_events_for_audit_log_fallback(
+def test_status_payload_counts_audit_log_before_memory_event_fallback(
     config: HieronymusConfig,
 ) -> None:
     store = AdminStore(config)
     with connect(config.database_path) as conn:
+        conn.execute(
+            """
+            insert into audit_log(
+              action,
+              entity_type,
+              entity_id,
+              note,
+              created_at
+            )
+            values ('edit', 'crystal', '1', 'Edited crystal', '2026-06-07T00:00:00+00:00')
+            """
+        )
         conn.execute(
             """
             insert into memory_events(
@@ -175,7 +187,11 @@ def test_status_payload_counts_memory_events_for_audit_log_fallback(
         conn.commit()
 
     assert store.status_payload()["counts"]["audit_events"] == 1
-    assert len(store.snapshot("Audit Log").rows) == 1
+    row = store.snapshot("Audit Log").rows[0]
+    assert row.kind == "edit"
+    assert row.label == "Edited crystal"
+    assert row.status == "crystal"
+    assert row.scope == "1"
 
 
 @pytest.mark.parametrize("view", ADMIN_VIEWS)

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 
-from hieronymus.admin_models import AdminDetail, AdminRow, AdminSnapshot, AdminStats
+from hieronymus.admin_models import ActionResult, AdminDetail, AdminRow, AdminSnapshot, AdminStats
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
 from hieronymus.service_manager import ServiceManager
@@ -18,6 +19,12 @@ ADMIN_VIEWS = (
     "Proposals",
     "Audit Log",
 )
+_ADMIN_IMMEDIATE_EVENT_DELTAS = {
+    "confirmed_by_user": (0.15, 0.20),
+    "contradicted_by_user": (-0.20, -0.25),
+    "deleted_by_user": (-0.50, -0.35),
+}
+_ARCHIVE_STRENGTH_THRESHOLD = 0.05
 
 
 class AdminStore:
@@ -33,6 +40,492 @@ class AdminStore:
             "counts": self.stats().as_dict(),
             "service": ServiceManager(self.config).status(),
         }
+
+    def reinforce_crystal(self, crystal_id: int, *, evidence: str) -> ActionResult:
+        with connect(self.config.database_path) as conn:
+            self._record_immediate_feedback(
+                conn,
+                crystal_id,
+                "confirmed_by_user",
+                evidence=evidence,
+            )
+            self._audit_with_connection(conn, "reinforce", "crystal", crystal_id, note=evidence)
+            conn.commit()
+        return ActionResult("crystal", crystal_id, "reinforce", "Crystal reinforced")
+
+    def decay_crystal(self, crystal_id: int, *, evidence: str) -> ActionResult:
+        with connect(self.config.database_path) as conn:
+            self._record_immediate_feedback(
+                conn,
+                crystal_id,
+                "contradicted_by_user",
+                evidence=evidence,
+            )
+            self._audit_with_connection(conn, "decay", "crystal", crystal_id, note=evidence)
+            conn.commit()
+        return ActionResult("crystal", crystal_id, "decay", "Crystal decayed")
+
+    def edit_crystal(self, crystal_id: int, *, title: str, text: str) -> ActionResult:
+        if not text.strip():
+            raise ValueError("text must not be empty")
+        now = self._now()
+        with connect(self.config.database_path) as conn:
+            before = self._get_crystal(conn, crystal_id)
+            conn.execute(
+                """
+                update crystals
+                set title = ?,
+                    text = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (title, text, now, crystal_id),
+            )
+            self._replace_crystal_fts(
+                conn,
+                crystal_id,
+                old_title=before["title"],
+                old_text=before["text"],
+                title=title,
+                text=text,
+            )
+            after = self._get_crystal(conn, crystal_id)
+            self._audit_with_connection(
+                conn,
+                "edit",
+                "crystal",
+                crystal_id,
+                before_json=self._row_json(before),
+                after_json=self._row_json(after),
+            )
+            conn.commit()
+        return ActionResult("crystal", crystal_id, "edit", "Crystal edited")
+
+    def deprecate_crystal(self, crystal_id: int, *, evidence: str) -> ActionResult:
+        with connect(self.config.database_path) as conn:
+            self._set_crystal_status(conn, crystal_id, "archived")
+            self._audit_with_connection(conn, "deprecate", "crystal", crystal_id, note=evidence)
+            conn.commit()
+        return ActionResult("crystal", crystal_id, "deprecate", "Crystal deprecated")
+
+    def delete_crystal(self, crystal_id: int, *, evidence: str) -> ActionResult:
+        with connect(self.config.database_path) as conn:
+            before_json = self._row_json(self._get_crystal(conn, crystal_id))
+            self._record_immediate_feedback(
+                conn,
+                crystal_id,
+                "deleted_by_user",
+                evidence=evidence,
+            )
+            conn.execute(
+                """
+                update crystals
+                set status = 'archived',
+                    strength = 0,
+                    confidence = 0,
+                    updated_at = ?
+                where id = ?
+                """,
+                (self._now(), crystal_id),
+            )
+            after = self._get_crystal(conn, crystal_id)
+            self._audit_with_connection(
+                conn,
+                "delete",
+                "crystal",
+                crystal_id,
+                note=evidence,
+                before_json=before_json,
+                after_json=self._row_json(after),
+            )
+            conn.commit()
+        return ActionResult("crystal", crystal_id, "delete", "Crystal deleted")
+
+    def supersede_crystal(
+        self,
+        crystal_id: int,
+        *,
+        replacement_id: int,
+        evidence: str,
+    ) -> ActionResult:
+        if crystal_id == replacement_id:
+            raise ValueError("crystal cannot supersede itself")
+        with connect(self.config.database_path) as conn:
+            source = self._get_crystal(conn, crystal_id)
+            replacement = self._get_crystal(conn, replacement_id)
+            self._validate_active_crystals([source, replacement])
+            self._validate_crystal_contexts([source, replacement])
+            conn.execute(
+                """
+                insert or ignore into crystal_links(
+                  source_crystal_id,
+                  target_crystal_id,
+                  link_type
+                )
+                values (?, ?, 'supersedes')
+                """,
+                (replacement_id, crystal_id),
+            )
+            self._set_crystal_status(conn, crystal_id, "archived")
+            self._audit_with_connection(conn, "supersede", "crystal", crystal_id, note=evidence)
+            conn.commit()
+        return ActionResult("crystal", crystal_id, "supersede", "Crystal superseded")
+
+    def merge_crystals(self, crystal_ids: list[int], *, title: str, text: str) -> int:
+        if len(set(crystal_ids)) != len(crystal_ids):
+            raise ValueError("crystal IDs must identify distinct crystals")
+        if len(crystal_ids) < 2:
+            raise ValueError("at least two distinct crystals are required")
+        if not text.strip():
+            raise ValueError("text must not be empty")
+        now = self._now()
+        with connect(self.config.database_path) as conn:
+            rows = [self._get_crystal(conn, crystal_id) for crystal_id in crystal_ids]
+            self._validate_active_crystals(rows)
+            self._validate_crystal_contexts(rows)
+            first = rows[0]
+            cursor = conn.execute(
+                """
+                insert into crystals(
+                  crystal_type,
+                  text,
+                  title,
+                  scope_type,
+                  scope_key,
+                  series_slug,
+                  source_language,
+                  target_language,
+                  tags_json,
+                  strength,
+                  confidence,
+                  status,
+                  created_at,
+                  updated_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (
+                    first["crystal_type"],
+                    text,
+                    title,
+                    first["scope_type"],
+                    first["scope_key"],
+                    first["series_slug"],
+                    first["source_language"],
+                    first["target_language"],
+                    first["tags_json"],
+                    max(float(row["strength"]) for row in rows),
+                    max(float(row["confidence"]) for row in rows),
+                    now,
+                    now,
+                ),
+            )
+            merged_id = int(cursor.lastrowid)
+            conn.execute(
+                "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
+                (merged_id, title, text),
+            )
+            for crystal_id in crystal_ids:
+                conn.execute(
+                    """
+                    insert or ignore into crystal_links(
+                      source_crystal_id,
+                      target_crystal_id,
+                      link_type
+                    )
+                    values (?, ?, 'merged_from')
+                    """,
+                    (merged_id, crystal_id),
+                )
+                self._set_crystal_status(conn, crystal_id, "archived")
+            self._audit_with_connection(
+                conn,
+                "merge",
+                "crystal",
+                merged_id,
+                before_json=json.dumps(crystal_ids),
+                after_json=self._row_json(self._get_crystal(conn, merged_id)),
+            )
+            conn.commit()
+        return merged_id
+
+    def split_crystal(
+        self,
+        crystal_id: int,
+        *,
+        parts: list[tuple[str, str] | dict[str, str]],
+    ) -> list[int]:
+        if len(parts) < 2:
+            raise ValueError("at least two parts are required")
+        now = self._now()
+        new_ids: list[int] = []
+        with connect(self.config.database_path) as conn:
+            source = self._get_crystal(conn, crystal_id)
+            self._validate_active_crystals([source])
+            for part in parts:
+                title, text = self._split_part_title_text(part)
+                if not isinstance(title, str):
+                    raise ValueError("part title must be a string")
+                if not isinstance(text, str):
+                    raise ValueError("part text must be a string")
+                if not text.strip():
+                    raise ValueError("part text must not be empty")
+                cursor = conn.execute(
+                    """
+                    insert into crystals(
+                      crystal_type,
+                      text,
+                      title,
+                      scope_type,
+                      scope_key,
+                      series_slug,
+                      source_language,
+                      target_language,
+                      tags_json,
+                      strength,
+                      confidence,
+                      status,
+                      created_at,
+                      updated_at
+                    )
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                    """,
+                    (
+                        source["crystal_type"],
+                        text,
+                        title,
+                        source["scope_type"],
+                        source["scope_key"],
+                        source["series_slug"],
+                        source["source_language"],
+                        source["target_language"],
+                        source["tags_json"],
+                        source["strength"],
+                        source["confidence"],
+                        now,
+                        now,
+                    ),
+                )
+                new_id = int(cursor.lastrowid)
+                new_ids.append(new_id)
+                conn.execute(
+                    "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
+                    (new_id, title, text),
+                )
+                conn.execute(
+                    """
+                    insert or ignore into crystal_links(
+                      source_crystal_id,
+                      target_crystal_id,
+                      link_type
+                    )
+                    values (?, ?, 'split_from')
+                    """,
+                    (new_id, crystal_id),
+                )
+            self._set_crystal_status(conn, crystal_id, "archived")
+            self._audit_with_connection(
+                conn,
+                "split",
+                "crystal",
+                crystal_id,
+                before_json=self._row_json(source),
+                after_json=json.dumps(new_ids),
+            )
+            conn.commit()
+        return new_ids
+
+    def promote_local_lesson(self, crystal_id: int, *, evidence: str) -> int:
+        now = self._now()
+        with connect(self.config.database_path) as conn:
+            source = self._get_crystal(conn, crystal_id)
+            self._validate_promotable_lesson(source)
+            cursor = conn.execute(
+                """
+                insert into crystals(
+                  crystal_type,
+                  text,
+                  title,
+                  scope_type,
+                  scope_key,
+                  series_slug,
+                  source_language,
+                  target_language,
+                  tags_json,
+                  strength,
+                  confidence,
+                  status,
+                  created_at,
+                  updated_at
+                )
+                values (?, ?, ?, 'global', 'global', '', ?, ?, ?, ?, ?, 'candidate', ?, ?)
+                """,
+                (
+                    source["crystal_type"],
+                    source["text"],
+                    source["title"],
+                    source["source_language"],
+                    source["target_language"],
+                    source["tags_json"],
+                    source["strength"],
+                    source["confidence"],
+                    now,
+                    now,
+                ),
+            )
+            promoted_id = int(cursor.lastrowid)
+            conn.execute(
+                "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
+                (promoted_id, source["title"], source["text"]),
+            )
+            self._audit_with_connection(
+                conn,
+                "promote",
+                "crystal",
+                promoted_id,
+                note=evidence,
+                before_json=self._row_json(source),
+                after_json=self._row_json(self._get_crystal(conn, promoted_id)),
+            )
+            conn.commit()
+        return promoted_id
+
+    def activate_global_lesson(self, crystal_id: int, *, evidence: str) -> ActionResult:
+        with connect(self.config.database_path) as conn:
+            before = self._get_crystal(conn, crystal_id)
+            self._validate_activatable_global_lesson(before)
+            self._set_crystal_status(conn, crystal_id, "active")
+            after = self._get_crystal(conn, crystal_id)
+            self._audit_with_connection(
+                conn,
+                "activate",
+                "crystal",
+                crystal_id,
+                note=evidence,
+                before_json=self._row_json(before),
+                after_json=self._row_json(after),
+            )
+            conn.commit()
+        return ActionResult("crystal", crystal_id, "activate", "Global lesson activated")
+
+    def approve_proposal(self, proposal_id: int) -> int:
+        now = self._now()
+        with connect(self.config.database_path) as conn:
+            proposal = self._get_proposal(conn, proposal_id)
+            if proposal["status"] != "pending":
+                raise ValueError("proposal must be pending")
+            cursor = conn.execute(
+                """
+                insert into strict_terms(
+                  series_slug,
+                  source_language,
+                  target_language,
+                  category,
+                  source_text,
+                  canonical_translation,
+                  status,
+                  notes,
+                  created_at,
+                  updated_at
+                )
+                values (?, ?, ?, 'strict_concept', ?, ?, 'approved', ?, ?, ?)
+                """,
+                (
+                    proposal["series_slug"],
+                    proposal["source_language"],
+                    proposal["target_language"],
+                    proposal["concept_text"],
+                    proposal["canonical_rendering"],
+                    proposal["rationale"],
+                    now,
+                    now,
+                ),
+            )
+            term_id = int(cursor.lastrowid)
+            conn.execute(
+                "insert into strict_terms_fts(rowid, source_text, canonical_translation, notes) "
+                "values (?, ?, ?, ?)",
+                (
+                    term_id,
+                    proposal["concept_text"],
+                    proposal["canonical_rendering"],
+                    proposal["rationale"],
+                ),
+            )
+            self._insert_alias(
+                conn,
+                term_id,
+                language=proposal["source_language"],
+                text=proposal["source_form"],
+                kind="source_variant",
+            )
+            for variant in json.loads(proposal["approved_variants_json"]):
+                self._insert_alias(
+                    conn,
+                    term_id,
+                    language=proposal["target_language"],
+                    text=variant,
+                    kind="approved_variant",
+                )
+            for variant in json.loads(proposal["forbidden_variants_json"]):
+                self._insert_alias(
+                    conn,
+                    term_id,
+                    language=proposal["target_language"],
+                    text=variant,
+                    kind="forbidden_variant",
+                )
+            conn.execute(
+                """
+                update strict_concept_proposals
+                set status = 'approved',
+                    updated_at = ?
+                where id = ?
+                """,
+                (now, proposal_id),
+            )
+            self._audit_with_connection(
+                conn,
+                "approve",
+                "strict_concept_proposal",
+                proposal_id,
+                before_json=self._row_json(proposal),
+                after_json=json.dumps({"term_id": term_id}, sort_keys=True),
+            )
+            conn.commit()
+        return term_id
+
+    def reject_proposal(self, proposal_id: int, *, evidence: str) -> ActionResult:
+        with connect(self.config.database_path) as conn:
+            before = self._get_proposal(conn, proposal_id)
+            if before["status"] != "pending":
+                raise ValueError("proposal must be pending")
+            conn.execute(
+                """
+                update strict_concept_proposals
+                set status = 'rejected',
+                    updated_at = ?
+                where id = ?
+                """,
+                (self._now(), proposal_id),
+            )
+            after = self._get_proposal(conn, proposal_id)
+            self._audit_with_connection(
+                conn,
+                "reject",
+                "strict_concept_proposal",
+                proposal_id,
+                note=evidence,
+                before_json=self._row_json(before),
+                after_json=self._row_json(after),
+            )
+            conn.commit()
+        return ActionResult(
+            "strict_concept_proposal",
+            proposal_id,
+            "reject",
+            "Proposal rejected",
+        )
 
     def stats(self) -> AdminStats:
         with connect(self.config.database_path) as conn:
@@ -257,11 +750,14 @@ class AdminStore:
                 return [
                     AdminRow(
                         id=int(row["id"]),
-                        kind=_row_value(row, "event_type", "event"),
-                        label=_row_value(row, "message", _row_value(row, "evidence", "")),
-                        status=_row_value(row, "status", ""),
-                        scope=_row_value(row, "series_slug", "global"),
+                        kind=_row_value(row, "action", _row_value(row, "event_type", "event")),
+                        label=_row_value(row, "note", _row_value(row, "message", "")),
+                        status=_row_value(row, "entity_type", _row_value(row, "status", "")),
+                        scope=_row_value(
+                            row, "entity_id", _row_value(row, "series_slug", "global")
+                        ),
                         language_pair="",
+                        quality_label=_row_value(row, "created_at", ""),
                     )
                     for row in rows
                 ]
@@ -421,6 +917,246 @@ class AdminStore:
             ),
         )
 
+    def _set_crystal_status(
+        self,
+        conn: sqlite3.Connection,
+        crystal_id: int,
+        status: str,
+    ) -> None:
+        cursor = conn.execute(
+            """
+            update crystals
+            set status = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (status, self._now(), crystal_id),
+        )
+        if cursor.rowcount == 0:
+            raise KeyError(f"unknown crystal: {crystal_id}")
+
+    def _record_immediate_feedback(
+        self,
+        conn: sqlite3.Connection,
+        crystal_id: int,
+        event_type: str,
+        *,
+        evidence: str,
+    ) -> int:
+        strength_delta, confidence_delta = _ADMIN_IMMEDIATE_EVENT_DELTAS[event_type]
+        now = self._now()
+        crystal = self._get_crystal(conn, crystal_id)
+        cursor = conn.execute(
+            """
+            insert into memory_events(
+              crystal_id,
+              session_id,
+              event_type,
+              source_role,
+              evidence,
+              strength_delta,
+              confidence_delta,
+              applied,
+              created_at
+            )
+            values (?, null, ?, 'user', ?, ?, ?, 1, ?)
+            """,
+            (
+                crystal_id,
+                event_type,
+                evidence,
+                strength_delta,
+                confidence_delta,
+                now,
+            ),
+        )
+        strength = _clamp_score(float(crystal["strength"]) + strength_delta)
+        confidence = _clamp_score(float(crystal["confidence"]) + confidence_delta)
+        status = crystal["status"]
+        if event_type == "deleted_by_user" and strength < _ARCHIVE_STRENGTH_THRESHOLD:
+            status = "archived"
+        conn.execute(
+            """
+            update crystals
+            set strength = ?,
+                confidence = ?,
+                status = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (strength, confidence, status, now, crystal_id),
+        )
+        return int(cursor.lastrowid)
+
+    def _validate_crystal_contexts(self, rows: list[sqlite3.Row]) -> None:
+        if len(rows) < 2:
+            return
+        first = rows[0]
+        for row in rows[1:]:
+            for column in (
+                "series_slug",
+                "source_language",
+                "target_language",
+                "crystal_type",
+                "scope_type",
+                "scope_key",
+            ):
+                if row[column] != first[column]:
+                    raise ValueError(f"crystal {column} does not match")
+
+    def _validate_active_crystals(self, rows: list[sqlite3.Row]) -> None:
+        for row in rows:
+            if row["status"] not in {"active", "candidate"}:
+                raise ValueError("crystals must be active or candidate")
+
+    def _validate_promotable_lesson(self, row: sqlite3.Row) -> None:
+        if row["crystal_type"] != "lesson":
+            raise ValueError("source crystal must be a lesson")
+        if row["scope_type"] != "series":
+            raise ValueError("source lesson must be series-scoped")
+        if row["status"] in {"archived", "rejected"}:
+            raise ValueError("source lesson must not be archived or rejected")
+
+    def _validate_activatable_global_lesson(self, row: sqlite3.Row) -> None:
+        if row["crystal_type"] != "lesson":
+            raise ValueError("crystal must be a lesson")
+        if row["scope_type"] != "global":
+            raise ValueError("lesson must be global-scoped")
+        if row["status"] != "candidate":
+            raise ValueError("global lesson must be candidate")
+
+    def _split_part_title_text(
+        self,
+        part: tuple[str, str] | dict[str, str],
+    ) -> tuple[object, object]:
+        if isinstance(part, tuple):
+            if len(part) != 2:
+                raise ValueError("part tuple must contain title and text")
+            return part
+        if isinstance(part, dict):
+            return part.get("title", ""), part.get("text", "")
+        raise ValueError("part must be a title/text tuple or dict")
+
+    def _audit(
+        self,
+        action: str,
+        entity_type: str,
+        entity_id: int | str,
+        *,
+        note: str = "",
+        before_json: str = "{}",
+        after_json: str = "{}",
+    ) -> None:
+        with connect(self.config.database_path) as conn:
+            self._audit_with_connection(
+                conn,
+                action,
+                entity_type,
+                entity_id,
+                note=note,
+                before_json=before_json,
+                after_json=after_json,
+            )
+            conn.commit()
+
+    def _audit_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        action: str,
+        entity_type: str,
+        entity_id: int | str,
+        *,
+        note: str = "",
+        before_json: str = "{}",
+        after_json: str = "{}",
+    ) -> None:
+        conn.execute(
+            """
+            insert into audit_log(
+              action,
+              entity_type,
+              entity_id,
+              note,
+              before_json,
+              after_json,
+              created_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                action,
+                entity_type,
+                str(entity_id),
+                note,
+                before_json,
+                after_json,
+                self._now(),
+            ),
+        )
+
+    def _row_json(self, row: sqlite3.Row) -> str:
+        return json.dumps(
+            {key: row[key] for key in row.keys()},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    def _get_crystal(self, conn: sqlite3.Connection, crystal_id: int) -> sqlite3.Row:
+        row = conn.execute("select * from crystals where id = ?", (crystal_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown crystal: {crystal_id}")
+        return row
+
+    def _get_proposal(self, conn: sqlite3.Connection, proposal_id: int) -> sqlite3.Row:
+        row = conn.execute(
+            "select * from strict_concept_proposals where id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown concept proposal: {proposal_id}")
+        return row
+
+    def _replace_crystal_fts(
+        self,
+        conn: sqlite3.Connection,
+        crystal_id: int,
+        *,
+        old_title: str,
+        old_text: str,
+        title: str,
+        text: str,
+    ) -> None:
+        conn.execute(
+            "insert into crystals_fts(crystals_fts, rowid, title, text) values ('delete', ?, ?, ?)",
+            (crystal_id, old_title, old_text),
+        )
+        conn.execute(
+            "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
+            (crystal_id, title, text),
+        )
+
+    def _insert_alias(
+        self,
+        conn: sqlite3.Connection,
+        term_id: int,
+        *,
+        language: str,
+        text: str,
+        kind: str,
+    ) -> None:
+        if not text.strip():
+            return
+        conn.execute(
+            """
+            insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
+            values (?, ?, ?, ?, 1)
+            """,
+            (term_id, language, text, kind),
+        )
+
+    def _now(self) -> str:
+        return datetime.now(UTC).isoformat()
+
     def _count(
         self,
         conn: sqlite3.Connection,
@@ -459,6 +1195,10 @@ def _json_tuple(value: str) -> tuple[str, ...]:
     if not isinstance(loaded, list):
         return ()
     return tuple(str(item) for item in loaded)
+
+
+def _clamp_score(value: float) -> float:
+    return min(max(value, 0.0), 1.0)
 
 
 def _language_pair(row: sqlite3.Row) -> str:

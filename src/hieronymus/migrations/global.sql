@@ -173,3 +173,15 @@ create virtual table if not exists strict_terms_fts using fts5(
   content='strict_terms',
   content_rowid='id'
 );
+
+create table if not exists audit_log (
+  id integer primary key,
+  actor text not null default 'admin',
+  action text not null,
+  entity_type text not null,
+  entity_id text not null,
+  note text not null default '',
+  before_json text not null default '{}',
+  after_json text not null default '{}',
+  created_at text not null
+);
