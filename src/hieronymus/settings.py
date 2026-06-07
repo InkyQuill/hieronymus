@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass, fields, replace
 from typing import Any
@@ -294,6 +295,8 @@ def _coerce_positive_float(field_name: str, value: object) -> float:
     if type(value) not in (int, float):
         raise SettingsError(f"{field_name} must be a number")
     value = float(value)
+    if not math.isfinite(value):
+        raise SettingsError(f"{field_name} must be finite and greater than 0")
     if value <= 0:
         raise SettingsError(f"{field_name} must be greater than 0")
     return value

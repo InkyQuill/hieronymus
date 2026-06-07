@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -130,6 +131,14 @@ def test_load_settings_rejects_non_positive_dreaming_values(tmp_path: Path) -> N
             "[providers.openai]\ntimeout_seconds = 0\n",
             r"providers\.openai\.timeout_seconds must be greater than 0",
         ),
+        (
+            "[providers.openai]\ntimeout_seconds = nan\n",
+            r"providers\.openai\.timeout_seconds must be finite and greater than 0",
+        ),
+        (
+            "[providers.openai]\ntimeout_seconds = +inf\n",
+            r"providers\.openai\.timeout_seconds must be finite and greater than 0",
+        ),
     ],
 )
 def test_load_settings_rejects_invalid_schema(
@@ -143,6 +152,25 @@ def test_load_settings_rejects_invalid_schema(
 
     with pytest.raises(SettingsError, match=error):
         load_settings(config)
+
+
+def test_save_settings_rejects_non_finite_timeout(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = replace(
+        load_settings(config),
+        providers={
+            "deterministic": ProviderSettings(
+                enabled=True,
+                timeout_seconds=float("nan"),
+            )
+        },
+    )
+
+    with pytest.raises(
+        SettingsError,
+        match=r"providers\.deterministic\.timeout_seconds must be finite and greater than 0",
+    ):
+        save_settings(config, settings)
 
 
 def test_settings_to_json_masks_key_source_only(tmp_path: Path) -> None:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+import pytest
+
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_providers import (
     HTTPResponse,
@@ -179,6 +181,37 @@ def test_openai_check_uses_temporary_key_without_saving_secret(tmp_path) -> None
     assert "secret-test-key" not in config.settings_path.read_text(encoding="utf-8")
 
 
+def test_gemini_check_uses_api_key_header_without_url_secret(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config).with_provider(
+        "gemini",
+        ProviderSettings(
+            enabled=True,
+            model="gemini-2.5-flash",
+            api_key_env="GEMINI_API_KEY",
+        ),
+    )
+    save_settings(config, settings)
+    transport = FakeTransport(
+        HTTPResponse(status=200, body=json.dumps({"id": "ok"})),
+        [],
+    )
+
+    result = ProviderRegistry(transport=transport).check(
+        config,
+        "gemini",
+        temporary_api_key="secret-gemini",
+    )
+
+    assert result.ok is True
+    assert (
+        transport.requests[0]["url"] == "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-2.5-flash:generateContent"
+    )
+    assert "secret-gemini" not in transport.requests[0]["url"]
+    assert transport.requests[0]["headers"]["x-goog-api-key"] == "secret-gemini"
+
+
 def test_resolve_provider_rejects_disabled_provider(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
@@ -304,7 +337,12 @@ def test_gemini_provider_crystallizes_structured_response(tmp_path, monkeypatch)
     output = provider.crystallize(_context(), [_memory()])
 
     assert output.crystals[0].source_memory_ids == [7]
-    assert "generateContent?key=secret-gemini" in transport.requests[0]["url"]
+    assert (
+        transport.requests[0]["url"] == "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-2.5-flash:generateContent"
+    )
+    assert "secret-gemini" not in transport.requests[0]["url"]
+    assert transport.requests[0]["headers"]["x-goog-api-key"] == "secret-gemini"
 
 
 def test_anthropic_provider_crystallizes_structured_response(
@@ -376,6 +414,46 @@ def test_llm_provider_rejects_invalid_json_response(tmp_path, monkeypatch) -> No
         raise AssertionError("invalid JSON should fail")
 
 
+@pytest.mark.parametrize(
+    ("provider_name", "body", "expected_error"),
+    [
+        (
+            "openai",
+            "{not json",
+            "openai response did not match provider envelope",
+        ),
+        (
+            "gemini",
+            json.dumps({"candidates": []}),
+            "gemini response did not match provider envelope",
+        ),
+        (
+            "anthropic",
+            json.dumps({"content": [{"type": "image"}]}),
+            "anthropic response did not match provider envelope",
+        ),
+    ],
+)
+def test_llm_provider_normalizes_malformed_provider_envelope(
+    tmp_path,
+    monkeypatch,
+    provider_name: str,
+    body: str,
+    expected_error: str,
+) -> None:
+    config = _configured_llm_provider(tmp_path, monkeypatch, provider_name)
+    transport = FakeTransport(HTTPResponse(status=200, body=body), [])
+    provider = resolve_provider(config, transport=transport)
+
+    with pytest.raises(ValueError) as exc_info:
+        provider.crystallize(_context(), [_memory()])
+
+    assert str(exc_info.value) == expected_error
+    assert body not in str(exc_info.value)
+    assert "secret-" not in str(exc_info.value)
+    assert "http" not in str(exc_info.value).lower()
+
+
 def test_llm_provider_rejects_null_crystal_title(tmp_path, monkeypatch) -> None:
     payload = _llm_payload()
     crystals = payload["crystals"]
@@ -442,3 +520,33 @@ def _assert_openai_payload_schema_error(tmp_path, monkeypatch, payload: dict[str
         assert str(exc) == "openai response did not match dream schema"
     else:
         raise AssertionError("invalid dream schema should fail")
+
+
+def _configured_llm_provider(tmp_path, monkeypatch, provider_name: str) -> HieronymusConfig:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    provider_settings = {
+        "openai": ProviderSettings(
+            enabled=True,
+            model="gpt-4.1-mini",
+            api_key_env="OPENAI_API_KEY",
+            base_url="https://api.openai.test/v1",
+        ),
+        "gemini": ProviderSettings(
+            enabled=True,
+            model="gemini-2.5-flash",
+            api_key_env="GEMINI_API_KEY",
+        ),
+        "anthropic": ProviderSettings(
+            enabled=True,
+            model="claude-3-5-haiku-latest",
+            api_key_env="ANTHROPIC_API_KEY",
+        ),
+    }[provider_name]
+    settings = (
+        load_settings(config)
+        .with_provider(provider_name, provider_settings)
+        .with_dreaming(DreamingSettings(active_provider=provider_name))
+    )
+    save_settings(config, settings)
+    monkeypatch.setenv(provider_settings.api_key_env, f"secret-{provider_name}")
+    return config

@@ -218,9 +218,9 @@ class ProviderRegistry:
             return self._transport.post_json(
                 (
                     "https://generativelanguage.googleapis.com/v1beta/models/"
-                    f"{provider.model}:generateContent?key={api_key}"
+                    f"{provider.model}:generateContent"
                 ),
-                headers={},
+                headers={"x-goog-api-key": api_key},
                 payload={
                     "contents": [
                         {
@@ -329,6 +329,52 @@ def _parse_dream_json(provider_name: str, raw_text: str) -> DreamOutput:
     return DreamOutput(crystals=crystals, concept_proposals=proposals)
 
 
+def _provider_envelope_error(provider_name: str) -> ValueError:
+    return ValueError(f"{provider_name} response did not match provider envelope")
+
+
+def _provider_envelope_payload(provider_name: str, body: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as error:
+        raise _provider_envelope_error(provider_name) from error
+    if type(payload) is not dict:
+        raise _provider_envelope_error(provider_name)
+    return payload
+
+
+def _openai_envelope_text(body: str) -> str:
+    try:
+        text = _provider_envelope_payload("openai", body)["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as error:
+        raise _provider_envelope_error("openai") from error
+    if type(text) is not str:
+        raise _provider_envelope_error("openai")
+    return text
+
+
+def _gemini_envelope_text(body: str) -> str:
+    try:
+        text = _provider_envelope_payload("gemini", body)["candidates"][0]["content"]["parts"][0][
+            "text"
+        ]
+    except (KeyError, IndexError, TypeError) as error:
+        raise _provider_envelope_error("gemini") from error
+    if type(text) is not str:
+        raise _provider_envelope_error("gemini")
+    return text
+
+
+def _anthropic_envelope_text(body: str) -> str:
+    try:
+        text = _provider_envelope_payload("anthropic", body)["content"][0]["text"]
+    except (KeyError, IndexError, TypeError) as error:
+        raise _provider_envelope_error("anthropic") from error
+    if type(text) is not str:
+        raise _provider_envelope_error("anthropic")
+    return text
+
+
 def _dream_crystal_from_payload(payload: object) -> DreamCrystalCandidate:
     item = _require_dict(payload)
     return DreamCrystalCandidate(
@@ -432,9 +478,7 @@ class OpenAIDreamProvider:
         )
         if not 200 <= response.status < 300:
             raise ValueError(f"openai returned HTTP {response.status}")
-        payload = json.loads(response.body)
-        text = payload["choices"][0]["message"]["content"]
-        return _parse_dream_json("openai", str(text))
+        return _parse_dream_json("openai", _openai_envelope_text(response.body))
 
 
 class GeminiDreamProvider:
@@ -458,9 +502,9 @@ class GeminiDreamProvider:
         response = self.transport.post_json(
             (
                 "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{self.settings.model}:generateContent?key={self.api_key}"
+                f"{self.settings.model}:generateContent"
             ),
-            headers={},
+            headers={"x-goog-api-key": self.api_key},
             payload={
                 "contents": [
                     {
@@ -477,9 +521,7 @@ class GeminiDreamProvider:
         )
         if not 200 <= response.status < 300:
             raise ValueError(f"gemini returned HTTP {response.status}")
-        payload = json.loads(response.body)
-        text = payload["candidates"][0]["content"]["parts"][0]["text"]
-        return _parse_dream_json("gemini", str(text))
+        return _parse_dream_json("gemini", _gemini_envelope_text(response.body))
 
 
 class AnthropicDreamProvider:
@@ -516,9 +558,7 @@ class AnthropicDreamProvider:
         )
         if not 200 <= response.status < 300:
             raise ValueError(f"anthropic returned HTTP {response.status}")
-        payload = json.loads(response.body)
-        text = payload["content"][0]["text"]
-        return _parse_dream_json("anthropic", str(text))
+        return _parse_dream_json("anthropic", _anthropic_envelope_text(response.body))
 
 
 def resolve_provider(
