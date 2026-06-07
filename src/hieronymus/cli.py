@@ -168,7 +168,7 @@ def restart(ctx: click.Context, json_output: bool) -> None:
     _echo_status_lines(payload["status"])
 
 
-@main.command("config")
+@main.command("config", help="Open the configuration TUI.")
 @click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def config_command(ctx: click.Context, json_output: bool) -> None:

@@ -84,6 +84,14 @@ def test_cli_help_mentions_service_commands() -> None:
     assert "hiero update           Update managed installs in place" in result.output
 
 
+def test_click_help_describes_config_command() -> None:
+    result = CliRunner().invoke(main, ["--help"])
+
+    assert result.exit_code == 0
+    assert "config" in result.output
+    assert "Open the configuration TUI." in result.output
+
+
 def test_readme_documents_production_install_update_and_uninstall() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     normalized_readme = " ".join(readme.split())
