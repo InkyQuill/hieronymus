@@ -141,7 +141,16 @@ def test_admin_json_returns_available_tui_status(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["tui"] == "available"
-    assert payload["counts"] == {"series": 0, "crystals": 0}
+    assert payload["counts"] == {
+        "series": 0,
+        "crystals": 0,
+        "lessons": 0,
+        "short_term_memories": 0,
+        "sessions": 0,
+        "dream_runs": 0,
+        "pending_proposals": 0,
+        "audit_events": 0,
+    }
     assert payload["service"]["running"] is False
 
 
