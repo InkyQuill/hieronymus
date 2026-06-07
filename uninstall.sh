@@ -26,6 +26,10 @@ validate_hieronymus_path() {
             echo "error: refusing unsafe path for ${label}: ${path}" >&2
             exit 1
             ;;
+        ".." | "../"* | *"/.." | *"/../"*)
+            echo "error: refusing unsafe path for ${label}: ${path}" >&2
+            exit 1
+            ;;
         /*)
             ;;
         *)

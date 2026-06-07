@@ -94,6 +94,17 @@ def _run(command: list[str], *, cwd: Path | None = None) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
+def _output(command: list[str], *, cwd: Path | None = None) -> str:
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def fetch_remote_tags(repo_url: str = GITHUB_REPO_URL) -> list[str]:
     result = subprocess.run(
         ["git", "ls-remote", "--tags", repo_url],
@@ -116,7 +127,16 @@ def _validate_target(target: str) -> None:
 
 def is_managed_install(checkout: Path | None = None) -> bool:
     app_checkout = checkout if checkout is not None else managed_app_path()
-    return app_checkout == managed_app_path() and (app_checkout / ".git").exists()
+    if app_checkout != managed_app_path() or not (app_checkout / ".git").exists():
+        return False
+    try:
+        return _checkout_origin_url(app_checkout) == GITHUB_REPO_URL
+    except subprocess.CalledProcessError:
+        return False
+
+
+def _checkout_origin_url(checkout: Path) -> str:
+    return _output(["git", "remote", "get-url", "origin"], cwd=checkout)
 
 
 def check_update(*, target: str = "latest") -> UpdateStatus:
@@ -150,12 +170,12 @@ def check_update(*, target: str = "latest") -> UpdateStatus:
 
 def _checkout_update_target(target: str, latest_tag: str, checkout: Path) -> None:
     if target == "main":
-        _run(["git", "fetch", "origin", "main"], cwd=checkout)
+        _run(["git", "fetch", GITHUB_REPO_URL, "main"], cwd=checkout)
         _run(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
         return
 
-    _run(["git", "fetch", "--tags"], cwd=checkout)
-    _run(["git", "checkout", latest_tag], cwd=checkout)
+    _run(["git", "fetch", "--force", GITHUB_REPO_URL, f"refs/tags/{latest_tag}"], cwd=checkout)
+    _run(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
 
 
 def run_update(*, target: str = "latest") -> UpdateStatus:

@@ -188,8 +188,17 @@ def test_run_update_fetches_checks_out_and_reinstalls_managed_install(
 
     assert status.latest_tag == "v0.2.0"
     assert commands == [
-        (["git", "fetch", "--tags"], checkout),
-        (["git", "checkout", "v0.2.0"], checkout),
+        (
+            [
+                "git",
+                "fetch",
+                "--force",
+                release.GITHUB_REPO_URL,
+                "refs/tags/v0.2.0",
+            ],
+            checkout,
+        ),
+        (["git", "checkout", "--detach", "FETCH_HEAD"], checkout),
         (["uv", "tool", "install", "--force", str(checkout)], None),
     ]
 
@@ -213,7 +222,7 @@ def test_run_update_fetches_origin_main_before_checkout(
 
     assert status.target == "main"
     assert commands == [
-        (["git", "fetch", "origin", "main"], checkout),
+        (["git", "fetch", release.GITHUB_REPO_URL, "main"], checkout),
         (["git", "checkout", "--detach", "FETCH_HEAD"], checkout),
         (["uv", "tool", "install", "--force", str(checkout)], None),
     ]
@@ -237,3 +246,31 @@ def test_run_update_returns_refreshed_status_after_reinstall(
     assert status.current_version == "0.2.0"
     assert status.latest_version == "0.2.0"
     assert status.update_available is False
+
+
+def test_is_managed_install_rejects_wrong_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout = tmp_path / "app"
+    (checkout / ".git").mkdir(parents=True)
+
+    monkeypatch.setattr(release, "managed_app_path", lambda: checkout)
+    monkeypatch.setattr(
+        release, "_checkout_origin_url", lambda _: "https://example.invalid/repo.git"
+    )
+
+    assert release.is_managed_install(checkout) is False
+
+
+def test_is_managed_install_accepts_expected_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout = tmp_path / "app"
+    (checkout / ".git").mkdir(parents=True)
+
+    monkeypatch.setattr(release, "managed_app_path", lambda: checkout)
+    monkeypatch.setattr(release, "_checkout_origin_url", lambda _: release.GITHUB_REPO_URL)
+
+    assert release.is_managed_install(checkout) is True

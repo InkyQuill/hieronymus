@@ -97,6 +97,56 @@ def test_uninstall_refuses_root_data_dir_and_preserves_app(tmp_path: Path) -> No
     assert sentinel.read_text(encoding="utf-8") == "keep\n"
 
 
+def test_uninstall_refuses_app_dir_parent_traversal_and_preserves_sibling(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    sibling = home / ".local" / "share" / "hieronymus-keep"
+    sibling.mkdir(parents=True)
+    sentinel = sibling / "sentinel.txt"
+    sentinel.write_text("keep\n", encoding="utf-8")
+    env = script_env(tmp_path, home=home)
+    env["HIERONYMUS_APP_DIR"] = str(
+        home / ".local" / "share" / "hieronymus" / ".." / "hieronymus-keep"
+    )
+
+    result = subprocess.run(
+        ["sh", str(ROOT / "uninstall.sh"), "--keep-data"],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "refusing unsafe path" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep\n"
+
+
+def test_uninstall_refuses_data_root_parent_traversal_and_preserves_sibling(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    sibling = home / ".config" / "hieronymus-keep"
+    sibling.mkdir(parents=True)
+    sentinel = sibling / "sentinel.txt"
+    sentinel.write_text("keep\n", encoding="utf-8")
+    env = script_env(tmp_path, home=home)
+    env["HIERONYMUS_DATA_ROOT"] = str(home / ".config" / "hieronymus" / ".." / "hieronymus-keep")
+
+    result = subprocess.run(
+        ["sh", str(ROOT / "uninstall.sh"), "--purge-data"],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "refusing unsafe path" in result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep\n"
+
+
 def test_uninstall_keep_data_removes_safe_app_and_keeps_safe_data(tmp_path: Path) -> None:
     home = tmp_path / "home"
     app_dir = home / ".local" / "share" / "hieronymus" / "app"
