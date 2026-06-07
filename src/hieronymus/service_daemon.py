@@ -37,7 +37,6 @@ class DreamAutostartScheduler:
         self._thread = threading.Thread(
             target=self._run,
             name="hieronymus-dream-autostart",
-            daemon=True,
         )
 
     def start(self) -> None:
@@ -45,7 +44,12 @@ class DreamAutostartScheduler:
 
     def stop(self) -> None:
         self._stop.set()
-        self._thread.join(timeout=max(1.0, self._interval_seconds))
+        if self._thread.ident is None or threading.current_thread() is self._thread:
+            return
+        self._thread.join()
+
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
 
     def _run(self) -> None:
         while not self._stop.is_set():
