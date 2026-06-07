@@ -94,6 +94,40 @@ def test_load_settings_rejects_non_positive_dreaming_values(tmp_path: Path) -> N
         load_settings(config)
 
 
+@pytest.mark.parametrize(
+    ("raw_settings", "error"),
+    [
+        (
+            "[dreaming]\nmin_interval_minutes = true\n",
+            "min_interval_minutes must be an integer",
+        ),
+        (
+            "[dreaming]\nunknown = 1\n",
+            r"unknown setting: dreaming\.unknown",
+        ),
+        (
+            "[providers.openai]\nunknown = 1\n",
+            r"unknown setting: providers\.openai\.unknown",
+        ),
+        (
+            "[providers.openai]\nenabled = 'yes'\n",
+            r"providers\.openai\.enabled must be a boolean",
+        ),
+    ],
+)
+def test_load_settings_rejects_invalid_nested_schema(
+    tmp_path: Path,
+    raw_settings: str,
+    error: str,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.settings_path.write_text(raw_settings, encoding="utf-8")
+
+    with pytest.raises(SettingsError, match=error):
+        load_settings(config)
+
+
 def test_settings_to_json_masks_key_source_only(tmp_path: Path) -> None:
     settings = load_settings(HieronymusConfig(data_root=tmp_path / "hieronymus"))
 

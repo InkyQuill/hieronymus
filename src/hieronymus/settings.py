@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
 import tomllib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Any
 
 import tomli_w
 
+from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
 
 
@@ -90,12 +90,7 @@ def save_settings(config: HieronymusConfig, settings: HieronymusSettings) -> Non
     settings = _validate_settings(settings)
     config.config_root.mkdir(parents=True, exist_ok=True)
 
-    tmp_path = config.config_root / f"settings.toml.tmp-{os.getpid()}"
-    tmp_path.write_text(
-        tomli_w.dumps(settings.to_json_dict()),
-        encoding="utf-8",
-    )
-    tmp_path.replace(config.settings_path)
+    atomic_write_text(config.settings_path, tomli_w.dumps(settings.to_json_dict()))
 
 
 def default_settings() -> HieronymusSettings:
@@ -127,12 +122,24 @@ def _settings_from_payload(payload: dict[str, Any]) -> HieronymusSettings:
     defaults = default_settings()
 
     dreaming_payload = _dict_payload(payload.get("dreaming"), "dreaming")
+    _validate_unknown_keys(
+        dreaming_payload,
+        allowed=_field_names(DreamingSettings),
+        prefix="dreaming",
+    )
+    _validate_dreaming_payload(dreaming_payload)
     dreaming = replace(defaults.dreaming, **dreaming_payload)
 
     providers = dict(defaults.providers)
     providers_payload = _dict_payload(payload.get("providers"), "providers")
     for name, raw_provider in providers_payload.items():
         provider_payload = _dict_payload(raw_provider, f"providers.{name}")
+        _validate_unknown_keys(
+            provider_payload,
+            allowed=_field_names(ProviderSettings),
+            prefix=f"providers.{name}",
+        )
+        _validate_provider_payload(name, provider_payload)
         provider_default = providers.get(name, ProviderSettings())
         providers[name] = replace(provider_default, **provider_payload)
 
@@ -142,12 +149,16 @@ def _settings_from_payload(payload: dict[str, Any]) -> HieronymusSettings:
 def _dict_payload(value: object, field_name: str) -> dict[str, Any]:
     if value is None:
         return {}
-    if not isinstance(value, dict):
+    if type(value) is not dict:
         raise SettingsError(f"{field_name} must be a table")
     return value
 
 
 def _validate_settings(settings: HieronymusSettings) -> HieronymusSettings:
+    _validate_dreaming_settings(settings.dreaming)
+    for name, provider in settings.providers.items():
+        _validate_provider_settings(name, provider)
+
     if settings.dreaming.active_provider not in settings.providers:
         raise SettingsError(
             f"active provider is not configured: {settings.dreaming.active_provider}",
@@ -175,6 +186,94 @@ def _validate_settings(settings: HieronymusSettings) -> HieronymusSettings:
             raise SettingsError(f"enabled provider must have an api_key_env: {name}")
 
     return settings
+
+
+def _field_names(model: type[object]) -> frozenset[str]:
+    return frozenset(field.name for field in fields(model))
+
+
+def _validate_unknown_keys(
+    payload: dict[str, Any],
+    *,
+    allowed: frozenset[str],
+    prefix: str,
+) -> None:
+    for key in payload:
+        if key not in allowed:
+            raise SettingsError(f"unknown setting: {prefix}.{key}")
+
+
+def _validate_dreaming_payload(payload: dict[str, Any]) -> None:
+    if "active_provider" in payload:
+        _require_exact_str("active_provider", payload["active_provider"])
+    if "autostart_enabled" in payload:
+        _require_exact_bool("autostart_enabled", payload["autostart_enabled"])
+    if "min_interval_minutes" in payload:
+        _require_exact_int("min_interval_minutes", payload["min_interval_minutes"])
+    if "new_short_term_memory_threshold" in payload:
+        _require_exact_int(
+            "new_short_term_memory_threshold",
+            payload["new_short_term_memory_threshold"],
+        )
+    if "max_cycles_per_autostart" in payload:
+        _require_exact_int(
+            "max_cycles_per_autostart",
+            payload["max_cycles_per_autostart"],
+        )
+
+
+def _validate_provider_payload(name: str, payload: dict[str, Any]) -> None:
+    prefix = f"providers.{name}"
+    if "enabled" in payload:
+        _require_exact_bool(f"{prefix}.enabled", payload["enabled"])
+    if "model" in payload:
+        _require_exact_str(f"{prefix}.model", payload["model"])
+    if "api_key_env" in payload:
+        _require_exact_str(f"{prefix}.api_key_env", payload["api_key_env"])
+    if "base_url" in payload:
+        _require_optional_exact_str(f"{prefix}.base_url", payload["base_url"])
+
+
+def _validate_dreaming_settings(dreaming: DreamingSettings) -> None:
+    _require_exact_str("active_provider", dreaming.active_provider)
+    _require_exact_bool("autostart_enabled", dreaming.autostart_enabled)
+    _require_exact_int("min_interval_minutes", dreaming.min_interval_minutes)
+    _require_exact_int(
+        "new_short_term_memory_threshold",
+        dreaming.new_short_term_memory_threshold,
+    )
+    _require_exact_int(
+        "max_cycles_per_autostart",
+        dreaming.max_cycles_per_autostart,
+    )
+
+
+def _validate_provider_settings(name: str, provider: ProviderSettings) -> None:
+    prefix = f"providers.{name}"
+    _require_exact_bool(f"{prefix}.enabled", provider.enabled)
+    _require_exact_str(f"{prefix}.model", provider.model)
+    _require_exact_str(f"{prefix}.api_key_env", provider.api_key_env)
+    _require_optional_exact_str(f"{prefix}.base_url", provider.base_url)
+
+
+def _require_exact_int(field_name: str, value: object) -> None:
+    if type(value) is not int:
+        raise SettingsError(f"{field_name} must be an integer")
+
+
+def _require_exact_bool(field_name: str, value: object) -> None:
+    if type(value) is not bool:
+        raise SettingsError(f"{field_name} must be a boolean")
+
+
+def _require_exact_str(field_name: str, value: object) -> None:
+    if type(value) is not str:
+        raise SettingsError(f"{field_name} must be a string")
+
+
+def _require_optional_exact_str(field_name: str, value: object) -> None:
+    if value is not None and type(value) is not str:
+        raise SettingsError(f"{field_name} must be a string or null")
 
 
 def _validate_minimum(field_name: str, value: int) -> None:
