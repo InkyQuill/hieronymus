@@ -28,6 +28,10 @@ def _command_labels(app: HieronymusAdminApp) -> set[str]:
     return {_plain_text(label) for label in app.screen.query("#command-list Label")}
 
 
+def _command_labels_ordered(app: HieronymusAdminApp) -> list[str]:
+    return [_plain_text(label) for label in app.screen.query("#command-list Label")]
+
+
 def _seed(config: HieronymusConfig) -> tuple[int, int]:
     series = Registry(config).create_series(
         slug="only-sense-online",
@@ -156,11 +160,19 @@ async def test_tui_command_palette_lists_admin_commands(config: HieronymusConfig
 
         assert app.screen.id == "command-dialog"
         commands = _command_labels(app)
-        assert {"reinforce", "edit", "delete", "inspect provenance"} <= commands
+        assert {
+            "add",
+            "reinforce",
+            "edit",
+            "delete",
+            "merge",
+            "split",
+            "supersede",
+            "inspect provenance",
+            "inspect recall reason",
+        } <= commands
         assert {"approve", "reject"}.isdisjoint(commands)
-        # The palette intentionally lists executable TUI commands only.
-        assert "manual dream" not in commands
-        assert "merge" not in commands
+        assert "run manual dreaming" not in commands
 
 
 @pytest.mark.anyio
@@ -186,8 +198,41 @@ async def test_tui_command_palette_lists_proposal_commands(
     ("view_key", "expected"),
     [
         ("1", set()),
-        ("3", {"edit", "delete", "deprecate", "reinforce", "decay", "inspect provenance"}),
-        ("4", {"edit", "delete", "deprecate", "reinforce", "decay", "inspect provenance"}),
+        (
+            "3",
+            {
+                "add",
+                "edit",
+                "delete",
+                "merge",
+                "split",
+                "deprecate",
+                "supersede",
+                "reinforce",
+                "decay",
+                "inspect provenance",
+                "inspect recall reason",
+            },
+        ),
+        (
+            "4",
+            {
+                "add",
+                "edit",
+                "delete",
+                "merge",
+                "split",
+                "deprecate",
+                "supersede",
+                "reinforce",
+                "decay",
+                "promote local lesson",
+                "activate global lesson",
+                "inspect provenance",
+                "inspect recall reason",
+            },
+        ),
+        ("6", {"run manual dreaming", "review dream outputs"}),
         ("7", {"approve", "reject"}),
     ],
 )
@@ -283,7 +328,7 @@ async def test_tui_command_palette_dispatches_supported_crystal_command(
         await pilot.press("ctrl+p")
         assert app.screen.id == "command-dialog"
         command_list = app.screen.query_one("#command-list", ListView)
-        command_list.index = 3
+        command_list.index = _command_labels_ordered(app).index("reinforce")
         await pilot.press("enter")
         await pilot.pause()
 
@@ -314,3 +359,67 @@ async def test_lessons_view_clears_stale_type_filter_in_dialog(
         await pilot.press("f")
         assert app.screen.id == "filter-dialog"
         assert len(app.screen.query("#filter-type")) == 0
+
+
+@pytest.mark.anyio
+async def test_tui_add_command_creates_audited_crystal(config: HieronymusConfig) -> None:
+    _seed(config)
+    app = HieronymusAdminApp(config)
+    store = AdminStore(config)
+
+    async with app.run_test() as pilot:
+        app.screen._dispatch_command("add")
+        await pilot.pause()
+
+        assert app.screen.id == "form-dialog"
+        app.screen.dismiss(
+            {
+                "series_slug": "only-sense-online",
+                "source_language": "ja",
+                "target_language": "ru",
+                "type": "concept",
+                "title": "Added Note",
+                "text": "Added from the admin TUI.",
+                "tags": "",
+            }
+        )
+        await pilot.pause()
+
+        assert store.stats().crystals == 3
+        assert store.stats().audit_events == 1
+        assert "Added Note" in _plain_text(_query(app, "#detail"))
+
+
+@pytest.mark.anyio
+async def test_tui_filters_proposals_by_status(config: HieronymusConfig) -> None:
+    _seed(config)
+    _seed_proposal(config)
+    app = HieronymusAdminApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("7")
+        await pilot.press("f")
+        assert app.screen.id == "filter-dialog"
+        app.screen.dismiss({"status": "approved"})
+        await pilot.pause()
+
+        assert _query(app, "#entries").row_count == 0
+
+
+@pytest.mark.anyio
+async def test_tui_manual_dream_command_switches_to_dream_runs(
+    config: HieronymusConfig,
+) -> None:
+    _seed(config)
+    app = HieronymusAdminApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("6")
+        await pilot.press("ctrl+p")
+        command_list = app.screen.query_one("#command-list", ListView)
+        command_list.index = _command_labels_ordered(app).index("run manual dreaming")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.active_view == "Dream Runs"
+        assert _query(app, "#entries").row_count == 1

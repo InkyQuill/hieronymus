@@ -15,8 +15,10 @@ from hieronymus.admin_models import (
     ProvenanceDetail,
 )
 from hieronymus.config import HieronymusConfig
+from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
 from hieronymus.dreaming import DeterministicDreamProvider, DreamRunRecord, DreamService
+from hieronymus.memory_models import TranslationContext
 from hieronymus.service_manager import ServiceManager
 
 ADMIN_VIEWS = (
@@ -113,6 +115,33 @@ class AdminStore:
         with connect(self.config.database_path) as conn:
             row = self._get_crystal(conn, crystal_id)
         return AdminCrystalEditPayload(title=row["title"], text=row["text"])
+
+    def add_crystal(
+        self,
+        *,
+        series_slug: str,
+        source_language: str,
+        target_language: str,
+        crystal_type: str,
+        title: str,
+        text: str,
+        tags: tuple[str, ...] = (),
+    ) -> int:
+        context = TranslationContext(
+            series_slug=series_slug,
+            source_language=source_language,
+            target_language=target_language,
+            task_type="admin",
+            tags=tags,
+        )
+        crystal_id = CrystalStore(self.config).add_crystal(
+            context,
+            crystal_type=crystal_type,
+            title=title,
+            text=text,
+        )
+        self._audit("add", "crystal", crystal_id, note="Added from admin TUI")
+        return crystal_id
 
     def run_manual_dreaming(self) -> DreamRunRecord:
         run = DreamService(self.config, DeterministicDreamProvider()).run_cycle()

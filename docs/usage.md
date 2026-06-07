@@ -83,16 +83,23 @@ dialogs, a detail pane, and command actions that match the selected entry type.
 
 Useful controls:
 
-- `1`-`7`: switch views
+- `1`-`8`: switch views
 - `j` / `k`: move through entries
-- `/`: filter the current view
+- `f` or `/`: filter the current view
 - `e`: edit the selected crystal or lesson
-- `a` / `r`: approve or reject the selected proposal
+- `a`: approve the selected proposal
+- `x`: reject the selected proposal
 - `+` / `-`: reinforce or decay the selected crystal or lesson
 - `d`: deprecate the selected crystal or lesson
-- `x`: delete after confirmation
+- `delete`: delete after confirmation
 - `p`: inspect provenance for the selected entry
 - `ctrl+p`: open the command palette
+
+The command palette exposes the broader admin action surface where the selected
+view supports it: add, edit, delete, merge, split, supersede, reinforce, decay,
+promote a local lesson to a global candidate, activate a global lesson, inspect
+provenance, inspect recall reasons, run manual dreaming, review dream outputs,
+and approve or reject strict-concept proposals.
 
 For scripts and health checks, use:
 
