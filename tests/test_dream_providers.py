@@ -370,3 +370,71 @@ def test_llm_provider_rejects_invalid_json_response(tmp_path, monkeypatch) -> No
         assert str(exc) == "openai response did not contain valid dream JSON"
     else:
         raise AssertionError("invalid JSON should fail")
+
+
+def test_llm_provider_rejects_null_crystal_title(tmp_path, monkeypatch) -> None:
+    payload = _llm_payload()
+    crystals = payload["crystals"]
+    assert isinstance(crystals, list)
+    crystal = crystals[0]
+    assert isinstance(crystal, dict)
+    crystal["title"] = None
+
+    _assert_openai_payload_schema_error(tmp_path, monkeypatch, payload)
+
+
+def test_llm_provider_rejects_numeric_approved_variant(tmp_path, monkeypatch) -> None:
+    payload = _llm_payload()
+    proposals = payload["concept_proposals"]
+    assert isinstance(proposals, list)
+    proposal = proposals[0]
+    assert isinstance(proposal, dict)
+    proposal["approved_variants"] = [1]
+
+    _assert_openai_payload_schema_error(tmp_path, monkeypatch, payload)
+
+
+def test_llm_provider_rejects_string_source_memory_id(tmp_path, monkeypatch) -> None:
+    payload = _llm_payload()
+    crystals = payload["crystals"]
+    assert isinstance(crystals, list)
+    crystal = crystals[0]
+    assert isinstance(crystal, dict)
+    crystal["source_memory_ids"] = ["7"]
+
+    _assert_openai_payload_schema_error(tmp_path, monkeypatch, payload)
+
+
+def _assert_openai_payload_schema_error(tmp_path, monkeypatch, payload: dict[str, object]) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = (
+        load_settings(config)
+        .with_provider(
+            "openai",
+            ProviderSettings(
+                enabled=True,
+                model="gpt-4.1-mini",
+                api_key_env="OPENAI_API_KEY",
+                base_url="https://api.openai.test/v1",
+            ),
+        )
+        .with_dreaming(DreamingSettings(active_provider="openai"))
+    )
+    save_settings(config, settings)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = FakeTransport(
+        HTTPResponse(
+            status=200,
+            body=json.dumps({"choices": [{"message": {"content": json.dumps(payload)}}]}),
+        ),
+        [],
+    )
+
+    provider = resolve_provider(config, transport=transport)
+
+    try:
+        provider.crystallize(_context(), [_memory()])
+    except ValueError as exc:
+        assert str(exc) == "openai response did not match dream schema"
+    else:
+        raise AssertionError("invalid dream schema should fail")

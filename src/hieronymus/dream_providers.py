@@ -334,27 +334,27 @@ def _parse_dream_json(provider_name: str, raw_text: str) -> DreamOutput:
 def _dream_crystal_from_payload(payload: object) -> DreamCrystalCandidate:
     item = _require_dict(payload)
     return DreamCrystalCandidate(
-        crystal_type=str(item["crystal_type"]),
-        title=str(item["title"]),
-        text=str(item["text"]),
-        strength=float(item["strength"]),
-        confidence=float(item["confidence"]),
-        source_memory_ids=_int_list(item["source_memory_ids"]),
+        crystal_type=_require_str(item, "crystal_type"),
+        title=_require_str(item, "title"),
+        text=_require_str(item, "text"),
+        strength=_require_float(item, "strength"),
+        confidence=_require_float(item, "confidence"),
+        source_memory_ids=_require_int_list(item, "source_memory_ids"),
     )
 
 
 def _dream_proposal_from_payload(payload: object) -> DreamConceptProposal:
     item = _require_dict(payload)
     return DreamConceptProposal(
-        series_slug=str(item["series_slug"]),
-        source_language=str(item["source_language"]),
-        target_language=str(item["target_language"]),
-        concept_text=str(item["concept_text"]),
-        source_form=str(item["source_form"]),
-        canonical_rendering=str(item["canonical_rendering"]),
-        approved_variants=_str_list(item["approved_variants"]),
-        forbidden_variants=_str_list(item["forbidden_variants"]),
-        rationale=str(item.get("rationale", "")),
+        series_slug=_require_str(item, "series_slug"),
+        source_language=_require_str(item, "source_language"),
+        target_language=_require_str(item, "target_language"),
+        concept_text=_require_str(item, "concept_text"),
+        source_form=_require_str(item, "source_form"),
+        canonical_rendering=_require_str(item, "canonical_rendering"),
+        approved_variants=_require_str_list(item, "approved_variants"),
+        forbidden_variants=_require_str_list(item, "forbidden_variants"),
+        rationale=_require_str(item, "rationale"),
     )
 
 
@@ -364,16 +364,42 @@ def _require_dict(payload: object) -> dict[str, Any]:
     return payload
 
 
-def _int_list(payload: object) -> list[int]:
-    if type(payload) is not list:
-        raise ValueError("schema field must be a list")
-    return [int(item) for item in payload]
+def _require_field(payload: dict[str, Any], key: str) -> object:
+    if key not in payload:
+        raise ValueError("schema field is required")
+    return payload[key]
 
 
-def _str_list(payload: object) -> list[str]:
-    if type(payload) is not list:
+def _require_str(payload: dict[str, Any], key: str) -> str:
+    value = _require_field(payload, key)
+    if type(value) is not str:
+        raise ValueError("schema field must be a string")
+    return value
+
+
+def _require_float(payload: dict[str, Any], key: str) -> float:
+    value = _require_field(payload, key)
+    if type(value) not in (int, float):
+        raise ValueError("schema field must be a number")
+    return float(value)
+
+
+def _require_int_list(payload: dict[str, Any], key: str) -> list[int]:
+    value = _require_field(payload, key)
+    if type(value) is not list:
         raise ValueError("schema field must be a list")
-    return [str(item) for item in payload]
+    if not all(type(item) is int for item in value):
+        raise ValueError("schema field must be a list of integers")
+    return value
+
+
+def _require_str_list(payload: dict[str, Any], key: str) -> list[str]:
+    value = _require_field(payload, key)
+    if type(value) is not list:
+        raise ValueError("schema field must be a list")
+    if not all(type(item) is str for item in value):
+        raise ValueError("schema field must be a list of strings")
+    return value
 
 
 class OpenAIDreamProvider:
