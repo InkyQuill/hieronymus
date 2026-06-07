@@ -77,10 +77,10 @@ def test_cli_help_mentions_service_commands() -> None:
     assert "hiero status" in result.output
     assert "hiero install codex --dry-run" in result.output
     assert "Open the memory management TUI" not in result.output
-    assert "Open the configuration TUI" not in result.output
+    assert "Open the configuration TUI" in result.output
     assert "Open the local management TUI" in result.output
     assert "Show management counts and available views" in result.output
-    assert "Show config paths" in result.output
+    assert "Show config paths" not in result.output
     assert "hiero update           Update managed installs in place" in result.output
 
 
@@ -194,7 +194,7 @@ def test_restart_json_returns_manager_payload(tmp_path: Path) -> None:
     }
 
 
-def test_config_json_returns_paths_and_tui_placeholder(tmp_path: Path) -> None:
+def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     data_root = tmp_path / "hieronymus"
 
     result = CliRunner().invoke(
@@ -203,11 +203,33 @@ def test_config_json_returns_paths_and_tui_placeholder(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0
-    assert json.loads(result.output) == {
-        "config_root": str(data_root),
-        "database_path": str(data_root / "hieronymus.sqlite"),
-        "tui": "not-available-in-this-pass",
-    }
+    payload = json.loads(result.output)
+    assert payload["config_root"] == str(data_root)
+    assert payload["database_path"] == str(data_root / "hieronymus.sqlite")
+    assert payload["settings_path"] == str(data_root / "settings.toml")
+    assert payload["tui"] == "available"
+    assert payload["settings"]["dreaming"]["active_provider"] == "deterministic"
+    assert payload["providers"][0]["name"] == "deterministic"
+
+
+def test_config_launch_invokes_textual_app(tmp_path: Path, monkeypatch) -> None:
+    data_root = tmp_path / "hieronymus"
+    launched = {}
+
+    class FakeApp:
+        def __init__(self, config) -> None:
+            launched["config"] = config
+
+        def run(self) -> None:
+            launched["ran"] = True
+
+    monkeypatch.setattr("hieronymus.cli.HieronymusConfigApp", FakeApp)
+
+    result = CliRunner().invoke(main, ["--data-root", str(data_root), "config"])
+
+    assert result.exit_code == 0
+    assert launched["config"].data_root == data_root
+    assert launched["ran"] is True
 
 
 def test_dream_json_uses_configured_active_provider(tmp_path: Path) -> None:

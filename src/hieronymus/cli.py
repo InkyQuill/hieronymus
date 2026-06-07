@@ -10,7 +10,8 @@ from hieronymus.admin import AdminStore
 from hieronymus.agent_plugins import resolve_plugin
 from hieronymus.config import load_config
 from hieronymus.doctor import Doctor, report_to_json
-from hieronymus.dream_providers import resolve_provider
+from hieronymus.dream_autostart import DreamAutostart
+from hieronymus.dream_providers import ProviderRegistry, resolve_provider
 from hieronymus.dreaming import DreamService
 from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
@@ -21,9 +22,10 @@ from hieronymus.registry import Registry
 from hieronymus.release import check_update, run_update
 from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
-from hieronymus.settings import SettingsError
+from hieronymus.settings import SettingsError, load_settings
 from hieronymus.termbase import Termbase
 from hieronymus.tui.app import HieronymusAdminApp
+from hieronymus.tui.config_app import HieronymusConfigApp
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -171,20 +173,25 @@ def restart(ctx: click.Context, json_output: bool) -> None:
 @click.pass_context
 def config_command(ctx: click.Context, json_output: bool) -> None:
     config = ctx.obj["config"]
-    payload = {
-        "config_root": str(config.config_root),
-        "database_path": str(config.database_path),
-        "tui": "not-available-in-this-pass",
-    }
-    if json_output:
-        click.echo(render_json(payload))
+    if not json_output:
+        HieronymusConfigApp(config).run()
         return
 
-    click.echo(render_greeting())
-    click.echo()
-    click.echo(f"config_root: {payload['config_root']}")
-    click.echo(f"database_path: {payload['database_path']}")
-    click.echo(f"tui: {payload['tui']}")
+    try:
+        settings = load_settings(config)
+        payload = {
+            "config_root": str(config.config_root),
+            "database_path": str(config.database_path),
+            "settings_path": str(config.settings_path),
+            "tui": "available",
+            "settings": settings.to_json_dict(),
+            "providers": ProviderRegistry().status_payload(config),
+            "dreaming": DreamAutostart(config).status(),
+        }
+    except SettingsError as error:
+        raise click.ClickException(str(error)) from error
+
+    click.echo(render_json(payload))
 
 
 @main.command("install")
@@ -333,7 +340,7 @@ def help_command() -> None:
     click.echo("  hiero restart          Restart the local daemon")
     click.echo("  hiero admin            Open the local management TUI")
     click.echo("  hiero admin --json     Show management counts and available views")
-    click.echo("  hiero config           Show config paths")
+    click.echo("  hiero config           Open the configuration TUI")
     click.echo("  hiero update           Update managed installs in place")
     click.echo("  hiero install codex --dry-run")
 
