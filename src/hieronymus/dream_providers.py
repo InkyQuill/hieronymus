@@ -6,10 +6,17 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.dreaming import DeterministicDreamProvider, DreamProvider
+from hieronymus.dreaming import (
+    DeterministicDreamProvider,
+    DreamConceptProposal,
+    DreamCrystalCandidate,
+    DreamOutput,
+    DreamProvider,
+)
+from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.settings import ProviderSettings, load_settings
 
 _DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -243,6 +250,253 @@ class ProviderRegistry:
         raise ValueError(f"unsupported dream provider: {name}")
 
 
+def _dream_prompt(
+    context: TranslationContext,
+    memories: list[ShortTermMemoryRecord],
+) -> str:
+    memory_payload = [
+        {
+            "id": memory.id,
+            "source_role": memory.source_role,
+            "kind": memory.kind,
+            "text": memory.text,
+            "source_ref": memory.source_ref,
+        }
+        for memory in memories
+    ]
+    return json.dumps(
+        {
+            "instruction": (
+                "Return only JSON with keys crystals and concept_proposals. "
+                "Use only provided source memory ids. Do not add markdown."
+            ),
+            "context": {
+                "series_slug": context.series_slug,
+                "source_language": context.source_language,
+                "target_language": context.target_language,
+                "task_type": context.task_type,
+                "volume": context.volume,
+                "chapter": context.chapter,
+                "tags": list(context.tags),
+            },
+            "memories": memory_payload,
+            "schema": {
+                "crystals": [
+                    {
+                        "crystal_type": "lesson|concept|erudition",
+                        "title": "string",
+                        "text": "string",
+                        "strength": 0.7,
+                        "confidence": 0.8,
+                        "source_memory_ids": [1],
+                    }
+                ],
+                "concept_proposals": [
+                    {
+                        "series_slug": context.series_slug,
+                        "source_language": context.source_language,
+                        "target_language": context.target_language,
+                        "concept_text": "string",
+                        "source_form": "string",
+                        "canonical_rendering": "string",
+                        "approved_variants": ["string"],
+                        "forbidden_variants": ["string"],
+                        "rationale": "string",
+                    }
+                ],
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
+def _parse_dream_json(provider_name: str, raw_text: str) -> DreamOutput:
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{provider_name} response did not contain valid dream JSON") from error
+
+    if type(payload) is not dict:
+        raise ValueError(f"{provider_name} response did not match dream schema")
+    crystals_payload = payload.get("crystals")
+    proposals_payload = payload.get("concept_proposals")
+    if type(crystals_payload) is not list or type(proposals_payload) is not list:
+        raise ValueError(f"{provider_name} response did not match dream schema")
+
+    try:
+        crystals = [_dream_crystal_from_payload(item) for item in crystals_payload]
+        proposals = [_dream_proposal_from_payload(item) for item in proposals_payload]
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"{provider_name} response did not match dream schema") from error
+    return DreamOutput(crystals=crystals, concept_proposals=proposals)
+
+
+def _dream_crystal_from_payload(payload: object) -> DreamCrystalCandidate:
+    item = _require_dict(payload)
+    return DreamCrystalCandidate(
+        crystal_type=str(item["crystal_type"]),
+        title=str(item["title"]),
+        text=str(item["text"]),
+        strength=float(item["strength"]),
+        confidence=float(item["confidence"]),
+        source_memory_ids=_int_list(item["source_memory_ids"]),
+    )
+
+
+def _dream_proposal_from_payload(payload: object) -> DreamConceptProposal:
+    item = _require_dict(payload)
+    return DreamConceptProposal(
+        series_slug=str(item["series_slug"]),
+        source_language=str(item["source_language"]),
+        target_language=str(item["target_language"]),
+        concept_text=str(item["concept_text"]),
+        source_form=str(item["source_form"]),
+        canonical_rendering=str(item["canonical_rendering"]),
+        approved_variants=_str_list(item["approved_variants"]),
+        forbidden_variants=_str_list(item["forbidden_variants"]),
+        rationale=str(item.get("rationale", "")),
+    )
+
+
+def _require_dict(payload: object) -> dict[str, Any]:
+    if type(payload) is not dict:
+        raise ValueError("schema item must be an object")
+    return payload
+
+
+def _int_list(payload: object) -> list[int]:
+    if type(payload) is not list:
+        raise ValueError("schema field must be a list")
+    return [int(item) for item in payload]
+
+
+def _str_list(payload: object) -> list[str]:
+    if type(payload) is not list:
+        raise ValueError("schema field must be a list")
+    return [str(item) for item in payload]
+
+
+class OpenAIDreamProvider:
+    name = "openai"
+
+    def __init__(
+        self,
+        settings: ProviderSettings,
+        api_key: str,
+        transport: HTTPTransport,
+    ) -> None:
+        self.settings = settings
+        self.api_key = api_key
+        self.transport = transport
+
+    def crystallize(
+        self,
+        context: TranslationContext,
+        memories: list[ShortTermMemoryRecord],
+    ) -> DreamOutput:
+        base_url = (self.settings.base_url or "https://api.openai.com/v1").rstrip("/")
+        response = self.transport.post_json(
+            f"{base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            payload={
+                "model": self.settings.model,
+                "messages": [{"role": "user", "content": _dream_prompt(context, memories)}],
+                "temperature": 0.1,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=_DEFAULT_TIMEOUT_SECONDS,
+        )
+        if not 200 <= response.status < 300:
+            raise ValueError(f"openai returned HTTP {response.status}")
+        payload = json.loads(response.body)
+        text = payload["choices"][0]["message"]["content"]
+        return _parse_dream_json("openai", str(text))
+
+
+class GeminiDreamProvider:
+    name = "gemini"
+
+    def __init__(
+        self,
+        settings: ProviderSettings,
+        api_key: str,
+        transport: HTTPTransport,
+    ) -> None:
+        self.settings = settings
+        self.api_key = api_key
+        self.transport = transport
+
+    def crystallize(
+        self,
+        context: TranslationContext,
+        memories: list[ShortTermMemoryRecord],
+    ) -> DreamOutput:
+        response = self.transport.post_json(
+            (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{self.settings.model}:generateContent?key={self.api_key}"
+            ),
+            headers={},
+            payload={
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": _dream_prompt(context, memories)}],
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "responseMimeType": "application/json",
+                },
+            },
+            timeout=_DEFAULT_TIMEOUT_SECONDS,
+        )
+        if not 200 <= response.status < 300:
+            raise ValueError(f"gemini returned HTTP {response.status}")
+        payload = json.loads(response.body)
+        text = payload["candidates"][0]["content"]["parts"][0]["text"]
+        return _parse_dream_json("gemini", str(text))
+
+
+class AnthropicDreamProvider:
+    name = "anthropic"
+
+    def __init__(
+        self,
+        settings: ProviderSettings,
+        api_key: str,
+        transport: HTTPTransport,
+    ) -> None:
+        self.settings = settings
+        self.api_key = api_key
+        self.transport = transport
+
+    def crystallize(
+        self,
+        context: TranslationContext,
+        memories: list[ShortTermMemoryRecord],
+    ) -> DreamOutput:
+        response = self.transport.post_json(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            payload={
+                "model": self.settings.model,
+                "max_tokens": 2000,
+                "temperature": 0.1,
+                "messages": [{"role": "user", "content": _dream_prompt(context, memories)}],
+            },
+            timeout=_DEFAULT_TIMEOUT_SECONDS,
+        )
+        if not 200 <= response.status < 300:
+            raise ValueError(f"anthropic returned HTTP {response.status}")
+        payload = json.loads(response.body)
+        text = payload["content"][0]["text"]
+        return _parse_dream_json("anthropic", str(text))
+
+
 def resolve_provider(
     config: HieronymusConfig,
     name: str | None = None,
@@ -252,12 +506,24 @@ def resolve_provider(
     settings = load_settings(config)
     provider_name = name or settings.dreaming.active_provider
     ProviderRegistry(transport=transport).metadata(provider_name)
-    provider = settings.providers.get(provider_name, ProviderSettings())
-    if not provider.enabled:
+    provider_settings = settings.providers.get(provider_name, ProviderSettings())
+    if not provider_settings.enabled:
         raise ValueError(f"dream provider is disabled: {provider_name}")
     if provider_name == "deterministic":
         return DeterministicDreamProvider()
-    raise ValueError(f"dream provider is not implemented: {provider_name}")
+    api_key = os.environ.get(provider_settings.api_key_env, "")
+    if not api_key:
+        raise ValueError(
+            f"missing environment variable for {provider_name}: {provider_settings.api_key_env}"
+        )
+    active_transport = transport or UrllibTransport()
+    if provider_name == "openai":
+        return OpenAIDreamProvider(provider_settings, api_key, active_transport)
+    if provider_name == "gemini":
+        return GeminiDreamProvider(provider_settings, api_key, active_transport)
+    if provider_name == "anthropic":
+        return AnthropicDreamProvider(provider_settings, api_key, active_transport)
+    raise ValueError(f"unsupported dream provider: {provider_name}")
 
 
 def _configured_status(name: str, provider: ProviderSettings) -> tuple[bool, str]:

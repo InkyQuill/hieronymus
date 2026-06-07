@@ -10,7 +10,13 @@ from hieronymus.dream_providers import (
     ProviderRegistry,
     resolve_provider,
 )
-from hieronymus.settings import ProviderSettings, load_settings, save_settings
+from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
+from hieronymus.settings import (
+    DreamingSettings,
+    ProviderSettings,
+    load_settings,
+    save_settings,
+)
 
 
 @dataclass
@@ -180,3 +186,187 @@ def test_resolve_provider_rejects_disabled_provider(tmp_path) -> None:
         assert str(exc) == "dream provider is disabled: openai"
     else:
         raise AssertionError("disabled provider should fail")
+
+
+def _context() -> TranslationContext:
+    return TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="en",
+        task_type="translation",
+    )
+
+
+def _memory() -> ShortTermMemoryRecord:
+    return ShortTermMemoryRecord(
+        id=7,
+        session_id=3,
+        source_role="user",
+        kind="style",
+        text="Use compact UI labels for inventory skill names.",
+        source_ref="chapter 1",
+        metadata={},
+    )
+
+
+def _llm_payload() -> dict[str, object]:
+    return {
+        "crystals": [
+            {
+                "crystal_type": "lesson",
+                "title": "Compact UI Labels",
+                "text": "Use compact UI labels for inventory skill names.",
+                "strength": 0.7,
+                "confidence": 0.8,
+                "source_memory_ids": [7],
+            }
+        ],
+        "concept_proposals": [
+            {
+                "series_slug": "only-sense-online",
+                "source_language": "ja",
+                "target_language": "en",
+                "concept_text": "Sense",
+                "source_form": "センス",
+                "canonical_rendering": "Sense",
+                "approved_variants": ["Sense"],
+                "forbidden_variants": ["Senses"],
+                "rationale": "Existing series terminology.",
+            }
+        ],
+    }
+
+
+def test_openai_provider_crystallizes_structured_response(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = (
+        load_settings(config)
+        .with_provider(
+            "openai",
+            ProviderSettings(
+                enabled=True,
+                model="gpt-4.1-mini",
+                api_key_env="OPENAI_API_KEY",
+                base_url="https://api.openai.test/v1",
+            ),
+        )
+        .with_dreaming(DreamingSettings(active_provider="openai"))
+    )
+    save_settings(config, settings)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = FakeTransport(
+        HTTPResponse(
+            status=200,
+            body=json.dumps({"choices": [{"message": {"content": json.dumps(_llm_payload())}}]}),
+        ),
+        [],
+    )
+
+    provider = resolve_provider(config, transport=transport)
+    output = provider.crystallize(_context(), [_memory()])
+
+    assert output.crystals[0].title == "Compact UI Labels"
+    assert output.concept_proposals[0].source_form == "センス"
+    assert transport.requests[0]["url"] == "https://api.openai.test/v1/chat/completions"
+
+
+def test_gemini_provider_crystallizes_structured_response(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = (
+        load_settings(config)
+        .with_provider(
+            "gemini",
+            ProviderSettings(
+                enabled=True,
+                model="gemini-2.5-flash",
+                api_key_env="GEMINI_API_KEY",
+            ),
+        )
+        .with_dreaming(DreamingSettings(active_provider="gemini"))
+    )
+    save_settings(config, settings)
+    monkeypatch.setenv("GEMINI_API_KEY", "secret-gemini")
+    transport = FakeTransport(
+        HTTPResponse(
+            status=200,
+            body=json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": json.dumps(_llm_payload())}]}}]}
+            ),
+        ),
+        [],
+    )
+
+    provider = resolve_provider(config, transport=transport)
+    output = provider.crystallize(_context(), [_memory()])
+
+    assert output.crystals[0].source_memory_ids == [7]
+    assert "generateContent?key=secret-gemini" in transport.requests[0]["url"]
+
+
+def test_anthropic_provider_crystallizes_structured_response(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = (
+        load_settings(config)
+        .with_provider(
+            "anthropic",
+            ProviderSettings(
+                enabled=True,
+                model="claude-3-5-haiku-latest",
+                api_key_env="ANTHROPIC_API_KEY",
+            ),
+        )
+        .with_dreaming(DreamingSettings(active_provider="anthropic"))
+    )
+    save_settings(config, settings)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret-anthropic")
+    transport = FakeTransport(
+        HTTPResponse(
+            status=200,
+            body=json.dumps({"content": [{"type": "text", "text": json.dumps(_llm_payload())}]}),
+        ),
+        [],
+    )
+
+    provider = resolve_provider(config, transport=transport)
+    output = provider.crystallize(_context(), [_memory()])
+
+    assert output.crystals[0].confidence == 0.8
+    assert transport.requests[0]["headers"]["x-api-key"] == "secret-anthropic"
+
+
+def test_llm_provider_rejects_invalid_json_response(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = (
+        load_settings(config)
+        .with_provider(
+            "openai",
+            ProviderSettings(
+                enabled=True,
+                model="gpt-4.1-mini",
+                api_key_env="OPENAI_API_KEY",
+                base_url="https://api.openai.test/v1",
+            ),
+        )
+        .with_dreaming(DreamingSettings(active_provider="openai"))
+    )
+    save_settings(config, settings)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = FakeTransport(
+        HTTPResponse(
+            status=200,
+            body=json.dumps({"choices": [{"message": {"content": "nope"}}]}),
+        ),
+        [],
+    )
+
+    provider = resolve_provider(config, transport=transport)
+
+    try:
+        provider.crystallize(_context(), [_memory()])
+    except ValueError as exc:
+        assert str(exc) == "openai response did not contain valid dream JSON"
+    else:
+        raise AssertionError("invalid JSON should fail")
