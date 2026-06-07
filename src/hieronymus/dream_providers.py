@@ -95,7 +95,7 @@ class ProviderRegistry:
             ),
             ProviderMetadata(
                 name="openai",
-                display_name="OpenAI",
+                display_name="OpenAI compatible",
                 requires_api_key=True,
                 supports_base_url=True,
             ),
@@ -263,10 +263,10 @@ def resolve_provider(
 def _configured_status(name: str, provider: ProviderSettings) -> tuple[bool, str]:
     if name == "deterministic":
         return True, ""
-    if not provider.model:
+    if not provider.model.strip():
         return False, "model is empty"
-    if not provider.api_key_env:
+    if not provider.api_key_env.strip():
         return False, "api_key_env is empty"
-    if provider.enabled and provider.api_key_env not in os.environ:
+    if provider.enabled and not os.environ.get(provider.api_key_env):
         return False, f"missing environment variable: {provider.api_key_env}"
     return True, ""

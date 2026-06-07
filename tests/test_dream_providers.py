@@ -41,6 +41,8 @@ def test_registry_lists_real_providers() -> None:
         "gemini",
         "anthropic",
     ]
+    openai = next(provider for provider in registry.list() if provider.name == "openai")
+    assert openai.display_name == "OpenAI compatible"
 
 
 def test_provider_status_marks_missing_env_for_enabled_provider(tmp_path, monkeypatch) -> None:
@@ -63,6 +65,67 @@ def test_provider_status_marks_missing_env_for_enabled_provider(tmp_path, monkey
     assert openai["enabled"] is True
     assert openai["configured"] is False
     assert openai["error"] == "missing environment variable: MISSING_OPENAI_KEY"
+
+
+def test_provider_status_rejects_whitespace_model(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config).with_provider(
+        "openai",
+        ProviderSettings(
+            enabled=False,
+            model="   ",
+            api_key_env="OPENAI_API_KEY",
+            base_url="https://api.openai.com/v1",
+        ),
+    )
+    save_settings(config, settings)
+
+    statuses = ProviderRegistry().status_payload(config)
+
+    openai = next(item for item in statuses if item["name"] == "openai")
+    assert openai["configured"] is False
+    assert openai["error"] == "model is empty"
+
+
+def test_provider_status_rejects_whitespace_api_key_env(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config).with_provider(
+        "openai",
+        ProviderSettings(
+            enabled=False,
+            model="gpt-4.1-mini",
+            api_key_env="   ",
+            base_url="https://api.openai.com/v1",
+        ),
+    )
+    save_settings(config, settings)
+
+    statuses = ProviderRegistry().status_payload(config)
+
+    openai = next(item for item in statuses if item["name"] == "openai")
+    assert openai["configured"] is False
+    assert openai["error"] == "api_key_env is empty"
+
+
+def test_provider_status_marks_empty_env_value_missing(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config).with_provider(
+        "openai",
+        ProviderSettings(
+            enabled=True,
+            model="gpt-4.1-mini",
+            api_key_env="OPENAI_API_KEY",
+            base_url="https://api.openai.com/v1",
+        ),
+    )
+    save_settings(config, settings)
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+    statuses = ProviderRegistry().status_payload(config)
+
+    openai = next(item for item in statuses if item["name"] == "openai")
+    assert openai["configured"] is False
+    assert openai["error"] == "missing environment variable: OPENAI_API_KEY"
 
 
 def test_deterministic_check_passes_without_network(tmp_path) -> None:
