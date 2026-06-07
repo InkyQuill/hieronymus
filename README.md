@@ -4,6 +4,54 @@ Hieronymus is a local-first translation memory MCP for long-form book translatio
 
 It keeps strict terminology stable per series while also giving translator agents a searchable fuzzy memory for decisions, plot facts, voice notes, unresolved questions, and future memory-crystal consolidation.
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | sh
+```
+
+The installer creates a managed checkout at
+`~/.local/share/hieronymus/app` and installs console commands through
+`uv tool install`.
+
+Update managed installs in place with:
+
+```bash
+hiero update
+```
+
+Uninstall the app with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh
+```
+
+The non-interactive uninstall one-liner removes the app and keeps settings/data
+by default.
+
+To choose data handling explicitly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh -s -- --keep-data
+curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh -s -- --purge-data
+```
+
+For an interactive prompt, run the managed checkout script from a terminal:
+
+```bash
+~/.local/share/hieronymus/app/uninstall.sh
+```
+
+The prompt uses ~/.config/hieronymus unless HIERONYMUS_DATA_ROOT is set.
+
+--purge-data removes the configured data root. If HIERONYMUS_DATA_ROOT is
+set, check it before purging.
+
+The uninstall script only removes Hieronymus-owned install and config/data paths.
+It does not remove translation workspace directories.
+
+Repository: <https://github.com/InkyQuill/hieronymus>
+
 ## Status
 
 MVP implementation exists for local series setup, strict termbase validation, memory import/search, and MCP/CLI workflows.

@@ -2,6 +2,62 @@
 
 For the long-term memory workflow, see [Memory Dreaming](memory-dreaming.md).
 
+## Installation and Updates
+
+Install Hieronymus with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | sh
+```
+
+The installer keeps the managed application checkout at
+`~/.local/share/hieronymus/app` and installs the `hieronymus`, `hiero`, and
+`hieronymus-mcp` console commands through `uv tool install`. If `hiero` is not
+available after installation, add `~/.local/bin` to `PATH`.
+
+Update an installed checkout:
+
+```bash
+hiero update
+```
+
+Check for updates without applying them:
+
+```bash
+hiero update --check
+```
+
+Uninstall the app:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh
+```
+
+The non-interactive uninstall one-liner removes the app and keeps settings/data
+by default.
+
+Choose data handling explicitly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh -s -- --keep-data
+curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/uninstall.sh | sh -s -- --purge-data
+```
+
+For an interactive prompt, run the managed checkout script from a terminal:
+
+```bash
+~/.local/share/hieronymus/app/uninstall.sh
+```
+
+The uninstall script only removes Hieronymus-owned install and config/data
+paths. It does not remove translation workspace directories.
+
+--purge-data removes the configured data root. If HIERONYMUS_DATA_ROOT is
+set, check it before purging.
+
+Unset or check `HIERONYMUS_DATA_ROOT` before using `--purge-data` if it points
+at data you want to keep, such as a data root inside a translation workspace.
+
 ## Data Root
 
 By default, Hieronymus stores one global database at

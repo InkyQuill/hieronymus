@@ -82,6 +82,57 @@ def test_cli_help_mentions_service_commands() -> None:
     assert "hiero update           Update managed installs in place" in result.output
 
 
+def test_readme_documents_production_install_update_and_uninstall() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+    normalized_readme = " ".join(readme.split())
+
+    assert "https://github.com/InkyQuill/hieronymus" in readme
+    assert (
+        "curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | sh"
+        in readme
+    )
+    assert "hiero update" in readme
+    assert "uninstall.sh" in readme
+    assert "--keep-data" in readme
+    assert "--purge-data" in readme
+    assert (
+        "The non-interactive uninstall one-liner removes the app and keeps "
+        "settings/data by default." in normalized_readme
+    )
+    assert "HIERONYMUS_DATA_ROOT" in readme
+    assert (
+        "The uninstall script only removes Hieronymus-owned install and "
+        "config/data paths. It does not remove translation workspace directories."
+        in normalized_readme
+    )
+    assert (
+        "The prompt uses ~/.config/hieronymus unless HIERONYMUS_DATA_ROOT is set."
+        in normalized_readme
+    )
+    assert "--purge-data removes the configured data root." in normalized_readme
+    assert "If HIERONYMUS_DATA_ROOT is set, check it before purging." in normalized_readme
+
+
+def test_usage_documents_uninstall_data_modes_and_workspace_warning() -> None:
+    usage = Path("docs/usage.md").read_text(encoding="utf-8")
+    normalized_usage = " ".join(usage.split())
+
+    assert "--keep-data" in usage
+    assert "--purge-data" in usage
+    assert (
+        "The non-interactive uninstall one-liner removes the app and keeps "
+        "settings/data by default." in normalized_usage
+    )
+    assert "HIERONYMUS_DATA_ROOT" in usage
+    assert (
+        "The uninstall script only removes Hieronymus-owned install and "
+        "config/data paths. It does not remove translation workspace directories."
+        in normalized_usage
+    )
+    assert "--purge-data removes the configured data root." in normalized_usage
+    assert "If HIERONYMUS_DATA_ROOT is set, check it before purging." in normalized_usage
+
+
 def test_status_json_returns_manager_payload(tmp_path: Path) -> None:
     runner = CliRunner()
 
