@@ -44,12 +44,17 @@ use, and dream-cycle processing. In the CLI this is recorded with `feedback`
 events such as `confirmed_by_user`, `used_in_translation`, `passed_review`, or
 `caused_correction`.
 
-Dream cycles process completed sessions. The only provider implemented now is the
-deterministic provider, selected with `hieronymus dream --provider deterministic`.
-It converts completed short-term memories into crystals using fixed local rules:
+Dream cycles process completed sessions. They use the configured active provider
+by default, and commands may override that provider for one run. `deterministic`
+is the offline fallback selected with `hieronymus dream --provider deterministic`;
+it converts completed short-term memories into crystals using fixed local rules:
 `user` inputs become `lesson` crystals, `mentor` inputs become `erudition`
-crystals, and `mundane` inputs become `concept` crystals. External LLM providers
-are planned for later, but they are not available in the current CLI or MCP API.
+crystals, and `mundane` inputs become `concept` crystals.
+
+OpenAI, Gemini, and Anthropic providers produce structured JSON that Hieronymus
+validates before applying dream outputs. Invalid provider output records a failed
+dream run and leaves completed sessions pending so they can be retried after the
+provider, prompt, or settings are corrected.
 
 Dream providers may produce strict concept proposals. These proposals are stored
 as pending management records with exact scope, source form, canonical rendering,
@@ -61,6 +66,13 @@ Decay is cycle-based, not wall-clock based. A crystal should weaken when
 translation work keeps happening without that crystal being recalled or
 reinforced. Wall-clock time would punish idle projects and long breaks; cycles
 instead tie decay to actual Hieronymus processing.
+
+Automatic dreaming is cycle-based. When `autostart_enabled` is on, it can run
+once every `min_interval_minutes` when completed sessions have pending
+short-term memories, or sooner when `new_short_term_memory_threshold` pending
+short-term memories exists. The threshold counts short-term memories, not
+long-term crystals or remembered strict terminology. `max_cycles_per_autostart`
+limits how many dream cycles a single automatic start may run.
 
 ## CLI Workflow
 
@@ -89,7 +101,8 @@ Complete the session so it can be processed by dreaming:
 hieronymus session-complete 1
 ```
 
-Run the deterministic dream provider:
+Run a dream cycle. Without `--provider`, this uses the configured active
+provider:
 
 ```bash
 hieronymus dream --provider deterministic
@@ -120,6 +133,8 @@ The MCP server exposes the same workflow:
 - `hieronymus_feedback`
 - `hieronymus_concept_proposals_list`
 
-`hieronymus_dream` currently accepts only `provider="deterministic"`. Recall uses
+`hieronymus_dream` uses the configured active provider by default and also
+accepts explicit provider overrides such as `provider="deterministic"`,
+`provider="openai"`, `provider="gemini"`, or `provider="anthropic"`. Recall uses
 the stored active session context by default, and rejects calls whose explicit
 context arguments do not match the session.

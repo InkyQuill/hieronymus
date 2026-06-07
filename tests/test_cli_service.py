@@ -143,6 +143,35 @@ def test_usage_documents_uninstall_data_modes_and_workspace_warning() -> None:
     assert "If HIERONYMUS_DATA_ROOT is set, check it before purging." in normalized_usage
 
 
+def test_docs_describe_real_config_tui_and_llm_providers() -> None:
+    combined = "\n".join(
+        Path(path).read_text(encoding="utf-8")
+        for path in [
+            "README.md",
+            "docs/usage.md",
+            "docs/memory-dreaming.md",
+            "docs/service-toolkit.md",
+        ]
+    )
+
+    forbidden = [
+        "not-available-in-this-pass",
+        "config TUI is separate work",
+        "only provider implemented now is the deterministic provider",
+        "External LLM providers are a later extension",
+        "external LLM providers are deferred",
+    ]
+    for phrase in forbidden:
+        assert phrase not in combined
+
+    assert "hiero config" in combined
+    assert "OPENAI_API_KEY" in combined
+    assert "GEMINI_API_KEY" in combined
+    assert "ANTHROPIC_API_KEY" in combined
+    assert "API key values are not stored" in combined
+    assert "new_short_term_memory_threshold" in combined
+
+
 def test_status_json_returns_manager_payload(tmp_path: Path) -> None:
     runner = CliRunner()
 

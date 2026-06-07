@@ -68,6 +68,44 @@ different data root:
 export HIERONYMUS_DATA_ROOT=/home/inky/Yandex.Disk/Translation/.translation-memory
 ```
 
+## Configuration
+
+Open the local configuration TUI:
+
+```bash
+hiero config
+```
+
+For machine-readable status, use:
+
+```bash
+hiero config --json
+```
+
+Non-secret settings are stored in `~/.config/hieronymus/settings.toml` by
+default, or in `settings.toml` under the configured `HIERONYMUS_DATA_ROOT`.
+API key values are not stored. Provider entries store the environment variable
+name for each key, and dream runs read the secret value from the runtime
+environment.
+
+Supported dream providers:
+
+- `deterministic`: offline local fallback.
+- `openai`: OpenAI and OpenAI-compatible endpoints using `OPENAI_API_KEY`.
+- `gemini`: Gemini API using `GEMINI_API_KEY`.
+- `anthropic`: Anthropic Messages API using `ANTHROPIC_API_KEY`.
+
+Example OpenAI-backed dreaming run:
+
+```bash
+export OPENAI_API_KEY=...
+hiero config
+hiero dream --provider openai --json
+```
+
+Dreaming automation uses `autostart_enabled`, `min_interval_minutes`,
+`new_short_term_memory_threshold`, and `max_cycles_per_autostart`.
+
 ## Initialize a Series
 
 ```bash
