@@ -24,6 +24,12 @@ class AdminDetail:
 
 
 @dataclass(frozen=True)
+class AdminCrystalEditPayload:
+    title: str
+    text: str
+
+
+@dataclass(frozen=True)
 class AdminSnapshot:
     view: str
     rows: list[AdminRow]

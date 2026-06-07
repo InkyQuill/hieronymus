@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from hieronymus.admin_models import (
     ActionResult,
+    AdminCrystalEditPayload,
     AdminDetail,
     AdminRow,
     AdminSnapshot,
@@ -107,6 +108,11 @@ class AdminStore:
             }
             for row in rows
         ]
+
+    def crystal_edit_payload(self, crystal_id: int) -> AdminCrystalEditPayload:
+        with connect(self.config.database_path) as conn:
+            row = self._get_crystal(conn, crystal_id)
+        return AdminCrystalEditPayload(title=row["title"], text=row["text"])
 
     def run_manual_dreaming(self) -> DreamRunRecord:
         run = DreamService(self.config, DeterministicDreamProvider()).run_cycle()

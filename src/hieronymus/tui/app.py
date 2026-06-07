@@ -10,6 +10,7 @@ from hieronymus.tui.screens import ManagementScreen
 class HieronymusAdminApp(App[None]):
     TITLE = "Hieronymus Admin"
     CSS_PATH = "styles.tcss"
+    COMMAND_PALETTE_BINDING = "ctrl+shift+p"
 
     def __init__(self, config: HieronymusConfig) -> None:
         super().__init__()
