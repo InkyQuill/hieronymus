@@ -38,12 +38,14 @@ class ProviderSettings:
     model: str = ""
     api_key_env: str = ""
     base_url: str | None = None
+    timeout_seconds: float = 30.0
 
     def to_json_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
             "enabled": self.enabled,
             "model": self.model,
             "api_key_env": self.api_key_env,
+            "timeout_seconds": self.timeout_seconds,
         }
         if self.base_url is not None:
             payload["base_url"] = self.base_url
@@ -238,6 +240,11 @@ def _validate_provider_payload(name: str, payload: dict[str, Any]) -> None:
         _require_exact_str(f"{prefix}.api_key_env", payload["api_key_env"])
     if "base_url" in payload:
         _require_optional_exact_str(f"{prefix}.base_url", payload["base_url"])
+    if "timeout_seconds" in payload:
+        payload["timeout_seconds"] = _coerce_positive_float(
+            f"{prefix}.timeout_seconds",
+            payload["timeout_seconds"],
+        )
 
 
 def _validate_dreaming_settings(dreaming: DreamingSettings) -> None:
@@ -260,6 +267,7 @@ def _validate_provider_settings(name: str, provider: ProviderSettings) -> None:
     _require_exact_str(f"{prefix}.model", provider.model)
     _require_exact_str(f"{prefix}.api_key_env", provider.api_key_env)
     _require_optional_exact_str(f"{prefix}.base_url", provider.base_url)
+    _require_positive_float(f"{prefix}.timeout_seconds", provider.timeout_seconds)
 
 
 def _require_exact_int(field_name: str, value: object) -> None:
@@ -280,6 +288,19 @@ def _require_exact_str(field_name: str, value: object) -> None:
 def _require_optional_exact_str(field_name: str, value: object) -> None:
     if value is not None and type(value) is not str:
         raise SettingsError(f"{field_name} must be a string or null")
+
+
+def _coerce_positive_float(field_name: str, value: object) -> float:
+    if type(value) not in (int, float):
+        raise SettingsError(f"{field_name} must be a number")
+    value = float(value)
+    if value <= 0:
+        raise SettingsError(f"{field_name} must be greater than 0")
+    return value
+
+
+def _require_positive_float(field_name: str, value: object) -> None:
+    _coerce_positive_float(field_name, value)
 
 
 def _validate_minimum(field_name: str, value: int) -> None:

@@ -19,8 +19,6 @@ from hieronymus.dreaming import (
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.settings import ProviderSettings, load_settings
 
-_DEFAULT_TIMEOUT_SECONDS = 30.0
-
 
 @dataclass(frozen=True)
 class HTTPResponse:
@@ -214,7 +212,7 @@ class ProviderRegistry:
                     "messages": [{"role": "user", "content": "Reply with ok."}],
                     "max_tokens": 1,
                 },
-                timeout=_DEFAULT_TIMEOUT_SECONDS,
+                timeout=provider.timeout_seconds,
             )
         if name == "gemini":
             return self._transport.post_json(
@@ -231,7 +229,7 @@ class ProviderRegistry:
                         }
                     ]
                 },
-                timeout=_DEFAULT_TIMEOUT_SECONDS,
+                timeout=provider.timeout_seconds,
             )
         if name == "anthropic":
             return self._transport.post_json(
@@ -245,7 +243,7 @@ class ProviderRegistry:
                     "max_tokens": 1,
                     "messages": [{"role": "user", "content": "Reply with ok."}],
                 },
-                timeout=_DEFAULT_TIMEOUT_SECONDS,
+                timeout=provider.timeout_seconds,
             )
         raise ValueError(f"unsupported dream provider: {name}")
 
@@ -430,7 +428,7 @@ class OpenAIDreamProvider:
                 "temperature": 0.1,
                 "response_format": {"type": "json_object"},
             },
-            timeout=_DEFAULT_TIMEOUT_SECONDS,
+            timeout=self.settings.timeout_seconds,
         )
         if not 200 <= response.status < 300:
             raise ValueError(f"openai returned HTTP {response.status}")
@@ -475,7 +473,7 @@ class GeminiDreamProvider:
                     "responseMimeType": "application/json",
                 },
             },
-            timeout=_DEFAULT_TIMEOUT_SECONDS,
+            timeout=self.settings.timeout_seconds,
         )
         if not 200 <= response.status < 300:
             raise ValueError(f"gemini returned HTTP {response.status}")
@@ -514,7 +512,7 @@ class AnthropicDreamProvider:
                 "temperature": 0.1,
                 "messages": [{"role": "user", "content": _dream_prompt(context, memories)}],
             },
-            timeout=_DEFAULT_TIMEOUT_SECONDS,
+            timeout=self.settings.timeout_seconds,
         )
         if not 200 <= response.status < 300:
             raise ValueError(f"anthropic returned HTTP {response.status}")

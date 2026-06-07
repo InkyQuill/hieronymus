@@ -157,6 +157,7 @@ def test_openai_check_uses_temporary_key_without_saving_secret(tmp_path) -> None
             model="gpt-4.1-mini",
             api_key_env="OPENAI_API_KEY",
             base_url="https://llm.example.test/v1",
+            timeout_seconds=12.5,
         ),
     )
     save_settings(config, settings)
@@ -174,6 +175,7 @@ def test_openai_check_uses_temporary_key_without_saving_secret(tmp_path) -> None
     assert result.ok is True
     assert transport.requests[0]["url"] == "https://llm.example.test/v1/chat/completions"
     assert transport.requests[0]["headers"]["Authorization"] == "Bearer secret-test-key"
+    assert transport.requests[0]["timeout"] == 12.5
     assert "secret-test-key" not in config.settings_path.read_text(encoding="utf-8")
 
 
@@ -248,6 +250,7 @@ def test_openai_provider_crystallizes_structured_response(tmp_path, monkeypatch)
                 model="gpt-4.1-mini",
                 api_key_env="OPENAI_API_KEY",
                 base_url="https://api.openai.test/v1",
+                timeout_seconds=12.5,
             ),
         )
         .with_dreaming(DreamingSettings(active_provider="openai"))
@@ -268,6 +271,7 @@ def test_openai_provider_crystallizes_structured_response(tmp_path, monkeypatch)
     assert output.crystals[0].title == "Compact UI Labels"
     assert output.concept_proposals[0].source_form == "センス"
     assert transport.requests[0]["url"] == "https://api.openai.test/v1/chat/completions"
+    assert transport.requests[0]["timeout"] == 12.5
 
 
 def test_gemini_provider_crystallizes_structured_response(tmp_path, monkeypatch) -> None:

@@ -30,10 +30,13 @@ def test_load_settings_returns_defaults_when_file_is_missing(tmp_path: Path) -> 
     assert settings.providers["openai"].model == "gpt-4.1-mini"
     assert settings.providers["openai"].base_url == "https://api.openai.com/v1"
     assert settings.providers["openai"].api_key_env == "OPENAI_API_KEY"
+    assert settings.providers["openai"].timeout_seconds == 30.0
     assert settings.providers["gemini"].model == "gemini-2.5-flash"
     assert settings.providers["gemini"].api_key_env == "GEMINI_API_KEY"
+    assert settings.providers["gemini"].timeout_seconds == 30.0
     assert settings.providers["anthropic"].model == "claude-3-5-haiku-latest"
     assert settings.providers["anthropic"].api_key_env == "ANTHROPIC_API_KEY"
+    assert settings.providers["anthropic"].timeout_seconds == 30.0
 
 
 def test_save_settings_writes_toml_without_secret_values(tmp_path: Path) -> None:
@@ -45,6 +48,7 @@ def test_save_settings_writes_toml_without_secret_values(tmp_path: Path) -> None
             model="gpt-4.1-mini",
             api_key_env="HIERONYMUS_OPENAI_KEY",
             base_url="https://llm.example.test/v1",
+            timeout_seconds=12.5,
         ),
     )
 
@@ -56,6 +60,7 @@ def test_save_settings_writes_toml_without_secret_values(tmp_path: Path) -> None
     payload = tomllib.loads(raw)
     assert payload["providers"]["openai"]["enabled"] is True
     assert payload["providers"]["openai"]["base_url"] == "https://llm.example.test/v1"
+    assert payload["providers"]["openai"]["timeout_seconds"] == 12.5
 
 
 def test_load_settings_rejects_malformed_toml(tmp_path: Path) -> None:
@@ -117,6 +122,14 @@ def test_load_settings_rejects_non_positive_dreaming_values(tmp_path: Path) -> N
             "[providers.openai]\nenabled = 'yes'\n",
             r"providers\.openai\.enabled must be a boolean",
         ),
+        (
+            "[providers.openai]\ntimeout_seconds = true\n",
+            r"providers\.openai\.timeout_seconds must be a number",
+        ),
+        (
+            "[providers.openai]\ntimeout_seconds = 0\n",
+            r"providers\.openai\.timeout_seconds must be greater than 0",
+        ),
     ],
 )
 def test_load_settings_rejects_invalid_schema(
@@ -139,6 +152,7 @@ def test_settings_to_json_masks_key_source_only(tmp_path: Path) -> None:
 
     assert payload["dreaming"]["active_provider"] == "deterministic"
     assert payload["providers"]["openai"]["api_key_env"] == "OPENAI_API_KEY"
+    assert payload["providers"]["openai"]["timeout_seconds"] == 30.0
     assert "api_key" not in payload["providers"]["openai"]
 
 
