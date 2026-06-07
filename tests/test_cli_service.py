@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +10,28 @@ from click.testing import CliRunner
 
 from hieronymus.cli import main
 from hieronymus.presentation import GREETING_ICON, render_greeting
+
+
+@dataclass(frozen=True)
+class CliUpdateStatus:
+    current_version: str = "0.1.0"
+    latest_version: str | None = "0.1.0"
+    latest_tag: str | None = "v0.1.0"
+    update_available: bool = False
+    managed_checkout: Path = Path("/tmp/hieronymus-managed")
+    managed_install: bool = True
+    target: str = "latest"
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "current_version": self.current_version,
+            "latest_version": self.latest_version,
+            "latest_tag": self.latest_tag,
+            "update_available": self.update_available,
+            "managed_checkout": str(self.managed_checkout),
+            "managed_install": self.managed_install,
+            "target": self.target,
+        }
 
 
 def test_render_greeting_contains_identity_and_tagline() -> None:
@@ -56,6 +79,7 @@ def test_cli_help_mentions_service_commands() -> None:
     assert "Open the local management TUI" in result.output
     assert "Show management counts and available views" in result.output
     assert "Show config paths" in result.output
+    assert "hiero update           Update managed installs in place" in result.output
 
 
 def test_status_json_returns_manager_payload(tmp_path: Path) -> None:
@@ -200,6 +224,154 @@ def test_install_unknown_target_returns_clean_error(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "unknown install target: unknown-agent" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_update_check_json_returns_status_from_release(tmp_path: Path) -> None:
+    status = CliUpdateStatus(latest_version="0.2.0", latest_tag="v0.2.0", update_available=True)
+
+    with patch("hieronymus.cli.check_update", return_value=status) as check_update:
+        result = CliRunner().invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "update", "--check", "--json"],
+        )
+
+    assert result.exit_code == 0
+    check_update.assert_called_once_with(target="latest")
+    assert json.loads(result.output) == status.as_dict()
+
+
+def test_update_human_runs_update_and_prints_up_to_date(tmp_path: Path) -> None:
+    status = CliUpdateStatus(current_version="0.2.0", latest_version="0.2.0")
+
+    with (
+        patch("hieronymus.cli.check_update", return_value=status) as check_update,
+        patch("hieronymus.cli.run_update") as run_update,
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "update"],
+        )
+
+    assert result.exit_code == 0
+    check_update.assert_called_once_with(target="latest")
+    run_update.assert_not_called()
+    assert "Hieronymus is up to date: 0.2.0" in result.output
+    assert "managed checkout: /tmp/hieronymus-managed" in result.output
+
+
+def test_update_check_human_prints_no_update_available(tmp_path: Path) -> None:
+    status = CliUpdateStatus(current_version="0.2.0", latest_version="0.2.0")
+
+    with patch("hieronymus.cli.check_update", return_value=status):
+        result = CliRunner().invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "update", "--check"],
+        )
+
+    assert result.exit_code == 0
+    assert "No update available: 0.2.0" in result.output
+    assert "Hieronymus is up to date" not in result.output
+
+
+def test_update_check_human_prints_update_available(tmp_path: Path) -> None:
+    status = CliUpdateStatus(latest_version="0.2.0", latest_tag="v0.2.0", update_available=True)
+
+    with patch("hieronymus.cli.check_update", return_value=status):
+        result = CliRunner().invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "update", "--check"],
+        )
+
+    assert result.exit_code == 0
+    assert "Update available: 0.1.0 -> 0.2.0" in result.output
+    assert "Updated Hieronymus" not in result.output
+
+
+def test_update_human_prints_updated_after_applied_update(tmp_path: Path) -> None:
+    before = CliUpdateStatus(
+        current_version="0.1.0",
+        latest_version="0.2.0",
+        latest_tag="v0.2.0",
+        update_available=True,
+    )
+    after = CliUpdateStatus(current_version="0.2.0", latest_version="0.2.0")
+
+    with (
+        patch("hieronymus.cli.check_update", return_value=before) as check_update,
+        patch("hieronymus.cli.run_update", return_value=after) as run_update,
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "update"],
+        )
+
+    assert result.exit_code == 0
+    check_update.assert_called_once_with(target="latest")
+    run_update.assert_called_once_with(target="latest")
+    assert "Updated Hieronymus: 0.1.0 -> 0.2.0" in result.output
+    assert "Update available" not in result.output
+
+
+def test_update_human_prints_available_if_update_remains_available(tmp_path: Path) -> None:
+    before = CliUpdateStatus(
+        current_version="0.1.0",
+        latest_version="0.2.0",
+        latest_tag="v0.2.0",
+        update_available=True,
+    )
+    after = CliUpdateStatus(
+        current_version="0.1.0",
+        latest_version="0.2.0",
+        latest_tag="v0.2.0",
+        update_available=True,
+    )
+
+    with (
+        patch("hieronymus.cli.check_update", return_value=before),
+        patch("hieronymus.cli.run_update", return_value=after),
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "update"],
+        )
+
+    assert result.exit_code == 0
+    assert "Update available: 0.1.0 -> 0.2.0" in result.output
+    assert "Updated Hieronymus" not in result.output
+
+
+def test_update_unmanaged_runtime_error_returns_clean_error(tmp_path: Path) -> None:
+    status = CliUpdateStatus(latest_version="0.2.0", latest_tag="v0.2.0", update_available=True)
+
+    with (
+        patch("hieronymus.cli.check_update", return_value=status),
+        patch(
+            "hieronymus.cli.run_update",
+            side_effect=RuntimeError("Updates require installation through the managed installer."),
+        ),
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "update"],
+        )
+
+    assert result.exit_code == 1
+    assert "Updates require installation through the managed installer." in result.output
+    assert "Traceback" not in result.output
+
+
+def test_update_subprocess_error_returns_clean_error(tmp_path: Path) -> None:
+    error = subprocess.CalledProcessError(returncode=128, cmd=["git", "fetch", "--tags"])
+
+    with patch("hieronymus.cli.check_update", side_effect=error):
+        result = CliRunner().invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "update", "--check"],
+        )
+
+    assert result.exit_code == 1
+    assert "Update command failed: git fetch --tags exited with code 128" in result.output
     assert "Traceback" not in result.output
 
 

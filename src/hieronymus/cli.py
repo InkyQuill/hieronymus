@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import asdict
 
 import click
@@ -16,6 +17,7 @@ from hieronymus.memory_models import TranslationContext
 from hieronymus.presentation import GUIDE_ICON, render_greeting, render_json
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
+from hieronymus.release import check_update, run_update
 from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
 from hieronymus.termbase import Termbase
@@ -97,6 +99,11 @@ def _echo_status_lines(status: dict[str, object]) -> None:
         click.echo(f"pid: {status['pid']}")
     if "port" in status:
         click.echo(f"port: {status['port']}")
+
+
+def _subprocess_error_message(error: subprocess.CalledProcessError) -> str:
+    command = " ".join(str(part) for part in error.cmd)
+    return f"Update command failed: {command} exited with code {error.returncode}"
 
 
 @click.group(invoke_without_command=True)
@@ -233,6 +240,47 @@ def install_command(
         click.echo(f"Result: {plan.result_kind}.")
 
 
+@main.command("update")
+@click.option("--check", "check_only", is_flag=True)
+@click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--target",
+    type=click.Choice(["latest", "main"]),
+    default="latest",
+)
+def update_command(check_only: bool, as_json: bool, target: str) -> None:
+    before_status = None
+    try:
+        if check_only:
+            status = check_update(target=target)
+        else:
+            before_status = check_update(target=target)
+            status = run_update(target=target) if before_status.update_available else before_status
+    except RuntimeError as error:
+        raise click.ClickException(str(error)) from error
+    except subprocess.CalledProcessError as error:
+        raise click.ClickException(_subprocess_error_message(error)) from error
+
+    if as_json:
+        click.echo(render_json(status.as_dict()))
+        return
+
+    click.echo(render_greeting())
+    click.echo()
+    if before_status is not None and before_status.update_available and not status.update_available:
+        click.echo(
+            f"Updated Hieronymus: {before_status.current_version} -> {status.current_version}"
+        )
+    elif status.update_available:
+        update_target = status.latest_version or status.latest_tag or "unknown"
+        click.echo(f"Update available: {status.current_version} -> {update_target}")
+    elif check_only:
+        click.echo(f"No update available: {status.current_version}")
+    else:
+        click.echo(f"Hieronymus is up to date: {status.current_version}")
+    click.echo(f"managed checkout: {status.managed_checkout}")
+
+
 @main.command("admin")
 @click.option("--json", "json_output", is_flag=True)
 @click.pass_context
@@ -284,6 +332,7 @@ def help_command() -> None:
     click.echo("  hiero admin            Open the local management TUI")
     click.echo("  hiero admin --json     Show management counts and available views")
     click.echo("  hiero config           Show config paths")
+    click.echo("  hiero update           Update managed installs in place")
     click.echo("  hiero install codex --dry-run")
 
 
