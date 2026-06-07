@@ -59,8 +59,46 @@ active session after session `1` has been completed and dreamed.
 hiero
 hiero status --json
 hiero doctor
+hiero admin
+hiero admin --json
 hiero install codex --dry-run
 hiero stop
 ```
 
 `hiero` is an alias for `hieronymus`; all subcommands work with either command.
+
+## Management TUI
+
+Open the local admin interface with:
+
+```bash
+hiero admin
+```
+
+The TUI is a local-first management surface for reviewing and controlling
+Hieronymus memory data. It shows global status and statistics, then lets an
+admin switch between crystals, lessons, concepts, proposals, dream runs, and
+audit events. Each view supports keyboard navigation through entries, filter
+dialogs, a detail pane, and command actions that match the selected entry type.
+
+Useful controls:
+
+- `1`-`7`: switch views
+- `j` / `k`: move through entries
+- `/`: filter the current view
+- `e`: edit the selected crystal or lesson
+- `a` / `r`: approve or reject the selected proposal
+- `+` / `-`: reinforce or decay the selected crystal or lesson
+- `d`: deprecate the selected crystal or lesson
+- `x`: delete after confirmation
+- `p`: inspect provenance for the selected entry
+- `ctrl+p`: open the command palette
+
+For scripts and health checks, use:
+
+```bash
+hiero admin --json
+```
+
+This prints management counts and available TUI views without opening the
+interactive app.

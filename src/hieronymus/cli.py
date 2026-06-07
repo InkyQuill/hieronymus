@@ -281,8 +281,9 @@ def help_command() -> None:
     click.echo("  hiero status           Show daemon and provider status")
     click.echo("  hiero doctor           Check configuration and service health")
     click.echo("  hiero restart          Restart the local daemon")
-    click.echo("  hiero admin            Show admin TUI placeholder")
-    click.echo("  hiero config           Show config paths and TUI placeholder")
+    click.echo("  hiero admin            Open the local management TUI")
+    click.echo("  hiero admin --json     Show management counts and available views")
+    click.echo("  hiero config           Show config paths")
     click.echo("  hiero install codex --dry-run")
 
 
