@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import connect
@@ -156,3 +159,20 @@ def test_autostart_state_round_trips(config: HieronymusConfig) -> None:
     save_autostart_state(config, state)
 
     assert load_autostart_state(config) == state
+
+
+def test_run_due_persists_last_error_for_corrupt_autostart_state(
+    config: HieronymusConfig,
+) -> None:
+    _enable_autostart(config, min_interval_minutes=30, new_short_term_memory_threshold=25)
+    _completed_session(config, _context(config), memories=1)
+    state_path = config.config_root / "dream-autostart.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        DreamAutostart(config).run_due(now=datetime(2026, 6, 7, 12, 0, tzinfo=UTC))
+
+    state = load_autostart_state(config)
+    assert state.last_started_at is None
+    assert "Expecting property name" in state.last_error

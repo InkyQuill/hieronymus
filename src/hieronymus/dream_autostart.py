@@ -71,28 +71,32 @@ class DreamAutostart:
 
     def run_due(self, now: datetime | None = None) -> dict[str, object]:
         now = now or datetime.now(UTC)
-        settings = load_settings(self.config)
-        if not settings.dreaming.autostart_enabled:
-            return {"ran": False, "reason": "disabled", "cycles": 0}
-
-        _pending_completed_sessions, pending_short_term_memories = self._pending_counts()
-        if pending_short_term_memories == 0:
-            return {"ran": False, "reason": "no-pending-memory", "cycles": 0}
-
-        state = load_autostart_state(self.config)
-        if pending_short_term_memories >= settings.dreaming.new_short_term_memory_threshold:
-            reason = "threshold"
-        elif self._interval_elapsed(
-            now,
-            state.last_started_at,
-            settings.dreaming.min_interval_minutes,
-        ):
-            reason = "interval"
-        else:
-            return {"ran": False, "reason": "not-due", "cycles": 0}
-
-        cycles = 0
+        state_for_error = AutostartState()
+        attempted_run = False
         try:
+            settings = load_settings(self.config)
+            if not settings.dreaming.autostart_enabled:
+                return {"ran": False, "reason": "disabled", "cycles": 0}
+
+            _pending_completed_sessions, pending_short_term_memories = self._pending_counts()
+            if pending_short_term_memories == 0:
+                return {"ran": False, "reason": "no-pending-memory", "cycles": 0}
+
+            state = load_autostart_state(self.config)
+            state_for_error = state
+            if pending_short_term_memories >= settings.dreaming.new_short_term_memory_threshold:
+                reason = "threshold"
+            elif self._interval_elapsed(
+                now,
+                state.last_started_at,
+                settings.dreaming.min_interval_minutes,
+            ):
+                reason = "interval"
+            else:
+                return {"ran": False, "reason": "not-due", "cycles": 0}
+
+            cycles = 0
+            attempted_run = True
             service = DreamService(self.config, resolve_provider(self.config))
             for _ in range(settings.dreaming.max_cycles_per_autostart):
                 _pending_completed_sessions, pending_short_term_memories = self._pending_counts()
@@ -101,14 +105,16 @@ class DreamAutostart:
                 service.run_cycle()
                 cycles += 1
             save_autostart_state(self.config, AutostartState(last_started_at=now))
+            return {"ran": True, "reason": reason, "cycles": cycles}
         except Exception as exc:
             save_autostart_state(
                 self.config,
-                AutostartState(last_started_at=now, last_error=str(exc)),
+                AutostartState(
+                    last_started_at=now if attempted_run else state_for_error.last_started_at,
+                    last_error=str(exc),
+                ),
             )
             raise
-
-        return {"ran": True, "reason": reason, "cycles": cycles}
 
     def _pending_counts(self) -> tuple[int, int]:
         with connect(self.config.database_path) as conn:
