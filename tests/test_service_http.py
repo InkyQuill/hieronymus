@@ -97,7 +97,14 @@ def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:
     assert payload["data_root"] == str(config.data_root)
     assert payload["database_path"] == str(config.database_path)
     assert payload["config_path"] == str(config.config_root)
-    assert payload["providers"] == []
+    assert [provider["name"] for provider in payload["providers"]] == [
+        "deterministic",
+        "openai",
+        "gemini",
+        "anthropic",
+    ]
+    assert payload["dreaming"]["enabled"] is False
+    assert payload["dreaming"]["active_provider"] == "deterministic"
     assert payload["mcp_adapter"] == {"available": True, "mode": "local-http"}
     assert payload["housekeeping"] == {"last_cycle": None, "pending": False}
 

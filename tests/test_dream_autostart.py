@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+
+from hieronymus.config import HieronymusConfig
+from hieronymus.db import connect
+from hieronymus.dream_autostart import (
+    AutostartState,
+    DreamAutostart,
+    load_autostart_state,
+    save_autostart_state,
+)
+from hieronymus.memory_models import TranslationContext
+from hieronymus.registry import Registry
+from hieronymus.settings import load_settings, save_settings
+from hieronymus.workspace import WorkspaceStore
+
+
+def _context(config: HieronymusConfig) -> TranslationContext:
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="ru",
+    )
+    return TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type="translate",
+        volume="1",
+        chapter="2",
+    )
+
+
+def _enable_autostart(
+    config: HieronymusConfig,
+    *,
+    min_interval_minutes: int = 30,
+    new_short_term_memory_threshold: int = 25,
+    max_cycles_per_autostart: int = 1,
+) -> None:
+    settings = load_settings(config)
+    save_settings(
+        config,
+        settings.with_dreaming(
+            replace(
+                settings.dreaming,
+                autostart_enabled=True,
+                min_interval_minutes=min_interval_minutes,
+                new_short_term_memory_threshold=new_short_term_memory_threshold,
+                max_cycles_per_autostart=max_cycles_per_autostart,
+            )
+        ),
+    )
+
+
+def _completed_session(
+    config: HieronymusConfig,
+    context: TranslationContext,
+    *,
+    memories: int = 1,
+) -> int:
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    for index in range(memories):
+        workspace.add_short_term_memory(
+            session.id,
+            "user",
+            "note",
+            f"Completed short-term memory {index}.",
+        )
+    workspace.complete_session(session.id)
+    return session.id
+
+
+def test_status_counts_pending_short_term_memories_and_completed_sessions(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    pending_session_id = _completed_session(config, context, memories=2)
+    archived_session_id = _completed_session(config, context, memories=1)
+    active_session = WorkspaceStore(config).start_session(context)
+    WorkspaceStore(config).add_short_term_memory(
+        active_session.id,
+        "user",
+        "note",
+        "Active session memory is not pending.",
+    )
+    with connect(config.database_path) as conn:
+        conn.execute(
+            "update short_term_memories set archived_at = ? where session_id = ?",
+            ("2026-06-07T00:00:00+00:00", archived_session_id),
+        )
+        conn.commit()
+
+    status = DreamAutostart(config).status()
+
+    assert pending_session_id
+    assert status["pending_completed_sessions"] == 1
+    assert status["pending_short_term_memories"] == 2
+
+
+def test_volume_trigger_runs_when_threshold_is_reached(config: HieronymusConfig) -> None:
+    _enable_autostart(config, new_short_term_memory_threshold=2)
+    _completed_session(config, _context(config), memories=2)
+    now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+
+    result = DreamAutostart(config).run_due(now=now)
+
+    assert result == {"ran": True, "reason": "threshold", "cycles": 1}
+    assert DreamAutostart(config).status()["pending_short_term_memories"] == 0
+    assert load_autostart_state(config).last_started_at == now
+    assert load_autostart_state(config).last_error == ""
+
+
+def test_interval_trigger_requires_pending_memory_and_elapsed_minutes(
+    config: HieronymusConfig,
+) -> None:
+    _enable_autostart(config, min_interval_minutes=30, new_short_term_memory_threshold=25)
+    now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+
+    assert DreamAutostart(config).run_due(now=now) == {
+        "ran": False,
+        "reason": "no-pending-memory",
+        "cycles": 0,
+    }
+
+    _completed_session(config, _context(config), memories=1)
+    save_autostart_state(
+        config,
+        AutostartState(last_started_at=now - timedelta(minutes=29)),
+    )
+    assert DreamAutostart(config).run_due(now=now) == {
+        "ran": False,
+        "reason": "not-due",
+        "cycles": 0,
+    }
+
+    save_autostart_state(
+        config,
+        AutostartState(last_started_at=now - timedelta(minutes=31)),
+    )
+    assert DreamAutostart(config).run_due(now=now) == {
+        "ran": True,
+        "reason": "interval",
+        "cycles": 1,
+    }
+
+
+def test_autostart_state_round_trips(config: HieronymusConfig) -> None:
+    last_started_at = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+    state = AutostartState(last_started_at=last_started_at, last_error="provider failed")
+
+    save_autostart_state(config, state)
+
+    assert load_autostart_state(config) == state

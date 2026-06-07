@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import asdict, dataclass
 
 from hieronymus.agent_plugins import available_plugins
 from hieronymus.config import HieronymusConfig
 from hieronymus.service_manager import ServiceManager
+from hieronymus.settings import SettingsError, load_settings
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,7 @@ class Doctor:
         self._check_config_root(report, autofix=autofix)
         self._check_database(report)
         self._check_daemon(report)
+        self._check_settings_and_providers(report)
         self._check_agent_plugins(report)
 
         return report
@@ -119,6 +122,56 @@ class Doctor:
                     ),
                 )
             )
+
+    def _check_settings_and_providers(self, report: DoctorReport) -> None:
+        try:
+            settings = load_settings(self.config)
+        except SettingsError as error:
+            report["errors"].append(
+                DoctorFinding(
+                    level="error",
+                    code="settings-invalid",
+                    message=str(error),
+                )
+            )
+            return
+
+        active_name = settings.dreaming.active_provider
+        active = settings.providers[active_name]
+        if not active.enabled:
+            report["errors"].append(
+                DoctorFinding(
+                    level="error",
+                    code="active-provider-disabled",
+                    message=f"Active dream provider is disabled: {active_name}",
+                )
+            )
+            return
+
+        if (
+            active_name != "deterministic"
+            and active.api_key_env
+            and not os.environ.get(active.api_key_env)
+        ):
+            report["errors"].append(
+                DoctorFinding(
+                    level="error",
+                    code="provider-env-missing",
+                    message=(
+                        "Missing environment variable for active dream provider: "
+                        f"{active.api_key_env}"
+                    ),
+                )
+            )
+            return
+
+        report["autofixed"].append(
+            DoctorFinding(
+                level="info",
+                code="provider-configured",
+                message=f"Active dream provider is configured: {active_name}",
+            )
+        )
 
 
 def report_to_json(report: DoctorReport) -> dict[str, list[dict[str, object]]]:

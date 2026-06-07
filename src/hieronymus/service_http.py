@@ -8,6 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_autostart import DreamAutostart
+from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.service_state import ServerState
 
 
@@ -74,6 +76,7 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
 
 
 def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, Any]:
+    dreaming_status = DreamAutostart(config).status()
     return {
         "running": True,
         "pid": state.pid,
@@ -84,9 +87,13 @@ def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, An
         "data_root": str(config.data_root),
         "database_path": str(config.database_path),
         "config_path": str(config.config_root),
-        "providers": [],
+        "providers": ProviderRegistry().status_payload(config),
+        "dreaming": dreaming_status,
         "mcp_adapter": {"available": True, "mode": "local-http"},
-        "housekeeping": {"last_cycle": None, "pending": False},
+        "housekeeping": {
+            "last_cycle": None,
+            "pending": dreaming_status["pending_short_term_memories"] > 0,
+        },
     }
 
 

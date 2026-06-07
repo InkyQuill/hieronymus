@@ -40,6 +40,12 @@ def main(argv: list[str] | None = None) -> None:
     state = server.state
     write_server_state(config, state)
     try:
+        from hieronymus.dream_autostart import DreamAutostart
+
+        DreamAutostart(config).run_due()
+    except Exception:
+        pass
+    try:
         server.serve_forever()
     finally:
         server.server_close()
