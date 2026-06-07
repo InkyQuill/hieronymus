@@ -132,14 +132,17 @@ def test_config_json_returns_paths_and_tui_placeholder(tmp_path: Path) -> None:
     }
 
 
-def test_admin_json_returns_tui_placeholder(tmp_path: Path) -> None:
+def test_admin_json_returns_available_tui_status(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         main,
         ["--data-root", str(tmp_path / "hieronymus"), "admin", "--json"],
     )
 
     assert result.exit_code == 0
-    assert json.loads(result.output) == {"tui": "not-available-in-this-pass"}
+    payload = json.loads(result.output)
+    assert payload["tui"] == "available"
+    assert payload["counts"] == {"series": 0, "crystals": 0}
+    assert payload["service"]["running"] is False
 
 
 def test_install_json_returns_dry_run_plan(tmp_path: Path) -> None:

@@ -5,6 +5,7 @@ from dataclasses import asdict
 
 import click
 
+from hieronymus.admin import AdminStore
 from hieronymus.agent_plugins import resolve_plugin
 from hieronymus.config import load_config
 from hieronymus.doctor import Doctor, report_to_json
@@ -18,6 +19,7 @@ from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
 from hieronymus.termbase import Termbase
+from hieronymus.tui.app import HieronymusAdminApp
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -233,15 +235,15 @@ def install_command(
 
 @main.command("admin")
 @click.option("--json", "json_output", is_flag=True)
-def admin(json_output: bool) -> None:
-    payload = {"tui": "not-available-in-this-pass"}
+@click.pass_context
+def admin(ctx: click.Context, json_output: bool) -> None:
+    config = ctx.obj["config"]
     if json_output:
+        payload = AdminStore(config).status_payload()
         click.echo(render_json(payload))
         return
 
-    click.echo(render_greeting())
-    click.echo()
-    click.echo(f"tui: {payload['tui']}")
+    HieronymusAdminApp(config).run()
 
 
 @main.command("doctor")
