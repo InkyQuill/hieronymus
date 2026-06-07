@@ -332,7 +332,15 @@ def test_dream_outputs_completed_cycle_after_completed_session_with_memory(tmp_p
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload == {"cycle_id": 1, "status": "completed"}
+    assert payload == {
+        "cycle_id": 1,
+        "status": "completed",
+        "provider": "deterministic",
+        "input_count": 1,
+        "created_crystal_count": 1,
+        "proposal_count": 0,
+        "error": "",
+    }
 
 
 def test_recall_outputs_ranked_crystal_results(tmp_path):

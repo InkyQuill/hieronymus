@@ -10,7 +10,8 @@ from hieronymus.admin import AdminStore
 from hieronymus.agent_plugins import resolve_plugin
 from hieronymus.config import load_config
 from hieronymus.doctor import Doctor, report_to_json
-from hieronymus.dreaming import DeterministicDreamProvider, DreamService
+from hieronymus.dream_providers import resolve_provider
+from hieronymus.dreaming import DreamService
 from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
@@ -20,18 +21,19 @@ from hieronymus.registry import Registry
 from hieronymus.release import check_update, run_update
 from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
+from hieronymus.settings import SettingsError
 from hieronymus.termbase import Termbase
 from hieronymus.tui.app import HieronymusAdminApp
 from hieronymus.workspace import WorkspaceStore
 
 
-def _error_message(error: KeyError | ValueError) -> str:
+def _error_message(error: KeyError | ValueError | SettingsError) -> str:
     if isinstance(error, KeyError) and error.args:
         return str(error.args[0])
     return str(error)
 
 
-def _raise_click_error(error: KeyError | ValueError) -> None:
+def _raise_click_error(error: KeyError | ValueError | SettingsError) -> None:
     raise click.ClickException(_error_message(error)) from error
 
 
@@ -621,22 +623,28 @@ def feedback(
 
 
 @main.command("dream")
-@click.option("--provider", default="deterministic")
+@click.option("--provider", default=None)
+@click.option("--json", "json_output", is_flag=True)
 @click.pass_context
-def dream(ctx: click.Context, provider: str) -> None:
-    if provider != "deterministic":
-        raise click.ClickException(f"unsupported dream provider: {provider}")
-
+def dream(ctx: click.Context, provider: str | None, json_output: bool) -> None:
     try:
+        dream_provider = resolve_provider(ctx.obj["config"], provider)
         run = DreamService(
             ctx.obj["config"],
-            DeterministicDreamProvider(),
+            dream_provider,
         ).run_cycle()
-    except (KeyError, ValueError) as error:
+    except (KeyError, ValueError, SettingsError) as error:
         _raise_click_error(error)
-    click.echo(
-        json.dumps(
-            {"cycle_id": run.cycle_id, "status": run.status},
-            ensure_ascii=False,
-        )
-    )
+    payload = {
+        "cycle_id": run.cycle_id,
+        "status": run.status,
+        "provider": run.provider,
+        "input_count": run.input_count,
+        "created_crystal_count": run.created_crystal_count,
+        "proposal_count": run.proposal_count,
+        "error": run.error,
+    }
+    if json_output:
+        click.echo(render_json(payload))
+        return
+    click.echo(json.dumps(payload, ensure_ascii=False))

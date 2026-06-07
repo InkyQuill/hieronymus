@@ -8,7 +8,8 @@ from mcp.server.fastmcp import FastMCP
 from hieronymus.agent_ingestion import IngestionService
 from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import HieronymusConfig, load_config
-from hieronymus.dreaming import DeterministicDreamProvider, DreamService
+from hieronymus.dream_providers import resolve_provider
+from hieronymus.dreaming import DreamService
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
@@ -383,13 +384,18 @@ def hieronymus_feedback(
 
 
 @server.tool()
-def hieronymus_dream(provider: str = "deterministic") -> dict[str, int | str]:
+def hieronymus_dream(provider: str | None = None) -> dict[str, int | str]:
     """Run a dream cycle over completed sessions."""
     config = _load_validated_config()
-    if provider != "deterministic":
-        raise ValueError(f"unsupported dream provider: {provider}")
-    run = DreamService(config, DeterministicDreamProvider()).run_cycle()
-    return {"cycle_id": run.cycle_id, "status": run.status}
+    run = DreamService(config, resolve_provider(config, provider)).run_cycle()
+    return {
+        "cycle_id": run.cycle_id,
+        "status": run.status,
+        "provider": run.provider,
+        "input_count": run.input_count,
+        "created_crystal_count": run.created_crystal_count,
+        "proposal_count": run.proposal_count,
+    }
 
 
 @server.tool()

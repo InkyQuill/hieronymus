@@ -71,6 +71,7 @@ class DreamRunRecord:
     id: int
     cycle_id: int
     status: str
+    provider: str = ""
     input_count: int = 0
     created_crystal_count: int = 0
     proposal_count: int = 0
@@ -156,6 +157,7 @@ class DreamService:
                 id=run_id,
                 cycle_id=cycle_id,
                 status="completed",
+                provider=self.provider.name,
                 input_count=input_count,
                 created_crystal_count=created_crystal_count,
                 proposal_count=proposal_count,

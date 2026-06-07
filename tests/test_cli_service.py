@@ -9,7 +9,9 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from hieronymus.cli import main
+from hieronymus.config import load_config
 from hieronymus.presentation import GREETING_ICON, render_greeting
+from hieronymus.settings import DreamingSettings, load_settings, save_settings
 
 
 @dataclass(frozen=True)
@@ -206,6 +208,43 @@ def test_config_json_returns_paths_and_tui_placeholder(tmp_path: Path) -> None:
         "database_path": str(data_root / "hieronymus.sqlite"),
         "tui": "not-available-in-this-pass",
     }
+
+
+def test_dream_json_uses_configured_active_provider(tmp_path: Path) -> None:
+    data_root = tmp_path / "hieronymus"
+    config = load_config(str(data_root))
+    save_settings(
+        config,
+        load_settings(config).with_dreaming(DreamingSettings(active_provider="deterministic")),
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "dream", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == {
+        "cycle_id": 1,
+        "status": "completed",
+        "provider": "deterministic",
+        "input_count": 0,
+        "created_crystal_count": 0,
+        "proposal_count": 0,
+        "error": "",
+    }
+
+
+def test_dream_rejects_disabled_provider(tmp_path: Path) -> None:
+    data_root = tmp_path / "hieronymus"
+
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "dream", "--provider", "openai"],
+    )
+
+    assert result.exit_code != 0
+    assert "dream provider is disabled: openai" in result.output
 
 
 def test_admin_json_returns_available_tui_status(tmp_path: Path) -> None:

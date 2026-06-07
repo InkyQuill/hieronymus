@@ -11,6 +11,7 @@ from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
+from hieronymus.settings import DreamingSettings, load_settings, save_settings
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
@@ -241,7 +242,14 @@ def test_mcp_session_memory_complete_and_dream_happy_path(monkeypatch, tmp_path)
     assert completed == {"session_id": 1, "completed": True}
 
     dreamed = mcp_server.hieronymus_dream()
-    assert dreamed == {"cycle_id": 1, "status": "completed"}
+    assert dreamed == {
+        "cycle_id": 1,
+        "status": "completed",
+        "provider": "deterministic",
+        "input_count": 1,
+        "created_crystal_count": 1,
+        "proposal_count": 0,
+    }
 
 
 def test_mcp_session_start_without_languages_uses_registry_pair(monkeypatch, tmp_path):
@@ -572,5 +580,21 @@ def test_mcp_dream_rejects_unsupported_provider(monkeypatch, tmp_path):
 
     from hieronymus import mcp_server
 
-    with pytest.raises(ValueError, match="unsupported dream provider"):
+    with pytest.raises(ValueError, match="unsupported dream provider: external"):
         mcp_server.hieronymus_dream(provider="external")
+
+
+def test_mcp_dream_uses_configured_provider(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    save_settings(
+        config,
+        load_settings(config).with_dreaming(DreamingSettings(active_provider="deterministic")),
+    )
+
+    from hieronymus import mcp_server
+
+    dreamed = mcp_server.hieronymus_dream()
+
+    assert dreamed["provider"] == "deterministic"
+    assert dreamed["status"] == "completed"
