@@ -98,6 +98,10 @@ def test_load_settings_rejects_non_positive_dreaming_values(tmp_path: Path) -> N
     ("raw_settings", "error"),
     [
         (
+            "unknown = 1\n",
+            r"unknown setting: unknown",
+        ),
+        (
             "[dreaming]\nmin_interval_minutes = true\n",
             "min_interval_minutes must be an integer",
         ),
@@ -115,7 +119,7 @@ def test_load_settings_rejects_non_positive_dreaming_values(tmp_path: Path) -> N
         ),
     ],
 )
-def test_load_settings_rejects_invalid_nested_schema(
+def test_load_settings_rejects_invalid_schema(
     tmp_path: Path,
     raw_settings: str,
     error: str,

@@ -119,6 +119,11 @@ def default_settings() -> HieronymusSettings:
 
 
 def _settings_from_payload(payload: dict[str, Any]) -> HieronymusSettings:
+    _validate_unknown_keys(
+        payload,
+        allowed=frozenset({"dreaming", "providers"}),
+        prefix=None,
+    )
     defaults = default_settings()
 
     dreaming_payload = _dict_payload(payload.get("dreaming"), "dreaming")
@@ -196,11 +201,12 @@ def _validate_unknown_keys(
     payload: dict[str, Any],
     *,
     allowed: frozenset[str],
-    prefix: str,
+    prefix: str | None,
 ) -> None:
     for key in payload:
         if key not in allowed:
-            raise SettingsError(f"unknown setting: {prefix}.{key}")
+            setting = key if prefix is None else f"{prefix}.{key}"
+            raise SettingsError(f"unknown setting: {setting}")
 
 
 def _validate_dreaming_payload(payload: dict[str, Any]) -> None:
