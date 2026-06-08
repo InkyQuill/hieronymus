@@ -1,8 +1,8 @@
-import {z} from 'zod';
+import { z } from "zod";
 
-export const ProviderNameSchema = z.enum(['openai', 'gemini', 'anthropic']);
+export const ProviderNameSchema = z.enum(["openai", "gemini", "anthropic"]);
 
-export const RpcResponseSchema = z.discriminatedUnion('ok', [
+export const RpcResponseSchema = z.discriminatedUnion("ok", [
   z.object({
     id: z.string(),
     ok: z.literal(true),
@@ -49,7 +49,7 @@ export const AdminRowSchema = z.object({
   status: z.string(),
   scope: z.string(),
   language_pair: z.string(),
-  quality_label: z.string().default(''),
+  quality_label: z.string().default(""),
   tags: z.array(z.string()).default([]),
 });
 
@@ -68,35 +68,49 @@ export const AdminSnapshotSchema = z.object({
   filters: z.array(z.string()),
 });
 
-export const ConfigBootstrapSchema = z.object({
-  config_paths: z.record(z.string()),
-  provider_choices: z.array(
-    z
-      .object({
-        name: ProviderNameSchema,
-        display_name: z.string(),
-        requires_api_key: z.boolean(),
-        supports_api_path: z.boolean(),
-      })
-      .passthrough(),
-  ),
-  selected_provider: ProviderNameSchema,
-  draft: z.object({
-    dreaming: z.record(z.unknown()),
-    providers: z.record(z.record(z.unknown())),
-  }),
-  form_values: z.object({
-    provider: z.record(z.string()),
-    dreaming: z.record(z.string()),
-  }),
-  validation: z.object({
-    ok: z.boolean(),
-    errors: z.array(z.string()),
-  }),
-  check_result: z.record(z.unknown()).default({}),
-  suggestions: ModelSuggestionsSchema.default({}),
-  detail: ConfigDetailSchema,
-}).passthrough();
+export const AdminBootstrapSchema = z.object({
+  views: z.array(z.string()),
+  default_view: z.string(),
+  stats: z.record(z.number()),
+  service: z
+    .object({
+      running: z.boolean(),
+    })
+    .passthrough(),
+  snapshot: AdminSnapshotSchema,
+});
+
+export const ConfigBootstrapSchema = z
+  .object({
+    config_paths: z.record(z.string()),
+    provider_choices: z.array(
+      z
+        .object({
+          name: ProviderNameSchema,
+          display_name: z.string(),
+          requires_api_key: z.boolean(),
+          supports_api_path: z.boolean(),
+        })
+        .passthrough(),
+    ),
+    selected_provider: ProviderNameSchema,
+    draft: z.object({
+      dreaming: z.record(z.unknown()),
+      providers: z.record(z.record(z.unknown())),
+    }),
+    form_values: z.object({
+      provider: z.record(z.string()),
+      dreaming: z.record(z.string()),
+    }),
+    validation: z.object({
+      ok: z.boolean(),
+      errors: z.array(z.string()),
+    }),
+    check_result: z.record(z.unknown()).default({}),
+    suggestions: ModelSuggestionsSchema.default({}),
+    detail: ConfigDetailSchema,
+  })
+  .passthrough();
 
 export type ProviderName = z.infer<typeof ProviderNameSchema>;
 export type RpcResponse = z.infer<typeof RpcResponseSchema>;
@@ -105,4 +119,5 @@ export type ConfigDetail = z.infer<typeof ConfigDetailSchema>;
 export type AdminRow = z.infer<typeof AdminRowSchema>;
 export type AdminDetail = z.infer<typeof AdminDetailSchema>;
 export type AdminSnapshot = z.infer<typeof AdminSnapshotSchema>;
+export type AdminBootstrap = z.infer<typeof AdminBootstrapSchema>;
 export type ConfigBootstrap = z.infer<typeof ConfigBootstrapSchema>;
