@@ -11,11 +11,6 @@ if (modeArg !== "admin" && modeArg !== "config") {
   process.exit(1);
 }
 
-if (modeArg === "admin") {
-  console.error("Admin Ink screen is not available yet");
-  process.exit(1);
-}
-
 if (bridgeFlag !== "--bridge-command" || !bridgeCommand) {
   console.error("Usage: main.js <admin|config> --bridge-command <command>");
   process.exit(1);
