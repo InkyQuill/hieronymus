@@ -22,6 +22,7 @@ class Parent:
     id: int
     child: Child
     tags: tuple[str, ...]
+    _cache_key: str = "private-state"
 
 
 def test_parse_request_accepts_valid_json_rpc_object() -> None:
