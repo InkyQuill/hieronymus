@@ -19,7 +19,8 @@ def config(tmp_path: Path) -> HieronymusConfig:
 
 
 def _detail_text(app: HieronymusConfigApp) -> str:
-    return str(app.screen.query_one("#config-detail", Static).renderable)
+    renderable = app.screen.query_one("#config-detail", Static).render()
+    return getattr(renderable, "plain", str(renderable))
 
 
 @pytest.mark.anyio
@@ -46,6 +47,7 @@ async def test_config_tui_edits_provider_fields_and_saves(
         app.screen.query_one("#provider-api-key-env", Input).value = "HIERONYMUS_OPENAI_KEY"
         app.screen.query_one("#provider-base-url", Input).value = "https://llm.example.test/v1"
         app.screen.query_one("#provider-timeout-seconds", Input).value = "11.5"
+        await pilot.pause()
         await pilot.press("s")
 
     provider = load_settings(config).providers["openai"]
@@ -70,6 +72,7 @@ async def test_config_tui_edits_dreaming_fields_and_saves(
         app.screen.query_one("#dreaming-new-short-term-memory-threshold", Input).value = "3"
         app.screen.query_one("#dreaming-max-cycles-per-autostart", Input).value = "2"
         app.screen.query_one("#provider-enabled", Input).value = "yes"
+        await pilot.pause()
         await pilot.press("s")
 
     dreaming = load_settings(config).dreaming
@@ -90,6 +93,7 @@ async def test_config_tui_reload_discards_unsaved_edits(
     async with app.run_test() as pilot:
         await pilot.press("2")
         app.screen.query_one("#provider-model", Input).value = "unsaved-model"
+        await pilot.pause()
         assert "unsaved" in _detail_text(app)
         await pilot.press("r")
         assert app.screen.query_one("#provider-model", Input).value == "gpt-4.1-mini"
@@ -104,6 +108,7 @@ async def test_config_tui_validation_failure_does_not_save(
 
     async with app.run_test() as pilot:
         app.screen.query_one("#dreaming-min-interval-minutes", Input).value = "0"
+        await pilot.pause()
         await pilot.press("s")
         detail = _detail_text(app)
 
@@ -123,8 +128,25 @@ async def test_config_tui_detail_never_shows_raw_api_key_value(
         await pilot.press("2")
         app.screen.query_one("#provider-api-key-env", Input).value = "HIERONYMUS_OPENAI_KEY"
         app.screen.query_one("#provider-enabled", Input).value = "yes"
+        await pilot.pause()
         detail = _detail_text(app)
 
     assert "HIERONYMUS_OPENAI_KEY" in detail
     assert "api_key_present: yes" in detail
     assert "raw-secret-value" not in detail
+
+
+@pytest.mark.anyio
+async def test_config_tui_clears_provider_check_after_provider_switch(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("c")
+        assert "Check: deterministic" in _detail_text(app)
+        await pilot.press("2")
+        detail = _detail_text(app)
+
+    assert "Selected provider: openai" in detail
+    assert "Check: deterministic" not in detail

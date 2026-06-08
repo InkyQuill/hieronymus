@@ -5,7 +5,6 @@ from dataclasses import replace
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.dom import NoScreen
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Input, Static
 
@@ -26,27 +25,6 @@ from hieronymus.tui.config_state import (
     validate_draft,
     yes_no,
 )
-
-
-class _DetailStatic(Static):
-    def __init__(self, content: str = "", **kwargs: object) -> None:
-        super().__init__(content, **kwargs)
-        self.renderable = content
-
-    def update(self, content: object = "", *, layout: bool = True) -> None:
-        self.renderable = content
-        super().update(content, layout=layout)
-
-
-class _DraftInput(Input):
-    def _watch_value(self, value: str) -> None:
-        super()._watch_value(value)
-        try:
-            screen = self.screen
-        except NoScreen:
-            return
-        if isinstance(screen, ConfigScreen):
-            screen._handle_draft_input_changed(self)
 
 
 class ConfigScreen(Screen[None]):
@@ -74,17 +52,17 @@ class ConfigScreen(Screen[None]):
         with Horizontal(id="workspace"):
             yield DataTable(id="config-table")
             with Vertical(id="config-form"):
-                yield _DetailStatic("", id="config-detail")
-                yield _DraftInput(id="provider-enabled")
-                yield _DraftInput(id="provider-model")
-                yield _DraftInput(id="provider-api-key-env")
-                yield _DraftInput(id="provider-base-url")
-                yield _DraftInput(id="provider-timeout-seconds")
-                yield _DraftInput(id="dreaming-active-provider")
-                yield _DraftInput(id="dreaming-autostart-enabled")
-                yield _DraftInput(id="dreaming-min-interval-minutes")
-                yield _DraftInput(id="dreaming-new-short-term-memory-threshold")
-                yield _DraftInput(id="dreaming-max-cycles-per-autostart")
+                yield Static("", id="config-detail")
+                yield Input(id="provider-enabled")
+                yield Input(id="provider-model")
+                yield Input(id="provider-api-key-env")
+                yield Input(id="provider-base-url")
+                yield Input(id="provider-timeout-seconds")
+                yield Input(id="dreaming-active-provider")
+                yield Input(id="dreaming-autostart-enabled")
+                yield Input(id="dreaming-min-interval-minutes")
+                yield Input(id="dreaming-new-short-term-memory-threshold")
+                yield Input(id="dreaming-max-cycles-per-autostart")
         yield Footer()
 
     def on_mount(self) -> None:

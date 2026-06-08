@@ -28,7 +28,7 @@ class ConfigDraft:
             saved=self.saved,
             edited=settings,
             errors=(),
-            check_result=self.check_result,
+            check_result="",
         )
 
     def with_errors(self, errors: list[str]) -> ConfigDraft:
@@ -36,7 +36,7 @@ class ConfigDraft:
             saved=self.saved,
             edited=self.edited,
             errors=tuple(errors),
-            check_result=self.check_result,
+            check_result="",
         )
 
     def with_check_result(self, result: str) -> ConfigDraft:
