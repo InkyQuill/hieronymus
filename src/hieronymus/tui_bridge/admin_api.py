@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 from hieronymus.admin import ADMIN_VIEWS, AdminStore
 from hieronymus.admin_models import ActionResult, AdminDetail, AdminRow, AdminSnapshot
 from hieronymus.config import HieronymusConfig
@@ -258,10 +256,9 @@ class AdminBridge:
         snapshot = self._base_snapshot(view, selected_id, filters)
         rows = _filter_rows(snapshot.rows, filters)
         selected = _select_row(rows, selected_id)
-        detail = self.store.snapshot(view, selected_id=selected.id).detail if selected else None
+        detail = self._detail_for_filtered_row(view, selected) if selected else None
         if detail is None:
             detail = AdminDetail(title=view, subtitle="No rows", body="")
-        detail = self._bridge_detail(view, selected, detail)
         return AdminSnapshot(
             view=snapshot.view,
             rows=rows,
@@ -285,21 +282,31 @@ class AdminBridge:
             tags=_tuple_filter(filters, "tags"),
         )
         selected = _select_row(rows, selected_id)
-        detail = self.store.snapshot(view, selected_id=selected.id).detail if selected else None
+        detail = self._detail_for_filtered_row(view, selected) if selected else None
         if detail is None:
             detail = AdminDetail(title=view, subtitle="No rows", body="")
         return AdminSnapshot(view=view, rows=rows, selected=selected, detail=detail)
 
-    def _bridge_detail(
+    def _detail_for_filtered_row(
         self,
         view: str,
         selected: AdminRow | None,
-        detail: AdminDetail,
-    ) -> AdminDetail:
-        if selected is None or view not in {"Crystals", "Lessons"}:
-            return detail
+    ) -> AdminDetail | None:
+        if selected is None:
+            return None
+        if view not in {"Crystals", "Lessons"}:
+            return self.store.snapshot(view, selected_id=selected.id).detail
         crystal = CrystalStore(self.config).get(_required_int(selected.id, "selected.id"))
-        return replace(detail, body=crystal.text)
+        return AdminDetail(
+            title=selected.label,
+            subtitle=f"{selected.kind} / {selected.status}",
+            body=crystal.text,
+            fields=(
+                ("Series", selected.scope),
+                ("Language", selected.language_pair),
+                ("Quality", selected.quality_label),
+            ),
+        )
 
 
 def _required_int(value: object, name: str) -> int:
@@ -448,10 +455,8 @@ def _validate_view_filters(view: str, filters: dict[str, FilterValue]) -> None:
     if not filters:
         return
     if view not in {"Crystals", "Lessons"}:
-        for key in filters:
-            if key not in {"status", "kind"}:
-                raise ValueError(f"unsupported admin filter for {view}: {key}")
-        return
+        key = next(iter(filters))
+        raise ValueError(f"unsupported admin filter for {view}: {key}")
     safe_filters = {"status", "kind", "series_slug", "tags"}
     if view == "Crystals":
         safe_filters = safe_filters | {"type"}
