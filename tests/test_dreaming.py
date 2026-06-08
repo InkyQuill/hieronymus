@@ -3,6 +3,7 @@ import pytest
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
     DreamConceptProposal,
@@ -155,6 +156,33 @@ def test_dreaming_creates_next_cycle_id(config: HieronymusConfig) -> None:
 
     assert first_run.cycle_id == 1
     assert second_run.cycle_id == 2
+
+
+def test_dreaming_rejects_second_cycle_while_lock_is_active(
+    config: HieronymusConfig,
+) -> None:
+    with dream_cycle_lock(config, owner="manual"):
+        with pytest.raises(DreamCycleAlreadyRunning, match="dream cycle already running"):
+            DreamService(config, DeterministicDreamProvider()).run_cycle()
+
+
+def test_dreaming_releases_lock_after_provider_exception(
+    config: HieronymusConfig,
+) -> None:
+    class FailingProvider:
+        name = "failing"
+
+        def crystallize(self, context, memories):
+            raise RuntimeError("provider failed")
+
+    context = _context(config)
+    _completed_session(config, context)
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        DreamService(config, FailingProvider()).run_cycle()
+
+    run = DreamService(config, DeterministicDreamProvider()).run_cycle()
+    assert run.status == "completed"
 
 
 def test_dreaming_records_failed_run_for_invalid_provider_output(

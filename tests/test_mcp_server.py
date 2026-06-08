@@ -584,6 +584,18 @@ def test_mcp_dream_rejects_unsupported_provider(monkeypatch, tmp_path):
         mcp_server.hieronymus_dream(provider="external")
 
 
+def test_mcp_dream_rejects_active_cycle(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+
+    from hieronymus import mcp_server
+    from hieronymus.dream_locks import dream_cycle_lock
+
+    with dream_cycle_lock(config, owner="manual"):
+        with pytest.raises(ValueError, match="dream cycle already running"):
+            mcp_server.hieronymus_dream()
+
+
 def test_mcp_dream_uses_configured_provider(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     config = load_config()

@@ -9,6 +9,7 @@ from hieronymus.cli import main
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.workspace import WorkspaceStore
@@ -583,4 +584,17 @@ def test_dream_unsupported_provider_returns_clean_click_error(tmp_path):
 
     assert result.exit_code == 1
     assert "Error: unsupported dream provider: llm" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_dream_returns_clean_error_when_cycle_is_active(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    config = HieronymusConfig(data_root=data_root)
+    runner = CliRunner()
+
+    with dream_cycle_lock(config, owner="manual"):
+        result = runner.invoke(main, ["--data-root", str(data_root), "dream"])
+
+    assert result.exit_code == 1
+    assert "Error: dream cycle already running" in result.output
     assert "Traceback" not in result.output

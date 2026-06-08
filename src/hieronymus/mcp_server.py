@@ -384,10 +384,16 @@ def hieronymus_feedback(
 
 
 @server.tool()
-def hieronymus_dream(provider: str | None = None) -> dict[str, int | str]:
+def hieronymus_dream(
+    provider: str | None = None,
+    wait: bool = False,
+) -> dict[str, int | str]:
     """Run a dream cycle over completed sessions."""
     config = _load_validated_config()
-    run = DreamService(config, resolve_provider(config, provider)).run_cycle()
+    run = DreamService(config, resolve_provider(config, provider)).run_cycle(
+        owner="mcp",
+        wait=wait,
+    )
     return {
         "cycle_id": run.cycle_id,
         "status": run.status,

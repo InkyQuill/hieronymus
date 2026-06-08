@@ -9,8 +9,11 @@ from typing import Protocol
 from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
+from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.scoring import PASSIVE_EVENT_DELTAS
+from hieronymus.secrets import redact_configured_secret_values
+from hieronymus.settings import load_settings
 
 _ALLOWED_CRYSTAL_TYPES = frozenset({"lesson", "concept", "erudition"})
 STRENGTH_DECAY_PER_CYCLE = 0.03
@@ -122,7 +125,22 @@ class DreamService:
         with connect(self.config.database_path) as conn:
             apply_migration(conn, "global.sql")
 
-    def run_cycle(self) -> DreamRunRecord:
+    def run_cycle(
+        self,
+        *,
+        owner: str = "manual",
+        wait: bool = False,
+        skip_when_locked: bool = False,
+    ) -> DreamRunRecord:
+        try:
+            with dream_cycle_lock(self.config, owner=owner, wait=wait):
+                return self._run_cycle_unlocked()
+        except DreamCycleAlreadyRunning:
+            if skip_when_locked:
+                return self._record_skipped_run("dream cycle already running")
+            raise
+
+    def _run_cycle_unlocked(self) -> DreamRunRecord:
         now = _now()
         with connect(self.config.database_path) as conn:
             cycle_id = self._next_cycle_id(conn)
@@ -163,6 +181,8 @@ class DreamService:
                 proposal_count=proposal_count,
             )
         except Exception as exc:
+            settings = load_settings(self.config)
+            error_message = redact_configured_secret_values(str(exc), settings)
             with connect(self.config.database_path) as conn:
                 conn.execute(
                     """
@@ -172,10 +192,31 @@ class DreamService:
                         completed_at = ?
                     where id = ?
                     """,
-                    (str(exc), _now(), run_id),
+                    (error_message, _now(), run_id),
                 )
                 conn.commit()
             raise
+
+    def _record_skipped_run(self, reason: str) -> DreamRunRecord:
+        now = _now()
+        with connect(self.config.database_path) as conn:
+            cycle_id = self._next_cycle_id(conn)
+            cursor = conn.execute(
+                """
+                insert into dream_runs(cycle_id, status, provider, error, created_at, completed_at)
+                values (?, 'skipped', ?, ?, ?, ?)
+                """,
+                (cycle_id, self.provider.name, reason, now, now),
+            )
+            run_id = int(cursor.lastrowid)
+            conn.commit()
+        return DreamRunRecord(
+            id=run_id,
+            cycle_id=cycle_id,
+            status="skipped",
+            provider=self.provider.name,
+            error=reason,
+        )
 
     def _load_completed_groups(
         self,

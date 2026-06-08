@@ -11,6 +11,7 @@ from hieronymus.agent_plugins import resolve_plugin
 from hieronymus.config import load_config
 from hieronymus.doctor import Doctor, report_to_json
 from hieronymus.dream_autostart import DreamAutostart
+from hieronymus.dream_locks import DreamCycleAlreadyRunning
 from hieronymus.dream_providers import ProviderRegistry, resolve_provider
 from hieronymus.dreaming import DreamService
 from hieronymus.install import agent_install_candidates
@@ -632,15 +633,21 @@ def feedback(
 @main.command("dream")
 @click.option("--provider", default=None)
 @click.option("--json", "json_output", is_flag=True)
+@click.option("--wait", is_flag=True, help="Wait for an active dream cycle to finish.")
 @click.pass_context
-def dream(ctx: click.Context, provider: str | None, json_output: bool) -> None:
+def dream(
+    ctx: click.Context,
+    provider: str | None,
+    json_output: bool,
+    wait: bool,
+) -> None:
     try:
         dream_provider = resolve_provider(ctx.obj["config"], provider)
         run = DreamService(
             ctx.obj["config"],
             dream_provider,
-        ).run_cycle()
-    except (KeyError, ValueError, SettingsError) as error:
+        ).run_cycle(wait=wait, owner="manual")
+    except (KeyError, ValueError, SettingsError, DreamCycleAlreadyRunning) as error:
         _raise_click_error(error)
     payload = {
         "cycle_id": run.cycle_id,
