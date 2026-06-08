@@ -38,6 +38,29 @@ def test_parse_request_accepts_valid_json_rpc_object() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("line", "code", "message"),
+    [
+        ("{", "invalid_json", "invalid JSON: Expecting property name enclosed in double quotes"),
+        ("[]", "invalid_request", "request must be an object"),
+        ('{"method":"admin.snapshot"}', "invalid_request", "id must be a non-empty string"),
+        ('{"id":"","method":"admin.snapshot"}', "invalid_request", "id must be a non-empty string"),
+        ('{"id":"1"}', "invalid_request", "method must be a non-empty string"),
+        ('{"id":"1","method":""}', "invalid_request", "method must be a non-empty string"),
+    ],
+)
+def test_parse_request_rejects_invalid_request_shapes(
+    line: str,
+    code: str,
+    message: str,
+) -> None:
+    with pytest.raises(RpcError) as error_info:
+        parse_request(line)
+
+    assert error_info.value.code == code
+    assert error_info.value.message == message
+
+
 def test_parse_request_rejects_non_object_params() -> None:
     with pytest.raises(RpcError) as error_info:
         parse_request('{"id":"1","method":"admin.snapshot","params":["Crystals"]}')
