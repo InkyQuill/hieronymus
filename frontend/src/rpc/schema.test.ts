@@ -2,7 +2,11 @@ import {describe, expect, it} from 'vitest';
 import {AdminSnapshotSchema, ConfigBootstrapSchema, RpcResponseSchema} from './schema.js';
 
 describe('runtime schemas', () => {
-  it('parses config bootstrap payload with one provider selector', () => {
+  it.each([
+    ['openai', 'OpenAI compatible'],
+    ['gemini', 'Gemini'],
+    ['anthropic', 'Anthropic'],
+  ] as const)('parses config bootstrap payload for %s provider selector', (provider, displayName) => {
     const payload = ConfigBootstrapSchema.parse({
       config_paths: {
         config_root: '/tmp/h',
@@ -10,17 +14,17 @@ describe('runtime schemas', () => {
         database_path: '/tmp/h/hieronymus.sqlite3',
       },
       provider_choices: [
-        {name: 'openai', display_name: 'OpenAI compatible', supports_api_path: true},
+        {name: provider, display_name: displayName, supports_api_path: true},
       ],
-      selected_provider: 'openai',
-      draft: {dreaming: {active_provider: 'openai'}, providers: {}},
+      selected_provider: provider,
+      draft: {dreaming: {active_provider: provider}, providers: {}},
       form_values: {provider: {model: 'gpt-4.1-mini'}, dreaming: {}},
       validation: {ok: true, errors: []},
-      suggestions: {provider: 'openai', models: ['gpt-4.1-mini'], source: 'defaults', error: ''},
-      detail: {title: 'openai dreaming provider', fields: [], errors: []},
+      suggestions: {provider, models: ['gpt-4.1-mini'], source: 'defaults', error: ''},
+      detail: {title: `${provider} dreaming provider`, fields: [], errors: []},
     });
 
-    expect(payload.selected_provider).toBe('openai');
+    expect(payload.selected_provider).toBe(provider);
   });
 
   it('rejects config provider choices outside supported families', () => {

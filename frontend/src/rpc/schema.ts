@@ -80,6 +80,8 @@ export const ConfigBootstrapSchema = z.object({
 });
 
 export type ProviderName = z.infer<typeof ProviderNameSchema>;
+export type RpcResponse = z.infer<typeof RpcResponseSchema>;
 export type AdminRow = z.infer<typeof AdminRowSchema>;
+export type AdminDetail = z.infer<typeof AdminDetailSchema>;
 export type AdminSnapshot = z.infer<typeof AdminSnapshotSchema>;
 export type ConfigBootstrap = z.infer<typeof ConfigBootstrapSchema>;
