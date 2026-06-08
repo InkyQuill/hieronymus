@@ -319,6 +319,16 @@ def test_admin_delete_validates_filters_before_mutating(tmp_path: Path) -> None:
     assert CrystalStore(config).get(crystal_id).status == "active"
 
 
+def test_admin_delete_validates_view_before_mutating(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    crystal_id = _seed(config)
+
+    with pytest.raises(ValueError, match="unsupported admin view: Bad"):
+        AdminBridge(config).delete_crystal({"id": crystal_id, "confirmed": True, "view": "Bad"})
+
+    assert CrystalStore(config).get(crystal_id).status == "active"
+
+
 def test_admin_edit_crystal_refreshes_selected_detail(tmp_path: Path) -> None:
     config = _config(tmp_path)
     crystal_id = _seed(config)

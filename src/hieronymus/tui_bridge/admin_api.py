@@ -498,6 +498,8 @@ def _tuple_filter(filters: dict[str, FilterValue], key: str) -> tuple[str, ...]:
 
 
 def _validate_view_filters(view: str, filters: dict[str, FilterValue]) -> None:
+    if view not in ADMIN_VIEWS:
+        raise ValueError(f"unsupported admin view: {view}")
     if not filters:
         return
     if view not in {"Crystals", "Lessons"}:
