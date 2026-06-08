@@ -155,3 +155,49 @@ def test_admin_add_crystal_accepts_type_alias(tmp_path: Path) -> None:
     assert payload["result"]["action"] == "add"
     assert payload["snapshot"]["selected"]["kind"] == "concept"
     assert payload["snapshot"]["selected"]["label"] == "Guild Register"
+
+
+def test_admin_split_crystal_accepts_named_part_params(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    crystal_id = _seed(config)
+
+    payload = AdminBridge(config).split_crystal(
+        {
+            "id": crystal_id,
+            "part_one_title": "Guild Ledger Term",
+            "part_one_text": "Keep guild ledger as the accounting term.",
+            "part_two_title": "Guild Ledger Context",
+            "part_two_text": "Use context notes for guild accounting scenes.",
+        }
+    )
+
+    assert payload["result"]["action"] == "split"
+    assert payload["snapshot"]["selected"]["label"] == "Guild Ledger Term"
+    assert CrystalStore(config).get(crystal_id).status == "archived"
+
+
+def test_admin_provenance_accepts_crystal_id_param(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    crystal_id = _seed(config)
+
+    payload = AdminBridge(config).provenance({"crystal_id": crystal_id})
+
+    assert payload["provenance"]["title"] == "Guild Ledger"
+
+
+def test_admin_recall_reasons_accepts_crystal_id_param(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    crystal_id = _seed(config)
+
+    payload = AdminBridge(config).recall_reasons({"crystal_id": crystal_id})
+
+    assert payload["reasons"] == []
+
+
+def test_admin_dream_review_accepts_run_id_param(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    run = AdminStore(config).run_manual_dreaming()
+
+    payload = AdminBridge(config).dream_review({"run_id": run.id})
+
+    assert payload["review"]["run_id"] == run.id

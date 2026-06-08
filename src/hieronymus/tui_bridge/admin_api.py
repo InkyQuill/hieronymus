@@ -69,7 +69,7 @@ class AdminBridge:
 
     def split_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
-        new_ids = self.store.split_crystal(crystal_id, parts=_split_parts(params.get("parts")))
+        new_ids = self.store.split_crystal(crystal_id, parts=_split_parts(params))
         selected_id = new_ids[0] if new_ids else crystal_id
         result = ActionResult("crystal", selected_id, "split", "Crystal split")
         return self._mutation_payload(result, params, view="Crystals", selected_id=selected_id)
@@ -132,14 +132,14 @@ class AdminBridge:
         return self._mutation_payload(result, params, view="Proposals", selected_id=proposal_id)
 
     def provenance(self, params: dict[str, object]) -> dict[str, object]:
-        crystal_id = _required_int(params.get("id"), "id")
+        crystal_id = _required_int(_aliased_param(params, "crystal_id", "id"), "crystal_id")
         return {
             "provenance": dataclass_to_json(self.store.provenance_for_crystal(crystal_id)),
             "stats": dataclass_to_json(self.store.stats()),
         }
 
     def recall_reasons(self, params: dict[str, object]) -> dict[str, object]:
-        crystal_id = _required_int(params.get("id"), "id")
+        crystal_id = _required_int(_aliased_param(params, "crystal_id", "id"), "crystal_id")
         return {
             "reasons": dataclass_to_json(self.store.recall_reasons_for_crystal(crystal_id)),
             "stats": dataclass_to_json(self.store.stats()),
@@ -155,7 +155,7 @@ class AdminBridge:
         )
 
     def dream_review(self, params: dict[str, object]) -> dict[str, object]:
-        run_id = _required_int(params.get("id"), "id")
+        run_id = _required_int(_aliased_param(params, "run_id", "id"), "run_id")
         return {
             "review": dataclass_to_json(self.store.dream_review(run_id)),
             "stats": dataclass_to_json(self.store.stats()),
@@ -240,6 +240,13 @@ def _required_string(value: object, name: str) -> str:
     return value
 
 
+def _aliased_param(params: dict[str, object], primary: str, alias: str) -> object:
+    value = params.get(primary)
+    if value is None:
+        value = params.get(alias)
+    return value
+
+
 def _optional_string(value: object, name: str) -> str | None:
     if value is None:
         return None
@@ -304,7 +311,19 @@ def _filter_labels(filters: dict[str, str]) -> list[str]:
     return [f"{key}={filters[key]}" for key in ("status", "kind") if key in filters]
 
 
-def _split_parts(value: object) -> list[tuple[str, str] | dict[str, str]]:
+def _split_parts(params: dict[str, object]) -> list[tuple[str, str] | dict[str, str]]:
+    value = params.get("parts")
+    if value is None:
+        return [
+            (
+                _required_string(params.get("part_one_title"), "part_one_title"),
+                _required_string(params.get("part_one_text"), "part_one_text"),
+            ),
+            (
+                _required_string(params.get("part_two_title"), "part_two_title"),
+                _required_string(params.get("part_two_text"), "part_two_text"),
+            ),
+        ]
     if type(value) is not list:
         raise ValueError("parts must be a list")
     parts: list[tuple[str, str] | dict[str, str]] = []
