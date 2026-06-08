@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 
@@ -134,6 +134,82 @@ def test_provider_status_marks_empty_env_value_missing(tmp_path, monkeypatch) ->
     openai = next(item for item in statuses if item["name"] == "openai")
     assert openai["configured"] is False
     assert openai["error"] == "missing environment variable: OPENAI_API_KEY"
+
+
+def test_provider_status_reports_key_presence_without_key_value(config, monkeypatch):
+    monkeypatch.setenv("HIERONYMUS_OPENAI_TEST_KEY", "sk-live-secret-value")
+    settings = load_settings(config).with_provider(
+        "openai",
+        ProviderSettings(
+            enabled=True,
+            model="gpt-4.1-mini",
+            api_key_env="HIERONYMUS_OPENAI_TEST_KEY",
+            base_url="https://api.example.test/v1",
+        ),
+    )
+    save_settings(config, settings)
+
+    payload = ProviderRegistry().status_payload(config)
+    openai = next(row for row in payload if row["name"] == "openai")
+
+    assert openai["api_key_env"] == "HIERONYMUS_OPENAI_TEST_KEY"
+    assert openai["api_key_present"] is True
+    assert "sk-live-secret-value" not in repr(payload)
+
+
+def test_provider_status_can_use_unsaved_in_memory_settings(config, monkeypatch):
+    monkeypatch.setenv("DRAFT_OPENAI_KEY", "draft-secret")
+    saved = load_settings(config)
+    draft = saved.with_provider(
+        "openai",
+        replace(
+            saved.providers["openai"],
+            enabled=True,
+            api_key_env="DRAFT_OPENAI_KEY",
+            model="draft-model",
+            base_url="https://draft.example.test/v1",
+        ),
+    )
+
+    payload = ProviderRegistry().status_payload(config, settings=draft)
+    openai = next(row for row in payload if row["name"] == "openai")
+
+    assert openai["model"] == "draft-model"
+    assert openai["api_key_present"] is True
+    assert load_settings(config).providers["openai"].model == "gpt-4.1-mini"
+
+
+def test_provider_check_uses_unsaved_in_memory_settings(config, monkeypatch):
+    class Transport:
+        def __init__(self):
+            self.calls = []
+
+        def post_json(self, url, *, headers, payload, timeout):
+            self.calls.append((url, headers, payload, timeout))
+            return type("Response", (), {"status": 200, "body": "{}"})()
+
+    monkeypatch.setenv("DRAFT_OPENAI_KEY", "draft-secret")
+    saved = load_settings(config)
+    draft = saved.with_provider(
+        "openai",
+        replace(
+            saved.providers["openai"],
+            enabled=True,
+            api_key_env="DRAFT_OPENAI_KEY",
+            model="draft-model",
+            base_url="https://draft.example.test/v1",
+            timeout_seconds=7.5,
+        ),
+    )
+    transport = Transport()
+
+    result = ProviderRegistry(transport=transport).check(config, "openai", settings=draft)
+
+    assert result.ok is True
+    assert result.model == "draft-model"
+    assert transport.calls[0][0] == "https://draft.example.test/v1/chat/completions"
+    assert transport.calls[0][3] == 7.5
+    assert "draft-secret" not in repr(result.to_json_dict())
 
 
 def test_deterministic_check_passes_without_network(tmp_path) -> None:

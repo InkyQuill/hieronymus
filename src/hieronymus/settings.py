@@ -96,6 +96,10 @@ def save_settings(config: HieronymusConfig, settings: HieronymusSettings) -> Non
     atomic_write_text(config.settings_path, tomli_w.dumps(settings.to_json_dict()))
 
 
+def validate_settings(settings: HieronymusSettings) -> HieronymusSettings:
+    return _validate_settings(settings)
+
+
 def default_settings() -> HieronymusSettings:
     return HieronymusSettings(
         dreaming=DreamingSettings(),

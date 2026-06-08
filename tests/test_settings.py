@@ -13,6 +13,7 @@ from hieronymus.settings import (
     SettingsError,
     load_settings,
     save_settings,
+    validate_settings,
 )
 
 
@@ -98,6 +99,21 @@ def test_load_settings_rejects_non_positive_dreaming_values(tmp_path: Path) -> N
 
     with pytest.raises(SettingsError, match="min_interval_minutes must be at least 1"):
         load_settings(config)
+
+
+def test_validate_settings_exposes_existing_validation(config):
+    settings = load_settings(config).with_dreaming(
+        DreamingSettings(
+            active_provider="deterministic",
+            autostart_enabled=False,
+            min_interval_minutes=0,
+            new_short_term_memory_threshold=25,
+            max_cycles_per_autostart=1,
+        )
+    )
+
+    with pytest.raises(SettingsError, match="min_interval_minutes must be at least 1"):
+        validate_settings(settings)
 
 
 @pytest.mark.parametrize(

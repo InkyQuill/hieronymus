@@ -17,7 +17,8 @@ from hieronymus.dreaming import (
     DreamProvider,
 )
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
-from hieronymus.settings import ProviderSettings, load_settings
+from hieronymus.secrets import env_value_exists
+from hieronymus.settings import HieronymusSettings, ProviderSettings, load_settings
 
 
 @dataclass(frozen=True)
@@ -127,11 +128,16 @@ class ProviderRegistry:
                 return provider
         raise ValueError(f"unsupported dream provider: {name}")
 
-    def status_payload(self, config: HieronymusConfig) -> list[dict[str, object]]:
-        settings = load_settings(config)
+    def status_payload(
+        self,
+        config: HieronymusConfig,
+        *,
+        settings: HieronymusSettings | None = None,
+    ) -> list[dict[str, object]]:
+        active_settings = settings or load_settings(config)
         statuses = []
         for metadata in self._providers:
-            provider = settings.providers.get(metadata.name, ProviderSettings())
+            provider = active_settings.providers.get(metadata.name, ProviderSettings())
             configured, error = _configured_status(metadata.name, provider)
             statuses.append(
                 {
@@ -141,7 +147,9 @@ class ProviderRegistry:
                     "configured": configured,
                     "model": provider.model,
                     "api_key_env": provider.api_key_env,
+                    "api_key_present": env_value_exists(provider.api_key_env),
                     "base_url": provider.base_url,
+                    "timeout_seconds": provider.timeout_seconds,
                     "error": error,
                 }
             )
@@ -152,13 +160,15 @@ class ProviderRegistry:
         config: HieronymusConfig,
         name: str,
         temporary_api_key: str | None = None,
+        *,
+        settings: HieronymusSettings | None = None,
     ) -> ProviderCheckResult:
         self.metadata(name)
         if name == "deterministic":
             return ProviderCheckResult(name="deterministic", ok=True, model="")
 
-        settings = load_settings(config)
-        provider = settings.providers.get(name, ProviderSettings())
+        active_settings = settings or load_settings(config)
+        provider = active_settings.providers.get(name, ProviderSettings())
         key = temporary_api_key or os.environ.get(provider.api_key_env)
         if not key:
             return ProviderCheckResult(
@@ -597,6 +607,6 @@ def _configured_status(name: str, provider: ProviderSettings) -> tuple[bool, str
         return False, "model is empty"
     if not provider.api_key_env.strip():
         return False, "api_key_env is empty"
-    if provider.enabled and not os.environ.get(provider.api_key_env):
+    if provider.enabled and not env_value_exists(provider.api_key_env):
         return False, f"missing environment variable: {provider.api_key_env}"
     return True, ""
