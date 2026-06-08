@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import asdict
+from pathlib import Path
 
 import click
 
@@ -111,6 +113,27 @@ def _subprocess_error_message(error: subprocess.CalledProcessError) -> str:
     return f"Update command failed: {command} exited with code {error.returncode}"
 
 
+def _tui_mode() -> str:
+    value = os.environ.get("HIERONYMUS_TUI", "textual").strip().lower()
+    if value not in {"textual", "ink"}:
+        raise click.ClickException("HIERONYMUS_TUI must be textual or ink")
+    return value
+
+
+def _frontend_entrypoint() -> str:
+    candidate = Path(__file__).resolve().parent / "frontend" / "dist" / "main.js"
+    if candidate.exists():
+        return str(candidate)
+    return str(Path.cwd() / "frontend" / "dist" / "main.js")
+
+
+def _launch_ink(mode: str) -> None:
+    subprocess.run(
+        ["node", _frontend_entrypoint(), mode, "--bridge-command", "hiero"],
+        check=True,
+    )
+
+
 @click.group(invoke_without_command=True)
 @click.option("--data-root", type=click.Path(file_okay=False, dir_okay=True), default=None)
 @click.pass_context
@@ -125,6 +148,14 @@ def main(ctx: click.Context, data_root: str | None) -> None:
         click.echo(render_greeting())
         click.echo()
         _echo_status_lines(status)
+
+
+@main.command("tui-bridge", hidden=True)
+@click.pass_context
+def tui_bridge_command(ctx: click.Context) -> None:
+    from hieronymus.tui_bridge.server import run_stdio
+
+    run_stdio(ctx.obj["config"])
 
 
 @main.command("status")
@@ -175,6 +206,9 @@ def restart(ctx: click.Context, json_output: bool) -> None:
 def config_command(ctx: click.Context, json_output: bool) -> None:
     config = ctx.obj["config"]
     if not json_output:
+        if _tui_mode() == "ink":
+            _launch_ink("config")
+            return
         HieronymusConfigApp(config).run()
         return
 
@@ -301,6 +335,9 @@ def admin(ctx: click.Context, json_output: bool) -> None:
         click.echo(render_json(payload))
         return
 
+    if _tui_mode() == "ink":
+        _launch_ink("admin")
+        return
     HieronymusAdminApp(config).run()
 
 
