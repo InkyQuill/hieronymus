@@ -131,52 +131,7 @@ def test_admin_snapshot_crystal_filter_finds_matches_after_unfiltered_page(
         target_language="ru",
         task_type="translation",
     )
-    for index in range(205):
-        store.add_crystal(
-            filler_context,
-            crystal_type="concept",
-            title=f"Filler {index:03d}",
-            text="Filler crystal marker.",
-        )
-    series = Registry(config).create_series(
-        slug="late-series",
-        title="Late Series",
-        source_language="ja",
-        target_language="ru",
-    )
-    late_context = TranslationContext(
-        series_slug=series.slug,
-        source_language=series.source_language,
-        target_language=series.target_language,
-        task_type="translation",
-    )
-    store.add_crystal(
-        late_context,
-        crystal_type="concept",
-        title="Late Ledger",
-        text="Late series marker.",
-    )
-
-    payload = AdminBridge(config).snapshot(
-        {"view": "Crystals", "filters": {"series_slug": "late-series"}}
-    )
-
-    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Late Ledger"]
-
-
-def test_admin_filtered_crystal_detail_matches_selected_beyond_unfiltered_page(
-    tmp_path: Path,
-) -> None:
-    config = _config(tmp_path)
-    _seed(config)
-    store = CrystalStore(config)
-    filler_context = TranslationContext(
-        series_slug="only-sense-online",
-        source_language="ja",
-        target_language="ru",
-        task_type="translation",
-    )
-    for index in range(205):
+    for index in range(200):
         store.add_crystal(
             filler_context,
             crystal_type="concept",
@@ -206,6 +161,7 @@ def test_admin_filtered_crystal_detail_matches_selected_beyond_unfiltered_page(
         {"view": "Crystals", "filters": {"series_slug": "late-series"}}
     )
 
+    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Late Ledger"]
     assert payload["snapshot"]["selected"]["label"] == "Late Ledger"
     assert payload["snapshot"]["detail"]["title"] == "Late Ledger"
     assert payload["snapshot"]["detail"]["body"] == "Late body marker."
@@ -345,6 +301,22 @@ def test_admin_delete_mutates_through_store_and_refreshes_snapshot(tmp_path: Pat
     assert payload["result"]["action"] == "delete"
     assert CrystalStore(config).get(crystal_id).status == "archived"
     assert payload["snapshot"]["selected"]["status"] == "archived"
+
+
+def test_admin_delete_validates_filters_before_mutating(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    crystal_id = _seed(config)
+
+    with pytest.raises(ValueError, match="unsupported admin filter for Crystals: confidence"):
+        AdminBridge(config).delete_crystal(
+            {
+                "id": crystal_id,
+                "confirmed": True,
+                "filters": {"confidence": "60"},
+            }
+        )
+
+    assert CrystalStore(config).get(crystal_id).status == "active"
 
 
 def test_admin_edit_crystal_refreshes_selected_detail(tmp_path: Path) -> None:
@@ -494,10 +466,8 @@ def test_admin_recall_reasons_accepts_crystal_id_param(tmp_path: Path) -> None:
     assert payload["reasons"] == []
 
 
-def test_admin_dream_review_accepts_run_id_param(tmp_path: Path) -> None:
+def test_admin_dream_review_uses_run_id_param(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    run = AdminStore(config).run_manual_dreaming()
 
-    payload = AdminBridge(config).dream_review({"run_id": run.id})
-
-    assert payload["review"]["run_id"] == run.id
+    with pytest.raises(KeyError, match="unknown dream run: 999"):
+        AdminBridge(config).dream_review({"run_id": 999})

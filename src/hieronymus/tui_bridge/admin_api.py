@@ -48,6 +48,7 @@ class AdminBridge:
         return self._snapshot_payload(view=view, selected_id=selected_id, filters=filters)
 
     def add_crystal(self, params: dict[str, object]) -> dict[str, object]:
+        view, filters = _refresh_context(params, default_view=_crystal_mutation_view(params))
         crystal_id = self.store.add_crystal(
             series_slug=_required_string(params.get("series_slug"), "series_slug"),
             source_language=_required_string(params.get("source_language"), "source_language"),
@@ -61,12 +62,14 @@ class AdminBridge:
         return self._mutation_payload(
             result,
             params,
-            view=_crystal_mutation_view(params),
+            view=view,
+            filters=filters,
             selected_id=crystal_id,
         )
 
     def edit_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
+        view, filters = _refresh_context(params, default_view=_crystal_mutation_view(params))
         result = self.store.edit_crystal(
             crystal_id,
             title=_required_string(params.get("title"), "title"),
@@ -75,12 +78,14 @@ class AdminBridge:
         return self._mutation_payload(
             result,
             params,
-            view=_crystal_mutation_view(params),
+            view=view,
+            filters=filters,
             selected_id=crystal_id,
         )
 
     def merge_crystals(self, params: dict[str, object]) -> dict[str, object]:
         crystal_ids = _required_int_list(params.get("ids"), "ids")
+        view, filters = _refresh_context(params, default_view=_crystal_mutation_view(params))
         merged_id = self.store.merge_crystals(
             crystal_ids,
             title=_required_string(params.get("title"), "title"),
@@ -90,24 +95,28 @@ class AdminBridge:
         return self._mutation_payload(
             result,
             params,
-            view=_crystal_mutation_view(params),
+            view=view,
+            filters=filters,
             selected_id=merged_id,
         )
 
     def split_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
+        view, filters = _refresh_context(params, default_view=_crystal_mutation_view(params))
         new_ids = self.store.split_crystal(crystal_id, parts=_split_parts(params))
         selected_id = new_ids[0] if new_ids else crystal_id
         result = ActionResult("crystal", selected_id, "split", "Crystal split")
         return self._mutation_payload(
             result,
             params,
-            view=_crystal_mutation_view(params),
+            view=view,
+            filters=filters,
             selected_id=selected_id,
         )
 
     def supersede_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
+        view, filters = _refresh_context(params, default_view=_crystal_mutation_view(params))
         result = self.store.supersede_crystal(
             crystal_id,
             replacement_id=_required_int(params.get("replacement_id"), "replacement_id"),
@@ -116,12 +125,14 @@ class AdminBridge:
         return self._mutation_payload(
             result,
             params,
-            view=_crystal_mutation_view(params),
+            view=view,
+            filters=filters,
             selected_id=crystal_id,
         )
 
     def reinforce_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
+        view, filters = _refresh_context(params, default_view=_crystal_mutation_view(params))
         result = self.store.reinforce_crystal(
             crystal_id,
             evidence=_evidence(params, default="Reinforced from admin bridge"),
@@ -129,12 +140,14 @@ class AdminBridge:
         return self._mutation_payload(
             result,
             params,
-            view=_crystal_mutation_view(params),
+            view=view,
+            filters=filters,
             selected_id=crystal_id,
         )
 
     def decay_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
+        view, filters = _refresh_context(params, default_view=_crystal_mutation_view(params))
         result = self.store.decay_crystal(
             crystal_id,
             evidence=_evidence(params, default="Decayed from admin bridge"),
@@ -142,12 +155,14 @@ class AdminBridge:
         return self._mutation_payload(
             result,
             params,
-            view=_crystal_mutation_view(params),
+            view=view,
+            filters=filters,
             selected_id=crystal_id,
         )
 
     def deprecate_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
+        view, filters = _refresh_context(params, default_view=_crystal_mutation_view(params))
         result = self.store.deprecate_crystal(
             crystal_id,
             evidence=_evidence(params, default="Deprecated from admin bridge"),
@@ -155,7 +170,8 @@ class AdminBridge:
         return self._mutation_payload(
             result,
             params,
-            view=_crystal_mutation_view(params),
+            view=view,
+            filters=filters,
             selected_id=crystal_id,
         )
 
@@ -163,6 +179,7 @@ class AdminBridge:
         if params.get("confirmed") is not True:
             raise ValueError("delete requires confirmation")
         crystal_id = _required_int(params.get("id"), "id")
+        view, filters = _refresh_context(params, default_view=_crystal_mutation_view(params))
         result = self.store.delete_crystal(
             crystal_id,
             evidence=_evidence(params, default="Deleted from admin bridge"),
@@ -170,23 +187,38 @@ class AdminBridge:
         return self._mutation_payload(
             result,
             params,
-            view=_crystal_mutation_view(params),
+            view=view,
+            filters=filters,
             selected_id=crystal_id,
         )
 
     def approve_proposal(self, params: dict[str, object]) -> dict[str, object]:
         proposal_id = _required_int(params.get("id"), "id")
+        view, filters = _refresh_context(params, default_view="Proposals")
         term_id = self.store.approve_proposal(proposal_id)
         result = ActionResult("strict_term", term_id, "approve", "Proposal approved")
-        return self._mutation_payload(result, params, view="Proposals", selected_id=proposal_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=view,
+            filters=filters,
+            selected_id=proposal_id,
+        )
 
     def reject_proposal(self, params: dict[str, object]) -> dict[str, object]:
         proposal_id = _required_int(params.get("id"), "id")
+        view, filters = _refresh_context(params, default_view="Proposals")
         result = self.store.reject_proposal(
             proposal_id,
             evidence=_evidence(params, default="Rejected from admin bridge"),
         )
-        return self._mutation_payload(result, params, view="Proposals", selected_id=proposal_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=view,
+            filters=filters,
+            selected_id=proposal_id,
+        )
 
     def provenance(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(_aliased_param(params, "crystal_id", "id"), "crystal_id")
@@ -203,11 +235,13 @@ class AdminBridge:
         }
 
     def run_manual_dreaming(self, params: dict[str, object]) -> dict[str, object]:
+        view, filters = _refresh_context(params, default_view="Dream Runs")
         run = self.store.run_manual_dreaming()
         return self._mutation_payload(
             dataclass_to_json(run),
             params,
-            view="Dream Runs",
+            view=view,
+            filters=filters,
             selected_id=run.id,
         )
 
@@ -225,9 +259,10 @@ class AdminBridge:
         params: dict[str, object],
         *,
         view: str,
+        filters: dict[str, FilterValue] | None = None,
         selected_id: int | str | None,
     ) -> dict[str, object]:
-        filters = _filters(params.get("filters"))
+        filters = _filters(params.get("filters")) if filters is None else filters
         return {
             "result": dataclass_to_json(result),
             "stats": dataclass_to_json(self.store.stats()),
@@ -359,6 +394,17 @@ def _crystal_type(params: dict[str, object]) -> str:
 
 def _crystal_mutation_view(params: dict[str, object]) -> str:
     return _optional_string(params.get("view"), "view") or DEFAULT_VIEW
+
+
+def _refresh_context(
+    params: dict[str, object],
+    *,
+    default_view: str,
+) -> tuple[str, dict[str, FilterValue]]:
+    view = _optional_string(params.get("view"), "view") or default_view
+    filters = _filters(params.get("filters"))
+    _validate_view_filters(view, filters)
+    return view, filters
 
 
 def _evidence(params: dict[str, object], *, default: str) -> str:
