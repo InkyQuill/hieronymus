@@ -168,3 +168,21 @@ async def test_config_tui_table_navigation_syncs_provider_form(
     assert "Selected provider: openai" in detail
     assert "Check: openai" in detail
     assert "state: saved" in detail
+
+
+@pytest.mark.anyio
+async def test_config_tui_updates_provider_row_after_draft_edit(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("2")
+        app.screen.query_one("#provider-model", Input).value = ""
+        await pilot.pause()
+        table = app.screen.query_one("#config-table", DataTable)
+        row = table.get_row("openai")
+
+    assert row[3] == "-"
+    assert row[5] == "no"
+    assert row[6] == "model is empty"

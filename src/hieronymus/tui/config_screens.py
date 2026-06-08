@@ -68,13 +68,13 @@ class ConfigScreen(Screen[None]):
     def on_mount(self) -> None:
         table = self.query_one("#config-table", DataTable)
         table.add_columns(
-            "provider",
-            "active",
-            "enabled",
-            "model",
-            "key env",
-            "configured",
-            "error",
+            ("provider", "provider"),
+            ("active", "active"),
+            ("enabled", "enabled"),
+            ("model", "model"),
+            ("key env", "key_env"),
+            ("configured", "configured"),
+            ("error", "error"),
         )
         table.focus()
         self._refresh()
@@ -177,6 +177,7 @@ class ConfigScreen(Screen[None]):
             return
         selected_provider = self._selected_provider()
         if self._apply_form_to_draft():
+            self._update_provider_row(selected_provider)
             self._update_detail(selected_provider)
 
     def _refresh(self, selected_provider: str | None = None) -> None:
@@ -230,6 +231,18 @@ class ConfigScreen(Screen[None]):
                 "error": error,
             }
         return [by_name[metadata.name] for metadata in self.registry.list()]
+
+    def _update_provider_row(self, provider_name: str) -> None:
+        table = self.query_one("#config-table", DataTable)
+        provider = self.draft.edited.providers.get(provider_name, ProviderSettings())
+        configured, error = _configured_status(provider_name, provider)
+        active_provider = self.draft.edited.dreaming.active_provider
+        table.update_cell(provider_name, "active", "*" if provider_name == active_provider else "")
+        table.update_cell(provider_name, "enabled", yes_no(provider.enabled))
+        table.update_cell(provider_name, "model", str(provider.model or "-"))
+        table.update_cell(provider_name, "key_env", str(provider.api_key_env or "-"))
+        table.update_cell(provider_name, "configured", yes_no(configured))
+        table.update_cell(provider_name, "error", str(error or ""))
 
     def _selected_provider(self, default: str | None = None) -> str:
         table = self.query_one("#config-table", DataTable)
