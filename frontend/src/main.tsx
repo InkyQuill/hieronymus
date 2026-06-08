@@ -11,7 +11,8 @@ if (
   bridgeFlag !== "--bridge-command" ||
   !bridgeCommand
 ) {
-  throw new Error("Usage: main.js <admin|config> --bridge-command <command>");
+  console.error("Usage: main.js <admin|config> --bridge-command <command>");
+  process.exit(1);
 }
 
 const client = createBridgeClient(bridgeCommand);

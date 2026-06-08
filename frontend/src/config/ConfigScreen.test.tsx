@@ -2,8 +2,10 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import { ConfigScreen } from "./ConfigScreen.js";
+import type { JsonRpcClient } from "../rpc/client.js";
+import type { ConfigBootstrap, ProviderName } from "../rpc/schema.js";
 
-function payload() {
+function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
   return {
     config_paths: { settings_path: "/tmp/settings.toml" },
     provider_choices: [
@@ -26,13 +28,16 @@ function payload() {
         supports_api_path: false,
       },
     ],
-    selected_provider: "openai" as const,
-    draft: { dreaming: { active_provider: "openai" }, providers: {} },
+    selected_provider: selectedProvider,
+    draft: { dreaming: { active_provider: selectedProvider }, providers: {} },
     form_values: {
       provider: {
-        model: "gpt-4.1-mini",
-        api_key_env: "OPENAI_API_KEY",
-        api_path: "https://api.openai.com/v1",
+        model:
+          selectedProvider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
+        api_key_env:
+          selectedProvider === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY",
+        api_path:
+          selectedProvider === "openai" ? "https://api.openai.com/v1" : "",
         timeout_seconds: "30",
       },
       dreaming: {
@@ -45,14 +50,21 @@ function payload() {
     validation: { ok: true, errors: [] },
     check_result: {},
     suggestions: {
-      provider: "openai" as const,
-      models: ["gpt-4.1-mini"],
+      provider: selectedProvider,
+      models: [
+        selectedProvider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
+      ],
       source: "defaults",
       error: "",
     },
     detail: {
-      title: "openai dreaming provider",
-      fields: [["api_key_env", "OPENAI_API_KEY"]] as [string, string][],
+      title: `${selectedProvider} dreaming provider`,
+      fields: [
+        [
+          "api_key_env",
+          selectedProvider === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY",
+        ],
+      ],
       errors: [],
     },
   };
@@ -73,4 +85,105 @@ describe("ConfigScreen", () => {
 
     expect(app.lastFrame()).toContain("gpt-4.1-mini");
   });
+
+  it("renders a placeholder when model suggestions are absent", () => {
+    const app = render(
+      <ConfigScreen
+        initial={{ ...payload(), suggestions: {} }}
+        client={undefined}
+      />,
+    );
+
+    expect(app.lastFrame()).toContain("Models: -");
+  });
+
+  it("selects a provider through the configured RPC", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve(payload("gemini"));
+    });
+    const app = render(<ConfigScreen initial={payload()} client={client} />);
+
+    await nextTick();
+    app.stdin.write("2");
+    await waitFor(() => expect(app.lastFrame()).toContain("Selected gemini"));
+
+    expect(calls).toEqual([
+      {
+        method: "config.select_provider",
+        params: {
+          provider: "gemini",
+          draft: payload().draft,
+        },
+      },
+    ]);
+    expect(app.lastFrame()).toContain("> Gemini");
+    expect(app.lastFrame()).toContain("gemini-2.5-flash");
+  });
+
+  it("ignores further action keys while an operation is in flight", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const deferred = deferredPayload();
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return deferred.promise;
+    });
+    const app = render(<ConfigScreen initial={payload()} client={client} />);
+
+    await nextTick();
+    app.stdin.write("2");
+    app.stdin.write("3");
+    await waitFor(() => expect(calls).toHaveLength(1));
+
+    expect(calls[0]).toMatchObject({
+      method: "config.select_provider",
+      params: { provider: "gemini" },
+    });
+
+    deferred.resolve(payload("gemini"));
+    await waitFor(() => expect(app.lastFrame()).toContain("Selected gemini"));
+    expect(calls).toHaveLength(1);
+  });
 });
+
+function fakeClient(
+  request: (
+    method: string,
+    params: Record<string, unknown>,
+  ) => Promise<Record<string, unknown>>,
+): JsonRpcClient {
+  return { request } as unknown as JsonRpcClient;
+}
+
+function deferredPayload() {
+  let resolve!: (payload: ConfigBootstrap) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<Record<string, unknown>>(
+    (promiseResolve, promiseReject) => {
+      resolve = (payload) => promiseResolve(payload);
+      reject = promiseReject;
+    },
+  );
+  return { promise, resolve, reject };
+}
+
+async function nextTick() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitFor(assertion: () => void) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw lastError;
+}

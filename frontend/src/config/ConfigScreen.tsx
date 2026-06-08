@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useEffect, useRef, useState } from "react";
+import { Box, Text, useStdin } from "ink";
 import { ConfigBootstrapSchema, type ConfigBootstrap } from "../rpc/schema.js";
 import type { JsonRpcClient } from "../rpc/client.js";
 import { ConfigForm } from "./ConfigForm.js";
@@ -25,6 +25,8 @@ export function ConfigScreen({ initial, client }: Props) {
     message: "Ready",
     error: false,
   });
+  const [busy, setBusy] = useState(false);
+  const operationInFlight = useRef(false);
   const suggestions = modelSuggestions(payload);
   const detailErrors = getDetailErrors(payload);
 
@@ -34,8 +36,11 @@ export function ConfigScreen({ initial, client }: Props) {
         <ConfigInputHandler
           client={client}
           payload={payload}
+          busy={busy}
           setPayload={setPayload}
           setStatus={setStatus}
+          setBusy={setBusy}
+          operationInFlight={operationInFlight}
         />
       ) : null}
       <Text bold>Hieronymus Config</Text>
@@ -47,9 +52,9 @@ export function ConfigScreen({ initial, client }: Props) {
         />
         <ConfigForm payload={payload} />
       </Box>
-      {suggestions.length > 0 ? (
-        <Text>Models: {suggestions.join(", ")}</Text>
-      ) : null}
+      <Text>
+        Models: {suggestions.length > 0 ? suggestions.join(", ") : "-"}
+      </Text>
       {payload.validation.errors.map((error) => (
         <Text key={error} color="red">
           {error}
@@ -60,8 +65,13 @@ export function ConfigScreen({ initial, client }: Props) {
           {error}
         </Text>
       ))}
-      <StatusLine message={status.message} error={status.error} />
-      <KeyHelp keys={["1/2/3 provider", "s save", "r reload", "c check"]} />
+      <StatusLine
+        message={busy ? `Working: ${status.message}` : status.message}
+        error={status.error}
+      />
+      <KeyHelp
+        keys={["1/2/3 provider", "s save", "r reload", "c check", "q quit"]}
+      />
     </Box>
   );
 }
@@ -69,63 +79,170 @@ export function ConfigScreen({ initial, client }: Props) {
 function ConfigInputHandler({
   client,
   payload,
+  busy,
   setPayload,
   setStatus,
+  setBusy,
+  operationInFlight,
 }: {
   client: JsonRpcClient;
   payload: ConfigBootstrap;
+  busy: boolean;
   setPayload: (payload: ConfigBootstrap) => void;
   setStatus: (status: Status) => void;
+  setBusy: (busy: boolean) => void;
+  operationInFlight: React.MutableRefObject<boolean>;
 }) {
-  useInput((input) => {
-    const providerIndex = providerKeys.indexOf(
-      input as (typeof providerKeys)[number],
-    );
-    if (providerIndex >= 0) {
-      const provider = payload.provider_choices[providerIndex]?.name;
-      if (provider) {
-        void requestBootstrap(client, "config.select_provider", {
-          provider,
-          draft: payload.draft,
-        }).then((next) => {
-          setPayload(next);
-          setStatus({ message: `Selected ${provider}`, error: false });
-        }, setErrorStatus(setStatus));
+  const { stdin, setRawMode, isRawModeSupported } = useStdin();
+
+  useEffect(() => {
+    const canUseInkRawMode =
+      isRawModeSupported &&
+      typeof stdin.ref === "function" &&
+      typeof stdin.unref === "function";
+    if (!canUseInkRawMode) {
+      return undefined;
+    }
+
+    setRawMode(true);
+    return () => {
+      setRawMode(false);
+    };
+  }, [isRawModeSupported, setRawMode, stdin]);
+
+  useEffect(() => {
+    const onData = (chunk: Buffer | string) => {
+      const input = String(chunk)[0] ?? "";
+      if (busy || operationInFlight.current) {
+        return;
       }
-      return;
-    }
 
-    if (input === "s") {
-      void requestBootstrap(client, "config.save", {
-        draft: payload.draft,
-      }).then((next) => {
-        setPayload(next);
-        setStatus({ message: "Saved configuration", error: false });
-      }, setErrorStatus(setStatus));
-      return;
-    }
+      const providerIndex = providerKeys.indexOf(
+        input as (typeof providerKeys)[number],
+      );
+      if (providerIndex >= 0) {
+        const provider = payload.provider_choices[providerIndex]?.name;
+        if (provider) {
+          void runConfigOperation({
+            client,
+            method: "config.select_provider",
+            params: {
+              provider,
+              draft: payload.draft,
+            },
+            pendingMessage: `Selecting ${provider}`,
+            successMessage: `Selected ${provider}`,
+            setBusy,
+            setPayload,
+            setStatus,
+            operationInFlight,
+          });
+        }
+        return;
+      }
 
-    if (input === "r") {
-      void requestBootstrap(client, "config.reload", {
-        selected_provider: payload.selected_provider,
-      }).then((next) => {
-        setPayload(next);
-        setStatus({ message: "Reloaded configuration", error: false });
-      }, setErrorStatus(setStatus));
-      return;
-    }
+      if (input === "s") {
+        void runConfigOperation({
+          client,
+          method: "config.save",
+          params: { draft: payload.draft },
+          pendingMessage: "Saving configuration",
+          successMessage: "Saved configuration",
+          setBusy,
+          setPayload,
+          setStatus,
+          operationInFlight,
+        });
+        return;
+      }
 
-    if (input === "c") {
-      void requestBootstrap(client, "config.check_provider", {
-        selected_provider: payload.selected_provider,
-        draft: payload.draft,
-      }).then((next) => {
-        setPayload(next);
-        setStatus({ message: "Provider check complete", error: false });
-      }, setErrorStatus(setStatus));
-    }
-  });
+      if (input === "r") {
+        void runConfigOperation({
+          client,
+          method: "config.reload",
+          params: {
+            selected_provider: payload.selected_provider,
+          },
+          pendingMessage: "Reloading configuration",
+          successMessage: "Reloaded configuration",
+          setBusy,
+          setPayload,
+          setStatus,
+          operationInFlight,
+        });
+        return;
+      }
+
+      if (input === "c") {
+        void runConfigOperation({
+          client,
+          method: "config.check_provider",
+          params: {
+            selected_provider: payload.selected_provider,
+            draft: payload.draft,
+          },
+          pendingMessage: "Checking provider",
+          successMessage: "Provider check complete",
+          setBusy,
+          setPayload,
+          setStatus,
+          operationInFlight,
+        });
+      }
+    };
+
+    stdin.on("data", onData);
+    return () => {
+      stdin.off("data", onData);
+    };
+  }, [
+    busy,
+    client,
+    operationInFlight,
+    payload,
+    setBusy,
+    setPayload,
+    setStatus,
+    stdin,
+  ]);
+
   return null;
+}
+
+async function runConfigOperation({
+  client,
+  method,
+  params,
+  pendingMessage,
+  successMessage,
+  setBusy,
+  setPayload,
+  setStatus,
+  operationInFlight,
+}: {
+  client: JsonRpcClient;
+  method: string;
+  params: Record<string, unknown>;
+  pendingMessage: string;
+  successMessage: string;
+  setBusy: (busy: boolean) => void;
+  setPayload: (payload: ConfigBootstrap) => void;
+  setStatus: (status: Status) => void;
+  operationInFlight: React.MutableRefObject<boolean>;
+}) {
+  operationInFlight.current = true;
+  setBusy(true);
+  setStatus({ message: pendingMessage, error: false });
+  try {
+    const next = await requestBootstrap(client, method, params);
+    setPayload(next);
+    setStatus({ message: successMessage, error: false });
+  } catch (error) {
+    setErrorStatus(setStatus)(error);
+  } finally {
+    operationInFlight.current = false;
+    setBusy(false);
+  }
 }
 
 function requestBootstrap(

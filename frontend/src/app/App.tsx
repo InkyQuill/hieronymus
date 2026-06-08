@@ -27,6 +27,9 @@ export function App({ mode, client }: Props) {
     }
   }, [client, mode]);
 
+  if (mode === "admin") {
+    return <Text color="yellow">Admin Ink screen is not available yet</Text>;
+  }
   if (error) {
     return <Text color="red">{error}</Text>;
   }
