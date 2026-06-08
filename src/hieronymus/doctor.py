@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
+import subprocess
 from dataclasses import asdict, dataclass
 
 from hieronymus.agent_plugins import available_plugins
@@ -112,7 +113,18 @@ class Doctor:
         )
 
     def _check_ink_runtime(self, report: DoctorReport) -> None:
-        if shutil.which("node"):
+        node_path = shutil.which("node")
+        if not node_path:
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="node-runtime-missing",
+                    message=(
+                        "Node.js is not available; install Node.js >=22 to use HIERONYMUS_TUI=ink."
+                    ),
+                )
+            )
+        elif _node_major_version(node_path) >= 22:
             report["autofixed"].append(
                 DoctorFinding(
                     level="info",
@@ -124,9 +136,10 @@ class Doctor:
             report["warnings"].append(
                 DoctorFinding(
                     level="warning",
-                    code="node-runtime-missing",
+                    code="node-runtime-too-old",
                     message=(
-                        "Node.js is not available; install Node.js >=22 to use HIERONYMUS_TUI=ink."
+                        "Node.js >=22 is required for the Ink TUI; install or activate "
+                        "a supported Node.js runtime."
                     ),
                 )
             )
@@ -218,6 +231,30 @@ class Doctor:
                 message=safe(f"Active dream provider is configured: {active_name}"),
             )
         )
+
+
+def _node_major_version(node_path: str) -> int:
+    try:
+        result = subprocess.run(
+            [node_path, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return 0
+
+    if result.returncode != 0:
+        return 0
+
+    version = result.stdout.strip()
+    if version.startswith("v"):
+        version = version[1:]
+    major, _, _ = version.partition(".")
+    try:
+        return int(major)
+    except ValueError:
+        return 0
 
 
 def report_to_json(report: DoctorReport) -> dict[str, list[dict[str, object]]]:
