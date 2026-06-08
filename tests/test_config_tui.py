@@ -4,7 +4,7 @@ import pytest
 from textual.widgets import DataTable, Input, Static
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.settings import load_settings
+from hieronymus.settings import ProviderSettings, load_settings, save_settings
 from hieronymus.tui.config_app import HieronymusConfigApp
 
 
@@ -150,6 +150,40 @@ async def test_config_tui_clears_provider_check_after_provider_switch(
 
     assert "Selected provider: openai" in detail
     assert "Check: deterministic" not in detail
+
+
+@pytest.mark.anyio
+async def test_config_tui_hides_check_result_after_table_switch_with_same_form_values(
+    config: HieronymusConfig,
+) -> None:
+    settings = load_settings(config)
+    same_provider = ProviderSettings(
+        enabled=True,
+        model="same-model",
+        api_key_env="SAME_KEY_ENV",
+        base_url=None,
+        timeout_seconds=30.0,
+    )
+    save_settings(
+        config,
+        settings.with_provider("openai", same_provider).with_provider(
+            "gemini",
+            same_provider,
+        ),
+    )
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("2")
+        app.screen.action_check_selected()
+        assert "Check: openai" in _detail_text(app)
+        table = app.screen.query_one("#config-table", DataTable)
+        table.move_cursor(row=2)
+        await pilot.pause()
+        detail = _detail_text(app)
+
+    assert "Selected provider: gemini" in detail
+    assert "Check: openai" not in detail
 
 
 @pytest.mark.anyio

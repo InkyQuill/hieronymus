@@ -372,12 +372,15 @@ class ConfigScreen(Screen[None]):
             f"timeout_seconds: {provider.timeout_seconds}",
             f"error: {error or '-'}",
         ]
-        if self.draft.check_result:
+        if self._check_result_matches_provider(provider_name):
             detail.extend(["", self.draft.check_result])
         if self.draft.errors:
             detail.extend(["", "Validation errors", *self.draft.errors])
         detail.extend(["", "Keys: 1-4 set active, s save, r reload, c check selected, q quit."])
         self.query_one("#config-detail", Static).update("\n".join(detail))
+
+    def _check_result_matches_provider(self, provider_name: str) -> bool:
+        return self.draft.check_result.startswith(f"Check: {provider_name}\n")
 
 
 def _configured_status(name: str, provider: ProviderSettings) -> tuple[bool, str]:
