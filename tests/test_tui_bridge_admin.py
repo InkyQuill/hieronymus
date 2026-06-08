@@ -89,6 +89,69 @@ def test_admin_snapshot_accepts_type_filter_alias(tmp_path: Path) -> None:
     assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Lesson Row"]
 
 
+def test_admin_snapshot_filters_crystals_by_series_slug(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    series = Registry(config).create_series(
+        slug="another-series",
+        title="Another Series",
+        source_language="ja",
+        target_language="ru",
+    )
+    context = TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type="translation",
+    )
+    CrystalStore(config).add_crystal(
+        context,
+        crystal_type="concept",
+        title="Other Ledger",
+        text="Other series marker.",
+    )
+
+    payload = AdminBridge(config).snapshot(
+        {"view": "Crystals", "filters": {"series_slug": "another-series"}}
+    )
+
+    assert payload["snapshot"]["filters"] == ["series_slug=another-series"]
+    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Other Ledger"]
+
+
+def test_admin_snapshot_filters_crystals_by_tags(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    context = TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        task_type="translation",
+        tags=("glossary", "reviewed"),
+    )
+    CrystalStore(config).add_crystal(
+        context,
+        crystal_type="concept",
+        title="Tagged Ledger",
+        text="Tagged ledger marker.",
+    )
+
+    payload = AdminBridge(config).snapshot(
+        {"view": "Crystals", "filters": {"tags": ["glossary", "reviewed"]}}
+    )
+
+    assert payload["snapshot"]["filters"] == ["tags=glossary,reviewed"]
+    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Tagged Ledger"]
+
+
+def test_admin_snapshot_rejects_unknown_filter_key(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+
+    with pytest.raises(ValueError, match="unsupported admin filter: unknown"):
+        AdminBridge(config).snapshot({"view": "Crystals", "filters": {"unknown": "value"}})
+
+
 def test_admin_delete_requires_confirmation(tmp_path: Path) -> None:
     config = _config(tmp_path)
     crystal_id = _seed(config)

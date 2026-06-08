@@ -10,6 +10,20 @@ from hieronymus.service_manager import ServiceManager
 from hieronymus.tui_bridge.protocol import dataclass_to_json
 
 DEFAULT_VIEW = "Crystals"
+FilterValue = str | tuple[str, ...]
+SUPPORTED_FILTERS = frozenset(
+    {
+        "status",
+        "kind",
+        "type",
+        "series_slug",
+        "language_pair",
+        "confidence",
+        "strength",
+        "cycle",
+        "tags",
+    }
+)
 
 
 class AdminBridge:
@@ -227,7 +241,7 @@ class AdminBridge:
         *,
         view: str,
         selected_id: object,
-        filters: dict[str, str],
+        filters: dict[str, FilterValue],
     ) -> dict[str, object]:
         return {
             "stats": dataclass_to_json(self.store.stats()),
@@ -238,7 +252,7 @@ class AdminBridge:
         self,
         view: str,
         selected_id: object,
-        filters: dict[str, str],
+        filters: dict[str, FilterValue],
     ) -> AdminSnapshot:
         snapshot = self.store.snapshot(view, selected_id=selected_id)
         rows = _filter_rows(snapshot.rows, filters)
@@ -301,6 +315,8 @@ def _optional_string(value: object, name: str) -> str | None:
 def _string_tuple(value: object, name: str) -> tuple[str, ...]:
     if value is None:
         return ()
+    if type(value) is str:
+        return (value,)
     if type(value) not in {list, tuple}:
         raise ValueError(f"{name} must be a list of strings")
     return tuple(_required_string(item, f"{name} item") for item in value)
@@ -324,28 +340,52 @@ def _evidence(params: dict[str, object], *, default: str) -> str:
     return _required_string(evidence, "evidence")
 
 
-def _filters(value: object) -> dict[str, str]:
+def _filters(value: object) -> dict[str, FilterValue]:
     if value is None:
         return {}
     if type(value) is not dict:
         raise ValueError("filters must be an object")
-    result: dict[str, str] = {}
-    for key in ("status", "kind", "type"):
-        raw = value.get(key)
+    result: dict[str, FilterValue] = {}
+    for raw_key, raw in value.items():
+        key = _required_string(raw_key, "filter key")
+        if key not in SUPPORTED_FILTERS:
+            raise ValueError(f"unsupported admin filter: {key}")
         if raw is None or raw == "":
+            continue
+        if key == "tags":
+            tags = _string_tuple(raw, f"filters.{key}")
+            if tags:
+                result[key] = tags
             continue
         result[key] = _required_string(raw, f"filters.{key}")
     return result
 
 
-def _filter_rows(rows: list[AdminRow], filters: dict[str, str]) -> list[AdminRow]:
+def _filter_rows(rows: list[AdminRow], filters: dict[str, FilterValue]) -> list[AdminRow]:
     result = rows
-    if status := filters.get("status"):
+    if status := _string_filter(filters, "status"):
         result = [row for row in result if row.status == status]
-    if kind := filters.get("kind"):
+    if kind := _string_filter(filters, "kind"):
         result = [row for row in result if row.kind == kind]
-    if row_type := filters.get("type"):
+    if row_type := _string_filter(filters, "type"):
         result = [row for row in result if row.kind == row_type]
+    if series_slug := _string_filter(filters, "series_slug"):
+        result = [row for row in result if row.scope == series_slug]
+    if language_pair := _string_filter(filters, "language_pair"):
+        result = [row for row in result if row.language_pair == language_pair]
+    if confidence := _string_filter(filters, "confidence"):
+        confidence = _percent_filter(confidence)
+        result = [
+            row for row in result if _quality_percent(row.quality_label, "conf") == confidence
+        ]
+    if strength := _string_filter(filters, "strength"):
+        strength = _percent_filter(strength)
+        result = [row for row in result if _quality_percent(row.quality_label, "str") == strength]
+    if cycle := _string_filter(filters, "cycle"):
+        result = [row for row in result if row.label == f"Cycle {cycle}"]
+    if tags := filters.get("tags"):
+        required_tags = set(tags)
+        result = [row for row in result if required_tags.issubset(row.tags)]
     return result
 
 
@@ -358,8 +398,45 @@ def _select_row(rows: list[AdminRow], selected_id: object) -> AdminRow | None:
     return next((row for row in rows if str(row.id) == normalized_id), rows[0])
 
 
-def _filter_labels(filters: dict[str, str]) -> list[str]:
-    return [f"{key}={filters[key]}" for key in ("status", "kind", "type") if key in filters]
+def _filter_labels(filters: dict[str, FilterValue]) -> list[str]:
+    labels = []
+    for key in (
+        "status",
+        "kind",
+        "type",
+        "series_slug",
+        "language_pair",
+        "confidence",
+        "strength",
+        "cycle",
+        "tags",
+    ):
+        if key not in filters:
+            continue
+        value = filters[key]
+        if isinstance(value, tuple):
+            labels.append(f"{key}={','.join(value)}")
+            continue
+        labels.append(f"{key}={value}")
+    return labels
+
+
+def _string_filter(filters: dict[str, FilterValue], key: str) -> str:
+    value = filters.get(key, "")
+    return value if isinstance(value, str) else ""
+
+
+def _quality_percent(quality_label: str, label: str) -> str:
+    marker = f" {label}"
+    for part in quality_label.split("/"):
+        part = part.strip()
+        if part.endswith(marker):
+            return part.removesuffix(marker).strip()
+    return ""
+
+
+def _percent_filter(value: str) -> str:
+    return value if value.endswith("%") else f"{value}%"
 
 
 def _split_parts(params: dict[str, object]) -> list[tuple[str, str] | dict[str, str]]:
