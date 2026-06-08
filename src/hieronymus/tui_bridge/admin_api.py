@@ -448,8 +448,10 @@ def _validate_view_filters(view: str, filters: dict[str, FilterValue]) -> None:
     if not filters:
         return
     if view not in {"Crystals", "Lessons"}:
-        key = next(iter(filters))
-        raise ValueError(f"unsupported admin filter for {view}: {key}")
+        for key in filters:
+            if key not in {"status", "kind"}:
+                raise ValueError(f"unsupported admin filter for {view}: {key}")
+        return
     safe_filters = {"status", "kind", "series_slug", "tags"}
     if view == "Crystals":
         safe_filters = safe_filters | {"type"}

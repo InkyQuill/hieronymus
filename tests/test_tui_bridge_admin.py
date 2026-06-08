@@ -264,6 +264,26 @@ def test_admin_proposals_snapshot_rejects_confidence_filter(tmp_path: Path) -> N
         AdminBridge(config).snapshot({"view": "Proposals", "filters": {"confidence": "60"}})
 
 
+def test_admin_proposals_snapshot_filters_status(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    ConceptProposalStore(config).create(
+        dream_run_id=None,
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        concept_text="Sense",
+        source_form="センス",
+        canonical_rendering="сенс",
+        rationale="Palette proposal fixture.",
+    )
+
+    payload = AdminBridge(config).snapshot({"view": "Proposals", "filters": {"status": "pending"}})
+
+    assert payload["snapshot"]["filters"] == ["status=pending"]
+    assert [row["status"] for row in payload["snapshot"]["rows"]] == ["pending"]
+
+
 def test_admin_snapshot_rejects_unknown_filter_key(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _seed(config)
@@ -363,7 +383,7 @@ def test_admin_proposal_approval_refreshes_proposal_view(tmp_path: Path) -> None
     assert payload["snapshot"]["selected"]["status"] == "approved"
 
 
-def test_admin_proposal_approval_rejects_filtered_refresh(tmp_path: Path) -> None:
+def test_admin_proposal_approval_preserves_status_filter(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _seed(config)
     proposal_id = ConceptProposalStore(config).create(
@@ -377,8 +397,14 @@ def test_admin_proposal_approval_rejects_filtered_refresh(tmp_path: Path) -> Non
         rationale="Palette proposal fixture.",
     )
 
-    with pytest.raises(ValueError, match="unsupported admin filter for Proposals: status"):
-        AdminBridge(config).approve_proposal({"id": proposal_id, "filters": {"status": "pending"}})
+    payload = AdminBridge(config).approve_proposal(
+        {"id": proposal_id, "filters": {"status": "pending"}}
+    )
+
+    assert payload["snapshot"]["view"] == "Proposals"
+    assert payload["snapshot"]["filters"] == ["status=pending"]
+    assert payload["snapshot"]["rows"] == []
+    assert payload["snapshot"]["selected"] is None
 
 
 def test_admin_add_crystal_accepts_type_alias(tmp_path: Path) -> None:
