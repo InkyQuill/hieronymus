@@ -14,6 +14,7 @@ from hieronymus.dream_autostart import (
     load_autostart_state,
     save_autostart_state,
 )
+from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.settings import load_settings, save_settings
@@ -118,6 +119,29 @@ def test_volume_trigger_runs_when_threshold_is_reached(config: HieronymusConfig)
     assert load_autostart_state(config).last_error == ""
 
 
+def test_autostart_skips_and_records_when_cycle_is_active(
+    config: HieronymusConfig,
+) -> None:
+    _enable_autostart(config, new_short_term_memory_threshold=1)
+    _completed_session(config, _context(config), memories=1)
+    now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+
+    with dream_cycle_lock(config, owner="manual"):
+        result = DreamAutostart(config).run_due(now=now)
+        status = DreamAutostart(config).status()
+
+    assert result == {"ran": False, "reason": "cycle-active", "cycles": 0}
+    assert status["cycle_active"] is True
+    assert status["active_cycle"]["owner"] == "manual"
+    assert status["last_skip_reason"] == "cycle-active"
+    assert status["last_skipped_at"] == now.isoformat()
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select status, error from dream_runs").fetchone()
+    assert run["status"] == "skipped"
+    assert run["error"] == "dream cycle already running"
+
+
 def test_interval_trigger_requires_pending_memory_and_elapsed_minutes(
     config: HieronymusConfig,
 ) -> None:
@@ -154,11 +178,41 @@ def test_interval_trigger_requires_pending_memory_and_elapsed_minutes(
 
 def test_autostart_state_round_trips(config: HieronymusConfig) -> None:
     last_started_at = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
-    state = AutostartState(last_started_at=last_started_at, last_error="provider failed")
+    last_skipped_at = datetime(2026, 6, 7, 13, 0, tzinfo=UTC)
+    state = AutostartState(
+        last_started_at=last_started_at,
+        last_error="provider failed",
+        last_skipped_at=last_skipped_at,
+        last_skip_reason="cycle-active",
+    )
 
     save_autostart_state(config, state)
 
     assert load_autostart_state(config) == state
+
+
+def test_autostart_state_loads_legacy_payload(config: HieronymusConfig) -> None:
+    last_started_at = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+    state_path = config.config_root / "dream-autostart.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "last_started_at": last_started_at.isoformat(),
+                "last_error": "provider failed",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    state = load_autostart_state(config)
+
+    assert state.last_started_at == last_started_at
+    assert state.last_error == "provider failed"
+    assert state.last_skipped_at is None
+    assert state.last_skip_reason == ""
 
 
 def test_run_due_persists_last_error_for_corrupt_autostart_state(
