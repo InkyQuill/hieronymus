@@ -175,6 +175,11 @@ def _validate_settings(settings: HieronymusSettings) -> HieronymusSettings:
         raise SettingsError(
             f"active provider is not configured: {settings.dreaming.active_provider}",
         )
+    active_provider = settings.providers[settings.dreaming.active_provider]
+    if not active_provider.enabled:
+        raise SettingsError(
+            f"active provider is disabled: {settings.dreaming.active_provider}",
+        )
 
     _validate_minimum(
         "min_interval_minutes",

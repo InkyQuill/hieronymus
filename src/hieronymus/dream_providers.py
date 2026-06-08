@@ -20,6 +20,8 @@ from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.secrets import env_value_exists
 from hieronymus.settings import HieronymusSettings, ProviderSettings, load_settings
 
+ANTHROPIC_API_VERSION = "2023-06-01"
+
 
 @dataclass(frozen=True)
 class HTTPResponse:
@@ -61,6 +63,8 @@ class UrllibTransport:
         except urllib.error.HTTPError as error:
             body = error.read().decode("utf-8", errors="replace")
             return HTTPResponse(status=error.code, body=body)
+        except urllib.error.URLError:
+            return HTTPResponse(status=0, body="network error")
 
 
 @dataclass(frozen=True)
@@ -246,7 +250,7 @@ class ProviderRegistry:
                 "https://api.anthropic.com/v1/messages",
                 headers={
                     "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
+                    "anthropic-version": ANTHROPIC_API_VERSION,
                 },
                 payload={
                     "model": provider.model,
@@ -556,7 +560,7 @@ class AnthropicDreamProvider:
             "https://api.anthropic.com/v1/messages",
             headers={
                 "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
+                "anthropic-version": ANTHROPIC_API_VERSION,
             },
             payload={
                 "model": self.settings.model,

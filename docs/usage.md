@@ -113,6 +113,9 @@ hiero config
 hiero dream --provider openai --json
 ```
 
+Dream runs accept `--provider` for one-off provider selection, `--wait` to block
+until an active dream cycle finishes, and `--json` for machine-readable output.
+
 Dreaming automation uses `autostart_enabled`, `min_interval_minutes`,
 `new_short_term_memory_threshold`, and `max_cycles_per_autostart`.
 

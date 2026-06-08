@@ -76,7 +76,14 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
 
 
 def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, Any]:
-    dreaming_status = DreamAutostart(config).status()
+    try:
+        dreaming_status = DreamAutostart(config).status()
+    except Exception as error:
+        dreaming_status = {
+            "available": False,
+            "pending_short_term_memories": 0,
+            "error": str(error),
+        }
     return {
         "running": True,
         "pid": state.pid,
@@ -92,7 +99,7 @@ def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, An
         "mcp_adapter": {"available": True, "mode": "local-http"},
         "housekeeping": {
             "last_cycle": None,
-            "pending": dreaming_status["pending_short_term_memories"] > 0,
+            "pending": int(dreaming_status.get("pending_short_term_memories", 0)) > 0,
         },
     }
 

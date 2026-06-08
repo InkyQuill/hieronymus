@@ -81,8 +81,8 @@ def test_doctor_reports_missing_active_provider_env(
         }
         report = Doctor(config).run(autofix=False)
 
-    assert report["errors"][0].code == "provider-env-missing"
-    assert "MISSING_OPENAI_KEY" in report["errors"][0].message
+    finding = next(error for error in report["errors"] if error.code == "provider-env-missing")
+    assert "MISSING_OPENAI_KEY" in finding.message
 
 
 def test_doctor_json_does_not_include_raw_api_key_value(config, monkeypatch):

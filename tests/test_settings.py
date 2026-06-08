@@ -86,6 +86,18 @@ def test_load_settings_rejects_invalid_active_provider(tmp_path: Path) -> None:
         load_settings(config)
 
 
+def test_load_settings_rejects_disabled_active_provider(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.settings_path.write_text(
+        "[dreaming]\nactive_provider = 'openai'\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SettingsError, match="active provider is disabled: openai"):
+        load_settings(config)
+
+
 def test_load_settings_rejects_non_positive_dreaming_values(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     config.config_root.mkdir(parents=True)

@@ -4,6 +4,7 @@ import pytest
 from textual.widgets import DataTable, Input, Static
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_providers import ProviderCheckResult
 from hieronymus.settings import ProviderSettings, load_settings, save_settings
 from hieronymus.tui.config_app import HieronymusConfigApp
 
@@ -133,6 +134,33 @@ async def test_config_tui_detail_never_shows_raw_api_key_value(
 
     assert "HIERONYMUS_OPENAI_KEY" in detail
     assert "api_key_present: yes" in detail
+    assert "raw-secret-value" not in detail
+
+
+@pytest.mark.anyio
+async def test_config_tui_redacts_provider_check_error(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Registry:
+        def check(self, *args, **kwargs):
+            return ProviderCheckResult(
+                name="openai",
+                ok=False,
+                model="gpt-4.1-mini",
+                error="provider returned raw-secret-value",
+            )
+
+    monkeypatch.setenv("OPENAI_API_KEY", "raw-secret-value")
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("2")
+        app.screen.registry = Registry()
+        await pilot.press("c")
+        detail = _detail_text(app)
+
+    assert "provider returned [redacted]" in detail
     assert "raw-secret-value" not in detail
 
 

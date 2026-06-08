@@ -176,6 +176,26 @@ def test_interval_trigger_requires_pending_memory_and_elapsed_minutes(
     }
 
 
+def test_autostart_does_not_record_started_at_for_zero_cycles(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_autostart(config, new_short_term_memory_threshold=1)
+    now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+    counts = iter([(1, 1), (0, 0)])
+
+    def pending_counts(self):
+        return next(counts)
+
+    monkeypatch.setattr(DreamAutostart, "_pending_counts", pending_counts)
+
+    result = DreamAutostart(config).run_due(now=now)
+
+    assert result == {"ran": False, "reason": "threshold", "cycles": 0}
+    assert not (config.config_root / "dream-autostart.json").exists()
+    assert load_autostart_state(config).last_started_at is None
+
+
 def test_autostart_state_round_trips(config: HieronymusConfig) -> None:
     last_started_at = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
     last_skipped_at = datetime(2026, 6, 7, 13, 0, tzinfo=UTC)

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 from dataclasses import dataclass, replace
 
 import pytest
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_providers import (
+    ANTHROPIC_API_VERSION,
     HTTPResponse,
     ProviderCheckResult,
     ProviderRegistry,
+    UrllibTransport,
     resolve_provider,
 )
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
@@ -177,6 +180,22 @@ def test_provider_status_can_use_unsaved_in_memory_settings(config, monkeypatch)
     assert openai["model"] == "draft-model"
     assert openai["api_key_present"] is True
     assert load_settings(config).providers["openai"].model == "gpt-4.1-mini"
+
+
+def test_urllib_transport_converts_url_error(monkeypatch) -> None:
+    def fail(*args, **kwargs):
+        raise urllib.error.URLError("network unavailable")
+
+    monkeypatch.setattr("urllib.request.urlopen", fail)
+
+    response = UrllibTransport().post_json(
+        "https://api.example.test/v1",
+        headers={},
+        payload={},
+        timeout=1,
+    )
+
+    assert response == HTTPResponse(status=0, body="network error")
 
 
 def test_provider_check_uses_unsaved_in_memory_settings(config, monkeypatch):
@@ -453,6 +472,7 @@ def test_anthropic_provider_crystallizes_structured_response(
 
     assert output.crystals[0].confidence == 0.8
     assert transport.requests[0]["headers"]["x-api-key"] == "secret-anthropic"
+    assert transport.requests[0]["headers"]["anthropic-version"] == ANTHROPIC_API_VERSION
 
 
 def test_llm_provider_rejects_invalid_json_response(tmp_path, monkeypatch) -> None:

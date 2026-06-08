@@ -19,8 +19,15 @@ def env_value_exists(env_name: str) -> bool:
 
 def redact_configured_secret_values(text: str, settings: HieronymusSettings) -> str:
     redacted = text
-    for env_name in configured_key_env_names(settings):
-        value = os.environ.get(env_name)
-        if value and len(value) >= 4:
-            redacted = redacted.replace(value, "[redacted]")
+    values = sorted(
+        (
+            value
+            for env_name in configured_key_env_names(settings)
+            if (value := os.environ.get(env_name)) and len(value) >= 4
+        ),
+        key=len,
+        reverse=True,
+    )
+    for value in values:
+        redacted = redacted.replace(value, "[redacted]")
     return redacted

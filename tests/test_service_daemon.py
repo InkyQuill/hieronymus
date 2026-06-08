@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 
 from hieronymus.config import HieronymusConfig
@@ -32,6 +33,7 @@ def test_dream_autostart_scheduler_runs_repeatedly(config: HieronymusConfig) -> 
 
 def test_dream_autostart_scheduler_survives_run_due_errors(
     config: HieronymusConfig,
+    caplog,
 ) -> None:
     calls = 0
     recovered = threading.Event()
@@ -47,14 +49,17 @@ def test_dream_autostart_scheduler_survives_run_due_errors(
                 raise RuntimeError("autostart failed")
             recovered.set()
 
-    scheduler = DreamAutostartScheduler(config, interval_seconds=0.01, autostart_cls=Autostart)
-    scheduler.start()
-    try:
-        assert recovered.wait(timeout=1)
-    finally:
-        scheduler.stop()
+    with caplog.at_level(logging.ERROR, logger="hieronymus.service_daemon"):
+        scheduler = DreamAutostartScheduler(config, interval_seconds=0.01, autostart_cls=Autostart)
+        scheduler.start()
+        try:
+            assert recovered.wait(timeout=1)
+        finally:
+            scheduler.stop()
 
     assert calls >= 2
+    assert "Dream autostart run_due failed" in caplog.text
+    assert "autostart failed" in caplog.text
 
 
 def test_dream_autostart_scheduler_stop_waits_for_in_flight_run_due(

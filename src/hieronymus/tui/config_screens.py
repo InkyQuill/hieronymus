@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -10,7 +11,7 @@ from textual.widgets import DataTable, Footer, Input, Static
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_providers import ProviderRegistry
-from hieronymus.secrets import env_value_exists
+from hieronymus.secrets import env_value_exists, redact_configured_secret_values
 from hieronymus.settings import (
     ProviderSettings,
     SettingsError,
@@ -130,7 +131,8 @@ class ConfigScreen(Screen[None]):
         if result.latency_ms is not None:
             lines.append(f"latency: {result.latency_ms}ms")
         if result.error:
-            lines.append(f"error: {result.error}")
+            redacted_error = redact_configured_secret_values(result.error, self.draft.edited)
+            lines.append(f"error: {escape(redacted_error)}")
         self.draft = self.draft.with_check_result("\n".join(lines))
         self._update_detail(selected_provider)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import secrets
 import threading
@@ -16,6 +17,8 @@ from hieronymus.service_state import (
     remove_server_state,
     write_server_state,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 class _DreamAutostartFactory(Protocol):
@@ -56,7 +59,11 @@ class DreamAutostartScheduler:
             try:
                 self._autostart_cls(self._config).run_due()
             except Exception:
-                pass
+                LOGGER.exception(
+                    "Dream autostart run_due failed for %s with config %s",
+                    self._autostart_cls,
+                    self._config,
+                )
             self._stop.wait(self._interval_seconds)
 
 

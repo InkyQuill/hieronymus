@@ -6,10 +6,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_locks import dream_cycle_lock
-from hieronymus.service_http import HieronymusHTTPServer, build_server
+from hieronymus.service_http import HieronymusHTTPServer, build_server, status_payload
 from hieronymus.service_state import ServerState
 
 
@@ -130,6 +131,22 @@ def test_status_endpoint_reports_active_dream_cycle(tmp_path: Path) -> None:
     assert payload["dreaming"]["active_cycle"]["pid"] > 0
     assert "started_at" in payload["dreaming"]["active_cycle"]
     assert "token" not in payload["dreaming"]["active_cycle"]
+
+
+def test_status_payload_degrades_when_dreaming_status_fails(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = _make_state(config)
+
+    with patch("hieronymus.service_http.DreamAutostart") as autostart_class:
+        autostart_class.return_value.status.side_effect = RuntimeError("settings broken")
+        payload = status_payload(config, state)
+
+    assert payload["dreaming"] == {
+        "available": False,
+        "pending_short_term_memories": 0,
+        "error": "settings broken",
+    }
+    assert payload["housekeeping"] == {"last_cycle": None, "pending": False}
 
 
 def test_shutdown_endpoint_stops_server(tmp_path: Path) -> None:

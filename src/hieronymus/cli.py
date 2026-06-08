@@ -661,4 +661,4 @@ def dream(
     if json_output:
         click.echo(render_json(payload))
         return
-    click.echo(json.dumps(payload, ensure_ascii=False))
+    click.echo(render_json(payload))

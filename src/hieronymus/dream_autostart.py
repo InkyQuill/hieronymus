@@ -120,7 +120,6 @@ class DreamAutostart:
                 return {"ran": False, "reason": "not-due", "cycles": 0}
 
             cycles = 0
-            attempted_run = True
             service = DreamService(self.config, resolve_provider(self.config))
             for _ in range(settings.dreaming.max_cycles_per_autostart):
                 _pending_completed_sessions, pending_short_term_memories = self._pending_counts()
@@ -137,9 +136,11 @@ class DreamAutostart:
                         ),
                     )
                     return {"ran": False, "reason": "cycle-active", "cycles": cycles}
+                attempted_run = True
                 cycles += 1
-            save_autostart_state(self.config, AutostartState(last_started_at=now))
-            return {"ran": True, "reason": reason, "cycles": cycles}
+            if cycles > 0:
+                save_autostart_state(self.config, AutostartState(last_started_at=now))
+            return {"ran": cycles > 0, "reason": reason, "cycles": cycles}
         except Exception as exc:
             save_autostart_state(
                 self.config,

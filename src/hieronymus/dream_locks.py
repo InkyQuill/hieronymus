@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import fcntl
+import functools
 import json
 import os
 import threading
@@ -13,6 +13,11 @@ from pathlib import Path
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.service_state import is_pid_running
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - exercised only on non-Unix platforms.
+    fcntl = None
 
 
 @dataclass(frozen=True)
@@ -49,8 +54,8 @@ class DreamCycleAlreadyRunning(ValueError):
         super().__init__(f"dream cycle already running{detail}")
 
 
-_LOCKS_GUARD = threading.Lock()
-_LOCAL_LOCKS: dict[Path, threading.Lock] = {}
+class PlatformNotSupportedError(RuntimeError):
+    """Raised when dream-cycle file locking is unavailable on this platform."""
 
 
 def dream_cycle_paths(config: HieronymusConfig) -> DreamCyclePaths:
@@ -62,13 +67,24 @@ def dream_cycle_paths(config: HieronymusConfig) -> DreamCyclePaths:
     )
 
 
+@functools.lru_cache(maxsize=256)
 def _local_lock(path: Path) -> threading.Lock:
-    with _LOCKS_GUARD:
-        lock = _LOCAL_LOCKS.get(path)
-        if lock is None:
-            lock = threading.Lock()
-            _LOCAL_LOCKS[path] = lock
-        return lock
+    return threading.Lock()
+
+
+def _lock_file(file_descriptor: int, *, wait: bool) -> None:
+    if fcntl is None:
+        raise PlatformNotSupportedError(
+            "dream cycle locks require Unix fcntl file locking on this platform"
+        )
+    flags = fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB
+    fcntl.flock(file_descriptor, flags)
+
+
+def _unlock_file(file_descriptor: int) -> None:
+    if fcntl is None:
+        return
+    fcntl.flock(file_descriptor, fcntl.LOCK_UN)
 
 
 def _write_state(paths: DreamCyclePaths, state: DreamCycleState) -> None:
@@ -140,10 +156,11 @@ def dream_cycle_lock(
                 started_at=datetime.now(UTC).isoformat(),
                 token=uuid.uuid4().hex,
             )
+            file_locked = False
             try:
-                flags = fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB
                 try:
-                    fcntl.flock(lock_file.fileno(), flags)
+                    _lock_file(lock_file.fileno(), wait=wait)
+                    file_locked = True
                 except BlockingIOError as error:
                     raise DreamCycleAlreadyRunning(read_dream_cycle_state(config)) from error
                 _write_state(paths, state)
@@ -152,7 +169,8 @@ def dream_cycle_lock(
                 try:
                     _remove_state_if_unchanged(paths, state)
                 finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                    if file_locked:
+                        _unlock_file(lock_file.fileno())
         finally:
             lock_file.close()
     finally:
