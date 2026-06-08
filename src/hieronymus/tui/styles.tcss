@@ -58,10 +58,20 @@ DetailPane {
 }
 
 #config-detail {
+    height: auto;
+    padding: 0;
+    background: #13171b;
+    color: #d8dee6;
+}
+
+#config-form {
     width: 1fr;
     height: 100%;
     padding: 1 2;
     border-left: solid #2a313a;
     background: #13171b;
-    color: #d8dee6;
+}
+
+#config-form Input {
+    margin-top: 1;
 }

@@ -1,21 +1,52 @@
 from __future__ import annotations
 
-import os
 from dataclasses import replace
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
+from textual.dom import NoScreen
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Static
+from textual.widgets import DataTable, Footer, Input, Static
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_providers import ProviderRegistry
+from hieronymus.secrets import env_value_exists
 from hieronymus.settings import (
     ProviderSettings,
+    SettingsError,
     load_settings,
     save_settings,
 )
+from hieronymus.tui.config_state import (
+    ConfigDraft,
+    apply_dreaming_form,
+    apply_provider_form,
+    field_value,
+    validate_draft,
+    yes_no,
+)
+
+
+class _DetailStatic(Static):
+    def __init__(self, content: str = "", **kwargs: object) -> None:
+        super().__init__(content, **kwargs)
+        self.renderable = content
+
+    def update(self, content: object = "", *, layout: bool = True) -> None:
+        self.renderable = content
+        super().update(content, layout=layout)
+
+
+class _DraftInput(Input):
+    def _watch_value(self, value: str) -> None:
+        super()._watch_value(value)
+        try:
+            screen = self.screen
+        except NoScreen:
+            return
+        if isinstance(screen, ConfigScreen):
+            screen._handle_draft_input_changed(self)
 
 
 class ConfigScreen(Screen[None]):
@@ -33,14 +64,27 @@ class ConfigScreen(Screen[None]):
     def __init__(self, config: HieronymusConfig) -> None:
         super().__init__()
         self.config = config
-        self.settings = load_settings(config)
+        settings = load_settings(config)
+        self.draft = ConfigDraft(saved=settings, edited=settings)
+        self._syncing_form = False
         self.registry = ProviderRegistry()
 
     def compose(self) -> ComposeResult:
         yield Static("Providers", id="config-title")
         with Horizontal(id="workspace"):
             yield DataTable(id="config-table")
-            yield Static("", id="config-detail")
+            with Vertical(id="config-form"):
+                yield _DetailStatic("", id="config-detail")
+                yield _DraftInput(id="provider-enabled")
+                yield _DraftInput(id="provider-model")
+                yield _DraftInput(id="provider-api-key-env")
+                yield _DraftInput(id="provider-base-url")
+                yield _DraftInput(id="provider-timeout-seconds")
+                yield _DraftInput(id="dreaming-active-provider")
+                yield _DraftInput(id="dreaming-autostart-enabled")
+                yield _DraftInput(id="dreaming-min-interval-minutes")
+                yield _DraftInput(id="dreaming-new-short-term-memory-threshold")
+                yield _DraftInput(id="dreaming-max-cycles-per-autostart")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -58,28 +102,48 @@ class ConfigScreen(Screen[None]):
         self._refresh()
 
     def action_set_active(self, name: str) -> None:
-        provider = self.settings.providers.get(name, ProviderSettings())
+        if not self._apply_form_to_draft():
+            return
+        provider = self.draft.edited.providers.get(name, ProviderSettings())
         if not provider.enabled:
-            self.settings = self.settings.with_provider(
-                name,
-                replace(provider, enabled=True),
+            self.draft = self.draft.with_edited(
+                self.draft.edited.with_provider(name, replace(provider, enabled=True))
             )
-        self.settings = self.settings.with_dreaming(
-            replace(self.settings.dreaming, active_provider=name)
+        self.draft = self.draft.with_edited(
+            self.draft.edited.with_dreaming(
+                replace(self.draft.edited.dreaming, active_provider=name)
+            )
         )
         self._refresh(selected_provider=name)
 
     def action_save(self) -> None:
-        save_settings(self.config, self.settings)
+        if not self._apply_form_to_draft():
+            return
+        errors = validate_draft(self.draft.edited)
+        if errors:
+            self.draft = self.draft.with_errors(errors)
+            self._update_detail(self._selected_provider())
+            return
+        save_settings(self.config, self.draft.edited)
+        saved = load_settings(self.config)
+        self.draft = ConfigDraft(saved=saved, edited=saved)
         self._refresh()
 
     def action_reload(self) -> None:
-        self.settings = load_settings(self.config)
-        self._refresh()
+        selected_provider = self._selected_provider()
+        settings = load_settings(self.config)
+        self.draft = ConfigDraft(saved=settings, edited=settings)
+        self._refresh(selected_provider=selected_provider)
 
     def action_check_selected(self) -> None:
+        if not self._apply_form_to_draft():
+            return
         selected_provider = self._selected_provider()
-        result = self.registry.check(self.config, selected_provider)
+        result = self.registry.check(
+            self.config,
+            selected_provider,
+            settings=self.draft.edited,
+        )
         lines = [
             f"Check: {result.name}",
             f"status: {'ok' if result.ok else 'failed'}",
@@ -89,7 +153,8 @@ class ConfigScreen(Screen[None]):
             lines.append(f"latency: {result.latency_ms}ms")
         if result.error:
             lines.append(f"error: {result.error}")
-        self.query_one("#config-detail", Static).update("\n".join(lines))
+        self.draft = self.draft.with_check_result("\n".join(lines))
+        self._update_detail(selected_provider)
 
     def action_quit(self) -> None:
         self.app.exit()
@@ -97,27 +162,41 @@ class ConfigScreen(Screen[None]):
     def on_data_table_row_highlighted(self, message: DataTable.RowHighlighted) -> None:
         if message.data_table is not self.query_one("#config-table", DataTable):
             return
+        self._sync_form_from_draft(str(message.row_key.value))
         self._update_detail(message.row_key.value)
 
     def on_data_table_row_selected(self, message: DataTable.RowSelected) -> None:
         if message.data_table is not self.query_one("#config-table", DataTable):
             return
+        self._sync_form_from_draft(str(message.row_key.value))
         self._update_detail(message.row_key.value)
+
+    def on_input_changed(self, message: Input.Changed) -> None:
+        self._handle_draft_input_changed(message.input)
+
+    def _handle_draft_input_changed(self, input_widget: Input) -> None:
+        if self._syncing_form:
+            return
+        if input_widget.id is None or not input_widget.id.startswith(("provider-", "dreaming-")):
+            return
+        selected_provider = self._selected_provider()
+        if self._apply_form_to_draft():
+            self._refresh(selected_provider=selected_provider)
 
     def _refresh(self, selected_provider: str | None = None) -> None:
         table = self.query_one("#config-table", DataTable)
         table.clear()
         rows = self._provider_rows()
-        active_provider = self.settings.dreaming.active_provider
+        active_provider = self.draft.edited.dreaming.active_provider
         for row in rows:
             name = str(row["name"])
             table.add_row(
                 name,
                 "*" if name == active_provider else "",
-                _yes_no(bool(row["enabled"])),
+                yes_no(bool(row["enabled"])),
                 str(row["model"] or "-"),
                 str(row["api_key_env"] or "-"),
-                _yes_no(bool(row["configured"])),
+                yes_no(bool(row["configured"])),
                 str(row["error"] or ""),
                 key=name,
             )
@@ -127,13 +206,17 @@ class ConfigScreen(Screen[None]):
             if row.key.value == selected_provider:
                 table.move_cursor(row=index)
                 break
+        self._sync_form_from_draft(selected_provider)
         self._update_detail(selected_provider)
 
     def _provider_rows(self) -> list[dict[str, object]]:
-        rows = self.registry.status_payload(self.config)
+        rows = self.registry.status_payload(self.config, settings=self.draft.edited)
         by_name = {str(row["name"]): dict(row) for row in rows}
         for metadata in self.registry.list():
-            provider = self.settings.providers.get(metadata.name, ProviderSettings())
+            provider = self.draft.edited.providers.get(
+                metadata.name,
+                ProviderSettings(),
+            )
             configured, error = _configured_status(metadata.name, provider)
             by_name[metadata.name] = {
                 **by_name.get(
@@ -158,34 +241,113 @@ class ConfigScreen(Screen[None]):
             row_key = table.ordered_rows[table.cursor_row].key.value
             if row_key is not None:
                 return str(row_key)
-        return default or self.settings.dreaming.active_provider
+        return default or self.draft.edited.dreaming.active_provider
+
+    def _sync_form_from_draft(self, selected_provider: str) -> None:
+        provider = self.draft.edited.providers.get(selected_provider, ProviderSettings())
+        dreaming = self.draft.edited.dreaming
+        values = {
+            "#provider-enabled": field_value(provider.enabled),
+            "#provider-model": field_value(provider.model),
+            "#provider-api-key-env": field_value(provider.api_key_env),
+            "#provider-base-url": field_value(provider.base_url),
+            "#provider-timeout-seconds": field_value(provider.timeout_seconds),
+            "#dreaming-active-provider": field_value(dreaming.active_provider),
+            "#dreaming-autostart-enabled": field_value(dreaming.autostart_enabled),
+            "#dreaming-min-interval-minutes": field_value(dreaming.min_interval_minutes),
+            "#dreaming-new-short-term-memory-threshold": field_value(
+                dreaming.new_short_term_memory_threshold
+            ),
+            "#dreaming-max-cycles-per-autostart": field_value(dreaming.max_cycles_per_autostart),
+        }
+        self._syncing_form = True
+        try:
+            for selector, value in values.items():
+                self.query_one(selector, Input).value = value
+        finally:
+            self._syncing_form = False
+
+    def _provider_form_values(self) -> dict[str, str]:
+        return {
+            "enabled": self.query_one("#provider-enabled", Input).value,
+            "model": self.query_one("#provider-model", Input).value,
+            "api_key_env": self.query_one("#provider-api-key-env", Input).value,
+            "base_url": self.query_one("#provider-base-url", Input).value,
+            "timeout_seconds": self.query_one(
+                "#provider-timeout-seconds",
+                Input,
+            ).value,
+        }
+
+    def _dreaming_form_values(self) -> dict[str, str]:
+        return {
+            "active_provider": self.query_one("#dreaming-active-provider", Input).value,
+            "autostart_enabled": self.query_one(
+                "#dreaming-autostart-enabled",
+                Input,
+            ).value,
+            "min_interval_minutes": self.query_one(
+                "#dreaming-min-interval-minutes",
+                Input,
+            ).value,
+            "new_short_term_memory_threshold": self.query_one(
+                "#dreaming-new-short-term-memory-threshold",
+                Input,
+            ).value,
+            "max_cycles_per_autostart": self.query_one(
+                "#dreaming-max-cycles-per-autostart",
+                Input,
+            ).value,
+        }
+
+    def _apply_form_to_draft(self) -> bool:
+        selected_provider = self._selected_provider()
+        try:
+            edited = apply_provider_form(
+                self.draft.edited,
+                selected_provider,
+                self._provider_form_values(),
+            )
+            edited = apply_dreaming_form(edited, self._dreaming_form_values())
+        except SettingsError as error:
+            self.draft = self.draft.with_errors([str(error)])
+            self._update_detail(selected_provider)
+            return False
+        self.draft = self.draft.with_edited(edited)
+        return True
 
     def _update_detail(self, selected_provider: str | None) -> None:
-        provider_name = selected_provider or self.settings.dreaming.active_provider
-        provider = self.settings.providers.get(provider_name, ProviderSettings())
-        dreaming = self.settings.dreaming
+        provider_name = selected_provider or self.draft.edited.dreaming.active_provider
+        provider = self.draft.edited.providers.get(provider_name, ProviderSettings())
+        dreaming = self.draft.edited.dreaming
         configured, error = _configured_status(provider_name, provider)
         detail = [
             f"settings_path: {self.config.settings_path}",
             f"database_path: {self.config.database_path}",
+            f"state: {'unsaved' if self.draft.has_unsaved_changes else 'saved'}",
             "",
             "Autostart",
-            f"enabled: {_yes_no(dreaming.autostart_enabled)}",
+            f"enabled: {yes_no(dreaming.autostart_enabled)}",
             f"active_provider: {dreaming.active_provider}",
             f"min_interval_minutes: {dreaming.min_interval_minutes}",
-            f"new_short_term_memory_threshold: {dreaming.new_short_term_memory_threshold}",
+            (f"new_short_term_memory_threshold: {dreaming.new_short_term_memory_threshold}"),
             f"max_cycles_per_autostart: {dreaming.max_cycles_per_autostart}",
             "",
             f"Selected provider: {provider_name}",
-            f"enabled: {_yes_no(provider.enabled)}",
-            f"configured: {_yes_no(configured)}",
+            f"enabled: {yes_no(provider.enabled)}",
+            f"configured: {yes_no(configured)}",
             f"model: {provider.model or '-'}",
             f"key env: {provider.api_key_env or '-'}",
+            f"api_key_present: {yes_no(env_value_exists(provider.api_key_env))}",
             f"base_url: {provider.base_url or '-'}",
+            f"timeout_seconds: {provider.timeout_seconds}",
             f"error: {error or '-'}",
-            "",
-            "Keys: 1-4 set active, s save, r reload, c check selected, q quit.",
         ]
+        if self.draft.check_result:
+            detail.extend(["", self.draft.check_result])
+        if self.draft.errors:
+            detail.extend(["", "Validation errors", *self.draft.errors])
+        detail.extend(["", "Keys: 1-4 set active, s save, r reload, c check selected, q quit."])
         self.query_one("#config-detail", Static).update("\n".join(detail))
 
 
@@ -196,10 +358,6 @@ def _configured_status(name: str, provider: ProviderSettings) -> tuple[bool, str
         return False, "model is empty"
     if not provider.api_key_env.strip():
         return False, "api_key_env is empty"
-    if provider.enabled and not os.environ.get(provider.api_key_env):
+    if provider.enabled and not env_value_exists(provider.api_key_env):
         return False, f"missing environment variable: {provider.api_key_env}"
     return True, ""
-
-
-def _yes_no(value: bool) -> str:
-    return "yes" if value else "no"
