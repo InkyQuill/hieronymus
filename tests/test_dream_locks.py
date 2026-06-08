@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-import time
+import subprocess
+import sys
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -47,12 +49,53 @@ def test_dream_cycle_lock_releases_after_exception(config):
 
 
 def test_dream_cycle_lock_wait_blocks_until_release(config):
+    entered_wait = threading.Event()
+    acquired = threading.Event()
+
+    def wait_for_lock() -> None:
+        entered_wait.set()
+        with dream_cycle_lock(config, "worker", wait=True) as state:
+            assert state.owner == "worker"
+            acquired.set()
+
     with dream_cycle_lock(config, owner="manual"):
-        started = time.monotonic()
-        with pytest.raises(DreamCycleAlreadyRunning):
-            with dream_cycle_lock(config, owner="manual", wait=False):
-                pass
-        assert time.monotonic() - started < 1
+        thread = threading.Thread(target=wait_for_lock)
+        thread.start()
+        assert entered_wait.wait(timeout=1)
+        assert not acquired.wait(timeout=0.05)
+
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    assert acquired.is_set()
+
+
+def test_dream_cycle_lock_fails_across_processes(config):
+    with dream_cycle_lock(config, owner="manual"):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from pathlib import Path\n"
+                    "from hieronymus.config import HieronymusConfig\n"
+                    "from hieronymus.dream_locks import "
+                    "DreamCycleAlreadyRunning, dream_cycle_lock\n"
+                    f"config = HieronymusConfig(data_root=Path({str(config.data_root)!r}))\n"
+                    "try:\n"
+                    "    with dream_cycle_lock(config, 'subprocess'):\n"
+                    "        print('acquired')\n"
+                    "except DreamCycleAlreadyRunning as error:\n"
+                    "    print(str(error))\n"
+                    "    raise SystemExit(2)\n"
+                ),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 2
+    assert "dream cycle already running" in result.stdout
 
 
 def test_stale_state_with_dead_pid_is_cleaned_conservatively(config):

@@ -131,28 +131,29 @@ def dream_cycle_lock(
     if not local_acquired:
         raise DreamCycleAlreadyRunning(read_dream_cycle_state(config))
 
-    lock_file = paths.lock_file.open("a+", encoding="utf-8")
-    state = DreamCycleState(
-        owner=owner,
-        pid=os.getpid(),
-        started_at=datetime.now(UTC).isoformat(),
-        token=uuid.uuid4().hex,
-    )
     try:
-        flags = fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB
+        lock_file = paths.lock_file.open("a+", encoding="utf-8")
         try:
-            fcntl.flock(lock_file.fileno(), flags)
-        except BlockingIOError as error:
-            raise DreamCycleAlreadyRunning(read_dream_cycle_state(config)) from error
-        _write_state(paths, state)
-        yield state
-    finally:
-        current = _read_state_file(paths)
-        if current is not None and current.token == state.token:
+            state = DreamCycleState(
+                owner=owner,
+                pid=os.getpid(),
+                started_at=datetime.now(UTC).isoformat(),
+                token=uuid.uuid4().hex,
+            )
             try:
-                paths.state_json.unlink()
-            except FileNotFoundError:
-                pass
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        lock_file.close()
+                flags = fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB
+                try:
+                    fcntl.flock(lock_file.fileno(), flags)
+                except BlockingIOError as error:
+                    raise DreamCycleAlreadyRunning(read_dream_cycle_state(config)) from error
+                _write_state(paths, state)
+                yield state
+            finally:
+                try:
+                    _remove_state_if_unchanged(paths, state)
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
+    finally:
         local_lock.release()
