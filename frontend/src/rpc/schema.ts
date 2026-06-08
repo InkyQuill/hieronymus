@@ -39,6 +39,7 @@ export const ConfigDetailSchema = z.union([
       errors: z.array(z.string()),
     })
     .passthrough(),
+  z.object({}).strict(),
 ]);
 
 export const AdminRowSchema = z.object({

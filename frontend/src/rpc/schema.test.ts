@@ -73,6 +73,30 @@ describe('runtime schemas', () => {
     expect(payload.provider_choices[0].requires_api_key).toBe(true);
   });
 
+  it('accepts an empty config detail payload', () => {
+    const payload = ConfigBootstrapSchema.parse({
+      config_paths: {
+        settings_path: '/tmp/hieronymus/config/settings.toml',
+      },
+      provider_choices: [
+        {
+          display_name: 'OpenAI compatible',
+          name: 'openai',
+          requires_api_key: true,
+          supports_api_path: true,
+        },
+      ],
+      selected_provider: 'openai',
+      draft: {dreaming: {active_provider: 'openai'}, providers: {}},
+      form_values: {provider: {}, dreaming: {}},
+      validation: {ok: true, errors: []},
+      suggestions: {},
+      detail: {},
+    });
+
+    expect(payload.detail).toEqual({});
+  });
+
   it('rejects config provider choices outside supported families', () => {
     expect(() =>
       ConfigBootstrapSchema.parse({
