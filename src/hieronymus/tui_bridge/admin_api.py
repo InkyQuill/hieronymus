@@ -254,7 +254,6 @@ class AdminBridge:
         selected_id: object,
         filters: dict[str, FilterValue],
     ) -> AdminSnapshot:
-        filters = _active_filters(view, filters)
         _validate_view_filters(view, filters)
         snapshot = self._base_snapshot(view, selected_id, filters)
         rows = _filter_rows(snapshot.rows, filters)
@@ -445,17 +444,17 @@ def _tuple_filter(filters: dict[str, FilterValue], key: str) -> tuple[str, ...]:
     return value if isinstance(value, tuple) else ()
 
 
-def _active_filters(view: str, filters: dict[str, FilterValue]) -> dict[str, FilterValue]:
-    if view == "Lessons":
-        return {key: value for key, value in filters.items() if key != "type"}
-    return filters
-
-
 def _validate_view_filters(view: str, filters: dict[str, FilterValue]) -> None:
-    if view not in {"Crystals", "Lessons"}:
+    if not filters:
         return
-    for key in ("language_pair", "confidence", "strength"):
-        if key in filters:
+    if view not in {"Crystals", "Lessons"}:
+        key = next(iter(filters))
+        raise ValueError(f"unsupported admin filter for {view}: {key}")
+    safe_filters = {"status", "kind", "series_slug", "tags"}
+    if view == "Crystals":
+        safe_filters = safe_filters | {"type"}
+    for key in filters:
+        if key not in safe_filters:
             raise ValueError(f"unsupported admin filter for {view}: {key}")
 
 

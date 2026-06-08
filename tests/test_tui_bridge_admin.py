@@ -214,26 +214,12 @@ def test_admin_snapshot_splits_comma_separated_tag_filter(tmp_path: Path) -> Non
     assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Comma Tagged Ledger"]
 
 
-def test_admin_lessons_snapshot_ignores_stale_type_filter(tmp_path: Path) -> None:
+def test_admin_lessons_snapshot_rejects_type_filter(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _seed(config)
-    context = TranslationContext(
-        series_slug="only-sense-online",
-        source_language="ja",
-        target_language="ru",
-        task_type="translation",
-    )
-    CrystalStore(config).add_crystal(
-        context,
-        crystal_type="lesson",
-        title="Lesson Row",
-        text="Lesson row marker.",
-    )
 
-    payload = AdminBridge(config).snapshot({"view": "Lessons", "filters": {"type": "concept"}})
-
-    assert payload["snapshot"]["filters"] == []
-    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Lesson Row"]
+    with pytest.raises(ValueError, match="unsupported admin filter for Lessons: type"):
+        AdminBridge(config).snapshot({"view": "Lessons", "filters": {"type": "concept"}})
 
 
 def test_admin_crystal_snapshot_rejects_confidence_filter(tmp_path: Path) -> None:
@@ -258,6 +244,24 @@ def test_admin_lesson_snapshot_rejects_strength_filter(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="unsupported admin filter for Lessons: strength"):
         AdminBridge(config).snapshot({"view": "Lessons", "filters": {"strength": "60%"}})
+
+
+def test_admin_proposals_snapshot_rejects_series_slug_filter(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+
+    with pytest.raises(ValueError, match="unsupported admin filter for Proposals: series_slug"):
+        AdminBridge(config).snapshot(
+            {"view": "Proposals", "filters": {"series_slug": "only-sense-online"}}
+        )
+
+
+def test_admin_proposals_snapshot_rejects_confidence_filter(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+
+    with pytest.raises(ValueError, match="unsupported admin filter for Proposals: confidence"):
+        AdminBridge(config).snapshot({"view": "Proposals", "filters": {"confidence": "60"}})
 
 
 def test_admin_snapshot_rejects_unknown_filter_key(tmp_path: Path) -> None:
@@ -359,7 +363,7 @@ def test_admin_proposal_approval_refreshes_proposal_view(tmp_path: Path) -> None
     assert payload["snapshot"]["selected"]["status"] == "approved"
 
 
-def test_admin_proposal_approval_preserves_pending_filter(tmp_path: Path) -> None:
+def test_admin_proposal_approval_rejects_filtered_refresh(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _seed(config)
     proposal_id = ConceptProposalStore(config).create(
@@ -373,14 +377,8 @@ def test_admin_proposal_approval_preserves_pending_filter(tmp_path: Path) -> Non
         rationale="Palette proposal fixture.",
     )
 
-    payload = AdminBridge(config).approve_proposal(
-        {"id": proposal_id, "filters": {"status": "pending"}}
-    )
-
-    assert payload["snapshot"]["view"] == "Proposals"
-    assert payload["snapshot"]["filters"] == ["status=pending"]
-    assert payload["snapshot"]["rows"] == []
-    assert payload["snapshot"]["selected"] is None
+    with pytest.raises(ValueError, match="unsupported admin filter for Proposals: status"):
+        AdminBridge(config).approve_proposal({"id": proposal_id, "filters": {"status": "pending"}})
 
 
 def test_admin_add_crystal_accepts_type_alias(tmp_path: Path) -> None:
