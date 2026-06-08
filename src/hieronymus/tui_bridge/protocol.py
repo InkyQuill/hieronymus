@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import fields, is_dataclass
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+if TYPE_CHECKING:
+    from hieronymus.settings import HieronymusSettings
 
 
 class RpcRequest(NamedTuple):
@@ -54,12 +57,19 @@ def dataclass_to_json(value: Any) -> Any:
 
 
 def success_response(request_id: str, result: dict[str, object]) -> dict[str, object]:
-    return {"id": request_id, "ok": True, "result": result}
+    return {"id": request_id, "ok": True, "result": dataclass_to_json(result)}
 
 
-def error_response(request_id: str | None, error: RpcError) -> dict[str, object]:
+def error_response(
+    request_id: str | None,
+    error: RpcError,
+    *,
+    settings: HieronymusSettings | None = None,
+) -> dict[str, object]:
+    from hieronymus.tui_bridge.errors import error_payload
+
     return {
         "id": request_id,
         "ok": False,
-        "error": {"code": error.code, "message": error.message},
+        "error": error_payload(error, settings=settings),
     }
