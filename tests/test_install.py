@@ -65,7 +65,7 @@ def test_resolve_target_has_complete_metadata_for_all_targets() -> None:
         assert target.display_name == display_name
         assert target.detect_path == detect_path
         assert target.config_path == config_path
-        assert target.docs == "docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md"
+        assert target.docs == "docs/agent-workflows.md"
         assert target.protocol_note
 
 
@@ -96,7 +96,7 @@ def test_plan_install_json_includes_docs_for_codex(tmp_path: Path) -> None:
 
     payload = plan_install(config, "codex").to_json_dict()
 
-    assert payload["docs"] == "docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md"
+    assert payload["docs"] == "docs/agent-workflows.md"
     assert payload["availability"]["target"] == "codex"
 
 

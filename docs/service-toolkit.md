@@ -48,6 +48,6 @@ identity line, while automation should use `--json`.
 This pass provides real Claude, Codex, OpenClaw, opencode, and Gemini CLI installer wiring. Pi and
 Hermes are reserved detectable targets until their host config formats are known.
 
-`docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md`
+See [Agent workflows](agent-workflows.md) for the host integration contract.
 
 `hiero doctor` also reports detected agent hosts where Hieronymus has not been installed yet.

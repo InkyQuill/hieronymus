@@ -96,5 +96,5 @@ MVP implementation exists for local series setup, strict termbase validation, me
 
 - [Usage guide](docs/usage.md)
 - [Management TUI usage](docs/usage.md#management-tui)
-- [Design spec](docs/superpowers/specs/2026-06-06-hieronymus-design.md)
-- [Implementation plan](docs/superpowers/plans/2026-06-06-hieronymus-mvp.md)
+- [Agent workflows](docs/agent-workflows.md)
+- [Service toolkit](docs/service-toolkit.md)

@@ -14,7 +14,7 @@ import tomli_w
 
 from hieronymus.config import HieronymusConfig
 
-AGENT_WORKFLOW_SPEC = "docs/superpowers/specs/2026-06-06-hieronymus-agent-workflows.md"
+AGENT_WORKFLOW_SPEC = "docs/agent-workflows.md"
 
 
 @dataclass(frozen=True)

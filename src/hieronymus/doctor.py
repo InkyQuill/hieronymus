@@ -79,7 +79,7 @@ class Doctor:
 
         try:
             with sqlite3.connect(database_path) as connection:
-                connection.execute("select 1")
+                connection.execute("pragma schema_version").fetchone()
         except sqlite3.DatabaseError:
             report["errors"].append(
                 DoctorFinding(
