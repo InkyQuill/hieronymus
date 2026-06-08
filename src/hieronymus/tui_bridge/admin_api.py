@@ -255,6 +255,7 @@ class AdminBridge:
         filters: dict[str, FilterValue],
     ) -> AdminSnapshot:
         filters = _active_filters(view, filters)
+        _validate_view_filters(view, filters)
         snapshot = self._base_snapshot(view, selected_id, filters)
         rows = _filter_rows(snapshot.rows, filters)
         selected = _select_row(rows, selected_id)
@@ -394,14 +395,6 @@ def _filter_rows(rows: list[AdminRow], filters: dict[str, FilterValue]) -> list[
         result = [row for row in result if row.scope == series_slug]
     if language_pair := _string_filter(filters, "language_pair"):
         result = [row for row in result if row.language_pair == language_pair]
-    confidence = _optional_percent(_string_filter(filters, "confidence"))
-    if confidence is not None:
-        result = [
-            row for row in result if _quality_percent(row.quality_label, "conf") >= confidence
-        ]
-    strength = _optional_percent(_string_filter(filters, "strength"))
-    if strength is not None:
-        result = [row for row in result if _quality_percent(row.quality_label, "str") >= strength]
     if cycle := _string_filter(filters, "cycle"):
         result = [row for row in result if row.label == f"Cycle {cycle}"]
     if tags := filters.get("tags"):
@@ -458,32 +451,18 @@ def _active_filters(view: str, filters: dict[str, FilterValue]) -> dict[str, Fil
     return filters
 
 
+def _validate_view_filters(view: str, filters: dict[str, FilterValue]) -> None:
+    if view not in {"Crystals", "Lessons"}:
+        return
+    for key in ("language_pair", "confidence", "strength"):
+        if key in filters:
+            raise ValueError(f"unsupported admin filter for {view}: {key}")
+
+
 def _crystal_filter_type(view: str, filters: dict[str, FilterValue]) -> str | None:
     if view == "Lessons":
         return "lesson"
     return _string_filter(filters, "type") or _string_filter(filters, "kind") or None
-
-
-def _optional_percent(value: str) -> float | None:
-    if not value:
-        return None
-    try:
-        parsed = float(value.strip().removesuffix("%"))
-    except ValueError:
-        return None
-    return parsed / 100 if parsed > 1 else parsed
-
-
-def _quality_percent(quality_label: str, label: str) -> float:
-    marker = f" {label}"
-    for part in quality_label.split("/"):
-        part = part.strip()
-        if part.endswith(marker):
-            try:
-                return float(part.removesuffix(marker).strip().removesuffix("%")) / 100
-            except ValueError:
-                return 0.0
-    return 0.0
 
 
 def _split_parts(params: dict[str, object]) -> list[tuple[str, str] | dict[str, str]]:

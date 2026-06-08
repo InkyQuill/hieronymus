@@ -236,66 +236,28 @@ def test_admin_lessons_snapshot_ignores_stale_type_filter(tmp_path: Path) -> Non
     assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Lesson Row"]
 
 
-def test_admin_snapshot_filters_confidence_as_minimum_threshold(tmp_path: Path) -> None:
+def test_admin_crystal_snapshot_rejects_confidence_filter(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _seed(config)
-    context = TranslationContext(
-        series_slug="only-sense-online",
-        source_language="ja",
-        target_language="ru",
-        task_type="translation",
-    )
-    store = CrystalStore(config)
-    store.add_crystal(
-        context,
-        crystal_type="concept",
-        title="Low Confidence",
-        text="Low confidence marker.",
-        confidence=0.3,
-    )
-    store.add_crystal(
-        context,
-        crystal_type="concept",
-        title="High Confidence",
-        text="High confidence marker.",
-        confidence=0.8,
-    )
 
-    payload = AdminBridge(config).snapshot({"view": "Crystals", "filters": {"confidence": "60"}})
-
-    assert payload["snapshot"]["filters"] == ["confidence=60"]
-    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["High Confidence"]
+    with pytest.raises(ValueError, match="unsupported admin filter for Crystals: confidence"):
+        AdminBridge(config).snapshot({"view": "Crystals", "filters": {"confidence": "60"}})
 
 
-def test_admin_snapshot_filters_strength_as_minimum_threshold(tmp_path: Path) -> None:
+def test_admin_crystal_snapshot_rejects_language_pair_filter(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _seed(config)
-    context = TranslationContext(
-        series_slug="only-sense-online",
-        source_language="ja",
-        target_language="ru",
-        task_type="translation",
-    )
-    store = CrystalStore(config)
-    store.add_crystal(
-        context,
-        crystal_type="concept",
-        title="Low Strength",
-        text="Low strength marker.",
-        strength=0.3,
-    )
-    store.add_crystal(
-        context,
-        crystal_type="concept",
-        title="High Strength",
-        text="High strength marker.",
-        strength=0.8,
-    )
 
-    payload = AdminBridge(config).snapshot({"view": "Crystals", "filters": {"strength": "60%"}})
+    with pytest.raises(ValueError, match="unsupported admin filter for Crystals: language_pair"):
+        AdminBridge(config).snapshot({"view": "Crystals", "filters": {"language_pair": "ja->ru"}})
 
-    assert payload["snapshot"]["filters"] == ["strength=60%"]
-    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["High Strength"]
+
+def test_admin_lesson_snapshot_rejects_strength_filter(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+
+    with pytest.raises(ValueError, match="unsupported admin filter for Lessons: strength"):
+        AdminBridge(config).snapshot({"view": "Lessons", "filters": {"strength": "60%"}})
 
 
 def test_admin_snapshot_rejects_unknown_filter_key(tmp_path: Path) -> None:
