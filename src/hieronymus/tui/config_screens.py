@@ -178,6 +178,7 @@ class ConfigScreen(Screen[None]):
         selected_provider = self._selected_provider()
         if self._apply_form_to_draft():
             self._update_provider_row(selected_provider)
+            self._update_active_provider_markers()
             self._update_detail(selected_provider)
 
     def _refresh(self, selected_provider: str | None = None) -> None:
@@ -243,6 +244,16 @@ class ConfigScreen(Screen[None]):
         table.update_cell(provider_name, "key_env", str(provider.api_key_env or "-"))
         table.update_cell(provider_name, "configured", yes_no(configured))
         table.update_cell(provider_name, "error", str(error or ""))
+
+    def _update_active_provider_markers(self) -> None:
+        table = self.query_one("#config-table", DataTable)
+        active_provider = self.draft.edited.dreaming.active_provider
+        for metadata in self.registry.list():
+            table.update_cell(
+                metadata.name,
+                "active",
+                "*" if metadata.name == active_provider else "",
+            )
 
     def _selected_provider(self, default: str | None = None) -> str:
         table = self.query_one("#config-table", DataTable)

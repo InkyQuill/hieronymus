@@ -186,3 +186,20 @@ async def test_config_tui_updates_provider_row_after_draft_edit(
     assert row[3] == "-"
     assert row[5] == "no"
     assert row[6] == "model is empty"
+
+
+@pytest.mark.anyio
+async def test_config_tui_updates_active_marker_after_draft_edit(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        app.screen.query_one("#dreaming-active-provider", Input).value = "openai"
+        await pilot.pause()
+        table = app.screen.query_one("#config-table", DataTable)
+        deterministic = table.get_row("deterministic")
+        openai = table.get_row("openai")
+
+    assert deterministic[1] == ""
+    assert openai[1] == "*"
