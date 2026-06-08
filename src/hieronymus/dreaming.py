@@ -13,7 +13,7 @@ from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.scoring import PASSIVE_EVENT_DELTAS
 from hieronymus.secrets import redact_configured_secret_values
-from hieronymus.settings import load_settings
+from hieronymus.settings import SettingsError, load_settings
 
 _ALLOWED_CRYSTAL_TYPES = frozenset({"lesson", "concept", "erudition"})
 STRENGTH_DECAY_PER_CYCLE = 0.03
@@ -132,11 +132,13 @@ class DreamService:
         wait: bool = False,
         skip_when_locked: bool = False,
     ) -> DreamRunRecord:
+        lock_acquired = False
         try:
             with dream_cycle_lock(self.config, owner=owner, wait=wait):
+                lock_acquired = True
                 return self._run_cycle_unlocked()
         except DreamCycleAlreadyRunning:
-            if skip_when_locked:
+            if skip_when_locked and not lock_acquired:
                 return self._record_skipped_run("dream cycle already running")
             raise
 
@@ -181,8 +183,6 @@ class DreamService:
                 proposal_count=proposal_count,
             )
         except Exception as exc:
-            settings = load_settings(self.config)
-            error_message = redact_configured_secret_values(str(exc), settings)
             with connect(self.config.database_path) as conn:
                 conn.execute(
                     """
@@ -192,7 +192,7 @@ class DreamService:
                         completed_at = ?
                     where id = ?
                     """,
-                    (error_message, _now(), run_id),
+                    (self._redacted_error_message(exc), _now(), run_id),
                 )
                 conn.commit()
             raise
@@ -200,16 +200,28 @@ class DreamService:
     def _record_skipped_run(self, reason: str) -> DreamRunRecord:
         now = _now()
         with connect(self.config.database_path) as conn:
-            cycle_id = self._next_cycle_id(conn)
-            cursor = conn.execute(
-                """
-                insert into dream_runs(cycle_id, status, provider, error, created_at, completed_at)
-                values (?, 'skipped', ?, ?, ?, ?)
-                """,
-                (cycle_id, self.provider.name, reason, now, now),
-            )
-            run_id = int(cursor.lastrowid)
-            conn.commit()
+            try:
+                conn.execute("begin immediate")
+                cycle_id = self._next_skipped_cycle_id(conn)
+                cursor = conn.execute(
+                    """
+                    insert into dream_runs(
+                      cycle_id,
+                      status,
+                      provider,
+                      error,
+                      created_at,
+                      completed_at
+                    )
+                    values (?, 'skipped', ?, ?, ?, ?)
+                    """,
+                    (cycle_id, self.provider.name, reason, now, now),
+                )
+                run_id = int(cursor.lastrowid)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
         return DreamRunRecord(
             id=run_id,
             cycle_id=cycle_id,
@@ -217,6 +229,14 @@ class DreamService:
             provider=self.provider.name,
             error=reason,
         )
+
+    def _redacted_error_message(self, error: Exception) -> str:
+        message = str(error)
+        try:
+            settings = load_settings(self.config)
+        except SettingsError:
+            return message
+        return redact_configured_secret_values(message, settings)
 
     def _load_completed_groups(
         self,
@@ -589,7 +609,23 @@ class DreamService:
             )
 
     def _next_cycle_id(self, conn) -> int:
-        row = conn.execute("select coalesce(max(cycle_id), 0) + 1 from dream_runs").fetchone()
+        row = conn.execute(
+            """
+            select coalesce(max(cycle_id), 0) + 1
+            from dream_runs
+            where cycle_id > 0
+            """
+        ).fetchone()
+        return int(row[0])
+
+    def _next_skipped_cycle_id(self, conn) -> int:
+        row = conn.execute(
+            """
+            select coalesce(min(cycle_id), 0) - 1
+            from dream_runs
+            where cycle_id < 0
+            """
+        ).fetchone()
         return int(row[0])
 
     def _validate_output(

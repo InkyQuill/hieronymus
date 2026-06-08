@@ -185,6 +185,78 @@ def test_dreaming_releases_lock_after_provider_exception(
     assert run.status == "completed"
 
 
+def test_dreaming_records_locked_skip_without_consuming_cycle_id(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    _completed_session(config, context)
+
+    with dream_cycle_lock(config, owner="manual"):
+        skipped = DreamService(config, DeterministicDreamProvider()).run_cycle(
+            skip_when_locked=True,
+        )
+
+    run = DreamService(config, DeterministicDreamProvider()).run_cycle()
+
+    assert skipped.status == "skipped"
+    assert skipped.cycle_id == -1
+    assert skipped.error == "dream cycle already running"
+    assert run.status == "completed"
+    assert run.cycle_id == 1
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            "select cycle_id, status from dream_runs order by id",
+        ).fetchall()
+    assert [(row["cycle_id"], row["status"]) for row in rows] == [
+        (-1, "skipped"),
+        (1, "completed"),
+    ]
+
+
+def test_dreaming_does_not_skip_provider_lock_error_after_acquiring_lock(
+    config: HieronymusConfig,
+) -> None:
+    class ProviderLockError:
+        name = "provider-lock-error"
+
+        def crystallize(self, context, memories):
+            raise DreamCycleAlreadyRunning()
+
+    context = _context(config)
+    _completed_session(config, context)
+
+    with pytest.raises(DreamCycleAlreadyRunning, match="dream cycle already running"):
+        DreamService(config, ProviderLockError()).run_cycle(skip_when_locked=True)
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select status, error from dream_runs").fetchone()
+    assert run["status"] == "failed"
+    assert "dream cycle already running" in run["error"]
+
+
+def test_dreaming_records_failed_run_when_settings_are_invalid(
+    config: HieronymusConfig,
+) -> None:
+    class FailingProvider:
+        name = "failing"
+
+        def crystallize(self, context, memories):
+            raise RuntimeError("provider failed")
+
+    context = _context(config)
+    _completed_session(config, context)
+    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.settings_path.write_text("not valid toml = [", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        DreamService(config, FailingProvider()).run_cycle()
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select status, error from dream_runs").fetchone()
+    assert run["status"] == "failed"
+    assert run["error"] == "provider failed"
+
+
 def test_dreaming_records_failed_run_for_invalid_provider_output(
     config: HieronymusConfig,
 ) -> None:
