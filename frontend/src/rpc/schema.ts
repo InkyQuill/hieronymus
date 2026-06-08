@@ -18,6 +18,29 @@ export const RpcResponseSchema = z.discriminatedUnion('ok', [
   }),
 ]);
 
+export const ModelSuggestionsSchema = z.union([
+  z
+    .object({
+      provider: ProviderNameSchema,
+      models: z.array(z.string()),
+      source: z.string(),
+      error: z.string(),
+    })
+    .passthrough(),
+  z.object({}).strict(),
+]);
+
+export const ConfigDetailSchema = z.union([
+  z.string(),
+  z
+    .object({
+      title: z.string(),
+      fields: z.array(z.tuple([z.string(), z.string()])),
+      errors: z.array(z.string()),
+    })
+    .passthrough(),
+]);
+
 export const AdminRowSchema = z.object({
   id: z.union([z.number(), z.string()]),
   kind: z.string(),
@@ -47,11 +70,14 @@ export const AdminSnapshotSchema = z.object({
 export const ConfigBootstrapSchema = z.object({
   config_paths: z.record(z.string()),
   provider_choices: z.array(
-    z.object({
-      name: ProviderNameSchema,
-      display_name: z.string(),
-      supports_api_path: z.boolean(),
-    }),
+    z
+      .object({
+        name: ProviderNameSchema,
+        display_name: z.string(),
+        requires_api_key: z.boolean(),
+        supports_api_path: z.boolean(),
+      })
+      .passthrough(),
   ),
   selected_provider: ProviderNameSchema,
   draft: z.object({
@@ -66,21 +92,15 @@ export const ConfigBootstrapSchema = z.object({
     ok: z.boolean(),
     errors: z.array(z.string()),
   }),
-  suggestions: z.object({
-    provider: ProviderNameSchema,
-    models: z.array(z.string()),
-    source: z.string(),
-    error: z.string(),
-  }),
-  detail: z.object({
-    title: z.string(),
-    fields: z.array(z.tuple([z.string(), z.string()])),
-    errors: z.array(z.string()),
-  }),
-});
+  check_result: z.record(z.unknown()).default({}),
+  suggestions: ModelSuggestionsSchema,
+  detail: ConfigDetailSchema,
+}).passthrough();
 
 export type ProviderName = z.infer<typeof ProviderNameSchema>;
 export type RpcResponse = z.infer<typeof RpcResponseSchema>;
+export type ModelSuggestions = z.infer<typeof ModelSuggestionsSchema>;
+export type ConfigDetail = z.infer<typeof ConfigDetailSchema>;
 export type AdminRow = z.infer<typeof AdminRowSchema>;
 export type AdminDetail = z.infer<typeof AdminDetailSchema>;
 export type AdminSnapshot = z.infer<typeof AdminSnapshotSchema>;

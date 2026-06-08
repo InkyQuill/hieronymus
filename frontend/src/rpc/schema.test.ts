@@ -14,7 +14,12 @@ describe('runtime schemas', () => {
         database_path: '/tmp/h/hieronymus.sqlite3',
       },
       provider_choices: [
-        {name: provider, display_name: displayName, supports_api_path: true},
+        {
+          name: provider,
+          display_name: displayName,
+          requires_api_key: true,
+          supports_api_path: true,
+        },
       ],
       selected_provider: provider,
       draft: {dreaming: {active_provider: provider}, providers: {}},
@@ -27,11 +32,59 @@ describe('runtime schemas', () => {
     expect(payload.selected_provider).toBe(provider);
   });
 
+  it('parses the current Python config bootstrap payload shape', () => {
+    const payload = ConfigBootstrapSchema.parse({
+      config_paths: {
+        data_root: '/tmp/hieronymus',
+        config_root: '/tmp/hieronymus/config',
+        settings_path: '/tmp/hieronymus/config/settings.toml',
+      },
+      provider_choices: [
+        {
+          display_name: 'OpenAI compatible',
+          name: 'openai',
+          requires_api_key: true,
+          supports_api_path: true,
+        },
+        {
+          display_name: 'Gemini',
+          name: 'gemini',
+          requires_api_key: true,
+          supports_api_path: false,
+        },
+        {
+          display_name: 'Anthropic',
+          name: 'anthropic',
+          requires_api_key: true,
+          supports_api_path: false,
+        },
+      ],
+      selected_provider: 'openai',
+      draft: {dreaming: {active_provider: 'openai'}, providers: {}},
+      form_values: {provider: {}, dreaming: {}},
+      validation: {ok: true, errors: []},
+      check_result: {},
+      suggestions: {},
+      detail: '',
+    });
+
+    expect(payload.suggestions).toEqual({});
+    expect(payload.detail).toBe('');
+    expect(payload.provider_choices[0].requires_api_key).toBe(true);
+  });
+
   it('rejects config provider choices outside supported families', () => {
     expect(() =>
       ConfigBootstrapSchema.parse({
         config_paths: {},
-        provider_choices: [{name: 'deterministic', display_name: 'Deterministic', supports_api_path: false}],
+        provider_choices: [
+          {
+            name: 'deterministic',
+            display_name: 'Deterministic',
+            requires_api_key: false,
+            supports_api_path: false,
+          },
+        ],
         selected_provider: 'deterministic',
         draft: {dreaming: {}, providers: {}},
         form_values: {provider: {}, dreaming: {}},

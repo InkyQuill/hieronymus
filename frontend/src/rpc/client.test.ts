@@ -45,4 +45,34 @@ describe('JsonRpcClient', () => {
 
     await expect(pending).rejects.toThrow('text must not be empty');
   });
+
+  it('rejects pending requests when stdout contains malformed JSON', async () => {
+    const proc = new FakeProcess();
+    const client = new JsonRpcClient(proc as never);
+
+    const pending = client.request('config.bootstrap', {});
+    proc.stdout.push('not json\n');
+
+    await expect(pending).rejects.toThrow('invalid bridge response');
+  });
+
+  it('rejects pending requests when the child process emits an error', async () => {
+    const proc = new FakeProcess();
+    const client = new JsonRpcClient(proc as never);
+
+    const pending = client.request('config.bootstrap', {});
+    proc.emit('error', new Error('spawn ENOENT'));
+
+    await expect(pending).rejects.toThrow('bridge process error: spawn ENOENT');
+  });
+
+  it('rejects pending requests when the child process closes before response', async () => {
+    const proc = new FakeProcess();
+    const client = new JsonRpcClient(proc as never);
+
+    const pending = client.request('config.bootstrap', {});
+    proc.emit('close', 1, null);
+
+    await expect(pending).rejects.toThrow('bridge process closed before response');
+  });
 });
