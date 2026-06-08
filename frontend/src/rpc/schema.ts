@@ -94,7 +94,7 @@ export const ConfigBootstrapSchema = z.object({
     errors: z.array(z.string()),
   }),
   check_result: z.record(z.unknown()).default({}),
-  suggestions: ModelSuggestionsSchema,
+  suggestions: ModelSuggestionsSchema.default({}),
   detail: ConfigDetailSchema,
 }).passthrough();
 
