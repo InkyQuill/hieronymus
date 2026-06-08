@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import subprocess
 from dataclasses import asdict
 from pathlib import Path
@@ -129,10 +128,10 @@ def _frontend_entrypoint() -> str:
 
 
 def _launch_ink(mode: str, *, data_root: Path) -> None:
-    bridge_command = shlex.join(["hiero", "--data-root", str(data_root), "tui-bridge"])
-    command = ["node", _frontend_entrypoint(), mode, "--bridge-command", bridge_command]
+    command = ["node", _frontend_entrypoint(), mode, "--bridge-command", "hiero"]
+    env = {**os.environ, "HIERONYMUS_DATA_ROOT": str(data_root)}
     try:
-        subprocess.run(command, check=True)
+        subprocess.run(command, check=True, env=env)
     except FileNotFoundError as error:
         raise click.ClickException("Ink TUI launch failed: node executable not found") from error
     except subprocess.CalledProcessError as error:

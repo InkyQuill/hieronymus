@@ -87,8 +87,8 @@ def test_cli_ink_config_launches_frontend_with_data_root(tmp_path, monkeypatch) 
     calls = []
     data_root = tmp_path / "hieronymus"
 
-    def fake_run(command, check):
-        calls.append(command)
+    def fake_run(command, check, env):
+        calls.append((command, env))
 
     monkeypatch.setenv("HIERONYMUS_TUI", "ink")
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fake_run)
@@ -100,21 +100,23 @@ def test_cli_ink_config_launches_frontend_with_data_root(tmp_path, monkeypatch) 
     )
 
     assert result.exit_code == 0
-    assert calls[0][0] == "node"
-    assert calls[0][1] == "/tmp/hiero-ink.js"
-    assert calls[0][2:] == [
+    command, env = calls[0]
+    assert command[0] == "node"
+    assert command[1] == "/tmp/hiero-ink.js"
+    assert command[2:] == [
         "config",
         "--bridge-command",
-        f"hiero --data-root {data_root} tui-bridge",
+        "hiero",
     ]
+    assert env["HIERONYMUS_DATA_ROOT"] == str(data_root)
 
 
 def test_cli_ink_admin_launches_frontend_when_requested(tmp_path, monkeypatch) -> None:
     calls = []
     data_root = tmp_path / "hieronymus"
 
-    def fake_run(command, check):
-        calls.append(command)
+    def fake_run(command, check, env):
+        calls.append((command, env))
 
     monkeypatch.setenv("HIERONYMUS_TUI", "ink")
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fake_run)
@@ -126,15 +128,17 @@ def test_cli_ink_admin_launches_frontend_when_requested(tmp_path, monkeypatch) -
     )
 
     assert result.exit_code == 0
-    assert calls[0][2:] == [
+    command, env = calls[0]
+    assert command[2:] == [
         "admin",
         "--bridge-command",
-        f"hiero --data-root {data_root} tui-bridge",
+        "hiero",
     ]
+    assert env["HIERONYMUS_DATA_ROOT"] == str(data_root)
 
 
 def test_cli_ink_launch_failure_returns_clean_error(tmp_path, monkeypatch) -> None:
-    def fail_run(command, check):
+    def fail_run(command, check, env):
         raise FileNotFoundError(command[0])
 
     monkeypatch.setenv("HIERONYMUS_TUI", "ink")
@@ -152,7 +156,7 @@ def test_cli_ink_launch_failure_returns_clean_error(tmp_path, monkeypatch) -> No
 
 
 def test_cli_ink_nonzero_exit_returns_clean_error(tmp_path, monkeypatch) -> None:
-    def fail_run(command, check):
+    def fail_run(command, check, env):
         raise subprocess.CalledProcessError(7, command)
 
     monkeypatch.setenv("HIERONYMUS_TUI", "ink")
