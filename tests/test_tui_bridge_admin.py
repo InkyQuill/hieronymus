@@ -119,6 +119,51 @@ def test_admin_snapshot_filters_crystals_by_series_slug(tmp_path: Path) -> None:
     assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Other Ledger"]
 
 
+def test_admin_snapshot_crystal_filter_finds_matches_after_unfiltered_page(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    store = CrystalStore(config)
+    filler_context = TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        task_type="translation",
+    )
+    for index in range(205):
+        store.add_crystal(
+            filler_context,
+            crystal_type="concept",
+            title=f"Filler {index:03d}",
+            text="Filler crystal marker.",
+        )
+    series = Registry(config).create_series(
+        slug="late-series",
+        title="Late Series",
+        source_language="ja",
+        target_language="ru",
+    )
+    late_context = TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type="translation",
+    )
+    store.add_crystal(
+        late_context,
+        crystal_type="concept",
+        title="Late Ledger",
+        text="Late series marker.",
+    )
+
+    payload = AdminBridge(config).snapshot(
+        {"view": "Crystals", "filters": {"series_slug": "late-series"}}
+    )
+
+    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Late Ledger"]
+
+
 def test_admin_snapshot_filters_crystals_by_tags(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _seed(config)
@@ -142,6 +187,115 @@ def test_admin_snapshot_filters_crystals_by_tags(tmp_path: Path) -> None:
 
     assert payload["snapshot"]["filters"] == ["tags=glossary,reviewed"]
     assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Tagged Ledger"]
+
+
+def test_admin_snapshot_splits_comma_separated_tag_filter(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    context = TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        task_type="translation",
+        tags=("glossary", "reviewed"),
+    )
+    CrystalStore(config).add_crystal(
+        context,
+        crystal_type="concept",
+        title="Comma Tagged Ledger",
+        text="Comma tagged ledger marker.",
+    )
+
+    payload = AdminBridge(config).snapshot(
+        {"view": "Crystals", "filters": {"tags": "glossary, reviewed"}}
+    )
+
+    assert payload["snapshot"]["filters"] == ["tags=glossary,reviewed"]
+    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Comma Tagged Ledger"]
+
+
+def test_admin_lessons_snapshot_ignores_stale_type_filter(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    context = TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        task_type="translation",
+    )
+    CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Lesson Row",
+        text="Lesson row marker.",
+    )
+
+    payload = AdminBridge(config).snapshot({"view": "Lessons", "filters": {"type": "concept"}})
+
+    assert payload["snapshot"]["filters"] == []
+    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Lesson Row"]
+
+
+def test_admin_snapshot_filters_confidence_as_minimum_threshold(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    context = TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        task_type="translation",
+    )
+    store = CrystalStore(config)
+    store.add_crystal(
+        context,
+        crystal_type="concept",
+        title="Low Confidence",
+        text="Low confidence marker.",
+        confidence=0.3,
+    )
+    store.add_crystal(
+        context,
+        crystal_type="concept",
+        title="High Confidence",
+        text="High confidence marker.",
+        confidence=0.8,
+    )
+
+    payload = AdminBridge(config).snapshot({"view": "Crystals", "filters": {"confidence": "60"}})
+
+    assert payload["snapshot"]["filters"] == ["confidence=60"]
+    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["High Confidence"]
+
+
+def test_admin_snapshot_filters_strength_as_minimum_threshold(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    context = TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        task_type="translation",
+    )
+    store = CrystalStore(config)
+    store.add_crystal(
+        context,
+        crystal_type="concept",
+        title="Low Strength",
+        text="Low strength marker.",
+        strength=0.3,
+    )
+    store.add_crystal(
+        context,
+        crystal_type="concept",
+        title="High Strength",
+        text="High strength marker.",
+        strength=0.8,
+    )
+
+    payload = AdminBridge(config).snapshot({"view": "Crystals", "filters": {"strength": "60%"}})
+
+    assert payload["snapshot"]["filters"] == ["strength=60%"]
+    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["High Strength"]
 
 
 def test_admin_snapshot_rejects_unknown_filter_key(tmp_path: Path) -> None:

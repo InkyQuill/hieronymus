@@ -254,7 +254,8 @@ class AdminBridge:
         selected_id: object,
         filters: dict[str, FilterValue],
     ) -> AdminSnapshot:
-        snapshot = self.store.snapshot(view, selected_id=selected_id)
+        filters = _active_filters(view, filters)
+        snapshot = self._base_snapshot(view, selected_id, filters)
         rows = _filter_rows(snapshot.rows, filters)
         selected = _select_row(rows, selected_id)
         detail = self.store.snapshot(view, selected_id=selected.id).detail if selected else None
@@ -268,6 +269,26 @@ class AdminBridge:
             detail=detail,
             filters=_filter_labels(filters),
         )
+
+    def _base_snapshot(
+        self,
+        view: str,
+        selected_id: object,
+        filters: dict[str, FilterValue],
+    ) -> AdminSnapshot:
+        if view not in {"Crystals", "Lessons"} or not filters:
+            return self.store.snapshot(view, selected_id=selected_id)
+        rows = self.store.list_crystals(
+            series_slug=_string_filter(filters, "series_slug") or None,
+            crystal_type=_crystal_filter_type(view, filters),
+            status=_string_filter(filters, "status") or None,
+            tags=_tuple_filter(filters, "tags"),
+        )
+        selected = _select_row(rows, selected_id)
+        detail = self.store.snapshot(view, selected_id=selected.id).detail if selected else None
+        if detail is None:
+            detail = AdminDetail(title=view, subtitle="No rows", body="")
+        return AdminSnapshot(view=view, rows=rows, selected=selected, detail=detail)
 
     def _bridge_detail(
         self,
@@ -316,7 +337,7 @@ def _string_tuple(value: object, name: str) -> tuple[str, ...]:
     if value is None:
         return ()
     if type(value) is str:
-        return (value,)
+        return tuple(item.strip() for item in value.split(",") if item.strip())
     if type(value) not in {list, tuple}:
         raise ValueError(f"{name} must be a list of strings")
     return tuple(_required_string(item, f"{name} item") for item in value)
@@ -373,14 +394,14 @@ def _filter_rows(rows: list[AdminRow], filters: dict[str, FilterValue]) -> list[
         result = [row for row in result if row.scope == series_slug]
     if language_pair := _string_filter(filters, "language_pair"):
         result = [row for row in result if row.language_pair == language_pair]
-    if confidence := _string_filter(filters, "confidence"):
-        confidence = _percent_filter(confidence)
+    confidence = _optional_percent(_string_filter(filters, "confidence"))
+    if confidence is not None:
         result = [
-            row for row in result if _quality_percent(row.quality_label, "conf") == confidence
+            row for row in result if _quality_percent(row.quality_label, "conf") >= confidence
         ]
-    if strength := _string_filter(filters, "strength"):
-        strength = _percent_filter(strength)
-        result = [row for row in result if _quality_percent(row.quality_label, "str") == strength]
+    strength = _optional_percent(_string_filter(filters, "strength"))
+    if strength is not None:
+        result = [row for row in result if _quality_percent(row.quality_label, "str") >= strength]
     if cycle := _string_filter(filters, "cycle"):
         result = [row for row in result if row.label == f"Cycle {cycle}"]
     if tags := filters.get("tags"):
@@ -426,17 +447,43 @@ def _string_filter(filters: dict[str, FilterValue], key: str) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _quality_percent(quality_label: str, label: str) -> str:
+def _tuple_filter(filters: dict[str, FilterValue], key: str) -> tuple[str, ...]:
+    value = filters.get(key, ())
+    return value if isinstance(value, tuple) else ()
+
+
+def _active_filters(view: str, filters: dict[str, FilterValue]) -> dict[str, FilterValue]:
+    if view == "Lessons":
+        return {key: value for key, value in filters.items() if key != "type"}
+    return filters
+
+
+def _crystal_filter_type(view: str, filters: dict[str, FilterValue]) -> str | None:
+    if view == "Lessons":
+        return "lesson"
+    return _string_filter(filters, "type") or _string_filter(filters, "kind") or None
+
+
+def _optional_percent(value: str) -> float | None:
+    if not value:
+        return None
+    try:
+        parsed = float(value.strip().removesuffix("%"))
+    except ValueError:
+        return None
+    return parsed / 100 if parsed > 1 else parsed
+
+
+def _quality_percent(quality_label: str, label: str) -> float:
     marker = f" {label}"
     for part in quality_label.split("/"):
         part = part.strip()
         if part.endswith(marker):
-            return part.removesuffix(marker).strip()
-    return ""
-
-
-def _percent_filter(value: str) -> str:
-    return value if value.endswith("%") else f"{value}%"
+            try:
+                return float(part.removesuffix(marker).strip().removesuffix("%")) / 100
+            except ValueError:
+                return 0.0
+    return 0.0
 
 
 def _split_parts(params: dict[str, object]) -> list[tuple[str, str] | dict[str, str]]:
