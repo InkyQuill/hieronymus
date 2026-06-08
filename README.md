@@ -53,6 +53,17 @@ Dreaming automation is controlled by `autostart_enabled`,
 `min_interval_minutes`, `new_short_term_memory_threshold`, and
 `max_cycles_per_autostart`.
 
+## Frontend Development
+
+The Ink/React frontend lives under `frontend/`. Use pnpm from the repository
+root:
+
+```bash
+pnpm --dir frontend install
+pnpm --dir frontend test
+pnpm --dir frontend build
+```
+
 Command summary:
 
 - `hiero config` edits dream provider and autostart settings in a local TUI.
