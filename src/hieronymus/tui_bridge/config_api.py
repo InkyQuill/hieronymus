@@ -80,6 +80,8 @@ class ConfigBridge:
         settings = self._settings_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
+        if errors := validate_draft(settings):
+            return self._payload(settings, selected, validation_errors=errors)
         result = self.registry.check(self.config, selected, settings=settings)
         check_result = _result_to_json_dict(result)
         _redact_error(check_result, settings)
@@ -89,6 +91,8 @@ class ConfigBridge:
         settings = self._settings_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
+        if errors := validate_draft(settings):
+            return self._payload(settings, selected, validation_errors=errors)
         result = self.registry.list_model_suggestions(self.config, selected, settings=settings)
         suggestions = _result_to_json_dict(result)
         _redact_error(suggestions, settings)

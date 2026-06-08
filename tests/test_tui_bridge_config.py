@@ -180,6 +180,52 @@ def test_config_check_provider_redacts_error(tmp_path: Path, monkeypatch) -> Non
     assert "raw-secret-value" not in repr(payload)
 
 
+def test_config_check_provider_returns_validation_for_malformed_api_key_env(
+    tmp_path: Path,
+) -> None:
+    class Registry:
+        def check(self, *args, **kwargs):
+            raise AssertionError("invalid draft should not reach provider check")
+
+    bridge = ConfigBridge(_config(tmp_path), registry=Registry())
+
+    payload = bridge.check_provider(
+        {
+            "selected_provider": "openai",
+            "draft": {"providers": {"openai": {"api_key_env": 123}}},
+        }
+    )
+
+    assert payload["validation"] == {
+        "ok": False,
+        "errors": ["providers.openai.api_key_env must be a string"],
+    }
+    assert payload["check_result"] == {}
+
+
+def test_config_model_suggestions_returns_validation_for_malformed_timeout(
+    tmp_path: Path,
+) -> None:
+    class Registry:
+        def list_model_suggestions(self, *args, **kwargs):
+            raise AssertionError("invalid draft should not reach model suggestions")
+
+    bridge = ConfigBridge(_config(tmp_path), registry=Registry())
+
+    payload = bridge.model_suggestions(
+        {
+            "selected_provider": "openai",
+            "draft": {"providers": {"openai": {"timeout_seconds": "slow"}}},
+        }
+    )
+
+    assert payload["validation"] == {
+        "ok": False,
+        "errors": ["providers.openai.timeout_seconds must be a number"],
+    }
+    assert payload["suggestions"] == {}
+
+
 def test_config_model_suggestions_fall_back_to_defaults(tmp_path: Path) -> None:
     bridge = ConfigBridge(_config(tmp_path))
 
