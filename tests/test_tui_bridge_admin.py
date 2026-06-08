@@ -6,6 +6,7 @@ from hieronymus.admin import ADMIN_VIEWS, AdminStore
 from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
+from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.tui_bridge.admin_api import AdminBridge
@@ -60,6 +61,34 @@ def test_admin_snapshot_filters_crystal_status(tmp_path: Path) -> None:
     assert payload["snapshot"]["filters"] == ["status=active"]
 
 
+def test_admin_snapshot_accepts_type_filter_alias(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    series = Registry(config).create_series(
+        slug="another-series",
+        title="Another Series",
+        source_language="ja",
+        target_language="ru",
+    )
+    context = TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type="translation",
+    )
+    CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Lesson Row",
+        text="Lesson row marker.",
+    )
+
+    payload = AdminBridge(config).snapshot({"view": "Crystals", "filters": {"type": "lesson"}})
+
+    assert payload["snapshot"]["filters"] == ["type=lesson"]
+    assert [row["label"] for row in payload["snapshot"]["rows"]] == ["Lesson Row"]
+
+
 def test_admin_delete_requires_confirmation(tmp_path: Path) -> None:
     config = _config(tmp_path)
     crystal_id = _seed(config)
@@ -90,6 +119,44 @@ def test_admin_edit_crystal_refreshes_selected_detail(tmp_path: Path) -> None:
     assert payload["result"]["message"] == "Crystal edited"
     assert payload["snapshot"]["selected"]["label"] == "Guild Ledger Notes"
     assert payload["snapshot"]["detail"]["body"] == "Keep term stable."
+
+
+def test_admin_crystal_mutation_preserves_lessons_view(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="ru",
+    )
+    context = TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type="translation",
+    )
+    lesson_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Lesson Ledger",
+        text="Lesson ledger detail marker.",
+    )
+
+    payload = AdminBridge(config).reinforce_crystal({"id": lesson_id, "view": "Lessons"})
+
+    assert payload["snapshot"]["view"] == "Lessons"
+    assert payload["snapshot"]["selected"]["label"] == "Lesson Ledger"
+
+
+def test_admin_empty_evidence_uses_default(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    crystal_id = _seed(config)
+
+    AdminBridge(config).reinforce_crystal({"id": crystal_id, "evidence": "  "})
+
+    with connect(config.database_path) as conn:
+        event = conn.execute("select evidence from memory_events").fetchone()
+    assert event["evidence"] == "Reinforced from admin bridge"
 
 
 def test_admin_proposal_approval_refreshes_proposal_view(tmp_path: Path) -> None:

@@ -46,7 +46,12 @@ class AdminBridge:
             tags=_string_tuple(params.get("tags"), "tags"),
         )
         result = ActionResult("crystal", crystal_id, "add", "Crystal added")
-        return self._mutation_payload(result, params, view="Crystals", selected_id=crystal_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=_crystal_mutation_view(params),
+            selected_id=crystal_id,
+        )
 
     def edit_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
@@ -55,7 +60,12 @@ class AdminBridge:
             title=_required_string(params.get("title"), "title"),
             text=_required_string(params.get("text"), "text"),
         )
-        return self._mutation_payload(result, params, view="Crystals", selected_id=crystal_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=_crystal_mutation_view(params),
+            selected_id=crystal_id,
+        )
 
     def merge_crystals(self, params: dict[str, object]) -> dict[str, object]:
         crystal_ids = _required_int_list(params.get("ids"), "ids")
@@ -65,14 +75,24 @@ class AdminBridge:
             text=_required_string(params.get("text"), "text"),
         )
         result = ActionResult("crystal", merged_id, "merge", "Crystals merged")
-        return self._mutation_payload(result, params, view="Crystals", selected_id=merged_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=_crystal_mutation_view(params),
+            selected_id=merged_id,
+        )
 
     def split_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
         new_ids = self.store.split_crystal(crystal_id, parts=_split_parts(params))
         selected_id = new_ids[0] if new_ids else crystal_id
         result = ActionResult("crystal", selected_id, "split", "Crystal split")
-        return self._mutation_payload(result, params, view="Crystals", selected_id=selected_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=_crystal_mutation_view(params),
+            selected_id=selected_id,
+        )
 
     def supersede_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
@@ -81,7 +101,12 @@ class AdminBridge:
             replacement_id=_required_int(params.get("replacement_id"), "replacement_id"),
             evidence=_evidence(params, default="Superseded from admin bridge"),
         )
-        return self._mutation_payload(result, params, view="Crystals", selected_id=crystal_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=_crystal_mutation_view(params),
+            selected_id=crystal_id,
+        )
 
     def reinforce_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
@@ -89,7 +114,12 @@ class AdminBridge:
             crystal_id,
             evidence=_evidence(params, default="Reinforced from admin bridge"),
         )
-        return self._mutation_payload(result, params, view="Crystals", selected_id=crystal_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=_crystal_mutation_view(params),
+            selected_id=crystal_id,
+        )
 
     def decay_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
@@ -97,7 +127,12 @@ class AdminBridge:
             crystal_id,
             evidence=_evidence(params, default="Decayed from admin bridge"),
         )
-        return self._mutation_payload(result, params, view="Crystals", selected_id=crystal_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=_crystal_mutation_view(params),
+            selected_id=crystal_id,
+        )
 
     def deprecate_crystal(self, params: dict[str, object]) -> dict[str, object]:
         crystal_id = _required_int(params.get("id"), "id")
@@ -105,7 +140,12 @@ class AdminBridge:
             crystal_id,
             evidence=_evidence(params, default="Deprecated from admin bridge"),
         )
-        return self._mutation_payload(result, params, view="Crystals", selected_id=crystal_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=_crystal_mutation_view(params),
+            selected_id=crystal_id,
+        )
 
     def delete_crystal(self, params: dict[str, object]) -> dict[str, object]:
         if params.get("confirmed") is not True:
@@ -115,7 +155,12 @@ class AdminBridge:
             crystal_id,
             evidence=_evidence(params, default="Deleted from admin bridge"),
         )
-        return self._mutation_payload(result, params, view="Crystals", selected_id=crystal_id)
+        return self._mutation_payload(
+            result,
+            params,
+            view=_crystal_mutation_view(params),
+            selected_id=crystal_id,
+        )
 
     def approve_proposal(self, params: dict[str, object]) -> dict[str, object]:
         proposal_id = _required_int(params.get("id"), "id")
@@ -268,9 +313,13 @@ def _crystal_type(params: dict[str, object]) -> str:
     return _required_string(value, "type")
 
 
+def _crystal_mutation_view(params: dict[str, object]) -> str:
+    return _optional_string(params.get("view"), "view") or DEFAULT_VIEW
+
+
 def _evidence(params: dict[str, object], *, default: str) -> str:
     evidence = params.get("evidence", default)
-    if evidence is None:
+    if evidence is None or (type(evidence) is str and not evidence.strip()):
         return default
     return _required_string(evidence, "evidence")
 
@@ -281,7 +330,7 @@ def _filters(value: object) -> dict[str, str]:
     if type(value) is not dict:
         raise ValueError("filters must be an object")
     result: dict[str, str] = {}
-    for key in ("status", "kind"):
+    for key in ("status", "kind", "type"):
         raw = value.get(key)
         if raw is None or raw == "":
             continue
@@ -295,6 +344,8 @@ def _filter_rows(rows: list[AdminRow], filters: dict[str, str]) -> list[AdminRow
         result = [row for row in result if row.status == status]
     if kind := filters.get("kind"):
         result = [row for row in result if row.kind == kind]
+    if row_type := filters.get("type"):
+        result = [row for row in result if row.kind == row_type]
     return result
 
 
@@ -308,7 +359,7 @@ def _select_row(rows: list[AdminRow], selected_id: object) -> AdminRow | None:
 
 
 def _filter_labels(filters: dict[str, str]) -> list[str]:
-    return [f"{key}={filters[key]}" for key in ("status", "kind") if key in filters]
+    return [f"{key}={filters[key]}" for key in ("status", "kind", "type") if key in filters]
 
 
 def _split_parts(params: dict[str, object]) -> list[tuple[str, str] | dict[str, str]]:
