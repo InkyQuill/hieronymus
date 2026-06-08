@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 
 from hieronymus.agent_plugins import available_plugins
 from hieronymus.config import HieronymusConfig
+from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_manager import ServiceManager
 from hieronymus.settings import SettingsError, load_settings
 
@@ -138,12 +139,16 @@ class Doctor:
 
         active_name = settings.dreaming.active_provider
         active = settings.providers[active_name]
+
+        def safe(message: str) -> str:
+            return redact_configured_secret_values(message, settings)
+
         if not active.enabled:
             report["errors"].append(
                 DoctorFinding(
                     level="error",
                     code="active-provider-disabled",
-                    message=f"Active dream provider is disabled: {active_name}",
+                    message=safe(f"Active dream provider is disabled: {active_name}"),
                 )
             )
             return
@@ -157,7 +162,7 @@ class Doctor:
                 DoctorFinding(
                     level="error",
                     code="provider-env-missing",
-                    message=(
+                    message=safe(
                         "Missing environment variable for active dream provider: "
                         f"{active.api_key_env}"
                     ),
@@ -169,7 +174,7 @@ class Doctor:
             DoctorFinding(
                 level="info",
                 code="provider-configured",
-                message=f"Active dream provider is configured: {active_name}",
+                message=safe(f"Active dream provider is configured: {active_name}"),
             )
         )
 

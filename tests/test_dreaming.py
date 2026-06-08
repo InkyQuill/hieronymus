@@ -15,6 +15,7 @@ from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
+from hieronymus.settings import ProviderSettings, load_settings, save_settings
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -255,6 +256,41 @@ def test_dreaming_records_failed_run_when_settings_are_invalid(
         run = conn.execute("select status, error from dream_runs").fetchone()
     assert run["status"] == "failed"
     assert run["error"] == "provider failed"
+
+
+def test_dream_error_records_redact_configured_api_key_value(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HIERONYMUS_PROVIDER_KEY", "raw-secret-value")
+    save_settings(
+        config,
+        load_settings(config).with_provider(
+            "openai",
+            ProviderSettings(
+                enabled=True,
+                model="gpt-4.1-mini",
+                api_key_env="HIERONYMUS_PROVIDER_KEY",
+            ),
+        ),
+    )
+
+    class LeakyProvider:
+        name = "leaky"
+
+        def crystallize(self, context, memories):
+            raise RuntimeError("provider rejected raw-secret-value")
+
+    context = _context(config)
+    _completed_session(config, context)
+
+    with pytest.raises(RuntimeError, match="raw-secret-value"):
+        DreamService(config, LeakyProvider()).run_cycle()
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select error from dream_runs").fetchone()
+
+    assert run["error"] == "provider rejected [redacted]"
 
 
 def test_dreaming_records_failed_run_for_invalid_provider_output(

@@ -5,8 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.doctor import Doctor, DoctorFinding
-from hieronymus.settings import load_settings, save_settings
+from hieronymus.doctor import Doctor, DoctorFinding, report_to_json
+from hieronymus.settings import DreamingSettings, ProviderSettings, load_settings, save_settings
 
 
 def test_doctor_reports_missing_config_root_as_autofixable(tmp_path: Path) -> None:
@@ -83,3 +83,30 @@ def test_doctor_reports_missing_active_provider_env(
 
     assert report["errors"][0].code == "provider-env-missing"
     assert "MISSING_OPENAI_KEY" in report["errors"][0].message
+
+
+def test_doctor_json_does_not_include_raw_api_key_value(config, monkeypatch):
+    monkeypatch.setenv("HIERONYMUS_OPENAI_KEY", "raw-secret-value")
+    settings = (
+        load_settings(config)
+        .with_provider(
+            "openai",
+            ProviderSettings(
+                enabled=True,
+                model="gpt-4.1-mini",
+                api_key_env="HIERONYMUS_OPENAI_KEY",
+            ),
+        )
+        .with_dreaming(DreamingSettings(active_provider="openai"))
+    )
+    save_settings(config, settings)
+
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        payload = report_to_json(Doctor(config).run())
+
+    assert "provider-configured" in repr(payload)
+    assert "raw-secret-value" not in repr(payload)
