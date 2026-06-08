@@ -100,18 +100,28 @@ def read_dream_cycle_state(config: HieronymusConfig) -> DreamCycleState | None:
         return None
     if is_pid_running(state.pid):
         return state
+    _remove_state_if_unchanged(paths, state)
+    return None
+
+
+def _remove_state_if_unchanged(
+    paths: DreamCyclePaths,
+    expected: DreamCycleState,
+) -> None:
+    current = _read_state_file(paths)
+    if current is None or current.token != expected.token or current.pid != expected.pid:
+        return
     try:
         paths.state_json.unlink()
     except FileNotFoundError:
         pass
-    return None
 
 
 @contextmanager
 def dream_cycle_lock(
     config: HieronymusConfig,
-    *,
     owner: str,
+    *,
     wait: bool = False,
 ) -> Iterator[DreamCycleState]:
     paths = dream_cycle_paths(config)

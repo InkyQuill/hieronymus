@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -8,6 +9,7 @@ import pytest
 
 from hieronymus.dream_locks import (
     DreamCycleAlreadyRunning,
+    DreamCycleState,
     dream_cycle_lock,
     dream_cycle_paths,
     read_dream_cycle_state,
@@ -21,6 +23,11 @@ def test_dream_cycle_lock_acquires_and_releases(config):
         assert read_dream_cycle_state(config).owner == "manual"
 
     assert read_dream_cycle_state(config) is None
+
+
+def test_dream_cycle_lock_accepts_positional_owner(config):
+    with dream_cycle_lock(config, "manual") as state:
+        assert state.owner == "manual"
 
 
 def test_second_dream_cycle_lock_fails_while_active(config):
@@ -62,3 +69,44 @@ def test_stale_state_with_dead_pid_is_cleaned_conservatively(config):
 
     assert read_dream_cycle_state(config) is None
     assert not paths.state_json.exists()
+
+
+def test_stale_cleanup_does_not_remove_replaced_state(config, monkeypatch):
+    paths = dream_cycle_paths(config)
+    paths.config_root.mkdir(parents=True, exist_ok=True)
+    stale = DreamCycleState(
+        owner="manual",
+        pid=-1,
+        started_at=(datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+        token="stale",
+    )
+    fresh = DreamCycleState(
+        owner="autostart",
+        pid=os.getpid(),
+        started_at=datetime.now(UTC).isoformat(),
+        token="fresh",
+    )
+    paths.state_json.write_text(
+        json.dumps(stale.to_json_dict(), sort_keys=True),
+        encoding="utf-8",
+    )
+
+    calls = 0
+
+    def replace_state_after_stale_check(pid: int) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            paths.state_json.write_text(
+                json.dumps(fresh.to_json_dict(), sort_keys=True),
+                encoding="utf-8",
+            )
+        return pid > 0
+
+    monkeypatch.setattr(
+        "hieronymus.dream_locks.is_pid_running",
+        replace_state_after_stale_check,
+    )
+
+    assert read_dream_cycle_state(config) is None
+    assert json.loads(paths.state_json.read_text(encoding="utf-8"))["token"] == "fresh"
