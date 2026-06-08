@@ -231,6 +231,42 @@ def test_provider_check_uses_unsaved_in_memory_settings(config, monkeypatch):
     assert "draft-secret" not in repr(result.to_json_dict())
 
 
+def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> None:
+    class Transport:
+        def __init__(self):
+            self.requests = []
+
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            self.requests.append({"url": url, "headers": headers, "timeout": timeout})
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"gpt-4.1"},{"id":"gpt-4.1-mini"}]}',
+            )
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = Transport()
+
+    result = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["gpt-4.1", "gpt-4.1-mini"],
+        "source": "api",
+        "error": "",
+    }
+    assert transport.requests[0]["url"] == "https://api.openai.com/v1/models"
+    assert "secret-openai" not in repr(result.to_json_dict())
+
+
 def test_deterministic_check_passes_without_network(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 

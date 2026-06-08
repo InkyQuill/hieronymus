@@ -39,6 +39,14 @@ class HTTPTransport(Protocol):
         timeout: float,
     ) -> HTTPResponse: ...
 
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        timeout: float,
+    ) -> HTTPResponse: ...
+
 
 class UrllibTransport:
     def post_json(
@@ -55,6 +63,28 @@ class UrllibTransport:
             data=data,
             headers={**headers, "Content-Type": "application/json"},
             method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                body = response.read().decode("utf-8", errors="replace")
+                return HTTPResponse(status=response.status, body=body)
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            return HTTPResponse(status=error.code, body=body)
+        except urllib.error.URLError:
+            return HTTPResponse(status=0, body="network error")
+
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        timeout: float,
+    ) -> HTTPResponse:
+        request = urllib.request.Request(
+            url,
+            headers={**headers, "Accept": "application/json"},
+            method="GET",
         )
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -90,6 +120,22 @@ class ProviderCheckResult:
             "model": self.model,
             "error": self.error,
             "latency_ms": self.latency_ms,
+        }
+
+
+@dataclass(frozen=True)
+class ModelSuggestionResult:
+    provider: str
+    models: list[str]
+    source: str
+    error: str = ""
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "provider": self.provider,
+            "models": self.models,
+            "source": self.source,
+            "error": self.error,
         }
 
 
@@ -158,6 +204,45 @@ class ProviderRegistry:
                 }
             )
         return statuses
+
+    def list_model_suggestions(
+        self,
+        config: HieronymusConfig,
+        name: str,
+        *,
+        settings: HieronymusSettings | None = None,
+    ) -> ModelSuggestionResult:
+        self.metadata(name)
+        defaults = _default_model_suggestions(name)
+        if name in {"anthropic", "deterministic"}:
+            return ModelSuggestionResult(provider=name, models=defaults, source="defaults")
+
+        active_settings = settings or load_settings(config)
+        provider = active_settings.providers.get(name, ProviderSettings())
+        api_key = os.environ.get(provider.api_key_env)
+        if not api_key:
+            return ModelSuggestionResult(
+                provider=name,
+                models=defaults,
+                source="defaults",
+                error=f"missing environment variable: {provider.api_key_env}",
+            )
+
+        try:
+            response = self._list_remote_models(name, provider, api_key)
+            if not 200 <= response.status < 300:
+                raise ValueError("model suggestions request failed")
+            models = _parse_model_suggestions(name, response.body)
+            if not models:
+                raise ValueError("empty model suggestions")
+        except Exception:
+            return ModelSuggestionResult(
+                provider=name,
+                models=defaults,
+                source="defaults",
+                error="model suggestions unavailable",
+            )
+        return ModelSuggestionResult(provider=name, models=models, source="api")
 
     def check(
         self,
@@ -261,6 +346,27 @@ class ProviderRegistry:
             )
         raise ValueError(f"unsupported dream provider: {name}")
 
+    def _list_remote_models(
+        self,
+        name: str,
+        provider: ProviderSettings,
+        api_key: str,
+    ) -> HTTPResponse:
+        if name == "openai":
+            base_url = (provider.base_url or "https://api.openai.com/v1").rstrip("/")
+            return self._transport.get_json(
+                f"{base_url}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=provider.timeout_seconds,
+            )
+        if name == "gemini":
+            return self._transport.get_json(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                headers={"x-goog-api-key": api_key},
+                timeout=provider.timeout_seconds,
+            )
+        raise ValueError(f"unsupported dream provider: {name}")
+
 
 def _dream_prompt(
     context: TranslationContext,
@@ -320,6 +426,39 @@ def _dream_prompt(
         },
         ensure_ascii=False,
     )
+
+
+def _default_model_suggestions(name: str) -> list[str]:
+    defaults = {
+        "openai": ["gpt-4.1-mini", "gpt-4.1", "o4-mini"],
+        "gemini": ["gemini-2.5-flash", "gemini-2.5-pro"],
+        "anthropic": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
+        "deterministic": [""],
+    }
+    return list(defaults[name])
+
+
+def _parse_model_suggestions(name: str, body: str) -> list[str]:
+    payload = json.loads(body)
+    if type(payload) is not dict:
+        return []
+    if name == "openai":
+        data = payload.get("data")
+        if type(data) is not list:
+            return []
+        return sorted(
+            item["id"] for item in data if type(item) is dict and type(item.get("id")) is str
+        )
+    if name == "gemini":
+        data = payload.get("models")
+        if type(data) is not list:
+            return []
+        return sorted(
+            item["name"].removeprefix("models/")
+            for item in data
+            if type(item) is dict and type(item.get("name")) is str
+        )
+    return []
 
 
 def _parse_dream_json(provider_name: str, raw_text: str) -> DreamOutput:
