@@ -24,21 +24,46 @@ export function App({ mode, client }: Props) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let active = true;
+    setError("");
+
     if (mode === "admin") {
+      setAdminInitial(null);
+      setConfigInitial(null);
       client
         .request("admin.bootstrap", {})
-        .then((payload) => setAdminInitial(AdminBootstrapSchema.parse(payload)))
-        .catch((err: Error) => setError(err.message));
+        .then((payload) => {
+          if (active) {
+            setAdminInitial(AdminBootstrapSchema.parse(payload));
+          }
+        })
+        .catch((err: Error) => {
+          if (active) {
+            setError(err.message);
+          }
+        });
     }
 
     if (mode === "config") {
+      setAdminInitial(null);
+      setConfigInitial(null);
       client
         .request("config.bootstrap", {})
-        .then((payload) =>
-          setConfigInitial(ConfigBootstrapSchema.parse(payload)),
-        )
-        .catch((err: Error) => setError(err.message));
+        .then((payload) => {
+          if (active) {
+            setConfigInitial(ConfigBootstrapSchema.parse(payload));
+          }
+        })
+        .catch((err: Error) => {
+          if (active) {
+            setError(err.message);
+          }
+        });
     }
+
+    return () => {
+      active = false;
+    };
   }, [client, mode]);
 
   if (error) {

@@ -132,13 +132,120 @@ describe("AdminScreen", () => {
     expect(calls).toEqual([
       {
         method: "admin.reinforce_crystal",
-        params: { id: 1 },
+        params: { id: 1, view: "Crystals" },
       },
     ]);
     expect(app.lastFrame()).toContain("series 2");
     expect(app.lastFrame()).toContain("reinforced");
   });
+
+  it("does not send crystal mutations from proposals", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.reject(new Error("unexpected mutation"));
+    });
+    const app = render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: snapshotForView("Proposals"),
+        }}
+        client={client}
+      />,
+    );
+
+    await nextTick();
+    app.stdin.write("d");
+    app.stdin.write("+");
+    await nextTick();
+
+    expect(calls).toEqual([]);
+  });
+
+  it("reinforces lessons with the current view and preserves lessons", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: {
+          ...snapshotForView("Lessons"),
+          detail: {
+            ...bootstrap().snapshot.detail,
+            body: "Lesson reinforcement marker.",
+          },
+        },
+      });
+    });
+    const app = render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: snapshotForView("Lessons"),
+        }}
+        client={client}
+      />,
+    );
+
+    await nextTick();
+    app.stdin.write("+");
+    await waitFor(() =>
+      expect(app.lastFrame()).toContain("Lesson reinforcement marker."),
+    );
+
+    expect(calls).toEqual([
+      {
+        method: "admin.reinforce_crystal",
+        params: { id: 1, view: "Lessons" },
+      },
+    ]);
+    expect(app.lastFrame()).toContain("> Lessons");
+  });
+
+  it("ignores view and action keys while an operation is in flight", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const deferred = deferredResponse();
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return deferred.promise;
+    });
+    const app = render(<AdminScreen initial={bootstrap()} client={client} />);
+
+    await nextTick();
+    app.stdin.write("1");
+    app.stdin.write("2");
+    app.stdin.write("+");
+    await waitFor(() => expect(calls).toHaveLength(1));
+
+    expect(calls).toEqual([
+      {
+        method: "admin.snapshot",
+        params: { view: "Concepts" },
+      },
+    ]);
+
+    deferred.resolve({
+      stats: bootstrap().stats,
+      snapshot: snapshotForView("Concepts"),
+    });
+    await waitFor(() => expect(app.lastFrame()).toContain("Loaded Concepts"));
+  });
 });
+
+function snapshotForView(view: string) {
+  return {
+    ...bootstrap().snapshot,
+    view,
+    detail: {
+      ...bootstrap().snapshot.detail,
+      subtitle: view,
+    },
+  };
+}
 
 function fakeClient(
   request: (
@@ -147,6 +254,18 @@ function fakeClient(
   ) => Promise<Record<string, unknown>>,
 ): JsonRpcClient {
   return { request } as unknown as JsonRpcClient;
+}
+
+function deferredResponse() {
+  let resolve!: (payload: Record<string, unknown>) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<Record<string, unknown>>(
+    (promiseResolve, promiseReject) => {
+      resolve = promiseResolve;
+      reject = promiseReject;
+    },
+  );
+  return { promise, resolve, reject };
 }
 
 async function nextTick() {

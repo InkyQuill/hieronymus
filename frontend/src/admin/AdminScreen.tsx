@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdin } from "ink";
 import { z } from "zod";
 import {
@@ -26,6 +26,7 @@ type Status = {
 };
 
 const viewKeys = ["1", "2", "3", "4", "5", "6", "7", "8"] as const;
+const crystalMutationViews = new Set(["Crystals", "Lessons"]);
 const AdminOperationResponseSchema = z
   .object({
     stats: z.record(z.number()).optional(),
@@ -43,6 +44,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     message: serviceStatus(initial.service.running),
     error: false,
   });
+  const operationInFlight = useRef(false);
   const canUseInkInput = Boolean(
     client &&
     isRawModeSupported &&
@@ -66,6 +68,10 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       return;
     }
 
+    if (operationInFlight.current) {
+      return;
+    }
+
     const viewIndex = viewKeys.indexOf(input as (typeof viewKeys)[number]);
     if (viewIndex >= 0) {
       const view = initial.views[viewIndex];
@@ -78,13 +84,14 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           setSnapshot,
           setStats,
           setStatus,
+          operationInFlight,
         });
       }
       return;
     }
 
     const selectedId = snapshot.selected?.id;
-    if (selectedId === undefined) {
+    if (selectedId === undefined || !crystalMutationViews.has(snapshot.view)) {
       return;
     }
 
@@ -92,11 +99,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       void runSnapshotOperation({
         client,
         method: "admin.delete_crystal",
-        params: { id: selectedId, confirmed: true },
+        params: { id: selectedId, view: snapshot.view, confirmed: true },
         successMessage: "Deleted crystal",
         setSnapshot,
         setStats,
         setStatus,
+        operationInFlight,
       });
       return;
     }
@@ -105,11 +113,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       void runSnapshotOperation({
         client,
         method: "admin.reinforce_crystal",
-        params: { id: selectedId },
+        params: { id: selectedId, view: snapshot.view },
         successMessage: "Reinforced crystal",
         setSnapshot,
         setStats,
         setStatus,
+        operationInFlight,
       });
       return;
     }
@@ -118,11 +127,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       void runSnapshotOperation({
         client,
         method: "admin.decay_crystal",
-        params: { id: selectedId },
+        params: { id: selectedId, view: snapshot.view },
         successMessage: "Decayed crystal",
         setSnapshot,
         setStats,
         setStatus,
+        operationInFlight,
       });
     }
   };
@@ -140,7 +150,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     }
 
     const onData = (chunk: Buffer | string) => {
-      handleInput(String(chunk)[0] ?? "");
+      const text = String(chunk);
+      if (text === "\u0010") {
+        handleInput("p", true);
+        return;
+      }
+      handleInput(text[0] ?? "");
     };
 
     stdin.on("data", onData);
@@ -198,6 +213,7 @@ async function runSnapshotOperation({
   setSnapshot,
   setStats,
   setStatus,
+  operationInFlight,
 }: {
   client: JsonRpcClient;
   method: string;
@@ -206,7 +222,9 @@ async function runSnapshotOperation({
   setSnapshot: (snapshot: AdminSnapshot) => void;
   setStats: (stats: Record<string, number>) => void;
   setStatus: (status: Status) => void;
+  operationInFlight: React.MutableRefObject<boolean>;
 }) {
+  operationInFlight.current = true;
   setStatus({ message: `Working: ${successMessage}`, error: false });
   try {
     const response = await client.request(method, params);
@@ -219,6 +237,8 @@ async function runSnapshotOperation({
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     setStatus({ message, error: true });
+  } finally {
+    operationInFlight.current = false;
   }
 }
 
