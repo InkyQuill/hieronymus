@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 from dataclasses import asdict
 from pathlib import Path
@@ -127,11 +128,15 @@ def _frontend_entrypoint() -> str:
     return str(Path.cwd() / "frontend" / "dist" / "main.js")
 
 
-def _launch_ink(mode: str) -> None:
-    subprocess.run(
-        ["node", _frontend_entrypoint(), mode, "--bridge-command", "hiero"],
-        check=True,
-    )
+def _launch_ink(mode: str, *, data_root: Path) -> None:
+    bridge_command = shlex.join(["hiero", "--data-root", str(data_root), "tui-bridge"])
+    command = ["node", _frontend_entrypoint(), mode, "--bridge-command", bridge_command]
+    try:
+        subprocess.run(command, check=True)
+    except FileNotFoundError as error:
+        raise click.ClickException("Ink TUI launch failed: node executable not found") from error
+    except subprocess.CalledProcessError as error:
+        raise click.ClickException(f"Ink TUI exited with code {error.returncode}") from error
 
 
 @click.group(invoke_without_command=True)
@@ -207,7 +212,7 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
     config = ctx.obj["config"]
     if not json_output:
         if _tui_mode() == "ink":
-            _launch_ink("config")
+            _launch_ink("config", data_root=config.data_root)
             return
         HieronymusConfigApp(config).run()
         return
@@ -336,7 +341,7 @@ def admin(ctx: click.Context, json_output: bool) -> None:
         return
 
     if _tui_mode() == "ink":
-        _launch_ink("admin")
+        _launch_ink("admin", data_root=config.data_root)
         return
     HieronymusAdminApp(config).run()
 

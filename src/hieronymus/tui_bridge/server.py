@@ -81,10 +81,14 @@ def _dispatch_line(config: HieronymusConfig, line: str) -> dict[str, object]:
         request = parse_request(line)
         return _dispatch_request(config, request)
     except RpcError as error:
-        return error_response(None, error, settings=_settings_or_none(config))
+        return error_response(
+            _request_id_from_line(line),
+            error,
+            settings=_settings_or_none(config),
+        )
     except Exception as error:
         return {
-            "id": None,
+            "id": _request_id_from_line(line),
             "ok": False,
             "error": error_payload(error, settings=_settings_or_none(config)),
         }
@@ -108,6 +112,8 @@ def _dispatch_request(config: HieronymusConfig, request: RpcRequest) -> dict[str
 def _request_id(raw: object) -> str | None:
     if type(raw) is dict and type(raw.get("id")) is str:
         return raw["id"]
+    if type(raw) is dict and type(raw.get("id")) is int:
+        return str(raw["id"])
     return None
 
 
@@ -116,6 +122,14 @@ def _normalize_dispatch_request(raw: dict[str, object]) -> dict[str, object]:
     if type(request.get("id")) is int:
         request["id"] = str(request["id"])
     return request
+
+
+def _request_id_from_line(line: str) -> str | None:
+    try:
+        raw = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return _request_id(raw)
 
 
 def _settings_or_none(config: HieronymusConfig) -> HieronymusSettings | None:
