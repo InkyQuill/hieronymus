@@ -49,6 +49,13 @@ Dreaming automation is controlled by `autostart_enabled`,
 `min_interval_minutes`, `new_short_term_memory_threshold`, and
 `max_cycles_per_autostart`.
 
+Command summary:
+
+- `hiero config` edits dream provider and autostart settings in a local TUI.
+- `hiero config --json` prints secret-safe provider and dreaming status for
+  automation.
+- `hiero dream --wait` waits for an active dream cycle instead of failing fast.
+
 Uninstall the app with:
 
 ```bash

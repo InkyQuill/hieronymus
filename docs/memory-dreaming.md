@@ -74,6 +74,32 @@ short-term memories exists. The threshold counts short-term memories, not
 long-term crystals or remembered strict terminology. `max_cycles_per_autostart`
 limits how many dream cycles a single automatic start may run.
 
+## Dream Cycle Concurrency
+
+Dream cycles are serialized per Hieronymus data root. CLI, MCP, admin TUI, and
+daemon autostart all share the same `dream-cycle.lock` file under the config
+root, plus an in-process guard for service threads.
+
+Manual runs fail fast when another cycle is active:
+
+```bash
+hiero dream
+```
+
+Use explicit waiting only when the caller is prepared to block:
+
+```bash
+hiero dream --wait
+```
+
+Autostart never waits. If a scheduled cycle is due while another cycle is
+active, it records a skipped dream run and reports `reason: cycle-active` in
+service status.
+
+The `dream-cycle.json` state file is informational. Hieronymus removes stale
+state only when the recorded PID is no longer running; it never breaks a live
+OS lock.
+
 ## CLI Workflow
 
 Initialize the series in the global store:

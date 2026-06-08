@@ -82,6 +82,16 @@ For machine-readable status, use:
 hiero config --json
 ```
 
+The config TUI edits provider fields (`enabled`, `model`, `api_key_env`,
+`base_url`, `timeout_seconds`) and dreaming automation fields
+(`active_provider`, `autostart_enabled`, `min_interval_minutes`,
+`new_short_term_memory_threshold`, `max_cycles_per_autostart`).
+
+Edits stay in memory until saved. Reload discards unsaved edits and reads
+`settings.toml` again. Provider checks use the edited in-memory settings. API
+key values are never stored or displayed; the TUI shows only the configured
+environment variable name and whether that variable exists.
+
 Non-secret settings are stored in `~/.config/hieronymus/settings.toml` by
 default, or in `settings.toml` under the configured `HIERONYMUS_DATA_ROOT`.
 API key values are not stored. Provider entries store the environment variable
