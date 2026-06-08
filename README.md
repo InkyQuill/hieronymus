@@ -20,6 +20,42 @@ Update managed installs in place with:
 hiero update
 ```
 
+## Configuration
+
+Open the local configuration TUI with:
+
+```bash
+hiero config
+```
+
+For scripts and health checks, use machine-readable status:
+
+```bash
+hiero config --json
+```
+
+Non-secret settings are stored in `~/.config/hieronymus/settings.toml`.
+API key values are not stored. Provider entries store environment variable names,
+and runtime provider calls read the secret value from the environment.
+
+Supported dream providers:
+
+- `deterministic`: offline local fallback.
+- `openai`: OpenAI and OpenAI-compatible endpoints using `OPENAI_API_KEY`.
+- `gemini`: Gemini API using `GEMINI_API_KEY`.
+- `anthropic`: Anthropic Messages API using `ANTHROPIC_API_KEY`.
+
+Dreaming automation is controlled by `autostart_enabled`,
+`min_interval_minutes`, `new_short_term_memory_threshold`, and
+`max_cycles_per_autostart`.
+
+Command summary:
+
+- `hiero config` edits dream provider and autostart settings in a local TUI.
+- `hiero config --json` prints secret-safe provider and dreaming status for
+  automation.
+- `hiero dream --wait` waits for an active dream cycle instead of failing fast.
+
 Uninstall the app with:
 
 ```bash

@@ -41,3 +41,37 @@ DetailPane {
     background: #13171b;
     color: #d8dee6;
 }
+
+#config-title {
+    dock: top;
+    height: 1;
+    padding: 0 1;
+    background: #171a1f;
+    color: #d8dee6;
+    text-style: bold;
+}
+
+#config-table {
+    width: 2fr;
+    height: 100%;
+    background: #101214;
+}
+
+#config-detail {
+    height: auto;
+    padding: 0;
+    background: #13171b;
+    color: #d8dee6;
+}
+
+#config-form {
+    width: 1fr;
+    height: 100%;
+    padding: 1 2;
+    border-left: solid #2a313a;
+    background: #13171b;
+}
+
+#config-form Input {
+    margin-top: 1;
+}

@@ -4,6 +4,7 @@ from hieronymus.admin import ADMIN_VIEWS, AdminStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
@@ -254,11 +255,30 @@ def test_admin_runs_manual_dreaming_and_reviews_outputs(
     review = admin.dream_review(run.id)
 
     assert run.status == "completed"
+    assert run.provider == "deterministic"
     assert review.run_id == run.id
     assert review.consumed_memories == ["Keep crafting result messages quiet and precise."]
     assert review.created_crystals == ["Keep crafting result messages quiet and precise."]
     assert review.failed_outputs == []
     assert review.validation_errors == []
+    with connect(config.database_path) as conn:
+        audit = conn.execute(
+            """
+            select note
+            from audit_log
+            where action = 'run'
+              and entity_type = 'dream'
+              and entity_id = ?
+            """,
+            (run.id,),
+        ).fetchone()
+    assert audit["note"] == f"Manual dream run {run.cycle_id} with provider deterministic"
+
+
+def test_admin_manual_dreaming_uses_shared_cycle_guard(config: HieronymusConfig) -> None:
+    with dream_cycle_lock(config, owner="manual"):
+        with pytest.raises(ValueError, match="dream cycle already running"):
+            AdminStore(config).run_manual_dreaming()
 
 
 def test_dream_review_excludes_manual_decay_audit_from_unrelated_run(

@@ -68,6 +68,57 @@ different data root:
 export HIERONYMUS_DATA_ROOT=/home/inky/Yandex.Disk/Translation/.translation-memory
 ```
 
+## Configuration
+
+Open the local configuration TUI:
+
+```bash
+hiero config
+```
+
+For machine-readable status, use:
+
+```bash
+hiero config --json
+```
+
+The config TUI edits provider fields (`enabled`, `model`, `api_key_env`,
+`base_url`, `timeout_seconds`) and dreaming automation fields
+(`active_provider`, `autostart_enabled`, `min_interval_minutes`,
+`new_short_term_memory_threshold`, `max_cycles_per_autostart`).
+
+Edits stay in memory until saved. Reload discards unsaved edits and reads
+`settings.toml` again. Provider checks use the edited in-memory settings. API
+key values are never stored or displayed; the TUI shows only the configured
+environment variable name and whether that variable exists.
+
+Non-secret settings are stored in `~/.config/hieronymus/settings.toml` by
+default, or in `settings.toml` under the configured `HIERONYMUS_DATA_ROOT`.
+API key values are not stored. Provider entries store the environment variable
+name for each key, and dream runs read the secret value from the runtime
+environment.
+
+Supported dream providers:
+
+- `deterministic`: offline local fallback.
+- `openai`: OpenAI and OpenAI-compatible endpoints using `OPENAI_API_KEY`.
+- `gemini`: Gemini API using `GEMINI_API_KEY`.
+- `anthropic`: Anthropic Messages API using `ANTHROPIC_API_KEY`.
+
+Example OpenAI-backed dreaming run:
+
+```bash
+export OPENAI_API_KEY=...
+hiero config
+hiero dream --provider openai --json
+```
+
+Dream runs accept `--provider` for one-off provider selection, `--wait` to block
+until an active dream cycle finishes, and `--json` for machine-readable output.
+
+Dreaming automation uses `autostart_enabled`, `min_interval_minutes`,
+`new_short_term_memory_threshold`, and `max_cycles_per_autostart`.
+
 ## Initialize a Series
 
 ```bash

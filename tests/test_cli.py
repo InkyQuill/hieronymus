@@ -9,8 +9,10 @@ from hieronymus.cli import main
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
+from hieronymus.settings import ProviderSettings, load_settings, save_settings
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -332,7 +334,37 @@ def test_dream_outputs_completed_cycle_after_completed_session_with_memory(tmp_p
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload == {"cycle_id": 1, "status": "completed"}
+    assert payload == {
+        "cycle_id": 1,
+        "status": "completed",
+        "provider": "deterministic",
+        "input_count": 1,
+        "created_crystal_count": 1,
+        "proposal_count": 0,
+        "error": "",
+    }
+
+
+def test_config_json_does_not_include_raw_api_key_value(tmp_path, monkeypatch):
+    data_root = tmp_path / "hieronymus"
+    config = HieronymusConfig(data_root=data_root)
+    monkeypatch.setenv("HIERONYMUS_OPENAI_KEY", "raw-secret-value")
+    settings = load_settings(config).with_provider(
+        "openai",
+        ProviderSettings(
+            enabled=True,
+            model="gpt-4.1-mini",
+            api_key_env="HIERONYMUS_OPENAI_KEY",
+            base_url="https://api.example.test/v1",
+        ),
+    )
+    save_settings(config, settings)
+
+    result = CliRunner().invoke(main, ["--data-root", str(data_root), "config", "--json"])
+
+    assert result.exit_code == 0
+    assert "HIERONYMUS_OPENAI_KEY" in result.output
+    assert "raw-secret-value" not in result.output
 
 
 def test_recall_outputs_ranked_crystal_results(tmp_path):
@@ -575,4 +607,17 @@ def test_dream_unsupported_provider_returns_clean_click_error(tmp_path):
 
     assert result.exit_code == 1
     assert "Error: unsupported dream provider: llm" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_dream_returns_clean_error_when_cycle_is_active(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    config = HieronymusConfig(data_root=data_root)
+    runner = CliRunner()
+
+    with dream_cycle_lock(config, owner="manual"):
+        result = runner.invoke(main, ["--data-root", str(data_root), "dream"])
+
+    assert result.exit_code == 1
+    assert "Error: dream cycle already running" in result.output
     assert "Traceback" not in result.output

@@ -17,7 +17,8 @@ from hieronymus.admin_models import (
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
-from hieronymus.dreaming import DeterministicDreamProvider, DreamRunRecord, DreamService
+from hieronymus.dream_providers import resolve_provider
+from hieronymus.dreaming import DreamRunRecord, DreamService
 from hieronymus.memory_models import TranslationContext
 from hieronymus.service_manager import ServiceManager
 
@@ -144,8 +145,13 @@ class AdminStore:
         return crystal_id
 
     def run_manual_dreaming(self) -> DreamRunRecord:
-        run = DreamService(self.config, DeterministicDreamProvider()).run_cycle()
-        self._audit("run", "dream", run.id, note="manual dreaming")
+        run = DreamService(self.config, resolve_provider(self.config)).run_cycle(owner="admin")
+        self._audit(
+            "run",
+            "dream",
+            run.id,
+            note=f"Manual dream run {run.cycle_id} with provider {run.provider}",
+        )
         return run
 
     def dream_review(self, run_id: int) -> DreamReview:

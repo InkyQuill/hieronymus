@@ -10,7 +10,10 @@ from hieronymus.admin import AdminStore
 from hieronymus.agent_plugins import resolve_plugin
 from hieronymus.config import load_config
 from hieronymus.doctor import Doctor, report_to_json
-from hieronymus.dreaming import DeterministicDreamProvider, DreamService
+from hieronymus.dream_autostart import DreamAutostart
+from hieronymus.dream_locks import DreamCycleAlreadyRunning
+from hieronymus.dream_providers import ProviderRegistry, resolve_provider
+from hieronymus.dreaming import DreamService
 from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
@@ -20,18 +23,20 @@ from hieronymus.registry import Registry
 from hieronymus.release import check_update, run_update
 from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
+from hieronymus.settings import SettingsError, load_settings
 from hieronymus.termbase import Termbase
 from hieronymus.tui.app import HieronymusAdminApp
+from hieronymus.tui.config_app import HieronymusConfigApp
 from hieronymus.workspace import WorkspaceStore
 
 
-def _error_message(error: KeyError | ValueError) -> str:
+def _error_message(error: KeyError | ValueError | SettingsError) -> str:
     if isinstance(error, KeyError) and error.args:
         return str(error.args[0])
     return str(error)
 
 
-def _raise_click_error(error: KeyError | ValueError) -> None:
+def _raise_click_error(error: KeyError | ValueError | SettingsError) -> None:
     raise click.ClickException(_error_message(error)) from error
 
 
@@ -164,25 +169,30 @@ def restart(ctx: click.Context, json_output: bool) -> None:
     _echo_status_lines(payload["status"])
 
 
-@main.command("config")
+@main.command("config", help="Open the configuration TUI.")
 @click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def config_command(ctx: click.Context, json_output: bool) -> None:
     config = ctx.obj["config"]
-    payload = {
-        "config_root": str(config.config_root),
-        "database_path": str(config.database_path),
-        "tui": "not-available-in-this-pass",
-    }
-    if json_output:
-        click.echo(render_json(payload))
+    if not json_output:
+        HieronymusConfigApp(config).run()
         return
 
-    click.echo(render_greeting())
-    click.echo()
-    click.echo(f"config_root: {payload['config_root']}")
-    click.echo(f"database_path: {payload['database_path']}")
-    click.echo(f"tui: {payload['tui']}")
+    try:
+        settings = load_settings(config)
+        payload = {
+            "config_root": str(config.config_root),
+            "database_path": str(config.database_path),
+            "settings_path": str(config.settings_path),
+            "tui": "available",
+            "settings": settings.to_json_dict(),
+            "providers": ProviderRegistry().status_payload(config),
+            "dreaming": DreamAutostart(config).status(),
+        }
+    except SettingsError as error:
+        raise click.ClickException(str(error)) from error
+
+    click.echo(render_json(payload))
 
 
 @main.command("install")
@@ -331,7 +341,7 @@ def help_command() -> None:
     click.echo("  hiero restart          Restart the local daemon")
     click.echo("  hiero admin            Open the local management TUI")
     click.echo("  hiero admin --json     Show management counts and available views")
-    click.echo("  hiero config           Show config paths")
+    click.echo("  hiero config           Open the configuration TUI")
     click.echo("  hiero update           Update managed installs in place")
     click.echo("  hiero install codex --dry-run")
 
@@ -621,22 +631,34 @@ def feedback(
 
 
 @main.command("dream")
-@click.option("--provider", default="deterministic")
+@click.option("--provider", default=None)
+@click.option("--json", "json_output", is_flag=True)
+@click.option("--wait", is_flag=True, help="Wait for an active dream cycle to finish.")
 @click.pass_context
-def dream(ctx: click.Context, provider: str) -> None:
-    if provider != "deterministic":
-        raise click.ClickException(f"unsupported dream provider: {provider}")
-
+def dream(
+    ctx: click.Context,
+    provider: str | None,
+    json_output: bool,
+    wait: bool,
+) -> None:
     try:
+        dream_provider = resolve_provider(ctx.obj["config"], provider)
         run = DreamService(
             ctx.obj["config"],
-            DeterministicDreamProvider(),
-        ).run_cycle()
-    except (KeyError, ValueError) as error:
+            dream_provider,
+        ).run_cycle(wait=wait, owner="manual")
+    except (KeyError, ValueError, SettingsError, DreamCycleAlreadyRunning) as error:
         _raise_click_error(error)
-    click.echo(
-        json.dumps(
-            {"cycle_id": run.cycle_id, "status": run.status},
-            ensure_ascii=False,
-        )
-    )
+    payload = {
+        "cycle_id": run.cycle_id,
+        "status": run.status,
+        "provider": run.provider,
+        "input_count": run.input_count,
+        "created_crystal_count": run.created_crystal_count,
+        "proposal_count": run.proposal_count,
+        "error": run.error,
+    }
+    if json_output:
+        click.echo(render_json(payload))
+        return
+    click.echo(render_json(payload))

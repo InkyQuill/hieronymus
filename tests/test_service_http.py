@@ -6,9 +6,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.service_http import HieronymusHTTPServer, build_server
+from hieronymus.dream_locks import dream_cycle_lock
+from hieronymus.service_http import HieronymusHTTPServer, build_server, status_payload
 from hieronymus.service_state import ServerState
 
 
@@ -97,8 +99,53 @@ def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:
     assert payload["data_root"] == str(config.data_root)
     assert payload["database_path"] == str(config.database_path)
     assert payload["config_path"] == str(config.config_root)
-    assert payload["providers"] == []
+    assert [provider["name"] for provider in payload["providers"]] == [
+        "deterministic",
+        "openai",
+        "gemini",
+        "anthropic",
+    ]
+    assert payload["dreaming"]["enabled"] is False
+    assert payload["dreaming"]["active_provider"] == "deterministic"
+    assert payload["dreaming"]["cycle_active"] is False
+    assert payload["dreaming"]["active_cycle"] is None
+    assert payload["dreaming"]["last_skipped_at"] is None
+    assert payload["dreaming"]["last_skip_reason"] == ""
     assert payload["mcp_adapter"] == {"available": True, "mode": "local-http"}
+    assert payload["housekeeping"] == {"last_cycle": None, "pending": False}
+
+
+def test_status_endpoint_reports_active_dream_cycle(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = _make_state(config)
+    server = build_server(config, state)
+    thread, base_url = _serve(server)
+    try:
+        with dream_cycle_lock(config, owner="manual"):
+            payload = _request_json(f"{base_url}/status")
+    finally:
+        _stop_server(server, thread)
+
+    assert payload["dreaming"]["cycle_active"] is True
+    assert payload["dreaming"]["active_cycle"]["owner"] == "manual"
+    assert payload["dreaming"]["active_cycle"]["pid"] > 0
+    assert "started_at" in payload["dreaming"]["active_cycle"]
+    assert "token" not in payload["dreaming"]["active_cycle"]
+
+
+def test_status_payload_degrades_when_dreaming_status_fails(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = _make_state(config)
+
+    with patch("hieronymus.service_http.DreamAutostart") as autostart_class:
+        autostart_class.return_value.status.side_effect = RuntimeError("settings broken")
+        payload = status_payload(config, state)
+
+    assert payload["dreaming"] == {
+        "available": False,
+        "pending_short_term_memories": 0,
+        "error": "settings broken",
+    }
     assert payload["housekeeping"] == {"last_cycle": None, "pending": False}
 
 

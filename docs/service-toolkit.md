@@ -31,11 +31,15 @@ identity line, while automation should use `--json`.
 ## Commands
 
 - `hiero status --json` shows daemon status.
-- `hiero doctor --json` checks config, store, and service health.
+- `hiero doctor --json` checks settings parseability, active provider enablement,
+  provider key env configuration, store health, and service health.
 - `hiero stop` requests graceful shutdown.
 - `hiero restart` restarts the daemon.
-- `hiero config` shows config paths for now; the TUI is separate work.
-- `hiero admin` reports that the management TUI is separate work.
+- `hiero config` opens the configuration TUI for providers, dreaming automation,
+  service status, paths, and diagnostics.
+- `hiero config --json` reports settings, provider status, and dreaming
+  automation state.
+- `hiero admin` opens the management TUI.
 - `hiero install <app> --dry-run` shows the safe installer plan for an agent.
 - `hiero install <app>` writes plugin assets and patches supported agent host config.
 

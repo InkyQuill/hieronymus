@@ -1,0 +1,267 @@
+from pathlib import Path
+
+import pytest
+from textual.widgets import DataTable, Input, Static
+
+from hieronymus.config import HieronymusConfig
+from hieronymus.dream_providers import ProviderCheckResult
+from hieronymus.settings import ProviderSettings, load_settings, save_settings
+from hieronymus.tui.config_app import HieronymusConfigApp
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
+def config(tmp_path: Path) -> HieronymusConfig:
+    return HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+
+def _detail_text(app: HieronymusConfigApp) -> str:
+    renderable = app.screen.query_one("#config-detail", Static).render()
+    return getattr(renderable, "plain", str(renderable))
+
+
+@pytest.mark.anyio
+async def test_config_tui_mounts_provider_rows(config: HieronymusConfig) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test():
+        table = app.screen.query_one("#config-table", DataTable)
+        labels = [str(table.get_row(row.key)[0]) for row in table.ordered_rows]
+
+    assert {"deterministic", "openai", "gemini", "anthropic"} <= set(labels)
+
+
+@pytest.mark.anyio
+async def test_config_tui_edits_provider_fields_and_saves(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("2")
+        app.screen.query_one("#provider-enabled", Input).value = "yes"
+        app.screen.query_one("#provider-model", Input).value = "gpt-4.1"
+        app.screen.query_one("#provider-api-key-env", Input).value = "HIERONYMUS_OPENAI_KEY"
+        app.screen.query_one("#provider-base-url", Input).value = "https://llm.example.test/v1"
+        app.screen.query_one("#provider-timeout-seconds", Input).value = "11.5"
+        await pilot.pause()
+        await pilot.press("s")
+
+    provider = load_settings(config).providers["openai"]
+    assert provider.enabled is True
+    assert provider.model == "gpt-4.1"
+    assert provider.api_key_env == "HIERONYMUS_OPENAI_KEY"
+    assert provider.base_url == "https://llm.example.test/v1"
+    assert provider.timeout_seconds == 11.5
+
+
+@pytest.mark.anyio
+async def test_config_tui_edits_dreaming_fields_and_saves(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("3")
+        app.screen.query_one("#dreaming-active-provider", Input).value = "gemini"
+        app.screen.query_one("#dreaming-autostart-enabled", Input).value = "yes"
+        app.screen.query_one("#dreaming-min-interval-minutes", Input).value = "9"
+        app.screen.query_one("#dreaming-new-short-term-memory-threshold", Input).value = "3"
+        app.screen.query_one("#dreaming-max-cycles-per-autostart", Input).value = "2"
+        app.screen.query_one("#provider-enabled", Input).value = "yes"
+        await pilot.pause()
+        await pilot.press("s")
+
+    dreaming = load_settings(config).dreaming
+    assert dreaming.active_provider == "gemini"
+    assert dreaming.autostart_enabled is True
+    assert dreaming.min_interval_minutes == 9
+    assert dreaming.new_short_term_memory_threshold == 3
+    assert dreaming.max_cycles_per_autostart == 2
+    assert load_settings(config).providers["gemini"].enabled is True
+
+
+@pytest.mark.anyio
+async def test_config_tui_reload_discards_unsaved_edits(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("2")
+        app.screen.query_one("#provider-model", Input).value = "unsaved-model"
+        await pilot.pause()
+        assert "unsaved" in _detail_text(app)
+        await pilot.press("r")
+        assert app.screen.query_one("#provider-model", Input).value == "gpt-4.1-mini"
+        assert "unsaved" not in _detail_text(app)
+
+
+@pytest.mark.anyio
+async def test_config_tui_validation_failure_does_not_save(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        app.screen.query_one("#dreaming-min-interval-minutes", Input).value = "0"
+        await pilot.pause()
+        await pilot.press("s")
+        detail = _detail_text(app)
+
+    assert "min_interval_minutes must be at least 1" in detail
+    assert not config.settings_path.exists()
+
+
+@pytest.mark.anyio
+async def test_config_tui_detail_never_shows_raw_api_key_value(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HIERONYMUS_OPENAI_KEY", "raw-secret-value")
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("2")
+        app.screen.query_one("#provider-api-key-env", Input).value = "HIERONYMUS_OPENAI_KEY"
+        app.screen.query_one("#provider-enabled", Input).value = "yes"
+        await pilot.pause()
+        detail = _detail_text(app)
+
+    assert "HIERONYMUS_OPENAI_KEY" in detail
+    assert "api_key_present: yes" in detail
+    assert "raw-secret-value" not in detail
+
+
+@pytest.mark.anyio
+async def test_config_tui_redacts_provider_check_error(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Registry:
+        def check(self, *args, **kwargs):
+            return ProviderCheckResult(
+                name="openai",
+                ok=False,
+                model="gpt-4.1-mini",
+                error="provider returned raw-secret-value",
+            )
+
+    monkeypatch.setenv("OPENAI_API_KEY", "raw-secret-value")
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("2")
+        app.screen.registry = Registry()
+        await pilot.press("c")
+        detail = _detail_text(app)
+
+    assert "provider returned [redacted]" in detail
+    assert "raw-secret-value" not in detail
+
+
+@pytest.mark.anyio
+async def test_config_tui_clears_provider_check_after_provider_switch(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("c")
+        assert "Check: deterministic" in _detail_text(app)
+        await pilot.press("2")
+        detail = _detail_text(app)
+
+    assert "Selected provider: openai" in detail
+    assert "Check: deterministic" not in detail
+
+
+@pytest.mark.anyio
+async def test_config_tui_hides_check_result_after_table_switch_with_same_form_values(
+    config: HieronymusConfig,
+) -> None:
+    settings = load_settings(config)
+    same_provider = ProviderSettings(
+        enabled=True,
+        model="same-model",
+        api_key_env="SAME_KEY_ENV",
+        base_url=None,
+        timeout_seconds=30.0,
+    )
+    save_settings(
+        config,
+        settings.with_provider("openai", same_provider).with_provider(
+            "gemini",
+            same_provider,
+        ),
+    )
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("2")
+        app.screen.action_check_selected()
+        assert "Check: openai" in _detail_text(app)
+        table = app.screen.query_one("#config-table", DataTable)
+        table.move_cursor(row=2)
+        await pilot.pause()
+        detail = _detail_text(app)
+
+    assert "Selected provider: gemini" in detail
+    assert "Check: openai" not in detail
+
+
+@pytest.mark.anyio
+async def test_config_tui_table_navigation_syncs_provider_form(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        table = app.screen.query_one("#config-table", DataTable)
+        table.move_cursor(row=1)
+        await pilot.pause()
+        app.screen.action_check_selected()
+        detail = _detail_text(app)
+
+    assert "Selected provider: openai" in detail
+    assert "Check: openai" in detail
+    assert "state: saved" in detail
+
+
+@pytest.mark.anyio
+async def test_config_tui_updates_provider_row_after_draft_edit(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        await pilot.press("2")
+        app.screen.query_one("#provider-model", Input).value = ""
+        await pilot.pause()
+        table = app.screen.query_one("#config-table", DataTable)
+        row = table.get_row("openai")
+
+    assert row[3] == "-"
+    assert row[5] == "no"
+    assert row[6] == "model is empty"
+
+
+@pytest.mark.anyio
+async def test_config_tui_updates_active_marker_after_draft_edit(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        app.screen.query_one("#dreaming-active-provider", Input).value = "openai"
+        await pilot.pause()
+        table = app.screen.query_one("#config-table", DataTable)
+        deterministic = table.get_row("deterministic")
+        openai = table.get_row("openai")
+
+    assert deterministic[1] == ""
+    assert openai[1] == "*"

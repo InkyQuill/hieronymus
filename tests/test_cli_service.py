@@ -9,7 +9,9 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from hieronymus.cli import main
+from hieronymus.config import load_config
 from hieronymus.presentation import GREETING_ICON, render_greeting
+from hieronymus.settings import DreamingSettings, load_settings, save_settings
 
 
 @dataclass(frozen=True)
@@ -75,11 +77,19 @@ def test_cli_help_mentions_service_commands() -> None:
     assert "hiero status" in result.output
     assert "hiero install codex --dry-run" in result.output
     assert "Open the memory management TUI" not in result.output
-    assert "Open the configuration TUI" not in result.output
+    assert "Open the configuration TUI" in result.output
     assert "Open the local management TUI" in result.output
     assert "Show management counts and available views" in result.output
-    assert "Show config paths" in result.output
+    assert "Show config paths" not in result.output
     assert "hiero update           Update managed installs in place" in result.output
+
+
+def test_click_help_describes_config_command() -> None:
+    result = CliRunner().invoke(main, ["--help"])
+
+    assert result.exit_code == 0
+    assert "config" in result.output
+    assert "Open the configuration TUI." in result.output
 
 
 def test_readme_documents_production_install_update_and_uninstall() -> None:
@@ -131,6 +141,35 @@ def test_usage_documents_uninstall_data_modes_and_workspace_warning() -> None:
     )
     assert "--purge-data removes the configured data root." in normalized_usage
     assert "If HIERONYMUS_DATA_ROOT is set, check it before purging." in normalized_usage
+
+
+def test_docs_describe_real_config_tui_and_llm_providers() -> None:
+    combined = "\n".join(
+        Path(path).read_text(encoding="utf-8")
+        for path in [
+            "README.md",
+            "docs/usage.md",
+            "docs/memory-dreaming.md",
+            "docs/service-toolkit.md",
+        ]
+    )
+
+    forbidden = [
+        "not-available-in-this-pass",
+        "config TUI is separate work",
+        "only provider implemented now is the deterministic provider",
+        "External LLM providers are a later extension",
+        "external LLM providers are deferred",
+    ]
+    for phrase in forbidden:
+        assert phrase not in combined
+
+    assert "hiero config" in combined
+    assert "OPENAI_API_KEY" in combined
+    assert "GEMINI_API_KEY" in combined
+    assert "ANTHROPIC_API_KEY" in combined
+    assert "API key values are not stored" in combined
+    assert "new_short_term_memory_threshold" in combined
 
 
 def test_status_json_returns_manager_payload(tmp_path: Path) -> None:
@@ -192,7 +231,7 @@ def test_restart_json_returns_manager_payload(tmp_path: Path) -> None:
     }
 
 
-def test_config_json_returns_paths_and_tui_placeholder(tmp_path: Path) -> None:
+def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     data_root = tmp_path / "hieronymus"
 
     result = CliRunner().invoke(
@@ -201,11 +240,70 @@ def test_config_json_returns_paths_and_tui_placeholder(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["config_root"] == str(data_root)
+    assert payload["database_path"] == str(data_root / "hieronymus.sqlite")
+    assert payload["settings_path"] == str(data_root / "settings.toml")
+    assert payload["tui"] == "available"
+    assert payload["settings"]["dreaming"]["active_provider"] == "deterministic"
+    assert payload["providers"][0]["name"] == "deterministic"
+
+
+def test_config_launch_invokes_textual_app(tmp_path: Path, monkeypatch) -> None:
+    data_root = tmp_path / "hieronymus"
+    launched = {}
+
+    class FakeApp:
+        def __init__(self, config) -> None:
+            launched["config"] = config
+
+        def run(self) -> None:
+            launched["ran"] = True
+
+    monkeypatch.setattr("hieronymus.cli.HieronymusConfigApp", FakeApp)
+
+    result = CliRunner().invoke(main, ["--data-root", str(data_root), "config"])
+
+    assert result.exit_code == 0
+    assert launched["config"].data_root == data_root
+    assert launched["ran"] is True
+
+
+def test_dream_json_uses_configured_active_provider(tmp_path: Path) -> None:
+    data_root = tmp_path / "hieronymus"
+    config = load_config(str(data_root))
+    save_settings(
+        config,
+        load_settings(config).with_dreaming(DreamingSettings(active_provider="deterministic")),
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "dream", "--json"],
+    )
+
+    assert result.exit_code == 0
     assert json.loads(result.output) == {
-        "config_root": str(data_root),
-        "database_path": str(data_root / "hieronymus.sqlite"),
-        "tui": "not-available-in-this-pass",
+        "cycle_id": 1,
+        "status": "completed",
+        "provider": "deterministic",
+        "input_count": 0,
+        "created_crystal_count": 0,
+        "proposal_count": 0,
+        "error": "",
     }
+
+
+def test_dream_rejects_disabled_provider(tmp_path: Path) -> None:
+    data_root = tmp_path / "hieronymus"
+
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "dream", "--provider", "openai"],
+    )
+
+    assert result.exit_code != 0
+    assert "dream provider is disabled: openai" in result.output
 
 
 def test_admin_json_returns_available_tui_status(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@ import pytest
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
     DreamConceptProposal,
@@ -14,6 +15,7 @@ from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
+from hieronymus.settings import ProviderSettings, load_settings, save_settings
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -155,6 +157,140 @@ def test_dreaming_creates_next_cycle_id(config: HieronymusConfig) -> None:
 
     assert first_run.cycle_id == 1
     assert second_run.cycle_id == 2
+
+
+def test_dreaming_rejects_second_cycle_while_lock_is_active(
+    config: HieronymusConfig,
+) -> None:
+    with dream_cycle_lock(config, owner="manual"):
+        with pytest.raises(DreamCycleAlreadyRunning, match="dream cycle already running"):
+            DreamService(config, DeterministicDreamProvider()).run_cycle()
+
+
+def test_dreaming_releases_lock_after_provider_exception(
+    config: HieronymusConfig,
+) -> None:
+    class FailingProvider:
+        name = "failing"
+
+        def crystallize(self, context, memories):
+            raise RuntimeError("provider failed")
+
+    context = _context(config)
+    _completed_session(config, context)
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        DreamService(config, FailingProvider()).run_cycle()
+
+    run = DreamService(config, DeterministicDreamProvider()).run_cycle()
+    assert run.status == "completed"
+
+
+def test_dreaming_records_locked_skip_without_consuming_cycle_id(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    _completed_session(config, context)
+
+    with dream_cycle_lock(config, owner="manual"):
+        skipped = DreamService(config, DeterministicDreamProvider()).run_cycle(
+            skip_when_locked=True,
+        )
+
+    run = DreamService(config, DeterministicDreamProvider()).run_cycle()
+
+    assert skipped.status == "skipped"
+    assert skipped.cycle_id == -1
+    assert skipped.error == "dream cycle already running"
+    assert run.status == "completed"
+    assert run.cycle_id == 1
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            "select cycle_id, status from dream_runs order by id",
+        ).fetchall()
+    assert [(row["cycle_id"], row["status"]) for row in rows] == [
+        (-1, "skipped"),
+        (1, "completed"),
+    ]
+
+
+def test_dreaming_does_not_skip_provider_lock_error_after_acquiring_lock(
+    config: HieronymusConfig,
+) -> None:
+    class ProviderLockError:
+        name = "provider-lock-error"
+
+        def crystallize(self, context, memories):
+            raise DreamCycleAlreadyRunning()
+
+    context = _context(config)
+    _completed_session(config, context)
+
+    with pytest.raises(DreamCycleAlreadyRunning, match="dream cycle already running"):
+        DreamService(config, ProviderLockError()).run_cycle(skip_when_locked=True)
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select status, error from dream_runs").fetchone()
+    assert run["status"] == "failed"
+    assert "dream cycle already running" in run["error"]
+
+
+def test_dreaming_records_failed_run_when_settings_are_invalid(
+    config: HieronymusConfig,
+) -> None:
+    class FailingProvider:
+        name = "failing"
+
+        def crystallize(self, context, memories):
+            raise RuntimeError("provider failed")
+
+    context = _context(config)
+    _completed_session(config, context)
+    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.settings_path.write_text("not valid toml = [", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        DreamService(config, FailingProvider()).run_cycle()
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select status, error from dream_runs").fetchone()
+    assert run["status"] == "failed"
+    assert run["error"] == "provider failed"
+
+
+def test_dream_error_records_redact_configured_api_key_value(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HIERONYMUS_PROVIDER_KEY", "raw-secret-value")
+    save_settings(
+        config,
+        load_settings(config).with_provider(
+            "openai",
+            ProviderSettings(
+                enabled=True,
+                model="gpt-4.1-mini",
+                api_key_env="HIERONYMUS_PROVIDER_KEY",
+            ),
+        ),
+    )
+
+    class LeakyProvider:
+        name = "leaky"
+
+        def crystallize(self, context, memories):
+            raise RuntimeError("provider rejected raw-secret-value")
+
+    context = _context(config)
+    _completed_session(config, context)
+
+    with pytest.raises(RuntimeError, match="raw-secret-value"):
+        DreamService(config, LeakyProvider()).run_cycle()
+
+    with connect(config.database_path) as conn:
+        run = conn.execute("select error from dream_runs").fetchone()
+
+    assert run["error"] == "provider rejected [redacted]"
 
 
 def test_dreaming_records_failed_run_for_invalid_provider_output(
