@@ -6,11 +6,17 @@ import { createBridgeClient } from "./rpc/client.js";
 import type { AppMode } from "./app/routes.js";
 
 const [modeArg, bridgeFlag, bridgeCommand] = process.argv.slice(2);
-if (
-  (modeArg !== "admin" && modeArg !== "config") ||
-  bridgeFlag !== "--bridge-command" ||
-  !bridgeCommand
-) {
+if (modeArg !== "admin" && modeArg !== "config") {
+  console.error("Usage: main.js <admin|config> --bridge-command <command>");
+  process.exit(1);
+}
+
+if (modeArg === "admin") {
+  console.error("Admin Ink screen is not available yet");
+  process.exit(1);
+}
+
+if (bridgeFlag !== "--bridge-command" || !bridgeCommand) {
   console.error("Usage: main.js <admin|config> --bridge-command <command>");
   process.exit(1);
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useStdin } from "ink";
+import { Box, Text, useApp, useStdin } from "ink";
 import { ConfigBootstrapSchema, type ConfigBootstrap } from "../rpc/schema.js";
 import type { JsonRpcClient } from "../rpc/client.js";
 import { ConfigForm } from "./ConfigForm.js";
@@ -20,6 +20,7 @@ type Status = {
 const providerKeys = ["1", "2", "3"] as const;
 
 export function ConfigScreen({ initial, client }: Props) {
+  const { exit } = useApp();
   const [payload, setPayload] = useState(initial);
   const [status, setStatus] = useState<Status>({
     message: "Ready",
@@ -41,6 +42,7 @@ export function ConfigScreen({ initial, client }: Props) {
           setStatus={setStatus}
           setBusy={setBusy}
           operationInFlight={operationInFlight}
+          exit={exit}
         />
       ) : null}
       <Text bold>Hieronymus Config</Text>
@@ -84,6 +86,7 @@ function ConfigInputHandler({
   setStatus,
   setBusy,
   operationInFlight,
+  exit,
 }: {
   client: JsonRpcClient;
   payload: ConfigBootstrap;
@@ -92,6 +95,7 @@ function ConfigInputHandler({
   setStatus: (status: Status) => void;
   setBusy: (busy: boolean) => void;
   operationInFlight: React.MutableRefObject<boolean>;
+  exit: () => void;
 }) {
   const { stdin, setRawMode, isRawModeSupported } = useStdin();
 
@@ -113,6 +117,12 @@ function ConfigInputHandler({
   useEffect(() => {
     const onData = (chunk: Buffer | string) => {
       const input = String(chunk)[0] ?? "";
+      if (input === "q") {
+        client.close?.();
+        exit();
+        return;
+      }
+
       if (busy || operationInFlight.current) {
         return;
       }
@@ -198,6 +208,7 @@ function ConfigInputHandler({
   }, [
     busy,
     client,
+    exit,
     operationInFlight,
     payload,
     setBusy,

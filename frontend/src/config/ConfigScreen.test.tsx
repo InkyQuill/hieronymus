@@ -147,6 +147,21 @@ describe("ConfigScreen", () => {
     await waitFor(() => expect(app.lastFrame()).toContain("Selected gemini"));
     expect(calls).toHaveLength(1);
   });
+
+  it("closes the client when q is pressed", async () => {
+    let closeCalls = 0;
+    const client = fakeClient(
+      () => Promise.reject(new Error("unexpected request")),
+      () => {
+        closeCalls += 1;
+      },
+    );
+    const app = render(<ConfigScreen initial={payload()} client={client} />);
+
+    await nextTick();
+    app.stdin.write("q");
+    await waitFor(() => expect(closeCalls).toBe(1));
+  });
 });
 
 function fakeClient(
@@ -154,8 +169,9 @@ function fakeClient(
     method: string,
     params: Record<string, unknown>,
   ) => Promise<Record<string, unknown>>,
+  close?: () => void,
 ): JsonRpcClient {
-  return { request } as unknown as JsonRpcClient;
+  return { request, close } as unknown as JsonRpcClient;
 }
 
 function deferredPayload() {
