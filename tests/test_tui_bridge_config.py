@@ -22,6 +22,9 @@ def test_config_bootstrap_returns_one_remote_provider_selector(tmp_path: Path) -
     assert payload["selected_provider"] == "openai"
     assert payload["form_values"]["provider"]["api_path"] == "https://api.openai.com/v1"
     assert "deterministic" not in [choice["name"] for choice in payload["provider_choices"]]
+    openai = payload["provider_choices"][0]
+    assert openai["supports_api_path"] is True
+    assert "supports_base_url" not in openai
 
 
 def test_config_select_provider_enables_only_selected_remote_provider(tmp_path: Path) -> None:
@@ -203,6 +206,29 @@ def test_config_check_provider_returns_validation_for_malformed_api_key_env(
     assert payload["check_result"] == {}
 
 
+def test_config_check_provider_returns_validation_for_malformed_providers_container(
+    tmp_path: Path,
+) -> None:
+    class Registry:
+        def check(self, *args, **kwargs):
+            raise AssertionError("invalid draft should not reach provider check")
+
+    bridge = ConfigBridge(_config(tmp_path), registry=Registry())
+
+    payload = bridge.check_provider(
+        {
+            "selected_provider": "openai",
+            "draft": {"providers": "bad"},
+        }
+    )
+
+    assert payload["validation"] == {
+        "ok": False,
+        "errors": ["providers must be a table"],
+    }
+    assert payload["check_result"] == {}
+
+
 def test_config_model_suggestions_returns_validation_for_malformed_timeout(
     tmp_path: Path,
 ) -> None:
@@ -222,6 +248,29 @@ def test_config_model_suggestions_returns_validation_for_malformed_timeout(
     assert payload["validation"] == {
         "ok": False,
         "errors": ["providers.openai.timeout_seconds must be a number"],
+    }
+    assert payload["suggestions"] == {}
+
+
+def test_config_model_suggestions_returns_validation_for_malformed_dreaming_container(
+    tmp_path: Path,
+) -> None:
+    class Registry:
+        def list_model_suggestions(self, *args, **kwargs):
+            raise AssertionError("invalid draft should not reach model suggestions")
+
+    bridge = ConfigBridge(_config(tmp_path), registry=Registry())
+
+    payload = bridge.model_suggestions(
+        {
+            "selected_provider": "openai",
+            "draft": {"dreaming": ["bad"]},
+        }
+    )
+
+    assert payload["validation"] == {
+        "ok": False,
+        "errors": ["dreaming must be a table"],
     }
     assert payload["suggestions"] == {}
 

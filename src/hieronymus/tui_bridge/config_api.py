@@ -70,7 +70,7 @@ class ConfigBridge:
         selected = self._selected_provider(params, settings)
         if "selected_provider" in params or "provider" in params:
             settings = self._select_provider(settings, selected)
-        errors = validate_draft(settings)
+        errors = self._validation_errors(params, settings)
         if errors:
             return self._payload(settings, selected, validation_errors=errors)
         save_settings(self.config, settings)
@@ -80,7 +80,7 @@ class ConfigBridge:
         settings = self._settings_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
-        if errors := validate_draft(settings):
+        if errors := self._validation_errors(params, settings):
             return self._payload(settings, selected, validation_errors=errors)
         result = self.registry.check(self.config, selected, settings=settings)
         check_result = _result_to_json_dict(result)
@@ -91,7 +91,7 @@ class ConfigBridge:
         settings = self._settings_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
-        if errors := validate_draft(settings):
+        if errors := self._validation_errors(params, settings):
             return self._payload(settings, selected, validation_errors=errors)
         result = self.registry.list_model_suggestions(self.config, selected, settings=settings)
         suggestions = _result_to_json_dict(result)
@@ -132,7 +132,7 @@ class ConfigBridge:
                 "name": provider.name,
                 "display_name": provider.display_name,
                 "requires_api_key": provider.requires_api_key,
-                "supports_base_url": provider.supports_base_url,
+                "supports_api_path": provider.supports_base_url,
             }
             for provider in registry.list()
             if provider.name in REMOTE_PROVIDERS
@@ -188,6 +188,13 @@ class ConfigBridge:
                 },
             )
         return HieronymusSettings(dreaming=dreaming, providers=providers)
+
+    def _validation_errors(
+        self,
+        params: dict[str, object],
+        settings: HieronymusSettings,
+    ) -> list[str]:
+        return _draft_container_errors(params) or validate_draft(settings)
 
     def _selected_provider(
         self,
@@ -291,6 +298,28 @@ def _result_to_json_dict(result: object) -> dict[str, object]:
     if isinstance(result, dict):
         return dict(result)
     return result.to_json_dict()
+
+
+def _draft_container_errors(params: dict[str, object]) -> list[str]:
+    draft = params.get("draft")
+    if draft is None and any(key in params for key in ("dreaming", "providers")):
+        draft = params
+    if type(draft) is not dict:
+        return []
+
+    errors: list[str] = []
+    raw_dreaming = draft.get("dreaming")
+    if "dreaming" in draft and type(raw_dreaming) is not dict:
+        errors.append("dreaming must be a table")
+
+    raw_providers = draft.get("providers")
+    if "providers" in draft and type(raw_providers) is not dict:
+        errors.append("providers must be a table")
+    elif type(raw_providers) is dict:
+        for name, raw_provider in raw_providers.items():
+            if type(name) is str and type(raw_provider) is not dict:
+                errors.append(f"providers.{name} must be a table")
+    return errors
 
 
 def _redact_error(payload: dict[str, object], settings: HieronymusSettings) -> None:
