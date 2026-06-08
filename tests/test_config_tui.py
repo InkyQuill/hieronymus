@@ -150,3 +150,21 @@ async def test_config_tui_clears_provider_check_after_provider_switch(
 
     assert "Selected provider: openai" in detail
     assert "Check: deterministic" not in detail
+
+
+@pytest.mark.anyio
+async def test_config_tui_table_navigation_syncs_provider_form(
+    config: HieronymusConfig,
+) -> None:
+    app = HieronymusConfigApp(config)
+
+    async with app.run_test() as pilot:
+        table = app.screen.query_one("#config-table", DataTable)
+        table.move_cursor(row=1)
+        await pilot.pause()
+        app.screen.action_check_selected()
+        detail = _detail_text(app)
+
+    assert "Selected provider: openai" in detail
+    assert "Check: openai" in detail
+    assert "state: saved" in detail

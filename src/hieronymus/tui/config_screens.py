@@ -149,6 +149,24 @@ class ConfigScreen(Screen[None]):
         self._sync_form_from_draft(str(message.row_key.value))
         self._update_detail(message.row_key.value)
 
+    def on_data_table_cell_highlighted(self, message: DataTable.CellHighlighted) -> None:
+        if message.data_table is not self.query_one("#config-table", DataTable):
+            return
+        provider_name = self._provider_for_row(message.coordinate.row)
+        if provider_name is None:
+            return
+        self._sync_form_from_draft(provider_name)
+        self._update_detail(provider_name)
+
+    def on_data_table_cell_selected(self, message: DataTable.CellSelected) -> None:
+        if message.data_table is not self.query_one("#config-table", DataTable):
+            return
+        provider_name = self._provider_for_row(message.coordinate.row)
+        if provider_name is None:
+            return
+        self._sync_form_from_draft(provider_name)
+        self._update_detail(provider_name)
+
     def on_input_changed(self, message: Input.Changed) -> None:
         self._handle_draft_input_changed(message.input)
 
@@ -159,7 +177,7 @@ class ConfigScreen(Screen[None]):
             return
         selected_provider = self._selected_provider()
         if self._apply_form_to_draft():
-            self._refresh(selected_provider=selected_provider)
+            self._update_detail(selected_provider)
 
     def _refresh(self, selected_provider: str | None = None) -> None:
         table = self.query_one("#config-table", DataTable)
@@ -220,6 +238,15 @@ class ConfigScreen(Screen[None]):
             if row_key is not None:
                 return str(row_key)
         return default or self.draft.edited.dreaming.active_provider
+
+    def _provider_for_row(self, row_index: int) -> str | None:
+        table = self.query_one("#config-table", DataTable)
+        if not table.is_valid_row_index(row_index):
+            return None
+        row_key = table.ordered_rows[row_index].key.value
+        if row_key is None:
+            return None
+        return str(row_key)
 
     def _sync_form_from_draft(self, selected_provider: str) -> None:
         provider = self.draft.edited.providers.get(selected_provider, ProviderSettings())
