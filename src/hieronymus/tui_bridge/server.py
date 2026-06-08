@@ -21,14 +21,15 @@ Handler = Callable[[dict[str, object]], dict[str, object]]
 
 
 def dispatch(config: HieronymusConfig, raw: dict[str, object]) -> dict[str, object]:
+    normalized = _normalize_dispatch_request(raw)
     try:
-        request = parse_request(json.dumps(raw, ensure_ascii=False))
+        request = parse_request(json.dumps(normalized, ensure_ascii=False))
         return _dispatch_request(config, request)
     except RpcError as error:
-        return error_response(_request_id(raw), error, settings=_settings_or_none(config))
+        return error_response(_request_id(normalized), error, settings=_settings_or_none(config))
     except Exception as error:
         return {
-            "id": _request_id(raw),
+            "id": _request_id(normalized),
             "ok": False,
             "error": error_payload(error, settings=_settings_or_none(config)),
         }
@@ -108,6 +109,13 @@ def _request_id(raw: object) -> str | None:
     if type(raw) is dict and type(raw.get("id")) is str:
         return raw["id"]
     return None
+
+
+def _normalize_dispatch_request(raw: dict[str, object]) -> dict[str, object]:
+    request = dict(raw)
+    if type(request.get("id")) is int:
+        request["id"] = str(request["id"])
+    return request
 
 
 def _settings_or_none(config: HieronymusConfig) -> HieronymusSettings | None:

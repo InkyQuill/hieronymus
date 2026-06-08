@@ -20,6 +20,19 @@ def test_bridge_dispatch_config_bootstrap(tmp_path) -> None:
     assert response["result"]["selected_provider"] == "openai"
 
 
+def test_bridge_dispatch_normalizes_numeric_id(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    response = dispatch(
+        config,
+        {"id": 1, "method": "config.bootstrap", "params": {}},
+    )
+
+    assert response["id"] == "1"
+    assert response["ok"] is True
+    assert response["result"]["selected_provider"] == "openai"
+
+
 def test_bridge_dispatch_unknown_method_returns_error(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
