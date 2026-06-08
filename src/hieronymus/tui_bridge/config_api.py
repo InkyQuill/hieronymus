@@ -68,6 +68,8 @@ class ConfigBridge:
     def save(self, params: dict[str, object]) -> dict[str, object]:
         settings = self._settings_from_params(params)
         selected = self._selected_provider(params, settings)
+        if "selected_provider" in params or "provider" in params:
+            settings = self._select_provider(settings, selected)
         errors = validate_draft(settings)
         if errors:
             return self._payload(settings, selected, validation_errors=errors)

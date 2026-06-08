@@ -93,6 +93,37 @@ def test_config_save_persists_valid_selected_provider(tmp_path: Path) -> None:
     assert settings.providers["openai"].enabled is False
 
 
+def test_config_save_applies_selected_provider_to_valid_draft(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bridge = ConfigBridge(config)
+    draft = bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key_env": "OPENAI_API_KEY",
+                "api_path": "https://api.openai.com/v1",
+                "timeout_seconds": "30",
+            },
+            "dreaming": {
+                "autostart_enabled": "no",
+                "min_interval_minutes": "30",
+                "new_short_term_memory_threshold": "25",
+                "max_cycles_per_autostart": "1",
+            },
+        }
+    )["draft"]
+
+    payload = bridge.save({"selected_provider": "gemini", "draft": draft})
+
+    settings = load_settings(config)
+    assert payload["validation"]["ok"] is True
+    assert payload["selected_provider"] == "gemini"
+    assert settings.dreaming.active_provider == "gemini"
+    assert settings.providers["gemini"].enabled is True
+    assert settings.providers["openai"].enabled is False
+
+
 def test_config_save_rejects_invalid_dreaming_threshold(tmp_path: Path) -> None:
     bridge = ConfigBridge(_config(tmp_path))
     draft = bridge.update_draft(

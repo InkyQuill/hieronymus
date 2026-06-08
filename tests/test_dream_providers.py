@@ -243,7 +243,7 @@ def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> 
             self.requests.append({"url": url, "headers": headers, "timeout": timeout})
             return HTTPResponse(
                 status=200,
-                body='{"data":[{"id":"gpt-4.1"},{"id":"gpt-4.1-mini"}]}',
+                body='{"data":[{"id":"gpt-4.1-mini"},{"id":"gpt-4.1"}]}',
             )
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
