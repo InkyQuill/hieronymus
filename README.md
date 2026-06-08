@@ -28,6 +28,10 @@ Open the local configuration TUI with:
 hiero config
 ```
 
+Textual remains the default TUI. The Ink/React preview is available with
+`HIERONYMUS_TUI=ink hiero config` and `HIERONYMUS_TUI=ink hiero admin`; see the
+[usage guide](docs/usage.md#ink-preview) for runtime requirements and keys.
+
 For scripts and health checks, use machine-readable status:
 
 ```bash

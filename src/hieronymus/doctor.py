@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 from dataclasses import asdict, dataclass
 
@@ -35,6 +36,7 @@ class Doctor:
         self._check_config_root(report, autofix=autofix)
         self._check_database(report)
         self._check_daemon(report)
+        self._check_ink_runtime(report)
         self._check_settings_and_providers(report)
         self._check_agent_plugins(report)
 
@@ -108,6 +110,45 @@ class Doctor:
                 message="Hieronymus daemon is not running.",
             )
         )
+
+    def _check_ink_runtime(self, report: DoctorReport) -> None:
+        if shutil.which("node"):
+            report["autofixed"].append(
+                DoctorFinding(
+                    level="info",
+                    code="node-runtime-available",
+                    message="Node.js runtime is available for the Ink TUI.",
+                )
+            )
+        else:
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="node-runtime-missing",
+                    message=(
+                        "Node.js is not available; install Node.js >=22 to use HIERONYMUS_TUI=ink."
+                    ),
+                )
+            )
+
+        if shutil.which("pnpm"):
+            report["autofixed"].append(
+                DoctorFinding(
+                    level="info",
+                    code="pnpm-available",
+                    message="pnpm is available for frontend development and builds.",
+                )
+            )
+        else:
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="pnpm-missing",
+                    message=(
+                        "pnpm is not available; install pnpm to develop or build the Ink frontend."
+                    ),
+                )
+            )
 
     def _check_agent_plugins(self, report: DoctorReport) -> None:
         for plugin in available_plugins():

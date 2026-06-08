@@ -76,6 +76,13 @@ Open the local configuration TUI:
 hiero config
 ```
 
+Textual is the default TUI. The Ink/React TUI is available as a preview when
+Node.js is installed:
+
+```bash
+HIERONYMUS_TUI=ink hiero config
+```
+
 For machine-readable status, use:
 
 ```bash
@@ -104,6 +111,14 @@ Supported dream providers:
 - `openai`: OpenAI and OpenAI-compatible endpoints using `OPENAI_API_KEY`.
 - `gemini`: Gemini API using `GEMINI_API_KEY`.
 - `anthropic`: Anthropic Messages API using `ANTHROPIC_API_KEY`.
+
+In the Ink config TUI, the remote provider selector offers `openai`, `gemini`,
+and `anthropic`. `deterministic` remains the internal offline fallback and is
+not edited as a remote provider row there.
+
+Model suggestions appear when the selected provider API supports listing models
+and the configured API key environment variable is available. If model listing
+is unavailable, the TUI shows the configured defaults instead.
 
 Example OpenAI-backed dreaming run:
 
@@ -182,6 +197,12 @@ Open the local admin interface with:
 hiero admin
 ```
 
+Textual is the default admin TUI. The Ink/React admin preview is available with:
+
+```bash
+HIERONYMUS_TUI=ink hiero admin
+```
+
 The TUI is a local-first management surface for reviewing and controlling
 Hieronymus memory data. It shows global status and statistics, then lets an
 admin switch between crystals, lessons, concepts, proposals, dream runs, and
@@ -216,3 +237,31 @@ hiero admin --json
 
 This prints management counts and available TUI views without opening the
 interactive app.
+
+## Ink Preview
+
+The Ink TUI is feature-flagged with `HIERONYMUS_TUI=ink`; Textual remains the
+default unless that environment variable is set.
+
+Ink config MVP keys:
+
+- `1` / `2` / `3`: select `openai`, `gemini`, or `anthropic`
+- `s`: save
+- `r`: reload
+- `c`: check the selected provider
+- `q`: quit
+
+Ink admin MVP keys:
+
+- `1`-`8`: switch views
+- `f`: select filter command
+- `e`: select edit command
+- `+`: reinforce the selected crystal or lesson
+- `-`: decay the selected crystal or lesson
+- `d`: delete the selected crystal or lesson
+- `ctrl+p`: toggle command palette
+- `q`: quit
+
+Frontend development and builds require Node.js >=22 and pnpm. Installed package
+users only need Node.js for `HIERONYMUS_TUI=ink` until built frontend artifacts
+are distributed with releases.
