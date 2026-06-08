@@ -90,6 +90,16 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       return;
     }
 
+    if (input === "f") {
+      setStatus({ message: "Filter command selected", error: false });
+      return;
+    }
+
+    if (input === "e") {
+      setStatus({ message: "Edit command selected", error: false });
+      return;
+    }
+
     const selectedId = snapshot.selected?.id;
     if (selectedId === undefined || !crystalMutationViews.has(snapshot.view)) {
       return;
@@ -198,6 +208,8 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           "+ reinforce",
           "- decay",
           "d delete",
+          "f filter",
+          "e edit",
           "q quit",
         ]}
       />

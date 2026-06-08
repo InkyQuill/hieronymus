@@ -85,6 +85,27 @@ describe("AdminScreen", () => {
     expect(app.lastFrame()).not.toContain("approve");
   });
 
+  it("handles filter and edit keys as placeholder commands", async () => {
+    const client = fakeClient(() =>
+      Promise.reject(new Error("unexpected request")),
+    );
+    const app = render(<AdminScreen initial={bootstrap()} client={client} />);
+
+    expect(app.lastFrame()).toContain("f filter");
+    expect(app.lastFrame()).toContain("e edit");
+
+    await nextTick();
+    app.stdin.write("f");
+    await waitFor(() =>
+      expect(app.lastFrame()).toContain("Filter command selected"),
+    );
+
+    app.stdin.write("e");
+    await waitFor(() =>
+      expect(app.lastFrame()).toContain("Edit command selected"),
+    );
+  });
+
   it("reinforces the selected crystal and refreshes from nested snapshot", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
