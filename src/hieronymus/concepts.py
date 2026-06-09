@@ -449,7 +449,7 @@ class ConceptProposalStore:
         canonical_name = row["canonical_name"]
         canonical_rendering = facet_values[0] if facet_values else canonical_name
         return StrictConceptProposal(
-            id=int(row["id"]),
+            id=_vague_concept_proposal_id(int(row["id"])),
             series_slug=_series_slug_from_scope(row["scope_type"], row["scope_key"]),
             source_language="",
             target_language="",
@@ -474,3 +474,7 @@ class ConceptProposalStore:
         if not all(isinstance(value, str) for value in values):
             raise ValueError(f"{field} must contain only strings")
         return values
+
+
+def _vague_concept_proposal_id(concept_id: int) -> int:
+    return -abs(concept_id)

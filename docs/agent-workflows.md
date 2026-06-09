@@ -38,6 +38,11 @@ Legacy `remember` and memory-add integrations are compatibility wrappers around 
 queue. They preserve the old searchable entry shape for callers, but the stored memory remains
 short-term until dreaming converts, supersedes, or discards it.
 
+Legacy memory search keeps raw short-term IDs when they are unambiguous. If a long-term crystal and
+short-term memory would otherwise share the same legacy `id`, the crystal is returned with a negative
+compatibility ID. Vague concept suggestions in proposal lists also use negative compatibility IDs;
+only positive proposal IDs are actionable strict proposals.
+
 `read` is temporary inspection. It extracts useful concepts and terms for the current task without
 committing the whole source by default. Agents should use `read` for casual lookup, summaries, and
 one-off context unless the user asks Hieronymus to learn the material.

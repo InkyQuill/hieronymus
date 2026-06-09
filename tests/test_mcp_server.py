@@ -723,7 +723,7 @@ def test_mcp_concept_proposals_list_includes_vague_concepts(monkeypatch, tmp_pat
 
     assert mcp_server.hieronymus_concept_proposals_list() == [
         {
-            "id": 1,
+            "id": -1,
             "series_slug": "only-sense-online",
             "source_language": "",
             "target_language": "",

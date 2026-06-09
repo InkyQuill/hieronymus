@@ -45,7 +45,7 @@ class MemoryStore:
         if not text.strip():
             raise ValueError("text must not be empty")
 
-        context = self._context_for_series(series_slug)
+        context = self._context_for_add(series_slug)
         session = self._ensure_default_session(context)
         short_term_kind = "correction" if kind in {"rule", "correction"} else "note"
         return self._workspace.add_short_term_memory(
@@ -62,19 +62,23 @@ class MemoryStore:
         )
 
     def search(self, *args: str, limit: int = 5) -> list[MemoryEntry]:
-        if len(args) == 1:
-            query = args[0]
-            context = self._context_for_series(None)
-        elif len(args) == 2:
-            series_slug, query = args
-            context = self._context_for_series(series_slug)
-        else:
-            raise TypeError("search expects query or series_slug and query")
-
         if limit < 1:
             raise ValueError("limit must be at least 1")
-        if not search_expression(query):
-            return []
+
+        if len(args) == 1:
+            query = args[0]
+            if not search_expression(query):
+                return []
+            context = self._context_for_search(None)
+        elif len(args) == 2:
+            series_slug, query = args
+            if not search_expression(query):
+                return []
+            context = self._context_for_search(series_slug)
+            if context is None:
+                return []
+        else:
+            raise TypeError("search expects query or series_slug and query")
 
         bounded_limit = min(limit, _MAX_SEARCH_LIMIT)
         session = self._active_default_session(context)
@@ -85,12 +89,14 @@ class MemoryStore:
                 query,
                 limit=bounded_limit,
             )
-            entries = [self._entry_from_recall_result(result) for result in results]
+            entries = self._disambiguate_entry_ids(
+                [self._entry_from_recall_result(result) for result in results]
+            )
             return self._sort_legacy_entries(entries)[:bounded_limit]
 
         return self._fallback_search(context, query, limit=bounded_limit)
 
-    def _context_for_series(self, series_slug: str | None) -> TranslationContext:
+    def _context_for_add(self, series_slug: str | None) -> TranslationContext:
         if series_slug is None:
             if self.context is None:
                 raise ValueError("series_slug is required when MemoryStore has no context")
@@ -107,6 +113,18 @@ class MemoryStore:
                 source_language=_DEFAULT_SOURCE_LANGUAGE,
                 target_language=_DEFAULT_TARGET_LANGUAGE,
             )
+        return self._context_from_series(series)
+
+    def _context_for_search(self, series_slug: str | None) -> TranslationContext | None:
+        if series_slug is None:
+            if self.context is None:
+                raise ValueError("series_slug is required when MemoryStore has no context")
+            return self.context
+
+        try:
+            series = Registry(self.config).get_series(series_slug)
+        except KeyError:
+            return None
         return self._context_from_series(series)
 
     def _context_from_series(self, series: Series) -> TranslationContext:
@@ -161,25 +179,31 @@ class MemoryStore:
                 ),
             ).fetchone()
 
-    def _entry_from_recall_result(self, result) -> MemoryEntry:
+    def _entry_from_recall_result(self, result) -> tuple[MemoryEntry, str]:
         if result.source == "short_term":
             memory = result.short_term_memory
             metadata = memory.metadata
-            return _CompatibleMemoryEntry(
-                id=memory.id,
-                kind=str(metadata.get("legacy_kind") or memory.kind),
-                text=memory.text,
-                importance=_importance_from_metadata(metadata),
-                source_ref=memory.source_ref,
+            return (
+                _CompatibleMemoryEntry(
+                    id=memory.id,
+                    kind=str(metadata.get("legacy_kind") or memory.kind),
+                    text=memory.text,
+                    importance=_importance_from_metadata(metadata),
+                    source_ref=memory.source_ref,
+                ),
+                "short_term",
             )
 
         crystal = result.crystal
-        return _CompatibleMemoryEntry(
-            id=crystal.id,
-            kind=crystal.title or crystal.crystal_type,
-            text=crystal.text,
-            importance=round(crystal.strength * 5),
-            source_ref="",
+        return (
+            _CompatibleMemoryEntry(
+                id=crystal.id,
+                kind=crystal.title or crystal.crystal_type,
+                text=crystal.text,
+                importance=round(crystal.strength * 5),
+                source_ref="",
+            ),
+            "long_term",
         )
 
     def _fallback_search(
@@ -204,6 +228,9 @@ class MemoryStore:
                   and task_sessions.series_slug = ?
                   and task_sessions.source_language = ?
                   and task_sessions.target_language = ?
+                  and task_sessions.task_type = ?
+                  and task_sessions.volume = ?
+                  and task_sessions.chapter = ?
                 order by bm25(short_term_memories_fts), short_term_memories.id
                 limit ?
                 """,
@@ -212,6 +239,9 @@ class MemoryStore:
                     context.series_slug,
                     context.source_language,
                     context.target_language,
+                    context.task_type,
+                    context.volume,
+                    context.chapter,
                     limit,
                 ),
             ).fetchall()
@@ -249,30 +279,64 @@ class MemoryStore:
                 ),
             ).fetchall()
 
-        entries = [
-            _CompatibleMemoryEntry(
-                id=row["id"],
-                kind=str(_json_object(row["metadata_json"]).get("legacy_kind") or row["kind"]),
-                text=row["text"],
-                importance=_importance_from_metadata(_json_object(row["metadata_json"])),
-                source_ref=row["source_ref"],
-            )
-            for row in short_rows
-        ]
-        entries.extend(
-            _CompatibleMemoryEntry(
-                id=row["id"],
-                kind=row["title"] or row["crystal_type"],
-                text=row["text"],
-                importance=round(float(row["strength"]) * 5),
-                source_ref="",
-            )
-            for row in long_rows
+        entries = self._disambiguate_entry_ids(
+            [
+                (
+                    _CompatibleMemoryEntry(
+                        id=row["id"],
+                        kind=str(
+                            _json_object(row["metadata_json"]).get("legacy_kind") or row["kind"]
+                        ),
+                        text=row["text"],
+                        importance=_importance_from_metadata(_json_object(row["metadata_json"])),
+                        source_ref=row["source_ref"],
+                    ),
+                    "short_term",
+                )
+                for row in short_rows
+            ]
+            + [
+                (
+                    _CompatibleMemoryEntry(
+                        id=row["id"],
+                        kind=row["title"] or row["crystal_type"],
+                        text=row["text"],
+                        importance=round(float(row["strength"]) * 5),
+                        source_ref="",
+                    ),
+                    "long_term",
+                )
+                for row in long_rows
+            ]
         )
         return self._sort_legacy_entries(entries)[:limit]
 
+    def _disambiguate_entry_ids(
+        self,
+        entries: list[tuple[MemoryEntry, str]],
+    ) -> list[MemoryEntry]:
+        id_counts: dict[int, int] = {}
+        for entry, _source in entries:
+            id_counts[entry.id] = id_counts.get(entry.id, 0) + 1
+
+        disambiguated: list[MemoryEntry] = []
+        for entry, source in entries:
+            if source == "long_term" and id_counts[entry.id] > 1:
+                disambiguated.append(
+                    _CompatibleMemoryEntry(
+                        id=_legacy_long_term_id(entry.id),
+                        kind=entry.kind,
+                        text=entry.text,
+                        importance=entry.importance,
+                        source_ref=entry.source_ref,
+                    )
+                )
+                continue
+            disambiguated.append(entry)
+        return disambiguated
+
     def _sort_legacy_entries(self, entries: list[MemoryEntry]) -> list[MemoryEntry]:
-        return sorted(entries, key=lambda entry: (-entry.importance, entry.id))
+        return sorted(entries, key=lambda entry: (-entry.importance, abs(entry.id), entry.id < 0))
 
 
 def _json_object(raw: str) -> dict[str, object]:
@@ -292,3 +356,7 @@ def _importance_from_metadata(metadata: dict[str, object]) -> int:
     if isinstance(value, float):
         return round(value)
     return 3
+
+
+def _legacy_long_term_id(crystal_id: int) -> int:
+    return -abs(crystal_id)

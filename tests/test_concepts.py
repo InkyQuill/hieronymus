@@ -106,7 +106,7 @@ def test_list_pending_includes_vague_concepts_with_facet_suggestions(
     pending = ConceptProposalStore(config).list_pending()
 
     assert len(pending) == 1
-    assert pending[0].id == concept_id
+    assert pending[0].id == -concept_id
     assert pending[0].series_slug == "only-sense-online"
     assert pending[0].concept_text == "Sense"
     assert pending[0].source_form == "Sense"
@@ -115,6 +115,34 @@ def test_list_pending_includes_vague_concepts_with_facet_suggestions(
     assert pending[0].forbidden_variants == []
     assert pending[0].rationale == "A game-like aptitude category."
     assert pending[0].status == "vague"
+
+
+def test_list_pending_uses_non_overlapping_ids_for_strict_and_vague_proposals(
+    config: HieronymusConfig,
+) -> None:
+    strict_id = ConceptProposalStore(config).create(**_valid_proposal())
+    concept_id = ConceptStore(config).create_or_reinforce(
+        "Sense",
+        description="A vague duplicate concept.",
+        confidence_delta=0.2,
+        scope_type="project",
+        scope_key="only-sense-online",
+    )
+    assert strict_id == concept_id
+
+    pending = ConceptProposalStore(config).list_pending()
+
+    assert [(proposal.id, proposal.status) for proposal in pending] == [
+        (strict_id, "pending"),
+        (-concept_id, "vague"),
+    ]
+    store = ConceptProposalStore(config)
+    with pytest.raises(KeyError, match="unknown concept proposal"):
+        store.get(-concept_id)
+    with pytest.raises(KeyError, match="unknown concept proposal"):
+        store.approve(-concept_id)
+    with pytest.raises(KeyError, match="unknown concept proposal"):
+        store.reject(-concept_id)
 
 
 def test_approve_and_reject_only_change_status(config: HieronymusConfig) -> None:
