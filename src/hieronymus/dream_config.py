@@ -241,7 +241,11 @@ def _dream_config_from_payload(payload: dict[str, Any]) -> DreamConfig:
             prefix=f"providers.{name}",
         )
         _validate_provider_payload(name, provider_payload)
-        provider_default = providers.get(name, ProviderProfile(type="openai"))
+        provider_default = providers.get(name)
+        if provider_default is None:
+            if "type" not in provider_payload:
+                raise DreamConfigError(f"providers.{name}.type is required")
+            provider_default = ProviderProfile(type=provider_payload["type"])
         providers[name] = replace(provider_default, **provider_payload)
 
     workflows = dict(defaults.workflows)
