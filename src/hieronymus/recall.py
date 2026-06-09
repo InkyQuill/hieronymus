@@ -13,6 +13,7 @@ _SHORT_TERM_REASON = "active session short-term memory match"
 _SHORT_TERM_BASE_SCORE = 0.30
 _SHORT_TERM_RANK_STEP = 0.01
 _STORY_SCOPE_BOOST = 0.25
+_MAX_LONG_TERM_CANDIDATE_LIMIT = 50
 _MAX_SHORT_TERM_LIMIT = 50
 
 
@@ -30,6 +31,10 @@ def _short_memory_from_row(row) -> ShortTermMemoryRecord:
         source_ref=row["source_ref"],
         metadata=json.loads(row["metadata_json"]),
     )
+
+
+def _long_term_candidate_limit(limit: int) -> int:
+    return min(max(limit * 4, limit + 10), _MAX_LONG_TERM_CANDIDATE_LIMIT)
 
 
 class RecallService:
@@ -60,7 +65,11 @@ class RecallService:
                 limit=limit,
             )
 
-        scored_crystals = self.crystals.search_scored(context, query, limit=limit)
+        scored_crystals = self.crystals.search_scored(
+            context,
+            query,
+            limit=_long_term_candidate_limit(limit),
+        )
         ranked_items: list[tuple[str, float, int, object]] = []
         context_tags = set(context.tags)
         for crystal, score in scored_crystals:

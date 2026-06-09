@@ -117,6 +117,46 @@ def test_story_scope_boosts_long_term_crystals_without_filtering(
     }
 
 
+def test_story_scope_boost_applies_before_final_limit(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config, tags=("Book 5 Chapter 5",))
+    crystals = CrystalStore(config)
+    first_unscoped_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.9,
+        confidence=0.9,
+    )
+    second_unscoped_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.9,
+        confidence=0.9,
+    )
+    matching_scope_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.5,
+        confidence=0.5,
+        story_scopes=("Book 5 Chapter 5",),
+    )
+    session = WorkspaceStore(config).start_session(context)
+
+    results = RecallService(config).recall(
+        session.id,
+        context,
+        "guarded crafting",
+        limit=2,
+    )
+
+    assert [result.crystal.id for result in results] == [matching_scope_id, first_unscoped_id]
+    assert second_unscoped_id not in {result.crystal.id for result in results}
+
+
 def test_combined_recall_applies_final_limit_before_activation_records(
     config: HieronymusConfig,
 ) -> None:
@@ -185,3 +225,83 @@ def test_short_term_recall_preserves_fts_relevance_order(
 
     assert [result.short_term_memory.id for result in results] == [strong_id, weak_id]
     assert results[0].score > results[1].score
+
+
+def test_short_term_recall_excludes_other_active_sessions(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    other_session = workspace.start_session(context)
+    current_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Sense inventory labels stay terse.",
+    )
+    other_id = workspace.add_short_term_memory(
+        other_session.id,
+        source_role="mentor",
+        kind="note",
+        text="Sense inventory labels use another session note.",
+    )
+
+    results = RecallService(config).recall(session.id, context, "Sense inventory", limit=5)
+
+    assert [result.short_term_memory.id for result in results] == [current_id]
+    assert other_id not in {result.short_term_memory.id for result in results}
+
+
+def test_short_term_recall_excludes_archived_memories(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    active_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Sense inventory labels stay terse.",
+    )
+    archived_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Sense inventory labels use archived note.",
+    )
+    with connect(config.database_path) as conn:
+        conn.execute(
+            "update short_term_memories set archived_at = ? where id = ?",
+            ("2026-06-09T00:00:00+00:00", archived_id),
+        )
+        conn.commit()
+
+    results = RecallService(config).recall(session.id, context, "Sense inventory", limit=5)
+
+    assert [result.short_term_memory.id for result in results] == [active_id]
+    assert archived_id not in {result.short_term_memory.id for result in results}
+
+
+def test_short_term_recall_escapes_operator_like_query_characters(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    memory_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Sense inventory labels stay terse.",
+    )
+
+    results = RecallService(config).recall(
+        session.id,
+        context,
+        '"Sense" OR (inventory) NEAR labels* !!!',
+        limit=5,
+    )
+
+    assert [result.short_term_memory.id for result in results] == [memory_id]
