@@ -88,6 +88,9 @@ def _validate_rule_shape(
         raise ValueError("approved variants that differ from canonical rendering are unsupported")
 
 
+_UNSUPPORTED_RULE_ALIAS_KINDS = frozenset({"source_variant", "search_alias"})
+
+
 class Termbase:
     def __init__(self, config: HieronymusConfig, context: TranslationContext) -> None:
         self.config = config
@@ -354,14 +357,19 @@ class Termbase:
     ) -> None:
         alias_rows = conn.execute(
             """
-            select text, kind
+            select text, kind, case_sensitive
             from strict_term_aliases
             where term_id = ?
-              and kind in ('approved_variant', 'forbidden_variant')
             order by id
             """,
             (term["id"],),
         ).fetchall()
+        for row in alias_rows:
+            if row["kind"] in _UNSUPPORTED_RULE_ALIAS_KINDS:
+                raise ValueError(f"{row['kind']} aliases are unsupported by rule crystals")
+            if not bool(row["case_sensitive"]):
+                raise ValueError("case-insensitive aliases are unsupported by rule crystals")
+
         approved_variants = [
             row["text"].strip()
             for row in alias_rows

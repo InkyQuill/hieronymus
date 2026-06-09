@@ -46,6 +46,17 @@ def _propose_sense_name(termbase: Termbase) -> int:
     )
 
 
+def _assert_approval_rejected_atomically(termbase: Termbase, term_id: int) -> None:
+    with connect(termbase.config.database_path) as conn:
+        term = conn.execute("select status from strict_terms where id = ?", (term_id,)).fetchone()
+        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
+        audit_count = conn.execute("select count(*) from audit_log").fetchone()[0]
+
+    assert term["status"] == "pending"
+    assert crystal_count == 0
+    assert audit_count == 0
+
+
 def _add_rule_crystal(
     termbase: Termbase,
     text: str,
@@ -191,6 +202,47 @@ def test_add_alias_rejects_approved_term(config):
             text="Attack Increase",
             language="en",
         )
+
+
+def test_approve_rejects_source_variant_alias_atomically(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+    termbase.add_alias(term_id, kind="source_variant", text="攻撃バフ", language="ja")
+
+    with pytest.raises(ValueError, match="source_variant aliases are unsupported by rule crystals"):
+        termbase.approve(term_id)
+
+    _assert_approval_rejected_atomically(termbase, term_id)
+
+
+def test_approve_rejects_search_alias_atomically(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+    termbase.add_alias(term_id, kind="search_alias", text="attack buff", language="en")
+
+    with pytest.raises(ValueError, match="search_alias aliases are unsupported by rule crystals"):
+        termbase.approve(term_id)
+
+    _assert_approval_rejected_atomically(termbase, term_id)
+
+
+def test_approve_rejects_case_insensitive_forbidden_alias_atomically(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+    termbase.add_alias(
+        term_id,
+        kind="forbidden_variant",
+        text="Attack Increase",
+        language="en",
+        case_sensitive=False,
+    )
+
+    with pytest.raises(
+        ValueError, match="case-insensitive aliases are unsupported by rule crystals"
+    ):
+        termbase.approve(term_id)
+
+    _assert_approval_rejected_atomically(termbase, term_id)
 
 
 def test_contract_matches_case_insensitive_source_variant(config):
