@@ -63,6 +63,36 @@ class AdminStats:
 
 
 @dataclass(frozen=True)
+class AdminShortTermStatus:
+    pending_count: int
+    min_pending_short_term_memories: int
+    max_pending_short_term_memories: int
+    urgent: bool
+
+    def as_dict(self) -> dict[str, int | bool]:
+        return {
+            "pending_count": self.pending_count,
+            "min_pending_short_term_memories": self.min_pending_short_term_memories,
+            "max_pending_short_term_memories": self.max_pending_short_term_memories,
+            "urgent": self.urgent,
+        }
+
+
+@dataclass(frozen=True)
+class AdminDreamStatus:
+    state: str
+    current_phase: str
+    progress: float
+
+    def as_dict(self) -> dict[str, str | float]:
+        return {
+            "state": self.state,
+            "current_phase": self.current_phase,
+            "progress": self.progress,
+        }
+
+
+@dataclass(frozen=True)
 class ActionResult:
     entity_type: str
     entity_id: int | str

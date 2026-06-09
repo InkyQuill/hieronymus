@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from hieronymus.admin import ADMIN_VIEWS, AdminStore
+from hieronymus.admin import (
+    ADMIN_VIEW_KEYS,
+    ADMIN_VIEW_LABELS,
+    ADMIN_VIEWS,
+    AdminStore,
+    admin_view_label,
+    admin_view_options,
+)
 from hieronymus.admin_models import ActionResult, AdminDetail, AdminRow, AdminSnapshot
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
@@ -30,19 +37,26 @@ class AdminBridge:
         self.store = AdminStore(config)
 
     def bootstrap(self, params: dict[str, object]) -> dict[str, object]:
-        view = _optional_string(params.get("view"), "view") or DEFAULT_VIEW
+        view = _normalize_view(_optional_string(params.get("view"), "view") or DEFAULT_VIEW)
         selected_id = params.get("selected_id", params.get("id"))
         filters = _filters(params.get("filters"))
         return {
-            "views": list(ADMIN_VIEWS),
+            "views": list(ADMIN_VIEW_KEYS),
+            "view_labels": dict(ADMIN_VIEW_LABELS),
+            "view_options": admin_view_options(),
             "default_view": DEFAULT_VIEW,
+            "default_view_key": "crystals",
             "stats": dataclass_to_json(self.store.stats()),
             "service": dataclass_to_json(ServiceManager(self.config).status()),
             "snapshot": dataclass_to_json(self._snapshot(view, selected_id, filters)),
+            **self.store.dashboard_status_payload(),
         }
 
+    def dashboard(self, params: dict[str, object] | None = None) -> dict[str, object]:
+        return self.bootstrap(params or {})
+
     def snapshot(self, params: dict[str, object]) -> dict[str, object]:
-        view = _optional_string(params.get("view"), "view") or DEFAULT_VIEW
+        view = _normalize_view(_optional_string(params.get("view"), "view") or DEFAULT_VIEW)
         selected_id = params.get("selected_id", params.get("id"))
         filters = _filters(params.get("filters"))
         return self._snapshot_payload(view=view, selected_id=selected_id, filters=filters)
@@ -236,6 +250,8 @@ class AdminBridge:
 
     def run_manual_dreaming(self, params: dict[str, object]) -> dict[str, object]:
         view, filters = _refresh_context(params, default_view="Dream Runs")
+        if self.store.pending_completed_short_term_memory_count() == 0:
+            raise ValueError("dream all requires at least one completed pending short-term memory")
         run = self.store.run_manual_dreaming()
         return self._mutation_payload(
             dataclass_to_json(run),
@@ -267,6 +283,7 @@ class AdminBridge:
             "result": dataclass_to_json(result),
             "stats": dataclass_to_json(self.store.stats()),
             "snapshot": dataclass_to_json(self._snapshot(view, selected_id, filters)),
+            **self.store.dashboard_status_payload(),
         }
 
     def _snapshot_payload(
@@ -279,6 +296,7 @@ class AdminBridge:
         return {
             "stats": dataclass_to_json(self.store.stats()),
             "snapshot": dataclass_to_json(self._snapshot(view, selected_id, filters)),
+            **self.store.dashboard_status_payload(),
         }
 
     def _snapshot(
@@ -393,7 +411,7 @@ def _crystal_type(params: dict[str, object]) -> str:
 
 
 def _crystal_mutation_view(params: dict[str, object]) -> str:
-    return _optional_string(params.get("view"), "view") or DEFAULT_VIEW
+    return _normalize_view(_optional_string(params.get("view"), "view") or DEFAULT_VIEW)
 
 
 def _refresh_context(
@@ -401,7 +419,7 @@ def _refresh_context(
     *,
     default_view: str,
 ) -> tuple[str, dict[str, FilterValue]]:
-    view = _optional_string(params.get("view"), "view") or default_view
+    view = _normalize_view(_optional_string(params.get("view"), "view") or default_view)
     filters = _filters(params.get("filters"))
     _validate_view_filters(view, filters)
     return view, filters
@@ -497,7 +515,12 @@ def _tuple_filter(filters: dict[str, FilterValue], key: str) -> tuple[str, ...]:
     return value if isinstance(value, tuple) else ()
 
 
+def _normalize_view(view: str) -> str:
+    return admin_view_label(view)
+
+
 def _validate_view_filters(view: str, filters: dict[str, FilterValue]) -> None:
+    view = _normalize_view(view)
     if view not in ADMIN_VIEWS:
         raise ValueError(f"unsupported admin view: {view}")
     if not filters:

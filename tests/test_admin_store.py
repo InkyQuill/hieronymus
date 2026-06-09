@@ -74,6 +74,15 @@ def test_status_payload_reports_admin_counts(config: HieronymusConfig) -> None:
     assert payload["counts"]["sessions"] == 1
     assert payload["counts"]["pending_proposals"] == 0
     assert payload["service"]["running"] is False
+    assert payload["short_term_status"]["pending_count"] == 0
+    assert payload["short_term_status"]["urgent"] is False
+    assert payload["dream_status"] == {
+        "state": "DISABLED",
+        "current_phase": "",
+        "progress": 0.0,
+    }
+    assert "concepts" in payload["view_keys"]
+    assert "dream_audits" in payload["view_keys"]
 
 
 def test_list_crystals_filters_by_series_type_status_and_tags(

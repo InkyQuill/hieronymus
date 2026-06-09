@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import load_dream_config, redacted_dream_config_payload
 from hieronymus.dream_providers import ProviderRegistry
+from hieronymus.llm_cache import load_model_cache
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.settings import (
     DreamingSettings,
@@ -85,7 +87,16 @@ class ConfigBridge:
         result = self.registry.check(self.config, selected, settings=settings)
         check_result = _result_to_json_dict(result)
         _redact_error(check_result, settings)
-        return self._payload(settings, selected, check_result=check_result)
+        suggestions = None
+        if check_result.get("ok") is True and hasattr(self.registry, "list_model_suggestions"):
+            suggestion_result = self.registry.list_model_suggestions(
+                self.config,
+                selected,
+                settings=settings,
+            )
+            suggestions = _result_to_json_dict(suggestion_result)
+            _redact_error(suggestions, settings)
+        return self._payload(settings, selected, check_result=check_result, suggestions=suggestions)
 
     def model_suggestions(self, params: dict[str, object]) -> dict[str, object]:
         settings = self._settings_from_params(params)
@@ -109,12 +120,17 @@ class ConfigBridge:
         detail: str = "",
     ) -> dict[str, object]:
         errors = validate_draft(settings) if validation_errors is None else validation_errors
+        dream_config = redacted_dream_config_payload(load_dream_config(self.config))
         return {
             "config_paths": {
                 "data_root": str(self.config.data_root),
                 "config_root": str(self.config.config_root),
                 "settings_path": str(self.config.settings_path),
             },
+            "dreaming": dream_config["dreaming"],
+            "providers": dream_config["providers"],
+            "workflows": dream_config["workflows"],
+            "model_cache": load_model_cache(self.config).to_payload(),
             "provider_choices": self._provider_choices(),
             "selected_provider": selected,
             "draft": settings.to_json_dict(),

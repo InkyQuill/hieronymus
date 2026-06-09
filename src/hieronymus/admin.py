@@ -8,7 +8,9 @@ from hieronymus.admin_models import (
     ActionResult,
     AdminCrystalEditPayload,
     AdminDetail,
+    AdminDreamStatus,
     AdminRow,
+    AdminShortTermStatus,
     AdminSnapshot,
     AdminStats,
     DreamReview,
@@ -17,6 +19,7 @@ from hieronymus.admin_models import (
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
+from hieronymus.dream_config import DreamConfig, load_dream_config
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamRunRecord, DreamService
 from hieronymus.memory_models import TranslationContext
@@ -34,11 +37,39 @@ ADMIN_VIEWS = (
     "Dream Audits",
     "Audit Log",
 )
+ADMIN_VIEW_KEYS = (
+    "concepts",
+    "renderings",
+    "crystals",
+    "lessons",
+    "short_term_sessions",
+    "dream_runs",
+    "proposals",
+    "dream_audits",
+    "audit_log",
+)
+ADMIN_VIEW_LABELS = dict(zip(ADMIN_VIEW_KEYS, ADMIN_VIEWS, strict=True))
+ADMIN_LABEL_VIEW_KEYS = {label: key for key, label in ADMIN_VIEW_LABELS.items()}
 _ADMIN_IMMEDIATE_EVENT_DELTAS = {
     "confirmed_by_user": (0.15, 0.20),
     "contradicted_by_user": (-0.20, -0.25),
     "deleted_by_user": (-0.50, -0.35),
 }
+
+
+def admin_view_key(view: str) -> str:
+    return ADMIN_LABEL_VIEW_KEYS.get(view, view)
+
+
+def admin_view_label(view: str) -> str:
+    return ADMIN_VIEW_LABELS.get(view, view)
+
+
+def admin_view_options() -> list[dict[str, str]]:
+    return [
+        {"key": key, "label": label}
+        for key, label in zip(ADMIN_VIEW_KEYS, ADMIN_VIEWS, strict=True)
+    ]
 
 
 def _rule_crystal_text(
@@ -86,9 +117,55 @@ class AdminStore:
         return {
             "tui": "available",
             "views": list(ADMIN_VIEWS),
+            "view_keys": list(ADMIN_VIEW_KEYS),
+            "view_labels": dict(ADMIN_VIEW_LABELS),
+            "view_options": admin_view_options(),
             "counts": self.stats().as_dict(),
             "service": ServiceManager(self.config).status(),
+            **self.dashboard_status_payload(),
         }
+
+    def dashboard_status_payload(self) -> dict[str, object]:
+        dream_config = load_dream_config(self.config)
+        pending_count = self.pending_completed_short_term_memory_count()
+        return {
+            "short_term_status": self._short_term_status(
+                dream_config,
+                pending_count,
+            ).as_dict(),
+            "dream_status": self._dream_status(dream_config).as_dict(),
+        }
+
+    def pending_completed_short_term_memory_count(self) -> int:
+        with connect(self.config.database_path) as conn:
+            row = conn.execute(
+                """
+                select count(*)
+                from short_term_memories
+                join task_sessions
+                  on task_sessions.id = short_term_memories.session_id
+                where task_sessions.status = 'completed'
+                  and short_term_memories.archived_at is null
+                """
+            ).fetchone()
+        return int(row[0])
+
+    def _short_term_status(
+        self,
+        dream_config: DreamConfig,
+        pending_count: int,
+    ) -> AdminShortTermStatus:
+        return AdminShortTermStatus(
+            pending_count=pending_count,
+            min_pending_short_term_memories=dream_config.min_pending_short_term_memories,
+            max_pending_short_term_memories=dream_config.max_pending_short_term_memories,
+            urgent=pending_count >= dream_config.max_pending_short_term_memories,
+        )
+
+    def _dream_status(self, dream_config: DreamConfig) -> AdminDreamStatus:
+        if not dream_config.enabled:
+            return AdminDreamStatus(state="DISABLED", current_phase="", progress=0.0)
+        return AdminDreamStatus(state="IDLE", current_phase="", progress=0.0)
 
     def provenance_for_crystal(self, crystal_id: int) -> ProvenanceDetail:
         with connect(self.config.database_path) as conn:
@@ -181,7 +258,10 @@ class AdminStore:
         return crystal_id
 
     def run_manual_dreaming(self) -> DreamRunRecord:
-        run = DreamService(self.config, resolve_provider(self.config)).run_all(owner="admin")
+        run = DreamService(self.config, resolve_provider(self.config)).run_all(
+            owner="admin",
+            ignore_minimum=True,
+        )
         self._audit(
             "run",
             "dream",

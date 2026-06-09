@@ -1,6 +1,9 @@
 from pathlib import Path
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import ProviderProfile, default_dream_config, save_dream_config
+from hieronymus.dream_providers import HTTPResponse, ProviderRegistry
+from hieronymus.llm_cache import load_model_cache
 from hieronymus.settings import load_settings
 from hieronymus.tui_bridge.config_api import ConfigBridge
 
@@ -25,6 +28,36 @@ def test_config_bootstrap_returns_one_remote_provider_selector(tmp_path: Path) -
     openai = payload["provider_choices"][0]
     assert openai["supports_api_path"] is True
     assert "supports_base_url" not in openai
+
+
+def test_config_bootstrap_exposes_redacted_dream_config_and_model_cache(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    save_dream_config(
+        config,
+        default_dream_config().with_provider(
+            "openai",
+            ProviderProfile(
+                type="openai",
+                endpoint="https://llm.example.test/v1",
+                api_key="raw-secret-value",
+                timeout_seconds=12.0,
+            ),
+        ),
+    )
+
+    payload = ConfigBridge(config).bootstrap({})
+
+    assert payload["dreaming"]["min_pending_short_term_memories"] == 20
+    assert payload["providers"]["openai"] == {
+        "type": "openai",
+        "endpoint": "https://llm.example.test/v1",
+        "api_key": "***",
+        "timeout_seconds": 12.0,
+    }
+    assert payload["workflows"]["crystallization"]["provider"] == "anthropic"
+    assert payload["model_cache"] == {"providers": {}}
 
 
 def test_config_select_provider_enables_only_selected_remote_provider(tmp_path: Path) -> None:
@@ -181,6 +214,38 @@ def test_config_check_provider_redacts_error(tmp_path: Path, monkeypatch) -> Non
 
     assert payload["check_result"]["error"] == "provider returned [redacted]"
     assert "raw-secret-value" not in repr(payload)
+
+
+def test_config_check_provider_success_updates_model_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Transport:
+        def post_json(self, *args, **kwargs):
+            return HTTPResponse(status=200, body="{}")
+
+        def get_json(self, *args, **kwargs):
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"gpt-test"},{"id":"gpt-test-mini"}]}',
+            )
+
+    config = _config(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "raw-secret-value")
+    bridge = ConfigBridge(config, registry=ProviderRegistry(Transport()))
+
+    payload = bridge.check_provider({"selected_provider": "openai", "draft": {}})
+
+    assert payload["check_result"]["ok"] is True
+    assert payload["suggestions"]["models"] == ["gpt-test", "gpt-test-mini"]
+    assert payload["model_cache"]["providers"]["openai"]["models"] == [
+        "gpt-test",
+        "gpt-test-mini",
+    ]
+    assert load_model_cache(config).providers["openai"].models == (
+        "gpt-test",
+        "gpt-test-mini",
+    )
 
 
 def test_config_check_provider_returns_validation_for_malformed_api_key_env(

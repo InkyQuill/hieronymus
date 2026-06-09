@@ -2,14 +2,16 @@ from pathlib import Path
 
 import pytest
 
-from hieronymus.admin import ADMIN_VIEWS, AdminStore
+from hieronymus.admin import ADMIN_VIEW_KEYS, AdminStore
 from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dreaming import DreamRunRecord
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.tui_bridge.admin_api import AdminBridge
+from hieronymus.workspace import WorkspaceStore
 
 
 def _config(tmp_path: Path) -> HieronymusConfig:
@@ -43,9 +45,35 @@ def test_admin_bootstrap_returns_views_stats_and_initial_snapshot(tmp_path: Path
 
     payload = AdminBridge(config).bootstrap({})
 
-    assert payload["views"] == list(ADMIN_VIEWS)
+    assert payload["views"] == list(ADMIN_VIEW_KEYS)
+    assert payload["view_labels"]["concepts"] == "Concepts"
+    assert payload["view_labels"]["dream_audits"] == "Dream Audits"
     assert payload["default_view"] == "Crystals"
+    assert payload["default_view_key"] == "crystals"
     assert payload["stats"]["series"] == 1
+    assert payload["short_term_status"]["pending_count"] == 0
+    assert payload["dream_status"]["state"] in {"IDLE", "WORKING", "DISABLED"}
+    assert payload["snapshot"]["view"] == "Crystals"
+    assert payload["snapshot"]["selected"]["label"] == "Guild Ledger"
+
+
+def test_admin_bridge_exposes_memory_and_dream_status(config: HieronymusConfig) -> None:
+    api = AdminBridge(config)
+    payload = api.dashboard()
+
+    assert "short_term_status" in payload
+    assert "dream_status" in payload
+    assert payload["dream_status"]["state"] in {"IDLE", "WORKING", "DISABLED"}
+    assert "concepts" in payload["views"]
+    assert "dream_audits" in payload["views"]
+
+
+def test_admin_snapshot_accepts_machine_view_key(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+
+    payload = AdminBridge(config).snapshot({"view": "crystals"})
+
     assert payload["snapshot"]["view"] == "Crystals"
     assert payload["snapshot"]["selected"]["label"] == "Guild Ledger"
 
@@ -481,3 +509,67 @@ def test_admin_dream_review_uses_run_id_param(tmp_path: Path) -> None:
 
     with pytest.raises(KeyError, match="unknown dream run: 999"):
         AdminBridge(config).dream_review({"run_id": 999})
+
+
+def test_admin_dream_all_rejects_when_no_completed_pending_memory(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bridge = AdminBridge(config)
+
+    with pytest.raises(
+        ValueError,
+        match="dream all requires at least one completed pending short-term memory",
+    ):
+        bridge.run_manual_dreaming({})
+
+    with connect(config.database_path) as conn:
+        count = conn.execute("select count(*) from dream_runs").fetchone()[0]
+    assert count == 0
+
+
+def test_admin_dream_all_ignores_service_minimum_when_pending_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    context = TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        task_type="translation",
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Keep guild ledger stable.",
+    )
+    workspace.complete_session(session.id)
+    calls: dict[str, object] = {}
+
+    class FakeDreamService:
+        def __init__(self, config: HieronymusConfig, provider: object) -> None:
+            calls["config"] = config
+            calls["provider"] = provider
+
+        def run_all(self, **kwargs: object) -> DreamRunRecord:
+            calls["run_all"] = kwargs
+            return DreamRunRecord(
+                id=123,
+                cycle_id=456,
+                status="completed",
+                provider="fake",
+                input_count=1,
+                created_crystal_count=0,
+                proposal_count=0,
+            )
+
+    monkeypatch.setattr("hieronymus.admin.DreamService", FakeDreamService)
+
+    payload = AdminBridge(config).run_manual_dreaming({})
+
+    assert calls["config"] == config
+    assert calls["run_all"] == {"owner": "admin", "ignore_minimum": True}
+    assert payload["result"]["id"] == 123
