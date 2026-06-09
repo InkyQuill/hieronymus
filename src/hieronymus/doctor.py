@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import shutil
 import sqlite3
@@ -15,12 +13,15 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.dream_config import (
     DreamConfig,
     DreamConfigError,
-    ProviderProfile,
     _dream_config_from_payload,
     default_dream_config,
     load_dream_config,
 )
-from hieronymus.llm_cache import load_model_cache, model_cache_identity
+from hieronymus.llm_cache import (
+    dream_profile_cache_identity,
+    load_model_cache,
+    model_cache_identity,
+)
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_manager import ServiceManager
 from hieronymus.settings import SettingsError, load_settings
@@ -343,7 +344,7 @@ class Doctor:
     ) -> None:
         cache = load_model_cache(self.config)
         provider_identities = {
-            name: _dream_provider_cache_identity(name, provider)
+            name: dream_profile_cache_identity(name, provider)
             for name, provider in dream_config.providers.items()
         }
         reported_cache_errors: set[tuple[str, str]] = set()
@@ -502,22 +503,6 @@ def _is_dream_readiness_validation_error(error: DreamConfigError) -> bool:
         "referenced provider profile is missing" in message
         or "enabled workflow must have a model" in message
     )
-
-
-def _dream_provider_cache_identity(name: str, provider: ProviderProfile) -> str:
-    payload = {
-        "provider": name,
-        "type": provider.type,
-        "endpoint": provider.endpoint.rstrip("/"),
-        "api_key_sha256": _secret_fingerprint(provider.api_key),
-    }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
-
-
-def _secret_fingerprint(value: str) -> str:
-    if not value:
-        return ""
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _is_403_error(error: str) -> bool:

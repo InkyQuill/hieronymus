@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -7,6 +8,7 @@ from typing import Any
 
 from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import ProviderProfile
 from hieronymus.settings import ProviderSettings
 
 CACHE_TTL = timedelta(hours=24)
@@ -92,6 +94,22 @@ def model_cache_identity(name: str, provider: ProviderSettings | None = None) ->
             raise ValueError("gemini model cache identity requires provider settings")
         payload["api_key_env"] = provider.api_key_env
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def dream_profile_cache_identity(name: str, provider: ProviderProfile) -> str:
+    payload = {
+        "provider": name,
+        "type": provider.type,
+        "endpoint": provider.endpoint.rstrip("/"),
+        "api_key_sha256": _secret_fingerprint(provider.api_key),
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _secret_fingerprint(value: str) -> str:
+    if not value:
+        return ""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _cache_from_payload(payload: Any) -> CachedModels:

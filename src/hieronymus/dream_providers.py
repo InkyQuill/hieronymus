@@ -21,6 +21,7 @@ from hieronymus.dreaming import (
 from hieronymus.llm_cache import (
     CachedModels,
     ModelCacheEntry,
+    dream_profile_cache_identity,
     load_model_cache,
     model_cache_identity,
     save_model_cache,
@@ -271,6 +272,43 @@ class ProviderRegistry:
         )
         return result
 
+    def list_profile_model_suggestions(
+        self,
+        config: HieronymusConfig,
+        profile_name: str,
+        profile: ProviderProfile,
+    ) -> ModelSuggestionResult:
+        identity = dream_profile_cache_identity(profile_name, profile)
+        cache = load_model_cache(config)
+        entry = cache.providers.get(profile_name)
+        if (
+            entry is not None
+            and not entry.error
+            and entry.identity == identity
+            and not entry.is_stale()
+        ):
+            return ModelSuggestionResult(
+                provider=profile_name,
+                models=list(entry.models),
+                source=config.llm_cache_path.name,
+                error=entry.error,
+            )
+
+        result = self._list_uncached_profile_model_suggestions(profile_name, profile)
+        _save_model_cache_best_effort(
+            config,
+            cache.with_entry(
+                ModelCacheEntry(
+                    provider=profile_name,
+                    models=tuple(result.models),
+                    fetched_at=datetime.now(UTC).isoformat(),
+                    error=result.error,
+                    identity=identity,
+                )
+            ),
+        )
+        return result
+
     def _list_static_cached_model_suggestions(
         self,
         config: HieronymusConfig,
@@ -343,6 +381,39 @@ class ProviderRegistry:
             )
         return ModelSuggestionResult(provider=name, models=models, source="api")
 
+    def _list_uncached_profile_model_suggestions(
+        self,
+        profile_name: str,
+        profile: ProviderProfile,
+    ) -> ModelSuggestionResult:
+        defaults = _default_model_suggestions(profile.type)
+        if profile.type in {"anthropic", "ollama"}:
+            return ModelSuggestionResult(provider=profile_name, models=defaults, source="defaults")
+        if not profile.api_key.strip():
+            return ModelSuggestionResult(
+                provider=profile_name,
+                models=defaults,
+                source="defaults",
+                error="API key missing for provider profile",
+            )
+
+        settings = _profile_provider_settings(profile, model=defaults[0])
+        try:
+            response = self._list_remote_models(profile.type, settings, profile.api_key)
+            if not 200 <= response.status < 300:
+                raise ValueError("model suggestions request failed")
+            models = _parse_model_suggestions(profile.type, response.body)
+            if not models:
+                raise ValueError("empty model suggestions")
+        except Exception:
+            return ModelSuggestionResult(
+                provider=profile_name,
+                models=defaults,
+                source="defaults",
+                error="model suggestions unavailable",
+            )
+        return ModelSuggestionResult(provider=profile_name, models=models, source="api")
+
     def check(
         self,
         config: HieronymusConfig,
@@ -393,6 +464,115 @@ class ProviderRegistry:
             error=f"provider returned HTTP {response.status}",
             latency_ms=latency_ms,
         )
+
+    def check_profile(
+        self,
+        config: HieronymusConfig,
+        profile_name: str,
+        profile: ProviderProfile,
+        *,
+        model: str,
+    ) -> ProviderCheckResult:
+        resolved_model = model.strip()
+        if not resolved_model:
+            result = ProviderCheckResult(
+                name=profile_name,
+                ok=False,
+                model="",
+                error=f"model must not be empty for provider profile: {profile_name}",
+            )
+            self._cache_profile_check_failure(config, profile_name, profile, result)
+            return result
+        if profile.type != "ollama" and not profile.api_key.strip():
+            result = ProviderCheckResult(
+                name=profile_name,
+                ok=False,
+                model=resolved_model,
+                error=f"API key missing for provider profile: {profile_name}",
+            )
+            self._cache_profile_check_failure(config, profile_name, profile, result)
+            return result
+
+        settings = _profile_provider_settings(profile, resolved_model)
+        started = time.perf_counter()
+        try:
+            response = self._check_profile_remote(profile, settings)
+        except Exception:
+            latency_ms = round((time.perf_counter() - started) * 1000)
+            result = ProviderCheckResult(
+                name=profile_name,
+                ok=False,
+                model=resolved_model,
+                error="provider check failed",
+                latency_ms=latency_ms,
+            )
+            self._cache_profile_check_failure(config, profile_name, profile, result)
+            return result
+
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        if 200 <= response.status < 300:
+            return ProviderCheckResult(
+                name=profile_name,
+                ok=True,
+                model=resolved_model,
+                latency_ms=latency_ms,
+            )
+
+        result = ProviderCheckResult(
+            name=profile_name,
+            ok=False,
+            model=resolved_model,
+            error=f"provider returned HTTP {response.status}",
+            latency_ms=latency_ms,
+        )
+        self._cache_profile_check_failure(config, profile_name, profile, result)
+        return result
+
+    def _cache_profile_check_failure(
+        self,
+        config: HieronymusConfig,
+        profile_name: str,
+        profile: ProviderProfile,
+        result: ProviderCheckResult,
+    ) -> None:
+        if result.ok:
+            return
+        cache = load_model_cache(config)
+        _save_model_cache_best_effort(
+            config,
+            cache.with_entry(
+                ModelCacheEntry(
+                    provider=profile_name,
+                    models=(),
+                    fetched_at=datetime.now(UTC).isoformat(),
+                    error=result.error,
+                    identity=dream_profile_cache_identity(profile_name, profile),
+                )
+            ),
+        )
+
+    def _check_profile_remote(
+        self,
+        profile: ProviderProfile,
+        provider: ProviderSettings,
+    ) -> HTTPResponse:
+        if profile.type in {"openai", "gemini", "anthropic"}:
+            return self._check_remote(profile.type, provider, profile.api_key)
+        if profile.type == "ollama":
+            if _is_openai_compatible_ollama_endpoint(profile.endpoint):
+                return self._check_remote("openai", provider, profile.api_key or "ollama")
+            base_url = (provider.base_url or "http://localhost:11434").rstrip("/")
+            return self._transport.post_json(
+                f"{base_url}/api/chat",
+                headers={},
+                payload={
+                    "model": provider.model,
+                    "messages": [{"role": "user", "content": "Reply with ok."}],
+                    "stream": False,
+                },
+                timeout=provider.timeout_seconds,
+            )
+        raise ValueError(f"unsupported provider type: {profile.type}")
 
     def _check_remote(
         self,
@@ -533,6 +713,7 @@ def _default_model_suggestions(name: str) -> list[str]:
         "gemini": ["gemini-2.5-flash", "gemini-2.5-pro"],
         "anthropic": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
         "deterministic": [""],
+        "ollama": ["gemma4-e3b"],
     }
     return list(defaults[name])
 

@@ -4,7 +4,9 @@ from dataclasses import replace
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_config import (
+    DreamConfig,
     DreamConfigError,
+    ProviderProfile,
     default_dream_config,
     load_dream_config,
     redacted_dream_config_payload,
@@ -87,6 +89,27 @@ class ConfigBridge:
         settings = self._settings_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
+        profile_context = self._dream_profile_context(selected)
+        if profile_context is not None:
+            if errors := _draft_container_errors(params):
+                return self._payload(settings, selected, validation_errors=errors)
+            profile, model = profile_context
+            result = self.registry.check_profile(self.config, selected, profile, model=model)
+            check_result = _result_to_json_dict(result)
+            suggestions = None
+            if check_result.get("ok") is True:
+                suggestion_result = self.registry.list_profile_model_suggestions(
+                    self.config,
+                    selected,
+                    profile,
+                )
+                suggestions = _result_to_json_dict(suggestion_result)
+            return self._payload(
+                settings,
+                selected,
+                check_result=check_result,
+                suggestions=suggestions,
+            )
         if errors := self._validation_errors(params, settings):
             return self._payload(settings, selected, validation_errors=errors)
         result = self.registry.check(self.config, selected, settings=settings)
@@ -107,6 +130,14 @@ class ConfigBridge:
         settings = self._settings_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
+        profile_context = self._dream_profile_context(selected)
+        if profile_context is not None:
+            if errors := _draft_container_errors(params):
+                return self._payload(settings, selected, validation_errors=errors)
+            profile, _ = profile_context
+            result = self.registry.list_profile_model_suggestions(self.config, selected, profile)
+            suggestions = _result_to_json_dict(result)
+            return self._payload(settings, selected, suggestions=suggestions)
         if errors := self._validation_errors(params, settings):
             return self._payload(settings, selected, validation_errors=errors)
         result = self.registry.list_model_suggestions(self.config, selected, settings=settings)
@@ -237,6 +268,18 @@ class ConfigBridge:
             raise ValueError(f"unsupported remote provider: {value}")
         return value
 
+    def _dream_profile_context(self, selected: str) -> tuple[ProviderProfile, str] | None:
+        if not self.config.dream_config_path.exists():
+            return None
+        try:
+            dream_config = load_dream_config(self.config)
+        except DreamConfigError:
+            return None
+        profile = dream_config.providers.get(selected)
+        if profile is None:
+            return None
+        return profile, _model_for_profile(dream_config, selected)
+
     def _select_provider(
         self,
         settings: HieronymusSettings,
@@ -323,6 +366,16 @@ def _safe_dream_config_payload(config: HieronymusConfig) -> tuple[dict[str, obje
         return redacted_dream_config_payload(load_dream_config(config)), ""
     except DreamConfigError as error:
         return redacted_dream_config_payload(default_dream_config()), str(error)
+
+
+def _model_for_profile(dream_config: DreamConfig, profile_name: str) -> str:
+    for workflow in dream_config.workflows.values():
+        if workflow.enabled and workflow.provider == profile_name and workflow.model.strip():
+            return workflow.model
+    for workflow in dream_config.workflows.values():
+        if workflow.provider == profile_name and workflow.model.strip():
+            return workflow.model
+    return ""
 
 
 def _result_to_json_dict(result: object) -> dict[str, object]:

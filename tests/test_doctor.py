@@ -8,16 +8,12 @@ from unittest.mock import patch
 import pytest
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.doctor import (
-    Doctor,
-    DoctorFinding,
-    _dream_provider_cache_identity,
-    report_to_json,
-)
+from hieronymus.doctor import Doctor, DoctorFinding, report_to_json
 from hieronymus.dream_config import ProviderProfile
 from hieronymus.llm_cache import (
     CachedModels,
     ModelCacheEntry,
+    dream_profile_cache_identity,
     model_cache_identity,
     save_model_cache,
 )
@@ -222,7 +218,7 @@ def test_doctor_warns_when_configured_dream_model_missing_from_cache(config) -> 
                 provider="ollama",
                 models=("present-model",),
                 fetched_at=datetime.now(UTC).isoformat(),
-                identity=_dream_provider_cache_identity("ollama", profile),
+                identity=dream_profile_cache_identity("ollama", profile),
             )
         ),
     )
@@ -262,7 +258,7 @@ def test_doctor_ignores_dream_model_cache_for_obsolete_provider_profile(config) 
                 models=("present-model",),
                 fetched_at=datetime.now(UTC).isoformat(),
                 error="provider returned HTTP 403",
-                identity=_dream_provider_cache_identity("ollama", old_profile),
+                identity=dream_profile_cache_identity("ollama", old_profile),
             )
         ),
     )
@@ -298,7 +294,7 @@ def test_doctor_ignores_stale_dream_model_cache(config) -> None:
                 provider="ollama",
                 models=("present-model",),
                 fetched_at=(datetime.now(UTC) - timedelta(hours=24)).isoformat(),
-                identity=_dream_provider_cache_identity("ollama", profile),
+                identity=dream_profile_cache_identity("ollama", profile),
             )
         ),
     )
@@ -353,7 +349,7 @@ def test_doctor_reports_fresh_dream_provider_cache_errors(
                 models=(),
                 fetched_at=datetime.now(UTC).isoformat(),
                 error=error,
-                identity=_dream_provider_cache_identity("ollama", profile),
+                identity=dream_profile_cache_identity("ollama", profile),
             )
         ),
     )

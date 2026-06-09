@@ -1,9 +1,17 @@
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import ProviderProfile, default_dream_config, save_dream_config
+from hieronymus.doctor import Doctor, DoctorFinding
+from hieronymus.dream_config import (
+    ProviderProfile,
+    WorkflowProfile,
+    default_dream_config,
+    save_dream_config,
+)
 from hieronymus.dream_providers import HTTPResponse, ProviderRegistry
-from hieronymus.llm_cache import load_model_cache
+from hieronymus.llm_cache import dream_profile_cache_identity, load_model_cache
 from hieronymus.settings import load_settings
 from hieronymus.tui_bridge.config_api import ConfigBridge
 
@@ -266,6 +274,99 @@ def test_config_check_provider_success_updates_model_cache(
     )
 
 
+def test_config_check_dream_profile_updates_cache_consumed_by_doctor(
+    tmp_path: Path,
+) -> None:
+    class Transport:
+        def post_json(self, *args, **kwargs):
+            return HTTPResponse(status=200, body="{}")
+
+        def get_json(self, *args, **kwargs):
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"gpt-test"},{"id":"gpt-test-mini"}]}',
+            )
+
+    config = _config(tmp_path)
+    profile = ProviderProfile(
+        type="openai",
+        endpoint="https://llm.example.test/v1",
+        api_key="raw-secret-value",
+    )
+    save_dream_config(
+        config,
+        replace(default_dream_config(), enabled=True)
+        .with_provider("openai", profile)
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="missing-model", enabled=True),
+        ),
+    )
+    bridge = ConfigBridge(config, registry=ProviderRegistry(Transport()))
+
+    payload = bridge.check_provider({"selected_provider": "openai", "draft": {}})
+    report = _run_doctor_without_daemon(config)
+
+    entry = load_model_cache(config).providers["openai"]
+    assert payload["check_result"]["ok"] is True
+    assert payload["model_cache"]["providers"]["openai"]["identity"] == entry.identity
+    assert entry.identity == dream_profile_cache_identity("openai", profile)
+    assert "raw-secret-value" not in entry.identity
+    assert (
+        DoctorFinding(
+            level="warning",
+            code="dream_model_missing",
+            message="Configured model was not found in provider cache",
+        )
+        in report["warnings"]
+    )
+
+
+def test_config_check_dream_profile_failure_updates_cache_consumed_by_doctor(
+    tmp_path: Path,
+) -> None:
+    class Transport:
+        def post_json(self, *args, **kwargs):
+            return HTTPResponse(status=403, body="forbidden")
+
+        def get_json(self, *args, **kwargs):
+            raise AssertionError("failed check should not fetch model suggestions")
+
+    config = _config(tmp_path)
+    profile = ProviderProfile(
+        type="openai",
+        endpoint="https://llm.example.test/v1",
+        api_key="raw-secret-value",
+    )
+    save_dream_config(
+        config,
+        replace(default_dream_config(), enabled=True)
+        .with_provider("openai", profile)
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        ),
+    )
+    bridge = ConfigBridge(config, registry=ProviderRegistry(Transport()))
+
+    payload = bridge.check_provider({"selected_provider": "openai", "draft": {}})
+    report = _run_doctor_without_daemon(config)
+
+    entry = load_model_cache(config).providers["openai"]
+    assert payload["check_result"]["ok"] is False
+    assert entry.error == "provider returned HTTP 403"
+    assert entry.identity == dream_profile_cache_identity("openai", profile)
+    assert "raw-secret-value" not in entry.identity
+    assert (
+        DoctorFinding(
+            level="error",
+            code="dream_api_key_rejected",
+            message="API key rejected with 403",
+        )
+        in report["errors"]
+    )
+
+
 def test_config_check_provider_returns_validation_for_malformed_api_key_env(
     tmp_path: Path,
 ) -> None:
@@ -365,3 +466,12 @@ def test_config_model_suggestions_fall_back_to_defaults(tmp_path: Path) -> None:
 
     assert payload["suggestions"]["provider"] == "anthropic"
     assert "claude-3-5-haiku-latest" in payload["suggestions"]["models"]
+
+
+def _run_doctor_without_daemon(config: HieronymusConfig):
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        return Doctor(config).run(autofix=False)
