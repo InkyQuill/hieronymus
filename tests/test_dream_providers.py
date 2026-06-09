@@ -391,6 +391,42 @@ def test_model_suggestions_refresh_after_cached_error_resolves(
     assert load_model_cache(config).providers["openai"].error == ""
 
 
+def test_model_suggestions_return_api_result_when_cache_save_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class Transport:
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"fresh-without-cache"}]}',
+            )
+
+    def fail_save(*args, **kwargs):
+        raise PermissionError("cache is not writable")
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    monkeypatch.setattr("hieronymus.dream_providers.save_model_cache", fail_save)
+
+    result = ProviderRegistry(Transport()).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["fresh-without-cache"],
+        "source": "api",
+        "error": "",
+    }
+
+
 def test_model_suggestions_refresh_and_save_stale_cache(tmp_path, monkeypatch) -> None:
     class Transport:
         def __init__(self):
@@ -632,6 +668,26 @@ def test_anthropic_model_suggestions_cache_default_hints(tmp_path) -> None:
 
     assert result.source == "defaults"
     assert load_model_cache(config).providers["anthropic"].models == tuple(result.models)
+
+
+def test_anthropic_model_suggestions_return_defaults_when_cache_save_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    def fail_save(*args, **kwargs):
+        raise FileExistsError("cache temp path already exists")
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    monkeypatch.setattr("hieronymus.dream_providers.save_model_cache", fail_save)
+
+    result = ProviderRegistry().list_model_suggestions(config, "anthropic")
+
+    assert result.to_json_dict() == {
+        "provider": "anthropic",
+        "models": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
+        "source": "defaults",
+        "error": "",
+    }
 
 
 def test_deterministic_check_passes_without_network(tmp_path) -> None:

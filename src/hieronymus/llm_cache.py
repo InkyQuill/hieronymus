@@ -27,6 +27,8 @@ class ModelCacheEntry:
         current = now or datetime.now(UTC)
         if current.tzinfo is None:
             current = current.replace(tzinfo=UTC)
+        if fetched_at > current:
+            return True
         return current - fetched_at >= CACHE_TTL
 
     def to_payload(self) -> dict[str, object]:

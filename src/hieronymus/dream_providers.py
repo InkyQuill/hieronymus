@@ -17,7 +17,7 @@ from hieronymus.dreaming import (
     DreamOutput,
     DreamProvider,
 )
-from hieronymus.llm_cache import ModelCacheEntry, load_model_cache, save_model_cache
+from hieronymus.llm_cache import CachedModels, ModelCacheEntry, load_model_cache, save_model_cache
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.secrets import env_value_exists
 from hieronymus.settings import HieronymusSettings, ProviderSettings, load_settings
@@ -248,7 +248,7 @@ class ProviderRegistry:
             name,
             settings=active_settings,
         )
-        save_model_cache(
+        _save_model_cache_best_effort(
             config,
             cache.with_entry(
                 ModelCacheEntry(
@@ -282,7 +282,7 @@ class ProviderRegistry:
             models=_default_model_suggestions(name),
             source="defaults",
         )
-        save_model_cache(
+        _save_model_cache_best_effort(
             config,
             cache.with_entry(
                 ModelCacheEntry(
@@ -549,6 +549,13 @@ def _parse_model_suggestions(name: str, body: str) -> list[str]:
             if type(item) is dict and type(item.get("name")) is str
         )
     return []
+
+
+def _save_model_cache_best_effort(config: HieronymusConfig, cache: CachedModels) -> None:
+    try:
+        save_model_cache(config, cache)
+    except OSError:
+        return
 
 
 def _model_cache_identity(name: str, provider: ProviderSettings | None = None) -> str:

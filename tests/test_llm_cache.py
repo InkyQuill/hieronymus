@@ -46,6 +46,17 @@ def test_model_cache_entry_is_not_stale_before_24_hours() -> None:
     assert entry.is_stale(fetched_at + timedelta(hours=24) - timedelta(microseconds=1)) is False
 
 
+def test_model_cache_entry_with_future_fetched_at_is_stale() -> None:
+    now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=UTC)
+    entry = ModelCacheEntry(
+        provider="openai",
+        models=("gpt-4.1-mini",),
+        fetched_at=(now + timedelta(seconds=1)).isoformat(),
+    )
+
+    assert entry.is_stale(now) is True
+
+
 def test_load_model_cache_tolerates_invalid_json(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     config.config_root.mkdir(parents=True)
