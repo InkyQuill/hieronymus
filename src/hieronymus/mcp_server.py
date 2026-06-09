@@ -366,13 +366,29 @@ def hieronymus_recall(
 @server.tool()
 def hieronymus_feedback(
     crystal_id: int,
-    event_type: str,
-    source_role: str,
+    event_type: str | None = None,
+    source_role: str | None = None,
     evidence: str = "",
     session_id: int | None = None,
 ) -> dict[str, int]:
     """Record feedback for a crystal."""
     config = _load_validated_config()
+    if source_role is None:
+        if event_type is None:
+            raise ValueError("correction text must not be empty")
+        if evidence or session_id is not None:
+            raise ValueError("correction feedback only accepts session_id and text")
+        memory_id = WorkspaceStore(config).add_short_term_memory(
+            session_id=crystal_id,
+            source_role="user",
+            kind="correction",
+            text=event_type,
+        )
+        return {"memory_id": memory_id}
+
+    if event_type is None:
+        raise ValueError("event_type must not be empty")
+
     event_id = FeedbackStore(config).record(
         crystal_id=crystal_id,
         event_type=event_type,

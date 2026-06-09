@@ -491,6 +491,37 @@ def test_mcp_feedback_returns_event_id(monkeypatch, tmp_path):
     assert event == {"event_id": 1}
 
 
+def test_mcp_feedback_records_correction_short_term_memory(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="ru",
+    )
+
+    from hieronymus import mcp_server
+
+    started = mcp_server.hieronymus_session_start(series.slug)
+    result = mcp_server.hieronymus_feedback(
+        started["session_id"],
+        "User told me to remember that Cooking Talent is translated as Кулинария.",
+    )
+    memories = WorkspaceStore(load_config()).list_short_term_memories(started["session_id"])
+
+    assert result == {"memory_id": 1}
+    assert memories[0].kind == "correction"
+    assert memories[0].source_role == "user"
+    assert memories[0].text.startswith("User told me to remember")
+    assert memories[0].metadata == {"sentence_count": 1}
+    with connect(config.database_path) as conn:
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+        dream_run_count = conn.execute("select count(*) from dream_runs").fetchone()[0]
+    assert event_count == 0
+    assert dream_run_count == 0
+
+
 def test_mcp_feedback_rejects_mismatched_session_without_event(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     config = load_config()

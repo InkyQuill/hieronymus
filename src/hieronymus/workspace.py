@@ -10,6 +10,7 @@ from hieronymus.memory_models import (
     TaskSessionRecord,
     TranslationContext,
 )
+from hieronymus.short_memory import validate_short_memory_text
 
 _SOURCE_ROLES = frozenset({"mundane", "mentor", "user", "system"})
 
@@ -117,10 +118,15 @@ class WorkspaceStore:
     ) -> int:
         self._validate_source_role(source_role)
         _require_non_empty(kind, "kind")
-        _require_non_empty(text, "text")
+        text = text.strip()
+        validation = validate_short_memory_text(text)
+        memory_metadata = dict(metadata or {})
+        memory_metadata["sentence_count"] = validation.sentence_count
+        if validation.warning:
+            memory_metadata["validation_warning"] = validation.warning
 
         metadata_json = json.dumps(
-            metadata or {},
+            memory_metadata,
             ensure_ascii=False,
             sort_keys=True,
         )
