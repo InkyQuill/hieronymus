@@ -8,12 +8,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import ProviderProfile, default_dream_config, save_dream_config
 from hieronymus.dream_providers import (
     ANTHROPIC_API_VERSION,
     HTTPResponse,
     ProviderCheckResult,
     ProviderRegistry,
     UrllibTransport,
+    resolve_profile_provider,
     resolve_provider,
 )
 from hieronymus.llm_cache import CachedModels, ModelCacheEntry, load_model_cache, save_model_cache
@@ -775,6 +777,145 @@ def test_resolve_provider_rejects_disabled_provider(tmp_path) -> None:
         assert str(exc) == "dream provider is disabled: openai"
     else:
         raise AssertionError("disabled provider should fail")
+
+
+def test_resolve_profile_provider_rejects_missing_profile(config: HieronymusConfig) -> None:
+    with pytest.raises(ValueError, match="referenced provider profile is missing: missing"):
+        resolve_profile_provider(config, "missing", model="model")
+
+
+def test_resolve_profile_provider_rejects_missing_model(config: HieronymusConfig) -> None:
+    with pytest.raises(
+        ValueError,
+        match="model must not be empty for provider profile: openai",
+    ):
+        resolve_profile_provider(config, "openai", model=" ")
+
+
+def test_resolve_profile_provider_requires_plaintext_api_key_for_non_ollama(
+    config: HieronymusConfig,
+) -> None:
+    with pytest.raises(ValueError, match="API key missing for provider profile: openai"):
+        resolve_profile_provider(config, "openai", model="gpt-4.1-mini")
+
+
+@pytest.mark.parametrize(
+    ("profile_name", "profile", "model", "response_body", "expected"),
+    [
+        (
+            "openai",
+            ProviderProfile(
+                type="openai",
+                endpoint="https://openai.example.test/v1",
+                api_key="plain-openai",
+                timeout_seconds=6.5,
+            ),
+            "gpt-profile",
+            lambda: json.dumps({"choices": [{"message": {"content": json.dumps(_llm_payload())}}]}),
+            {
+                "url": "https://openai.example.test/v1/chat/completions",
+                "header": "Authorization",
+                "value": "Bearer plain-openai",
+            },
+        ),
+        (
+            "anthropic",
+            ProviderProfile(
+                type="anthropic",
+                endpoint="https://anthropic.example.test",
+                api_key="plain-anthropic",
+                timeout_seconds=7.5,
+            ),
+            "claude-profile",
+            lambda: json.dumps({"content": [{"type": "text", "text": json.dumps(_llm_payload())}]}),
+            {
+                "url": "https://anthropic.example.test/v1/messages",
+                "header": "x-api-key",
+                "value": "plain-anthropic",
+            },
+        ),
+        (
+            "gemini",
+            ProviderProfile(
+                type="gemini",
+                endpoint="https://gemini.example.test",
+                api_key="plain-gemini",
+                timeout_seconds=8.5,
+            ),
+            "gemini-profile",
+            lambda: json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": json.dumps(_llm_payload())}]}}]}
+            ),
+            {
+                "url": "https://gemini.example.test/v1beta/models/gemini-profile:generateContent",
+                "header": "x-goog-api-key",
+                "value": "plain-gemini",
+            },
+        ),
+    ],
+)
+def test_resolve_profile_provider_uses_plaintext_api_key(
+    config: HieronymusConfig,
+    profile_name: str,
+    profile: ProviderProfile,
+    model: str,
+    response_body,
+    expected: dict[str, str],
+) -> None:
+    save_dream_config(config, default_dream_config().with_provider(profile_name, profile))
+    transport = FakeTransport(HTTPResponse(status=200, body=response_body()), [])
+
+    provider = resolve_profile_provider(
+        config,
+        profile_name,
+        model=model,
+        transport=transport,
+    )
+    output = provider.crystallize(_context(), [_memory()])
+
+    request = transport.requests[0]
+    assert output.crystals[0].title == "Compact UI Labels"
+    assert request["url"] == expected["url"]
+    assert request["headers"][expected["header"]] == expected["value"]
+    if "model" in request["payload"]:
+        assert request["payload"]["model"] == model
+    else:
+        assert model in request["url"]
+    assert request["timeout"] == profile.timeout_seconds
+
+
+def test_resolve_profile_provider_supports_native_ollama_without_api_key(
+    config: HieronymusConfig,
+) -> None:
+    save_dream_config(
+        config,
+        default_dream_config().with_provider(
+            "ollama",
+            ProviderProfile(
+                type="ollama",
+                endpoint="http://ollama.example.test",
+                timeout_seconds=4.5,
+            ),
+        ),
+    )
+    transport = FakeTransport(
+        HTTPResponse(
+            status=200,
+            body=json.dumps({"message": {"content": json.dumps(_llm_payload())}}),
+        ),
+        [],
+    )
+
+    provider = resolve_profile_provider(config, "ollama", model="gemma4-e3b", transport=transport)
+    output = provider.crystallize(_context(), [_memory()])
+
+    request = transport.requests[0]
+    assert output.concept_proposals[0].concept_text == "Sense"
+    assert request["url"] == "http://ollama.example.test/api/chat"
+    assert request["headers"] == {}
+    assert request["payload"]["model"] == "gemma4-e3b"
+    assert request["payload"]["stream"] is False
+    assert request["timeout"] == 4.5
 
 
 def _context() -> TranslationContext:

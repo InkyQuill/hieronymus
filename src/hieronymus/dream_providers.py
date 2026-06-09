@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import ProviderProfile, load_dream_config
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
     DreamConceptProposal,
@@ -631,6 +632,16 @@ def _anthropic_envelope_text(body: str) -> str:
     return text
 
 
+def _ollama_envelope_text(body: str) -> str:
+    try:
+        text = _provider_envelope_payload("ollama", body)["message"]["content"]
+    except (KeyError, TypeError) as error:
+        raise _provider_envelope_error("ollama") from error
+    if type(text) is not str:
+        raise _provider_envelope_error("ollama")
+    return text
+
+
 def _dream_crystal_from_payload(payload: object) -> DreamCrystalCandidate:
     item = _require_dict(payload)
     return DreamCrystalCandidate(
@@ -710,7 +721,10 @@ class OpenAIDreamProvider:
         settings: ProviderSettings,
         api_key: str,
         transport: HTTPTransport,
+        *,
+        name: str = "openai",
     ) -> None:
+        self.name = name
         self.settings = settings
         self.api_key = api_key
         self.transport = transport
@@ -755,11 +769,11 @@ class GeminiDreamProvider:
         context: TranslationContext,
         memories: list[ShortTermMemoryRecord],
     ) -> DreamOutput:
+        base_url = (self.settings.base_url or "https://generativelanguage.googleapis.com").rstrip(
+            "/"
+        )
         response = self.transport.post_json(
-            (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{self.settings.model}:generateContent"
-            ),
+            f"{base_url}/v1beta/models/{self.settings.model}:generateContent",
             headers={"x-goog-api-key": self.api_key},
             payload={
                 "contents": [
@@ -798,8 +812,9 @@ class AnthropicDreamProvider:
         context: TranslationContext,
         memories: list[ShortTermMemoryRecord],
     ) -> DreamOutput:
+        base_url = (self.settings.base_url or "https://api.anthropic.com").rstrip("/")
         response = self.transport.post_json(
-            "https://api.anthropic.com/v1/messages",
+            f"{base_url}/v1/messages",
             headers={
                 "x-api-key": self.api_key,
                 "anthropic-version": ANTHROPIC_API_VERSION,
@@ -815,6 +830,116 @@ class AnthropicDreamProvider:
         if not 200 <= response.status < 300:
             raise ValueError(f"anthropic returned HTTP {response.status}")
         return _parse_dream_json("anthropic", _anthropic_envelope_text(response.body))
+
+
+class OllamaDreamProvider:
+    name = "ollama"
+
+    def __init__(
+        self,
+        settings: ProviderSettings,
+        transport: HTTPTransport,
+    ) -> None:
+        self.settings = settings
+        self.transport = transport
+
+    def crystallize(
+        self,
+        context: TranslationContext,
+        memories: list[ShortTermMemoryRecord],
+    ) -> DreamOutput:
+        base_url = (self.settings.base_url or "http://localhost:11434").rstrip("/")
+        response = self.transport.post_json(
+            f"{base_url}/api/chat",
+            headers={},
+            payload={
+                "model": self.settings.model,
+                "messages": [{"role": "user", "content": _dream_prompt(context, memories)}],
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.1},
+            },
+            timeout=self.settings.timeout_seconds,
+        )
+        if not 200 <= response.status < 300:
+            raise ValueError(f"ollama returned HTTP {response.status}")
+        return _parse_dream_json("ollama", _ollama_envelope_text(response.body))
+
+
+def resolve_profile_provider(
+    config: HieronymusConfig,
+    profile_name: str,
+    *,
+    model: str,
+    transport: HTTPTransport | None = None,
+) -> DreamProvider:
+    dream_config = load_dream_config(config)
+    profile = dream_config.providers.get(profile_name)
+    if profile is None:
+        raise ValueError(f"referenced provider profile is missing: {profile_name}")
+    return _provider_from_profile(
+        profile_name,
+        profile,
+        model=model,
+        transport=transport,
+    )
+
+
+def _provider_from_profile(
+    profile_name: str,
+    profile: ProviderProfile,
+    *,
+    model: str,
+    transport: HTTPTransport | None = None,
+) -> DreamProvider:
+    resolved_model = model.strip()
+    if not resolved_model:
+        raise ValueError(f"model must not be empty for provider profile: {profile_name}")
+    if profile.type != "ollama" and not profile.api_key.strip():
+        raise ValueError(f"API key missing for provider profile: {profile_name}")
+
+    active_transport = transport or UrllibTransport()
+    settings = _profile_provider_settings(profile, resolved_model)
+    if profile.type == "openai":
+        return OpenAIDreamProvider(settings, profile.api_key, active_transport)
+    if profile.type == "gemini":
+        return GeminiDreamProvider(settings, profile.api_key, active_transport)
+    if profile.type == "anthropic":
+        return AnthropicDreamProvider(settings, profile.api_key, active_transport)
+    if profile.type == "ollama":
+        if _is_openai_compatible_ollama_endpoint(profile.endpoint):
+            return OpenAIDreamProvider(
+                settings, profile.api_key or "ollama", active_transport, name="ollama"
+            )
+        return OllamaDreamProvider(settings, active_transport)
+    raise ValueError(f"unsupported provider type for {profile_name}: {profile.type}")
+
+
+def _profile_provider_settings(profile: ProviderProfile, model: str) -> ProviderSettings:
+    endpoint = profile.endpoint.strip() or _default_profile_endpoint(profile.type)
+    return ProviderSettings(
+        enabled=True,
+        model=model,
+        api_key_env="",
+        base_url=endpoint,
+        timeout_seconds=profile.timeout_seconds,
+    )
+
+
+def _default_profile_endpoint(provider_type: str) -> str:
+    if provider_type == "openai":
+        return "https://api.openai.com/v1"
+    if provider_type == "gemini":
+        return "https://generativelanguage.googleapis.com"
+    if provider_type == "anthropic":
+        return "https://api.anthropic.com"
+    if provider_type == "ollama":
+        return "http://localhost:11434"
+    return ""
+
+
+def _is_openai_compatible_ollama_endpoint(endpoint: str) -> bool:
+    return endpoint.strip().rstrip("/").endswith("/v1")
 
 
 def resolve_provider(
