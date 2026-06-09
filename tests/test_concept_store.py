@@ -52,6 +52,58 @@ def test_concepts_fts_searches_inserted_concept(config: HieronymusConfig) -> Non
     assert [row["rowid"] for row in rows] == [concept_id]
 
 
+def test_concept_insert_helper_uses_global_scope_defaults(
+    config: HieronymusConfig,
+) -> None:
+    with connect(config.database_path) as conn:
+        apply_migration(conn, "global.sql")
+        concept_id = _insert_concept(conn)
+        row = conn.execute(
+            "select scope_type, scope_key from concepts where id = ?",
+            (concept_id,),
+        ).fetchone()
+
+    assert dict(row) == {"scope_type": "global", "scope_key": ""}
+
+
+def test_duplicate_concept_identity_in_same_scope_is_rejected(
+    config: HieronymusConfig,
+) -> None:
+    with connect(config.database_path) as conn:
+        apply_migration(conn, "global.sql")
+        _insert_concept(conn, canonical_name="Sense")
+
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_concept(conn, canonical_name="Sense")
+
+
+def test_same_concept_name_can_exist_in_different_scopes(
+    config: HieronymusConfig,
+) -> None:
+    with connect(config.database_path) as conn:
+        apply_migration(conn, "global.sql")
+        global_id = _insert_concept(conn, canonical_name="Sense")
+        project_id = _insert_concept(
+            conn,
+            canonical_name="Sense",
+            scope_type="project",
+            scope_key="oso",
+        )
+        rows = conn.execute(
+            """
+            select id, scope_type, scope_key
+            from concepts
+            where canonical_name = 'Sense'
+            order by id
+            """
+        ).fetchall()
+
+    assert [dict(row) for row in rows] == [
+        {"id": global_id, "scope_type": "global", "scope_key": ""},
+        {"id": project_id, "scope_type": "project", "scope_key": "oso"},
+    ]
+
+
 def test_concept_semantic_tags_cascade_when_concept_is_deleted(
     config: HieronymusConfig,
 ) -> None:
@@ -141,13 +193,32 @@ def _insert_concept(
     *,
     canonical_name: str = "Sense",
     description: str = "A game-like aptitude category.",
+    scope_type: str | None = None,
+    scope_key: str | None = None,
 ) -> int:
+    if scope_type is None and scope_key is None:
+        cursor = conn.execute(
+            """
+            insert into concepts(canonical_name, description, created_at, updated_at)
+            values (?, ?, ?, ?)
+            """,
+            (canonical_name, description, _NOW, _NOW),
+        )
+        return int(cursor.lastrowid)
+
     cursor = conn.execute(
         """
-        insert into concepts(canonical_name, description, created_at, updated_at)
-        values (?, ?, ?, ?)
+        insert into concepts(
+          canonical_name,
+          description,
+          scope_type,
+          scope_key,
+          created_at,
+          updated_at
+        )
+        values (?, ?, ?, ?, ?, ?)
         """,
-        (canonical_name, description, _NOW, _NOW),
+        (canonical_name, description, scope_type or "global", scope_key or "", _NOW, _NOW),
     )
     return int(cursor.lastrowid)
 

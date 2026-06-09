@@ -190,10 +190,13 @@ create table if not exists concepts (
   id integer primary key,
   canonical_name text not null,
   description text not null default '',
+  scope_type text not null default 'global',
+  scope_key text not null default '',
   status text not null default 'vague',
   confidence real not null default 0.2,
   created_at text not null,
-  updated_at text not null
+  updated_at text not null,
+  unique(scope_type, scope_key, canonical_name)
 );
 
 create virtual table if not exists concepts_fts using fts5(

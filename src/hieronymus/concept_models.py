@@ -10,6 +10,8 @@ class ConceptRecord:
     description: str
     status: str
     confidence: float
+    scope_type: str = "global"
+    scope_key: str = ""
     tags: tuple[str, ...] = ()
 
 
