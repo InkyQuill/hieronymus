@@ -41,6 +41,10 @@ def _row_to_crystal(row) -> CrystalRecord:
         target_language=row["target_language"],
         strength=float(row["strength"]),
         confidence=float(row["confidence"]),
+        source_credibility=row["source_credibility"],
+        rule_intent=row["rule_intent"],
+        malformed_penalty=float(row["malformed_penalty"]),
+        supersedes_crystal_id=row["supersedes_crystal_id"],
         status=row["status"],
     )
 
@@ -73,6 +77,10 @@ class CrystalStore:
         title: str = "",
         strength: float = 0.5,
         confidence: float = 0.5,
+        source_credibility: str = "observation",
+        rule_intent: str = "",
+        malformed_penalty: float = 0.0,
+        supersedes_crystal_id: int | None = None,
         status: str = "active",
         source_memory_ids: list[int] | None = None,
     ) -> int:
@@ -101,11 +109,15 @@ class CrystalStore:
                   tags_json,
                   strength,
                   confidence,
+                  source_credibility,
+                  rule_intent,
+                  malformed_penalty,
+                  supersedes_crystal_id,
                   status,
                   created_at,
                   updated_at
                 )
-                values (?, ?, ?, 'series', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, 'series', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     crystal_type,
@@ -118,6 +130,10 @@ class CrystalStore:
                     tags_json,
                     clamped_strength,
                     clamped_confidence,
+                    source_credibility,
+                    rule_intent,
+                    malformed_penalty,
+                    supersedes_crystal_id,
                     status,
                     now,
                     now,

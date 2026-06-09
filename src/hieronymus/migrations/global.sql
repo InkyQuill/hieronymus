@@ -53,6 +53,10 @@ create table if not exists crystals (
   tags_json text not null default '[]',
   strength real not null,
   confidence real not null,
+  source_credibility text not null default 'observation',
+  rule_intent text not null default '',
+  malformed_penalty real not null default 0.0,
+  supersedes_crystal_id integer references crystals(id) on delete set null,
   status text not null,
   created_cycle integer not null default 0,
   last_activated_cycle integer,
@@ -196,6 +200,7 @@ create table if not exists concepts (
   confidence real not null default 0.2,
   created_at text not null,
   updated_at text not null,
+  check ((scope_type = 'global' and scope_key = '') or (scope_type != 'global' and scope_key != '')),
   unique(scope_type, scope_key, canonical_name)
 );
 

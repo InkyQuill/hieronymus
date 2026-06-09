@@ -64,6 +64,80 @@ def test_scores_are_clamped_when_adding_crystal(config: HieronymusConfig) -> Non
     assert crystal.confidence == 0.0
 
 
+def test_crystal_scalar_metadata_defaults_hydrate_from_store(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    crystal_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Render inventory menu labels with concise Russian nouns.",
+    )
+
+    crystal = store.get(crystal_id)
+
+    assert crystal.source_credibility == "observation"
+    assert crystal.rule_intent == ""
+    assert crystal.malformed_penalty == 0.0
+    assert crystal.supersedes_crystal_id is None
+
+
+def test_crystal_scalar_metadata_round_trips_through_store(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    base_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use terse inventory labels.",
+    )
+    crystal_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Replace malformed UI label guidance.",
+        source_credibility="user_rule",
+        rule_intent="terminology_override",
+        malformed_penalty=0.35,
+        supersedes_crystal_id=base_id,
+    )
+
+    crystal = store.get(crystal_id)
+
+    assert crystal.source_credibility == "user_rule"
+    assert crystal.rule_intent == "terminology_override"
+    assert crystal.malformed_penalty == 0.35
+    assert crystal.supersedes_crystal_id == base_id
+
+
+def test_superseded_crystal_reference_nulls_when_source_is_deleted(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    base_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use terse inventory labels.",
+    )
+    replacement_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Replace malformed UI label guidance.",
+        supersedes_crystal_id=base_id,
+    )
+
+    with connect(config.database_path) as conn:
+        conn.execute("delete from crystals where id = ?", (base_id,))
+        row = conn.execute(
+            "select supersedes_crystal_id from crystals where id = ?",
+            (replacement_id,),
+        ).fetchone()
+
+    assert row["supersedes_crystal_id"] is None
+
+
 def test_search_prefers_higher_strength_when_text_relevance_matches(
     config: HieronymusConfig,
 ) -> None:

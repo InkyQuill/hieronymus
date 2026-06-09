@@ -104,6 +104,36 @@ def test_same_concept_name_can_exist_in_different_scopes(
     ]
 
 
+def test_global_concept_scope_rejects_non_empty_key(
+    config: HieronymusConfig,
+) -> None:
+    with connect(config.database_path) as conn:
+        apply_migration(conn, "global.sql")
+
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_concept(
+                conn,
+                canonical_name="Sense",
+                scope_type="global",
+                scope_key="oso",
+            )
+
+
+def test_non_global_concept_scope_requires_key(
+    config: HieronymusConfig,
+) -> None:
+    with connect(config.database_path) as conn:
+        apply_migration(conn, "global.sql")
+
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_concept(
+                conn,
+                canonical_name="Sense",
+                scope_type="project",
+                scope_key="",
+            )
+
+
 def test_concept_semantic_tags_cascade_when_concept_is_deleted(
     config: HieronymusConfig,
 ) -> None:
