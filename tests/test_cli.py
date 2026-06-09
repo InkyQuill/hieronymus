@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 
@@ -329,7 +330,7 @@ def test_dream_outputs_completed_cycle_after_completed_session_with_memory(tmp_p
 
     result = runner.invoke(
         main,
-        ["--data-root", str(data_root), "dream", "--provider", "deterministic"],
+        ["--data-root", str(data_root), "dream", "--provider", "deterministic", "--json"],
     )
 
     assert result.exit_code == 0
@@ -342,6 +343,52 @@ def test_dream_outputs_completed_cycle_after_completed_session_with_memory(tmp_p
         "created_crystal_count": 1,
         "proposal_count": 0,
         "error": "",
+    }
+
+
+def test_dream_runs_true_drain_with_cli_owner(monkeypatch, tmp_path):
+    data_root = tmp_path / "hieronymus"
+    runner = CliRunner()
+    calls: dict[str, object] = {}
+    provider = SimpleNamespace(name="deterministic")
+
+    def fake_resolve_provider(config, provider_name):
+        calls["provider_name"] = provider_name
+        return provider
+
+    class FakeDreamService:
+        def __init__(self, config, dream_provider):
+            calls["config"] = config
+            calls["dream_provider"] = dream_provider
+
+        def run_all(self, **kwargs):
+            calls["run_all"] = kwargs
+            return SimpleNamespace(
+                cycle_id=7,
+                status="completed",
+                provider="deterministic",
+                input_count=0,
+                created_crystal_count=0,
+                proposal_count=0,
+                error="",
+            )
+
+    monkeypatch.setattr("hieronymus.cli.resolve_provider", fake_resolve_provider)
+    monkeypatch.setattr("hieronymus.cli.DreamService", FakeDreamService)
+
+    result = runner.invoke(
+        main,
+        ["--data-root", str(data_root), "dream", "--provider", "deterministic"],
+    )
+
+    assert result.exit_code == 0
+    assert result.output == "Dream run 7: completed\n"
+    assert calls["provider_name"] == "deterministic"
+    assert calls["dream_provider"] is provider
+    assert calls["run_all"] == {
+        "wait": False,
+        "owner": "cli",
+        "ignore_minimum": True,
     }
 
 

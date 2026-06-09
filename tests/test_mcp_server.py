@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tomllib
 
 import pytest
 
-from hieronymus.concepts import ConceptProposalStore
+from hieronymus.concepts import ConceptProposalStore, ConceptStore
 from hieronymus.config import load_config
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
@@ -102,18 +103,65 @@ def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
         source_ref="chapter-1",
         importance=4,
     )
-    assert added == {"memory_id": 2}
+    assert added == {"memory_id": 1, "storage": "short_term"}
 
     memories = mcp_server.hieronymus_memory_search(series.slug, "translation_rationale", limit=5)
-    assert memories == [
-        {
-            "id": 2,
-            "kind": "translation_rationale",
-            "text": "Use Yun for ユン.",
-            "importance": 4,
-            "source_ref": "",
-        }
-    ]
+    assert memories == []
+
+
+def test_mcp_memory_add_routes_legacy_calls_to_short_term(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+
+    from hieronymus import mcp_server
+
+    correction = mcp_server.hieronymus_memory_add(
+        series.slug,
+        "rule",
+        "Use Sense, not Feeling, for センス.",
+        source_ref="chapter-2",
+        importance=5,
+    )
+    note = mcp_server.hieronymus_memory_add(
+        series.slug,
+        "translation_rationale",
+        "Keep UI terminology concise.",
+        source_ref="chapter-2",
+        importance=2,
+    )
+
+    assert correction == {"memory_id": 1, "storage": "short_term"}
+    assert note == {"memory_id": 2, "storage": "short_term"}
+    with connect(config.database_path) as conn:
+        sessions = conn.execute("select * from task_sessions order by id").fetchall()
+        memories = conn.execute("select * from short_term_memories order by id").fetchall()
+        dream_count = conn.execute("select count(*) from dream_runs").fetchone()[0]
+
+    assert len(sessions) == 1
+    assert sessions[0]["status"] == "active"
+    assert sessions[0]["series_slug"] == series.slug
+    assert memories[0]["session_id"] == sessions[0]["id"]
+    assert memories[0]["source_role"] == "user"
+    assert memories[0]["kind"] == "correction"
+    assert memories[0]["source_ref"] == "chapter-2"
+    assert json.loads(memories[0]["metadata_json"]) == {
+        "importance": 5,
+        "legacy_kind": "rule",
+        "sentence_count": 1,
+    }
+    assert memories[1]["kind"] == "note"
+    assert json.loads(memories[1]["metadata_json"]) == {
+        "importance": 2,
+        "legacy_kind": "translation_rationale",
+        "sentence_count": 1,
+    }
+    assert dream_count == 0
 
 
 def test_mcp_termbase_contract_accepts_volume_and_chapter(monkeypatch, tmp_path):
@@ -630,6 +678,35 @@ def test_mcp_concept_proposals_list_returns_pending(monkeypatch, tmp_path):
             "forbidden_variants": ["Senses"],
             "rationale": "User correction.",
             "status": "pending",
+        }
+    ]
+
+
+def test_mcp_concept_proposals_list_includes_vague_concepts(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    ConceptStore(load_config()).create_or_reinforce(
+        "Sense",
+        description="A game-like aptitude category.",
+        confidence_delta=0.2,
+        scope_type="project",
+        scope_key="only-sense-online",
+    )
+
+    from hieronymus import mcp_server
+
+    assert mcp_server.hieronymus_concept_proposals_list() == [
+        {
+            "id": 1,
+            "series_slug": "only-sense-online",
+            "source_language": "",
+            "target_language": "",
+            "concept_text": "Sense",
+            "source_form": "Sense",
+            "canonical_rendering": "Sense",
+            "approved_variants": [],
+            "forbidden_variants": [],
+            "rationale": "A game-like aptitude category.",
+            "status": "vague",
         }
     ]
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from typing import Any
 
@@ -8,10 +9,16 @@ from mcp.server.fastmcp import FastMCP
 from hieronymus.agent_ingestion import IngestionService
 from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import HieronymusConfig, load_config
+from hieronymus.db import connect
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamService
 from hieronymus.memory import MemoryStore
-from hieronymus.memory_models import CrystalRecord, ShortTermMemoryRecord, TranslationContext
+from hieronymus.memory_models import (
+    CrystalRecord,
+    ShortTermMemoryRecord,
+    TaskSessionRecord,
+    TranslationContext,
+)
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry, Series
 from hieronymus.termbase import Termbase
@@ -101,6 +108,143 @@ def _translation_context(
         volume=volume,
         chapter=chapter,
     )
+
+
+def _ensure_default_session(
+    config: HieronymusConfig,
+    series: Series,
+    *,
+    source_language: str | None = None,
+    target_language: str | None = None,
+) -> TaskSessionRecord:
+    context = _translation_context(
+        series,
+        source_language=source_language,
+        target_language=target_language,
+    )
+    workspace = WorkspaceStore(config)
+    with connect(config.database_path) as conn:
+        row = conn.execute(
+            """
+            select *
+            from task_sessions
+            where series_slug = ?
+              and source_language = ?
+              and target_language = ?
+              and task_type = ?
+              and volume = ?
+              and chapter = ?
+              and status = 'active'
+            order by id desc
+            limit 1
+            """,
+            (
+                context.series_slug,
+                context.source_language,
+                context.target_language,
+                context.task_type,
+                context.volume,
+                context.chapter,
+            ),
+        ).fetchone()
+    if row is not None:
+        return TaskSessionRecord(
+            id=int(row["id"]),
+            context=context,
+            status=row["status"],
+            cycle_id=row["cycle_id"],
+        )
+    return workspace.start_session(context)
+
+
+def _strict_concept_proposal_payload(proposal: object) -> dict[str, Any]:
+    return asdict(proposal)
+
+
+def _vague_concept_proposal_payloads(config: HieronymusConfig) -> list[dict[str, Any]]:
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            """
+            select id, canonical_name, description, scope_type, scope_key, status
+            from concepts
+            where status = 'vague'
+            order by updated_at desc, id desc
+            limit 50
+            """
+        ).fetchall()
+
+    payloads: list[dict[str, Any]] = []
+    for row in rows:
+        scope_type = row["scope_type"]
+        scope_key = row["scope_key"]
+        series_slug = ""
+        if scope_type != "global":
+            series_slug = scope_key.removeprefix("series:")
+        payloads.append(
+            {
+                "id": int(row["id"]),
+                "series_slug": series_slug,
+                "source_language": "",
+                "target_language": "",
+                "concept_text": row["canonical_name"],
+                "source_form": row["canonical_name"],
+                "canonical_rendering": row["canonical_name"],
+                "approved_variants": [],
+                "forbidden_variants": [],
+                "rationale": row["description"],
+                "status": row["status"],
+            }
+        )
+    return payloads
+
+
+def _recent_dream_audit_proposal_payloads(config: HieronymusConfig) -> list[dict[str, Any]]:
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            """
+            select id, payload_json
+            from dream_audit_entries
+            where payload_json like '%concept_proposals%'
+            order by id desc
+            limit 20
+            """
+        ).fetchall()
+
+    payloads: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            continue
+        proposals = payload.get("concept_proposals") if isinstance(payload, dict) else None
+        if not isinstance(proposals, list):
+            continue
+        for proposal in proposals:
+            if not isinstance(proposal, dict):
+                continue
+            concept_text = proposal.get("concept_text")
+            source_form = proposal.get("source_form", concept_text)
+            canonical_rendering = proposal.get("canonical_rendering", concept_text)
+            if not isinstance(canonical_rendering, str):
+                canonical_rendering = concept_text
+            if not all(isinstance(value, str) and value for value in (concept_text, source_form)):
+                continue
+            payloads.append(
+                {
+                    "id": int(row["id"]),
+                    "series_slug": proposal.get("series_slug", ""),
+                    "source_language": proposal.get("source_language", ""),
+                    "target_language": proposal.get("target_language", ""),
+                    "concept_text": concept_text,
+                    "source_form": source_form,
+                    "canonical_rendering": canonical_rendering,
+                    "approved_variants": proposal.get("approved_variants", []),
+                    "forbidden_variants": proposal.get("forbidden_variants", []),
+                    "rationale": proposal.get("rationale", ""),
+                    "status": "audit",
+                }
+            )
+    return payloads
 
 
 @server.tool()
@@ -233,21 +377,24 @@ def hieronymus_memory_add(
     importance: int = 3,
     source_language: str | None = None,
     target_language: str | None = None,
-) -> dict[str, int]:
-    """Add a translation memory entry for a series."""
+) -> dict[str, int | str]:
+    """Add user memory as short-term learning material for a series."""
     config, series = _series_context(series_slug)
-    context = _translation_context(
+    session = _ensure_default_session(
+        config,
         series,
         source_language=source_language,
         target_language=target_language,
     )
-    memory_id = _memory(config, series, context).add(
-        kind=kind,
+    memory_id = WorkspaceStore(config).add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="correction" if kind in {"rule", "correction"} else "note",
         text=text,
         source_ref=source_ref,
-        importance=importance,
+        metadata={"legacy_kind": kind, "importance": importance},
     )
-    return {"memory_id": memory_id}
+    return {"memory_id": memory_id, "storage": "short_term"}
 
 
 @server.tool()
@@ -433,9 +580,16 @@ def hieronymus_dream(
 
 @server.tool()
 def hieronymus_concept_proposals_list() -> list[dict[str, Any]]:
-    """List pending strict concept proposals."""
+    """List strict proposals and legacy-compatible vague concept suggestions."""
     config = _load_validated_config()
-    return [asdict(proposal) for proposal in ConceptProposalStore(config).list_pending()]
+    return [
+        *[
+            _strict_concept_proposal_payload(proposal)
+            for proposal in ConceptProposalStore(config).list_pending()
+        ],
+        *_vague_concept_proposal_payloads(config),
+        *_recent_dream_audit_proposal_payloads(config),
+    ]
 
 
 def main() -> None:

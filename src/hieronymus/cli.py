@@ -719,7 +719,7 @@ def dream(
         run = DreamService(
             ctx.obj["config"],
             dream_provider,
-        ).run_all(wait=wait, owner="manual")
+        ).run_all(wait=wait, owner="cli", ignore_minimum=True)
     except (KeyError, ValueError, SettingsError, DreamCycleAlreadyRunning) as error:
         _raise_click_error(error)
     payload = {
@@ -734,4 +734,4 @@ def dream(
     if json_output:
         click.echo(render_json(payload))
         return
-    click.echo(render_json(payload))
+    click.echo(f"Dream run {run.cycle_id}: {run.status}")

@@ -44,12 +44,16 @@ use, and dream-cycle processing. In the CLI this is recorded with `feedback`
 events such as `confirmed_by_user`, `used_in_translation`, `passed_review`, or
 `caused_correction`.
 
-Dream cycles process completed sessions. They use the configured active provider
-by default, and commands may override that provider for one run. `deterministic`
-is the offline fallback selected with `hieronymus dream --provider deterministic`;
-it converts completed short-term memories into crystals using fixed local rules:
-`user` inputs become `lesson` crystals, `mentor` inputs become `erudition`
-crystals, and `mundane` inputs become `concept` crystals.
+Dream cycles process completed sessions. Short-term memories stay pending until
+dreaming processes them or a user removes them. They use the configured active
+provider by default, and commands may override that provider for one run.
+`deterministic` is the offline fallback selected with
+`hieronymus dream --provider deterministic`; it converts completed short-term
+memories into crystals using fixed local rules: `user` inputs become `lesson`
+crystals, `mentor` inputs become `erudition` crystals, and `mundane` inputs
+become `concept` crystals. User corrections are stored as short-term memories
+first; through dreaming they can become rule crystals instead of bypassing the
+learning workflow.
 
 OpenAI, Gemini, and Anthropic providers produce structured JSON that Hieronymus
 validates before applying dream outputs. Invalid provider output records a failed
@@ -67,12 +71,11 @@ translation work keeps happening without that crystal being recalled or
 reinforced. Wall-clock time would punish idle projects and long breaks; cycles
 instead tie decay to actual Hieronymus processing.
 
-Automatic dreaming is cycle-based. When `autostart_enabled` is on, it can run
-once every `min_interval_minutes` when completed sessions have pending
-short-term memories, or sooner when `new_short_term_memory_threshold` pending
-short-term memories exists. The threshold counts short-term memories, not
-long-term crystals or remembered strict terminology. `max_cycles_per_autostart`
-limits how many dream cycles a single automatic start may run.
+Automatic dreaming is cycle-based. Scheduled dreaming respects the configured
+minimum pending-memory threshold by default. It may run sooner only when the
+urgent cap is reached or the backlog escape rule fires after repeated
+not-enough-memory skips. The threshold counts short-term memories, not long-term
+crystals or remembered strict terminology.
 
 ## Dream Cycle Concurrency
 
@@ -127,8 +130,9 @@ Complete the session so it can be processed by dreaming:
 hieronymus session-complete 1
 ```
 
-Run a dream cycle. Without `--provider`, this uses the configured active
-provider:
+Run dreaming manually. Without `--provider`, this uses the configured active
+provider. Manual `hiero dream` drains all pending short-term memories, including
+a final small batch below the scheduled minimum threshold:
 
 ```bash
 hieronymus dream --provider deterministic

@@ -130,9 +130,12 @@ hiero dream --provider openai --json
 
 Dream runs accept `--provider` for one-off provider selection, `--wait` to block
 until an active dream cycle finishes, and `--json` for machine-readable output.
+Manual `hiero dream` drains all pending short-term memories, including the final
+small batch that scheduled dreaming would normally leave until the minimum
+threshold is met.
 
-Dreaming automation uses `autostart_enabled`, `min_interval_minutes`,
-`new_short_term_memory_threshold`, and `max_cycles_per_autostart`.
+Scheduled dreaming respects the configured minimum pending-memory threshold
+unless the urgent cap or backlog escape rule fires.
 
 ## Initialize a Series
 
@@ -174,6 +177,8 @@ hieronymus recall 2 --series oso --source-language ja --target-language en --tas
 
 The final recall command uses session `2` because recall must run inside a new
 active session after session `1` has been completed and dreamed.
+Corrections enter the workflow as short-term memories and become rule crystals
+through dreaming.
 
 ## Service Commands
 
