@@ -215,6 +215,16 @@ class ProviderRegistry:
         settings: HieronymusSettings | None = None,
     ) -> ModelSuggestionResult:
         self.metadata(name)
+        if name == "deterministic":
+            return ModelSuggestionResult(
+                provider=name,
+                models=_default_model_suggestions(name),
+                source="defaults",
+            )
+
+        if name == "anthropic":
+            return self._list_static_cached_model_suggestions(config, name)
+
         active_settings = settings or load_settings(config)
         provider = active_settings.providers.get(name, ProviderSettings())
         identity = _model_cache_identity(name, provider)
@@ -247,6 +257,40 @@ class ProviderRegistry:
                     fetched_at=datetime.now(UTC).isoformat(),
                     error=result.error,
                     identity=identity,
+                )
+            ),
+        )
+        return result
+
+    def _list_static_cached_model_suggestions(
+        self,
+        config: HieronymusConfig,
+        name: str,
+    ) -> ModelSuggestionResult:
+        cache = load_model_cache(config)
+        entry = cache.providers.get(name)
+        if entry is not None and not entry.error and not entry.is_stale():
+            return ModelSuggestionResult(
+                provider=name,
+                models=list(entry.models),
+                source=config.llm_cache_path.name,
+                error=entry.error,
+            )
+
+        result = ModelSuggestionResult(
+            provider=name,
+            models=_default_model_suggestions(name),
+            source="defaults",
+        )
+        save_model_cache(
+            config,
+            cache.with_entry(
+                ModelCacheEntry(
+                    provider=name,
+                    models=tuple(result.models),
+                    fetched_at=datetime.now(UTC).isoformat(),
+                    error=result.error,
+                    identity=_model_cache_identity(name),
                 )
             ),
         )
@@ -507,12 +551,16 @@ def _parse_model_suggestions(name: str, body: str) -> list[str]:
     return []
 
 
-def _model_cache_identity(name: str, provider: ProviderSettings) -> str:
+def _model_cache_identity(name: str, provider: ProviderSettings | None = None) -> str:
     payload = {"provider": name}
     if name == "openai":
+        if provider is None:
+            raise ValueError("openai model cache identity requires provider settings")
         payload["base_url"] = (provider.base_url or "https://api.openai.com/v1").rstrip("/")
         payload["api_key_env"] = provider.api_key_env
-    elif name in {"gemini", "anthropic"}:
+    elif name == "gemini":
+        if provider is None:
+            raise ValueError("gemini model cache identity requires provider settings")
         payload["api_key_env"] = provider.api_key_env
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
