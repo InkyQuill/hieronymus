@@ -102,6 +102,54 @@ def test_append_redacts_nested_secret_keys(config: HieronymusConfig) -> None:
     }
 
 
+def test_append_redacts_gemini_api_key_header(config: HieronymusConfig) -> None:
+    store = DreamAuditStore(config)
+    dream_run_id = _dream_run_id(config)
+
+    store.append(
+        dream_run_id=dream_run_id,
+        phase_run_id=None,
+        event_type="provider_request",
+        severity="info",
+        summary="sent gemini request",
+        payload={
+            "model": "gemini-2.5-pro",
+            "headers": {"x-goog-api-key": "gemini-secret"},
+        },
+    )
+
+    assert store.list_for_run(dream_run_id)[0].payload == {
+        "headers": {"x-goog-api-key": "[REDACTED]"},
+        "model": "gemini-2.5-pro",
+    }
+
+
+def test_append_redacts_secret_keys_inside_tuples(config: HieronymusConfig) -> None:
+    store = DreamAuditStore(config)
+    dream_run_id = _dream_run_id(config)
+
+    store.append(
+        dream_run_id=dream_run_id,
+        phase_run_id=None,
+        event_type="provider_request",
+        severity="info",
+        summary="sent tuple payload",
+        payload={
+            "messages": (
+                {"role": "user", "content": "safe"},
+                {"Authorization": "Bearer tuple-secret", "model": "claude-test"},
+            )
+        },
+    )
+
+    assert store.list_for_run(dream_run_id)[0].payload == {
+        "messages": [
+            {"content": "safe", "role": "user"},
+            {"Authorization": "[REDACTED]", "model": "claude-test"},
+        ]
+    }
+
+
 def test_list_for_run_orders_entries_by_id(config: HieronymusConfig) -> None:
     store = DreamAuditStore(config)
     dream_run_id = _dream_run_id(config)

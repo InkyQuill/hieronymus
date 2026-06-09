@@ -14,6 +14,7 @@ _SECRET_KEYS = frozenset(
         "apikey",
         "authorization",
         "xapikey",
+        "xgoogapikey",
         "anthropicversion",
         "token",
         "bearer",
@@ -113,7 +114,7 @@ def _redact_payload(value: Any) -> Any:
             key: _REDACTED if _is_secret_key(key) else _redact_payload(item)
             for key, item in value.items()
         }
-    if isinstance(value, list):
+    if isinstance(value, list | tuple):
         return [_redact_payload(item) for item in value]
     return value
 
