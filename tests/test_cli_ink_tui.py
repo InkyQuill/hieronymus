@@ -106,6 +106,62 @@ def test_cli_config_defaults_to_textual_when_tui_env_unset(tmp_path, monkeypatch
     assert calls == [data_root]
 
 
+def test_cli_admin_defaults_to_textual_when_tui_env_unset(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    def fail_launch_ink(*args, **kwargs):
+        raise AssertionError("unset HIERONYMUS_TUI must not launch Ink")
+
+    def fake_run(app):
+        calls.append(app.config.data_root)
+
+    monkeypatch.delenv("HIERONYMUS_TUI", raising=False)
+    monkeypatch.setattr("hieronymus.cli._launch_ink", fail_launch_ink)
+    monkeypatch.setattr("hieronymus.cli.HieronymusAdminApp.run", fake_run)
+
+    data_root = tmp_path / "hieronymus"
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "admin"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [data_root]
+
+
+def test_cli_textual_env_forces_textual_for_config_and_admin(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    def fail_launch_ink(*args, **kwargs):
+        raise AssertionError("HIERONYMUS_TUI=textual must not launch Ink")
+
+    def fake_config_run(app):
+        calls.append(("config", app.config.data_root))
+
+    def fake_admin_run(app):
+        calls.append(("admin", app.config.data_root))
+
+    monkeypatch.setenv("HIERONYMUS_TUI", "textual")
+    monkeypatch.setattr("hieronymus.cli._launch_ink", fail_launch_ink)
+    monkeypatch.setattr("hieronymus.cli.HieronymusConfigApp.run", fake_config_run)
+    monkeypatch.setattr("hieronymus.cli.HieronymusAdminApp.run", fake_admin_run)
+
+    data_root = tmp_path / "hieronymus"
+    runner = CliRunner()
+    config_result = runner.invoke(
+        main,
+        ["--data-root", str(data_root), "config"],
+    )
+    admin_result = runner.invoke(
+        main,
+        ["--data-root", str(data_root), "admin"],
+    )
+
+    assert config_result.exit_code == 0
+    assert admin_result.exit_code == 0
+    assert calls == [("config", data_root), ("admin", data_root)]
+
+
 def test_cli_ink_config_launches_frontend_with_data_root(tmp_path, monkeypatch) -> None:
     calls = []
     data_root = tmp_path / "hieronymus"

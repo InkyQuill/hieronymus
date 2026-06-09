@@ -244,15 +244,23 @@ interactive app.
 The Ink TUI is feature-flagged with `HIERONYMUS_TUI=ink`; Textual remains the
 default unless that environment variable is set.
 
-Ink can become the default only after all default-switch criteria are met:
+Ink can become the default only after all default-switch criteria are verified
+for the same release candidate:
 
 - Installed packages include a bundled, self-contained
-  `hieronymus/frontend/dist/main.js` frontend artifact.
-- Parity tests for the config and admin flows pass against both Textual and
-  Ink.
-- Source/development and packaged smoke tests pass on every supported platform.
-- Textual fallback remains available with `HIERONYMUS_TUI=textual` during the
-  switch window.
+  `hieronymus/frontend/dist/main.js` frontend artifact before installed
+  packages default to Ink.
+- Python verification passes with `uv run pytest`, `uv run ruff check .`, and
+  `uv run ruff format --check .`.
+- Frontend verification passes with `pnpm --dir frontend install`,
+  `pnpm --dir frontend test`, and `pnpm --dir frontend build`.
+- Non-interactive config and admin smoke tests pass with `hiero config --json`
+  and `hiero admin --json` against a temporary data root.
+- Ink config and admin smoke tests pass on supported platforms, or documented
+  manual checks cover the interactive `HIERONYMUS_TUI=ink hiero config` and
+  `HIERONYMUS_TUI=ink hiero admin` flows.
+- Textual fallback remains verified with `HIERONYMUS_TUI=textual` for config
+  and admin during the switch window.
 - User-facing docs are updated and `hiero doctor` verifies the required Ink
   runtime.
 
