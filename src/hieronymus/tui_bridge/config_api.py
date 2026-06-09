@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import load_dream_config, redacted_dream_config_payload
+from hieronymus.dream_config import (
+    DreamConfigError,
+    default_dream_config,
+    load_dream_config,
+    redacted_dream_config_payload,
+)
 from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.llm_cache import load_model_cache
 from hieronymus.secrets import redact_configured_secret_values
@@ -120,7 +125,10 @@ class ConfigBridge:
         detail: str = "",
     ) -> dict[str, object]:
         errors = validate_draft(settings) if validation_errors is None else validation_errors
-        dream_config = redacted_dream_config_payload(load_dream_config(self.config))
+        dream_config, dream_error = _safe_dream_config_payload(self.config)
+        if dream_error:
+            errors = [*errors, dream_error]
+            detail = detail or dream_error
         return {
             "config_paths": {
                 "data_root": str(self.config.data_root),
@@ -308,6 +316,13 @@ class ConfigBridge:
                 "max_cycles_per_autostart": field_value(settings.dreaming.max_cycles_per_autostart),
             },
         }
+
+
+def _safe_dream_config_payload(config: HieronymusConfig) -> tuple[dict[str, object], str]:
+    try:
+        return redacted_dream_config_payload(load_dream_config(config)), ""
+    except DreamConfigError as error:
+        return redacted_dream_config_payload(default_dream_config()), str(error)
 
 
 def _result_to_json_dict(result: object) -> dict[str, object]:

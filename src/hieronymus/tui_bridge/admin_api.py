@@ -41,7 +41,8 @@ class AdminBridge:
         selected_id = params.get("selected_id", params.get("id"))
         filters = _filters(params.get("filters"))
         return {
-            "views": list(ADMIN_VIEW_KEYS),
+            "views": list(ADMIN_VIEWS),
+            "view_keys": list(ADMIN_VIEW_KEYS),
             "view_labels": dict(ADMIN_VIEW_LABELS),
             "view_options": admin_view_options(),
             "default_view": DEFAULT_VIEW,

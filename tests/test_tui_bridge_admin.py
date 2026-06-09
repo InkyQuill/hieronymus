@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from hieronymus.admin import ADMIN_VIEW_KEYS, AdminStore
+from hieronymus.admin import ADMIN_VIEW_KEYS, ADMIN_VIEWS, AdminStore
 from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
@@ -45,7 +45,8 @@ def test_admin_bootstrap_returns_views_stats_and_initial_snapshot(tmp_path: Path
 
     payload = AdminBridge(config).bootstrap({})
 
-    assert payload["views"] == list(ADMIN_VIEW_KEYS)
+    assert payload["views"] == list(ADMIN_VIEWS)
+    assert payload["view_keys"] == list(ADMIN_VIEW_KEYS)
     assert payload["view_labels"]["concepts"] == "Concepts"
     assert payload["view_labels"]["dream_audits"] == "Dream Audits"
     assert payload["default_view"] == "Crystals"
@@ -64,8 +65,10 @@ def test_admin_bridge_exposes_memory_and_dream_status(config: HieronymusConfig) 
     assert "short_term_status" in payload
     assert "dream_status" in payload
     assert payload["dream_status"]["state"] in {"IDLE", "WORKING", "DISABLED"}
-    assert "concepts" in payload["views"]
-    assert "dream_audits" in payload["views"]
+    assert "Concepts" in payload["views"]
+    assert "Dream Audits" in payload["views"]
+    assert "concepts" in payload["view_keys"]
+    assert "dream_audits" in payload["view_keys"]
 
 
 def test_admin_snapshot_accepts_machine_view_key(tmp_path: Path) -> None:

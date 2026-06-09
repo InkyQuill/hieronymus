@@ -60,6 +60,24 @@ def test_config_bootstrap_exposes_redacted_dream_config_and_model_cache(
     assert payload["model_cache"] == {"providers": {}}
 
 
+def test_config_bootstrap_survives_malformed_dream_config(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config.config_root.mkdir(parents=True)
+    config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
+
+    payload = ConfigBridge(config).bootstrap({})
+
+    assert payload["selected_provider"] == "openai"
+    assert payload["draft"]["providers"]["openai"]["enabled"] is True
+    assert payload["dreaming"]["min_pending_short_term_memories"] == 20
+    assert payload["providers"]["openai"]["api_key"] == ""
+    assert payload["workflows"]["crystallization"]["provider"] == "anthropic"
+    assert payload["model_cache"] == {"providers": {}}
+    assert payload["validation"]["ok"] is False
+    assert any("dream.conf is not valid TOML" in error for error in payload["validation"]["errors"])
+    assert "dream.conf is not valid TOML" in payload["detail"]
+
+
 def test_config_select_provider_enables_only_selected_remote_provider(tmp_path: Path) -> None:
     bridge = ConfigBridge(_config(tmp_path))
 
