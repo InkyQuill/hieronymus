@@ -204,7 +204,18 @@ def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
         ).run_all()
 
     with connect(config.database_path) as conn:
-        failed_run = conn.execute("select id, cycle_id, status from dream_runs").fetchone()
+        failed_run = conn.execute(
+            """
+            select
+              id,
+              cycle_id,
+              status,
+              input_count,
+              created_crystal_count,
+              proposal_count
+            from dream_runs
+            """
+        ).fetchone()
         first_memory = conn.execute(
             "select archived_at from short_term_memories where id = ?",
             (first_memory_id,),
@@ -222,6 +233,9 @@ def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
         ).fetchall()
 
     assert failed_run["status"] == "failed"
+    assert failed_run["input_count"] == 1
+    assert failed_run["created_crystal_count"] == 0
+    assert failed_run["proposal_count"] == 0
     assert first_memory["archived_at"] is not None
     assert second_memory["archived_at"] is None
     assert first_session_after_failure["status"] == "dreamed"

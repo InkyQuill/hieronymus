@@ -199,6 +199,9 @@ class DreamService:
             run_id = int(cursor.lastrowid)
             conn.commit()
 
+        input_count = 0
+        created_crystal_count = 0
+        proposal_count = 0
         try:
             pending_count = self._pending_short_term_memory_count()
             minimum = load_dream_config(self.config).min_pending_short_term_memories
@@ -219,9 +222,6 @@ class DreamService:
                     proposal_count=0,
                 )
 
-            input_count = 0
-            created_crystal_count = 0
-            proposal_count = 0
             processed_batches = 0
             processed_session_ids: set[int] = set()
 
@@ -258,6 +258,12 @@ class DreamService:
                         outputs=outputs,
                         archive_memories=True,
                     )
+                    input_count += batch_input_count
+                    created_crystal_count += batch_created_crystals
+                    proposal_count += batch_proposals
+                    processed_session_ids.update(
+                        session_id for session_id, _context, _memories in groups
+                    )
                     self._complete_phase_run(
                         phase_run_id=phase_run_id,
                         output_count=batch_created_crystals + batch_proposals,
@@ -266,12 +272,6 @@ class DreamService:
                     self._fail_phase_run(phase_run_id, exc)
                     raise
 
-                input_count += batch_input_count
-                created_crystal_count += batch_created_crystals
-                proposal_count += batch_proposals
-                processed_session_ids.update(
-                    session_id for session_id, _context, _memories in groups
-                )
                 processed_batches += 1
 
             processed_session_ids.update(self._completed_session_ids_without_pending_memories())
@@ -311,11 +311,21 @@ class DreamService:
                     """
                     update dream_runs
                     set status = 'failed',
+                        input_count = ?,
+                        created_crystal_count = ?,
+                        proposal_count = ?,
                         error = ?,
                         completed_at = ?
                     where id = ?
                     """,
-                    (self._redacted_error_message(exc), _now(), run_id),
+                    (
+                        input_count,
+                        created_crystal_count,
+                        proposal_count,
+                        self._redacted_error_message(exc),
+                        _now(),
+                        run_id,
+                    ),
                 )
                 conn.commit()
             raise

@@ -243,6 +243,51 @@ def test_not_enough_memory_skip_anchors_next_interval(
     assert state.not_enough_memories_skipped_count == 1
 
 
+def test_no_pending_memory_resets_not_enough_skip_count(
+    config: HieronymusConfig,
+) -> None:
+    _enable_autostart(
+        config,
+        schedule_interval_minutes=30,
+        min_pending_short_term_memories=2,
+        max_pending_short_term_memories=25,
+        not_enough_memories_cycle_threshold=1,
+    )
+    context = _context(config)
+    _completed_session(config, context, memories=1)
+    now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+
+    assert DreamAutostart(config).run_due(now=now) == {
+        "ran": False,
+        "reason": "not_enough_memories",
+        "cycles": 0,
+    }
+    assert load_autostart_state(config).not_enough_memories_skipped_count == 1
+
+    with connect(config.database_path) as conn:
+        conn.execute(
+            "update short_term_memories set archived_at = ? where archived_at is null",
+            ("2026-06-07T12:30:00+00:00",),
+        )
+        conn.commit()
+
+    assert DreamAutostart(config).run_due(now=now + timedelta(minutes=30)) == {
+        "ran": False,
+        "reason": "no-pending-memory",
+        "cycles": 0,
+    }
+    assert load_autostart_state(config).not_enough_memories_skipped_count == 0
+
+    _completed_session(config, context, memories=1)
+
+    assert DreamAutostart(config).run_due(now=now + timedelta(minutes=60)) == {
+        "ran": False,
+        "reason": "not_enough_memories",
+        "cycles": 0,
+    }
+    assert load_autostart_state(config).not_enough_memories_skipped_count == 1
+
+
 def test_backlog_escape_runs_on_sixth_default_not_enough_check(
     config: HieronymusConfig,
 ) -> None:

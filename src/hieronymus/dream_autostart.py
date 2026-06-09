@@ -116,12 +116,22 @@ class DreamAutostart:
             if not dream_config.enabled:
                 return {"ran": False, "reason": "disabled", "cycles": 0}
 
-            _pending_completed_sessions, pending_short_term_memories = self._pending_counts()
-            if pending_short_term_memories == 0:
-                return {"ran": False, "reason": "no-pending-memory", "cycles": 0}
-
             state = load_autostart_state(self.config)
             state_for_error = state
+            _pending_completed_sessions, pending_short_term_memories = self._pending_counts()
+            if pending_short_term_memories == 0:
+                if state.not_enough_memories_skipped_count != 0:
+                    save_autostart_state(
+                        self.config,
+                        AutostartState(
+                            last_started_at=state.last_started_at,
+                            last_error=state.last_error,
+                            last_skipped_at=state.last_skipped_at,
+                            last_skip_reason=state.last_skip_reason,
+                        ),
+                    )
+                return {"ran": False, "reason": "no-pending-memory", "cycles": 0}
+
             ignore_minimum = False
             if pending_short_term_memories >= dream_config.max_pending_short_term_memories:
                 reason = "urgent"
