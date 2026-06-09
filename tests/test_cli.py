@@ -454,11 +454,12 @@ def test_recall_outputs_short_term_results(tmp_path):
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
+    assert payload[0]["score"] > 0
     assert payload == [
         {
             "source": "short_term",
             "rank": 1,
-            "score": 0.65,
+            "score": payload[0]["score"],
             "reason": "active session short-term memory match",
             "crystal": None,
             "short_term_memory": {

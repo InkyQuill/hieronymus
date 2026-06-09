@@ -1,5 +1,6 @@
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
+from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
@@ -114,3 +115,73 @@ def test_story_scope_boosts_long_term_crystals_without_filtering(
         unscoped_id,
         other_scope_id,
     }
+
+
+def test_combined_recall_applies_final_limit_before_activation_records(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    crystals = CrystalStore(config)
+    for index in range(5):
+        crystals.add_crystal(
+            context,
+            crystal_type="lesson",
+            text=f"Use compact inventory labels for menu entry {index}.",
+            strength=0.9,
+            confidence=0.9,
+        )
+    for index in range(5):
+        workspace.add_short_term_memory(
+            session.id,
+            source_role="mentor",
+            kind="note",
+            text=f"Compact inventory labels should stay terse in menu note {index}.",
+        )
+
+    results = RecallService(config).recall(
+        session.id,
+        context,
+        "compact inventory labels",
+        limit=3,
+    )
+
+    returned_long_term_count = sum(1 for result in results if result.source == "long_term")
+    with connect(config.database_path) as conn:
+        activation_count = conn.execute("select count(*) from crystal_activations").fetchone()[0]
+
+    assert len(results) == 3
+    assert [result.rank for result in results] == [1, 2, 3]
+    assert activation_count == returned_long_term_count
+    assert activation_count <= 3
+
+
+def test_short_term_recall_preserves_fts_relevance_order(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    weak_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Sense inventory labels.",
+    )
+    strong_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Sense inventory inventory inventory inventory labels.",
+    )
+
+    results = RecallService(config).recall(
+        session.id,
+        context,
+        "inventory",
+        limit=2,
+    )
+
+    assert [result.short_term_memory.id for result in results] == [strong_id, weak_id]
+    assert results[0].score > results[1].score

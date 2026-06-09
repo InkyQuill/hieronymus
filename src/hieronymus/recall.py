@@ -10,7 +10,8 @@ from hieronymus.memory_models import RecallResult, ShortTermMemoryRecord, Transl
 
 _RECALL_REASON = "weighted search match"
 _SHORT_TERM_REASON = "active session short-term memory match"
-_SHORT_TERM_SCORE = 0.65
+_SHORT_TERM_BASE_SCORE = 0.30
+_SHORT_TERM_RANK_STEP = 0.01
 _STORY_SCOPE_BOOST = 0.25
 _MAX_SHORT_TERM_LIMIT = 50
 
@@ -67,8 +68,8 @@ class RecallService:
             if context_tags.intersection(crystal.story_scopes):
                 ranked_score += _STORY_SCOPE_BOOST
             ranked_items.append(("long_term", ranked_score, crystal.id, crystal))
-        for memory in short_term_memories:
-            ranked_items.append(("short_term", _SHORT_TERM_SCORE, memory.id, memory))
+        for memory, score in short_term_memories:
+            ranked_items.append(("short_term", score, memory.id, memory))
 
         source_preference = {"long_term": 0, "short_term": 1}
         ranked_items.sort(
@@ -80,7 +81,7 @@ class RecallService:
         )
 
         results: list[RecallResult] = []
-        for rank, (source, score, _item_id, payload) in enumerate(ranked_items, start=1):
+        for rank, (source, score, _item_id, payload) in enumerate(ranked_items[:limit], start=1):
             if source == "long_term":
                 results.append(
                     RecallResult.long_term(
@@ -141,7 +142,7 @@ class RecallService:
         session_id: int,
         query: str,
         limit: int,
-    ) -> list[ShortTermMemoryRecord]:
+    ) -> list[tuple[ShortTermMemoryRecord, float]]:
         expression = search_expression(query)
         if not expression:
             return []
@@ -161,7 +162,10 @@ class RecallService:
             """,
             (expression, session_id, bounded_limit),
         ).fetchall()
-        return [_short_memory_from_row(row) for row in rows]
+        return [
+            (_short_memory_from_row(row), _SHORT_TERM_BASE_SCORE - (index * _SHORT_TERM_RANK_STEP))
+            for index, row in enumerate(rows)
+        ]
 
     def _require_active_session(self, conn, session_id: int):
         row = conn.execute(
