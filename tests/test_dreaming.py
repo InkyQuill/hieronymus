@@ -10,6 +10,7 @@ from hieronymus.dreaming import (
     DreamCrystalCandidate,
     DreamOutput,
     DreamService,
+    _recover_crystal_text,
 )
 from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
@@ -951,6 +952,58 @@ def test_dreaming_dict_source_credibility_controls_confidence_and_clamps_floor(
         ("observation", "rumor", 0.05),
         ("thought", "thought", 0.2),
     ]
+
+
+def test_dreaming_valid_kind_does_not_add_malformed_penalty(
+    config: HieronymusConfig,
+) -> None:
+    class KindProvider:
+        name = "kind"
+
+        def crystallize(self, context, memories):
+            return {
+                "crystals": [
+                    {
+                        "content": "Valid kind rule keeps full user-rule confidence.",
+                        "kind": "rule",
+                        "source_credibility": "user_rule",
+                    },
+                    {
+                        "content": "Malformed rule crystal alias is penalized.",
+                        "kind": "rule_crystal",
+                        "source_credibility": "user_rule",
+                    },
+                ]
+            }
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "Kind input.")
+    workspace.complete_session(session.id)
+
+    DreamService(config, KindProvider()).run_all()
+
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            """
+            select crystal_type, confidence, malformed_penalty
+            from crystals
+            order by id
+            """
+        ).fetchall()
+
+    assert [(row["crystal_type"], row["confidence"], row["malformed_penalty"]) for row in rows] == [
+        ("rule", 0.95, 0.0),
+        ("rule", 0.75, 0.2),
+    ]
+
+
+def test_dream_candidate_content_helper_requires_content() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        _recover_crystal_text({"kind": "rule"})
+
+    assert str(exc_info.value) == "dream candidate content is required"
 
 
 def test_dreaming_skips_unrecoverable_dict_entries_without_poisoning_good_entries(

@@ -1337,8 +1337,9 @@ def _normalize_dict_crystal(
     else:
         return None
 
-    text, penalty = _recover_crystal_text(payload)
-    if text == "":
+    try:
+        text, penalty = _recover_crystal_text(payload)
+    except ValueError:
         return None
     crystal_type, kind_penalty = _recover_crystal_type(payload, default_crystal_type)
     penalty += kind_penalty
@@ -1380,7 +1381,7 @@ def _recover_crystal_text(payload: dict[object, object]) -> tuple[str, float]:
     value = payload.get("body")
     if isinstance(value, str) and value.strip():
         return (" ".join(value.split()), MALFORMED_CONFIDENCE_PENALTY)
-    return ("", 0.0)
+    raise ValueError("dream candidate content is required")
 
 
 def _recover_crystal_type(
@@ -1394,7 +1395,6 @@ def _recover_crystal_type(
         value = payload["type"]
     elif "kind" in payload:
         value = payload["kind"]
-        penalty += MALFORMED_CONFIDENCE_PENALTY
     else:
         return (default_crystal_type, 0.0)
 
