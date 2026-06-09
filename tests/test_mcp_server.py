@@ -164,6 +164,33 @@ def test_mcp_memory_add_routes_legacy_calls_to_short_term(monkeypatch, tmp_path)
     assert dream_count == 0
 
 
+def test_mcp_memory_add_rejects_empty_kind_without_creating_rows(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+
+    from hieronymus import mcp_server
+
+    with pytest.raises(ValueError, match="kind must not be empty"):
+        mcp_server.hieronymus_memory_add(
+            series.slug,
+            "   ",
+            "Use Sense, not Feeling, for センス.",
+        )
+
+    with connect(config.database_path) as conn:
+        session_count = conn.execute("select count(*) from task_sessions").fetchone()[0]
+        memory_count = conn.execute("select count(*) from short_term_memories").fetchone()[0]
+
+    assert session_count == 0
+    assert memory_count == 0
+
+
 def test_mcp_termbase_contract_accepts_volume_and_chapter(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     series = Registry(load_config()).create_series(
@@ -707,6 +734,151 @@ def test_mcp_concept_proposals_list_includes_vague_concepts(monkeypatch, tmp_pat
             "forbidden_variants": [],
             "rationale": "A game-like aptitude category.",
             "status": "vague",
+        }
+    ]
+
+
+def test_mcp_concept_proposals_list_cleans_malformed_audit_payloads(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    ConceptProposalStore(config)
+    with connect(config.database_path) as conn:
+        old_run_id = conn.execute(
+            """
+            insert into dream_runs(cycle_id, status, provider, created_at)
+            values (1, 'completed', 'deterministic', '2026-06-09T00:00:00+00:00')
+            """
+        ).lastrowid
+        conn.execute(
+            """
+            insert into dream_audit_entries(
+              dream_run_id,
+              phase_run_id,
+              event_type,
+              severity,
+              summary,
+              payload_json,
+              created_at
+            )
+            values (?, null, 'provider_output', 'info', 'old proposal', ?, ?)
+            """,
+            (
+                old_run_id,
+                json.dumps(
+                    {
+                        "concept_proposals": [
+                            {
+                                "series_slug": "old-series",
+                                "source_language": "ja",
+                                "target_language": "en",
+                                "concept_text": "Old",
+                                "source_form": "古い",
+                                "canonical_rendering": "Old",
+                                "approved_variants": ["Old"],
+                                "forbidden_variants": [],
+                                "rationale": "outside recent window",
+                            }
+                        ]
+                    }
+                ),
+                "2026-06-09T00:00:00+00:00",
+            ),
+        )
+        for cycle_id in range(2, 51):
+            run_id = conn.execute(
+                """
+                insert into dream_runs(cycle_id, status, provider, created_at)
+                values (?, 'completed', 'deterministic', '2026-06-09T00:00:00+00:00')
+                """,
+                (cycle_id,),
+            ).lastrowid
+            conn.execute(
+                """
+                insert into dream_audit_entries(
+                  dream_run_id,
+                  phase_run_id,
+                  event_type,
+                  severity,
+                  summary,
+                  payload_json,
+                  created_at
+                )
+                values (?, null, 'noise', 'info', 'noise', '{"noise": true}', ?)
+                """,
+                (run_id, "2026-06-09T00:00:00+00:00"),
+            )
+        recent_run_id = conn.execute(
+            """
+            insert into dream_runs(cycle_id, status, provider, created_at)
+            values (51, 'completed', 'deterministic', '2026-06-09T00:00:00+00:00')
+            """
+        ).lastrowid
+        conn.execute(
+            """
+            insert into dream_audit_entries(
+              dream_run_id,
+              phase_run_id,
+              event_type,
+              severity,
+              summary,
+              payload_json,
+              created_at
+            )
+            values (?, null, 'provider_output', 'info', 'recent proposals', ?, ?)
+            """,
+            (
+                recent_run_id,
+                json.dumps(
+                    {
+                        "concept_proposals": [
+                            "not a proposal",
+                            {
+                                "concept_text": "",
+                                "source_form": "空",
+                                "canonical_rendering": "Empty",
+                            },
+                            {
+                                "concept_text": "Bad Source",
+                                "source_form": 42,
+                                "canonical_rendering": "Bad Source",
+                            },
+                            {
+                                "series_slug": 7,
+                                "source_language": None,
+                                "target_language": ["en"],
+                                "concept_text": "Sense",
+                                "source_form": "センス",
+                                "canonical_rendering": 17,
+                                "approved_variants": "Sense",
+                                "forbidden_variants": ["Feeling", 3],
+                                "rationale": {"why": "malformed"},
+                            },
+                        ]
+                    }
+                ),
+                "2026-06-09T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    from hieronymus import mcp_server
+
+    assert mcp_server.hieronymus_concept_proposals_list() == [
+        {
+            "id": 51,
+            "series_slug": "",
+            "source_language": "",
+            "target_language": "",
+            "concept_text": "Sense",
+            "source_form": "センス",
+            "canonical_rendering": "Sense",
+            "approved_variants": [],
+            "forbidden_variants": ["Feeling"],
+            "rationale": "",
+            "status": "audit",
         }
     ]
 

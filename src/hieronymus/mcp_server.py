@@ -198,15 +198,30 @@ def _vague_concept_proposal_payloads(config: HieronymusConfig) -> list[dict[str,
     return payloads
 
 
+def _optional_string(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _required_string(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
 def _recent_dream_audit_proposal_payloads(config: HieronymusConfig) -> list[dict[str, Any]]:
     with connect(config.database_path) as conn:
         rows = conn.execute(
             """
             select id, payload_json
             from dream_audit_entries
-            where payload_json like '%concept_proposals%'
             order by id desc
-            limit 20
+            limit 50
             """
         ).fetchall()
 
@@ -222,25 +237,29 @@ def _recent_dream_audit_proposal_payloads(config: HieronymusConfig) -> list[dict
         for proposal in proposals:
             if not isinstance(proposal, dict):
                 continue
-            concept_text = proposal.get("concept_text")
-            source_form = proposal.get("source_form", concept_text)
-            canonical_rendering = proposal.get("canonical_rendering", concept_text)
-            if not isinstance(canonical_rendering, str):
-                canonical_rendering = concept_text
-            if not all(isinstance(value, str) and value for value in (concept_text, source_form)):
+            concept_text = _required_string(proposal.get("concept_text"))
+            if concept_text is None:
                 continue
+            source_form = _required_string(proposal.get("source_form", concept_text))
+            if source_form is None:
+                continue
+            canonical_rendering = _required_string(
+                proposal.get("canonical_rendering", concept_text)
+            )
+            if canonical_rendering is None:
+                canonical_rendering = concept_text
             payloads.append(
                 {
                     "id": int(row["id"]),
-                    "series_slug": proposal.get("series_slug", ""),
-                    "source_language": proposal.get("source_language", ""),
-                    "target_language": proposal.get("target_language", ""),
+                    "series_slug": _optional_string(proposal.get("series_slug")),
+                    "source_language": _optional_string(proposal.get("source_language")),
+                    "target_language": _optional_string(proposal.get("target_language")),
                     "concept_text": concept_text,
                     "source_form": source_form,
                     "canonical_rendering": canonical_rendering,
-                    "approved_variants": proposal.get("approved_variants", []),
-                    "forbidden_variants": proposal.get("forbidden_variants", []),
-                    "rationale": proposal.get("rationale", ""),
+                    "approved_variants": _string_list(proposal.get("approved_variants")),
+                    "forbidden_variants": _string_list(proposal.get("forbidden_variants")),
+                    "rationale": _optional_string(proposal.get("rationale")),
                     "status": "audit",
                 }
             )
@@ -379,6 +398,8 @@ def hieronymus_memory_add(
     target_language: str | None = None,
 ) -> dict[str, int | str]:
     """Add user memory as short-term learning material for a series."""
+    if not kind.strip():
+        raise ValueError("kind must not be empty")
     config, series = _series_context(series_slug)
     session = _ensure_default_session(
         config,
