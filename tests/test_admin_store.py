@@ -6,6 +6,7 @@ from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_audit import DreamAuditStore
 from hieronymus.dream_locks import dream_cycle_lock
+from hieronymus.dreaming import DreamRunRecord
 from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
@@ -330,7 +331,76 @@ def test_admin_runs_manual_dreaming_and_reviews_outputs(
     assert audit["note"] == f"Manual dream run {run.cycle_id} with provider deterministic"
 
 
+def test_admin_manual_dreaming_rejects_without_completed_pending_memory(
+    config: HieronymusConfig,
+) -> None:
+    admin = AdminStore(config)
+
+    with pytest.raises(
+        ValueError,
+        match="dream all requires at least one completed pending short-term memory",
+    ):
+        admin.run_manual_dreaming()
+
+    with connect(config.database_path) as conn:
+        count = conn.execute("select count(*) from dream_runs").fetchone()[0]
+    assert count == 0
+
+
+def test_admin_manual_dreaming_uses_ignore_minimum_when_pending_exists(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Manual dreaming should bypass the service minimum.",
+    )
+    workspace.complete_session(session.id)
+    calls: dict[str, object] = {}
+
+    class FakeDreamService:
+        def __init__(self, config: HieronymusConfig, provider: object) -> None:
+            calls["config"] = config
+            calls["provider"] = provider
+
+        def run_all(self, **kwargs: object) -> DreamRunRecord:
+            calls["run_all"] = kwargs
+            return DreamRunRecord(
+                id=123,
+                cycle_id=456,
+                status="completed",
+                provider="fake",
+                input_count=1,
+                created_crystal_count=0,
+                proposal_count=0,
+            )
+
+    monkeypatch.setattr("hieronymus.admin.DreamService", FakeDreamService)
+
+    run = AdminStore(config).run_manual_dreaming()
+
+    assert calls["config"] == config
+    assert calls["run_all"] == {"owner": "admin", "ignore_minimum": True}
+    assert run.id == 123
+
+
 def test_admin_manual_dreaming_uses_shared_cycle_guard(config: HieronymusConfig) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Pending memory lets the lock guard run.",
+    )
+    workspace.complete_session(session.id)
+
     with dream_cycle_lock(config, owner="manual"):
         with pytest.raises(ValueError, match="dream cycle already running"):
             AdminStore(config).run_manual_dreaming()

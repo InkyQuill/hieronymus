@@ -8,6 +8,7 @@ from hieronymus.crystals import CrystalStore
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.tui.app import HieronymusAdminApp
+from hieronymus.workspace import WorkspaceStore
 
 
 @pytest.fixture
@@ -72,6 +73,24 @@ def _seed_proposal(config: HieronymusConfig) -> None:
         canonical_rendering="сенс",
         rationale="Palette proposal fixture.",
     )
+
+
+def _seed_completed_short_term_memory(config: HieronymusConfig) -> None:
+    context = TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        task_type="translation",
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Keep inventory UI labels compact in dream outputs.",
+    )
+    workspace.complete_session(session.id)
 
 
 @pytest.mark.anyio
@@ -411,6 +430,7 @@ async def test_tui_manual_dream_command_switches_to_dream_runs(
     config: HieronymusConfig,
 ) -> None:
     _seed(config)
+    _seed_completed_short_term_memory(config)
     app = HieronymusAdminApp(config)
 
     async with app.run_test() as pilot:

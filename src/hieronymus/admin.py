@@ -258,6 +258,8 @@ class AdminStore:
         return crystal_id
 
     def run_manual_dreaming(self) -> DreamRunRecord:
+        if self.pending_completed_short_term_memory_count() == 0:
+            raise ValueError("dream all requires at least one completed pending short-term memory")
         run = DreamService(self.config, resolve_provider(self.config)).run_all(
             owner="admin",
             ignore_minimum=True,
