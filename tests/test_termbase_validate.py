@@ -1,3 +1,5 @@
+import pytest
+
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.memory_models import TranslationContext
@@ -163,6 +165,77 @@ def test_validate_isolated_by_target_language(config):
     )
 
     assert findings == []
+
+
+def test_reapproving_strict_term_does_not_duplicate_validation_findings(config):
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    termbase = _termbase_for_series(config, series)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+    )
+    termbase.add_alias(term_id, kind="forbidden_variant", text="Attack Increase", language="en")
+
+    termbase.approve(term_id)
+    termbase.approve(term_id)
+
+    findings = termbase.validate(
+        raw_text="攻撃力上昇を取るべきだ。",
+        translated_text="You should pick up Attack Increase.",
+    )
+
+    assert [finding.kind for finding in findings] == [
+        "forbidden_variant",
+        "missing_canonical",
+    ]
+
+
+def test_approve_rejects_multiple_forbidden_variants(config):
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    termbase = _termbase_for_series(config, series)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+    )
+    termbase.add_alias(term_id, kind="forbidden_variant", text="Attack Increase", language="en")
+    termbase.add_alias(term_id, kind="forbidden_variant", text="Attack Boost", language="en")
+
+    with pytest.raises(ValueError, match="rule crystals support at most one forbidden variant"):
+        termbase.approve(term_id)
+
+
+def test_approve_rejects_noncanonical_approved_variant(config):
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    termbase = _termbase_for_series(config, series)
+    term_id = termbase.propose(
+        category="person_name",
+        source_text="ガンツ",
+        canonical_translation="Ganz",
+    )
+    termbase.add_alias(term_id, kind="approved_variant", text="Gantz", language="en")
+
+    with pytest.raises(
+        ValueError,
+        match="approved variants that differ from canonical rendering are unsupported",
+    ):
+        termbase.approve(term_id)
 
 
 def test_rule_crystal_validation_reports_forbidden_old_rendering(

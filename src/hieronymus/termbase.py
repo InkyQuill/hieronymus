@@ -76,6 +76,18 @@ def _rule_text(source_text: str, canonical_translation: str, forbidden_variants:
     return f"{source_text} is translated as {canonical_translation}."
 
 
+def _validate_rule_shape(
+    *,
+    canonical_translation: str,
+    approved_variants: list[str],
+    forbidden_variants: list[str],
+) -> None:
+    if len(forbidden_variants) > 1:
+        raise ValueError("rule crystals support at most one forbidden variant")
+    if any(variant != canonical_translation for variant in approved_variants):
+        raise ValueError("approved variants that differ from canonical rendering are unsupported")
+
+
 class Termbase:
     def __init__(self, config: HieronymusConfig, context: TranslationContext) -> None:
         self.config = config
@@ -153,7 +165,27 @@ class Termbase:
 
     def approve(self, term_id: int) -> None:
         with connect(self.config.database_path) as conn:
-            cursor = conn.execute(
+            term = conn.execute(
+                """
+                select *
+                from strict_terms
+                where id = ?
+                  and series_slug = ?
+                  and source_language = ?
+                  and target_language = ?
+                """,
+                (
+                    term_id,
+                    self.series_slug,
+                    self.source_language,
+                    self.target_language,
+                ),
+            ).fetchone()
+            if term is None:
+                raise KeyError(f"unknown term: {term_id}")
+            self._validate_strict_term_rule_shape(conn, term)
+            self._insert_rule_crystal_for_strict_term(conn, term)
+            conn.execute(
                 """
                 update strict_terms
                 set status = 'approved', updated_at = ?
@@ -170,22 +202,6 @@ class Termbase:
                     self.target_language,
                 ),
             )
-            if cursor.rowcount == 0:
-                raise KeyError(f"unknown term: {term_id}")
-            term = conn.execute(
-                """
-                select *
-                from strict_terms
-                where id = ?
-                  and series_slug = ?
-                  and source_language = ?
-                  and target_language = ?
-                """,
-                (term_id, self.series_slug, self.source_language, self.target_language),
-            ).fetchone()
-            if term is None:
-                raise KeyError(f"unknown term: {term_id}")
-            self._insert_rule_crystal_for_strict_term(conn, term)
             conn.commit()
 
     def add_alias(
@@ -205,7 +221,7 @@ class Termbase:
         with connect(self.config.database_path) as conn:
             term = conn.execute(
                 """
-                select id
+                select id, status
                 from strict_terms
                 where id = ?
                   and series_slug = ?
@@ -216,6 +232,8 @@ class Termbase:
             ).fetchone()
             if term is None:
                 raise KeyError(f"unknown term: {term_id}")
+            if term["status"] == "approved":
+                raise ValueError("approved term aliases must be represented as rule crystals")
             conn.execute(
                 """
                 insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
@@ -329,6 +347,37 @@ class Termbase:
                 )
         return findings
 
+    def _validate_strict_term_rule_shape(
+        self,
+        conn: sqlite3.Connection,
+        term: sqlite3.Row,
+    ) -> None:
+        alias_rows = conn.execute(
+            """
+            select text, kind
+            from strict_term_aliases
+            where term_id = ?
+              and kind in ('approved_variant', 'forbidden_variant')
+            order by id
+            """,
+            (term["id"],),
+        ).fetchall()
+        approved_variants = [
+            row["text"].strip()
+            for row in alias_rows
+            if row["kind"] == "approved_variant" and row["text"].strip()
+        ]
+        forbidden_variants = [
+            row["text"].strip()
+            for row in alias_rows
+            if row["kind"] == "forbidden_variant" and row["text"].strip()
+        ]
+        _validate_rule_shape(
+            canonical_translation=term["canonical_translation"],
+            approved_variants=approved_variants,
+            forbidden_variants=forbidden_variants,
+        )
+
     def _insert_rule_crystal_for_strict_term(
         self,
         conn: sqlite3.Connection,
@@ -349,6 +398,32 @@ class Termbase:
             term["canonical_translation"],
             forbidden_variants,
         )
+        existing = conn.execute(
+            """
+            select id
+            from crystals
+            where crystal_type = 'rule'
+              and status = 'active'
+              and text = ?
+              and scope_type = 'series'
+              and scope_key = ?
+              and series_slug = ?
+              and source_language = ?
+              and target_language = ?
+            order by id
+            limit 1
+            """,
+            (
+                text,
+                self.context.scope_key,
+                term["series_slug"],
+                term["source_language"],
+                term["target_language"],
+            ),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["id"])
+
         now = _now()
         cursor = conn.execute(
             """

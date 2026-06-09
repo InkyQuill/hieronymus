@@ -50,6 +50,18 @@ def _rule_crystal_text(
     return f"{source_form} is translated as {canonical_rendering}."
 
 
+def _validate_rule_crystal_shape(
+    *,
+    canonical_rendering: str,
+    approved_variants: list[str],
+    forbidden_variants: list[str],
+) -> None:
+    if len(forbidden_variants) > 1:
+        raise ValueError("rule crystals support at most one forbidden variant")
+    if any(variant != canonical_rendering for variant in approved_variants):
+        raise ValueError("approved variants that differ from canonical rendering are unsupported")
+
+
 _ARCHIVE_STRENGTH_THRESHOLD = 0.05
 
 
@@ -1347,11 +1359,21 @@ class AdminStore:
         *,
         now: str,
     ) -> int:
+        approved_variants = [
+            variant.strip()
+            for variant in json.loads(proposal["approved_variants_json"])
+            if isinstance(variant, str) and variant.strip()
+        ]
         forbidden_variants = [
             variant.strip()
             for variant in json.loads(proposal["forbidden_variants_json"])
             if isinstance(variant, str) and variant.strip()
         ]
+        _validate_rule_crystal_shape(
+            canonical_rendering=proposal["canonical_rendering"],
+            approved_variants=approved_variants,
+            forbidden_variants=forbidden_variants,
+        )
         text = _rule_crystal_text(
             proposal["source_form"].strip() or proposal["concept_text"],
             proposal["canonical_rendering"],

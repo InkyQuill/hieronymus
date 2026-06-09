@@ -153,6 +153,46 @@ def test_approve_rejects_unknown_term(config):
         termbase.approve(404)
 
 
+def test_approve_same_strict_term_twice_creates_one_rule_crystal(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+
+    termbase.approve(term_id)
+    termbase.approve(term_id)
+
+    contract = termbase.contract("ユンは攻撃力上昇を取るべきだと言われた。")
+    with connect(termbase.config.database_path) as conn:
+        active_rule_count = conn.execute(
+            """
+            select count(*)
+            from crystals
+            where crystal_type = 'rule'
+              and status = 'active'
+              and text = '攻撃力上昇 is translated as ATK Up.'
+            """
+        ).fetchone()[0]
+
+    assert active_rule_count == 1
+    assert len(contract) == 1
+    assert contract[0].source_text == "攻撃力上昇"
+
+
+def test_add_alias_rejects_approved_term(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+    termbase.approve(term_id)
+
+    with pytest.raises(
+        ValueError, match="approved term aliases must be represented as rule crystals"
+    ):
+        termbase.add_alias(
+            term_id,
+            kind="forbidden_variant",
+            text="Attack Increase",
+            language="en",
+        )
+
+
 def test_contract_matches_case_insensitive_source_variant(config):
     termbase = _create_termbase(config)
     _add_rule_crystal(termbase, "atk boost is translated as ATK Up.")
