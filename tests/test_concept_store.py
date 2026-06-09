@@ -40,16 +40,62 @@ def test_concepts_fts_searches_inserted_concept(config: HieronymusConfig) -> Non
             canonical_name="Sense",
             description="A game-like aptitude category.",
         )
-        conn.execute(
-            "insert into concepts_fts(rowid, canonical_name, description) values (?, ?, ?)",
-            (concept_id, "Sense", "A game-like aptitude category."),
-        )
         rows = conn.execute(
             "select rowid from concepts_fts where concepts_fts match ?",
             ("aptitude",),
         ).fetchall()
 
     assert [row["rowid"] for row in rows] == [concept_id]
+
+
+def test_concepts_fts_updates_when_concept_changes(config: HieronymusConfig) -> None:
+    with connect(config.database_path) as conn:
+        apply_migration(conn, "global.sql")
+        concept_id = _insert_concept(
+            conn,
+            canonical_name="Sense",
+            description="A game-like aptitude category.",
+        )
+
+        conn.execute(
+            """
+            update concepts
+            set canonical_name = 'Artisan Focus',
+                description = 'A crafting concentration category.',
+                updated_at = ?
+            where id = ?
+            """,
+            (_NOW, concept_id),
+        )
+        old_rows = conn.execute(
+            "select rowid from concepts_fts where concepts_fts match ?",
+            ("aptitude",),
+        ).fetchall()
+        new_rows = conn.execute(
+            "select rowid from concepts_fts where concepts_fts match ?",
+            ("concentration",),
+        ).fetchall()
+
+    assert old_rows == []
+    assert [row["rowid"] for row in new_rows] == [concept_id]
+
+
+def test_concepts_fts_deletes_when_concept_is_deleted(config: HieronymusConfig) -> None:
+    with connect(config.database_path) as conn:
+        apply_migration(conn, "global.sql")
+        concept_id = _insert_concept(
+            conn,
+            canonical_name="Sense",
+            description="A game-like aptitude category.",
+        )
+
+        conn.execute("delete from concepts where id = ?", (concept_id,))
+        rows = conn.execute(
+            "select rowid from concepts_fts where concepts_fts match ?",
+            ("aptitude",),
+        ).fetchall()
+
+    assert rows == []
 
 
 def test_concept_insert_helper_uses_global_scope_defaults(

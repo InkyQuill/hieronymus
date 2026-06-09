@@ -211,6 +211,29 @@ create virtual table if not exists concepts_fts using fts5(
   content_rowid='id'
 );
 
+create trigger if not exists concepts_ai
+after insert on concepts
+begin
+  insert into concepts_fts(rowid, canonical_name, description)
+  values (new.id, new.canonical_name, new.description);
+end;
+
+create trigger if not exists concepts_ad
+after delete on concepts
+begin
+  insert into concepts_fts(concepts_fts, rowid, canonical_name, description)
+  values ('delete', old.id, old.canonical_name, old.description);
+end;
+
+create trigger if not exists concepts_au
+after update on concepts
+begin
+  insert into concepts_fts(concepts_fts, rowid, canonical_name, description)
+  values ('delete', old.id, old.canonical_name, old.description);
+  insert into concepts_fts(rowid, canonical_name, description)
+  values (new.id, new.canonical_name, new.description);
+end;
+
 create table if not exists concept_facets (
   id integer primary key,
   concept_id integer not null references concepts(id) on delete cascade,

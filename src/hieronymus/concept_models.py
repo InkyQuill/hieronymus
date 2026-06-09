@@ -14,6 +14,15 @@ class ConceptRecord:
     scope_key: str = ""
     tags: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        if self.scope_type == "global":
+            if self.scope_key != "":
+                raise ValueError("global concept scope requires an empty key")
+            return
+
+        if self.scope_key == "":
+            raise ValueError("non-global concept scope requires a key")
+
 
 @dataclass(frozen=True)
 class ConceptFacetRecord:
