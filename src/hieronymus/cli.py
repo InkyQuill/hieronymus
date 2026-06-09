@@ -719,7 +719,7 @@ def dream(
         run = DreamService(
             ctx.obj["config"],
             dream_provider,
-        ).run_cycle(wait=wait, owner="manual")
+        ).run_all(wait=wait, owner="manual")
     except (KeyError, ValueError, SettingsError, DreamCycleAlreadyRunning) as error:
         _raise_click_error(error)
     payload = {

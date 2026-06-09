@@ -70,6 +70,15 @@ def _completed_session(config: HieronymusConfig, context: TranslationContext) ->
     return session.id
 
 
+def _pending_short_term_memory_count(config: HieronymusConfig) -> int:
+    with connect(config.database_path) as conn:
+        return int(
+            conn.execute(
+                "select count(*) from short_term_memories where archived_at is null",
+            ).fetchone()[0]
+        )
+
+
 def test_dreaming_crystallizes_completed_short_term_memory(config: HieronymusConfig) -> None:
     context = _context(config)
     workspace = WorkspaceStore(config)
@@ -93,6 +102,87 @@ def test_dreaming_crystallizes_completed_short_term_memory(config: HieronymusCon
     assert crystal["title"] == "Correction"
     assert crystal["text"] == "Use Сенс, not Чувство, for Sense in UI references."
     assert sources[0]["short_term_memory_id"] == memory_id
+
+
+def test_manual_dreaming_drains_small_batch_even_below_minimum(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    _completed_session(config, context)
+
+    run = DreamService(config, DeterministicDreamProvider()).run_all(owner="admin")
+
+    assert run.status == "completed"
+    assert run.input_count == 1
+    assert _pending_short_term_memory_count(config) == 0
+
+
+def test_scheduled_dreaming_drains_all_pending_in_capped_cycles(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    for index in range(55):
+        workspace.add_short_term_memory(
+            session.id,
+            source_role="user",
+            kind="note",
+            text=f"Drain memory {index}.",
+        )
+    workspace.complete_session(session.id)
+
+    run = DreamService(
+        config,
+        DeterministicDreamProvider(),
+        max_short_term_memories_per_cycle=20,
+    ).run_all(owner="scheduler")
+
+    with connect(config.database_path) as conn:
+        phase_rows = conn.execute(
+            """
+            select phase, status, input_count
+            from dream_phase_runs
+            order by id
+            """
+        ).fetchall()
+        session_row = conn.execute("select status, cycle_id from task_sessions").fetchone()
+
+    assert run.status == "completed"
+    assert run.input_count == 55
+    assert run.created_crystal_count == 55
+    assert run.proposal_count == 0
+    assert [(row["phase"], row["status"], row["input_count"]) for row in phase_rows] == [
+        ("crystallization", "completed", 20),
+        ("crystallization", "completed", 20),
+        ("crystallization", "completed", 15),
+    ]
+    assert _pending_short_term_memory_count(config) == 0
+    assert session_row["status"] == "dreamed"
+    assert session_row["cycle_id"] == run.cycle_id
+
+
+def test_run_all_preserves_crystal_source_links(config: HieronymusConfig) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    memory_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="correction",
+        text="Keep Item Box capitalized.",
+    )
+    workspace.complete_session(session.id)
+
+    run = DreamService(config, DeterministicDreamProvider()).run_all()
+
+    with connect(config.database_path) as conn:
+        crystal = conn.execute("select * from crystals").fetchone()
+        source = conn.execute("select * from crystal_sources").fetchone()
+
+    assert run.status == "completed"
+    assert crystal["text"] == "Keep Item Box capitalized."
+    assert source["short_term_memory_id"] == memory_id
 
 
 def test_dreaming_ignores_active_sessions(config: HieronymusConfig) -> None:

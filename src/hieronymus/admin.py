@@ -146,7 +146,7 @@ class AdminStore:
         return crystal_id
 
     def run_manual_dreaming(self) -> DreamRunRecord:
-        run = DreamService(self.config, resolve_provider(self.config)).run_cycle(owner="admin")
+        run = DreamService(self.config, resolve_provider(self.config)).run_all(owner="admin")
         self._audit(
             "run",
             "dream",

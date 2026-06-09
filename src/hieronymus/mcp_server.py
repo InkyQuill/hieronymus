@@ -415,9 +415,9 @@ def hieronymus_dream(
     provider: str | None = None,
     wait: bool = False,
 ) -> dict[str, int | str]:
-    """Run a dream cycle over completed sessions."""
+    """Run dreaming over all pending completed-session memories."""
     config = _load_validated_config()
-    run = DreamService(config, resolve_provider(config, provider)).run_cycle(
+    run = DreamService(config, resolve_provider(config, provider)).run_all(
         owner="mcp",
         wait=wait,
     )

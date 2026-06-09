@@ -14,10 +14,10 @@ from hieronymus.dream_autostart import (
     load_autostart_state,
     save_autostart_state,
 )
+from hieronymus.dream_config import default_dream_config, save_dream_config
 from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
-from hieronymus.settings import load_settings, save_settings
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -41,21 +41,27 @@ def _context(config: HieronymusConfig) -> TranslationContext:
 def _enable_autostart(
     config: HieronymusConfig,
     *,
-    min_interval_minutes: int = 30,
-    new_short_term_memory_threshold: int = 25,
-    max_cycles_per_autostart: int = 1,
+    schedule_interval_minutes: int = 30,
+    min_pending_short_term_memories: int = 1,
+    max_pending_short_term_memories: int = 25,
+    max_short_term_memories_per_cycle: int | None = None,
+    not_enough_memories_cycle_threshold: int = 5,
 ) -> None:
-    settings = load_settings(config)
-    save_settings(
+    max_short_term_memories_per_cycle = (
+        max_pending_short_term_memories
+        if max_short_term_memories_per_cycle is None
+        else max_short_term_memories_per_cycle
+    )
+    save_dream_config(
         config,
-        settings.with_dreaming(
-            replace(
-                settings.dreaming,
-                autostart_enabled=True,
-                min_interval_minutes=min_interval_minutes,
-                new_short_term_memory_threshold=new_short_term_memory_threshold,
-                max_cycles_per_autostart=max_cycles_per_autostart,
-            )
+        replace(
+            default_dream_config(),
+            enabled=True,
+            schedule_interval_minutes=schedule_interval_minutes,
+            min_pending_short_term_memories=min_pending_short_term_memories,
+            max_pending_short_term_memories=max_pending_short_term_memories,
+            max_short_term_memories_per_cycle=max_short_term_memories_per_cycle,
+            not_enough_memories_cycle_threshold=not_enough_memories_cycle_threshold,
         ),
     )
 
@@ -102,18 +108,24 @@ def test_status_counts_pending_short_term_memories_and_completed_sessions(
     status = DreamAutostart(config).status()
 
     assert pending_session_id
+    assert status["enabled"] is False
+    assert status["schedule_interval_minutes"] == 30
+    assert status["min_pending_short_term_memories"] == 20
+    assert status["max_pending_short_term_memories"] == 200
+    assert status["max_short_term_memories_per_cycle"] == 50
+    assert status["not_enough_memories_cycle_threshold"] == 5
     assert status["pending_completed_sessions"] == 1
     assert status["pending_short_term_memories"] == 2
 
 
-def test_volume_trigger_runs_when_threshold_is_reached(config: HieronymusConfig) -> None:
-    _enable_autostart(config, new_short_term_memory_threshold=2)
+def test_urgent_trigger_runs_when_max_pending_is_reached(config: HieronymusConfig) -> None:
+    _enable_autostart(config, max_pending_short_term_memories=2)
     _completed_session(config, _context(config), memories=2)
     now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
 
     result = DreamAutostart(config).run_due(now=now)
 
-    assert result == {"ran": True, "reason": "threshold", "cycles": 1}
+    assert result == {"ran": True, "reason": "urgent", "cycles": 1}
     assert DreamAutostart(config).status()["pending_short_term_memories"] == 0
     assert load_autostart_state(config).last_started_at == now
     assert load_autostart_state(config).last_error == ""
@@ -122,7 +134,7 @@ def test_volume_trigger_runs_when_threshold_is_reached(config: HieronymusConfig)
 def test_autostart_skips_and_records_when_cycle_is_active(
     config: HieronymusConfig,
 ) -> None:
-    _enable_autostart(config, new_short_term_memory_threshold=1)
+    _enable_autostart(config, max_pending_short_term_memories=1)
     _completed_session(config, _context(config), memories=1)
     now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
 
@@ -145,7 +157,12 @@ def test_autostart_skips_and_records_when_cycle_is_active(
 def test_interval_trigger_requires_pending_memory_and_elapsed_minutes(
     config: HieronymusConfig,
 ) -> None:
-    _enable_autostart(config, min_interval_minutes=30, new_short_term_memory_threshold=25)
+    _enable_autostart(
+        config,
+        schedule_interval_minutes=30,
+        min_pending_short_term_memories=1,
+        max_pending_short_term_memories=25,
+    )
     now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
 
     assert DreamAutostart(config).run_due(now=now) == {
@@ -171,29 +188,57 @@ def test_interval_trigger_requires_pending_memory_and_elapsed_minutes(
     )
     assert DreamAutostart(config).run_due(now=now) == {
         "ran": True,
-        "reason": "interval",
+        "reason": "scheduled",
         "cycles": 1,
     }
 
 
-def test_autostart_does_not_record_started_at_for_zero_cycles(
+def test_interval_trigger_counts_not_enough_memory_skips(
     config: HieronymusConfig,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _enable_autostart(config, new_short_term_memory_threshold=1)
+    _enable_autostart(
+        config,
+        schedule_interval_minutes=30,
+        min_pending_short_term_memories=2,
+        max_pending_short_term_memories=25,
+    )
+    _completed_session(config, _context(config), memories=1)
     now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
-    counts = iter([(1, 1), (0, 0)])
-
-    def pending_counts(self):
-        return next(counts)
-
-    monkeypatch.setattr(DreamAutostart, "_pending_counts", pending_counts)
 
     result = DreamAutostart(config).run_due(now=now)
 
-    assert result == {"ran": False, "reason": "threshold", "cycles": 0}
-    assert not (config.config_root / "dream-autostart.json").exists()
-    assert load_autostart_state(config).last_started_at is None
+    assert result == {"ran": False, "reason": "not_enough_memories", "cycles": 0}
+    state = load_autostart_state(config)
+    assert state.last_started_at is None
+    assert state.last_skip_reason == "not_enough_memories"
+    assert state.last_skipped_at == now
+    assert state.not_enough_memories_skipped_count == 1
+
+
+def test_backlog_escape_runs_on_sixth_default_not_enough_check(
+    config: HieronymusConfig,
+) -> None:
+    _enable_autostart(
+        config,
+        schedule_interval_minutes=30,
+        min_pending_short_term_memories=2,
+        max_pending_short_term_memories=25,
+    )
+    _completed_session(config, _context(config), memories=1)
+    base = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+
+    for offset in range(5):
+        assert DreamAutostart(config).run_due(now=base + timedelta(minutes=offset)) == {
+            "ran": False,
+            "reason": "not_enough_memories",
+            "cycles": 0,
+        }
+
+    result = DreamAutostart(config).run_due(now=base + timedelta(minutes=5))
+
+    assert result == {"ran": True, "reason": "backlog_escape", "cycles": 1}
+    assert DreamAutostart(config).status()["pending_short_term_memories"] == 0
+    assert load_autostart_state(config).not_enough_memories_skipped_count == 0
 
 
 def test_autostart_state_round_trips(config: HieronymusConfig) -> None:
@@ -204,6 +249,7 @@ def test_autostart_state_round_trips(config: HieronymusConfig) -> None:
         last_error="provider failed",
         last_skipped_at=last_skipped_at,
         last_skip_reason="cycle-active",
+        not_enough_memories_skipped_count=3,
     )
 
     save_autostart_state(config, state)
@@ -233,12 +279,18 @@ def test_autostart_state_loads_legacy_payload(config: HieronymusConfig) -> None:
     assert state.last_error == "provider failed"
     assert state.last_skipped_at is None
     assert state.last_skip_reason == ""
+    assert state.not_enough_memories_skipped_count == 0
 
 
 def test_run_due_persists_last_error_for_corrupt_autostart_state(
     config: HieronymusConfig,
 ) -> None:
-    _enable_autostart(config, min_interval_minutes=30, new_short_term_memory_threshold=25)
+    _enable_autostart(
+        config,
+        schedule_interval_minutes=30,
+        min_pending_short_term_memories=2,
+        max_pending_short_term_memories=25,
+    )
     _completed_session(config, _context(config), memories=1)
     state_path = config.config_root / "dream-autostart.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)

@@ -9,6 +9,7 @@ from typing import Protocol
 from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
+from hieronymus.dream_config import load_dream_config
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.scoring import PASSIVE_EVENT_DELTAS
@@ -117,10 +118,26 @@ class DeterministicDreamProvider:
         return DreamOutput(crystals=candidates, concept_proposals=[])
 
 
+DreamBatch = list[tuple[int, TranslationContext, list[ShortTermMemoryRecord]]]
+DreamBatchOutput = tuple[TranslationContext, int, list[ShortTermMemoryRecord], DreamOutput]
+
+
 class DreamService:
-    def __init__(self, config: HieronymusConfig, provider: DreamProvider) -> None:
+    def __init__(
+        self,
+        config: HieronymusConfig,
+        provider: DreamProvider,
+        max_short_term_memories_per_cycle: int | None = None,
+    ) -> None:
         self.config = config
         self.provider = provider
+        self.max_short_term_memories_per_cycle = (
+            max_short_term_memories_per_cycle
+            if max_short_term_memories_per_cycle is not None
+            else load_dream_config(config).max_short_term_memories_per_cycle
+        )
+        if self.max_short_term_memories_per_cycle < 1:
+            raise ValueError("max_short_term_memories_per_cycle must be at least 1")
         self.concept_proposals = ConceptProposalStore(config)
         with connect(self.config.database_path) as conn:
             apply_migration(conn, "global.sql")
@@ -136,13 +153,39 @@ class DreamService:
         try:
             with dream_cycle_lock(self.config, owner=owner, wait=wait):
                 lock_acquired = True
-                return self._run_cycle_unlocked()
+                return self._run_cycle_unlocked(max_batches=1)
         except DreamCycleAlreadyRunning:
             if skip_when_locked and not lock_acquired:
                 return self._record_skipped_run("dream cycle already running")
             raise
 
-    def _run_cycle_unlocked(self) -> DreamRunRecord:
+    def run_all(
+        self,
+        *,
+        owner: str = "manual",
+        skip_when_locked: bool = False,
+        wait: bool = False,
+        ignore_minimum: bool = True,
+    ) -> DreamRunRecord:
+        lock_acquired = False
+        try:
+            with dream_cycle_lock(self.config, owner=owner, wait=wait):
+                lock_acquired = True
+                return self._run_cycle_unlocked(
+                    max_batches=None,
+                    ignore_minimum=ignore_minimum,
+                )
+        except DreamCycleAlreadyRunning:
+            if skip_when_locked and not lock_acquired:
+                return self._record_skipped_run("dream cycle already running")
+            raise
+
+    def _run_cycle_unlocked(
+        self,
+        *,
+        max_batches: int | None,
+        ignore_minimum: bool = True,
+    ) -> DreamRunRecord:
         now = _now()
         with connect(self.config.database_path) as conn:
             cycle_id = self._next_cycle_id(conn)
@@ -157,22 +200,102 @@ class DreamService:
             conn.commit()
 
         try:
-            groups = self._load_completed_groups()
-            outputs = [
-                (context, session_id, memories, self.provider.crystallize(context, memories))
-                for session_id, context, memories in groups
-            ]
-            for context, _session_id, memories, output in outputs:
-                self._validate_output(output, context, {memory.id for memory in memories})
+            pending_count = self._pending_short_term_memory_count()
+            minimum = load_dream_config(self.config).min_pending_short_term_memories
+            if not ignore_minimum and pending_count < minimum:
+                self._complete_run(
+                    run_id=run_id,
+                    input_count=0,
+                    created_crystal_count=0,
+                    proposal_count=0,
+                )
+                return DreamRunRecord(
+                    id=run_id,
+                    cycle_id=cycle_id,
+                    status="completed",
+                    provider=self.provider.name,
+                    input_count=0,
+                    created_crystal_count=0,
+                    proposal_count=0,
+                )
 
-            input_count = sum(len(memories) for _sid, _context, memories in groups)
-            created_crystal_count, proposal_count = self._apply_outputs(
-                run_id=run_id,
-                cycle_id=cycle_id,
-                groups=groups,
-                outputs=outputs,
-                input_count=input_count,
-            )
+            input_count = 0
+            created_crystal_count = 0
+            proposal_count = 0
+            processed_batches = 0
+            processed_session_ids: set[int] = set()
+
+            while max_batches is None or processed_batches < max_batches:
+                groups = self._load_pending_completed_groups(
+                    limit=self.max_short_term_memories_per_cycle,
+                )
+                if not groups:
+                    break
+
+                batch_input_count = sum(len(memories) for _sid, _context, memories in groups)
+                phase_run_id = self._start_phase_run(
+                    run_id=run_id,
+                    phase="crystallization",
+                    input_count=batch_input_count,
+                )
+                try:
+                    outputs = [
+                        (
+                            context,
+                            session_id,
+                            memories,
+                            self.provider.crystallize(context, memories),
+                        )
+                        for session_id, context, memories in groups
+                    ]
+                    for context, _session_id, memories, output in outputs:
+                        self._validate_output(output, context, {memory.id for memory in memories})
+
+                    batch_created_crystals, batch_proposals = self._apply_outputs(
+                        run_id=run_id,
+                        cycle_id=cycle_id,
+                        groups=groups,
+                        outputs=outputs,
+                        archive_memories=True,
+                    )
+                    self._complete_phase_run(
+                        phase_run_id=phase_run_id,
+                        output_count=batch_created_crystals + batch_proposals,
+                    )
+                except Exception as exc:
+                    self._fail_phase_run(phase_run_id, exc)
+                    raise
+
+                input_count += batch_input_count
+                created_crystal_count += batch_created_crystals
+                proposal_count += batch_proposals
+                processed_session_ids.update(
+                    session_id for session_id, _context, _memories in groups
+                )
+                processed_batches += 1
+
+            processed_session_ids.update(self._completed_session_ids_without_pending_memories())
+            with connect(self.config.database_path) as conn:
+                self._apply_passive_events(conn, cycle_id)
+                self._mark_activations_for_cycle(
+                    conn,
+                    cycle_id,
+                    sorted(processed_session_ids),
+                )
+                self._apply_cycle_decay(conn, cycle_id)
+                self._mark_fully_archived_completed_sessions(
+                    conn,
+                    cycle_id,
+                    sorted(processed_session_ids),
+                )
+                self._complete_run_with_connection(
+                    conn,
+                    run_id=run_id,
+                    input_count=input_count,
+                    created_crystal_count=created_crystal_count,
+                    proposal_count=proposal_count,
+                )
+                conn.commit()
             return DreamRunRecord(
                 id=run_id,
                 cycle_id=cycle_id,
@@ -238,67 +361,255 @@ class DreamService:
             return message
         return redact_configured_secret_values(message, settings)
 
-    def _load_completed_groups(
+    def _load_pending_completed_groups(
         self,
-    ) -> list[tuple[int, TranslationContext, list[ShortTermMemoryRecord]]]:
+        *,
+        limit: int,
+    ) -> DreamBatch:
         with connect(self.config.database_path) as conn:
-            session_rows = conn.execute(
+            memory_rows = conn.execute(
                 """
-                select *
+                select
+                  short_term_memories.*,
+                  task_sessions.series_slug,
+                  task_sessions.source_language,
+                  task_sessions.target_language,
+                  task_sessions.task_type,
+                  task_sessions.volume,
+                  task_sessions.chapter
+                from short_term_memories
+                join task_sessions
+                  on task_sessions.id = short_term_memories.session_id
+                where task_sessions.status = 'completed'
+                  and short_term_memories.archived_at is null
+                order by task_sessions.id, short_term_memories.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        groups_by_session: dict[int, tuple[TranslationContext, list[ShortTermMemoryRecord]]] = {}
+        for row in memory_rows:
+            session_id = int(row["session_id"])
+            group = groups_by_session.get(session_id)
+            if group is None:
+                group = (
+                    TranslationContext(
+                        series_slug=row["series_slug"],
+                        source_language=row["source_language"],
+                        target_language=row["target_language"],
+                        task_type=row["task_type"],
+                        volume=row["volume"],
+                        chapter=row["chapter"],
+                    ),
+                    [],
+                )
+                groups_by_session[session_id] = group
+            group[1].append(
+                ShortTermMemoryRecord(
+                    id=row["id"],
+                    session_id=row["session_id"],
+                    source_role=row["source_role"],
+                    kind=row["kind"],
+                    text=row["text"],
+                    source_ref=row["source_ref"],
+                    metadata=json.loads(row["metadata_json"]),
+                )
+            )
+
+        return [
+            (session_id, context, memories)
+            for session_id, (context, memories) in groups_by_session.items()
+        ]
+
+    def _pending_short_term_memory_count(self) -> int:
+        with connect(self.config.database_path) as conn:
+            row = conn.execute(
+                """
+                select count(*)
+                from short_term_memories
+                join task_sessions
+                  on task_sessions.id = short_term_memories.session_id
+                where task_sessions.status = 'completed'
+                  and short_term_memories.archived_at is null
+                """
+            ).fetchone()
+        return int(row[0])
+
+    def _completed_session_ids_without_pending_memories(self) -> list[int]:
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute(
+                """
+                select task_sessions.id
                 from task_sessions
-                where status = 'completed'
-                  and cycle_id is null
-                order by id
+                where task_sessions.status = 'completed'
+                  and task_sessions.cycle_id is null
+                  and not exists (
+                    select 1
+                    from short_term_memories
+                    where short_term_memories.session_id = task_sessions.id
+                      and short_term_memories.archived_at is null
+                  )
+                order by task_sessions.id
                 """
             ).fetchall()
-            groups = []
-            for session in session_rows:
-                memory_rows = conn.execute(
-                    """
-                    select *
-                    from short_term_memories
-                    where session_id = ?
-                      and archived_at is null
-                    order by id
-                    """,
-                    (session["id"],),
-                ).fetchall()
-                memories = [
-                    ShortTermMemoryRecord(
-                        id=row["id"],
-                        session_id=row["session_id"],
-                        source_role=row["source_role"],
-                        kind=row["kind"],
-                        text=row["text"],
-                        source_ref=row["source_ref"],
-                        metadata=json.loads(row["metadata_json"]),
-                    )
-                    for row in memory_rows
-                ]
-                groups.append(
-                    (
-                        int(session["id"]),
-                        TranslationContext(
-                            series_slug=session["series_slug"],
-                            source_language=session["source_language"],
-                            target_language=session["target_language"],
-                            task_type=session["task_type"],
-                            volume=session["volume"],
-                            chapter=session["chapter"],
-                        ),
-                        memories,
-                    )
+        return [int(row["id"]) for row in rows]
+
+    def _start_phase_run(self, *, run_id: int, phase: str, input_count: int) -> int:
+        now = _now()
+        with connect(self.config.database_path) as conn:
+            cursor = conn.execute(
+                """
+                insert into dream_phase_runs(
+                  dream_run_id,
+                  phase,
+                  provider_profile,
+                  provider_type,
+                  model,
+                  status,
+                  input_count,
+                  created_at
                 )
-        return groups
+                values (?, ?, ?, ?, ?, 'running', ?, ?)
+                """,
+                (
+                    run_id,
+                    phase,
+                    self.provider.name,
+                    self.provider.name,
+                    self.provider.name,
+                    input_count,
+                    now,
+                ),
+            )
+            phase_run_id = int(cursor.lastrowid)
+            conn.commit()
+        return phase_run_id
+
+    def _complete_phase_run(self, *, phase_run_id: int, output_count: int) -> None:
+        with connect(self.config.database_path) as conn:
+            conn.execute(
+                """
+                update dream_phase_runs
+                set status = 'completed',
+                    output_count = ?,
+                    completed_at = ?
+                where id = ?
+                """,
+                (output_count, _now(), phase_run_id),
+            )
+            conn.commit()
+
+    def _fail_phase_run(self, phase_run_id: int, error: Exception) -> None:
+        with connect(self.config.database_path) as conn:
+            conn.execute(
+                """
+                update dream_phase_runs
+                set status = 'failed',
+                    error = ?,
+                    completed_at = ?
+                where id = ?
+                """,
+                (self._redacted_error_message(error), _now(), phase_run_id),
+            )
+            conn.commit()
+
+    def _complete_run(
+        self,
+        *,
+        run_id: int,
+        input_count: int,
+        created_crystal_count: int,
+        proposal_count: int,
+    ) -> None:
+        with connect(self.config.database_path) as conn:
+            self._complete_run_with_connection(
+                conn,
+                run_id=run_id,
+                input_count=input_count,
+                created_crystal_count=created_crystal_count,
+                proposal_count=proposal_count,
+            )
+            conn.commit()
+
+    def _complete_run_with_connection(
+        self,
+        conn,
+        *,
+        run_id: int,
+        input_count: int,
+        created_crystal_count: int,
+        proposal_count: int,
+    ) -> None:
+        conn.execute(
+            """
+            update dream_runs
+            set status = 'completed',
+                input_count = ?,
+                created_crystal_count = ?,
+                proposal_count = ?,
+                completed_at = ?
+            where id = ?
+            """,
+            (
+                input_count,
+                created_crystal_count,
+                proposal_count,
+                _now(),
+                run_id,
+            ),
+        )
+
+    def _mark_fully_archived_completed_sessions(
+        self,
+        conn,
+        cycle_id: int,
+        session_ids: list[int],
+    ) -> None:
+        if not session_ids:
+            return
+        placeholders = ", ".join("?" for _ in session_ids)
+        conn.execute(
+            f"""
+            update task_sessions
+            set status = 'dreamed',
+                cycle_id = ?
+            where status = 'completed'
+              and id in ({placeholders})
+              and not exists (
+                select 1
+                from short_term_memories
+                where short_term_memories.session_id = task_sessions.id
+                  and short_term_memories.archived_at is null
+              )
+            """,
+            (cycle_id, *session_ids),
+        )
+
+    def _archive_memories(self, conn, groups: DreamBatch) -> None:
+        memory_ids = [
+            memory.id for _session_id, _context, memories in groups for memory in memories
+        ]
+        if not memory_ids:
+            return
+        placeholders = ", ".join("?" for _ in memory_ids)
+        conn.execute(
+            f"""
+            update short_term_memories
+            set archived_at = ?
+            where id in ({placeholders})
+            """,
+            (_now(), *memory_ids),
+        )
 
     def _apply_outputs(
         self,
         *,
         run_id: int,
         cycle_id: int,
-        groups: list[tuple[int, TranslationContext, list[ShortTermMemoryRecord]]],
-        outputs: list[tuple[TranslationContext, int, list[ShortTermMemoryRecord], DreamOutput]],
-        input_count: int,
+        groups: DreamBatch,
+        outputs: list[DreamBatchOutput],
+        archive_memories: bool,
     ) -> tuple[int, int]:
         created_crystal_count = 0
         proposal_count = 0
@@ -319,42 +630,8 @@ class DreamService:
                     self._insert_concept_proposals(conn, run_id, output.concept_proposals)
                     proposal_count += len(output.concept_proposals)
 
-                self._apply_passive_events(conn, cycle_id)
-                self._mark_activations_for_cycle(
-                    conn,
-                    cycle_id,
-                    [session_id for session_id, _context, _memories in groups],
-                )
-                self._apply_cycle_decay(conn, cycle_id)
-
-                for session_id, _context, _memories in groups:
-                    conn.execute(
-                        """
-                        update task_sessions
-                        set status = 'dreamed',
-                            cycle_id = ?
-                        where id = ?
-                        """,
-                        (cycle_id, session_id),
-                    )
-                conn.execute(
-                    """
-                    update dream_runs
-                    set status = 'completed',
-                        input_count = ?,
-                        created_crystal_count = ?,
-                        proposal_count = ?,
-                        completed_at = ?
-                    where id = ?
-                    """,
-                    (
-                        input_count,
-                        created_crystal_count,
-                        proposal_count,
-                        _now(),
-                        run_id,
-                    ),
-                )
+                if archive_memories:
+                    self._archive_memories(conn, groups)
                 conn.commit()
             except Exception:
                 conn.rollback()
