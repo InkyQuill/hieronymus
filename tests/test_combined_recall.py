@@ -1,0 +1,116 @@
+from hieronymus.config import HieronymusConfig
+from hieronymus.crystals import CrystalStore
+from hieronymus.memory_models import TranslationContext
+from hieronymus.recall import RecallService
+from hieronymus.registry import Registry
+from hieronymus.workspace import WorkspaceStore
+
+
+def _context(
+    config: HieronymusConfig,
+    *,
+    tags: tuple[str, ...] = (),
+) -> TranslationContext:
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="ru",
+    )
+    return TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type="translate",
+        volume="5",
+        chapter="5",
+        tags=tags,
+    )
+
+
+def test_recall_returns_short_and_long_term_results_by_source(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    memory_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Keep Sense untranslated in inventory UI labels.",
+        metadata={"origin": "chapter-note"},
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Render Sense as сенс in glossary entries.",
+        title="Sense Rendering",
+    )
+
+    results = RecallService(config).recall(session.id, context, "Sense", limit=5)
+
+    assert {result.source for result in results} == {"short_term", "long_term"}
+    short_result = next(result for result in results if result.source == "short_term")
+    long_result = next(result for result in results if result.source == "long_term")
+    assert short_result.short_term_memory is not None
+    assert short_result.short_term_memory.id == memory_id
+    assert short_result.short_term_memory.text == "Keep Sense untranslated in inventory UI labels."
+    assert short_result.short_term_memory.metadata["origin"] == "chapter-note"
+    assert short_result.crystal is None
+    assert long_result.crystal is not None
+    assert long_result.crystal.id == crystal_id
+    assert long_result.crystal.text == "Render Sense as сенс in glossary entries."
+    assert long_result.short_term_memory is None
+    assert [result.rank for result in results] == list(range(1, len(results) + 1))
+
+
+def test_story_scope_boosts_long_term_crystals_without_filtering(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config, tags=("Book 5 Chapter 5",))
+    crystals = CrystalStore(config)
+    unscoped_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    matching_scope_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.5,
+        confidence=0.5,
+        story_scopes=("Book 5 Chapter 5",),
+    )
+    other_scope_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.5,
+        confidence=0.5,
+        story_scopes=("Book 4 Chapter 1",),
+    )
+    session = WorkspaceStore(config).start_session(context)
+
+    results = RecallService(config).recall(
+        session.id,
+        context,
+        "guarded crafting",
+        limit=10,
+    )
+
+    assert [result.crystal.id for result in results] == [
+        matching_scope_id,
+        unscoped_id,
+        other_scope_id,
+    ]
+    assert results[0].score > results[1].score
+    assert [result.rank for result in results] == [1, 2, 3]
+    assert {result.crystal.id for result in results} == {
+        matching_scope_id,
+        unscoped_id,
+        other_scope_id,
+    }

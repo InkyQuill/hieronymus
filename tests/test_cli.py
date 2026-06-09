@@ -406,10 +406,73 @@ def test_recall_outputs_ranked_crystal_results(tmp_path):
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload[0]["crystal_id"] == crystal_id
+    assert payload[0]["source"] == "long_term"
     assert payload[0]["rank"] == 1
     assert payload[0]["score"] > 0
     assert payload[0]["reason"] == "weighted search match"
+    assert payload[0]["crystal"]["id"] == crystal_id
+    assert payload[0]["crystal"]["text"] == "Use Sense as a technical UI term."
+    assert payload[0]["short_term_memory"] is None
+
+
+def test_recall_outputs_short_term_results(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    _create_series(data_root)
+    runner = CliRunner()
+    session_id = _start_session(runner, data_root)
+    memory_id = WorkspaceStore(HieronymusConfig(data_root=data_root)).add_short_term_memory(
+        session_id,
+        source_role="mentor",
+        kind="note",
+        text="Keep Sense as Sense in menu labels.",
+        metadata={"source": "review"},
+    )
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "recall",
+            str(session_id),
+            "--series",
+            "only-sense-online",
+            "--query",
+            "Sense labels",
+            "--source-language",
+            "ja",
+            "--target-language",
+            "en",
+            "--task-type",
+            "translation",
+            "--volume",
+            "01",
+            "--chapter",
+            "002",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload == [
+        {
+            "source": "short_term",
+            "rank": 1,
+            "score": 0.65,
+            "reason": "active session short-term memory match",
+            "crystal": None,
+            "short_term_memory": {
+                "id": memory_id,
+                "source_role": "mentor",
+                "kind": "note",
+                "text": "Keep Sense as Sense in menu labels.",
+                "metadata": {
+                    "sentence_count": 1,
+                    "source": "review",
+                },
+            },
+        }
+    ]
 
 
 def test_recall_rejects_series_mismatch_without_writing_trace(tmp_path):

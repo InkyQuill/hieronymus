@@ -308,15 +308,28 @@ def test_mcp_recall_returns_expected_dict(monkeypatch, tmp_path):
         limit=5,
     )
 
-    assert recalled == [
-        {
-            "crystal_id": crystal_id,
+    assert len(recalled) == 1
+    assert recalled[0] == {
+        "source": "long_term",
+        "rank": 1,
+        "score": pytest.approx(recalled[0]["score"]),
+        "reason": "weighted search match",
+        "crystal": {
+            "id": crystal_id,
+            "crystal_type": "lesson",
             "text": "Render Sense as Sense in UI references.",
-            "rank": 1,
-            "score": pytest.approx(recalled[0]["score"]),
-            "reason": "weighted search match",
-        }
-    ]
+            "title": "Sense Rendering",
+            "confidence": 0.9,
+            "strength": 0.8,
+            "status": "active",
+            "source_credibility": "observation",
+            "rule_intent": "",
+            "story_scopes": [],
+            "semantic_tags": [],
+            "concept_ids": [],
+        },
+        "short_term_memory": None,
+    }
 
 
 def test_mcp_recall_without_languages_uses_stored_non_default_session_context(
@@ -350,8 +363,10 @@ def test_mcp_recall_without_languages_uses_stored_non_default_session_context(
 
     recalled = mcp_server.hieronymus_recall(session_id, series.slug, "Holo")
 
-    assert recalled[0]["crystal_id"] == crystal_id
-    assert recalled[0]["text"] == "Render Holo as Horo in this translation."
+    assert recalled[0]["source"] == "long_term"
+    assert recalled[0]["crystal"]["id"] == crystal_id
+    assert recalled[0]["crystal"]["text"] == "Render Holo as Horo in this translation."
+    assert recalled[0]["short_term_memory"] is None
 
 
 def test_mcp_recall_without_context_args_uses_stored_session_context(
@@ -392,10 +407,54 @@ def test_mcp_recall_without_context_args_uses_stored_session_context(
 
     recalled = mcp_server.hieronymus_recall(session_id, series.slug, "revised labels")
 
-    assert recalled[0]["crystal_id"] == crystal_id
+    assert recalled[0]["crystal"]["id"] == crystal_id
     with connect(config.database_path) as conn:
         activation_count = conn.execute("select count(*) from crystal_activations").fetchone()[0]
     assert activation_count == 1
+
+
+def test_mcp_recall_returns_short_term_payload(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+
+    from hieronymus import mcp_server
+
+    session_id = mcp_server.hieronymus_session_start(series.slug)["session_id"]
+    memory_id = WorkspaceStore(config).add_short_term_memory(
+        session_id,
+        source_role="mentor",
+        kind="note",
+        text="Keep Sense as Sense in menu labels.",
+        metadata={"source": "review"},
+    )
+
+    recalled = mcp_server.hieronymus_recall(session_id, series.slug, "Sense labels")
+
+    assert recalled == [
+        {
+            "source": "short_term",
+            "rank": 1,
+            "score": pytest.approx(recalled[0]["score"]),
+            "reason": "active session short-term memory match",
+            "crystal": None,
+            "short_term_memory": {
+                "id": memory_id,
+                "source_role": "mentor",
+                "kind": "note",
+                "text": "Keep Sense as Sense in menu labels.",
+                "metadata": {
+                    "sentence_count": 1,
+                    "source": "review",
+                },
+            },
+        }
+    ]
 
 
 def test_mcp_recall_rejects_mismatched_session_context_without_activation(

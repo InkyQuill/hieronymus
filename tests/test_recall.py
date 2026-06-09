@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 from hieronymus.config import HieronymusConfig
@@ -65,11 +63,11 @@ def test_recall_records_activation_without_reinforcing(config: HieronymusConfig)
     ]
 
 
-def test_recall_adds_system_short_term_trace_with_metadata(config: HieronymusConfig) -> None:
+def test_recall_does_not_add_system_short_term_trace(config: HieronymusConfig) -> None:
     context = _context(config)
     workspace = WorkspaceStore(config)
     session = workspace.start_session(context)
-    crystal_id = CrystalStore(config).add_crystal(
+    CrystalStore(config).add_crystal(
         context,
         crystal_type="concept",
         text="Render Sense as сенс in this series.",
@@ -78,15 +76,8 @@ def test_recall_adds_system_short_term_trace_with_metadata(config: HieronymusCon
     results = RecallService(config).recall(session.id, context, "Sense")
 
     memories = workspace.list_short_term_memories(session.id)
-    assert len(memories) == 1
-    assert memories[0].source_role == "system"
-    assert memories[0].kind == "recalled_crystal"
-    assert memories[0].text == "Render Sense as сенс in this series."
-    assert memories[0].metadata == {
-        "crystal_id": crystal_id,
-        "rank": 1,
-        "score": results[0].score,
-    }
+    assert results[0].source == "long_term"
+    assert memories == []
 
 
 def test_recall_records_ranked_activations_ordered_by_search_results(
@@ -149,14 +140,10 @@ def test_recall_activation_score_matches_weighted_search_score(
     assert results[0].score == expected_score
     with connect(config.database_path) as conn:
         activation = conn.execute("select crystal_id, score from crystal_activations").fetchone()
-        memory = conn.execute("select metadata_json from short_term_memories").fetchone()
+        memory_count = conn.execute("select count(*) from short_term_memories").fetchone()[0]
     assert activation["crystal_id"] == crystal_id
     assert activation["score"] == expected_score
-    assert json.loads(memory["metadata_json"]) == {
-        "crystal_id": crystal_id,
-        "rank": 1,
-        "score": expected_score,
-    }
+    assert memory_count == 0
 
 
 def test_recall_unknown_session_raises_key_error(config: HieronymusConfig) -> None:

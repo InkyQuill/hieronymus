@@ -33,9 +33,13 @@ def _clean_int_tuple(values: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(sorted(set(values)))
 
 
-def _search_expression(query: str) -> str:
+def search_expression(query: str) -> str:
     tokens = [token for token in _TOKEN_RE.findall(query) if token.casefold() not in _FTS_OPERATORS]
     return " ".join(f'"{token}"' for token in tokens)
+
+
+def _search_expression(query: str) -> str:
+    return search_expression(query)
 
 
 def _row_to_crystal(

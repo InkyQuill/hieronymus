@@ -18,7 +18,7 @@ from hieronymus.dream_providers import ProviderRegistry, resolve_provider
 from hieronymus.dreaming import DreamService
 from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
-from hieronymus.memory_models import TranslationContext
+from hieronymus.memory_models import CrystalRecord, ShortTermMemoryRecord, TranslationContext
 from hieronymus.presentation import GUIDE_ICON, render_greeting, render_json
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
@@ -59,6 +59,37 @@ def _context(
         volume=volume,
         chapter=chapter,
     )
+
+
+def _crystal_payload(crystal: CrystalRecord | None) -> dict[str, object] | None:
+    if crystal is None:
+        return None
+    return {
+        "id": crystal.id,
+        "crystal_type": crystal.crystal_type,
+        "text": crystal.text,
+        "title": crystal.title,
+        "confidence": crystal.confidence,
+        "strength": crystal.strength,
+        "status": crystal.status,
+        "source_credibility": crystal.source_credibility,
+        "rule_intent": crystal.rule_intent,
+        "story_scopes": list(crystal.story_scopes),
+        "semantic_tags": list(crystal.semantic_tags),
+        "concept_ids": list(crystal.concept_ids),
+    }
+
+
+def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str, object] | None:
+    if memory is None:
+        return None
+    return {
+        "id": memory.id,
+        "source_role": memory.source_role,
+        "kind": memory.kind,
+        "text": memory.text,
+        "metadata": memory.metadata,
+    }
 
 
 def _validate_provided_match(
@@ -630,11 +661,12 @@ def recall(
         json.dumps(
             [
                 {
-                    "crystal_id": result.crystal.id,
-                    "text": result.crystal.text,
+                    "source": result.source,
                     "rank": result.rank,
                     "score": result.score,
                     "reason": result.reason,
+                    "crystal": _crystal_payload(result.crystal),
+                    "short_term_memory": _short_term_memory_payload(result.short_term_memory),
                 }
                 for result in results
             ],
