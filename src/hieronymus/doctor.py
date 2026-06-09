@@ -9,7 +9,7 @@ from pathlib import Path
 
 from hieronymus.agent_plugins import available_plugins
 from hieronymus.config import HieronymusConfig
-from hieronymus.llm_cache import load_model_cache
+from hieronymus.llm_cache import load_model_cache, model_cache_identity
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_manager import ServiceManager
 from hieronymus.settings import SettingsError, load_settings
@@ -259,8 +259,12 @@ class Doctor:
         )
 
     def _check_llm_model_cache(self, report: DoctorReport) -> None:
+        identities = self._current_llm_model_cache_identities()
         for entry in load_model_cache(self.config).providers.values():
             if not entry.error or entry.is_stale():
+                continue
+            valid_identities = identities.get(entry.provider)
+            if valid_identities is None or entry.identity not in valid_identities:
                 continue
             report["warnings"].append(
                 DoctorFinding(
@@ -269,6 +273,20 @@ class Doctor:
                     message=(f"Model cache refresh failed for provider profile: {entry.provider}"),
                 )
             )
+
+    def _current_llm_model_cache_identities(self) -> dict[str, tuple[str, ...]]:
+        identities = {"anthropic": ("", model_cache_identity("anthropic"))}
+        try:
+            settings = load_settings(self.config)
+        except SettingsError:
+            return identities
+
+        for provider_name in ("openai", "gemini"):
+            provider = settings.providers.get(provider_name)
+            if provider is None:
+                continue
+            identities[provider_name] = (model_cache_identity(provider_name, provider),)
+        return identities
 
 
 def _node_major_version(node_path: str) -> int | None:

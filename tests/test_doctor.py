@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.doctor import Doctor, DoctorFinding, report_to_json
-from hieronymus.llm_cache import CachedModels, ModelCacheEntry, save_model_cache
+from hieronymus.llm_cache import (
+    CachedModels,
+    ModelCacheEntry,
+    model_cache_identity,
+    save_model_cache,
+)
 from hieronymus.settings import DreamingSettings, ProviderSettings, load_settings, save_settings
 
 
@@ -128,6 +133,51 @@ def test_doctor_ignores_stale_llm_model_cache_refresh_failure(tmp_path: Path) ->
                 models=("claude-3-5-haiku-latest",),
                 fetched_at=(datetime.now(UTC) - timedelta(hours=24)).isoformat(),
                 error="model suggestions unavailable",
+            )
+        ),
+    )
+
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        report = Doctor(config).run(autofix=False)
+
+    assert all(warning.code != "llm-model-cache-refresh-failed" for warning in report["warnings"])
+
+
+def test_doctor_ignores_llm_model_cache_error_for_obsolete_settings(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    saved = load_settings(config)
+    settings_a = saved.with_provider(
+        "openai",
+        replace(
+            saved.providers["openai"],
+            api_key_env="OPENAI_KEY_A",
+            base_url="https://a.example.test/v1",
+        ),
+    )
+    settings_b = saved.with_provider(
+        "openai",
+        replace(
+            saved.providers["openai"],
+            api_key_env="OPENAI_KEY_B",
+            base_url="https://b.example.test/v1",
+        ),
+    )
+    save_settings(config, settings_b)
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="openai",
+                models=("gpt-4.1-mini",),
+                fetched_at=datetime.now(UTC).isoformat(),
+                error="missing environment variable: OPENAI_KEY_A",
+                identity=model_cache_identity("openai", settings_a.providers["openai"]),
             )
         ),
     )

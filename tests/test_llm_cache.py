@@ -103,3 +103,23 @@ def test_load_model_cache_skips_bad_datetime_entries(tmp_path) -> None:
     )
 
     assert load_model_cache(config) == CachedModels()
+
+
+def test_load_model_cache_skips_success_entries_without_valid_models(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.llm_cache_path.write_text(
+        "{"
+        '"providers": {'
+        '"openai": {'
+        '"provider": "openai",'
+        '"models": [1, null],'
+        '"fetched_at": "2026-06-09T12:00:00+00:00",'
+        '"error": ""'
+        "}"
+        "}"
+        "}",
+        encoding="utf-8",
+    )
+
+    assert load_model_cache(config) == CachedModels()

@@ -7,6 +7,7 @@ from typing import Any
 
 from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
+from hieronymus.settings import ProviderSettings
 
 CACHE_TTL = timedelta(hours=24)
 
@@ -79,6 +80,20 @@ def save_model_cache(config: HieronymusConfig, cache: CachedModels) -> None:
     )
 
 
+def model_cache_identity(name: str, provider: ProviderSettings | None = None) -> str:
+    payload = {"provider": name}
+    if name == "openai":
+        if provider is None:
+            raise ValueError("openai model cache identity requires provider settings")
+        payload["base_url"] = (provider.base_url or "https://api.openai.com/v1").rstrip("/")
+        payload["api_key_env"] = provider.api_key_env
+    elif name == "gemini":
+        if provider is None:
+            raise ValueError("gemini model cache identity requires provider settings")
+        payload["api_key_env"] = provider.api_key_env
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
 def _cache_from_payload(payload: Any) -> CachedModels:
     if type(payload) is not dict:
         return CachedModels()
@@ -112,6 +127,8 @@ def _entry_from_payload(provider: str, payload: dict[str, Any]) -> ModelCacheEnt
     except ValueError:
         return None
     models = tuple(model for model in raw_models if type(model) is str)
+    if not models and not raw_error:
+        return None
     return ModelCacheEntry(
         provider=provider,
         models=models,

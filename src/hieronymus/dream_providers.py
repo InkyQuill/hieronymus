@@ -17,7 +17,13 @@ from hieronymus.dreaming import (
     DreamOutput,
     DreamProvider,
 )
-from hieronymus.llm_cache import CachedModels, ModelCacheEntry, load_model_cache, save_model_cache
+from hieronymus.llm_cache import (
+    CachedModels,
+    ModelCacheEntry,
+    load_model_cache,
+    model_cache_identity,
+    save_model_cache,
+)
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.secrets import env_value_exists
 from hieronymus.settings import HieronymusSettings, ProviderSettings, load_settings
@@ -227,7 +233,7 @@ class ProviderRegistry:
 
         active_settings = settings or load_settings(config)
         provider = active_settings.providers.get(name, ProviderSettings())
-        identity = _model_cache_identity(name, provider)
+        identity = model_cache_identity(name, provider)
         cache = load_model_cache(config)
         entry = cache.providers.get(name)
         if (
@@ -290,7 +296,7 @@ class ProviderRegistry:
                     models=tuple(result.models),
                     fetched_at=datetime.now(UTC).isoformat(),
                     error=result.error,
-                    identity=_model_cache_identity(name),
+                    identity=model_cache_identity(name),
                 )
             ),
         )
@@ -556,20 +562,6 @@ def _save_model_cache_best_effort(config: HieronymusConfig, cache: CachedModels)
         save_model_cache(config, cache)
     except OSError:
         return
-
-
-def _model_cache_identity(name: str, provider: ProviderSettings | None = None) -> str:
-    payload = {"provider": name}
-    if name == "openai":
-        if provider is None:
-            raise ValueError("openai model cache identity requires provider settings")
-        payload["base_url"] = (provider.base_url or "https://api.openai.com/v1").rstrip("/")
-        payload["api_key_env"] = provider.api_key_env
-    elif name == "gemini":
-        if provider is None:
-            raise ValueError("gemini model cache identity requires provider settings")
-        payload["api_key_env"] = provider.api_key_env
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def _parse_dream_json(provider_name: str, raw_text: str) -> DreamOutput:
