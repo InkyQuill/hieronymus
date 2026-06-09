@@ -51,11 +51,20 @@ class CrystalRecord:
     strength: float
     confidence: float
     status: str
+    source_credibility: str = "observation"
+    rule_intent: str = ""
+    malformed_penalty: float = 0.0
+    supersedes_crystal_id: int | None = None
+    story_scopes: tuple[str, ...] = ()
+    semantic_tags: tuple[str, ...] = ()
+    concept_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
 class RecallResult:
-    crystal: CrystalRecord
     rank: int
     score: float
     reason: str
+    source: str = "long_term"
+    crystal: CrystalRecord | None = None
+    short_term_memory: ShortTermMemoryRecord | None = None
