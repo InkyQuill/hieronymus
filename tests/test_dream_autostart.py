@@ -276,9 +276,19 @@ def test_no_pending_memory_resets_not_enough_skip_count(
         "reason": "no-pending-memory",
         "cycles": 0,
     }
-    assert load_autostart_state(config).not_enough_memories_skipped_count == 0
+    state = load_autostart_state(config)
+    assert state.last_skip_reason == "no-pending-memory"
+    assert state.last_skipped_at == now + timedelta(minutes=30)
+    assert state.not_enough_memories_skipped_count == 0
 
     _completed_session(config, context, memories=1)
+
+    assert DreamAutostart(config).run_due(now=now + timedelta(minutes=31)) == {
+        "ran": False,
+        "reason": "not-due",
+        "cycles": 0,
+    }
+    assert load_autostart_state(config).not_enough_memories_skipped_count == 0
 
     assert DreamAutostart(config).run_due(now=now + timedelta(minutes=60)) == {
         "ran": False,

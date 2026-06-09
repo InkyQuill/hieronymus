@@ -376,9 +376,13 @@ class DreamService:
         *,
         limit: int,
     ) -> DreamBatch:
+        selected_session_ids = self._select_pending_completed_session_batch(limit=limit)
+        if not selected_session_ids:
+            return []
+        placeholders = ", ".join("?" for _ in selected_session_ids)
         with connect(self.config.database_path) as conn:
             memory_rows = conn.execute(
-                """
+                f"""
                 select
                   short_term_memories.*,
                   task_sessions.series_slug,
@@ -391,11 +395,11 @@ class DreamService:
                 join task_sessions
                   on task_sessions.id = short_term_memories.session_id
                 where task_sessions.status = 'completed'
+                  and task_sessions.id in ({placeholders})
                   and short_term_memories.archived_at is null
                 order by task_sessions.id, short_term_memories.id
-                limit ?
                 """,
-                (limit,),
+                selected_session_ids,
             ).fetchall()
 
         groups_by_session: dict[int, tuple[TranslationContext, list[ShortTermMemoryRecord]]] = {}
@@ -431,6 +435,40 @@ class DreamService:
             (session_id, context, memories)
             for session_id, (context, memories) in groups_by_session.items()
         ]
+
+    def _select_pending_completed_session_batch(self, *, limit: int) -> list[int]:
+        with connect(self.config.database_path) as conn:
+            session_rows = conn.execute(
+                """
+                select
+                  task_sessions.id,
+                  count(short_term_memories.id) as pending_memory_count
+                from task_sessions
+                join short_term_memories
+                  on short_term_memories.session_id = task_sessions.id
+                where task_sessions.status = 'completed'
+                  and short_term_memories.archived_at is null
+                group by task_sessions.id
+                order by task_sessions.id
+                """
+            ).fetchall()
+
+        selected_session_ids: list[int] = []
+        selected_memory_count = 0
+        for row in session_rows:
+            session_id = int(row["id"])
+            pending_memory_count = int(row["pending_memory_count"])
+            if not selected_session_ids:
+                selected_session_ids.append(session_id)
+                selected_memory_count += pending_memory_count
+                if pending_memory_count >= limit:
+                    break
+                continue
+            if selected_memory_count + pending_memory_count > limit:
+                break
+            selected_session_ids.append(session_id)
+            selected_memory_count += pending_memory_count
+        return selected_session_ids
 
     def _pending_short_term_memory_count(self) -> int:
         with connect(self.config.database_path) as conn:

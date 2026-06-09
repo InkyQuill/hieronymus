@@ -122,15 +122,17 @@ def test_scheduled_dreaming_drains_all_pending_in_capped_cycles(
 ) -> None:
     context = _context(config)
     workspace = WorkspaceStore(config)
-    session = workspace.start_session(context)
-    for index in range(55):
-        workspace.add_short_term_memory(
-            session.id,
-            source_role="user",
-            kind="note",
-            text=f"Drain memory {index}.",
-        )
-    workspace.complete_session(session.id)
+    session_sizes = [10, 10, 20, 15]
+    for session_index, memory_count in enumerate(session_sizes):
+        session = workspace.start_session(context)
+        for memory_index in range(memory_count):
+            workspace.add_short_term_memory(
+                session.id,
+                source_role="user",
+                kind="note",
+                text=f"Drain session {session_index} memory {memory_index}.",
+            )
+        workspace.complete_session(session.id)
 
     run = DreamService(
         config,
@@ -146,7 +148,9 @@ def test_scheduled_dreaming_drains_all_pending_in_capped_cycles(
             order by id
             """
         ).fetchall()
-        session_row = conn.execute("select status, cycle_id from task_sessions").fetchone()
+        session_rows = conn.execute(
+            "select status, cycle_id from task_sessions order by id",
+        ).fetchall()
 
     assert run.status == "completed"
     assert run.input_count == 55
@@ -158,8 +162,12 @@ def test_scheduled_dreaming_drains_all_pending_in_capped_cycles(
         ("crystallization", "completed", 15),
     ]
     assert _pending_short_term_memory_count(config) == 0
-    assert session_row["status"] == "dreamed"
-    assert session_row["cycle_id"] == run.cycle_id
+    assert [(row["status"], row["cycle_id"]) for row in session_rows] == [
+        ("dreamed", run.cycle_id),
+        ("dreamed", run.cycle_id),
+        ("dreamed", run.cycle_id),
+        ("dreamed", run.cycle_id),
+    ]
 
 
 def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
@@ -180,12 +188,15 @@ def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
     context = _context(config)
     workspace = WorkspaceStore(config)
     first_session = workspace.start_session(context)
-    first_memory_id = workspace.add_short_term_memory(
-        first_session.id,
-        source_role="user",
-        kind="note",
-        text="First batch should stay attributed to the failed parent cycle.",
-    )
+    first_memory_ids = [
+        workspace.add_short_term_memory(
+            first_session.id,
+            source_role="user",
+            kind="note",
+            text=f"Oversized first session memory {index}.",
+        )
+        for index in range(3)
+    ]
     workspace.complete_session(first_session.id)
     second_session = workspace.start_session(context)
     second_memory_id = workspace.add_short_term_memory(
@@ -200,7 +211,7 @@ def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
         DreamService(
             config,
             FailSecondBatchProvider(),
-            max_short_term_memories_per_cycle=1,
+            max_short_term_memories_per_cycle=2,
         ).run_all()
 
     with connect(config.database_path) as conn:
@@ -216,10 +227,15 @@ def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
             from dream_runs
             """
         ).fetchone()
-        first_memory = conn.execute(
-            "select archived_at from short_term_memories where id = ?",
-            (first_memory_id,),
-        ).fetchone()
+        first_memories = conn.execute(
+            f"""
+            select archived_at
+            from short_term_memories
+            where id in ({", ".join("?" for _ in first_memory_ids)})
+            order by id
+            """,
+            first_memory_ids,
+        ).fetchall()
         second_memory = conn.execute(
             "select archived_at from short_term_memories where id = ?",
             (second_memory_id,),
@@ -233,10 +249,14 @@ def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
         ).fetchall()
 
     assert failed_run["status"] == "failed"
-    assert failed_run["input_count"] == 1
+    assert failed_run["input_count"] == 3
     assert failed_run["created_crystal_count"] == 0
     assert failed_run["proposal_count"] == 0
-    assert first_memory["archived_at"] is not None
+    assert [memory["archived_at"] is not None for memory in first_memories] == [
+        True,
+        True,
+        True,
+    ]
     assert second_memory["archived_at"] is None
     assert first_session_after_failure["status"] == "dreamed"
     assert first_session_after_failure["cycle_id"] == failed_run["cycle_id"]

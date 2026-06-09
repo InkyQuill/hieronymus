@@ -120,14 +120,17 @@ class DreamAutostart:
             state_for_error = state
             _pending_completed_sessions, pending_short_term_memories = self._pending_counts()
             if pending_short_term_memories == 0:
-                if state.not_enough_memories_skipped_count != 0:
+                if (
+                    state.not_enough_memories_skipped_count != 0
+                    or state.last_skip_reason == "not_enough_memories"
+                ):
                     save_autostart_state(
                         self.config,
                         AutostartState(
                             last_started_at=state.last_started_at,
                             last_error=state.last_error,
-                            last_skipped_at=state.last_skipped_at,
-                            last_skip_reason=state.last_skip_reason,
+                            last_skipped_at=now,
+                            last_skip_reason="no-pending-memory",
                         ),
                     )
                 return {"ran": False, "reason": "no-pending-memory", "cycles": 0}
