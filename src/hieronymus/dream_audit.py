@@ -123,7 +123,7 @@ def _is_secret_key(key: object) -> bool:
     if not isinstance(key, str):
         return False
     normalized = key.replace("-", "").replace("_", "").lower()
-    return normalized in _SECRET_KEYS
+    return normalized in _SECRET_KEYS or "token" in normalized or "bearer" in normalized
 
 
 def _now() -> str:

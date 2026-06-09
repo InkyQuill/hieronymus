@@ -150,6 +150,36 @@ def test_append_redacts_secret_keys_inside_tuples(config: HieronymusConfig) -> N
     }
 
 
+def test_append_redacts_nested_token_like_keys(config: HieronymusConfig) -> None:
+    store = DreamAuditStore(config)
+    dream_run_id = _dream_run_id(config)
+
+    store.append(
+        dream_run_id=dream_run_id,
+        phase_run_id=None,
+        event_type="provider_response",
+        severity="info",
+        summary="received token payload",
+        payload={
+            "provider": {
+                "model": "oauth-model",
+                "access_token": "access-secret",
+                "refresh_token": "refresh-secret",
+            },
+            "headers": [{"bearer_token": "bearer-secret", "status": "safe"}],
+        },
+    )
+
+    assert store.list_for_run(dream_run_id)[0].payload == {
+        "headers": [{"bearer_token": "[REDACTED]", "status": "safe"}],
+        "provider": {
+            "access_token": "[REDACTED]",
+            "model": "oauth-model",
+            "refresh_token": "[REDACTED]",
+        },
+    }
+
+
 def test_list_for_run_orders_entries_by_id(config: HieronymusConfig) -> None:
     store = DreamAuditStore(config)
     dream_run_id = _dream_run_id(config)
