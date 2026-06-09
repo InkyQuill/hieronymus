@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import subprocess
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from hieronymus.agent_plugins import available_plugins
 from hieronymus.config import HieronymusConfig
@@ -124,25 +125,38 @@ class Doctor:
                     ),
                 )
             )
-        elif _node_major_version(node_path) >= 22:
-            report["autofixed"].append(
-                DoctorFinding(
-                    level="info",
-                    code="node-runtime-available",
-                    message="Node.js runtime is available for the Ink TUI.",
-                )
-            )
         else:
-            report["warnings"].append(
-                DoctorFinding(
-                    level="warning",
-                    code="node-runtime-too-old",
-                    message=(
-                        "Node.js >=22 is required for the Ink TUI; install or activate "
-                        "a supported Node.js runtime."
-                    ),
+            node_major = _node_major_version(node_path)
+            if node_major is not None and node_major >= 22:
+                report["autofixed"].append(
+                    DoctorFinding(
+                        level="info",
+                        code="node-runtime-available",
+                        message="Node.js runtime is available for the Ink TUI.",
+                    )
                 )
-            )
+            elif node_major is None:
+                report["warnings"].append(
+                    DoctorFinding(
+                        level="warning",
+                        code="node-runtime-unusable",
+                        message=(
+                            "Node.js version could not be checked; install Node.js >=22 "
+                            "to use HIERONYMUS_TUI=ink."
+                        ),
+                    )
+                )
+            else:
+                report["warnings"].append(
+                    DoctorFinding(
+                        level="warning",
+                        code="node-runtime-too-old",
+                        message=(
+                            "Node.js >=22 is required for the Ink TUI; install or activate "
+                            "a supported Node.js runtime."
+                        ),
+                    )
+                )
 
         if shutil.which("pnpm"):
             report["autofixed"].append(
@@ -152,13 +166,23 @@ class Doctor:
                     message="pnpm is available for frontend development and builds.",
                 )
             )
-        else:
+        elif _needs_pnpm_for_frontend_dev():
             report["warnings"].append(
                 DoctorFinding(
                     level="warning",
                     code="pnpm-missing",
                     message=(
                         "pnpm is not available; install pnpm to develop or build the Ink frontend."
+                    ),
+                )
+            )
+        else:
+            report["autofixed"].append(
+                DoctorFinding(
+                    level="info",
+                    code="pnpm-missing",
+                    message=(
+                        "pnpm is not installed; it is only needed for frontend development/builds."
                     ),
                 )
             )
@@ -233,19 +257,20 @@ class Doctor:
         )
 
 
-def _node_major_version(node_path: str) -> int:
+def _node_major_version(node_path: str) -> int | None:
     try:
         result = subprocess.run(
             [node_path, "--version"],
             capture_output=True,
             text=True,
             check=False,
+            timeout=2,
         )
-    except OSError:
-        return 0
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
     if result.returncode != 0:
-        return 0
+        return None
 
     version = result.stdout.strip()
     if version.startswith("v"):
@@ -254,7 +279,14 @@ def _node_major_version(node_path: str) -> int:
     try:
         return int(major)
     except ValueError:
-        return 0
+        return None
+
+
+def _needs_pnpm_for_frontend_dev() -> bool:
+    package_root = Path(__file__).resolve().parent
+    bundled_entrypoint = package_root / "frontend" / "dist" / "main.js"
+    source_frontend_manifest = package_root.parents[1] / "frontend" / "package.json"
+    return source_frontend_manifest.exists() and not bundled_entrypoint.exists()
 
 
 def report_to_json(report: DoctorReport) -> dict[str, list[dict[str, object]]]:

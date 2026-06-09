@@ -76,8 +76,8 @@ Open the local configuration TUI:
 hiero config
 ```
 
-Textual is the default TUI. The Ink/React TUI is available as a preview when
-Node.js is installed:
+Textual is the default TUI. In source checkouts, the Ink/React TUI is available
+as a preview after the frontend has been built and Node.js >=22 is installed:
 
 ```bash
 HIERONYMUS_TUI=ink hiero config
@@ -197,7 +197,8 @@ Open the local admin interface with:
 hiero admin
 ```
 
-Textual is the default admin TUI. The Ink/React admin preview is available with:
+Textual is the default admin TUI. In source checkouts, the Ink/React admin
+preview is available after the frontend has been built:
 
 ```bash
 HIERONYMUS_TUI=ink hiero admin
@@ -262,6 +263,15 @@ Ink admin MVP keys:
 - `ctrl+p`: toggle command palette
 - `q`: quit
 
-Frontend development and builds require Node.js >=22 and pnpm. Installed package
-users only need Node.js for `HIERONYMUS_TUI=ink` until built frontend artifacts
-are distributed with releases.
+Frontend development and source-checkout preview builds require Node.js >=22 and
+pnpm:
+
+```bash
+pnpm --dir frontend install
+pnpm --dir frontend build
+```
+
+After that build, `HIERONYMUS_TUI=ink` uses the CLI fallback to
+`frontend/dist/main.js` from the current working directory. Installed packages
+should not be treated as shipping a self-contained Ink frontend until release
+tooling produces a bundled `hieronymus/frontend/dist/main.js` artifact.
