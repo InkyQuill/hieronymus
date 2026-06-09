@@ -215,9 +215,17 @@ class ProviderRegistry:
         settings: HieronymusSettings | None = None,
     ) -> ModelSuggestionResult:
         self.metadata(name)
+        active_settings = settings or load_settings(config)
+        provider = active_settings.providers.get(name, ProviderSettings())
+        identity = _model_cache_identity(name, provider)
         cache = load_model_cache(config)
         entry = cache.providers.get(name)
-        if entry is not None and not entry.is_stale():
+        if (
+            entry is not None
+            and not entry.error
+            and entry.identity == identity
+            and not entry.is_stale()
+        ):
             return ModelSuggestionResult(
                 provider=name,
                 models=list(entry.models),
@@ -225,7 +233,11 @@ class ProviderRegistry:
                 error=entry.error,
             )
 
-        result = self._list_uncached_model_suggestions(config, name, settings=settings)
+        result = self._list_uncached_model_suggestions(
+            config,
+            name,
+            settings=active_settings,
+        )
         save_model_cache(
             config,
             cache.with_entry(
@@ -234,6 +246,7 @@ class ProviderRegistry:
                     models=tuple(result.models),
                     fetched_at=datetime.now(UTC).isoformat(),
                     error=result.error,
+                    identity=identity,
                 )
             ),
         )
@@ -492,6 +505,16 @@ def _parse_model_suggestions(name: str, body: str) -> list[str]:
             if type(item) is dict and type(item.get("name")) is str
         )
     return []
+
+
+def _model_cache_identity(name: str, provider: ProviderSettings) -> str:
+    payload = {"provider": name}
+    if name == "openai":
+        payload["base_url"] = (provider.base_url or "https://api.openai.com/v1").rstrip("/")
+        payload["api_key_env"] = provider.api_key_env
+    elif name in {"gemini", "anthropic"}:
+        payload["api_key_env"] = provider.api_key_env
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def _parse_dream_json(provider_name: str, raw_text: str) -> DreamOutput:

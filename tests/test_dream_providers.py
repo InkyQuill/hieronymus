@@ -269,8 +269,18 @@ def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> 
     assert "secret-openai" not in repr(result.to_json_dict())
 
 
-def test_model_suggestions_use_fresh_cache_without_network(tmp_path) -> None:
-    class Transport:
+def test_model_suggestions_use_fresh_cache_without_network(tmp_path, monkeypatch) -> None:
+    class PrimingTransport:
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"cached-a"},{"id":"cached-b"}]}',
+            )
+
+    class CachedTransport:
         def post_json(self, *args, **kwargs):
             raise AssertionError("post_json should not be used for cached suggestions")
 
@@ -278,26 +288,73 @@ def test_model_suggestions_use_fresh_cache_without_network(tmp_path) -> None:
             raise AssertionError("get_json should not be used for cached suggestions")
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    save_model_cache(
+    settings = load_settings(config)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+
+    ProviderRegistry(PrimingTransport()).list_model_suggestions(
         config,
-        CachedModels().with_entry(
-            ModelCacheEntry(
-                provider="openai",
-                models=("cached-a", "cached-b"),
-                fetched_at=datetime.now(UTC).isoformat(),
-                error="cached refresh error",
-            )
-        ),
+        "openai",
+        settings=settings,
     )
 
-    result = ProviderRegistry(Transport()).list_model_suggestions(config, "openai")
+    result = ProviderRegistry(CachedTransport()).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
 
     assert result.to_json_dict() == {
         "provider": "openai",
         "models": ["cached-a", "cached-b"],
         "source": "llmcache.tmp",
-        "error": "cached refresh error",
+        "error": "",
     }
+
+
+def test_model_suggestions_refresh_after_cached_error_resolves(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class Transport:
+        def __init__(self):
+            self.requests = []
+
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            self.requests.append({"url": url, "headers": headers, "timeout": timeout})
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"fresh-after-error"}]}',
+            )
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    transport = Transport()
+
+    first = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    second = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+
+    assert first.error == "missing environment variable: OPENAI_API_KEY"
+    assert second.to_json_dict() == {
+        "provider": "openai",
+        "models": ["fresh-after-error"],
+        "source": "api",
+        "error": "",
+    }
+    assert transport.requests[0]["url"] == "https://api.openai.com/v1/models"
+    assert load_model_cache(config).providers["openai"].error == ""
 
 
 def test_model_suggestions_refresh_and_save_stale_cache(tmp_path, monkeypatch) -> None:
@@ -344,6 +401,72 @@ def test_model_suggestions_refresh_and_save_stale_cache(tmp_path, monkeypatch) -
     }
     assert transport.requests[0]["url"] == "https://api.openai.com/v1/models"
     assert load_model_cache(config).providers["openai"].models == ("fresh-model",)
+
+
+def test_model_suggestions_refresh_when_openai_base_url_changes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class Transport:
+        def __init__(self):
+            self.requests = []
+
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            self.requests.append({"url": url, "headers": headers, "timeout": timeout})
+            if url == "https://a.example.test/v1/models":
+                return HTTPResponse(
+                    status=200,
+                    body='{"data":[{"id":"model-from-a"}]}',
+                )
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"model-from-b"}]}',
+            )
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    saved = load_settings(config)
+    settings_a = saved.with_provider(
+        "openai",
+        replace(
+            saved.providers["openai"],
+            base_url="https://a.example.test/v1",
+        ),
+    )
+    settings_b = saved.with_provider(
+        "openai",
+        replace(
+            saved.providers["openai"],
+            base_url="https://b.example.test/v1",
+        ),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = Transport()
+
+    first = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings_a,
+    )
+    result = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings_b,
+    )
+
+    assert first.models == ["model-from-a"]
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["model-from-b"],
+        "source": "api",
+        "error": "",
+    }
+    assert [request["url"] for request in transport.requests] == [
+        "https://a.example.test/v1/models",
+        "https://b.example.test/v1/models",
+    ]
 
 
 def test_anthropic_model_suggestions_cache_default_hints(tmp_path) -> None:

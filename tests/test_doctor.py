@@ -117,6 +117,21 @@ def test_doctor_warns_when_llm_model_cache_refresh_failed(tmp_path: Path) -> Non
     )
 
 
+def test_doctor_ignores_malformed_llm_model_cache(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.llm_cache_path.write_text("{not json", encoding="utf-8")
+
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        report = Doctor(config).run(autofix=False)
+
+    assert all(warning.code != "llm-model-cache-refresh-failed" for warning in report["warnings"])
+
+
 def test_doctor_json_does_not_include_raw_api_key_value(config, monkeypatch):
     monkeypatch.setenv("HIERONYMUS_OPENAI_KEY", "raw-secret-value")
     settings = (

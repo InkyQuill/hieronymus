@@ -17,6 +17,7 @@ class ModelCacheEntry:
     models: tuple[str, ...]
     fetched_at: str
     error: str = ""
+    identity: str = ""
 
     def is_stale(self, now: datetime | None = None) -> bool:
         try:
@@ -34,6 +35,7 @@ class ModelCacheEntry:
             "models": list(self.models),
             "fetched_at": self.fetched_at,
             "error": self.error,
+            "identity": self.identity,
         }
 
 
@@ -55,7 +57,10 @@ class CachedModels:
 def load_model_cache(config: HieronymusConfig) -> CachedModels:
     if not config.llm_cache_path.exists():
         return CachedModels()
-    payload = json.loads(config.llm_cache_path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(config.llm_cache_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return CachedModels()
     return _cache_from_payload(payload)
 
 
@@ -89,23 +94,28 @@ def _cache_from_payload(payload: Any) -> CachedModels:
 
 
 def _entry_from_payload(provider: str, payload: dict[str, Any]) -> ModelCacheEntry | None:
-    raw_provider = payload.get("provider", provider)
     raw_models = payload.get("models")
     raw_fetched_at = payload.get("fetched_at")
     raw_error = payload.get("error", "")
+    raw_identity = payload.get("identity", "")
     if (
-        type(raw_provider) is not str
-        or type(raw_models) is not list
+        type(raw_models) is not list
         or type(raw_fetched_at) is not str
         or type(raw_error) is not str
+        or type(raw_identity) is not str
     ):
+        return None
+    try:
+        _parse_datetime(raw_fetched_at)
+    except ValueError:
         return None
     models = tuple(model for model in raw_models if type(model) is str)
     return ModelCacheEntry(
-        provider=raw_provider,
+        provider=provider,
         models=models,
         fetched_at=raw_fetched_at,
         error=raw_error,
+        identity=raw_identity,
     )
 
 

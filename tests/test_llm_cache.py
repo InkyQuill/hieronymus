@@ -44,3 +44,51 @@ def test_model_cache_entry_is_not_stale_before_24_hours() -> None:
     )
 
     assert entry.is_stale(fetched_at + timedelta(hours=24) - timedelta(microseconds=1)) is False
+
+
+def test_load_model_cache_tolerates_invalid_json(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.llm_cache_path.write_text("{not json", encoding="utf-8")
+
+    assert load_model_cache(config) == CachedModels()
+
+
+def test_load_model_cache_normalizes_provider_to_map_key(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.llm_cache_path.write_text(
+        "{"
+        '"providers": {'
+        '"openai": {'
+        '"provider": "gemini",'
+        '"models": ["gpt-4.1-mini"],'
+        '"fetched_at": "2026-06-09T12:00:00+00:00",'
+        '"error": ""'
+        "}"
+        "}"
+        "}",
+        encoding="utf-8",
+    )
+
+    assert load_model_cache(config).providers["openai"].provider == "openai"
+
+
+def test_load_model_cache_skips_bad_datetime_entries(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.llm_cache_path.write_text(
+        "{"
+        '"providers": {'
+        '"openai": {'
+        '"provider": "openai",'
+        '"models": ["gpt-4.1-mini"],'
+        '"fetched_at": "not-a-date",'
+        '"error": "model suggestions unavailable"'
+        "}"
+        "}"
+        "}",
+        encoding="utf-8",
+    )
+
+    assert load_model_cache(config) == CachedModels()
