@@ -113,6 +113,36 @@ def test_concept_store_reinforces_only_matching_scope(
     assert store.get(project_id).scope_key == "oso"
 
 
+def test_concept_store_connection_helper_matches_public_reinforcement(
+    config: HieronymusConfig,
+) -> None:
+    store = ConceptStore(config)
+    with connect(config.database_path) as conn:
+        concept_id = store._create_or_reinforce_with_connection(
+            conn,
+            "Cooking",
+            description="Food preparation concepts.",
+            tags=("domain:cuisine",),
+            confidence_delta=0.3,
+        )
+        reinforced_id = store._create_or_reinforce_with_connection(
+            conn,
+            "Cooking",
+            description="Concrete cooking terminology.",
+            tags=("term:craft",),
+            confidence_delta=0.4,
+        )
+        conn.commit()
+
+    concept = store.get(concept_id)
+
+    assert reinforced_id == concept_id
+    assert concept.canonical_name == "Cooking"
+    assert concept.description == "Concrete cooking terminology."
+    assert concept.confidence == 0.7
+    assert concept.tags == ("domain:cuisine", "term:craft")
+
+
 def test_concept_store_rejects_empty_canonical_name(
     config: HieronymusConfig,
 ) -> None:

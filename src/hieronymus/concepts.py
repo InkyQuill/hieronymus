@@ -87,77 +87,108 @@ class ConceptStore:
         clean_description = description.strip()
         now = _now()
         with connect(self.config.database_path) as conn:
-            row = conn.execute(
-                """
-                select id, confidence
-                from concepts
-                where scope_type = ? and scope_key = ? and canonical_name = ?
-                """,
-                (scope_type, scope_key, name),
-            ).fetchone()
-            if row is None:
-                confidence = _clamp_confidence(confidence_delta)
-                status = _concept_status(confidence)
-                cursor = conn.execute(
-                    """
-                    insert into concepts(
-                      canonical_name,
-                      description,
-                      scope_type,
-                      scope_key,
-                      status,
-                      confidence,
-                      created_at,
-                      updated_at
-                    )
-                    values (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        name,
-                        clean_description,
-                        scope_type,
-                        scope_key,
-                        status,
-                        confidence,
-                        now,
-                        now,
-                    ),
-                )
-                concept_id = int(cursor.lastrowid)
-            else:
-                concept_id = int(row["id"])
-                confidence = _clamp_confidence(float(row["confidence"]) + confidence_delta)
-                status = _concept_status(confidence)
-                conn.execute(
-                    """
-                    update concepts
-                    set description = case when ? != '' then ? else description end,
-                        confidence = ?,
-                        status = ?,
-                        updated_at = ?
-                    where id = ?
-                    """,
-                    (
-                        clean_description,
-                        clean_description,
-                        confidence,
-                        status,
-                        now,
-                        concept_id,
-                    ),
-                )
-
-            for tag in _clean_tags(tags):
-                conn.execute(
-                    """
-                    insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
-                    values (?, ?, ?, ?)
-                    on conflict(concept_id, tag) do update set
-                      confidence = max(concept_semantic_tags.confidence, excluded.confidence)
-                    """,
-                    (concept_id, tag, confidence, now),
-                )
+            concept_id = self._create_or_reinforce_with_connection(
+                conn,
+                name,
+                description=clean_description,
+                tags=tags,
+                confidence_delta=confidence_delta,
+                scope_type=scope_type,
+                scope_key=scope_key,
+                now=now,
+            )
             conn.commit()
+        return concept_id
+
+    def _create_or_reinforce_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        canonical_name: str,
+        *,
+        description: str = "",
+        tags: tuple[str, ...] = (),
+        confidence_delta: float = 0.2,
+        scope_type: str = "global",
+        scope_key: str = "",
+        now: str | None = None,
+    ) -> int:
+        name = canonical_name.strip()
+        if not name:
+            raise ValueError("concept canonical_name must not be empty")
+        self._validate_scope(scope_type, scope_key)
+
+        clean_description = description.strip()
+        event_time = now or _now()
+        row = conn.execute(
+            """
+            select id, confidence
+            from concepts
+            where scope_type = ? and scope_key = ? and canonical_name = ?
+            """,
+            (scope_type, scope_key, name),
+        ).fetchone()
+        if row is None:
+            confidence = _clamp_confidence(confidence_delta)
+            status = _concept_status(confidence)
+            cursor = conn.execute(
+                """
+                insert into concepts(
+                  canonical_name,
+                  description,
+                  scope_type,
+                  scope_key,
+                  status,
+                  confidence,
+                  created_at,
+                  updated_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    clean_description,
+                    scope_type,
+                    scope_key,
+                    status,
+                    confidence,
+                    event_time,
+                    event_time,
+                ),
+            )
+            concept_id = int(cursor.lastrowid)
+        else:
+            concept_id = int(row["id"])
+            confidence = _clamp_confidence(float(row["confidence"]) + confidence_delta)
+            status = _concept_status(confidence)
+            conn.execute(
+                """
+                update concepts
+                set description = case when ? != '' then ? else description end,
+                    confidence = ?,
+                    status = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (
+                    clean_description,
+                    clean_description,
+                    confidence,
+                    status,
+                    event_time,
+                    concept_id,
+                ),
+            )
+
+        for tag in _clean_tags(tags):
+            conn.execute(
+                """
+                insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
+                values (?, ?, ?, ?)
+                on conflict(concept_id, tag) do update set
+                  confidence = max(concept_semantic_tags.confidence, excluded.confidence)
+                """,
+                (concept_id, tag, confidence, event_time),
+            )
         return concept_id
 
     def get(self, concept_id: int) -> ConceptRecord:

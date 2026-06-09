@@ -11,7 +11,7 @@ from hieronymus.memory_models import CrystalRecord, TranslationContext
 _ALLOWED_CRYSTAL_TYPES = frozenset(
     {"lesson", "rule", "thought", "observation", "concept_note", "concept", "erudition"}
 )
-_ALLOWED_STATUSES = frozenset({"active", "candidate", "archived", "rejected"})
+_ALLOWED_STATUSES = frozenset({"active", "candidate", "archived", "rejected", "superseded"})
 _FTS_OPERATORS = frozenset({"and", "or", "not", "near"})
 _MAX_SEARCH_LIMIT = 50
 _TOKEN_RE = re.compile(r"\w+")
@@ -225,6 +225,60 @@ class CrystalStore:
                 raise KeyError(f"unknown crystal: {crystal_id}")
             crystal = self._hydrate_crystal(conn, row)
         return crystal
+
+    def _supersede_with_connection(
+        self,
+        conn,
+        *,
+        old_crystal_id: int,
+        new_crystal_id: int,
+        reason: str = "",
+        cycle_id: int,
+    ) -> None:
+        now = _now()
+        old_row = conn.execute(
+            "select id from crystals where id = ?",
+            (old_crystal_id,),
+        ).fetchone()
+        if old_row is None:
+            raise KeyError(f"unknown crystal: {old_crystal_id}")
+
+        conn.execute(
+            """
+            update crystals
+            set status = 'superseded',
+                updated_at = ?
+            where id = ?
+            """,
+            (now, old_crystal_id),
+        )
+        conn.execute(
+            """
+            update crystals
+            set supersedes_crystal_id = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (old_crystal_id, now, new_crystal_id),
+        )
+        conn.execute(
+            """
+            insert into memory_events(
+              crystal_id,
+              session_id,
+              event_type,
+              source_role,
+              evidence,
+              strength_delta,
+              confidence_delta,
+              applied,
+              cycle_id,
+              created_at
+            )
+            values (?, null, 'supersede', 'system', ?, 0, 0, 1, ?, ?)
+            """,
+            (old_crystal_id, reason, cycle_id, now),
+        )
 
     def search(
         self,

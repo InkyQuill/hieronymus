@@ -6,8 +6,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
-from hieronymus.concepts import ConceptProposalStore
+from hieronymus.concepts import ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig
+from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
 from hieronymus.dream_config import load_dream_config
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
@@ -16,7 +17,20 @@ from hieronymus.scoring import PASSIVE_EVENT_DELTAS
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.settings import SettingsError, load_settings
 
-_ALLOWED_CRYSTAL_TYPES = frozenset({"lesson", "concept", "erudition"})
+_ALLOWED_CRYSTAL_TYPES = frozenset(
+    {"lesson", "rule", "thought", "observation", "concept_note", "concept", "erudition"}
+)
+MALFORMED_CONFIDENCE_PENALTY = 0.2
+SOURCE_CREDIBILITY_CONFIDENCE = {
+    "rumor": 0.15,
+    "observation": 0.35,
+    "source_text": 0.7,
+    "expert": 0.85,
+    "user_suggestion": 0.8,
+    "user_rule": 0.95,
+    "thought": 0.2,
+}
+_MIN_NORMALIZED_CONFIDENCE = 0.05
 STRENGTH_DECAY_PER_CYCLE = 0.03
 CONFIDENCE_DECAY_AFTER_STRENGTH_BELOW = 0.20
 CONFIDENCE_DECAY_PER_CYCLE = 0.01
@@ -71,6 +85,47 @@ class DreamOutput:
 
 
 @dataclass(frozen=True)
+class _NormalizedDreamCrystal:
+    crystal_type: str
+    title: str
+    text: str
+    strength: float
+    confidence: float
+    source_memory_ids: list[int]
+    source_credibility: str = "observation"
+    rule_intent: str = ""
+    malformed_penalty: float = 0.0
+    supersedes_crystal_id: int | None = None
+    story_scopes: tuple[str, ...] = ()
+    semantic_tags: tuple[str, ...] = ()
+    concept_ids: tuple[int, ...] = ()
+    concept_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _NormalizedDreamConcept:
+    canonical_name: str
+    description: str = ""
+    tags: tuple[str, ...] = ()
+    confidence_delta: float = 0.2
+
+
+@dataclass(frozen=True)
+class _DreamSupersedeAction:
+    old_crystal_id: int
+    new_crystal_id: int
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class _NormalizedDreamOutput:
+    crystals: list[_NormalizedDreamCrystal] = field(default_factory=list)
+    concept_proposals: list[DreamConceptProposal] = field(default_factory=list)
+    concepts: list[_NormalizedDreamConcept] = field(default_factory=list)
+    supersede_actions: list[_DreamSupersedeAction] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class DreamRunRecord:
     id: int
     cycle_id: int
@@ -89,7 +144,7 @@ class DreamProvider(Protocol):
         self,
         context: TranslationContext,
         memories: list[ShortTermMemoryRecord],
-    ) -> DreamOutput: ...
+    ) -> DreamOutput | dict[str, object]: ...
 
 
 class DeterministicDreamProvider:
@@ -119,7 +174,9 @@ class DeterministicDreamProvider:
 
 
 DreamBatch = list[tuple[int, TranslationContext, list[ShortTermMemoryRecord]]]
-DreamBatchOutput = tuple[TranslationContext, int, list[ShortTermMemoryRecord], DreamOutput]
+DreamBatchOutput = tuple[
+    TranslationContext, int, list[ShortTermMemoryRecord], _NormalizedDreamOutput
+]
 
 
 class DreamService:
@@ -139,6 +196,8 @@ class DreamService:
         if self.max_short_term_memories_per_cycle < 1:
             raise ValueError("max_short_term_memories_per_cycle must be at least 1")
         self.concept_proposals = ConceptProposalStore(config)
+        self.concepts = ConceptStore(config)
+        self.crystals = CrystalStore(config)
         with connect(self.config.database_path) as conn:
             apply_migration(conn, "global.sql")
 
@@ -239,7 +298,7 @@ class DreamService:
                     input_count=batch_input_count,
                 )
                 try:
-                    outputs = [
+                    raw_outputs = [
                         (
                             context,
                             session_id,
@@ -248,8 +307,20 @@ class DreamService:
                         )
                         for session_id, context, memories in groups
                     ]
-                    for context, _session_id, memories, output in outputs:
-                        self._validate_output(output, context, {memory.id for memory in memories})
+                    outputs = []
+                    for context, session_id, memories, raw_output in raw_outputs:
+                        allowed_memory_ids = {memory.id for memory in memories}
+                        output = self._normalize_output(
+                            raw_output,
+                            context,
+                            allowed_memory_ids,
+                        )
+                        self._validate_normalized_output(
+                            output,
+                            context,
+                            allowed_memory_ids,
+                        )
+                        outputs.append((context, session_id, memories, output))
 
                     batch_created_crystals, batch_proposals = self._apply_outputs(
                         run_id=run_id,
@@ -664,7 +735,25 @@ class DreamService:
         with connect(self.config.database_path) as conn:
             try:
                 for context, _session_id, _memories, output in outputs:
+                    concept_ids_by_name: dict[str, int] = {}
+                    for concept in output.concepts:
+                        concept_id = self.concepts._create_or_reinforce_with_connection(
+                            conn,
+                            concept.canonical_name,
+                            description=concept.description,
+                            tags=concept.tags,
+                            confidence_delta=concept.confidence_delta,
+                            scope_type="global",
+                            scope_key="",
+                        )
+                        concept_ids_by_name[concept.canonical_name.casefold()] = concept_id
+
                     for candidate in output.crystals:
+                        candidate = self._resolve_candidate_concepts(
+                            conn,
+                            candidate,
+                            concept_ids_by_name,
+                        )
                         crystal_id = self._insert_crystal_for_dream(conn, context, candidate)
                         conn.execute(
                             """
@@ -677,6 +766,14 @@ class DreamService:
                         created_crystal_count += 1
                     self._insert_concept_proposals(conn, run_id, output.concept_proposals)
                     proposal_count += len(output.concept_proposals)
+                    for action in output.supersede_actions:
+                        self.crystals._supersede_with_connection(
+                            conn,
+                            old_crystal_id=action.old_crystal_id,
+                            new_crystal_id=action.new_crystal_id,
+                            reason=action.reason,
+                            cycle_id=cycle_id,
+                        )
 
                 if archive_memories:
                     self._archive_memories(conn, groups)
@@ -854,7 +951,7 @@ class DreamService:
         self,
         conn,
         context: TranslationContext,
-        candidate: DreamCrystalCandidate,
+        candidate: _NormalizedDreamCrystal,
     ) -> int:
         return self._insert_crystal(conn, context, candidate)
 
@@ -862,7 +959,7 @@ class DreamService:
         self,
         conn,
         context: TranslationContext,
-        candidate: DreamCrystalCandidate,
+        candidate: _NormalizedDreamCrystal,
     ) -> int:
         now = _now()
         cursor = conn.execute(
@@ -879,11 +976,15 @@ class DreamService:
               tags_json,
               strength,
               confidence,
+              source_credibility,
+              rule_intent,
+              malformed_penalty,
+              supersedes_crystal_id,
               status,
               created_at,
               updated_at
             )
-            values (?, ?, ?, 'series', ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            values (?, ?, ?, 'series', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
             """,
             (
                 candidate.crystal_type,
@@ -896,6 +997,10 @@ class DreamService:
                 json.dumps(list(context.tags), ensure_ascii=False, sort_keys=True),
                 candidate.strength,
                 candidate.confidence,
+                candidate.source_credibility,
+                candidate.rule_intent,
+                candidate.malformed_penalty,
+                candidate.supersedes_crystal_id,
                 now,
                 now,
             ),
@@ -912,6 +1017,42 @@ class DreamService:
                 values (?, ?)
                 """,
                 (crystal_id, memory_id),
+            )
+        for story_scope in candidate.story_scopes:
+            conn.execute(
+                """
+                insert into crystal_story_scopes(crystal_id, scope, confidence, created_at)
+                values (?, ?, ?, ?)
+                on conflict(crystal_id, scope) do update set
+                  confidence = max(crystal_story_scopes.confidence, excluded.confidence)
+                """,
+                (crystal_id, story_scope, candidate.confidence, now),
+            )
+        for semantic_tag in candidate.semantic_tags:
+            conn.execute(
+                """
+                insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+                values (?, ?, ?, ?)
+                on conflict(crystal_id, tag) do update set
+                  confidence = max(crystal_semantic_tags.confidence, excluded.confidence)
+                """,
+                (crystal_id, semantic_tag, candidate.confidence, now),
+            )
+        for concept_id in candidate.concept_ids:
+            conn.execute(
+                """
+                insert into crystal_concepts(
+                  crystal_id,
+                  concept_id,
+                  link_type,
+                  confidence,
+                  created_at
+                )
+                values (?, ?, 'mentions', ?, ?)
+                on conflict(crystal_id, concept_id, link_type) do update set
+                  confidence = max(crystal_concepts.confidence, excluded.confidence)
+                """,
+                (crystal_id, concept_id, candidate.confidence, now),
             )
         return crystal_id
 
@@ -938,6 +1079,130 @@ class DreamService:
                 rationale=proposal.rationale,
             )
 
+    def _normalize_output(
+        self,
+        raw_output: object,
+        context: TranslationContext,
+        allowed_memory_ids: set[int],
+    ) -> _NormalizedDreamOutput:
+        if isinstance(raw_output, DreamOutput):
+            self._validate_output(raw_output, context, allowed_memory_ids)
+            return _NormalizedDreamOutput(
+                crystals=[
+                    _NormalizedDreamCrystal(
+                        crystal_type=candidate.crystal_type,
+                        title=candidate.title,
+                        text=candidate.text,
+                        strength=candidate.strength,
+                        confidence=candidate.confidence,
+                        source_memory_ids=candidate.source_memory_ids,
+                    )
+                    for candidate in raw_output.crystals
+                ],
+                concept_proposals=raw_output.concept_proposals,
+            )
+        if type(raw_output) is not dict:
+            raise ValueError("provider output must be a DreamOutput or dict")
+        return self._normalize_dict_output(raw_output, allowed_memory_ids)
+
+    def _normalize_dict_output(
+        self,
+        payload: dict[object, object],
+        allowed_memory_ids: set[int],
+    ) -> _NormalizedDreamOutput:
+        crystals: list[_NormalizedDreamCrystal] = []
+        concepts: list[_NormalizedDreamConcept] = []
+
+        for item in _list_from_payload(payload.get("concepts")):
+            concept = _normalize_dict_concept(item)
+            if concept is not None:
+                concepts.append(concept)
+        for item in _list_from_payload(payload.get("facets")):
+            concept = _normalize_dict_concept(item)
+            if concept is not None:
+                concepts.append(concept)
+
+        for item in _list_from_payload(payload.get("crystals")):
+            crystal = _normalize_dict_crystal(
+                item,
+                default_crystal_type="observation",
+                default_source_credibility="observation",
+                allowed_memory_ids=allowed_memory_ids,
+            )
+            if crystal is not None:
+                crystals.append(crystal)
+        for item in _list_from_payload(payload.get("rule_crystals")):
+            crystal = _normalize_dict_crystal(
+                item,
+                default_crystal_type="rule",
+                default_source_credibility="user_rule",
+                allowed_memory_ids=allowed_memory_ids,
+            )
+            if crystal is not None:
+                crystals.append(crystal)
+        for item in _list_from_payload(payload.get("thoughts")):
+            crystal = _normalize_dict_crystal(
+                item,
+                default_crystal_type="thought",
+                default_source_credibility="thought",
+                allowed_memory_ids=allowed_memory_ids,
+            )
+            if crystal is not None:
+                crystals.append(crystal)
+
+        supersede_actions = [
+            action
+            for action in (
+                _normalize_supersede_action(item)
+                for item in _list_from_payload(payload.get("supersede"))
+            )
+            if action is not None
+        ]
+        return _NormalizedDreamOutput(
+            crystals=crystals,
+            concepts=concepts,
+            supersede_actions=supersede_actions,
+        )
+
+    def _resolve_candidate_concepts(
+        self,
+        conn,
+        candidate: _NormalizedDreamCrystal,
+        concept_ids_by_name: dict[str, int],
+    ) -> _NormalizedDreamCrystal:
+        concept_ids = set(candidate.concept_ids)
+        for concept_name in candidate.concept_names:
+            key = concept_name.casefold()
+            concept_id = concept_ids_by_name.get(key)
+            if concept_id is None:
+                concept_id = self.concepts._create_or_reinforce_with_connection(
+                    conn,
+                    concept_name,
+                    confidence_delta=0.2,
+                    scope_type="global",
+                    scope_key="",
+                )
+                concept_ids_by_name[key] = concept_id
+            concept_ids.add(concept_id)
+        if tuple(sorted(concept_ids)) == candidate.concept_ids:
+            return candidate
+        return _NormalizedDreamCrystal(
+            crystal_type=candidate.crystal_type,
+            title=candidate.title,
+            text=candidate.text,
+            strength=candidate.strength,
+            confidence=candidate.confidence,
+            source_memory_ids=candidate.source_memory_ids,
+            source_credibility=candidate.source_credibility,
+            rule_intent=candidate.rule_intent,
+            malformed_penalty=candidate.malformed_penalty,
+            supersedes_crystal_id=candidate.supersedes_crystal_id,
+            story_scopes=candidate.story_scopes,
+            semantic_tags=candidate.semantic_tags,
+            concept_ids=tuple(sorted(concept_ids)),
+            concept_names=candidate.concept_names,
+        )
+
     def _next_cycle_id(self, conn) -> int:
         row = conn.execute(
             """
@@ -957,6 +1222,34 @@ class DreamService:
             """
         ).fetchone()
         return int(row[0])
+
+    def _validate_normalized_output(
+        self,
+        output: _NormalizedDreamOutput,
+        context: TranslationContext,
+        allowed_memory_ids: set[int],
+    ) -> None:
+        for candidate in output.crystals:
+            if candidate.crystal_type not in _ALLOWED_CRYSTAL_TYPES:
+                raise ValueError(f"unknown crystal_type: {candidate.crystal_type}")
+            if not candidate.text.strip():
+                raise ValueError("candidate text must not be empty")
+            if not 0.0 <= candidate.strength <= 1.0:
+                raise ValueError("candidate strength must be between 0 and 1")
+            if not 0.0 <= candidate.confidence <= 1.0:
+                raise ValueError("candidate confidence must be between 0 and 1")
+            if candidate.source_memory_ids:
+                unknown_ids = set(candidate.source_memory_ids) - allowed_memory_ids
+                if unknown_ids:
+                    raise ValueError(f"unknown source_memory_ids: {sorted(unknown_ids)}")
+
+        for proposal in output.concept_proposals:
+            if proposal.series_slug != context.series_slug:
+                raise ValueError("proposal series_slug must match context")
+            if proposal.source_language != context.source_language:
+                raise ValueError("proposal source_language must match context")
+            if proposal.target_language != context.target_language:
+                raise ValueError("proposal target_language must match context")
 
     def _validate_output(
         self,
@@ -1027,6 +1320,256 @@ def _normalize_candidate_text(text: str) -> str:
     if not chunks:
         return " ".join(text.split())
     return " ".join(chunks[:3])
+
+
+def _normalize_dict_crystal(
+    item: object,
+    *,
+    default_crystal_type: str,
+    default_source_credibility: str,
+    allowed_memory_ids: set[int],
+) -> _NormalizedDreamCrystal | None:
+    payload: dict[object, object]
+    if isinstance(item, str):
+        payload = {"text": item}
+    elif type(item) is dict:
+        payload = item
+    else:
+        return None
+
+    text, penalty = _recover_crystal_text(payload)
+    if text == "":
+        return None
+    crystal_type, kind_penalty = _recover_crystal_type(payload, default_crystal_type)
+    penalty += kind_penalty
+    source_credibility, credibility_penalty = _recover_source_credibility(
+        payload,
+        default_source_credibility,
+    )
+    penalty += credibility_penalty
+    penalty += max(_numeric_field(payload.get("malformed_penalty"), default=0.0), 0.0)
+
+    confidence = _normalized_confidence(payload, source_credibility, penalty)
+    title = _string_field(payload.get("title")).strip() or _title_from_kind(crystal_type)
+    return _NormalizedDreamCrystal(
+        crystal_type=crystal_type,
+        title=title,
+        text=text,
+        strength=_clamp_score(_numeric_field(payload.get("strength"), default=0.5)),
+        confidence=confidence,
+        source_memory_ids=_source_memory_ids(payload, allowed_memory_ids),
+        source_credibility=source_credibility,
+        rule_intent=_string_field(payload.get("rule_intent")),
+        malformed_penalty=penalty,
+        supersedes_crystal_id=_optional_int(payload.get("supersedes_crystal_id")),
+        story_scopes=_clean_string_tuple(payload.get("story_scopes")),
+        semantic_tags=_clean_string_tuple(payload.get("semantic_tags"), payload.get("tags")),
+        concept_ids=_clean_int_tuple(
+            payload.get("concept_ids"),
+            payload.get("concept_id"),
+        ),
+        concept_names=_concept_names_from_payload(payload),
+    )
+
+
+def _recover_crystal_text(payload: dict[object, object]) -> tuple[str, float]:
+    for key in ("content", "text"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return (" ".join(value.split()), 0.0)
+    value = payload.get("body")
+    if isinstance(value, str) and value.strip():
+        return (" ".join(value.split()), MALFORMED_CONFIDENCE_PENALTY)
+    return ("", 0.0)
+
+
+def _recover_crystal_type(
+    payload: dict[object, object],
+    default_crystal_type: str,
+) -> tuple[str, float]:
+    penalty = 0.0
+    if "crystal_type" in payload:
+        value = payload["crystal_type"]
+    elif "type" in payload:
+        value = payload["type"]
+    elif "kind" in payload:
+        value = payload["kind"]
+        penalty += MALFORMED_CONFIDENCE_PENALTY
+    else:
+        return (default_crystal_type, 0.0)
+
+    if not isinstance(value, str):
+        return ("observation", penalty + MALFORMED_CONFIDENCE_PENALTY)
+
+    crystal_type = value.strip().casefold().replace("-", "_")
+    if crystal_type == "rule_crystal":
+        return ("rule", penalty + MALFORMED_CONFIDENCE_PENALTY)
+    if crystal_type in _ALLOWED_CRYSTAL_TYPES:
+        return (crystal_type, penalty)
+    return ("observation", penalty + MALFORMED_CONFIDENCE_PENALTY)
+
+
+def _recover_source_credibility(
+    payload: dict[object, object],
+    default_source_credibility: str,
+) -> tuple[str, float]:
+    value = payload.get("source_credibility", default_source_credibility)
+    if isinstance(value, str) and value.strip():
+        return (value.strip(), 0.0)
+    return (default_source_credibility, MALFORMED_CONFIDENCE_PENALTY)
+
+
+def _normalized_confidence(
+    payload: dict[object, object],
+    source_credibility: str,
+    penalty: float,
+) -> float:
+    if source_credibility in SOURCE_CREDIBILITY_CONFIDENCE:
+        base = SOURCE_CREDIBILITY_CONFIDENCE[source_credibility]
+    else:
+        base = _numeric_field(
+            payload.get("confidence"), default=SOURCE_CREDIBILITY_CONFIDENCE["observation"]
+        )
+    return min(max(base - penalty, _MIN_NORMALIZED_CONFIDENCE), 1.0)
+
+
+def _normalize_dict_concept(item: object) -> _NormalizedDreamConcept | None:
+    if type(item) is not dict:
+        return None
+    payload: dict[object, object] = item
+    penalty = 0.0
+    name = _string_field(payload.get("canonical_name")).strip()
+    if name == "":
+        name = _string_field(payload.get("name")).strip()
+    if name == "":
+        name = _string_field(payload.get("label")).strip()
+        if name:
+            penalty += MALFORMED_CONFIDENCE_PENALTY
+    if name == "":
+        return None
+    confidence = _numeric_field(payload.get("confidence"), default=0.2)
+    confidence_delta = min(max(confidence - penalty, _MIN_NORMALIZED_CONFIDENCE), 1.0)
+    return _NormalizedDreamConcept(
+        canonical_name=name,
+        description=_string_field(payload.get("description")),
+        tags=_clean_string_tuple(payload.get("tags"), payload.get("semantic_tags")),
+        confidence_delta=confidence_delta,
+    )
+
+
+def _normalize_supersede_action(item: object) -> _DreamSupersedeAction | None:
+    if type(item) is not dict:
+        return None
+    payload: dict[object, object] = item
+    old_crystal_id = _optional_int(payload.get("old_crystal_id"))
+    new_crystal_id = _optional_int(payload.get("new_crystal_id"))
+    if old_crystal_id is None or new_crystal_id is None:
+        return None
+    return _DreamSupersedeAction(
+        old_crystal_id=old_crystal_id,
+        new_crystal_id=new_crystal_id,
+        reason=_string_field(payload.get("reason")),
+    )
+
+
+def _list_from_payload(value: object) -> list[object]:
+    if value is None:
+        return []
+    if type(value) is list:
+        return value
+    return [value]
+
+
+def _string_field(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _numeric_field(value: object, *, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int | float):
+        return float(value)
+    return default
+
+
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _source_memory_ids(
+    payload: dict[object, object],
+    allowed_memory_ids: set[int],
+) -> list[int]:
+    clean_ids = [
+        memory_id
+        for memory_id in _clean_int_tuple(
+            payload.get("source_memory_ids"), payload.get("source_memory_id")
+        )
+        if memory_id in allowed_memory_ids
+    ]
+    if clean_ids:
+        return clean_ids
+    return sorted(allowed_memory_ids)
+
+
+def _concept_names_from_payload(payload: dict[object, object]) -> tuple[str, ...]:
+    values: list[object] = []
+    for key in ("concept_names", "concepts"):
+        value = payload.get(key)
+        if type(value) is list:
+            values.extend(value)
+        elif value is not None:
+            values.append(value)
+    name = payload.get("concept_name")
+    if name is not None:
+        values.append(name)
+
+    names: list[str] = []
+    for value in values:
+        if isinstance(value, str):
+            names.append(value)
+        elif type(value) is dict:
+            concept = _normalize_dict_concept(value)
+            if concept is not None:
+                names.append(concept.canonical_name)
+    return _clean_text_tuple(tuple(names))
+
+
+def _clean_string_tuple(*values: object) -> tuple[str, ...]:
+    strings: list[str] = []
+    for value in values:
+        if isinstance(value, str):
+            strings.append(value)
+        elif type(value) is list:
+            strings.extend(item for item in value if isinstance(item, str))
+    return _clean_text_tuple(tuple(strings))
+
+
+def _clean_int_tuple(*values: object) -> tuple[int, ...]:
+    integers: list[int] = []
+    for value in values:
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            integers.append(value)
+        elif type(value) is list:
+            integers.extend(
+                item for item in value if isinstance(item, int) and not isinstance(item, bool)
+            )
+    return tuple(sorted(set(integers)))
+
+
+def _clean_text_tuple(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(sorted({value.strip() for value in values if value.strip()}))
 
 
 def _title_from_kind(kind: str) -> str:

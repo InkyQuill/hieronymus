@@ -850,6 +850,189 @@ def test_dreaming_inserts_strict_concept_proposals_from_provider_output(
     assert proposal["forbidden_variants_json"] == '["Чувство"]'
 
 
+def test_dreaming_applies_malformed_dict_rule_with_penalties_and_concepts(
+    config: HieronymusConfig,
+) -> None:
+    class MalformedDictProvider:
+        name = "malformed-dict"
+
+        def crystallize(self, context, memories):
+            return {
+                "rule_crystals": [
+                    {
+                        "body": "Keep cooking terminology practical and concrete.",
+                        "kind": "rule_crystal",
+                        "source_credibility": "user_rule",
+                        "rule_intent": "terminology",
+                        "concepts": ["Cooking"],
+                    }
+                ],
+                "concepts": [{"label": "Cooking", "tags": ["domain:cuisine"]}],
+            }
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "Cooking term guidance.")
+    workspace.complete_session(session.id)
+
+    run = DreamService(config, MalformedDictProvider()).run_all()
+
+    with connect(config.database_path) as conn:
+        crystal = conn.execute("select * from crystals").fetchone()
+        concept = conn.execute("select * from concepts").fetchone()
+        concept_link = conn.execute("select * from crystal_concepts").fetchone()
+
+    assert run.status == "completed"
+    assert crystal["crystal_type"] == "rule"
+    assert crystal["text"] == "Keep cooking terminology practical and concrete."
+    assert crystal["confidence"] < 0.9
+    assert crystal["source_credibility"] == "user_rule"
+    assert crystal["rule_intent"] == "terminology"
+    assert crystal["malformed_penalty"] > 0
+    assert concept["canonical_name"] == "Cooking"
+    assert concept_link["crystal_id"] == crystal["id"]
+    assert concept_link["concept_id"] == concept["id"]
+
+
+def test_dreaming_dict_source_credibility_controls_confidence_and_clamps_floor(
+    config: HieronymusConfig,
+) -> None:
+    class CredibilityProvider:
+        name = "credibility"
+
+        def crystallize(self, context, memories):
+            return {
+                "crystals": [
+                    {
+                        "content": "Expert confidence wins over explicit low confidence.",
+                        "type": "lesson",
+                        "source_credibility": "expert",
+                        "confidence": 0.1,
+                    },
+                    {
+                        "content": "User rule confidence wins over explicit low confidence.",
+                        "type": "rule",
+                        "source_credibility": "user_rule",
+                        "confidence": 0.1,
+                    },
+                    {
+                        "content": "Rumor confidence is clamped after heavy penalty.",
+                        "type": "observation",
+                        "source_credibility": "rumor",
+                        "malformed_penalty": 0.5,
+                    },
+                ],
+                "thoughts": ["Speculative thought stays low confidence."],
+            }
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "Credibility input.")
+    workspace.complete_session(session.id)
+
+    DreamService(config, CredibilityProvider()).run_all()
+
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            """
+            select crystal_type, source_credibility, confidence
+            from crystals
+            order by id
+            """
+        ).fetchall()
+
+    assert [
+        (row["crystal_type"], row["source_credibility"], row["confidence"]) for row in rows
+    ] == [
+        ("lesson", "expert", 0.85),
+        ("rule", "user_rule", 0.95),
+        ("observation", "rumor", 0.05),
+        ("thought", "thought", 0.2),
+    ]
+
+
+def test_dreaming_skips_unrecoverable_dict_entries_without_poisoning_good_entries(
+    config: HieronymusConfig,
+) -> None:
+    class PartlyMalformedProvider:
+        name = "partly-malformed"
+
+        def crystallize(self, context, memories):
+            return {
+                "crystals": [
+                    {"type": "lesson"},
+                    {"content": "Good recovered lesson.", "type": "lesson"},
+                ],
+                "rule_crystals": [{"body": ""}],
+                "thoughts": [{"body": "Recoverable thought."}],
+            }
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "Partial malformed input.")
+    workspace.complete_session(session.id)
+
+    run = DreamService(config, PartlyMalformedProvider()).run_all()
+
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            "select crystal_type, text from crystals order by id",
+        ).fetchall()
+
+    assert run.status == "completed"
+    assert [(row["crystal_type"], row["text"]) for row in rows] == [
+        ("lesson", "Good recovered lesson."),
+        ("thought", "Recoverable thought."),
+    ]
+
+
+def test_dreaming_supersede_action_updates_crystals_and_records_event(
+    config: HieronymusConfig,
+) -> None:
+    class SupersedeProvider:
+        name = "supersede"
+
+        def __init__(self, old_id: int, new_id: int) -> None:
+            self.old_id = old_id
+            self.new_id = new_id
+
+        def crystallize(self, context, memories):
+            return {
+                "supersede": [
+                    {
+                        "old_crystal_id": self.old_id,
+                        "new_crystal_id": self.new_id,
+                        "reason": "New rule is more precise.",
+                    }
+                ]
+            }
+
+    context = _context(config)
+    old_id = _add_crystal(config, context, text="Old cooking rule.")
+    new_id = _add_crystal(config, context, text="New cooking rule.")
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "Supersede old rule.")
+    workspace.complete_session(session.id)
+
+    run = DreamService(config, SupersedeProvider(old_id, new_id)).run_all()
+
+    old_crystal = CrystalStore(config).get(old_id)
+    new_crystal = CrystalStore(config).get(new_id)
+    with connect(config.database_path) as conn:
+        event = conn.execute("select * from memory_events").fetchone()
+
+    assert old_crystal.status == "superseded"
+    assert new_crystal.supersedes_crystal_id == old_id
+    assert event["event_type"] == "supersede"
+    assert event["evidence"] == "New rule is more precise."
+    assert event["applied"] == 1
+    assert event["cycle_id"] == run.cycle_id
+
+
 def test_dreaming_decays_inactive_crystals_but_not_recalled_crystals(
     config: HieronymusConfig,
 ) -> None:
