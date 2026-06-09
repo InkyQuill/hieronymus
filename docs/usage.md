@@ -244,6 +244,18 @@ interactive app.
 The Ink TUI is feature-flagged with `HIERONYMUS_TUI=ink`; Textual remains the
 default unless that environment variable is set.
 
+Ink can become the default only after all default-switch criteria are met:
+
+- Installed packages include a bundled, self-contained
+  `hieronymus/frontend/dist/main.js` frontend artifact.
+- Parity tests for the config and admin flows pass against both Textual and
+  Ink.
+- Source/development and packaged smoke tests pass on every supported platform.
+- Textual fallback remains available with `HIERONYMUS_TUI=textual` during the
+  switch window.
+- User-facing docs are updated and `hiero doctor` verifies the required Ink
+  runtime.
+
 Ink config MVP keys:
 
 - `1` / `2` / `3`: select `openai`, `gemini`, or `anthropic`

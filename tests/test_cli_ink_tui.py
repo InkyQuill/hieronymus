@@ -83,6 +83,29 @@ def test_cli_bridge_command_preserves_id_for_invalid_params(tmp_path) -> None:
     }
 
 
+def test_cli_config_defaults_to_textual_when_tui_env_unset(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    def fail_launch_ink(*args, **kwargs):
+        raise AssertionError("unset HIERONYMUS_TUI must not launch Ink")
+
+    def fake_run(app):
+        calls.append(app.config.data_root)
+
+    monkeypatch.delenv("HIERONYMUS_TUI", raising=False)
+    monkeypatch.setattr("hieronymus.cli._launch_ink", fail_launch_ink)
+    monkeypatch.setattr("hieronymus.cli.HieronymusConfigApp.run", fake_run)
+
+    data_root = tmp_path / "hieronymus"
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "config"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [data_root]
+
+
 def test_cli_ink_config_launches_frontend_with_data_root(tmp_path, monkeypatch) -> None:
     calls = []
     data_root = tmp_path / "hieronymus"
