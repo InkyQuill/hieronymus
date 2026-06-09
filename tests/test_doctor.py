@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from hieronymus.config import HieronymusConfig
 from hieronymus.doctor import Doctor, DoctorFinding, report_to_json
 from hieronymus.llm_cache import (
@@ -14,6 +16,20 @@ from hieronymus.llm_cache import (
     save_model_cache,
 )
 from hieronymus.settings import DreamingSettings, ProviderSettings, load_settings, save_settings
+
+
+def write_dream_config(config: HieronymusConfig, raw_config: str) -> None:
+    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.dream_config_path.write_text(raw_config, encoding="utf-8")
+
+
+def run_doctor_without_daemon(config: HieronymusConfig):
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        return Doctor(config).run(autofix=False)
 
 
 def test_doctor_reports_missing_config_root_as_autofixable(tmp_path: Path) -> None:
@@ -35,6 +51,225 @@ def test_doctor_reports_missing_config_root_as_autofixable(tmp_path: Path) -> No
         )
         in report["warnings"]
     )
+
+
+def test_doctor_warns_when_dreaming_is_disabled(config) -> None:
+    report = run_doctor_without_daemon(config)
+
+    assert (
+        DoctorFinding(
+            level="warning",
+            code="dreaming_disabled",
+            message="Dreaming is disabled",
+        )
+        in report["warnings"]
+    )
+
+
+def test_doctor_reports_invalid_dream_conf(config) -> None:
+    write_dream_config(config, "[dreaming\n")
+
+    report = run_doctor_without_daemon(config)
+
+    assert (
+        DoctorFinding(
+            level="error",
+            code="dream_conf_invalid",
+            message="dream.conf invalid",
+        )
+        in report["errors"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw_config", "code", "severity", "message"),
+    [
+        (
+            "[dreaming]\n"
+            "enabled = true\n"
+            "[workflows.crystallization]\n"
+            "provider='missing'\n"
+            "model='x'\n"
+            "enabled=true\n",
+            "dream_provider_profile_missing",
+            "error",
+            "Referenced provider profile is missing",
+        ),
+        (
+            "[dreaming]\n"
+            "enabled = true\n"
+            "[workflows.crystallization]\n"
+            "provider='anthropic'\n"
+            "model=''\n"
+            "enabled=true\n",
+            "dream_model_not_set",
+            "error",
+            "Model not set for workflow",
+        ),
+        (
+            "[dreaming]\n"
+            "enabled = true\n"
+            "[providers.anthropic]\n"
+            "type='anthropic'\n"
+            "api_key=''\n"
+            "[workflows.crystallization]\n"
+            "provider='anthropic'\n"
+            "model='x'\n"
+            "enabled=true\n",
+            "dream_api_key_missing",
+            "error",
+            "API key missing for provider profile",
+        ),
+    ],
+)
+def test_doctor_reports_dream_conf_readiness_errors(
+    config,
+    raw_config: str,
+    code: str,
+    severity: str,
+    message: str,
+) -> None:
+    write_dream_config(config, raw_config)
+
+    report = run_doctor_without_daemon(config)
+
+    assert DoctorFinding(level=severity, code=code, message=message) in report[f"{severity}s"]
+
+
+def test_doctor_ignores_disabled_optional_dream_workflows(config) -> None:
+    write_dream_config(
+        config,
+        "[dreaming]\n"
+        "enabled = true\n"
+        "[workflows.relation_discovery]\n"
+        "provider='missing'\n"
+        "model=''\n"
+        "enabled=false\n",
+    )
+
+    report = run_doctor_without_daemon(config)
+
+    failing_codes = {finding.code for finding in report["errors"]}
+    assert "dream_provider_profile_missing" not in failing_codes
+    assert "dream_model_not_set" not in failing_codes
+
+
+def test_doctor_warns_when_configured_dream_model_missing_from_cache(config) -> None:
+    write_dream_config(
+        config,
+        "[dreaming]\n"
+        "enabled = true\n"
+        "[providers.ollama]\n"
+        "type='ollama'\n"
+        "endpoint='http://localhost:11434'\n"
+        "[workflows.crystallization]\n"
+        "provider='ollama'\n"
+        "model='missing-model'\n"
+        "enabled=true\n",
+    )
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="ollama",
+                models=("present-model",),
+                fetched_at=datetime.now(UTC).isoformat(),
+            )
+        ),
+    )
+
+    report = run_doctor_without_daemon(config)
+
+    assert (
+        DoctorFinding(
+            level="warning",
+            code="dream_model_missing",
+            message="Configured model was not found in provider cache",
+        )
+        in report["warnings"]
+    )
+
+
+def test_doctor_ignores_stale_dream_model_cache(config) -> None:
+    write_dream_config(
+        config,
+        "[dreaming]\n"
+        "enabled = true\n"
+        "[providers.ollama]\n"
+        "type='ollama'\n"
+        "endpoint='http://localhost:11434'\n"
+        "[workflows.crystallization]\n"
+        "provider='ollama'\n"
+        "model='missing-model'\n"
+        "enabled=true\n",
+    )
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="ollama",
+                models=("present-model",),
+                fetched_at=(datetime.now(UTC) - timedelta(hours=24)).isoformat(),
+            )
+        ),
+    )
+
+    report = run_doctor_without_daemon(config)
+
+    assert all(warning.code != "dream_model_missing" for warning in report["warnings"])
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "severity", "message"),
+    [
+        (
+            "provider returned HTTP 403",
+            "dream_api_key_rejected",
+            "error",
+            "API key rejected with 403",
+        ),
+        (
+            "network error",
+            "dream_provider_unreachable",
+            "warning",
+            "Provider in use cannot be reached",
+        ),
+    ],
+)
+def test_doctor_reports_fresh_dream_provider_cache_errors(
+    config,
+    error: str,
+    code: str,
+    severity: str,
+    message: str,
+) -> None:
+    write_dream_config(
+        config,
+        "[dreaming]\n"
+        "enabled = true\n"
+        "[providers.ollama]\n"
+        "type='ollama'\n"
+        "endpoint='http://localhost:11434'\n"
+        "[workflows.crystallization]\n"
+        "provider='ollama'\n"
+        "model='gemma4-e3b'\n"
+        "enabled=true\n",
+    )
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="ollama",
+                models=(),
+                fetched_at=datetime.now(UTC).isoformat(),
+                error=error,
+            )
+        ),
+    )
+
+    report = run_doctor_without_daemon(config)
+
+    assert DoctorFinding(level=severity, code=code, message=message) in report[f"{severity}s"]
 
 
 def test_doctor_autofix_creates_config_root(tmp_path: Path) -> None:

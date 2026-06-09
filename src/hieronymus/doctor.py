@@ -9,6 +9,7 @@ from pathlib import Path
 
 from hieronymus.agent_plugins import available_plugins
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import DreamConfig, DreamConfigError, load_dream_config
 from hieronymus.llm_cache import load_model_cache, model_cache_identity
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_manager import ServiceManager
@@ -41,6 +42,7 @@ class Doctor:
         self._check_daemon(report)
         self._check_ink_runtime(report)
         self._check_settings_and_providers(report)
+        self._check_dream_config_readiness(report)
         self._check_llm_model_cache(report)
         self._check_agent_plugins(report)
 
@@ -258,6 +260,131 @@ class Doctor:
             )
         )
 
+    def _check_dream_config_readiness(self, report: DoctorReport) -> None:
+        try:
+            dream_config = load_dream_config(self.config)
+        except DreamConfigError as error:
+            finding = _dream_config_error_finding(error)
+            report[f"{finding.level}s"].append(finding)
+            return
+
+        if not dream_config.enabled:
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="dreaming_disabled",
+                    message="Dreaming is disabled",
+                )
+            )
+            return
+
+        self._check_enabled_dream_workflow_profiles(report, dream_config)
+        self._check_dream_model_cache_readiness(report, dream_config)
+
+    def _check_enabled_dream_workflow_profiles(
+        self,
+        report: DoctorReport,
+        dream_config: DreamConfig,
+    ) -> None:
+        missing_profile_reported = False
+        missing_model_reported = False
+        providers_with_missing_key_reported: set[str] = set()
+        for workflow in dream_config.workflows.values():
+            if not workflow.enabled:
+                continue
+            provider = dream_config.providers.get(workflow.provider)
+            if provider is None:
+                if not missing_profile_reported:
+                    report["errors"].append(
+                        DoctorFinding(
+                            level="error",
+                            code="dream_provider_profile_missing",
+                            message="Referenced provider profile is missing",
+                        )
+                    )
+                    missing_profile_reported = True
+                continue
+            if not workflow.model.strip() and not missing_model_reported:
+                report["errors"].append(
+                    DoctorFinding(
+                        level="error",
+                        code="dream_model_not_set",
+                        message="Model not set for workflow",
+                    )
+                )
+                missing_model_reported = True
+            if (
+                provider.type != "ollama"
+                and not provider.api_key.strip()
+                and workflow.provider not in providers_with_missing_key_reported
+            ):
+                report["errors"].append(
+                    DoctorFinding(
+                        level="error",
+                        code="dream_api_key_missing",
+                        message="API key missing for provider profile",
+                    )
+                )
+                providers_with_missing_key_reported.add(workflow.provider)
+
+    def _check_dream_model_cache_readiness(
+        self,
+        report: DoctorReport,
+        dream_config: DreamConfig,
+    ) -> None:
+        cache = load_model_cache(self.config)
+        reported_cache_errors: set[tuple[str, str]] = set()
+        reported_missing_models: set[tuple[str, str]] = set()
+
+        for workflow in dream_config.workflows.values():
+            if not workflow.enabled:
+                continue
+            entry = cache.providers.get(workflow.provider)
+            if entry is None or entry.is_stale():
+                continue
+            if entry.error:
+                if _is_403_error(entry.error):
+                    key = (workflow.provider, "dream_api_key_rejected")
+                    if key not in reported_cache_errors:
+                        report["errors"].append(
+                            DoctorFinding(
+                                level="error",
+                                code="dream_api_key_rejected",
+                                message="API key rejected with 403",
+                            )
+                        )
+                        reported_cache_errors.add(key)
+                    continue
+
+                key = (workflow.provider, "dream_provider_unreachable")
+                if key not in reported_cache_errors:
+                    report["warnings"].append(
+                        DoctorFinding(
+                            level="warning",
+                            code="dream_provider_unreachable",
+                            message="Provider in use cannot be reached",
+                        )
+                    )
+                    reported_cache_errors.add(key)
+                continue
+
+            model = workflow.model.strip()
+            key = (workflow.provider, model)
+            if (
+                model
+                and entry.models
+                and model not in entry.models
+                and key not in reported_missing_models
+            ):
+                report["warnings"].append(
+                    DoctorFinding(
+                        level="warning",
+                        code="dream_model_missing",
+                        message="Configured model was not found in provider cache",
+                    )
+                )
+                reported_missing_models.add(key)
+
     def _check_llm_model_cache(self, report: DoctorReport) -> None:
         identities = self._current_llm_model_cache_identities()
         for entry in load_model_cache(self.config).providers.values():
@@ -319,6 +446,32 @@ def _needs_pnpm_for_frontend_dev() -> bool:
     bundled_entrypoint = package_root / "frontend" / "dist" / "main.js"
     source_frontend_manifest = package_root.parents[1] / "frontend" / "package.json"
     return source_frontend_manifest.exists() and not bundled_entrypoint.exists()
+
+
+def _dream_config_error_finding(error: DreamConfigError) -> DoctorFinding:
+    message = str(error)
+    if "referenced provider profile is missing" in message:
+        return DoctorFinding(
+            level="error",
+            code="dream_provider_profile_missing",
+            message="Referenced provider profile is missing",
+        )
+    if "enabled workflow must have a model" in message:
+        return DoctorFinding(
+            level="error",
+            code="dream_model_not_set",
+            message="Model not set for workflow",
+        )
+    return DoctorFinding(
+        level="error",
+        code="dream_conf_invalid",
+        message="dream.conf invalid",
+    )
+
+
+def _is_403_error(error: str) -> bool:
+    normalized = error.lower()
+    return "403" in normalized or "forbidden" in normalized
 
 
 def report_to_json(report: DoctorReport) -> dict[str, list[dict[str, object]]]:
