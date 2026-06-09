@@ -1,5 +1,7 @@
 import pytest
 
+from hieronymus.crystals import CrystalStore
+from hieronymus.db import connect
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
@@ -34,9 +36,69 @@ def test_memory_search_returns_relevant_entries(config):
 
     assert results[0].id == memory_id
     assert results[0].kind == "translation_rationale"
+    assert results[0]["text"] == "Satou's system messages should stay concise and game-like."
     assert results[0].text == "Satou's system messages should stay concise and game-like."
     assert results[0].importance == 4
-    assert results[0].source_ref == ""
+    assert results[0].source_ref == "user:2026-06-06"
+
+
+def test_legacy_memory_add_is_searchable_as_short_term_then_long_term(config):
+    memory = MemoryStore(config)
+
+    memory_id = memory.add(
+        series_slug="only-sense-online",
+        kind="translation_rationale",
+        text="Use Yun for ユン.",
+        source_ref="chapter-1",
+        importance=4,
+    )
+
+    assert memory_id == 1
+    results = memory.search("only-sense-online", "Yun")
+    assert results[0]["text"] == "Use Yun for ユン."
+    assert results[0].kind == "translation_rationale"
+    assert results[0].importance == 4
+    assert results[0].source_ref == "chapter-1"
+    with connect(config.database_path) as conn:
+        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+        row = conn.execute("select kind, metadata_json from short_term_memories").fetchone()
+    assert row["kind"] == "note"
+    assert '"legacy_kind": "translation_rationale"' in row["metadata_json"]
+    assert '"importance": 4' in row["metadata_json"]
+    assert '"storage_semantics": "short_term_until_dreamed"' in row["metadata_json"]
+
+
+def test_memory_search_without_active_session_falls_back_to_short_and_long_term_fts(config):
+    store = _create_memory_store(config)
+    short_id = store.add(
+        kind="translation_rationale",
+        text="Yun keeps her name in village dialogue.",
+        importance=4,
+    )
+    with connect(config.database_path) as conn:
+        conn.execute("update task_sessions set status = 'completed', completed_at = created_at")
+        conn.commit()
+    CrystalStore(config).add_crystal(
+        TranslationContext(
+            series_slug="death-march",
+            source_language="ja",
+            target_language="en",
+            task_type="translation",
+        ),
+        crystal_type="observation",
+        text="Yun is a recurring merchant contact.",
+        title="name_note",
+        strength=0.2,
+        confidence=0.5,
+    )
+
+    results = store.search("Yun", limit=10)
+
+    assert {result.text for result in results} == {
+        "Yun keeps her name in village dialogue.",
+        "Yun is a recurring merchant contact.",
+    }
+    assert next(result for result in results if result.id == short_id).source_ref == ""
 
 
 @pytest.mark.parametrize("query", ["game-like", "Satou's", "system OR"])

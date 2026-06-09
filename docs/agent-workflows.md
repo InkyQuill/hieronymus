@@ -34,6 +34,10 @@ installer wiring and is not referenced from the Codex plugin manifest.
 `learn` is deliberate ingestion. It stores source blocks as short-term memories with provenance so
 later dreaming can distill crystals, lessons, erudition, and terminology proposals.
 
+Legacy `remember` and memory-add integrations are compatibility wrappers around the same short-term
+queue. They preserve the old searchable entry shape for callers, but the stored memory remains
+short-term until dreaming converts, supersedes, or discards it.
+
 `read` is temporary inspection. It extracts useful concepts and terms for the current task without
 committing the whole source by default. Agents should use `read` for casual lookup, summaries, and
 one-off context unless the user asks Hieronymus to learn the material.

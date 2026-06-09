@@ -161,43 +161,6 @@ def _strict_concept_proposal_payload(proposal: object) -> dict[str, Any]:
     return asdict(proposal)
 
 
-def _vague_concept_proposal_payloads(config: HieronymusConfig) -> list[dict[str, Any]]:
-    with connect(config.database_path) as conn:
-        rows = conn.execute(
-            """
-            select id, canonical_name, description, scope_type, scope_key, status
-            from concepts
-            where status = 'vague'
-            order by updated_at desc, id desc
-            limit 50
-            """
-        ).fetchall()
-
-    payloads: list[dict[str, Any]] = []
-    for row in rows:
-        scope_type = row["scope_type"]
-        scope_key = row["scope_key"]
-        series_slug = ""
-        if scope_type != "global":
-            series_slug = scope_key.removeprefix("series:")
-        payloads.append(
-            {
-                "id": int(row["id"]),
-                "series_slug": series_slug,
-                "source_language": "",
-                "target_language": "",
-                "concept_text": row["canonical_name"],
-                "source_form": row["canonical_name"],
-                "canonical_rendering": row["canonical_name"],
-                "approved_variants": [],
-                "forbidden_variants": [],
-                "rationale": row["description"],
-                "status": row["status"],
-            }
-        )
-    return payloads
-
-
 def _optional_string(value: object) -> str:
     return value if isinstance(value, str) else ""
 
@@ -608,7 +571,6 @@ def hieronymus_concept_proposals_list() -> list[dict[str, Any]]:
             _strict_concept_proposal_payload(proposal)
             for proposal in ConceptProposalStore(config).list_pending()
         ],
-        *_vague_concept_proposal_payloads(config),
         *_recent_dream_audit_proposal_payloads(config),
     ]
 

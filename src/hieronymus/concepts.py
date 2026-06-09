@@ -61,6 +61,12 @@ def _row_to_proposal(row: sqlite3.Row) -> StrictConceptProposal:
     )
 
 
+def _series_slug_from_scope(scope_type: str, scope_key: str) -> str:
+    if scope_type == "global":
+        return ""
+    return scope_key.removeprefix("series:")
+
+
 class ConceptStore:
     SOLID_CONFIDENCE = 0.75
 
@@ -324,7 +330,7 @@ class ConceptProposalStore:
 
     def list_pending(self) -> list[StrictConceptProposal]:
         with connect(self.config.database_path) as conn:
-            rows = conn.execute(
+            strict_rows = conn.execute(
                 """
                 select *
                 from strict_concept_proposals
@@ -332,7 +338,17 @@ class ConceptProposalStore:
                 order by id
                 """
             ).fetchall()
-        return [_row_to_proposal(row) for row in rows]
+            vague_rows = conn.execute(
+                """
+                select id, canonical_name, description, scope_type, scope_key, status
+                from concepts
+                where status = 'vague'
+                order by updated_at desc, id desc
+                limit 50
+                """
+            ).fetchall()
+            vague = [self._vague_concept_proposal_with_connection(conn, row) for row in vague_rows]
+        return [*[_row_to_proposal(row) for row in strict_rows], *vague]
 
     def approve(self, proposal_id: int) -> None:
         self._set_status(proposal_id, "approved")
@@ -413,6 +429,38 @@ class ConceptProposalStore:
             if cursor.rowcount == 0:
                 raise KeyError(f"unknown concept proposal: {proposal_id}")
             conn.commit()
+
+    def _vague_concept_proposal_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> StrictConceptProposal:
+        facet_rows = conn.execute(
+            """
+            select value
+            from concept_facets
+            where concept_id = ?
+              and value != ''
+            order by confidence desc, id
+            """,
+            (row["id"],),
+        ).fetchall()
+        facet_values = [facet["value"] for facet in facet_rows]
+        canonical_name = row["canonical_name"]
+        canonical_rendering = facet_values[0] if facet_values else canonical_name
+        return StrictConceptProposal(
+            id=int(row["id"]),
+            series_slug=_series_slug_from_scope(row["scope_type"], row["scope_key"]),
+            source_language="",
+            target_language="",
+            concept_text=canonical_name,
+            source_form=canonical_name,
+            canonical_rendering=canonical_rendering,
+            approved_variants=facet_values,
+            forbidden_variants=[],
+            rationale=row["description"],
+            status=row["status"],
+        )
 
     def _validate_required(self, field: str, value: str) -> None:
         if not isinstance(value, str) or not value.strip():
