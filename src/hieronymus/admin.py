@@ -19,7 +19,12 @@ from hieronymus.admin_models import (
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
-from hieronymus.dream_config import DreamConfig, load_dream_config
+from hieronymus.dream_config import (
+    DreamConfig,
+    DreamConfigError,
+    default_dream_config,
+    load_dream_config,
+)
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamRunRecord, DreamService
 from hieronymus.memory_models import TranslationContext
@@ -70,6 +75,13 @@ def admin_view_options() -> list[dict[str, str]]:
         {"key": key, "label": label}
         for key, label in zip(ADMIN_VIEW_KEYS, ADMIN_VIEWS, strict=True)
     ]
+
+
+def _safe_dream_config(config: HieronymusConfig) -> tuple[DreamConfig, str]:
+    try:
+        return load_dream_config(config), ""
+    except DreamConfigError as error:
+        return default_dream_config(), str(error)
 
 
 def _rule_crystal_text(
@@ -126,14 +138,18 @@ class AdminStore:
         }
 
     def dashboard_status_payload(self) -> dict[str, object]:
-        dream_config = load_dream_config(self.config)
+        dream_config, dream_config_error = _safe_dream_config(self.config)
         pending_count = self.pending_completed_short_term_memory_count()
+        dream_status = self._dream_status(dream_config).as_dict()
+        if dream_config_error:
+            dream_status["reason"] = dream_config_error
         return {
             "short_term_status": self._short_term_status(
                 dream_config,
                 pending_count,
             ).as_dict(),
-            "dream_status": self._dream_status(dream_config).as_dict(),
+            "dream_status": dream_status,
+            "dream_config_error": dream_config_error,
         }
 
     def pending_completed_short_term_memory_count(self) -> int:

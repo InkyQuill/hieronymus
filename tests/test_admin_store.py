@@ -86,6 +86,27 @@ def test_status_payload_reports_admin_counts(config: HieronymusConfig) -> None:
     assert "dream_audits" in payload["view_keys"]
 
 
+def test_status_payload_survives_malformed_dream_config(
+    config: HieronymusConfig,
+) -> None:
+    config.config_root.mkdir(parents=True)
+    config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
+
+    payload = AdminStore(config).status_payload()
+
+    assert payload["short_term_status"] == {
+        "pending_count": 0,
+        "min_pending_short_term_memories": 20,
+        "max_pending_short_term_memories": 200,
+        "urgent": False,
+    }
+    assert payload["dream_status"]["state"] == "DISABLED"
+    assert payload["dream_status"]["current_phase"] == ""
+    assert payload["dream_status"]["progress"] == 0.0
+    assert "dream.conf is not valid TOML" in payload["dream_status"]["reason"]
+    assert "dream.conf is not valid TOML" in payload["dream_config_error"]
+
+
 def test_list_crystals_filters_by_series_type_status_and_tags(
     config: HieronymusConfig,
 ) -> None:

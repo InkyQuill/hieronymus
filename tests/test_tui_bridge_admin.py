@@ -71,6 +71,27 @@ def test_admin_bridge_exposes_memory_and_dream_status(config: HieronymusConfig) 
     assert "dream_audits" in payload["view_keys"]
 
 
+def test_admin_bridge_survives_malformed_dream_config(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _seed(config)
+    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
+    api = AdminBridge(config)
+
+    bootstrap = api.bootstrap({})
+    snapshot = api.snapshot({"view": "Crystals"})
+
+    assert bootstrap["snapshot"]["selected"]["label"] == "Guild Ledger"
+    assert bootstrap["dream_status"]["state"] == "DISABLED"
+    assert "dream.conf is not valid TOML" in bootstrap["dream_status"]["reason"]
+    assert "dream.conf is not valid TOML" in bootstrap["dream_config_error"]
+    assert snapshot["snapshot"]["selected"]["label"] == "Guild Ledger"
+    assert snapshot["dream_status"]["state"] == "DISABLED"
+    assert "dream.conf is not valid TOML" in snapshot["dream_config_error"]
+
+
 def test_admin_snapshot_accepts_machine_view_key(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _seed(config)
