@@ -1,7 +1,7 @@
 # Memory Dreaming
 
 Hieronymus memory dreaming turns task-local observations into searchable long-term
-translation memory without letting fuzzy memory override deterministic terminology.
+translation memory without letting fuzzy memory override active rule crystals.
 
 ## Mental Model
 
@@ -35,7 +35,9 @@ current crystal types are:
 - `erudition`: background knowledge or expert guidance that may help future
   decisions.
 
-Crystals are advisory. Strict term/rendering proposals are not mandatory until an explicit user or management workflow accepts them into the deterministic termbase.
+Most crystals are advisory. Active rule crystals are mandatory translation
+rules; they do not decay while active, but they may be superseded or combined by
+later higher-confidence rules.
 
 Recall and reinforcement are separate. Recall protects a crystal from immediate
 decay in the dream cycle that processes the active session, but it does not
@@ -45,26 +47,24 @@ events such as `confirmed_by_user`, `used_in_translation`, `passed_review`, or
 `caused_correction`.
 
 Dream cycles process completed sessions. Short-term memories stay pending until
-dreaming processes them or a user removes them. They use the configured active
-provider by default, and commands may override that provider for one run.
-`deterministic` is the offline fallback selected with
-`hieronymus dream --provider deterministic`; it converts completed short-term
-memories into crystals using fixed local rules: `user` inputs become `lesson`
-crystals, `mentor` inputs become `erudition` crystals, and `mundane` inputs
-become `concept` crystals. User corrections are stored as short-term memories
-first; through dreaming they can become rule crystals instead of bypassing the
-learning workflow.
+dreaming processes them or a user removes them. They use the named providers and
+workflow model assignments from `~/.config/hieronymus/dream.conf`. User
+corrections are stored as short-term memories first; through crystallization they
+can become high-confidence rule crystals instead of bypassing the learning
+workflow.
 
-OpenAI, Gemini, and Anthropic providers produce structured JSON that Hieronymus
-validates before applying dream outputs. Invalid provider output records a failed
-dream run and leaves completed sessions pending so they can be retried after the
-provider, prompt, or settings are corrected.
+Dreaming is split into workflow phases. Crystallization converts short-term
+memories into crystals, rule crystals, concepts, facets, semantic tags, story
+scopes, links, and low-confidence thought memories. Reinforcement and compaction
+then inspect the changed neighborhood and decide what to reinforce, decay,
+combine, supersede, or archive. Optional discovery workflows can be assigned to a
+separate provider profile, such as a local Ollama model.
 
-Dream providers may produce strict concept proposals. These proposals are stored
-as pending management records with exact scope, source form, canonical rendering,
-approved variants, forbidden variants, and rationale. They are deliberately
-strict: malformed proposals, mismatched scope, or non-string variants are rejected
-before dream output is applied.
+Providers produce structured JSON that Hieronymus validates before applying dream
+outputs. Malformed entries are parsed best-effort when they still contain useful
+content, but receive a confidence penalty. Invalid provider output records a
+failed dream run and leaves completed sessions pending so they can be retried
+after the provider, prompt, or config is corrected.
 
 Decay is cycle-based, not wall-clock based. A crystal should weaken when
 translation work keeps happening without that crystal being recalled or
@@ -75,7 +75,7 @@ Automatic dreaming is cycle-based. Scheduled dreaming respects the configured
 minimum pending-memory threshold by default. It may run sooner only when the
 urgent cap is reached or the backlog escape rule fires after repeated
 not-enough-memory skips. The threshold counts short-term memories, not long-term
-crystals or remembered strict terminology.
+crystals or remembered terminology.
 
 ## Dream Cycle Concurrency
 
@@ -130,12 +130,12 @@ Complete the session so it can be processed by dreaming:
 hieronymus session-complete 1
 ```
 
-Run dreaming manually. Without `--provider`, this uses the configured active
-provider. Manual `hiero dream` drains all pending short-term memories, including
-a final small batch below the scheduled minimum threshold:
+Run dreaming manually. This uses the configured crystallization workflow profile.
+Manual `hiero dream` drains all pending short-term memories, including a final
+small batch below the scheduled minimum threshold:
 
 ```bash
-hieronymus dream --provider deterministic
+hieronymus dream
 ```
 
 Recall requires an active session. Start a new session for the next workflow; in a
@@ -163,8 +163,8 @@ The MCP server exposes the same workflow:
 - `hieronymus_feedback`
 - `hieronymus_concept_proposals_list`
 
-`hieronymus_dream` uses the configured active provider by default and also
-accepts explicit provider overrides such as `provider="deterministic"`,
-`provider="openai"`, `provider="gemini"`, or `provider="anthropic"`. Recall uses
-the stored active session context by default, and rejects calls whose explicit
-context arguments do not match the session.
+`hieronymus_dream` uses the configured workflow providers. Recall uses the
+stored active session context by default, and rejects calls whose explicit
+context arguments do not match the session. Legacy memory-add and termbase MCP
+tools remain available as compatibility wrappers; user corrections enter
+short-term memory and deterministic validation reads active rule crystals.

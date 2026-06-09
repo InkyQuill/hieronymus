@@ -101,7 +101,7 @@ Modify:
 - Create: `src/hieronymus/dream_config.py`
 - Test: `tests/test_dream_config.py`
 
-- [ ] **Step 1: Write failing config path tests**
+- [x] **Step 1: Write failing config path tests**
 
 ```python
 from pathlib import Path
@@ -116,13 +116,13 @@ def test_dream_config_paths_live_under_config_root(tmp_path: Path) -> None:
     assert config.llm_cache_path == config.config_root / "llmcache.tmp"
 ```
 
-- [ ] **Step 2: Run the focused failing test**
+- [x] **Step 2: Run the focused failing test**
 
 Run: `uv run pytest tests/test_dream_config.py::test_dream_config_paths_live_under_config_root -v`
 
 Expected: FAIL with `AttributeError` for `dream_config_path`.
 
-- [ ] **Step 3: Add config path properties**
+- [x] **Step 3: Add config path properties**
 
 In `src/hieronymus/config.py`, add these properties after `settings_path`:
 
@@ -136,7 +136,7 @@ In `src/hieronymus/config.py`, add these properties after `settings_path`:
         return self.config_root / "llmcache.tmp"
 ```
 
-- [ ] **Step 4: Add dream config defaults and plaintext secret test**
+- [x] **Step 4: Add dream config defaults and plaintext secret test**
 
 Append to `tests/test_dream_config.py`:
 
@@ -221,7 +221,7 @@ def test_workflow_references_existing_provider(tmp_path: Path) -> None:
         save_dream_config(config, dream_config)
 ```
 
-- [ ] **Step 5: Create dream config implementation**
+- [x] **Step 5: Create dream config implementation**
 
 Create `src/hieronymus/dream_config.py`:
 
@@ -484,13 +484,13 @@ def _positive(name: str, value: int) -> None:
         raise DreamConfigError(f"{name} must be at least 1")
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run: `uv run pytest tests/test_dream_config.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/hieronymus/config.py src/hieronymus/dream_config.py tests/test_dream_config.py
@@ -507,7 +507,7 @@ git commit -m "feat: add dream config model"
 - Test: `tests/test_llm_cache.py`
 - Test: `tests/test_doctor.py`
 
-- [ ] **Step 1: Write model cache tests**
+- [x] **Step 1: Write model cache tests**
 
 ```python
 from datetime import UTC, datetime, timedelta
@@ -556,7 +556,7 @@ def test_cache_entry_is_stale_after_24_hours() -> None:
     assert entry.is_stale(datetime(2026, 6, 9, 9, 59, 0, tzinfo=UTC)) is False
 ```
 
-- [ ] **Step 2: Create cache implementation**
+- [x] **Step 2: Create cache implementation**
 
 Create `src/hieronymus/llm_cache.py`:
 
@@ -632,13 +632,13 @@ def save_model_cache(config: HieronymusConfig, cache: CachedModels) -> None:
     )
 ```
 
-- [ ] **Step 3: Run model cache tests**
+- [x] **Step 3: Run model cache tests**
 
 Run: `uv run pytest tests/test_llm_cache.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 4: Wire provider model suggestions through cache**
+- [x] **Step 4: Wire provider model suggestions through cache**
 
 In `src/hieronymus/dream_providers.py`, keep existing HTTP fetching methods but change
 `ProviderRegistry.list_model_suggestions` so it:
@@ -685,7 +685,7 @@ Use this helper inside `list_model_suggestions` for OpenAI, Gemini, Anthropic, a
 Ollama. For Anthropic, cache default hints with `source="defaults"` because there is
 no stable public models endpoint in the existing implementation.
 
-- [ ] **Step 5: Add doctor warning for stale or failed cache refresh**
+- [x] **Step 5: Add doctor warning for stale or failed cache refresh**
 
 In `tests/test_doctor.py`, add:
 
@@ -719,13 +719,13 @@ def test_doctor_warns_when_llm_cache_refresh_failed(config: HieronymusConfig) ->
 
 Then update `doctor_issues` to append that warning for cache entries with `error`.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run: `uv run pytest tests/test_llm_cache.py tests/test_doctor.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/hieronymus/llm_cache.py src/hieronymus/dream_providers.py src/hieronymus/doctor.py tests/test_llm_cache.py tests/test_doctor.py
@@ -742,7 +742,7 @@ git commit -m "feat: cache provider model suggestions"
 - Test: `tests/test_memory_models.py`
 - Test: `tests/test_concept_store.py`
 
-- [ ] **Step 1: Write schema smoke test**
+- [x] **Step 1: Write schema smoke test**
 
 Create `tests/test_concept_store.py`:
 
@@ -774,7 +774,7 @@ def test_memory_design_tables_exist(config: HieronymusConfig) -> None:
     }.issubset(table_names)
 ```
 
-- [ ] **Step 2: Add schema tables**
+- [x] **Step 2: Add schema tables**
 
 Append to `src/hieronymus/migrations/global.sql`:
 
@@ -883,7 +883,7 @@ Use `alter table` guarded by `try/except sqlite3.OperationalError` in `db.py` on
 SQLite migrations in this project do not re-run changed `global.sql` against existing
 databases. Preserve the old `strict_terms` and `strict_concept_proposals` tables.
 
-- [ ] **Step 3: Add model dataclasses**
+- [x] **Step 3: Add model dataclasses**
 
 Create `src/hieronymus/concept_models.py`:
 
@@ -966,13 +966,13 @@ class RecallResult:
     short_term_memory: ShortTermMemoryRecord | None = None
 ```
 
-- [ ] **Step 4: Run schema/model tests**
+- [x] **Step 4: Run schema/model tests**
 
 Run: `uv run pytest tests/test_memory_models.py tests/test_concept_store.py -v`
 
 Expected: PASS for existing tests plus the new schema smoke test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hieronymus/migrations/global.sql src/hieronymus/concept_models.py src/hieronymus/memory_models.py tests/test_memory_models.py tests/test_concept_store.py
@@ -990,7 +990,7 @@ git commit -m "feat: add multilingual memory schema"
 - Test: `tests/test_short_memory.py`
 - Test: `tests/test_mcp_server.py`
 
-- [ ] **Step 1: Write validation tests**
+- [x] **Step 1: Write validation tests**
 
 ```python
 import pytest
@@ -1021,7 +1021,7 @@ def test_short_memory_rejects_huge_memory() -> None:
         validate_short_memory_text(text)
 ```
 
-- [ ] **Step 2: Create validation helper**
+- [x] **Step 2: Create validation helper**
 
 Create `src/hieronymus/short_memory.py`:
 
@@ -1062,7 +1062,7 @@ def _sentence_count(text: str) -> int:
     return 1
 ```
 
-- [ ] **Step 3: Route workspace inserts through validation**
+- [x] **Step 3: Route workspace inserts through validation**
 
 In `src/hieronymus/workspace.py`, import `validate_short_memory_text`. In
 `WorkspaceStore.add_short_term_memory`, call:
@@ -1077,7 +1077,7 @@ metadata["sentence_count"] = validation.sentence_count
 
 Serialize that merged metadata into `metadata_json`.
 
-- [ ] **Step 4: Add correction memory MCP test**
+- [x] **Step 4: Add correction memory MCP test**
 
 In `tests/test_mcp_server.py`, add:
 
@@ -1107,13 +1107,13 @@ def test_mcp_feedback_adds_correction_short_term_memory(monkeypatch, tmp_path):
 Update `hieronymus_feedback` so user corrections are stored as short-term memory with
 `kind="correction"` and no immediate dream request.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run: `uv run pytest tests/test_short_memory.py tests/test_mcp_server.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hieronymus/short_memory.py src/hieronymus/workspace.py src/hieronymus/mcp_server.py src/hieronymus/cli.py tests/test_short_memory.py tests/test_mcp_server.py
@@ -1129,7 +1129,7 @@ git commit -m "feat: validate short-term memories"
 - Test: `tests/test_concept_store.py`
 - Test: `tests/test_crystals.py`
 
-- [ ] **Step 1: Write concept store tests**
+- [x] **Step 1: Write concept store tests**
 
 Append to `tests/test_concept_store.py`:
 
@@ -1173,7 +1173,7 @@ def test_concept_store_links_crystal_to_multiple_concepts(config: HieronymusConf
     assert store.concept_ids_for_crystal(crystal_id) == (yun_id, sense_id, enchant_id)
 ```
 
-- [ ] **Step 2: Implement concept store**
+- [x] **Step 2: Implement concept store**
 
 Add `ConceptStore` to `src/hieronymus/concepts.py` while keeping
 `ConceptProposalStore` available:
@@ -1307,7 +1307,7 @@ class ConceptStore:
         return tuple(int(row["concept_id"]) for row in rows)
 ```
 
-- [ ] **Step 3: Extend CrystalStore writes**
+- [x] **Step 3: Extend CrystalStore writes**
 
 In `src/hieronymus/crystals.py`, expand allowed crystal types:
 
@@ -1333,13 +1333,13 @@ After inserting the crystal row, insert rows into `crystal_story_scopes`,
 `crystal_semantic_tags`, and `crystal_concepts`. Keep `tags_json` populated with
 `semantic_tags` for old readers.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `uv run pytest tests/test_concept_store.py tests/test_crystals.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hieronymus/concepts.py src/hieronymus/crystals.py tests/test_concept_store.py tests/test_crystals.py
@@ -1357,7 +1357,7 @@ git commit -m "feat: add first-class concept links"
 - Test: `tests/test_recall.py`
 - Test: `tests/test_mcp_server.py`
 
-- [ ] **Step 1: Write combined recall tests**
+- [x] **Step 1: Write combined recall tests**
 
 Create `tests/test_combined_recall.py`:
 
@@ -1446,7 +1446,7 @@ def test_story_scope_boosts_but_does_not_filter(config: HieronymusConfig) -> Non
     assert unscoped in crystal_ids
 ```
 
-- [ ] **Step 2: Update RecallService**
+- [x] **Step 2: Update RecallService**
 
 Replace `RecallService.recall` with logic that:
 
@@ -1487,13 +1487,13 @@ Change `recall` to return `RecallResult(source="long_term", crystal=...)` and
 `RecallResult(source="short_term", short_term_memory=...)`. Do not create a new
 `recalled_crystal` short-term memory for each recall result.
 
-- [ ] **Step 3: Keep long-term activation records**
+- [x] **Step 3: Keep long-term activation records**
 
 When recording activations, insert only results with `source == "long_term"` and a
 non-null `crystal`. Use the rank from the combined list so audit shows the actual
 rank seen by the caller.
 
-- [ ] **Step 4: Update MCP recall payload**
+- [x] **Step 4: Update MCP recall payload**
 
 In `hieronymus_recall`, return:
 
@@ -1512,13 +1512,13 @@ In `hieronymus_recall`, return:
 }
 ```
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run: `uv run pytest tests/test_combined_recall.py tests/test_recall.py tests/test_mcp_server.py -v`
 
 Expected: PASS after updating old recall tests that expected `recalled_crystal` traces.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hieronymus/recall.py src/hieronymus/crystals.py src/hieronymus/mcp_server.py tests/test_combined_recall.py tests/test_recall.py tests/test_mcp_server.py
@@ -1534,7 +1534,7 @@ git commit -m "feat: combine short and long recall"
 - Test: `tests/test_dream_workflows.py`
 - Test: `tests/test_dream_providers.py`
 
-- [ ] **Step 1: Write prompt and workflow tests**
+- [x] **Step 1: Write prompt and workflow tests**
 
 ```python
 from hieronymus.dream_config import default_dream_config
@@ -1574,7 +1574,7 @@ def test_disabled_relation_discovery_is_not_resolved_by_default() -> None:
     assert REINFORCEMENT_COMPACTION_PHASE in workflows
 ```
 
-- [ ] **Step 2: Create workflow module**
+- [x] **Step 2: Create workflow module**
 
 Create `src/hieronymus/dream_workflows.py`:
 
@@ -1644,7 +1644,7 @@ def build_phase_prompt(
     )
 ```
 
-- [ ] **Step 3: Resolve provider profiles from dream.conf**
+- [x] **Step 3: Resolve provider profiles from dream.conf**
 
 In `src/hieronymus/dream_providers.py`, add:
 
@@ -1670,13 +1670,13 @@ provider classes to accept an explicit API key string instead of `api_key_env`.
 Add Ollama as OpenAI-compatible chat completions against `/api/chat` or the existing
 OpenAI-compatible path when endpoint ends with `/v1`.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `uv run pytest tests/test_dream_workflows.py tests/test_dream_providers.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hieronymus/dream_workflows.py src/hieronymus/dream_providers.py tests/test_dream_workflows.py tests/test_dream_providers.py
@@ -1692,7 +1692,7 @@ git commit -m "feat: add dream workflow prompts"
 - Test: `tests/test_dream_audit.py`
 - Test: `tests/test_admin_store.py`
 
-- [ ] **Step 1: Write audit tests**
+- [x] **Step 1: Write audit tests**
 
 ```python
 from hieronymus.dream_audit import DreamAuditStore
@@ -1719,7 +1719,7 @@ def test_dream_audit_redacts_api_keys(config: HieronymusConfig) -> None:
     assert entry.payload["body"]["model"] == "claude-sonnet-4-6"
 ```
 
-- [ ] **Step 2: Create audit store**
+- [x] **Step 2: Create audit store**
 
 Create `src/hieronymus/dream_audit.py`:
 
@@ -1828,20 +1828,20 @@ def _redact(value: Any) -> Any:
     return value
 ```
 
-- [ ] **Step 3: Expose audit rows in AdminStore**
+- [x] **Step 3: Expose audit rows in AdminStore**
 
 In `src/hieronymus/admin.py`, add `dream_audits` to the admin view list and implement
 `_list_dream_audit_entries` using `dream_audit_entries`. Each row label should be
 `"{event_type}: {summary}"`, kind should be `"dream audit"`, and detail body should
 show redacted JSON payload.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `uv run pytest tests/test_dream_audit.py tests/test_admin_store.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hieronymus/dream_audit.py src/hieronymus/admin.py tests/test_dream_audit.py tests/test_admin_store.py
@@ -1858,7 +1858,7 @@ git commit -m "feat: add dream audit log"
 - Test: `tests/test_dreaming.py`
 - Test: `tests/test_dream_autostart.py`
 
-- [ ] **Step 1: Write drain behavior tests**
+- [x] **Step 1: Write drain behavior tests**
 
 Add to `tests/test_dreaming.py`:
 
@@ -1911,7 +1911,7 @@ def test_scheduled_dreaming_drains_all_pending_in_capped_cycles(config: Hieronym
     assert pending == 0
 ```
 
-- [ ] **Step 2: Add `DreamService.run_all`**
+- [x] **Step 2: Add `DreamService.run_all`**
 
 In `src/hieronymus/dreaming.py`, add:
 
@@ -1942,7 +1942,7 @@ def run_all(
 Keep `run_cycle` as a compatibility wrapper around one batch for existing tests during
 the transition. New scheduler and admin calls must use `run_all`.
 
-- [ ] **Step 3: Implement scheduled threshold and backlog escape**
+- [x] **Step 3: Implement scheduled threshold and backlog escape**
 
 In `src/hieronymus/dream_autostart.py`, replace old threshold fields with
 `DreamConfig` fields. Scheduled checks should:
@@ -1960,13 +1960,13 @@ return DreamRequest(reason="not_enough_memories", ignore_minimum=False)
 Persist skipped check count in a small table or an audit event so the sixth scheduled
 check after five `not_enough_memories` checks drains leftovers.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `uv run pytest tests/test_dreaming.py tests/test_dream_autostart.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hieronymus/dreaming.py src/hieronymus/dream_autostart.py src/hieronymus/workspace.py tests/test_dreaming.py tests/test_dream_autostart.py
@@ -1983,7 +1983,7 @@ git commit -m "feat: drain pending memories during dreaming"
 - Test: `tests/test_dreaming.py`
 - Test: `tests/test_concept_store.py`
 
-- [ ] **Step 1: Write malformed output test**
+- [x] **Step 1: Write malformed output test**
 
 Add to `tests/test_dreaming.py`:
 
@@ -2027,7 +2027,7 @@ def test_dreaming_best_effort_parses_malformed_entries_with_confidence_penalty(
     assert concept["canonical_name"] == "Cooking"
 ```
 
-- [ ] **Step 2: Add normalized output parser**
+- [x] **Step 2: Add normalized output parser**
 
 In `src/hieronymus/dreaming.py`, add parsing helpers:
 
@@ -2057,7 +2057,7 @@ def _kind_from_candidate(raw: dict[str, object]) -> tuple[str, float]:
 Use these helpers for crystals, rule crystals, concepts, facets, semantic tags, story
 scopes, links, and thoughts. Reject only entries that have no recoverable content.
 
-- [ ] **Step 3: Apply source credibility and rule intent**
+- [x] **Step 3: Apply source credibility and rule intent**
 
 Map source credibility to initial confidence:
 
@@ -2076,7 +2076,7 @@ SOURCE_CREDIBILITY_CONFIDENCE = {
 Apply `malformed_penalty` by subtracting it from initial confidence and clamping to
 `0.05..1.0`.
 
-- [ ] **Step 4: Implement rule supersession actions**
+- [x] **Step 4: Implement rule supersession actions**
 
 When compaction output contains:
 
@@ -2095,13 +2095,13 @@ When compaction output contains:
 Set old crystal status to `superseded`, set `supersedes_crystal_id` on the new
 crystal when present, and append a `memory_events` row with `event_type="supersede"`.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run: `uv run pytest tests/test_dreaming.py tests/test_concept_store.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hieronymus/dreaming.py src/hieronymus/crystals.py src/hieronymus/concepts.py tests/test_dreaming.py tests/test_concept_store.py
@@ -2118,7 +2118,7 @@ git commit -m "feat: apply dream outputs with confidence penalties"
 - Test: `tests/test_dreaming.py`
 - Test: `tests/test_scoring.py`
 
-- [ ] **Step 1: Write rule no-decay test**
+- [x] **Step 1: Write rule no-decay test**
 
 Add to `tests/test_dreaming.py`:
 
@@ -2144,7 +2144,7 @@ def test_active_rule_crystals_do_not_decay(config: HieronymusConfig) -> None:
     assert crystal.status == "active"
 ```
 
-- [ ] **Step 2: Add decay candidate selection**
+- [x] **Step 2: Add decay candidate selection**
 
 In `src/hieronymus/dreaming.py`, implement:
 
@@ -2166,7 +2166,7 @@ def select_ambient_decay_candidates(
 
 In `CrystalStore.low_confidence_first`, exclude `crystal_type='rule' and status='active'`.
 
-- [ ] **Step 3: Add compaction maintenance actions**
+- [x] **Step 3: Add compaction maintenance actions**
 
 Handle compaction output keys:
 
@@ -2182,13 +2182,13 @@ Handle compaction output keys:
 Clamp strength and confidence to `0.0..1.0`. If confidence reaches `0.0`, set status
 to `archived` unless the crystal is an active rule.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `uv run pytest tests/test_dreaming.py tests/test_scoring.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hieronymus/dreaming.py src/hieronymus/crystals.py src/hieronymus/scoring.py tests/test_dreaming.py tests/test_scoring.py
@@ -2206,7 +2206,7 @@ git commit -m "feat: add autonomous memory maintenance"
 - Test: `tests/test_termbase_validate.py`
 - Test: `tests/test_mcp_server.py`
 
-- [ ] **Step 1: Write rule crystal validation test**
+- [x] **Step 1: Write rule crystal validation test**
 
 In `tests/test_termbase_validate.py`, add:
 
@@ -2232,7 +2232,7 @@ def test_rule_crystal_validation_reports_forbidden_old_rendering(config: Hierony
     assert findings[0].observed == "Кулинария"
 ```
 
-- [ ] **Step 2: Keep old tool names but source data from rule crystals**
+- [x] **Step 2: Keep old tool names but source data from rule crystals**
 
 In `hieronymus_termbase_contract`, include active rule crystals whose text matches the
 source text by FTS/tag search. Return the existing payload shape for compatibility:
@@ -2254,20 +2254,20 @@ Use deterministic parsing only for rules in the form
 `"<source> is translated as <target>, not <forbidden>"`. Rules that cannot be parsed
 stay recallable but do not produce contract validation findings.
 
-- [ ] **Step 3: Keep strict tables as import compatibility only**
+- [x] **Step 3: Keep strict tables as import compatibility only**
 
 Leave `strict_terms` and `strict_concept_proposals` in the schema. Admin approval of
 old strict proposals should now create a high-confidence rule crystal with
 `source_credibility="user_rule"` instead of inserting a new strict term.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `uv run pytest tests/test_termbase_contract.py tests/test_termbase_validate.py tests/test_mcp_server.py -v`
 
 Expected: PASS after updating old assertions from `strict_terms` rows to rule crystal
 rows where needed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hieronymus/termbase.py src/hieronymus/mcp_server.py src/hieronymus/admin.py tests/test_termbase_contract.py tests/test_termbase_validate.py tests/test_mcp_server.py
@@ -2286,7 +2286,7 @@ git commit -m "feat: validate translations from rule crystals"
 - Test: `tests/test_tui_bridge_admin.py`
 - Test: `tests/test_tui_bridge_config.py`
 
-- [ ] **Step 1: Write admin status contract test**
+- [x] **Step 1: Write admin status contract test**
 
 In `tests/test_tui_bridge_admin.py`, add:
 
@@ -2303,7 +2303,7 @@ def test_admin_bridge_exposes_memory_and_dream_status(config: HieronymusConfig) 
     assert "dream_audits" in payload["views"]
 ```
 
-- [ ] **Step 2: Add admin dashboard fields**
+- [x] **Step 2: Add admin dashboard fields**
 
 Extend admin summary payloads with:
 
@@ -2323,14 +2323,14 @@ Extend admin summary payloads with:
 }
 ```
 
-- [ ] **Step 3: Add Dream all guard**
+- [x] **Step 3: Add Dream all guard**
 
 Admin Dream all action should call `DreamService.run_all(owner="admin",
 ignore_minimum=True)`. The UI should allow Dream all only when pending short-term
 memory count is greater than zero. Scheduled and urgent dreaming use service logic
 rather than admin guards.
 
-- [ ] **Step 4: Add config API provider/workflow payload**
+- [x] **Step 4: Add config API provider/workflow payload**
 
 In `ConfigBridge`, expose:
 
@@ -2345,13 +2345,13 @@ In `ConfigBridge`, expose:
 
 Provider test actions must update `llmcache.tmp` when model fetch succeeds.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run: `uv run pytest tests/test_admin_store.py tests/test_tui_bridge_admin.py tests/test_tui_bridge_config.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hieronymus/admin.py src/hieronymus/admin_models.py src/hieronymus/tui_bridge/admin_api.py src/hieronymus/tui_bridge/config_api.py tests/test_admin_store.py tests/test_tui_bridge_admin.py tests/test_tui_bridge_config.py
@@ -2369,7 +2369,7 @@ git commit -m "feat: expose memory admin contracts"
 - Test: `tests/test_mcp_server.py`
 - Test: `tests/test_cli.py`
 
-- [ ] **Step 1: Write MCP tool list update test**
+- [x] **Step 1: Write MCP tool list update test**
 
 Update `tests/test_mcp_server.py::test_mcp_server_registers_expected_tool_names` so
 the set remains stable unless a new tool is needed. Keep these existing names:
@@ -2397,7 +2397,7 @@ the set remains stable unless a new tool is needed. Keep these existing names:
 `hieronymus_concept_proposals_list` becomes a compatibility view over vague concepts
 and recent dream audit proposals.
 
-- [ ] **Step 2: Update `hieronymus_memory_add` behavior**
+- [x] **Step 2: Update `hieronymus_memory_add` behavior**
 
 Keep the tool name but route user memory additions to short-term memory by default:
 
@@ -2417,7 +2417,7 @@ def hieronymus_memory_add(...):
 
 Do not request dreaming immediately.
 
-- [ ] **Step 3: Update `hiero dream`**
+- [x] **Step 3: Update `hiero dream`**
 
 The CLI `dream` command should run true drain:
 
@@ -2429,7 +2429,7 @@ click.echo(f"Dream run {run.cycle_id}: {run.status}")
 Scheduled service paths should call `run_all(ignore_minimum=False)` and rely on
 `DreamAutostart` to decide whether a run should start.
 
-- [ ] **Step 4: Update docs**
+- [x] **Step 4: Update docs**
 
 In `docs/memory-dreaming.md`, document:
 
@@ -2441,13 +2441,13 @@ In `docs/memory-dreaming.md`, document:
 - Corrections are stored as short-term memories and become rule crystals through dreaming.
 ```
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run: `uv run pytest tests/test_mcp_server.py tests/test_cli.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hieronymus/mcp_server.py src/hieronymus/cli.py docs/usage.md docs/memory-dreaming.md tests/test_mcp_server.py tests/test_cli.py
@@ -2463,7 +2463,7 @@ git commit -m "feat: route memory tools through learning workflow"
 - Test: `tests/test_doctor.py`
 - Test: `tests/test_cli.py`
 
-- [ ] **Step 1: Write doctor readiness tests**
+- [x] **Step 1: Write doctor readiness tests**
 
 In `tests/test_doctor.py`, add parameterized checks:
 
@@ -2490,7 +2490,7 @@ def test_doctor_reports_dream_conf_readiness_errors(
     assert any(issue.code == code and issue.severity == severity for issue in issues)
 ```
 
-- [ ] **Step 2: Implement readiness checks**
+- [x] **Step 2: Implement readiness checks**
 
 Doctor must produce:
 
@@ -2512,13 +2512,13 @@ DoctorIssue("warning", "dreaming_disabled", "Dreaming is disabled")
 
 Disabled optional workflows must not fail doctor.
 
-- [ ] **Step 3: Run focused tests**
+- [x] **Step 3: Run focused tests**
 
 Run: `uv run pytest tests/test_doctor.py tests/test_cli.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/hieronymus/doctor.py src/hieronymus/cli.py tests/test_doctor.py tests/test_cli.py
@@ -2537,7 +2537,7 @@ git commit -m "feat: validate dream readiness in doctor"
 - Test: `tests/test_admin_actions.py`
 - Test: `tests/test_concepts.py`
 
-- [ ] **Step 1: Write compatibility tests**
+- [x] **Step 1: Write compatibility tests**
 
 In `tests/test_memory_search.py`, add:
 
@@ -2558,7 +2558,7 @@ def test_legacy_memory_add_is_searchable_as_short_term_then_long_term(config: Hi
     assert results[0]["text"] == "Use Yun for ユン."
 ```
 
-- [ ] **Step 2: Preserve old APIs with new storage semantics**
+- [x] **Step 2: Preserve old APIs with new storage semantics**
 
 `MemoryStore.add` should create a default task session if needed and add a
 short-term memory with metadata:
@@ -2575,19 +2575,19 @@ short-term memory with metadata:
 otherwise it should run deterministic FTS over short-term and long-term tables and
 return the old dict shape.
 
-- [ ] **Step 3: Keep old concept proposal APIs as compatibility**
+- [x] **Step 3: Keep old concept proposal APIs as compatibility**
 
 `ConceptProposalStore.list_pending` should return rows from
 `strict_concept_proposals` plus vague concepts with facet suggestions. The returned
 dataclass shape remains compatible with tests that still inspect `concept_text`.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `uv run pytest tests/test_memory_search.py tests/test_admin_actions.py tests/test_concepts.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hieronymus/memory.py src/hieronymus/concepts.py src/hieronymus/admin.py docs/agent-workflows.md tests/test_memory_search.py tests/test_admin_actions.py tests/test_concepts.py
@@ -2603,39 +2603,44 @@ git commit -m "chore: keep legacy memory APIs compatible"
 - Modify: `docs/translation-workspace-integration.md`
 - Test: whole repository
 
-- [ ] **Step 1: Run the full pytest suite**
+- [x] **Step 1: Run the full pytest suite**
 
 Run: `uv run pytest`
 
 Expected: PASS.
 
-- [ ] **Step 2: Run ruff check**
+- [x] **Step 2: Run ruff check**
 
 Run: `uv run ruff check .`
 
 Expected: PASS.
 
-- [ ] **Step 3: Run ruff format check**
+- [x] **Step 3: Run ruff format check**
 
 Run: `uv run ruff format --check .`
 
 Expected: PASS.
 
-- [ ] **Step 4: Run docs whitespace check**
+- [x] **Step 4: Run docs whitespace check**
 
 Run:
 `git diff --check -- CONTEXT.md docs/adr docs/superpowers/specs docs/superpowers/plans docs/memory-dreaming.md docs/usage.md docs/translation-workspace-integration.md`
 
 Expected: no output and exit code 0.
 
-- [ ] **Step 5: Confirm spec coverage**
+- [x] **Step 5: Confirm spec coverage**
 
 Run:
 `rg -n "strict contract|api_key_env|new_short_term_memory_threshold|max_cycles_per_autostart|deterministic provider" docs src tests`
 
 Expected: only compatibility notes and tests that explicitly describe old behavior.
 
-- [ ] **Step 6: Commit**
+Result: remaining hits are legacy `settings.toml`/config TUI compatibility
+implementation and tests, plus this plan's own command text. The primary docs now
+describe `dream.conf`, named provider profiles/workflows, rule crystals, and
+short-term memory compatibility wrappers.
+
+- [x] **Step 6: Commit**
 
 ```bash
 git add docs/memory-dreaming.md docs/usage.md docs/translation-workspace-integration.md

@@ -89,50 +89,46 @@ For machine-readable status, use:
 hiero config --json
 ```
 
-The config TUI edits provider fields (`enabled`, `model`, `api_key_env`,
-`base_url`, `timeout_seconds`) and dreaming automation fields
-(`active_provider`, `autostart_enabled`, `min_interval_minutes`,
-`new_short_term_memory_threshold`, `max_cycles_per_autostart`).
+The config interface exposes the primary dreaming config from
+`~/.config/hieronymus/dream.conf`: schedule/minimum/urgent thresholds, named
+provider profiles, workflow-to-provider/model assignments, cached model
+suggestions from `llmcache.tmp`, and dreaming prompts. Provider profiles store
+their endpoint, model hints, and API key directly in `dream.conf`; the file is
+plain text local configuration.
 
 Edits stay in memory until saved. Reload discards unsaved edits and reads
-`settings.toml` again. Provider checks use the edited in-memory settings. API
-key values are never stored or displayed; the TUI shows only the configured
-environment variable name and whether that variable exists.
+`dream.conf` again. Provider checks use the edited profile, refresh model
+suggestions where the provider supports model listing, and update
+`llmcache.tmp`.
 
-Non-secret settings are stored in `~/.config/hieronymus/settings.toml` by
-default, or in `settings.toml` under the configured `HIERONYMUS_DATA_ROOT`.
-API key values are not stored. Provider entries store the environment variable
-name for each key, and dream runs read the secret value from the runtime
-environment.
+Supported dream provider profile types:
 
-Supported dream providers:
-
-- `deterministic`: offline local fallback.
-- `openai`: OpenAI and OpenAI-compatible endpoints using `OPENAI_API_KEY`.
-- `gemini`: Gemini API using `GEMINI_API_KEY`.
-- `anthropic`: Anthropic Messages API using `ANTHROPIC_API_KEY`.
+- `openai`: OpenAI and OpenAI-compatible endpoints.
+- `gemini`: Gemini API.
+- `anthropic`: Anthropic Messages API.
+- `ollama`: local Ollama chat/model endpoints.
 
 In the Ink config TUI, the remote provider selector offers `openai`, `gemini`,
-and `anthropic`. `deterministic` remains the internal offline fallback and is
-not edited as a remote provider row there.
+`anthropic`, and local-compatible profiles as the implementation supports them.
 
 Model suggestions appear when the selected provider API supports listing models
-and the configured API key environment variable is available. If model listing
-is unavailable, the TUI shows the configured defaults instead.
+and the configured profile can be reached. If model listing is unavailable, the
+TUI shows cached/default hints and `hiero doctor` reports stale, unreachable, or
+missing-model conditions.
 
 Example OpenAI-backed dreaming run:
 
 ```bash
-export OPENAI_API_KEY=...
 hiero config
-hiero dream --provider openai --json
+hiero doctor
+hiero dream --json
 ```
 
-Dream runs accept `--provider` for one-off provider selection, `--wait` to block
-until an active dream cycle finishes, and `--json` for machine-readable output.
-Manual `hiero dream` drains all pending short-term memories, including the final
-small batch that scheduled dreaming would normally leave until the minimum
-threshold is met.
+Manual `hiero dream` uses the configured crystallization workflow profile and
+drains all pending short-term memories, including the final small batch that
+scheduled dreaming would normally leave until the minimum threshold is met. Use
+`--wait` to block until an active dream cycle finishes, and `--json` for
+machine-readable output.
 
 Scheduled dreaming respects the configured minimum pending-memory threshold
 unless the urgent cap or backlog escape rule fires.
