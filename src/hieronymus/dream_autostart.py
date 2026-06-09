@@ -128,7 +128,7 @@ class DreamAutostart:
                 ignore_minimum = True
             elif self._interval_elapsed(
                 now,
-                state.last_started_at,
+                self._interval_anchor(state),
                 dream_config.schedule_interval_minutes,
             ):
                 if pending_short_term_memories >= dream_config.min_pending_short_term_memories:
@@ -213,12 +213,19 @@ class DreamAutostart:
     def _interval_elapsed(
         self,
         now: datetime,
-        last_started_at: datetime | None,
+        last_decision_at: datetime | None,
         min_interval_minutes: int,
     ) -> bool:
-        if last_started_at is None:
+        if last_decision_at is None:
             return True
-        return (now - last_started_at).total_seconds() / 60 >= min_interval_minutes
+        return (now - last_decision_at).total_seconds() / 60 >= min_interval_minutes
+
+    def _interval_anchor(self, state: AutostartState) -> datetime | None:
+        if state.last_skip_reason == "not_enough_memories" and state.last_skipped_at is not None:
+            return state.last_skipped_at
+        if state.last_started_at is None:
+            return state.last_skipped_at
+        return state.last_started_at
 
 
 def _parse_datetime(value: Any, field_name: str) -> datetime | None:

@@ -215,6 +215,34 @@ def test_interval_trigger_counts_not_enough_memory_skips(
     assert state.not_enough_memories_skipped_count == 1
 
 
+def test_not_enough_memory_skip_anchors_next_interval(
+    config: HieronymusConfig,
+) -> None:
+    _enable_autostart(
+        config,
+        schedule_interval_minutes=30,
+        min_pending_short_term_memories=2,
+        max_pending_short_term_memories=25,
+    )
+    _completed_session(config, _context(config), memories=1)
+    now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+
+    assert DreamAutostart(config).run_due(now=now) == {
+        "ran": False,
+        "reason": "not_enough_memories",
+        "cycles": 0,
+    }
+    assert DreamAutostart(config).run_due(now=now + timedelta(minutes=1)) == {
+        "ran": False,
+        "reason": "not-due",
+        "cycles": 0,
+    }
+
+    state = load_autostart_state(config)
+    assert state.last_skipped_at == now
+    assert state.not_enough_memories_skipped_count == 1
+
+
 def test_backlog_escape_runs_on_sixth_default_not_enough_check(
     config: HieronymusConfig,
 ) -> None:
@@ -228,13 +256,13 @@ def test_backlog_escape_runs_on_sixth_default_not_enough_check(
     base = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
 
     for offset in range(5):
-        assert DreamAutostart(config).run_due(now=base + timedelta(minutes=offset)) == {
+        assert DreamAutostart(config).run_due(now=base + timedelta(minutes=30 * offset)) == {
             "ran": False,
             "reason": "not_enough_memories",
             "cycles": 0,
         }
 
-    result = DreamAutostart(config).run_due(now=base + timedelta(minutes=5))
+    result = DreamAutostart(config).run_due(now=base + timedelta(minutes=150))
 
     assert result == {"ran": True, "reason": "backlog_escape", "cycles": 1}
     assert DreamAutostart(config).status()["pending_short_term_memories"] == 0

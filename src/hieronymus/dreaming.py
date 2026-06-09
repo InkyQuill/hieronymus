@@ -632,6 +632,11 @@ class DreamService:
 
                 if archive_memories:
                     self._archive_memories(conn, groups)
+                    self._mark_fully_archived_completed_sessions(
+                        conn,
+                        cycle_id,
+                        [session_id for session_id, _context, _memories in groups],
+                    )
                 conn.commit()
             except Exception:
                 conn.rollback()

@@ -162,6 +162,95 @@ def test_scheduled_dreaming_drains_all_pending_in_capped_cycles(
     assert session_row["cycle_id"] == run.cycle_id
 
 
+def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
+    config: HieronymusConfig,
+) -> None:
+    class FailSecondBatchProvider:
+        name = "fail-second-batch"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def crystallize(self, context, memories):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("second batch failed")
+            return DreamOutput(crystals=[], concept_proposals=[])
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    first_session = workspace.start_session(context)
+    first_memory_id = workspace.add_short_term_memory(
+        first_session.id,
+        source_role="user",
+        kind="note",
+        text="First batch should stay attributed to the failed parent cycle.",
+    )
+    workspace.complete_session(first_session.id)
+    second_session = workspace.start_session(context)
+    second_memory_id = workspace.add_short_term_memory(
+        second_session.id,
+        source_role="user",
+        kind="note",
+        text="Second batch fails.",
+    )
+    workspace.complete_session(second_session.id)
+
+    with pytest.raises(RuntimeError, match="second batch failed"):
+        DreamService(
+            config,
+            FailSecondBatchProvider(),
+            max_short_term_memories_per_cycle=1,
+        ).run_all()
+
+    with connect(config.database_path) as conn:
+        failed_run = conn.execute("select id, cycle_id, status from dream_runs").fetchone()
+        first_memory = conn.execute(
+            "select archived_at from short_term_memories where id = ?",
+            (first_memory_id,),
+        ).fetchone()
+        second_memory = conn.execute(
+            "select archived_at from short_term_memories where id = ?",
+            (second_memory_id,),
+        ).fetchone()
+        first_session_after_failure = conn.execute(
+            "select status, cycle_id from task_sessions where id = ?",
+            (first_session.id,),
+        ).fetchone()
+        phase_rows = conn.execute(
+            "select status from dream_phase_runs order by id",
+        ).fetchall()
+
+    assert failed_run["status"] == "failed"
+    assert first_memory["archived_at"] is not None
+    assert second_memory["archived_at"] is None
+    assert first_session_after_failure["status"] == "dreamed"
+    assert first_session_after_failure["cycle_id"] == failed_run["cycle_id"]
+    assert [row["status"] for row in phase_rows] == ["completed", "failed"]
+
+    later_run = DreamService(
+        config,
+        EmptyDreamProvider(),
+        max_short_term_memories_per_cycle=1,
+    ).run_all()
+
+    with connect(config.database_path) as conn:
+        first_session_after_later_run = conn.execute(
+            "select status, cycle_id from task_sessions where id = ?",
+            (first_session.id,),
+        ).fetchone()
+        second_session_after_later_run = conn.execute(
+            "select status, cycle_id from task_sessions where id = ?",
+            (second_session.id,),
+        ).fetchone()
+
+    assert later_run.cycle_id != failed_run["cycle_id"]
+    assert first_session_after_later_run["status"] == "dreamed"
+    assert first_session_after_later_run["cycle_id"] == failed_run["cycle_id"]
+    assert second_session_after_later_run["status"] == "dreamed"
+    assert second_session_after_later_run["cycle_id"] == later_run.cycle_id
+
+
 def test_run_all_preserves_crystal_source_links(config: HieronymusConfig) -> None:
     context = _context(config)
     workspace = WorkspaceStore(config)
