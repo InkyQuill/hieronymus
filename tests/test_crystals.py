@@ -299,6 +299,50 @@ def test_search_scored_exposes_weighted_scores_without_changing_search_api(
     assert scored_results[0][1] > scored_results[1][1]
 
 
+def test_low_confidence_first_orders_candidates_and_excludes_active_rules(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    active_rule_id = store.add_crystal(
+        context,
+        crystal_type="rule",
+        text="Cooking Talent is translated as Готовка.",
+        strength=0.4,
+        confidence=0.05,
+        status="active",
+    )
+    archived_rule_id = store.add_crystal(
+        context,
+        crystal_type="rule",
+        text="Archived rule can be audited.",
+        strength=0.4,
+        confidence=0.01,
+        status="archived",
+    )
+    middle_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Middle confidence candidate.",
+        strength=0.4,
+        confidence=0.3,
+    )
+    low_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Low confidence candidate.",
+        strength=0.4,
+        confidence=0.2,
+    )
+
+    candidates = store.low_confidence_first(
+        (active_rule_id, archived_rule_id, middle_id, low_id),
+        limit=3,
+    )
+
+    assert candidates == (archived_rule_id, low_id, middle_id)
+
+
 def test_search_blends_quality_with_text_relevance(config: HieronymusConfig) -> None:
     context = _context(config)
     store = CrystalStore(config)

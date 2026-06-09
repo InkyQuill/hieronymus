@@ -1372,6 +1372,238 @@ def test_dreaming_decays_inactive_crystals_but_not_recalled_crystals(
     assert recalled_cycle == run.cycle_id
 
 
+def test_active_rule_crystals_do_not_decay(config: HieronymusConfig) -> None:
+    context = _context(config)
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="rule",
+        text="Cooking Talent is translated as Готовка.",
+        confidence=0.95,
+        strength=0.6,
+        status="active",
+    )
+
+    DreamService(config, DeterministicDreamProvider()).decay_candidates(
+        crystal_ids=(crystal_id,),
+        reason="ambient low confidence decay",
+    )
+
+    crystal = CrystalStore(config).get(crystal_id)
+    assert crystal.strength == 0.6
+    assert crystal.status == "active"
+
+
+def test_select_ambient_decay_candidates_excludes_linked_ids_and_active_rules(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    linked_id = _add_crystal(
+        config,
+        context,
+        text="Linked low confidence memory.",
+        strength=0.3,
+        confidence=0.1,
+    )
+    lowest_id = _add_crystal(
+        config,
+        context,
+        text="Lowest confidence unlinked memory.",
+        strength=0.3,
+        confidence=0.2,
+    )
+    active_rule_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="rule",
+        text="Cooking Talent is translated as Готовка.",
+        strength=0.3,
+        confidence=0.05,
+        status="active",
+    )
+    higher_id = _add_crystal(
+        config,
+        context,
+        text="Higher confidence unlinked memory.",
+        strength=0.3,
+        confidence=0.4,
+    )
+
+    candidates = DreamService(
+        config,
+        DeterministicDreamProvider(),
+    ).select_ambient_decay_candidates(
+        recalled_crystal_ids=(linked_id, lowest_id, active_rule_id, higher_id),
+        linked_crystal_ids=(linked_id,),
+        limit=5,
+    )
+
+    assert candidates == (lowest_id, higher_id)
+
+
+def test_apply_maintenance_reinforce_decay_clamps_and_archives_zero_confidence(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    high_id = _add_crystal(
+        config,
+        context,
+        text="Strong reinforced memory.",
+        strength=0.95,
+        confidence=0.98,
+    )
+    low_id = _add_crystal(
+        config,
+        context,
+        text="Weak decayed memory.",
+        strength=0.03,
+        confidence=0.01,
+    )
+
+    DreamService(config, DeterministicDreamProvider()).apply_maintenance_actions(
+        {
+            "reinforce": [{"crystal_id": high_id, "strength_delta": 0.1, "confidence_delta": 0.05}],
+            "decay": [{"crystal_id": low_id, "strength_delta": -0.05, "confidence_delta": -0.02}],
+        },
+        cycle_id=42,
+    )
+
+    high = CrystalStore(config).get(high_id)
+    low = CrystalStore(config).get(low_id)
+    with connect(config.database_path) as conn:
+        events = conn.execute(
+            """
+            select crystal_id, event_type, strength_delta, confidence_delta, applied, cycle_id
+            from memory_events
+            order by id
+            """
+        ).fetchall()
+
+    assert high.strength == 1.0
+    assert high.confidence == 1.0
+    assert high.status == "active"
+    assert low.strength == 0.0
+    assert low.confidence == 0.0
+    assert low.status == "archived"
+    assert [
+        (row["crystal_id"], row["event_type"], row["applied"], row["cycle_id"]) for row in events
+    ] == [
+        (high_id, "maintenance_reinforce", 1, 42),
+        (low_id, "maintenance_decay", 1, 42),
+    ]
+    assert events[0]["strength_delta"] == pytest.approx(0.05)
+    assert events[0]["confidence_delta"] == pytest.approx(0.02)
+    assert events[1]["strength_delta"] == pytest.approx(-0.03)
+    assert events[1]["confidence_delta"] == pytest.approx(-0.01)
+
+
+def test_apply_maintenance_combines_crystals_with_deterministic_sources(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    first_id = _add_crystal(
+        config,
+        context,
+        text="First memory for combined crystal.",
+        strength=0.4,
+        confidence=0.7,
+    )
+    second_id = _add_crystal(
+        config,
+        context,
+        text="Second memory for combined crystal.",
+        strength=0.8,
+        confidence=0.5,
+    )
+
+    created_ids = DreamService(
+        config,
+        DeterministicDreamProvider(),
+    ).apply_maintenance_actions(
+        {
+            "combine": [
+                {
+                    "source_crystal_ids": [second_id, first_id, first_id],
+                    "content": "Combined memory text.",
+                }
+            ]
+        },
+        cycle_id=9,
+    )
+
+    combined = CrystalStore(config).get(created_ids["combine"][0])
+    with connect(config.database_path) as conn:
+        source_rows = conn.execute(
+            """
+            select source_crystal_id, target_crystal_id, link_type
+            from crystal_links
+            where target_crystal_id = ?
+            order by source_crystal_id
+            """,
+            (combined.id,),
+        ).fetchall()
+        event_rows = conn.execute(
+            """
+            select crystal_id, event_type, evidence, cycle_id
+            from memory_events
+            order by id
+            """
+        ).fetchall()
+
+    assert combined.text == "Combined memory text."
+    assert combined.strength == pytest.approx(0.6)
+    assert combined.confidence == pytest.approx(0.6)
+    assert [
+        (row["source_crystal_id"], row["target_crystal_id"], row["link_type"])
+        for row in source_rows
+    ] == [
+        (first_id, combined.id, "combined_into"),
+        (second_id, combined.id, "combined_into"),
+    ]
+    assert [(row["crystal_id"], row["event_type"], row["cycle_id"]) for row in event_rows] == [
+        (combined.id, "maintenance_combine", 9)
+    ]
+    assert event_rows[0]["evidence"] == f"combined sources: {first_id}, {second_id}"
+
+
+def test_apply_maintenance_supersede_uses_safe_supersede_behavior(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    old_id = _add_crystal(
+        config,
+        context,
+        text="Old rule-shaped lesson.",
+    )
+    new_id = _add_crystal(
+        config,
+        context,
+        text="New rule-shaped lesson.",
+    )
+
+    DreamService(config, DeterministicDreamProvider()).apply_maintenance_actions(
+        {
+            "supersede": [
+                {
+                    "old_crystal_id": old_id,
+                    "new_crystal_id": new_id,
+                    "reason": "New rule is specific.",
+                }
+            ]
+        },
+        cycle_id=7,
+    )
+
+    old = CrystalStore(config).get(old_id)
+    new = CrystalStore(config).get(new_id)
+    with connect(config.database_path) as conn:
+        event = conn.execute("select * from memory_events").fetchone()
+
+    assert old.status == "superseded"
+    assert new.supersedes_crystal_id == old_id
+    assert event["event_type"] == "supersede"
+    assert event["evidence"] == "New rule is specific."
+    assert event["cycle_id"] == 7
+
+
 def test_passive_positive_event_reinforces_and_prevents_decay_in_same_cycle(
     config: HieronymusConfig,
 ) -> None:

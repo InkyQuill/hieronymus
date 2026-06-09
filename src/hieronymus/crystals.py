@@ -226,6 +226,31 @@ class CrystalStore:
             crystal = self._hydrate_crystal(conn, row)
         return crystal
 
+    def low_confidence_first(
+        self,
+        crystal_ids: tuple[int, ...],
+        *,
+        limit: int = 5,
+    ) -> tuple[int, ...]:
+        if limit < 1 or not crystal_ids:
+            return ()
+
+        unique_ids = tuple(sorted(set(crystal_ids)))
+        placeholders = ", ".join("?" for _ in unique_ids)
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute(
+                f"""
+                select id
+                from crystals
+                where id in ({placeholders})
+                  and not (crystal_type = 'rule' and status = 'active')
+                order by confidence asc, strength asc, id asc
+                limit ?
+                """,
+                (*unique_ids, limit),
+            ).fetchall()
+        return tuple(int(row["id"]) for row in rows)
+
     def _supersede_with_connection(
         self,
         conn,
