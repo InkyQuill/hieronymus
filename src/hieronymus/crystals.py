@@ -8,7 +8,9 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
 from hieronymus.memory_models import CrystalRecord, TranslationContext
 
-_ALLOWED_CRYSTAL_TYPES = frozenset({"lesson", "concept", "erudition"})
+_ALLOWED_CRYSTAL_TYPES = frozenset(
+    {"lesson", "rule", "thought", "observation", "concept_note", "concept", "erudition"}
+)
 _ALLOWED_STATUSES = frozenset({"active", "candidate", "archived", "rejected"})
 _FTS_OPERATORS = frozenset({"and", "or", "not", "near"})
 _MAX_SEARCH_LIMIT = 50
@@ -23,12 +25,26 @@ def _clamp_score(value: float) -> float:
     return min(max(value, 0.0), 1.0)
 
 
+def _clean_text_tuple(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(sorted({value.strip() for value in values if value.strip()}))
+
+
+def _clean_int_tuple(values: tuple[int, ...]) -> tuple[int, ...]:
+    return tuple(sorted(set(values)))
+
+
 def _search_expression(query: str) -> str:
     tokens = [token for token in _TOKEN_RE.findall(query) if token.casefold() not in _FTS_OPERATORS]
     return " ".join(f'"{token}"' for token in tokens)
 
 
-def _row_to_crystal(row) -> CrystalRecord:
+def _row_to_crystal(
+    row,
+    *,
+    story_scopes: tuple[str, ...] = (),
+    semantic_tags: tuple[str, ...] = (),
+    concept_ids: tuple[int, ...] = (),
+) -> CrystalRecord:
     return CrystalRecord(
         id=row["id"],
         crystal_type=row["crystal_type"],
@@ -46,6 +62,9 @@ def _row_to_crystal(row) -> CrystalRecord:
         malformed_penalty=float(row["malformed_penalty"]),
         supersedes_crystal_id=row["supersedes_crystal_id"],
         status=row["status"],
+        story_scopes=story_scopes,
+        semantic_tags=semantic_tags,
+        concept_ids=concept_ids,
     )
 
 
@@ -81,6 +100,9 @@ class CrystalStore:
         rule_intent: str = "",
         malformed_penalty: float = 0.0,
         supersedes_crystal_id: int | None = None,
+        story_scopes: tuple[str, ...] = (),
+        semantic_tags: tuple[str, ...] = (),
+        concept_ids: tuple[int, ...] = (),
         status: str = "active",
         source_memory_ids: list[int] | None = None,
     ) -> int:
@@ -91,7 +113,11 @@ class CrystalStore:
 
         clamped_strength = _clamp_score(strength)
         clamped_confidence = _clamp_score(confidence)
-        tags_json = json.dumps(list(context.tags), ensure_ascii=False, sort_keys=True)
+        clean_story_scopes = _clean_text_tuple(story_scopes)
+        clean_semantic_tags = _clean_text_tuple(semantic_tags)
+        clean_concept_ids = _clean_int_tuple(concept_ids)
+        legacy_tags = list(clean_semantic_tags) if clean_semantic_tags else list(context.tags)
+        tags_json = json.dumps(legacy_tags, ensure_ascii=False, sort_keys=True)
         now = _now()
 
         with connect(self.config.database_path) as conn:
@@ -144,6 +170,36 @@ class CrystalStore:
                 "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
                 (crystal_id, title, text),
             )
+            for story_scope in clean_story_scopes:
+                conn.execute(
+                    """
+                    insert into crystal_story_scopes(crystal_id, scope, confidence, created_at)
+                    values (?, ?, ?, ?)
+                    """,
+                    (crystal_id, story_scope, clamped_confidence, now),
+                )
+            for semantic_tag in clean_semantic_tags:
+                conn.execute(
+                    """
+                    insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+                    values (?, ?, ?, ?)
+                    """,
+                    (crystal_id, semantic_tag, clamped_confidence, now),
+                )
+            for concept_id in clean_concept_ids:
+                conn.execute(
+                    """
+                    insert into crystal_concepts(
+                      crystal_id,
+                      concept_id,
+                      link_type,
+                      confidence,
+                      created_at
+                    )
+                    values (?, ?, 'mentions', ?, ?)
+                    """,
+                    (crystal_id, concept_id, clamped_confidence, now),
+                )
             for memory_id in source_memory_ids or []:
                 conn.execute(
                     """
@@ -161,9 +217,10 @@ class CrystalStore:
                 "select * from crystals where id = ?",
                 (crystal_id,),
             ).fetchone()
-        if row is None:
-            raise KeyError(f"unknown crystal: {crystal_id}")
-        return _row_to_crystal(row)
+            if row is None:
+                raise KeyError(f"unknown crystal: {crystal_id}")
+            crystal = self._hydrate_crystal(conn, row)
+        return crystal
 
     def search(
         self,
@@ -238,7 +295,51 @@ class CrystalStore:
                     bounded_limit,
                 ),
             ).fetchall()
-        return [(_row_to_crystal(row), float(row["search_score"])) for row in rows]
+            return [(self._hydrate_crystal(conn, row), float(row["search_score"])) for row in rows]
+
+    def _hydrate_crystal(self, conn, row) -> CrystalRecord:
+        story_scopes = tuple(
+            scope_row["scope"]
+            for scope_row in conn.execute(
+                """
+                select scope
+                from crystal_story_scopes
+                where crystal_id = ?
+                order by scope
+                """,
+                (row["id"],),
+            )
+        )
+        semantic_tags = tuple(
+            tag_row["tag"]
+            for tag_row in conn.execute(
+                """
+                select tag
+                from crystal_semantic_tags
+                where crystal_id = ?
+                order by tag
+                """,
+                (row["id"],),
+            )
+        )
+        concept_ids = tuple(
+            int(concept_row["concept_id"])
+            for concept_row in conn.execute(
+                """
+                select distinct concept_id
+                from crystal_concepts
+                where crystal_id = ?
+                order by concept_id
+                """,
+                (row["id"],),
+            )
+        )
+        return _row_to_crystal(
+            row,
+            story_scopes=story_scopes,
+            semantic_tags=semantic_tags,
+            concept_ids=concept_ids,
+        )
 
     def _validate_crystal_type(self, crystal_type: str) -> None:
         if crystal_type not in _ALLOWED_CRYSTAL_TYPES:

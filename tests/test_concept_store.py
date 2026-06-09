@@ -2,10 +2,22 @@ import sqlite3
 
 import pytest
 
+from hieronymus.concepts import ConceptStore
 from hieronymus.config import HieronymusConfig
+from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
+from hieronymus.memory_models import TranslationContext
 
 _NOW = "2026-06-09T00:00:00+00:00"
+
+
+def _context() -> TranslationContext:
+    return TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        task_type="translate",
+    )
 
 
 def test_memory_design_tables_exist(config: HieronymusConfig) -> None:
@@ -30,6 +42,114 @@ def test_memory_design_tables_exist(config: HieronymusConfig) -> None:
         "dream_audit_entries",
         "dream_phase_runs",
     }.issubset(table_names)
+
+
+def test_concept_store_creates_vague_then_solid_concept(
+    config: HieronymusConfig,
+) -> None:
+    store = ConceptStore(config)
+
+    concept_id = store.create_or_reinforce(
+        " Sense ",
+        description="A game-like aptitude category.",
+        tags=(" term:skill ", "term:skill", "", "domain:system"),
+        confidence_delta=0.4,
+    )
+    first = store.get(concept_id)
+
+    assert first.canonical_name == "Sense"
+    assert first.description == "A game-like aptitude category."
+    assert first.status == "vague"
+    assert first.confidence == 0.4
+    assert first.tags == ("domain:system", "term:skill")
+
+    reinforced_id = store.create_or_reinforce(
+        "Sense",
+        description="A reinforced description.",
+        tags=("term:skill", "plot:core"),
+        confidence_delta=0.4,
+    )
+    reinforced = store.get(reinforced_id)
+
+    assert reinforced_id == concept_id
+    assert reinforced.description == "A reinforced description."
+    assert reinforced.status == "solid"
+    assert reinforced.confidence == 0.8
+    assert reinforced.tags == ("domain:system", "plot:core", "term:skill")
+
+
+def test_concept_store_reinforces_only_matching_scope(
+    config: HieronymusConfig,
+) -> None:
+    store = ConceptStore(config)
+
+    global_id = store.create_or_reinforce(
+        "Sense",
+        confidence_delta=0.3,
+        scope_type="global",
+        scope_key="",
+    )
+    project_id = store.create_or_reinforce(
+        "Sense",
+        confidence_delta=0.6,
+        scope_type="project",
+        scope_key="oso",
+    )
+
+    reinforced_id = store.create_or_reinforce(
+        "Sense",
+        confidence_delta=0.2,
+        scope_type="project",
+        scope_key="oso",
+    )
+
+    assert global_id != project_id
+    assert reinforced_id == project_id
+    assert store.get(global_id).confidence == 0.3
+    assert store.get(project_id).confidence == 0.8
+    assert store.get(global_id).scope_type == "global"
+    assert store.get(global_id).scope_key == ""
+    assert store.get(project_id).scope_type == "project"
+    assert store.get(project_id).scope_key == "oso"
+
+
+def test_concept_store_rejects_empty_canonical_name(
+    config: HieronymusConfig,
+) -> None:
+    store = ConceptStore(config)
+
+    with pytest.raises(ValueError, match="concept canonical_name must not be empty"):
+        store.create_or_reinforce("   ")
+
+
+def test_concept_store_links_crystal_to_multiple_concepts(
+    config: HieronymusConfig,
+) -> None:
+    concept_store = ConceptStore(config)
+    first_id = concept_store.create_or_reinforce("Sense")
+    second_id = concept_store.create_or_reinforce("Crafting")
+    crystal_id = CrystalStore(config).add_crystal(
+        _context(),
+        crystal_type="lesson",
+        text="Sense and crafting terminology stay stable.",
+    )
+
+    concept_store.link_crystal(crystal_id, first_id, link_type="mentions", confidence=0.4)
+    concept_store.link_crystal(crystal_id, second_id, link_type="mentions", confidence=0.8)
+    concept_store.link_crystal(crystal_id, first_id, link_type="mentions", confidence=0.9)
+
+    assert concept_store.concept_ids_for_crystal(crystal_id) == (first_id, second_id)
+    with connect(config.database_path) as conn:
+        row = conn.execute(
+            """
+            select confidence
+            from crystal_concepts
+            where crystal_id = ? and concept_id = ?
+            """,
+            (crystal_id, first_id),
+        ).fetchone()
+
+    assert row["confidence"] == 0.9
 
 
 def test_concepts_fts_searches_inserted_concept(config: HieronymusConfig) -> None:
