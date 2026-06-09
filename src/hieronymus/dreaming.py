@@ -240,55 +240,61 @@ class DreamService:
         cycle_id: int = 0,
     ) -> dict[str, tuple[int, ...]]:
         applied: dict[str, tuple[int, ...]] = {}
-        reinforced_ids: list[int] = []
-        for item in _list_from_payload(payload.get("reinforce")):
-            action = _normalize_score_action(item)
-            if action is None:
-                continue
-            reinforced_ids.extend(
-                self._apply_score_maintenance(
-                    crystal_ids=(action[0],),
-                    strength_delta=action[1],
-                    confidence_delta=action[2],
-                    reason="maintenance reinforce",
-                    event_type="maintenance_reinforce",
-                    cycle_id=cycle_id,
-                    skip_active_rules=False,
-                )
-            )
-        if reinforced_ids:
-            applied["reinforce"] = tuple(reinforced_ids)
-
-        decayed_ids: list[int] = []
-        for item in _list_from_payload(payload.get("decay")):
-            action = _normalize_score_action(item)
-            if action is None:
-                continue
-            decayed_ids.extend(
-                self._apply_score_maintenance(
-                    crystal_ids=(action[0],),
-                    strength_delta=action[1],
-                    confidence_delta=action[2],
-                    reason="maintenance decay",
-                    event_type="maintenance_decay",
-                    cycle_id=cycle_id,
-                    skip_active_rules=True,
-                )
-            )
-        if decayed_ids:
-            applied["decay"] = tuple(decayed_ids)
-
-        combined_ids: list[int] = []
-        for item in _list_from_payload(payload.get("combine")):
-            combined_id = self._apply_combine_maintenance(item, cycle_id=cycle_id)
-            if combined_id is not None:
-                combined_ids.append(combined_id)
-        if combined_ids:
-            applied["combine"] = tuple(combined_ids)
-
-        superseded_ids: list[int] = []
         with connect(self.config.database_path) as conn:
             try:
+                reinforced_ids: list[int] = []
+                for item in _list_from_payload(payload.get("reinforce")):
+                    action = _normalize_score_action(item)
+                    if action is None:
+                        continue
+                    reinforced_ids.extend(
+                        self._apply_score_maintenance_with_connection(
+                            conn,
+                            crystal_ids=(action[0],),
+                            strength_delta=action[1],
+                            confidence_delta=action[2],
+                            reason="maintenance reinforce",
+                            event_type="maintenance_reinforce",
+                            cycle_id=cycle_id,
+                            skip_active_rules=False,
+                        )
+                    )
+                if reinforced_ids:
+                    applied["reinforce"] = tuple(reinforced_ids)
+
+                decayed_ids: list[int] = []
+                for item in _list_from_payload(payload.get("decay")):
+                    action = _normalize_score_action(item)
+                    if action is None:
+                        continue
+                    decayed_ids.extend(
+                        self._apply_score_maintenance_with_connection(
+                            conn,
+                            crystal_ids=(action[0],),
+                            strength_delta=action[1],
+                            confidence_delta=action[2],
+                            reason="maintenance decay",
+                            event_type="maintenance_decay",
+                            cycle_id=cycle_id,
+                            skip_active_rules=True,
+                        )
+                    )
+                if decayed_ids:
+                    applied["decay"] = tuple(decayed_ids)
+
+                combined_ids: list[int] = []
+                for item in _list_from_payload(payload.get("combine")):
+                    combined_id = self._apply_combine_maintenance_with_connection(
+                        conn,
+                        item,
+                        cycle_id=cycle_id,
+                    )
+                    if combined_id is not None:
+                        combined_ids.append(combined_id)
+                if combined_ids:
+                    applied["combine"] = tuple(combined_ids)
+
+                superseded_ids: list[int] = []
                 for item in _list_from_payload(payload.get("supersede")):
                     action = _normalize_supersede_action(item)
                     if action is None:
@@ -301,12 +307,12 @@ class DreamService:
                         cycle_id=cycle_id,
                     )
                     superseded_ids.append(action.old_crystal_id)
+                if superseded_ids:
+                    applied["supersede"] = tuple(superseded_ids)
                 conn.commit()
             except Exception:
                 conn.rollback()
                 raise
-        if superseded_ids:
-            applied["supersede"] = tuple(superseded_ids)
 
         return applied
 
@@ -564,86 +570,132 @@ class DreamService:
     ) -> tuple[int, ...]:
         if not crystal_ids:
             return ()
-        unique_ids = tuple(sorted(set(crystal_ids)))
-        placeholders = ", ".join("?" for _ in unique_ids)
-        now = _now()
-        applied_ids: list[int] = []
         with connect(self.config.database_path) as conn:
             try:
-                rows = conn.execute(
-                    f"""
-                    select id, crystal_type, strength, confidence, status
-                    from crystals
-                    where id in ({placeholders})
-                    order by id
-                    """,
-                    unique_ids,
-                ).fetchall()
-                for crystal in rows:
-                    if (
-                        skip_active_rules
-                        and crystal["crystal_type"] == "rule"
-                        and crystal["status"] == "active"
-                    ):
-                        continue
-                    original_strength = float(crystal["strength"])
-                    original_confidence = float(crystal["confidence"])
-                    strength, confidence, status = apply_score_delta(
-                        strength=original_strength,
-                        confidence=original_confidence,
-                        status=crystal["status"],
-                        crystal_type=crystal["crystal_type"],
-                        strength_delta=strength_delta,
-                        confidence_delta=confidence_delta,
-                    )
-                    conn.execute(
-                        """
-                        update crystals
-                        set strength = ?,
-                            confidence = ?,
-                            status = ?,
-                            updated_at = ?
-                        where id = ?
-                        """,
-                        (strength, confidence, status, now, crystal["id"]),
-                    )
-                    actual_strength_delta = strength - original_strength
-                    actual_confidence_delta = confidence - original_confidence
-                    conn.execute(
-                        """
-                        insert into memory_events(
-                          crystal_id,
-                          session_id,
-                          event_type,
-                          source_role,
-                          evidence,
-                          strength_delta,
-                          confidence_delta,
-                          applied,
-                          cycle_id,
-                          created_at
-                        )
-                        values (?, null, ?, 'system', ?, ?, ?, 1, ?, ?)
-                        """,
-                        (
-                            crystal["id"],
-                            event_type,
-                            reason,
-                            actual_strength_delta,
-                            actual_confidence_delta,
-                            cycle_id,
-                            now,
-                        ),
-                    )
-                    applied_ids.append(int(crystal["id"]))
+                applied_ids = self._apply_score_maintenance_with_connection(
+                    conn,
+                    crystal_ids=crystal_ids,
+                    strength_delta=strength_delta,
+                    confidence_delta=confidence_delta,
+                    reason=reason,
+                    event_type=event_type,
+                    cycle_id=cycle_id,
+                    skip_active_rules=skip_active_rules,
+                )
                 conn.commit()
             except Exception:
                 conn.rollback()
                 raise
         return tuple(applied_ids)
 
+    def _apply_score_maintenance_with_connection(
+        self,
+        conn,
+        *,
+        crystal_ids: tuple[int, ...],
+        strength_delta: float,
+        confidence_delta: float,
+        reason: str,
+        event_type: str,
+        cycle_id: int,
+        skip_active_rules: bool,
+    ) -> tuple[int, ...]:
+        if not crystal_ids:
+            return ()
+        unique_ids = tuple(sorted(set(crystal_ids)))
+        placeholders = ", ".join("?" for _ in unique_ids)
+        now = _now()
+        rows = conn.execute(
+            f"""
+            select id, crystal_type, strength, confidence, status
+            from crystals
+            where id in ({placeholders})
+            order by id
+            """,
+            unique_ids,
+        ).fetchall()
+        applied_ids: list[int] = []
+        for crystal in rows:
+            if (
+                skip_active_rules
+                and crystal["crystal_type"] == "rule"
+                and crystal["status"] == "active"
+            ):
+                continue
+            original_strength = float(crystal["strength"])
+            original_confidence = float(crystal["confidence"])
+            strength, confidence, status = apply_score_delta(
+                strength=original_strength,
+                confidence=original_confidence,
+                status=crystal["status"],
+                crystal_type=crystal["crystal_type"],
+                strength_delta=strength_delta,
+                confidence_delta=confidence_delta,
+            )
+            conn.execute(
+                """
+                update crystals
+                set strength = ?,
+                    confidence = ?,
+                    status = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (strength, confidence, status, now, crystal["id"]),
+            )
+            actual_strength_delta = strength - original_strength
+            actual_confidence_delta = confidence - original_confidence
+            conn.execute(
+                """
+                insert into memory_events(
+                  crystal_id,
+                  session_id,
+                  event_type,
+                  source_role,
+                  evidence,
+                  strength_delta,
+                  confidence_delta,
+                  applied,
+                  cycle_id,
+                  created_at
+                )
+                values (?, null, ?, 'system', ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    crystal["id"],
+                    event_type,
+                    reason,
+                    actual_strength_delta,
+                    actual_confidence_delta,
+                    cycle_id,
+                    now,
+                ),
+            )
+            applied_ids.append(int(crystal["id"]))
+        return tuple(applied_ids)
+
     def _apply_combine_maintenance(
         self,
+        item: object,
+        *,
+        cycle_id: int,
+    ) -> int | None:
+        with connect(self.config.database_path) as conn:
+            try:
+                combined_id = self._apply_combine_maintenance_with_connection(
+                    conn,
+                    item,
+                    cycle_id=cycle_id,
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return combined_id
+
+    def _apply_combine_maintenance_with_connection(
+        self,
+        conn,
         item: object,
         *,
         cycle_id: int,
@@ -658,102 +710,97 @@ class DreamService:
             return None
 
         source_ids = _clean_int_tuple(payload.get("source_crystal_ids"))
-        if not source_ids:
-            return None
+        if len(source_ids) < 2:
+            raise ValueError("combine requires at least two distinct source crystal IDs")
 
         placeholders = ", ".join("?" for _ in source_ids)
         now = _now()
-        with connect(self.config.database_path) as conn:
-            try:
-                source_rows = conn.execute(
-                    f"""
-                    select *
-                    from crystals
-                    where id in ({placeholders})
-                    order by id
-                    """,
-                    source_ids,
-                ).fetchall()
-                if len(source_rows) != len(source_ids):
-                    found_ids = {int(row["id"]) for row in source_rows}
-                    missing_ids = sorted(set(source_ids) - found_ids)
-                    raise KeyError(f"unknown source_crystal_ids: {missing_ids}")
-                self._validate_combine_sources(source_rows)
+        source_rows = conn.execute(
+            f"""
+            select *
+            from crystals
+            where id in ({placeholders})
+            order by id
+            """,
+            source_ids,
+        ).fetchall()
+        if len(source_rows) != len(source_ids):
+            found_ids = {int(row["id"]) for row in source_rows}
+            missing_ids = sorted(set(source_ids) - found_ids)
+            raise KeyError(f"unknown source_crystal_ids: {missing_ids}")
+        self._validate_combine_sources(source_rows)
 
-                first = source_rows[0]
-                crystal_types = {row["crystal_type"] for row in source_rows}
-                strength = _clamp_score(
-                    sum(float(row["strength"]) for row in source_rows) / len(source_rows)
+        first = source_rows[0]
+        crystal_types = {row["crystal_type"] for row in source_rows}
+        strength = _clamp_score(
+            sum(float(row["strength"]) for row in source_rows) / len(source_rows)
+        )
+        confidence = _clamp_score(
+            sum(float(row["confidence"]) for row in source_rows) / len(source_rows)
+        )
+        context = TranslationContext(
+            series_slug=first["series_slug"],
+            source_language=first["source_language"],
+            target_language=first["target_language"],
+            task_type="translate",
+            volume="",
+            chapter="",
+        )
+        candidate = _NormalizedDreamCrystal(
+            crystal_type=first["crystal_type"] if len(crystal_types) == 1 else "observation",
+            title=_string_field(payload.get("title")).strip() or "Combined Memory",
+            text=" ".join(content.split()),
+            strength=strength,
+            confidence=confidence,
+            source_memory_ids=[],
+            source_credibility=first["source_credibility"],
+        )
+        combined_id = self._insert_crystal(conn, context, candidate)
+        for source_id in source_ids:
+            conn.execute(
+                """
+                insert or ignore into crystal_links(
+                  source_crystal_id,
+                  target_crystal_id,
+                  link_type
                 )
-                confidence = _clamp_score(
-                    sum(float(row["confidence"]) for row in source_rows) / len(source_rows)
-                )
-                context = TranslationContext(
-                    series_slug=first["series_slug"],
-                    source_language=first["source_language"],
-                    target_language=first["target_language"],
-                    task_type="translate",
-                    volume="",
-                    chapter="",
-                )
-                candidate = _NormalizedDreamCrystal(
-                    crystal_type=first["crystal_type"]
-                    if len(crystal_types) == 1
-                    else "observation",
-                    title=_string_field(payload.get("title")).strip() or "Combined Memory",
-                    text=" ".join(content.split()),
-                    strength=strength,
-                    confidence=confidence,
-                    source_memory_ids=[],
-                    source_credibility=first["source_credibility"],
-                )
-                combined_id = self._insert_crystal(conn, context, candidate)
-                for source_id in source_ids:
-                    conn.execute(
-                        """
-                        insert or ignore into crystal_links(
-                          source_crystal_id,
-                          target_crystal_id,
-                          link_type
-                        )
-                        values (?, ?, 'combined_into')
-                        """,
-                        (source_id, combined_id),
-                    )
-                source_evidence = (
-                    f"combined sources: {', '.join(str(source_id) for source_id in source_ids)}"
-                )
-                conn.execute(
-                    """
-                    insert into memory_events(
-                      crystal_id,
-                      session_id,
-                      event_type,
-                      source_role,
-                      evidence,
-                      strength_delta,
-                      confidence_delta,
-                      applied,
-                      cycle_id,
-                      created_at
-                    )
-                    values (?, null, 'maintenance_combine', 'system', ?, 0, 0, 1, ?, ?)
-                    """,
-                    (
-                        combined_id,
-                        source_evidence,
-                        cycle_id,
-                        now,
-                    ),
-                )
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
+                values (?, ?, 'combined_into')
+                """,
+                (source_id, combined_id),
+            )
+        source_evidence = (
+            f"combined sources: {', '.join(str(source_id) for source_id in source_ids)}"
+        )
+        conn.execute(
+            """
+            insert into memory_events(
+              crystal_id,
+              session_id,
+              event_type,
+              source_role,
+              evidence,
+              strength_delta,
+              confidence_delta,
+              applied,
+              cycle_id,
+              created_at
+            )
+            values (?, null, 'maintenance_combine', 'system', ?, 0, 0, 1, ?, ?)
+            """,
+            (
+                combined_id,
+                source_evidence,
+                cycle_id,
+                now,
+            ),
+        )
         return combined_id
 
     def _validate_combine_sources(self, source_rows) -> None:
         first = source_rows[0]
+        for row in source_rows:
+            if row["status"] not in {"active", "candidate"}:
+                raise ValueError("combine source crystals must be active or candidate")
         for row in source_rows[1:]:
             for column in (
                 "series_slug",

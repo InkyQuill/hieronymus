@@ -1495,6 +1495,58 @@ def test_apply_maintenance_reinforce_decay_clamps_and_archives_zero_confidence(
     assert events[1]["confidence_delta"] == pytest.approx(-0.01)
 
 
+def test_apply_maintenance_rolls_back_reinforce_when_later_supersede_fails(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    reinforced_id = _add_crystal(
+        config,
+        context,
+        text="Reinforce should roll back.",
+        strength=0.4,
+        confidence=0.4,
+    )
+    supersede_id = _add_crystal(
+        config,
+        context,
+        text="Self supersede should fail.",
+        strength=0.5,
+        confidence=0.5,
+    )
+
+    with pytest.raises(ValueError, match="crystal cannot supersede itself"):
+        DreamService(config, DeterministicDreamProvider()).apply_maintenance_actions(
+            {
+                "reinforce": [
+                    {
+                        "crystal_id": reinforced_id,
+                        "strength_delta": 0.2,
+                        "confidence_delta": 0.2,
+                    }
+                ],
+                "supersede": [
+                    {
+                        "old_crystal_id": supersede_id,
+                        "new_crystal_id": supersede_id,
+                        "reason": "Invalid self supersede.",
+                    }
+                ],
+            },
+            cycle_id=11,
+        )
+
+    reinforced = CrystalStore(config).get(reinforced_id)
+    supersede = CrystalStore(config).get(supersede_id)
+    with connect(config.database_path) as conn:
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+
+    assert reinforced.strength == pytest.approx(0.4)
+    assert reinforced.confidence == pytest.approx(0.4)
+    assert supersede.status == "active"
+    assert supersede.supersedes_crystal_id is None
+    assert event_count == 0
+
+
 def test_apply_maintenance_combines_crystals_with_deterministic_sources(
     config: HieronymusConfig,
 ) -> None:
@@ -1562,6 +1614,115 @@ def test_apply_maintenance_combines_crystals_with_deterministic_sources(
         (combined.id, "maintenance_combine", 9)
     ]
     assert event_rows[0]["evidence"] == f"combined sources: {first_id}, {second_id}"
+
+
+def test_apply_maintenance_combine_rejects_single_source(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    source_id = _add_crystal(
+        config,
+        context,
+        text="Single source should not combine.",
+    )
+
+    with pytest.raises(ValueError, match="at least two distinct"):
+        DreamService(config, DeterministicDreamProvider()).apply_maintenance_actions(
+            {
+                "combine": [
+                    {
+                        "source_crystal_ids": [source_id],
+                        "content": "Invalid combined memory.",
+                    }
+                ]
+            }
+        )
+
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            "select id, text from crystals order by id",
+        ).fetchall()
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+
+    assert [(row["id"], row["text"]) for row in rows] == [
+        (source_id, "Single source should not combine.")
+    ]
+    assert event_count == 0
+
+
+def test_apply_maintenance_combine_rejects_duplicate_only_sources(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    source_id = _add_crystal(
+        config,
+        context,
+        text="Duplicate-only source should not combine.",
+    )
+
+    with pytest.raises(ValueError, match="at least two distinct"):
+        DreamService(config, DeterministicDreamProvider()).apply_maintenance_actions(
+            {
+                "combine": [
+                    {
+                        "source_crystal_ids": [source_id, source_id],
+                        "content": "Invalid combined memory.",
+                    }
+                ]
+            }
+        )
+
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            "select id, text from crystals order by id",
+        ).fetchall()
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+
+    assert [(row["id"], row["text"]) for row in rows] == [
+        (source_id, "Duplicate-only source should not combine.")
+    ]
+    assert event_count == 0
+
+
+def test_apply_maintenance_combine_rejects_inactive_sources(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    active_id = _add_crystal(
+        config,
+        context,
+        text="Active source.",
+    )
+    archived_id = _add_crystal(
+        config,
+        context,
+        text="Archived source.",
+        status="archived",
+    )
+
+    with pytest.raises(ValueError, match="active or candidate"):
+        DreamService(config, DeterministicDreamProvider()).apply_maintenance_actions(
+            {
+                "combine": [
+                    {
+                        "source_crystal_ids": [active_id, archived_id],
+                        "content": "Invalid combined memory.",
+                    }
+                ]
+            }
+        )
+
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            "select id, text, status from crystals order by id",
+        ).fetchall()
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+
+    assert [(row["id"], row["text"], row["status"]) for row in rows] == [
+        (active_id, "Active source.", "active"),
+        (archived_id, "Archived source.", "archived"),
+    ]
+    assert event_count == 0
 
 
 def test_apply_maintenance_supersede_uses_safe_supersede_behavior(
