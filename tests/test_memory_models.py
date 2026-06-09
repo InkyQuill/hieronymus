@@ -1,3 +1,5 @@
+import pytest
+
 from hieronymus.memory_models import (
     CrystalRecord,
     RecallResult,
@@ -65,7 +67,7 @@ def test_crystal_record_defaults_multilingual_memory_fields() -> None:
     assert crystal.concept_ids == ()
 
 
-def test_recall_result_can_represent_long_term_crystal() -> None:
+def test_crystal_record_side_table_fields_default_empty_before_store_hydration() -> None:
     crystal = CrystalRecord(
         id=1,
         crystal_type="lesson",
@@ -81,8 +83,29 @@ def test_recall_result_can_represent_long_term_crystal() -> None:
         status="active",
     )
 
-    result = RecallResult(
-        crystal=crystal,
+    assert crystal.story_scopes == ()
+    assert crystal.semantic_tags == ()
+    assert crystal.concept_ids == ()
+
+
+def test_recall_result_long_term_requires_crystal_payload() -> None:
+    crystal = CrystalRecord(
+        id=1,
+        crystal_type="lesson",
+        text="Keep UI labels terse.",
+        title="UI labels",
+        scope_type="series",
+        scope_key="series:only-sense-online",
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        strength=0.5,
+        confidence=0.8,
+        status="active",
+    )
+
+    result = RecallResult.long_term(
+        crystal,
         rank=1,
         score=0.75,
         reason="weighted search match",
@@ -93,7 +116,7 @@ def test_recall_result_can_represent_long_term_crystal() -> None:
     assert result.short_term_memory is None
 
 
-def test_recall_result_can_represent_short_term_memory() -> None:
+def test_recall_result_short_term_requires_memory_payload() -> None:
     memory = ShortTermMemoryRecord(
         id=1,
         session_id=10,
@@ -103,13 +126,89 @@ def test_recall_result_can_represent_short_term_memory() -> None:
         source_ref="chapter-1",
     )
 
-    result = RecallResult(
-        source="short_term",
+    result = RecallResult.short_term(
+        memory,
         rank=1,
         score=0.5,
         reason="recent memory match",
-        short_term_memory=memory,
     )
 
+    assert result.source == "short_term"
     assert result.crystal is None
     assert result.short_term_memory == memory
+
+
+def test_recall_result_rejects_missing_payload() -> None:
+    with pytest.raises(ValueError, match="long_term recall results require a crystal"):
+        RecallResult(source="long_term", rank=1, score=0.5, reason="missing payload")
+
+
+def test_recall_result_rejects_both_payloads() -> None:
+    crystal = CrystalRecord(
+        id=1,
+        crystal_type="lesson",
+        text="Keep UI labels terse.",
+        title="UI labels",
+        scope_type="series",
+        scope_key="series:only-sense-online",
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        strength=0.5,
+        confidence=0.8,
+        status="active",
+    )
+    memory = ShortTermMemoryRecord(
+        id=1,
+        session_id=10,
+        source_role="agent",
+        kind="note",
+        text="The protagonist speaks tersely.",
+        source_ref="chapter-1",
+    )
+
+    with pytest.raises(ValueError, match="must not include short-term memory"):
+        RecallResult(
+            source="long_term",
+            rank=1,
+            score=0.5,
+            reason="ambiguous payload",
+            crystal=crystal,
+            short_term_memory=memory,
+        )
+
+
+def test_recall_result_rejects_source_payload_mismatch() -> None:
+    crystal = CrystalRecord(
+        id=1,
+        crystal_type="lesson",
+        text="Keep UI labels terse.",
+        title="UI labels",
+        scope_type="series",
+        scope_key="series:only-sense-online",
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        strength=0.5,
+        confidence=0.8,
+        status="active",
+    )
+
+    with pytest.raises(ValueError, match="short_term recall results must not include a crystal"):
+        RecallResult(
+            source="short_term",
+            rank=1,
+            score=0.5,
+            reason="mismatched payload",
+            crystal=crystal,
+        )
+
+
+def test_recall_result_rejects_short_term_missing_payload() -> None:
+    with pytest.raises(ValueError, match="short_term recall results require short-term memory"):
+        RecallResult(source="short_term", rank=1, score=0.5, reason="missing payload")
+
+
+def test_recall_result_rejects_unknown_source() -> None:
+    with pytest.raises(ValueError, match="unknown recall source"):
+        RecallResult(source="semantic", rank=1, score=0.5, reason="unknown source")

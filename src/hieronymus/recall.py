@@ -35,8 +35,8 @@ class RecallService:
 
         scored_crystals = self.crystals.search_scored(context, query, limit=limit)
         results = [
-            RecallResult(
-                crystal=crystal,
+            RecallResult.long_term(
+                crystal,
                 rank=rank,
                 score=score,
                 reason=_RECALL_REASON,
