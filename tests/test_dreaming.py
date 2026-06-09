@@ -1042,6 +1042,96 @@ def test_dreaming_skips_unrecoverable_dict_entries_without_poisoning_good_entrie
     ]
 
 
+def test_dreaming_skips_dict_candidate_with_only_invalid_source_memory_ids(
+    config: HieronymusConfig,
+) -> None:
+    class SourceIdsProvider:
+        name = "source-ids"
+
+        def crystallize(self, context, memories):
+            return {
+                "crystals": [
+                    {
+                        "content": "Bad provenance should be skipped.",
+                        "type": "lesson",
+                        "source_memory_ids": [999999],
+                    },
+                    {
+                        "content": "Partly valid provenance keeps only valid links.",
+                        "type": "lesson",
+                        "source_memory_ids": [memories[0].id, 999999],
+                    },
+                    {
+                        "content": "Omitted provenance links to the input batch.",
+                        "type": "lesson",
+                    },
+                ]
+            }
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    first_id = workspace.add_short_term_memory(session.id, "user", "note", "First input.")
+    second_id = workspace.add_short_term_memory(session.id, "user", "note", "Second input.")
+    workspace.complete_session(session.id)
+
+    run = DreamService(config, SourceIdsProvider()).run_all()
+
+    with connect(config.database_path) as conn:
+        crystals = conn.execute("select id, text from crystals order by id").fetchall()
+        sources = conn.execute(
+            """
+            select crystal_id, short_term_memory_id
+            from crystal_sources
+            order by crystal_id, short_term_memory_id
+            """
+        ).fetchall()
+
+    assert run.status == "completed"
+    assert [row["text"] for row in crystals] == [
+        "Partly valid provenance keeps only valid links.",
+        "Omitted provenance links to the input batch.",
+    ]
+    assert [(row["crystal_id"], row["short_term_memory_id"]) for row in sources] == [
+        (crystals[0]["id"], first_id),
+        (crystals[1]["id"], first_id),
+        (crystals[1]["id"], second_id),
+    ]
+
+
+def test_dreaming_dict_semantic_tags_update_legacy_tags_json(
+    config: HieronymusConfig,
+) -> None:
+    class TaggedProvider:
+        name = "tagged"
+
+        def crystallize(self, context, memories):
+            return {
+                "crystals": [
+                    {
+                        "content": "Tagged dream crystal.",
+                        "type": "lesson",
+                        "semantic_tags": [" domain:cuisine ", "domain:cuisine"],
+                    }
+                ]
+            }
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "Tagged input.")
+    workspace.complete_session(session.id)
+
+    DreamService(config, TaggedProvider()).run_all()
+
+    with connect(config.database_path) as conn:
+        crystal = conn.execute("select id, tags_json from crystals").fetchone()
+        tag = conn.execute("select tag from crystal_semantic_tags").fetchone()
+
+    assert crystal["tags_json"] == '["domain:cuisine"]'
+    assert tag["tag"] == "domain:cuisine"
+
+
 def test_dreaming_supersede_action_updates_crystals_and_records_event(
     config: HieronymusConfig,
 ) -> None:
@@ -1084,6 +1174,162 @@ def test_dreaming_supersede_action_updates_crystals_and_records_event(
     assert event["evidence"] == "New rule is more precise."
     assert event["applied"] == 1
     assert event["cycle_id"] == run.cycle_id
+
+
+def test_dreaming_supersede_missing_replacement_does_not_mutate_old_crystal(
+    config: HieronymusConfig,
+) -> None:
+    class MissingReplacementProvider:
+        name = "missing-replacement"
+
+        def __init__(self, old_id: int) -> None:
+            self.old_id = old_id
+
+        def crystallize(self, context, memories):
+            return {
+                "supersede": [
+                    {
+                        "old_crystal_id": self.old_id,
+                        "new_crystal_id": 999999,
+                        "reason": "Missing replacement.",
+                    }
+                ]
+            }
+
+    context = _context(config)
+    old_id = _add_crystal(config, context, text="Old cooking rule.")
+    _completed_session(config, context)
+
+    with pytest.raises(KeyError, match="unknown crystal: 999999"):
+        DreamService(config, MissingReplacementProvider(old_id)).run_all()
+
+    old_crystal = CrystalStore(config).get(old_id)
+    with connect(config.database_path) as conn:
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+
+    assert old_crystal.status == "active"
+    assert event_count == 0
+
+
+def test_dreaming_supersede_self_reference_does_not_mutate_crystal(
+    config: HieronymusConfig,
+) -> None:
+    class SelfReferenceProvider:
+        name = "self-reference"
+
+        def __init__(self, crystal_id: int) -> None:
+            self.crystal_id = crystal_id
+
+        def crystallize(self, context, memories):
+            return {
+                "supersede": [
+                    {
+                        "old_crystal_id": self.crystal_id,
+                        "new_crystal_id": self.crystal_id,
+                        "reason": "Self reference.",
+                    }
+                ]
+            }
+
+    context = _context(config)
+    crystal_id = _add_crystal(config, context, text="Self reference rule.")
+    _completed_session(config, context)
+
+    with pytest.raises(ValueError, match="crystal cannot supersede itself"):
+        DreamService(config, SelfReferenceProvider(crystal_id)).run_all()
+
+    crystal = CrystalStore(config).get(crystal_id)
+    with connect(config.database_path) as conn:
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+
+    assert crystal.status == "active"
+    assert crystal.supersedes_crystal_id is None
+    assert event_count == 0
+
+
+def test_dreaming_supersede_rejects_context_mismatch_without_mutating(
+    config: HieronymusConfig,
+) -> None:
+    class ContextMismatchProvider:
+        name = "context-mismatch"
+
+        def __init__(self, old_id: int, new_id: int) -> None:
+            self.old_id = old_id
+            self.new_id = new_id
+
+        def crystallize(self, context, memories):
+            return {
+                "supersede": [
+                    {
+                        "old_crystal_id": self.old_id,
+                        "new_crystal_id": self.new_id,
+                        "reason": "Mismatched replacement.",
+                    }
+                ]
+            }
+
+    context = _context(config)
+    other_context = _context(config, slug="other-series")
+    old_id = _add_crystal(config, context, text="Old cooking rule.")
+    new_id = _add_crystal(config, other_context, text="Other cooking rule.")
+    _completed_session(config, context)
+
+    with pytest.raises(ValueError, match="supersede crystal series_slug does not match"):
+        DreamService(config, ContextMismatchProvider(old_id, new_id)).run_all()
+
+    old_crystal = CrystalStore(config).get(old_id)
+    new_crystal = CrystalStore(config).get(new_id)
+    with connect(config.database_path) as conn:
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+
+    assert old_crystal.status == "active"
+    assert new_crystal.supersedes_crystal_id is None
+    assert event_count == 0
+
+
+def test_dreaming_supersede_rejects_inactive_replacement_without_mutating(
+    config: HieronymusConfig,
+) -> None:
+    class InactiveReplacementProvider:
+        name = "inactive-replacement"
+
+        def __init__(self, old_id: int, new_id: int) -> None:
+            self.old_id = old_id
+            self.new_id = new_id
+
+        def crystallize(self, context, memories):
+            return {
+                "supersede": [
+                    {
+                        "old_crystal_id": self.old_id,
+                        "new_crystal_id": self.new_id,
+                        "reason": "Inactive replacement.",
+                    }
+                ]
+            }
+
+    context = _context(config)
+    old_id = _add_crystal(config, context, text="Old cooking rule.")
+    new_id = _add_crystal(
+        config,
+        context,
+        text="Archived replacement rule.",
+        status="archived",
+    )
+    _completed_session(config, context)
+
+    with pytest.raises(ValueError, match="supersede crystals must be active or candidate"):
+        DreamService(config, InactiveReplacementProvider(old_id, new_id)).run_all()
+
+    old_crystal = CrystalStore(config).get(old_id)
+    new_crystal = CrystalStore(config).get(new_id)
+    with connect(config.database_path) as conn:
+        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
+
+    assert old_crystal.status == "active"
+    assert new_crystal.status == "archived"
+    assert new_crystal.supersedes_crystal_id is None
+    assert event_count == 0
 
 
 def test_dreaming_decays_inactive_crystals_but_not_recalled_crystals(

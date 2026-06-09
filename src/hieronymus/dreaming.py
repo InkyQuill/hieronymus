@@ -962,6 +962,7 @@ class DreamService:
         candidate: _NormalizedDreamCrystal,
     ) -> int:
         now = _now()
+        tags_json = candidate.semantic_tags if candidate.semantic_tags else context.tags
         cursor = conn.execute(
             """
             insert into crystals(
@@ -994,7 +995,7 @@ class DreamService:
                 context.series_slug,
                 context.source_language,
                 context.target_language,
-                json.dumps(list(context.tags), ensure_ascii=False, sort_keys=True),
+                json.dumps(list(tags_json), ensure_ascii=False, sort_keys=True),
                 candidate.strength,
                 candidate.confidence,
                 candidate.source_credibility,
@@ -1352,13 +1353,16 @@ def _normalize_dict_crystal(
 
     confidence = _normalized_confidence(payload, source_credibility, penalty)
     title = _string_field(payload.get("title")).strip() or _title_from_kind(crystal_type)
+    source_memory_ids = _source_memory_ids(payload, allowed_memory_ids)
+    if source_memory_ids is None:
+        return None
     return _NormalizedDreamCrystal(
         crystal_type=crystal_type,
         title=title,
         text=text,
         strength=_clamp_score(_numeric_field(payload.get("strength"), default=0.5)),
         confidence=confidence,
-        source_memory_ids=_source_memory_ids(payload, allowed_memory_ids),
+        source_memory_ids=source_memory_ids,
         source_credibility=source_credibility,
         rule_intent=_string_field(payload.get("rule_intent")),
         malformed_penalty=penalty,
@@ -1508,7 +1512,8 @@ def _optional_int(value: object) -> int | None:
 def _source_memory_ids(
     payload: dict[object, object],
     allowed_memory_ids: set[int],
-) -> list[int]:
+) -> list[int] | None:
+    has_source_field = "source_memory_ids" in payload or "source_memory_id" in payload
     clean_ids = [
         memory_id
         for memory_id in _clean_int_tuple(
@@ -1518,6 +1523,8 @@ def _source_memory_ids(
     ]
     if clean_ids:
         return clean_ids
+    if has_source_field:
+        return None
     return sorted(allowed_memory_ids)
 
 

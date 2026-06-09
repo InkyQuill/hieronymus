@@ -235,13 +235,23 @@ class CrystalStore:
         reason: str = "",
         cycle_id: int,
     ) -> None:
+        if old_crystal_id == new_crystal_id:
+            raise ValueError("crystal cannot supersede itself")
+
         now = _now()
         old_row = conn.execute(
-            "select id from crystals where id = ?",
+            "select * from crystals where id = ?",
             (old_crystal_id,),
         ).fetchone()
         if old_row is None:
             raise KeyError(f"unknown crystal: {old_crystal_id}")
+        new_row = conn.execute(
+            "select * from crystals where id = ?",
+            (new_crystal_id,),
+        ).fetchone()
+        if new_row is None:
+            raise KeyError(f"unknown crystal: {new_crystal_id}")
+        self._validate_supersede_rows(old_row, new_row)
 
         conn.execute(
             """
@@ -279,6 +289,21 @@ class CrystalStore:
             """,
             (old_crystal_id, reason, cycle_id, now),
         )
+
+    def _validate_supersede_rows(self, old_row, new_row) -> None:
+        for row in (old_row, new_row):
+            if row["status"] not in {"active", "candidate"}:
+                raise ValueError("supersede crystals must be active or candidate")
+        for column in (
+            "series_slug",
+            "source_language",
+            "target_language",
+            "crystal_type",
+            "scope_type",
+            "scope_key",
+        ):
+            if old_row[column] != new_row[column]:
+                raise ValueError(f"supersede crystal {column} does not match")
 
     def search(
         self,
