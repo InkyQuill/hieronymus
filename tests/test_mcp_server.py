@@ -458,37 +458,32 @@ def test_mcp_recall_rejects_explicit_language_mismatch_without_activation(
     assert activation_count == 0
 
 
-def test_mcp_feedback_returns_event_id(monkeypatch, tmp_path):
+def test_mcp_feedback_records_named_correction_short_term_memory(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     config = load_config()
     series = Registry(config).create_series(
         slug="only-sense-online",
         title="Only Sense Online",
         source_language="ja",
-        target_language="en",
-    )
-    context = TranslationContext(
-        series_slug=series.slug,
-        source_language="ja",
-        target_language="en",
-        task_type="translation",
-    )
-    crystal_id = CrystalStore(config).add_crystal(
-        context,
-        crystal_type="lesson",
-        text="Keep UI labels concise.",
+        target_language="ru",
     )
 
     from hieronymus import mcp_server
 
-    event = mcp_server.hieronymus_feedback(
-        crystal_id,
-        event_type="confirmed_by_user",
-        source_role="user",
-        evidence="Applied in chapter 1.",
+    started = mcp_server.hieronymus_session_start(series.slug)
+    result = mcp_server.hieronymus_feedback(
+        session_id=started["session_id"],
+        correction_text=(
+            "User told me to remember that Cooking Talent is translated as Кулинария."
+        ),
     )
+    memories = WorkspaceStore(load_config()).list_short_term_memories(started["session_id"])
 
-    assert event == {"event_id": 1}
+    assert result == {"memory_id": 1}
+    assert memories[0].kind == "correction"
+    assert memories[0].source_role == "user"
+    assert memories[0].text.startswith("User told me to remember")
+    assert memories[0].metadata == {"sentence_count": 1}
 
 
 def test_mcp_feedback_records_correction_short_term_memory(monkeypatch, tmp_path):
@@ -505,8 +500,8 @@ def test_mcp_feedback_records_correction_short_term_memory(monkeypatch, tmp_path
 
     started = mcp_server.hieronymus_session_start(series.slug)
     result = mcp_server.hieronymus_feedback(
-        started["session_id"],
-        "User told me to remember that Cooking Talent is translated as Кулинария.",
+        session_id=started["session_id"],
+        correction_text="User told me to remember that Cooking Talent is translated as Кулинария.",
     )
     memories = WorkspaceStore(load_config()).list_short_term_memories(started["session_id"])
 
@@ -522,53 +517,27 @@ def test_mcp_feedback_records_correction_short_term_memory(monkeypatch, tmp_path
     assert dream_run_count == 0
 
 
-def test_mcp_feedback_rejects_mismatched_session_without_event(monkeypatch, tmp_path):
+def test_mcp_feedback_rejects_unknown_session_without_memory(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     config = load_config()
-    alpha_series = Registry(config).create_series(
+    Registry(config).create_series(
         slug="only-sense-online",
         title="Only Sense Online",
         source_language="ja",
         target_language="en",
     )
-    Registry(config).create_series(
-        slug="beta-series",
-        title="Beta Series",
-        source_language="ja",
-        target_language="en",
-    )
-    beta_session = WorkspaceStore(config).start_session(
-        TranslationContext(
-            series_slug="beta-series",
-            source_language="ja",
-            target_language="en",
-            task_type="translation",
-        )
-    )
-    crystal_id = CrystalStore(config).add_crystal(
-        TranslationContext(
-            series_slug=alpha_series.slug,
-            source_language="ja",
-            target_language="en",
-            task_type="translation",
-        ),
-        crystal_type="lesson",
-        text="Keep UI labels concise.",
-    )
 
     from hieronymus import mcp_server
 
-    with pytest.raises(ValueError, match="series_slug"):
+    with pytest.raises(KeyError, match="unknown session"):
         mcp_server.hieronymus_feedback(
-            crystal_id,
-            event_type="confirmed_by_user",
-            source_role="user",
-            session_id=beta_session.id,
+            session_id=999,
+            correction_text="User told me to remember that Sense is Сенс.",
         )
 
     with connect(config.database_path) as conn:
-        event_count = conn.execute("select count(*) from memory_events").fetchone()[0]
-    assert event_count == 0
+        memory_count = conn.execute("select count(*) from short_term_memories").fetchone()[0]
+    assert memory_count == 0
 
 
 def test_mcp_concept_proposals_list_returns_pending(monkeypatch, tmp_path):

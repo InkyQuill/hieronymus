@@ -120,7 +120,11 @@ class WorkspaceStore:
         _require_non_empty(kind, "kind")
         text = text.strip()
         validation = validate_short_memory_text(text)
-        memory_metadata = dict(metadata or {})
+        memory_metadata = {
+            key: value
+            for key, value in (metadata or {}).items()
+            if key not in {"sentence_count", "validation_warning"}
+        }
         memory_metadata["sentence_count"] = validation.sentence_count
         if validation.warning:
             memory_metadata["validation_warning"] = validation.warning

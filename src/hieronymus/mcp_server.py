@@ -14,7 +14,6 @@ from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry, Series
-from hieronymus.scoring import FeedbackStore
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
@@ -365,38 +364,18 @@ def hieronymus_recall(
 
 @server.tool()
 def hieronymus_feedback(
-    crystal_id: int,
-    event_type: str | None = None,
-    source_role: str | None = None,
-    evidence: str = "",
-    session_id: int | None = None,
+    session_id: int,
+    correction_text: str,
 ) -> dict[str, int]:
-    """Record feedback for a crystal."""
+    """Record user correction feedback as short-term memory."""
     config = _load_validated_config()
-    if source_role is None:
-        if event_type is None:
-            raise ValueError("correction text must not be empty")
-        if evidence or session_id is not None:
-            raise ValueError("correction feedback only accepts session_id and text")
-        memory_id = WorkspaceStore(config).add_short_term_memory(
-            session_id=crystal_id,
-            source_role="user",
-            kind="correction",
-            text=event_type,
-        )
-        return {"memory_id": memory_id}
-
-    if event_type is None:
-        raise ValueError("event_type must not be empty")
-
-    event_id = FeedbackStore(config).record(
-        crystal_id=crystal_id,
-        event_type=event_type,
-        source_role=source_role,
-        evidence=evidence,
+    memory_id = WorkspaceStore(config).add_short_term_memory(
         session_id=session_id,
+        source_role="user",
+        kind="correction",
+        text=correction_text,
     )
-    return {"event_id": event_id}
+    return {"memory_id": memory_id}
 
 
 @server.tool()

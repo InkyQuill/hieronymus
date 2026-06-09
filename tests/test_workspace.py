@@ -93,6 +93,31 @@ def test_short_term_memory_metadata_includes_validation_warning(
     }
 
 
+def test_short_term_memory_strips_caller_validation_metadata_without_warning(
+    config: HieronymusConfig,
+) -> None:
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    store.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="note",
+        text="A small memory.",
+        metadata={
+            "sentence_count": 999,
+            "validation_warning": "caller warning",
+            "tags": ["small"],
+        },
+    )
+
+    memories = store.list_short_term_memories(session.id)
+    assert memories[0].metadata == {
+        "sentence_count": 1,
+        "tags": ["small"],
+    }
+
+
 def test_complete_session_marks_session_completed(config: HieronymusConfig) -> None:
     store = WorkspaceStore(config)
     session = store.start_session(_context(config))
