@@ -1,21 +1,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 
 from hieronymus.dream_config import DreamConfig, WorkflowProfile
 
 CRYSTALLIZATION_PHASE = "crystallization"
 RELATION_DISCOVERY_PHASE = "relation_discovery"
 REINFORCEMENT_COMPACTION_PHASE = "reinforcement_compaction"
-
-
-@dataclass(frozen=True)
-class ResolvedWorkflow:
-    phase: str
-    provider: str
-    model: str
-    prompt: str
 
 
 PHASE_PROMPTS = {

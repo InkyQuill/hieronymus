@@ -1075,6 +1075,61 @@ def test_anthropic_provider_crystallizes_structured_response(
     assert transport.requests[0]["headers"]["anthropic-version"] == ANTHROPIC_API_VERSION
 
 
+@pytest.mark.parametrize(
+    ("provider_name", "settings", "response_body", "expected_url"),
+    [
+        (
+            "gemini",
+            ProviderSettings(
+                enabled=True,
+                model="gemini-2.5-flash",
+                api_key_env="GEMINI_API_KEY",
+                base_url="https://untrusted.example.test",
+            ),
+            json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": json.dumps(_llm_payload())}]}}]}
+            ),
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "gemini-2.5-flash:generateContent",
+        ),
+        (
+            "anthropic",
+            ProviderSettings(
+                enabled=True,
+                model="claude-3-5-haiku-latest",
+                api_key_env="ANTHROPIC_API_KEY",
+                base_url="https://untrusted.example.test",
+            ),
+            json.dumps({"content": [{"type": "text", "text": json.dumps(_llm_payload())}]}),
+            "https://api.anthropic.com/v1/messages",
+        ),
+    ],
+)
+def test_legacy_gemini_and_anthropic_ignore_configured_base_url(
+    tmp_path,
+    monkeypatch,
+    provider_name: str,
+    settings: ProviderSettings,
+    response_body: str,
+    expected_url: str,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    saved = (
+        load_settings(config)
+        .with_provider(provider_name, settings)
+        .with_dreaming(DreamingSettings(active_provider=provider_name))
+    )
+    save_settings(config, saved)
+    monkeypatch.setenv(settings.api_key_env, f"secret-{provider_name}")
+    transport = FakeTransport(HTTPResponse(status=200, body=response_body), [])
+
+    provider = resolve_provider(config, transport=transport)
+    provider.crystallize(_context(), [_memory()])
+
+    assert transport.requests[0]["url"] == expected_url
+    assert "untrusted.example.test" not in transport.requests[0]["url"]
+
+
 def test_llm_provider_rejects_invalid_json_response(tmp_path, monkeypatch) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     settings = (

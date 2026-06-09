@@ -30,6 +30,8 @@ from hieronymus.secrets import env_value_exists
 from hieronymus.settings import HieronymusSettings, ProviderSettings, load_settings
 
 ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_API_BASE_URL = "https://api.anthropic.com"
+GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com"
 
 
 @dataclass(frozen=True)
@@ -759,21 +761,21 @@ class GeminiDreamProvider:
         settings: ProviderSettings,
         api_key: str,
         transport: HTTPTransport,
+        *,
+        base_url: str | None = None,
     ) -> None:
         self.settings = settings
         self.api_key = api_key
         self.transport = transport
+        self.base_url = (base_url or GEMINI_API_BASE_URL).rstrip("/")
 
     def crystallize(
         self,
         context: TranslationContext,
         memories: list[ShortTermMemoryRecord],
     ) -> DreamOutput:
-        base_url = (self.settings.base_url or "https://generativelanguage.googleapis.com").rstrip(
-            "/"
-        )
         response = self.transport.post_json(
-            f"{base_url}/v1beta/models/{self.settings.model}:generateContent",
+            f"{self.base_url}/v1beta/models/{self.settings.model}:generateContent",
             headers={"x-goog-api-key": self.api_key},
             payload={
                 "contents": [
@@ -802,19 +804,21 @@ class AnthropicDreamProvider:
         settings: ProviderSettings,
         api_key: str,
         transport: HTTPTransport,
+        *,
+        base_url: str | None = None,
     ) -> None:
         self.settings = settings
         self.api_key = api_key
         self.transport = transport
+        self.base_url = (base_url or ANTHROPIC_API_BASE_URL).rstrip("/")
 
     def crystallize(
         self,
         context: TranslationContext,
         memories: list[ShortTermMemoryRecord],
     ) -> DreamOutput:
-        base_url = (self.settings.base_url or "https://api.anthropic.com").rstrip("/")
         response = self.transport.post_json(
-            f"{base_url}/v1/messages",
+            f"{self.base_url}/v1/messages",
             headers={
                 "x-api-key": self.api_key,
                 "anthropic-version": ANTHROPIC_API_VERSION,
@@ -903,9 +907,19 @@ def _provider_from_profile(
     if profile.type == "openai":
         return OpenAIDreamProvider(settings, profile.api_key, active_transport)
     if profile.type == "gemini":
-        return GeminiDreamProvider(settings, profile.api_key, active_transport)
+        return GeminiDreamProvider(
+            settings,
+            profile.api_key,
+            active_transport,
+            base_url=settings.base_url,
+        )
     if profile.type == "anthropic":
-        return AnthropicDreamProvider(settings, profile.api_key, active_transport)
+        return AnthropicDreamProvider(
+            settings,
+            profile.api_key,
+            active_transport,
+            base_url=settings.base_url,
+        )
     if profile.type == "ollama":
         if _is_openai_compatible_ollama_endpoint(profile.endpoint):
             return OpenAIDreamProvider(
