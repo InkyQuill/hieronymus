@@ -30,6 +30,7 @@ ADMIN_VIEWS = (
     "Short-Term Sessions",
     "Dream Runs",
     "Proposals",
+    "Dream Audits",
     "Audit Log",
 )
 _ADMIN_IMMEDIATE_EVENT_DELTAS = {
@@ -823,6 +824,8 @@ class AdminStore:
             return self._list_sessions()
         if view == "Dream Runs":
             return self._list_dream_runs()
+        if view == "Dream Audits":
+            return self._list_dream_audits()
         if view == "Proposals":
             return self._list_proposals()
         if view == "Audit Log":
@@ -906,6 +909,29 @@ class AdminStore:
                 quality_label=(
                     f"{row['created_crystal_count']} crystals / {row['proposal_count']} proposals"
                 ),
+            )
+            for row in rows
+        ]
+
+    def _list_dream_audits(self) -> list[AdminRow]:
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute(
+                """
+                select *
+                from dream_audit_entries
+                order by id desc
+                limit 200
+                """
+            ).fetchall()
+        return [
+            AdminRow(
+                id=int(row["id"]),
+                kind="dream audit",
+                label=f"{row['event_type']}: {row['summary']}",
+                status=row["severity"],
+                scope=f"dream:{row['dream_run_id']}",
+                language_pair="",
+                quality_label=row["created_at"],
             )
             for row in rows
         ]
@@ -1015,6 +1041,8 @@ class AdminStore:
             return self._session_detail(int(selected.id))
         if view == "Dream Runs":
             return self._dream_run_detail(int(selected.id))
+        if view == "Dream Audits":
+            return self._dream_audit_detail(int(selected.id))
         if view == "Proposals":
             return self._proposal_detail(int(selected.id))
         if view == "Audit Log":
@@ -1092,6 +1120,27 @@ class AdminStore:
                 ("Inputs", str(row["input_count"])),
                 ("Crystals", str(row["created_crystal_count"])),
                 ("Proposals", str(row["proposal_count"])),
+            ),
+        )
+
+    def _dream_audit_detail(self, audit_id: int) -> AdminDetail:
+        with connect(self.config.database_path) as conn:
+            row = conn.execute(
+                "select * from dream_audit_entries where id = ?",
+                (audit_id,),
+            ).fetchone()
+        if row is None:
+            return AdminDetail(title="Missing dream audit", subtitle="", body="")
+        payload = json.loads(row["payload_json"])
+        return AdminDetail(
+            title=f"{row['event_type']}: {row['summary']}",
+            subtitle=row["severity"],
+            body=json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            fields=(
+                ("Dream run", str(row["dream_run_id"])),
+                ("Phase run", "" if row["phase_run_id"] is None else str(row["phase_run_id"])),
+                ("Severity", row["severity"]),
+                ("Created", row["created_at"]),
             ),
         )
 

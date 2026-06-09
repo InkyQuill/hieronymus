@@ -38,6 +38,7 @@ def test_admin_json_reports_available_tui_and_counts(tmp_path: Path) -> None:
         "Short-Term Sessions",
         "Dream Runs",
         "Proposals",
+        "Dream Audits",
         "Audit Log",
     ]
 

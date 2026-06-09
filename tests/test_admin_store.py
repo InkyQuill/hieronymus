@@ -4,6 +4,7 @@ from hieronymus.admin import ADMIN_VIEWS, AdminStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_audit import DreamAuditStore
 from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
@@ -201,6 +202,51 @@ def test_snapshot_smoke_for_admin_views(config: HieronymusConfig, view: str) -> 
     snapshot = AdminStore(config).snapshot(view)
 
     assert snapshot.view == view
+
+
+def test_admin_snapshot_exposes_dream_audit_entries(config: HieronymusConfig) -> None:
+    store = AdminStore(config)
+    with connect(config.database_path) as conn:
+        cursor = conn.execute(
+            """
+            insert into dream_runs(cycle_id, status, provider, created_at)
+            values (1, 'running', 'test', '2026-06-09T00:00:00+00:00')
+            """
+        )
+        dream_run_id = int(cursor.lastrowid)
+        conn.commit()
+    audit_id = DreamAuditStore(config).append(
+        dream_run_id=dream_run_id,
+        phase_run_id=None,
+        event_type="provider_request",
+        severity="warning",
+        summary="sent request",
+        payload={
+            "model": "claude-test",
+            "headers": {"Authorization": "Bearer secret"},
+        },
+    )
+
+    snapshot = store.snapshot("Dream Audits", selected_id=audit_id)
+
+    assert snapshot.view == "Dream Audits"
+    assert snapshot.selected is not None
+    assert snapshot.selected.id == audit_id
+    assert snapshot.selected.kind == "dream audit"
+    assert snapshot.selected.label == "provider_request: sent request"
+    assert snapshot.selected.status == "warning"
+    assert snapshot.selected.scope == f"dream:{dream_run_id}"
+    assert snapshot.detail.title == "provider_request: sent request"
+    assert snapshot.detail.subtitle == "warning"
+    assert snapshot.detail.fields == (
+        ("Dream run", str(dream_run_id)),
+        ("Phase run", ""),
+        ("Severity", "warning"),
+        ("Created", snapshot.selected.quality_label),
+    )
+    assert snapshot.detail.body == (
+        '{\n  "headers": {\n    "Authorization": "[REDACTED]"\n  },\n  "model": "claude-test"\n}'
+    )
 
 
 def test_admin_exposes_crystal_provenance_and_recall_reason(
