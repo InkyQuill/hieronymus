@@ -38,6 +38,18 @@ _ADMIN_IMMEDIATE_EVENT_DELTAS = {
     "contradicted_by_user": (-0.20, -0.25),
     "deleted_by_user": (-0.50, -0.35),
 }
+
+
+def _rule_crystal_text(
+    source_form: str,
+    canonical_rendering: str,
+    forbidden_variants: list[str],
+) -> str:
+    if forbidden_variants:
+        return f"{source_form} is translated as {canonical_rendering}, not {forbidden_variants[0]}."
+    return f"{source_form} is translated as {canonical_rendering}."
+
+
 _ARCHIVE_STRENGTH_THRESHOLD = 0.05
 
 
@@ -613,67 +625,7 @@ class AdminStore:
             proposal = self._get_proposal(conn, proposal_id)
             if proposal["status"] != "pending":
                 raise ValueError("proposal must be pending")
-            cursor = conn.execute(
-                """
-                insert into strict_terms(
-                  series_slug,
-                  source_language,
-                  target_language,
-                  category,
-                  source_text,
-                  canonical_translation,
-                  status,
-                  notes,
-                  created_at,
-                  updated_at
-                )
-                values (?, ?, ?, 'strict_concept', ?, ?, 'approved', ?, ?, ?)
-                """,
-                (
-                    proposal["series_slug"],
-                    proposal["source_language"],
-                    proposal["target_language"],
-                    proposal["concept_text"],
-                    proposal["canonical_rendering"],
-                    proposal["rationale"],
-                    now,
-                    now,
-                ),
-            )
-            term_id = int(cursor.lastrowid)
-            conn.execute(
-                "insert into strict_terms_fts(rowid, source_text, canonical_translation, notes) "
-                "values (?, ?, ?, ?)",
-                (
-                    term_id,
-                    proposal["concept_text"],
-                    proposal["canonical_rendering"],
-                    proposal["rationale"],
-                ),
-            )
-            self._insert_alias(
-                conn,
-                term_id,
-                language=proposal["source_language"],
-                text=proposal["source_form"],
-                kind="source_variant",
-            )
-            for variant in json.loads(proposal["approved_variants_json"]):
-                self._insert_alias(
-                    conn,
-                    term_id,
-                    language=proposal["target_language"],
-                    text=variant,
-                    kind="approved_variant",
-                )
-            for variant in json.loads(proposal["forbidden_variants_json"]):
-                self._insert_alias(
-                    conn,
-                    term_id,
-                    language=proposal["target_language"],
-                    text=variant,
-                    kind="forbidden_variant",
-                )
+            crystal_id = self._insert_rule_crystal_for_proposal(conn, proposal, now=now)
             conn.execute(
                 """
                 update strict_concept_proposals
@@ -689,10 +641,10 @@ class AdminStore:
                 "strict_concept_proposal",
                 proposal_id,
                 before_json=self._row_json(proposal),
-                after_json=json.dumps({"term_id": term_id}, sort_keys=True),
+                after_json=json.dumps({"crystal_id": crystal_id}, sort_keys=True),
             )
             conn.commit()
-        return term_id
+        return crystal_id
 
     def reject_proposal(self, proposal_id: int, *, evidence: str) -> ActionResult:
         with connect(self.config.database_path) as conn:
@@ -1387,6 +1339,76 @@ class AdminStore:
             "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
             (crystal_id, title, text),
         )
+
+    def _insert_rule_crystal_for_proposal(
+        self,
+        conn: sqlite3.Connection,
+        proposal: sqlite3.Row,
+        *,
+        now: str,
+    ) -> int:
+        forbidden_variants = [
+            variant.strip()
+            for variant in json.loads(proposal["forbidden_variants_json"])
+            if isinstance(variant, str) and variant.strip()
+        ]
+        text = _rule_crystal_text(
+            proposal["source_form"].strip() or proposal["concept_text"],
+            proposal["canonical_rendering"],
+            forbidden_variants,
+        )
+        semantic_tags = ("strict-concept", "translation-rule")
+        cursor = conn.execute(
+            """
+            insert into crystals(
+              crystal_type,
+              text,
+              title,
+              scope_type,
+              scope_key,
+              series_slug,
+              source_language,
+              target_language,
+              tags_json,
+              strength,
+              confidence,
+              source_credibility,
+              rule_intent,
+              malformed_penalty,
+              supersedes_crystal_id,
+              status,
+              created_at,
+              updated_at
+            )
+            values ('rule', ?, ?, 'series', ?, ?, ?, ?, ?, 0.8, 0.95,
+                    'user_rule', '', 0.0, null, 'active', ?, ?)
+            """,
+            (
+                text,
+                proposal["concept_text"],
+                f"series:{proposal['series_slug']}",
+                proposal["series_slug"],
+                proposal["source_language"],
+                proposal["target_language"],
+                json.dumps(semantic_tags, ensure_ascii=False, sort_keys=True),
+                now,
+                now,
+            ),
+        )
+        crystal_id = int(cursor.lastrowid)
+        conn.execute(
+            "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
+            (crystal_id, proposal["concept_text"], text),
+        )
+        for tag in semantic_tags:
+            conn.execute(
+                """
+                insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+                values (?, ?, 0.95, ?)
+                """,
+                (crystal_id, tag, now),
+            )
+        return crystal_id
 
     def _insert_alias(
         self,

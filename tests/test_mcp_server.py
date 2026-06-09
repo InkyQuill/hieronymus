@@ -37,9 +37,6 @@ def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
     )
     assert proposed == {"term_id": 1}
 
-    approved = mcp_server.hieronymus_termbase_approve(series.slug, proposed["term_id"])
-    assert approved == {"term_id": 1, "approved": True}
-
     termbase = Termbase(
         load_config(),
         TranslationContext(
@@ -56,16 +53,19 @@ def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
         language="en",
     )
 
+    approved = mcp_server.hieronymus_termbase_approve(series.slug, proposed["term_id"])
+    assert approved == {"term_id": 1, "approved": True}
+
     contract = mcp_server.hieronymus_termbase_contract(series.slug, "ユン walked home.")
     assert contract == [
         {
             "id": 1,
-            "category": "character",
+            "category": "rule",
             "source_text": "ユン",
             "canonical_translation": "Yun",
             "forbidden_variants": ["Yuun"],
             "tags": ["name"],
-            "notes": "Main character.",
+            "notes": "ユン is translated as Yun, not Yuun.",
         }
     ]
 
@@ -102,12 +102,12 @@ def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
         source_ref="chapter-1",
         importance=4,
     )
-    assert added == {"memory_id": 1}
+    assert added == {"memory_id": 2}
 
-    memories = mcp_server.hieronymus_memory_search(series.slug, "Yun", limit=5)
+    memories = mcp_server.hieronymus_memory_search(series.slug, "translation_rationale", limit=5)
     assert memories == [
         {
-            "id": 1,
+            "id": 2,
             "kind": "translation_rationale",
             "text": "Use Yun for ユン.",
             "importance": 4,
@@ -152,12 +152,12 @@ def test_mcp_termbase_contract_accepts_volume_and_chapter(monkeypatch, tmp_path)
     assert contract == [
         {
             "id": 1,
-            "category": "character",
+            "category": "rule",
             "source_text": "ユン",
             "canonical_translation": "Yun",
             "forbidden_variants": [],
             "tags": [],
-            "notes": "",
+            "notes": "ユン is translated as Yun.",
         }
     ]
 

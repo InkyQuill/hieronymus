@@ -141,70 +141,72 @@ def test_edit_deprecate_and_delete_crystal_refresh_status_fts_scores_and_audit(
     assert [row.id for row in CrystalStore(config).search(context, "Updated")] == [edit_id]
 
 
-def test_approve_proposal_creates_strict_term_fts_aliases_and_audit(
+def test_approve_proposal_creates_rule_crystal_and_audit(
     config: HieronymusConfig,
 ) -> None:
     context = _context(config)
     proposal_id = _create_proposal(config, context)
 
-    term_id = AdminStore(config).approve_proposal(proposal_id)
+    crystal_id = AdminStore(config).approve_proposal(proposal_id)
 
     with connect(config.database_path) as conn:
-        term = conn.execute("select * from strict_terms where id = ?", (term_id,)).fetchone()
-        fts = conn.execute("select * from strict_terms_fts where rowid = ?", (term_id,)).fetchone()
-        aliases = conn.execute(
-            "select * from strict_term_aliases where term_id = ? order by id",
-            (term_id,),
+        term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
+        crystal = conn.execute("select * from crystals where id = ?", (crystal_id,)).fetchone()
+        fts = conn.execute("select * from crystals_fts where rowid = ?", (crystal_id,)).fetchone()
+        tags = conn.execute(
+            "select tag from crystal_semantic_tags where crystal_id = ? order by tag",
+            (crystal_id,),
         ).fetchall()
         proposal = conn.execute(
             "select * from strict_concept_proposals where id = ?",
             (proposal_id,),
         ).fetchone()
         fts_hits = conn.execute(
-            "select rowid from strict_terms_fts where strict_terms_fts match ?",
+            "select rowid from crystals_fts where crystals_fts match ?",
             ("сенс",),
         ).fetchall()
         audits = conn.execute("select * from audit_log").fetchall()
 
-    assert term["status"] == "approved"
-    assert term["source_text"] == "センス"
-    assert term["canonical_translation"] == "сенс"
-    assert fts["source_text"] == "センス"
-    assert fts["canonical_translation"] == "сенс"
-    assert [(alias["text"], alias["kind"], alias["language"]) for alias in aliases] == [
-        ("センス", "source_variant", "ja"),
-        ("сенсы", "approved_variant", "ru"),
-        ("sense", "forbidden_variant", "ru"),
-        ("Сенс", "forbidden_variant", "ru"),
-    ]
+    assert term_count == 0
+    assert crystal["crystal_type"] == "rule"
+    assert crystal["text"] == "センス is translated as сенс, not sense."
+    assert crystal["status"] == "active"
+    assert crystal["source_credibility"] == "user_rule"
+    assert crystal["confidence"] == 0.95
+    assert fts["text"] == "センス is translated as сенс, not sense."
+    assert [tag["tag"] for tag in tags] == ["strict-concept", "translation-rule"]
     assert proposal["status"] == "approved"
     assert [audit["action"] for audit in audits] == ["approve"]
     assert audits[0]["entity_type"] == "strict_concept_proposal"
     assert audits[0]["entity_id"] == str(proposal_id)
-    assert [row["rowid"] for row in fts_hits] == [term_id]
-    assert [term.id for term in Termbase(config, context).contract("センス appears.")] == [term_id]
+    assert [row["rowid"] for row in fts_hits] == [crystal_id]
+    assert [term.id for term in Termbase(config, context).contract("センス appears.")] == [
+        crystal_id
+    ]
 
 
-def test_approve_proposal_requires_pending_and_does_not_duplicate_terms(
+def test_approve_proposal_requires_pending_and_does_not_duplicate_crystals(
     config: HieronymusConfig,
 ) -> None:
     context = _context(config)
     proposal_id = _create_proposal(config, context)
     admin = AdminStore(config)
 
-    term_id = admin.approve_proposal(proposal_id)
+    crystal_id = admin.approve_proposal(proposal_id)
     with pytest.raises(ValueError, match="proposal must be pending"):
         admin.approve_proposal(proposal_id)
 
     with connect(config.database_path) as conn:
-        terms = conn.execute("select id from strict_terms order by id").fetchall()
+        crystals = conn.execute("select id from crystals order by id").fetchall()
+        term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
         proposal = conn.execute(
             "select status from strict_concept_proposals where id = ?",
             (proposal_id,),
         ).fetchone()
         audits = conn.execute("select action from audit_log order by id").fetchall()
 
-    assert [row["id"] for row in terms] == [term_id]
+    assert [row["id"] for row in crystals] == [crystal_id]
+    assert term_count == 0
     assert proposal["status"] == "approved"
     assert [row["action"] for row in audits] == ["approve"]
 

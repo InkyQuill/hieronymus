@@ -396,7 +396,7 @@ def test_admin_proposal_approval_refreshes_proposal_view(tmp_path: Path) -> None
 
     payload = AdminBridge(config).approve_proposal({"id": proposal_id})
 
-    assert payload["result"]["entity_type"] == "strict_term"
+    assert payload["result"]["entity_type"] == "crystal"
     assert payload["snapshot"]["view"] == "Proposals"
     assert payload["snapshot"]["selected"]["status"] == "approved"
 

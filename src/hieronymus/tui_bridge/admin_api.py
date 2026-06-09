@@ -195,8 +195,8 @@ class AdminBridge:
     def approve_proposal(self, params: dict[str, object]) -> dict[str, object]:
         proposal_id = _required_int(params.get("id"), "id")
         view, filters = _refresh_context(params, default_view="Proposals")
-        term_id = self.store.approve_proposal(proposal_id)
-        result = ActionResult("strict_term", term_id, "approve", "Proposal approved")
+        crystal_id = self.store.approve_proposal(proposal_id)
+        result = ActionResult("crystal", crystal_id, "approve", "Proposal approved")
         return self._mutation_payload(
             result,
             params,

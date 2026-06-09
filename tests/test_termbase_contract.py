@@ -1,5 +1,6 @@
 import pytest
 
+from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
@@ -45,19 +46,42 @@ def _propose_sense_name(termbase: Termbase) -> int:
     )
 
 
+def _add_rule_crystal(
+    termbase: Termbase,
+    text: str,
+    *,
+    semantic_tags: tuple[str, ...] = (),
+    status: str = "active",
+) -> int:
+    return CrystalStore(termbase.config).add_crystal(
+        termbase.context,
+        crystal_type="rule",
+        text=text,
+        source_credibility="user_rule",
+        confidence=0.95,
+        strength=0.8,
+        semantic_tags=semantic_tags,
+        status=status,
+    )
+
+
 def test_contract_returns_terms_found_in_raw_text(config):
     termbase = _create_termbase(config)
-    term_id = _propose_sense_name(termbase)
-    termbase.add_alias(term_id, kind="forbidden_variant", text="Attack Increase", language="en")
-    termbase.approve(term_id)
+    crystal_id = _add_rule_crystal(
+        termbase,
+        "攻撃力上昇 is translated as ATK Up, not Attack Increase.",
+        semantic_tags=("sense",),
+    )
 
     contract = termbase.contract("ユンは攻撃力上昇を取るべきだと言われた。")
 
+    assert contract[0].id == crystal_id
+    assert contract[0].category == "rule"
     assert contract[0].source_text == "攻撃力上昇"
     assert contract[0].canonical_translation == "ATK Up"
     assert "Attack Increase" in contract[0].forbidden_variants
     assert contract[0].tags == ["sense"]
-    assert contract[0].notes == "OSO Sense name."
+    assert contract[0].notes == "攻撃力上昇 is translated as ATK Up, not Attack Increase."
 
 
 def test_add_alias_rejects_unknown_kind(config):
@@ -131,15 +155,7 @@ def test_approve_rejects_unknown_term(config):
 
 def test_contract_matches_case_insensitive_source_variant(config):
     termbase = _create_termbase(config)
-    term_id = _propose_sense_name(termbase)
-    termbase.add_alias(
-        term_id,
-        kind="source_variant",
-        text="atk boost",
-        language="en",
-        case_sensitive=False,
-    )
-    termbase.approve(term_id)
+    _add_rule_crystal(termbase, "atk boost is translated as ATK Up.")
 
     contract = termbase.contract("Yun should take ATK BOOST.")
 
@@ -148,7 +164,11 @@ def test_contract_matches_case_insensitive_source_variant(config):
 
 def test_contract_excludes_pending_terms(config):
     termbase = _create_termbase(config)
-    _propose_sense_name(termbase)
+    _add_rule_crystal(
+        termbase,
+        "攻撃力上昇 is translated as ATK Up.",
+        status="candidate",
+    )
 
     assert termbase.contract("ユンは攻撃力上昇を取るべきだと言われた。") == []
 
@@ -178,21 +198,49 @@ def test_contract_isolated_by_target_language(config):
 
 def test_contract_matches_source_variant(config):
     termbase = _create_termbase(config)
-    term_id = _propose_sense_name(termbase)
-    termbase.add_alias(term_id, kind="source_variant", text="攻撃バフ", language="ja")
-    termbase.approve(term_id)
+    _add_rule_crystal(termbase, "攻撃バフ is translated as ATK Up.")
 
     contract = termbase.contract("ユンは攻撃バフを取るべきだと言われた。")
 
-    assert [term.source_text for term in contract] == ["攻撃力上昇"]
+    assert [term.source_text for term in contract] == ["攻撃バフ"]
 
 
 def test_contract_returns_empty_list_when_no_terms_match(config):
     termbase = _create_termbase(config)
-    term_id = _propose_sense_name(termbase)
-    termbase.approve(term_id)
+    _add_rule_crystal(termbase, "攻撃力上昇 is translated as ATK Up.")
 
     assert termbase.contract("ユンは防御力上昇を取るべきだと言われた。") == []
+
+
+def test_rule_crystal_contract_includes_parsed_active_rule(config):
+    termbase = _create_termbase(config, target_language="ru")
+    crystal_id = _add_rule_crystal(
+        termbase,
+        "Cooking Talent is translated as Готовка, not Кулинария.",
+        semantic_tags=("translation-rule", "cooking"),
+    )
+
+    contract = termbase.contract("Cooking Talent")
+
+    assert len(contract) == 1
+    assert contract[0].id == crystal_id
+    assert contract[0].category == "rule"
+    assert contract[0].source_text == "Cooking Talent"
+    assert contract[0].canonical_translation == "Готовка"
+    assert contract[0].forbidden_variants == ["Кулинария"]
+    assert contract[0].tags == ["cooking", "translation-rule"]
+    assert contract[0].notes == "Cooking Talent is translated as Готовка, not Кулинария."
+
+
+def test_unparseable_rule_crystal_remains_out_of_contract(config):
+    termbase = _create_termbase(config, target_language="ru")
+    _add_rule_crystal(
+        termbase,
+        "Cooking Talent should usually become Готовка.",
+        semantic_tags=("translation-rule", "cooking"),
+    )
+
+    assert termbase.contract("Cooking Talent") == []
 
 
 def test_propose_maintains_terms_fts_row(config):
