@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import urllib.error
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -15,6 +16,7 @@ from hieronymus.dream_providers import (
     UrllibTransport,
     resolve_provider,
 )
+from hieronymus.llm_cache import CachedModels, ModelCacheEntry, load_model_cache, save_model_cache
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.settings import (
     DreamingSettings,
@@ -265,6 +267,92 @@ def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> 
     }
     assert transport.requests[0]["url"] == "https://api.openai.com/v1/models"
     assert "secret-openai" not in repr(result.to_json_dict())
+
+
+def test_model_suggestions_use_fresh_cache_without_network(tmp_path) -> None:
+    class Transport:
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for cached suggestions")
+
+        def get_json(self, *args, **kwargs):
+            raise AssertionError("get_json should not be used for cached suggestions")
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="openai",
+                models=("cached-a", "cached-b"),
+                fetched_at=datetime.now(UTC).isoformat(),
+                error="cached refresh error",
+            )
+        ),
+    )
+
+    result = ProviderRegistry(Transport()).list_model_suggestions(config, "openai")
+
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["cached-a", "cached-b"],
+        "source": "llmcache.tmp",
+        "error": "cached refresh error",
+    }
+
+
+def test_model_suggestions_refresh_and_save_stale_cache(tmp_path, monkeypatch) -> None:
+    class Transport:
+        def __init__(self):
+            self.requests = []
+
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            self.requests.append({"url": url, "headers": headers, "timeout": timeout})
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"fresh-model"}]}',
+            )
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="openai",
+                models=("stale-model",),
+                fetched_at=(datetime.now(UTC) - timedelta(hours=24)).isoformat(),
+            )
+        ),
+    )
+    settings = load_settings(config)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = Transport()
+
+    result = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["fresh-model"],
+        "source": "api",
+        "error": "",
+    }
+    assert transport.requests[0]["url"] == "https://api.openai.com/v1/models"
+    assert load_model_cache(config).providers["openai"].models == ("fresh-model",)
+
+
+def test_anthropic_model_suggestions_cache_default_hints(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    result = ProviderRegistry().list_model_suggestions(config, "anthropic")
+
+    assert result.source == "defaults"
+    assert load_model_cache(config).providers["anthropic"].models == tuple(result.models)
 
 
 def test_deterministic_check_passes_without_network(tmp_path) -> None:

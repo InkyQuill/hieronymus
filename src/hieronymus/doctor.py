@@ -9,6 +9,7 @@ from pathlib import Path
 
 from hieronymus.agent_plugins import available_plugins
 from hieronymus.config import HieronymusConfig
+from hieronymus.llm_cache import load_model_cache
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_manager import ServiceManager
 from hieronymus.settings import SettingsError, load_settings
@@ -40,6 +41,7 @@ class Doctor:
         self._check_daemon(report)
         self._check_ink_runtime(report)
         self._check_settings_and_providers(report)
+        self._check_llm_model_cache(report)
         self._check_agent_plugins(report)
 
         return report
@@ -255,6 +257,18 @@ class Doctor:
                 message=safe(f"Active dream provider is configured: {active_name}"),
             )
         )
+
+    def _check_llm_model_cache(self, report: DoctorReport) -> None:
+        for entry in load_model_cache(self.config).providers.values():
+            if not entry.error:
+                continue
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="llm-model-cache-refresh-failed",
+                    message=(f"Model cache refresh failed for provider profile: {entry.provider}"),
+                )
+            )
 
 
 def _node_major_version(node_path: str) -> int | None:

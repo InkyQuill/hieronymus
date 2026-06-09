@@ -6,6 +6,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
@@ -16,6 +17,7 @@ from hieronymus.dreaming import (
     DreamOutput,
     DreamProvider,
 )
+from hieronymus.llm_cache import ModelCacheEntry, load_model_cache, save_model_cache
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.secrets import env_value_exists
 from hieronymus.settings import HieronymusSettings, ProviderSettings, load_settings
@@ -213,6 +215,37 @@ class ProviderRegistry:
         settings: HieronymusSettings | None = None,
     ) -> ModelSuggestionResult:
         self.metadata(name)
+        cache = load_model_cache(config)
+        entry = cache.providers.get(name)
+        if entry is not None and not entry.is_stale():
+            return ModelSuggestionResult(
+                provider=name,
+                models=list(entry.models),
+                source=config.llm_cache_path.name,
+                error=entry.error,
+            )
+
+        result = self._list_uncached_model_suggestions(config, name, settings=settings)
+        save_model_cache(
+            config,
+            cache.with_entry(
+                ModelCacheEntry(
+                    provider=name,
+                    models=tuple(result.models),
+                    fetched_at=datetime.now(UTC).isoformat(),
+                    error=result.error,
+                )
+            ),
+        )
+        return result
+
+    def _list_uncached_model_suggestions(
+        self,
+        config: HieronymusConfig,
+        name: str,
+        *,
+        settings: HieronymusSettings | None = None,
+    ) -> ModelSuggestionResult:
         defaults = _default_model_suggestions(name)
         if name in {"anthropic", "deterministic"}:
             return ModelSuggestionResult(provider=name, models=defaults, source="defaults")

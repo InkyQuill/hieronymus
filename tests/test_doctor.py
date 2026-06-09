@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.doctor import Doctor, DoctorFinding, report_to_json
+from hieronymus.llm_cache import CachedModels, ModelCacheEntry, save_model_cache
 from hieronymus.settings import DreamingSettings, ProviderSettings, load_settings, save_settings
 
 
@@ -83,6 +84,37 @@ def test_doctor_reports_missing_active_provider_env(
 
     finding = next(error for error in report["errors"] if error.code == "provider-env-missing")
     assert "MISSING_OPENAI_KEY" in finding.message
+
+
+def test_doctor_warns_when_llm_model_cache_refresh_failed(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="anthropic",
+                models=("claude-3-5-haiku-latest",),
+                fetched_at="2026-06-09T12:00:00+00:00",
+                error="model suggestions unavailable",
+            )
+        ),
+    )
+
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        report = Doctor(config).run(autofix=False)
+
+    assert (
+        DoctorFinding(
+            level="warning",
+            code="llm-model-cache-refresh-failed",
+            message="Model cache refresh failed for provider profile: anthropic",
+        )
+        in report["warnings"]
+    )
 
 
 def test_doctor_json_does_not_include_raw_api_key_value(config, monkeypatch):
