@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import sqlite3
 import subprocess
+import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from hieronymus.agent_plugins import available_plugins
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import DreamConfig, DreamConfigError, load_dream_config
+from hieronymus.dream_config import (
+    DreamConfig,
+    DreamConfigError,
+    ProviderProfile,
+    _dream_config_from_payload,
+    default_dream_config,
+    load_dream_config,
+)
 from hieronymus.llm_cache import load_model_cache, model_cache_identity
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_manager import ServiceManager
@@ -261,11 +271,10 @@ class Doctor:
         )
 
     def _check_dream_config_readiness(self, report: DoctorReport) -> None:
-        try:
-            dream_config = load_dream_config(self.config)
-        except DreamConfigError as error:
-            finding = _dream_config_error_finding(error)
-            report[f"{finding.level}s"].append(finding)
+        dream_config, config_finding = _load_dream_config_for_readiness(self.config)
+        if config_finding is not None:
+            report[f"{config_finding.level}s"].append(config_finding)
+        if dream_config is None:
             return
 
         if not dream_config.enabled:
@@ -333,6 +342,10 @@ class Doctor:
         dream_config: DreamConfig,
     ) -> None:
         cache = load_model_cache(self.config)
+        provider_identities = {
+            name: _dream_provider_cache_identity(name, provider)
+            for name, provider in dream_config.providers.items()
+        }
         reported_cache_errors: set[tuple[str, str]] = set()
         reported_missing_models: set[tuple[str, str]] = set()
 
@@ -341,6 +354,8 @@ class Doctor:
                 continue
             entry = cache.providers.get(workflow.provider)
             if entry is None or entry.is_stale():
+                continue
+            if entry.identity != provider_identities.get(workflow.provider):
                 continue
             if entry.error:
                 if _is_403_error(entry.error):
@@ -448,25 +463,61 @@ def _needs_pnpm_for_frontend_dev() -> bool:
     return source_frontend_manifest.exists() and not bundled_entrypoint.exists()
 
 
-def _dream_config_error_finding(error: DreamConfigError) -> DoctorFinding:
-    message = str(error)
-    if "referenced provider profile is missing" in message:
-        return DoctorFinding(
-            level="error",
-            code="dream_provider_profile_missing",
-            message="Referenced provider profile is missing",
-        )
-    if "enabled workflow must have a model" in message:
-        return DoctorFinding(
-            level="error",
-            code="dream_model_not_set",
-            message="Model not set for workflow",
-        )
+def _load_dream_config_for_readiness(
+    config: HieronymusConfig,
+) -> tuple[DreamConfig | None, DoctorFinding | None]:
+    try:
+        return load_dream_config(config), None
+    except DreamConfigError as error:
+        try:
+            dream_config = _load_dream_config_without_final_validation(config)
+        except DreamConfigError:
+            return None, _dream_conf_invalid_finding()
+        if _is_dream_readiness_validation_error(error):
+            return dream_config, None
+        return dream_config, _dream_conf_invalid_finding()
+
+
+def _load_dream_config_without_final_validation(config: HieronymusConfig) -> DreamConfig:
+    if not config.dream_config_path.exists():
+        return default_dream_config()
+    try:
+        payload = tomllib.loads(config.dream_config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as error:
+        raise DreamConfigError(f"dream.conf is not valid TOML: {error}") from error
+    return _dream_config_from_payload(payload)
+
+
+def _dream_conf_invalid_finding() -> DoctorFinding:
     return DoctorFinding(
         level="error",
         code="dream_conf_invalid",
         message="dream.conf invalid",
     )
+
+
+def _is_dream_readiness_validation_error(error: DreamConfigError) -> bool:
+    message = str(error)
+    return (
+        "referenced provider profile is missing" in message
+        or "enabled workflow must have a model" in message
+    )
+
+
+def _dream_provider_cache_identity(name: str, provider: ProviderProfile) -> str:
+    payload = {
+        "provider": name,
+        "type": provider.type,
+        "endpoint": provider.endpoint.rstrip("/"),
+        "api_key_sha256": _secret_fingerprint(provider.api_key),
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _secret_fingerprint(value: str) -> str:
+    if not value:
+        return ""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _is_403_error(error: str) -> bool:

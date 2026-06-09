@@ -8,7 +8,13 @@ from unittest.mock import patch
 import pytest
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.doctor import Doctor, DoctorFinding, report_to_json
+from hieronymus.doctor import (
+    Doctor,
+    DoctorFinding,
+    _dream_provider_cache_identity,
+    report_to_json,
+)
+from hieronymus.dream_config import ProviderProfile
 from hieronymus.llm_cache import (
     CachedModels,
     ModelCacheEntry,
@@ -136,6 +142,47 @@ def test_doctor_reports_dream_conf_readiness_errors(
     assert DoctorFinding(level=severity, code=code, message=message) in report[f"{severity}s"]
 
 
+def test_doctor_reports_multiple_dream_readiness_errors_after_config_validation_error(
+    config,
+) -> None:
+    write_dream_config(
+        config,
+        "[dreaming]\n"
+        "enabled = true\n"
+        "[providers.openai]\n"
+        "type='openai'\n"
+        "api_key=''\n"
+        "[workflows.crystallization]\n"
+        "provider='missing'\n"
+        "model='x'\n"
+        "enabled=true\n"
+        "[workflows.reinforcement_compaction]\n"
+        "provider='openai'\n"
+        "model='gpt-4.1-mini'\n"
+        "enabled=true\n",
+    )
+
+    report = run_doctor_without_daemon(config)
+
+    assert (
+        DoctorFinding(
+            level="error",
+            code="dream_provider_profile_missing",
+            message="Referenced provider profile is missing",
+        )
+        in report["errors"]
+    )
+    assert (
+        DoctorFinding(
+            level="error",
+            code="dream_api_key_missing",
+            message="API key missing for provider profile",
+        )
+        in report["errors"]
+    )
+    assert all(error.code != "dream_conf_invalid" for error in report["errors"])
+
+
 def test_doctor_ignores_disabled_optional_dream_workflows(config) -> None:
     write_dream_config(
         config,
@@ -155,6 +202,7 @@ def test_doctor_ignores_disabled_optional_dream_workflows(config) -> None:
 
 
 def test_doctor_warns_when_configured_dream_model_missing_from_cache(config) -> None:
+    profile = ProviderProfile(type="ollama", endpoint="http://localhost:11434")
     write_dream_config(
         config,
         "[dreaming]\n"
@@ -174,6 +222,7 @@ def test_doctor_warns_when_configured_dream_model_missing_from_cache(config) -> 
                 provider="ollama",
                 models=("present-model",),
                 fetched_at=datetime.now(UTC).isoformat(),
+                identity=_dream_provider_cache_identity("ollama", profile),
             )
         ),
     )
@@ -190,7 +239,46 @@ def test_doctor_warns_when_configured_dream_model_missing_from_cache(config) -> 
     )
 
 
+def test_doctor_ignores_dream_model_cache_for_obsolete_provider_profile(config) -> None:
+    current_profile = ProviderProfile(type="ollama", endpoint="http://localhost:11434")
+    old_profile = ProviderProfile(type="ollama", endpoint="http://localhost:11435")
+    write_dream_config(
+        config,
+        "[dreaming]\n"
+        "enabled = true\n"
+        "[providers.ollama]\n"
+        "type='ollama'\n"
+        "endpoint='http://localhost:11434'\n"
+        "[workflows.crystallization]\n"
+        "provider='ollama'\n"
+        "model='missing-model'\n"
+        "enabled=true\n",
+    )
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="ollama",
+                models=("present-model",),
+                fetched_at=datetime.now(UTC).isoformat(),
+                error="provider returned HTTP 403",
+                identity=_dream_provider_cache_identity("ollama", old_profile),
+            )
+        ),
+    )
+
+    report = run_doctor_without_daemon(config)
+
+    warning_codes = {warning.code for warning in report["warnings"]}
+    error_codes = {error.code for error in report["errors"]}
+    assert current_profile != old_profile
+    assert "dream_model_missing" not in warning_codes
+    assert "dream_provider_unreachable" not in warning_codes
+    assert "dream_api_key_rejected" not in error_codes
+
+
 def test_doctor_ignores_stale_dream_model_cache(config) -> None:
+    profile = ProviderProfile(type="ollama", endpoint="http://localhost:11434")
     write_dream_config(
         config,
         "[dreaming]\n"
@@ -210,6 +298,7 @@ def test_doctor_ignores_stale_dream_model_cache(config) -> None:
                 provider="ollama",
                 models=("present-model",),
                 fetched_at=(datetime.now(UTC) - timedelta(hours=24)).isoformat(),
+                identity=_dream_provider_cache_identity("ollama", profile),
             )
         ),
     )
@@ -243,6 +332,7 @@ def test_doctor_reports_fresh_dream_provider_cache_errors(
     severity: str,
     message: str,
 ) -> None:
+    profile = ProviderProfile(type="ollama", endpoint="http://localhost:11434")
     write_dream_config(
         config,
         "[dreaming]\n"
@@ -263,6 +353,7 @@ def test_doctor_reports_fresh_dream_provider_cache_errors(
                 models=(),
                 fetched_at=datetime.now(UTC).isoformat(),
                 error=error,
+                identity=_dream_provider_cache_identity("ollama", profile),
             )
         ),
     )
