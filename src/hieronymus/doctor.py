@@ -260,7 +260,7 @@ class Doctor:
 
     def _check_llm_model_cache(self, report: DoctorReport) -> None:
         for entry in load_model_cache(self.config).providers.values():
-            if not entry.error:
+            if not entry.error or entry.is_stale():
                 continue
             report["warnings"].append(
                 DoctorFinding(

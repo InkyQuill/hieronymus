@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -94,7 +95,7 @@ def test_doctor_warns_when_llm_model_cache_refresh_failed(tmp_path: Path) -> Non
             ModelCacheEntry(
                 provider="anthropic",
                 models=("claude-3-5-haiku-latest",),
-                fetched_at="2026-06-09T12:00:00+00:00",
+                fetched_at=datetime.now(UTC).isoformat(),
                 error="model suggestions unavailable",
             )
         ),
@@ -115,6 +116,30 @@ def test_doctor_warns_when_llm_model_cache_refresh_failed(tmp_path: Path) -> Non
         )
         in report["warnings"]
     )
+
+
+def test_doctor_ignores_stale_llm_model_cache_refresh_failure(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="anthropic",
+                models=("claude-3-5-haiku-latest",),
+                fetched_at=(datetime.now(UTC) - timedelta(hours=24)).isoformat(),
+                error="model suggestions unavailable",
+            )
+        ),
+    )
+
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        report = Doctor(config).run(autofix=False)
+
+    assert all(warning.code != "llm-model-cache-refresh-failed" for warning in report["warnings"])
 
 
 def test_doctor_ignores_malformed_llm_model_cache(tmp_path: Path) -> None:
