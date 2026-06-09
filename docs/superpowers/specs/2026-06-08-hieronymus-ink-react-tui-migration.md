@@ -8,15 +8,15 @@ keeping the Hieronymus backend in Python.
 The migration should let TypeScript own interactive terminal rendering, local UI
 state, keyboard handling, dialogs, and visual composition. Python remains the
 source of truth for storage, settings, MCP behavior, service lifecycle, dreaming,
-strict terminology, memory scoring, migrations, and domain validation.
+rule-crystal validation, memory scoring, migrations, and domain validation.
 
 ## Non-Goals
 
 - Do not rewrite the backend in Node.js.
-- Do not port SQLite, FTS5, MCP, dreaming providers, settings, or strict
-  terminology logic to TypeScript.
+- Do not port SQLite, FTS5, MCP, dreaming providers, settings, or rule-crystal
+  validation logic to TypeScript.
 - Do not allow the TypeScript UI to write Hieronymus SQLite tables directly.
-- Do not let fuzzy memory or UI-side behavior override approved termbase entries.
+- Do not let fuzzy memory or UI-side behavior override active rule crystals.
 - Do not write tool source code into `/home/inky/Yandex.Disk/Translation`.
 - Do not require a web browser or Electron. This is a terminal UI migration.
 
@@ -69,7 +69,7 @@ Local JSON boundary
 Python backend services
         |
         v
-SQLite, settings.toml, MCP/service/dreaming/domain modules
+SQLite, dream.conf/settings files, MCP/service/dreaming/domain modules
 ```
 
 The JSON boundary may be implemented in either of these forms:
@@ -181,23 +181,66 @@ Minimum admin methods needed for parity with the current management TUI:
 - `admin.delete_crystal`
   - Inputs: `id`, `confirmed`.
   - Returns: action result and refreshed snapshot.
-- `admin.approve_proposal`
-  - Inputs: `id`.
-  - Returns: action result and refreshed snapshot.
-- `admin.reject_proposal`
-  - Inputs: `id`.
-  - Returns: action result and refreshed snapshot.
+- `admin.list_rule_crystals`
+  - Inputs: optional `selected_id`, optional filters.
+  - Returns: active and archived rule crystals with linked concepts, language
+    tags, story scopes, source credibility, status, and validation scope.
+- `admin.archive_rule_crystal`
+  - Inputs: rule crystal id, confirmation, and evidence.
+  - Returns: action result and refreshed rule crystal snapshot.
+- `admin.add_correction_memory`
+  - Inputs: correction text, source credibility, optional linked concept ids,
+    language tags, story scopes, and semantic tags.
+  - Returns: new short-term memory id and refreshed short-term status. It does
+    not request immediate dreaming.
 - `admin.provenance`
   - Inputs: `crystal_id`.
   - Returns: detail payload suitable for the detail pane.
 - `admin.recall_reasons`
   - Inputs: `crystal_id`.
   - Returns: detail payload suitable for the detail pane.
-- `admin.run_manual_dreaming`
-  - Returns: dream run id and refreshed `Dream Runs` snapshot.
+- `admin.run_dream_all`
+  - Runs successive capped dreaming cycles until no pending short-term memories
+    remain.
+  - Uses the same drain-all behavior as a started scheduled or urgent dreaming
+    run. Each cycle still respects `max_short_term_memories_per_cycle`.
+  - Returns dream run ids and refreshed `Dream Runs` snapshot, or a display-safe
+    no-pending-memory result.
 - `admin.dream_review`
   - Inputs: `run_id`.
-  - Returns: detail payload suitable for the detail pane.
+  - Returns: phase-by-phase dream audit payload suitable for the detail pane or
+    audit viewer.
+- `admin.list_concepts`
+  - Inputs: optional `selected_id`, optional filters.
+  - Returns: concepts, selected concept, facets, linked crystals, semantic tags,
+    and status.
+- `admin.add_concept`
+  - Inputs: canonical label, optional facets, semantic tags, language tags, and
+    story scopes.
+  - Returns: new concept id and refreshed concept snapshot.
+- `admin.edit_concept`
+  - Inputs: concept id, canonical label, notes, status, semantic tags, facets,
+    and story scopes.
+  - Returns: action result and refreshed concept snapshot.
+- `admin.archive_concept`
+  - Inputs: concept id and confirmation.
+  - Returns: action result and refreshed concept snapshot.
+- `admin.reinforce_concept`
+  - Inputs: concept id.
+  - Returns: concept feedback result and refreshed concept snapshot.
+- `admin.rename_concept`
+  - Inputs: concept id and new canonical label.
+  - Returns: action result, preserving old labels as searchable facets unless
+    explicitly superseded.
+- `admin.link_crystal_to_concept`
+  - Inputs: concept id, crystal id, optional relation type.
+  - Returns: refreshed concept and crystal detail.
+- `admin.unlink_crystal_from_concept`
+  - Inputs: concept id, crystal id.
+  - Returns: refreshed concept and crystal detail.
+- `admin.remove_short_term_memory`
+  - Inputs: short-term memory id and confirmation.
+  - Returns: refreshed short-term memory snapshot and short-term status.
 
 ### Config Methods
 
@@ -218,20 +261,86 @@ Minimum config methods needed for parity with the current configuration TUI:
   - Returns: saved settings, provider rows, and detail payload.
 - `config.reload`
   - Inputs: optional selected provider.
-  - Returns: settings reloaded from `settings.toml`, provider rows, form values,
+  - Returns: settings reloaded from `dream.conf`, provider rows, form values,
     and detail payload.
-- `config.check_provider`
-  - Inputs: selected provider and current draft.
-  - Returns: redacted provider check result and detail payload.
+- `config.model_suggestions`
+  - Inputs: provider profile name and current draft.
+  - Returns cached model suggestions for that provider profile from
+    `llmcache.tmp` when available, with fallback defaults.
+- `config.test_provider_profile`
+  - Inputs: provider profile name and current draft.
+  - Tests connectivity for the provider profile, fetches models when the
+    provider exposes a models endpoint, updates `llmcache.tmp`, and returns a
+    redacted result.
+- `config.check_workflow`
+  - Inputs: selected workflow and current draft.
+  - Returns: redacted workflow check result for the selected provider profile,
+    model, prompt, and schema constraints.
+- `config.dreaming_status`
+  - Returns: pending short-term memory counts, active cycle state, last trigger,
+    current phase, progress, consecutive `not_enough_memories` skip count, and
+    last error.
 
-Config methods must preserve current guarantees:
+Config methods must preserve these guarantees:
 
-- API key values are never persisted.
-- API key values are never displayed.
-- The configured environment variable name may be displayed.
-- Provider checks use edited in-memory settings, not only saved settings.
+- Dreaming provider configuration is saved in a scoped plaintext config file at
+  `~/.config/hieronymus/dream.conf`.
+- `dream.conf` contains only dreaming workflow provider, trigger, prompt, and
+  workflow-cap settings for now.
+- Discovered provider model lists are not stored in `dream.conf`; they are
+  cached in `~/.config/hieronymus/llmcache.tmp`.
+- API key values are persisted as plaintext in `dream.conf`.
+- API key values are not displayed after save, logged, or returned through the
+  bridge except as redacted presence/status fields.
+- Provider profile tests and workflow checks use edited in-memory settings, not
+  only saved settings.
 - Reload discards unsaved edits.
 - Save validates through the existing Python settings layer before writing.
+
+Recommended `dream.conf` shape:
+
+```toml
+[providers.anthropic-main]
+type = "anthropic"
+endpoint = "https://api.anthropic.com"
+api_key = "plain-text-key"
+timeout_seconds = 60
+
+[providers.ollama-local]
+type = "openai"
+endpoint = "http://localhost:11434/v1"
+api_key = ""
+timeout_seconds = 120
+
+[workflows.crystallization]
+provider = "anthropic-main"
+model = "claude-4-6-sonnet"
+
+[workflows.relation_discovery]
+enabled = false
+provider = "ollama-local"
+model = "gemma4-e3b"
+
+[workflows.reinforcement_compaction]
+provider = "anthropic-main"
+model = "claude-4-5-haiku"
+```
+
+First-run defaults:
+
+- create provider profile stubs for Anthropic, OpenAI, Gemini, and Ollama;
+- do not create plaintext API keys;
+- crystallization points to the Anthropic stub and remains invalid until a model
+  and API key are configured;
+- LLM-assisted relation discovery is disabled and points to the Ollama stub;
+- reinforcement/compaction points to the Ollama stub and remains invalid until a
+  model/provider endpoint is configured.
+
+Dreaming is disabled until all required enabled provider-backed workflows are
+valid. Deterministic fallback must not silently replace misconfigured dreaming
+workflows in scheduled, urgent, or admin-triggered dreaming.
+Disabled dreaming blocks conversion and maintenance only; recall still searches
+short-term and long-term memory.
 
 ## TypeScript Frontend Structure
 
@@ -272,6 +381,56 @@ The exact folder name can be changed, but the separation should remain:
 Use TypeScript types as a mirror of the Python JSON contract. The TypeScript UI
 must validate incoming payloads at runtime with a small schema layer such as
 Zod or an equivalent lightweight validator.
+
+## Frontend Dependency Baseline
+
+The current frontend prototype uses Ink 5 and React 18. The refactor should move
+to a coherent modern baseline:
+
+- `react` `^19.2`
+- `ink` `^7`
+- `ink-text-input` `^6`
+- `nanostores` `^1.3`
+- `@nanostores/react` `^1.1`
+- `zod` `^4`
+- `unicode-animations` `^1.0`
+- `ink-spinner` `^5`
+- `ink-select-input` `^6`
+
+Use Nanostores for shared TUI state such as active view, selected row, draft
+config, status panes, command palette state, provider profile cache state, and
+dreaming progress. Keep Python authoritative for persistence and domain
+validation.
+
+Use `unicode-animations` and `ink-spinner` for subtle terminal motion:
+progress, working states, phase transitions, and status pulses. Keep animations
+optional and degrade cleanly when terminal rendering does not support them.
+
+Use `ink-select-input` for menus and pickers if custom list navigation becomes
+too much local code. `ink-tab` is useful conceptually, but its published peer
+range does not currently include Ink 7, so do not add it unless compatibility is
+verified or replaced.
+
+Keep these dependencies out of the TUI unless a concrete implementation need
+appears:
+
+- AI SDK packages such as `ai`, `@ai-sdk/openai`, `@ai-sdk/anthropic`,
+  `@ai-sdk/google`, or `@ai-sdk/openai-compatible`; provider logic remains in
+  Python.
+- MCP/Agent Client Protocol SDKs; the TUI talks to Python through the local JSON
+  bridge.
+- TOML parsers such as `@iarna/toml` or `yaml`; Python owns `dream.conf`
+  parsing and writing.
+- broad CLI utility packages such as `simple-git`, `glob`, `open`, `prompts`,
+  `clipboardy`, `extract-zip`, or `dotenv` unless a later plan introduces a
+  specific UI feature that needs them.
+
+`~/Development/3rd/hermes-agent/ui-tui/packages/hermes-ink/` is a useful local
+reference for advanced terminal behavior: alternate screen handling, scroll
+boxes, raw ANSI, terminal focus/viewport hooks, selection, links, and text-input
+integration. Do not depend on that private package by absolute path in
+Hieronymus releases. Either stay on public Ink packages or deliberately vendor a
+small, reviewed subset if a future implementation plan needs those features.
 
 ## Python Structure
 
@@ -351,44 +510,113 @@ Node.js availability must be handled explicitly:
 
 ## UX Parity Requirements
 
-The Ink admin UI must preserve these current behaviors:
+The Ink admin UI must preserve current behaviors and add the memory surfaces
+required by the multilingual memory design:
 
-- View switching for Concepts, Renderings, Crystals, Lessons, Short-Term
-  Sessions, Dream Runs, Proposals, and Audit Log.
+- Header with the Hieronymus logo/name and current workspace context.
+- View switching for Concepts, Concept Facets/Renderings, Crystals, Lessons,
+  Rule Crystals, Thought Memories, Short-Term Memories, Short-Term Sessions,
+  Dream Runs, Dream Audit, and Audit Log.
+- Current short-term memory status pane visible on all admin pages.
+  It should show pending short-term memory count, recall availability, dreaming
+  enabled/disabled reason, and next scheduled eligibility.
+- Current dreaming process state visible on all admin pages. It should show
+  `IDLE` when no background work is active, and `Working` with current phase and
+  progress while a dream cycle is running. If dreaming config is invalid, it
+  should show disabled/invalid status with the failing workflow reason.
 - Stats display.
 - Table navigation.
 - Detail pane updates when selection changes.
 - Filter dialog.
 - Edit dialog for crystals and lessons.
 - Add, merge, split, supersede, reinforce, decay, deprecate, delete.
+- Crystal list with manual decay and reinforce.
+- Concept list with CRUD, rename, semantic tag editing, facet editing,
+  concept-crystal link editing, reinforce feedback, archive, and linked-crystal
+  navigation.
+- Short-term memory list with remove/archive actions.
+- Direct admin edits are allowed for metadata fixes and obvious typo cleanup.
+  Semantic corrections that change meaning, rendering, applicability, or rule
+  behavior should create correction memories instead of mutating long-term
+  memory directly. Correction memories do not request immediate dreaming.
+- Rule Crystal list with inspection, archive, and correction-memory creation.
+  The admin UI must not expose a manual "promote to rule" action; rule
+  activation remains a dreaming decision from clean explicit rule intent.
+  Archiving an active rule crystal stops validation from using it immediately;
+  replacement rules still enter as correction memories and are processed by
+  dreaming.
+- Manual dreaming has one admin action: Dream all. Dream all drains pending
+  short-term memories through successive capped cycles and includes the final
+  small batch.
 - Delete confirmation before mutation.
-- Proposal approve/reject.
 - Provenance inspection.
 - Recall reason inspection.
+- Dream run list with admin-visible immutable dream audit detail.
+- Dream audit detail must show malformed provider items that were rejected or
+  recovered best-effort, including parse problems and confidence penalties.
 - Command palette scoped by active view.
 - Manual dreaming and dream output review.
+- Keyboard navigation for every command. Mouse navigation should work where Ink
+  and the terminal environment support it.
+- Sleek terminal UX with subtle animations where possible. Follow the
+  `~/Development/3rd/hermes-agent` style: short 120-200ms transitions, small
+  fade/slide/pulse effects for drawers, progress, and focus changes, with no
+  animation required where terminal rendering cannot support it cleanly.
 
-The Ink config UI must preserve these current behaviors:
+The Ink config UI must preserve current behaviors and add the new dreaming
+configuration surface:
 
-- Provider table for deterministic, OpenAI, Gemini, and Anthropic providers.
-- Active provider selection.
-- Provider fields: `enabled`, `model`, `api_key_env`, `base_url`,
+- Named provider profiles for OpenAI, Anthropic, Gemini, and
+  OpenAI-compatible local endpoints such as Ollama. Provider profiles hold
+  reusable `type`, `endpoint`/API path where supported, plaintext `api_key`, and
   `timeout_seconds`.
-- Dreaming fields: `active_provider`, `autostart_enabled`,
-  `min_interval_minutes`, `new_short_term_memory_threshold`,
-  `max_cycles_per_autostart`.
+- Workflow selectors for crystallization, optional LLM-assisted relation
+  discovery, and reinforcement/compaction. Each workflow selects a named
+  provider profile and its own model. For example: crystallization can use
+  Anthropic Sonnet, relation discovery can use Ollama Gemma, and
+  reinforcement/compaction can use Anthropic Haiku. LLM-assisted relation
+  discovery is disabled by default and may default to the reinforcement/
+  compaction provider when enabled. Deterministic fallback may remain available
+  only as an explicit CLI/debug/test provider, not as a normal scheduled/admin
+  dreaming fallback.
+- Provider profile test/fetch button and result field. When the provider exposes
+  a models endpoint, this fetches and caches model suggestions for that provider
+  profile in `llmcache.tmp`.
+- Workflow model editors suggest cached models from the selected provider
+  profile.
+- Test button and result field per provider-backed workflow. The test uses the
+  workflow's selected provider profile, model, prompt, and schema constraints,
+  with all secrets redacted.
+- Dreaming trigger fields: `autostart_enabled`,
+  `scheduled_interval_minutes`, `min_pending_short_term_memories`,
+  `max_pending_short_term_memories`, `not_enough_memories_cycle_threshold`, and
+  cycle/working-set caps, including max short-term memories per dreaming cycle.
+  Defaults: 30 minutes, minimum 20 pending short-term memories, urgent maximum
+  200 pending short-term memories, 50 short-term memories per cycle, and
+  backlog escape after 5 consecutive scheduled
+  `not_enough_memories` skips.
+- Editable dreaming prompt editors for crystallization, optional LLM-assisted
+  relation discovery, and reinforcement/compaction. Each prompt is tied to that
+  workflow's selected provider. System format/schema constraints are appended
+  automatically and are not user-editable. Hieronymus must ship default prompts
+  for provider-backed phases, and those prompts should instruct the provider to
+  write ordinary memory prose in English while preserving Japanese, Russian, and
+  other non-English forms as facets, renderings, quotations, or metadata.
+- Current short-term memory status pane.
+- Current dreaming process state pane.
 - Unsaved draft state.
 - Save.
 - Reload.
-- Provider check.
+- Workflow check.
 - Secret-safe detail panel.
 - Validation errors that do not save invalid settings.
 
-Keyboard bindings should stay as close as possible to the current Textual UI:
+Keyboard bindings should stay as close as possible to the current Textual UI,
+but view switching may need dynamic bindings once the admin view count grows:
 
-- Admin: `1`-`8`, `f`, `/`, `e`, `a`, `x`, `+`, `-`, `d`, `delete`, `p`,
-  `ctrl+p`, `q`.
-- Config: `1`-`4`, `s`, `r`, `c`, `q`.
+- Admin: numeric view selection where possible, arrow navigation, `f`, `/`,
+  `e`, `a`, `x`, `+`, `-`, `d`, `delete`, `p`, `ctrl+p`, `q`.
+- Config: provider navigation, prompt tab navigation, `s`, `r`, `c`, `q`.
 
 Where Ink terminal input differs from Textual behavior, document the difference
 in `docs/usage.md` before switching defaults.
@@ -406,7 +634,58 @@ Add tests for the bridge methods before building the Ink UI:
 - Config bootstrap returns provider rows and safe settings.
 - Config save persists valid settings.
 - Config save rejects invalid settings.
-- Config provider checks redact configured secret values.
+- Config workflow checks redact configured secret values.
+- Config saves plaintext provider API keys only to
+  `~/.config/hieronymus/dream.conf`.
+- Config provider profile tests fetch and cache model suggestions when the
+  provider exposes a models endpoint, storing them in `llmcache.tmp`.
+- Config workflow model editors use cached provider-profile model suggestions
+  or safe fallback defaults.
+- `hiero doctor` reads `llmcache.tmp`, reports whether selected workflow models
+  are still present when the cache knows the provider model list, and tries to
+  refresh stale model lists on start. Cache entries are stale after 24 hours.
+  If a stale cache refresh fails because the provider is unreachable, doctor
+  reports a warning rather than failing.
+
+Dreaming config doctor failures:
+
+- `dream.conf` is invalid TOML or does not match the expected schema;
+- a workflow references a missing provider profile;
+- a workflow model is not set;
+- a provider profile used by an enabled workflow cannot be reached during an
+  active check;
+- a required API key is missing;
+- a configured API key is rejected by the provider, such as HTTP 403;
+- a selected model is known not to exist when the provider can verify model
+  availability. Local/OpenAI-compatible providers such as Ollama may be
+  inconclusive if they cannot verify the model list.
+
+Disabled optional workflows, such as LLM-assisted relation discovery when
+`enabled = false`, do not cause doctor failures for missing provider/model/API
+settings. Doctor may still report warnings for invalid configured values.
+Disabled optional workflow settings are still saved in `dream.conf`, so users
+can configure relation discovery while disabled and enable it later without
+re-entering provider, model, or prompt settings.
+- Config dreaming status returns pending short-term memory counts and active
+  phase/progress.
+- Config saves provider-backed dreaming prompts, per-workflow provider settings,
+  and trigger fields.
+- Admin concept methods cover CRUD, rename, facet editing, semantic tags, and
+  concept-crystal links.
+- Admin short-term memory removal requires confirmation.
+- Admin dream review returns immutable phase-by-phase audit data.
+- Admin dream review exposes rejected malformed items and recovered malformed
+  items with confidence penalties.
+- Admin correction-memory creation does not request immediate dreaming.
+- Admin Dream all drains all pending short-term memories through successive
+  capped cycles.
+- Scheduled dreaming records `not_enough_memories` skips below
+  `min_pending_short_term_memories` and processes leftovers once
+  `not_enough_memories_cycle_threshold` consecutive skips have accumulated.
+- Urgent dreaming caused by `max_pending_short_term_memories` still respects the
+  max short-term memories per cycle cap.
+- Once scheduled, urgent, backlog-escape, or manual dreaming starts, it drains
+  pending short-term memories until none remain through successive capped cycles.
 - Error responses use stable codes and display-safe messages.
 
 ### TypeScript Tests
@@ -417,19 +696,31 @@ Add frontend tests for:
 - Runtime schema validation.
 - Admin screen state transitions.
 - Config draft state transitions.
+- Config prompt editor tab/state transitions.
 - Command palette scoping.
 - Dialog submission and cancellation.
+- Dreaming status pane rendering for `IDLE` and `Working`.
+- Short-term status pane rendering on all admin pages.
+- Short-term status pane distinguishes recall availability from dreaming
+  enabled/disabled state.
 
 ### End-to-End Tests
 
 Add a small set of scripted terminal tests after the bridge and Ink app exist:
 
 - Launch `hiero config` with `HIERONYMUS_TUI=ink`, edit a provider, save, and
-  verify `settings.toml`.
+  verify `~/.config/hieronymus/dream.conf`.
 - Launch `hiero admin` with seeded data, switch views, open detail, and run a
   non-destructive action.
 - Confirm that destructive actions require confirmation.
-- Confirm that raw API key values never appear in captured output.
+- Confirm that raw API key values persist only in `dream.conf` and never appear
+  in captured terminal output, logs, or bridge responses.
+- Confirm concept CRUD, short-term memory removal, and dream audit inspection
+  are keyboard navigable.
+- Confirm Dream all drains all pending short-term memories through successive
+  capped cycles, including the final small batch.
+- Confirm scheduled dreaming processes a leftover short-term memory batch on the
+  run after `not_enough_memories_cycle_threshold` consecutive scheduled skips.
 
 ## Migration Phases
 
@@ -440,7 +731,8 @@ Create the Python JSON bridge and tests. Keep Textual as the default UI.
 Deliverables:
 
 - `src/hieronymus/tui_bridge/` package.
-- Contract tests for admin and config methods.
+- Contract tests for admin and config methods, including concepts, short-term
+  status, dreaming status, phase prompts, trigger fields, and dream audit.
 - No behavior change for `hiero admin` or `hiero config`.
 
 ### Phase 2: Ink Config UI
@@ -452,6 +744,8 @@ Deliverables:
 - `frontend/` project.
 - Ink config screen.
 - Runtime schemas for config payloads.
+- Provider selector, model suggestions, workflow test results, dreaming trigger
+  fields, dreaming status pane, short-term status pane, and phase prompt editor.
 - Config UI tests.
 - `HIERONYMUS_TUI=ink hiero config` launches Ink.
 
@@ -462,7 +756,9 @@ Build the Ink admin UI against the same bridge.
 Deliverables:
 
 - Ink admin screen.
-- Admin tables, detail pane, filters, dialogs, command palette, and actions.
+- Admin tables, detail pane, filters, dialogs, command palette, status panes,
+  concept editor, short-term memory viewer, crystal actions, and dream audit
+  review.
 - Admin UI tests.
 - `HIERONYMUS_TUI=ink hiero admin` launches Ink.
 
@@ -495,8 +791,12 @@ Deliverables:
 - TypeScript never writes SQLite or settings files directly.
 - Existing `--json` commands keep working.
 - Current TUI workflows are available in Ink.
-- Raw secret values are not displayed, logged, persisted, or returned through the
-  bridge.
+- Config exposes provider selection, workflow testing, model hints, dreaming
+  triggers, and provider-backed dreaming prompts.
+- Admin exposes concepts, crystals, short-term memories, current short-term
+  status, current dreaming state, and dream audits.
+- Raw secret values are persisted only in `dream.conf`; they are not displayed,
+  logged, or returned through the bridge.
 - All backend mutations are performed by existing Python service/domain modules.
 - The full Python verification still passes:
 
@@ -565,4 +865,3 @@ later if daemon-backed UI behavior becomes desirable.
   during implementation.
 - Default-switch timing: one release cycle with `HIERONYMUS_TUI=ink` available
   before changing the default is recommended.
-
