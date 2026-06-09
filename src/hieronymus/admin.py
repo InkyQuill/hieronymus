@@ -21,6 +21,7 @@ from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamRunRecord, DreamService
 from hieronymus.memory_models import TranslationContext
 from hieronymus.service_manager import ServiceManager
+from hieronymus.termbase import _parse_rule_crystal
 
 ADMIN_VIEWS = (
     "Concepts",
@@ -52,6 +53,7 @@ def _rule_crystal_text(
 
 def _validate_rule_crystal_shape(
     *,
+    source_form: str,
     canonical_rendering: str,
     approved_variants: list[str],
     forbidden_variants: list[str],
@@ -60,6 +62,15 @@ def _validate_rule_crystal_shape(
         raise ValueError("rule crystals support at most one forbidden variant")
     if any(variant != canonical_rendering for variant in approved_variants):
         raise ValueError("approved variants that differ from canonical rendering are unsupported")
+    text = _rule_crystal_text(source_form, canonical_rendering, forbidden_variants)
+    parsed = _parse_rule_crystal(text)
+    if (
+        parsed is None
+        or parsed.source_text != source_form
+        or parsed.canonical_translation != canonical_rendering
+        or parsed.forbidden_variants != forbidden_variants
+    ):
+        raise ValueError("rule crystal text cannot round-trip parsed fields")
 
 
 _ARCHIVE_STRENGTH_THRESHOLD = 0.05
@@ -1369,16 +1380,14 @@ class AdminStore:
             for variant in json.loads(proposal["forbidden_variants_json"])
             if isinstance(variant, str) and variant.strip()
         ]
+        source_form = proposal["source_form"].strip() or proposal["concept_text"]
         _validate_rule_crystal_shape(
+            source_form=source_form,
             canonical_rendering=proposal["canonical_rendering"],
             approved_variants=approved_variants,
             forbidden_variants=forbidden_variants,
         )
-        text = _rule_crystal_text(
-            proposal["source_form"].strip() or proposal["concept_text"],
-            proposal["canonical_rendering"],
-            forbidden_variants,
-        )
+        text = _rule_crystal_text(source_form, proposal["canonical_rendering"], forbidden_variants)
         semantic_tags = ("strict-concept", "translation-rule")
         cursor = conn.execute(
             """

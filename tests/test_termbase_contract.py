@@ -245,6 +245,34 @@ def test_approve_rejects_case_insensitive_forbidden_alias_atomically(config):
     _assert_approval_rejected_atomically(termbase, term_id)
 
 
+def test_approve_rejects_canonical_with_rule_delimiter_atomically(config):
+    termbase = _create_termbase(config)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up, not Attack Increase",
+    )
+
+    with pytest.raises(ValueError, match="rule crystal text cannot round-trip parsed fields"):
+        termbase.approve(term_id)
+
+    _assert_approval_rejected_atomically(termbase, term_id)
+
+
+def test_approve_rejects_source_with_rule_delimiter_atomically(config):
+    termbase = _create_termbase(config)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="Attack Up is translated as Attack Increase",
+        canonical_translation="ATK Up",
+    )
+
+    with pytest.raises(ValueError, match="rule crystal text cannot round-trip parsed fields"):
+        termbase.approve(term_id)
+
+    _assert_approval_rejected_atomically(termbase, term_id)
+
+
 def test_contract_matches_case_insensitive_source_variant(config):
     termbase = _create_termbase(config)
     _add_rule_crystal(termbase, "atk boost is translated as ATK Up.")

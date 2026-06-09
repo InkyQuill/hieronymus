@@ -73,6 +73,25 @@ def _create_proposal(config: HieronymusConfig, context: TranslationContext) -> i
     )
 
 
+def _assert_proposal_approval_rejected_atomically(
+    config: HieronymusConfig,
+    proposal_id: int,
+) -> None:
+    with connect(config.database_path) as conn:
+        proposal = conn.execute(
+            "select status from strict_concept_proposals where id = ?",
+            (proposal_id,),
+        ).fetchone()
+        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
+        term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
+        audit_count = conn.execute("select count(*) from audit_log").fetchone()[0]
+
+    assert proposal["status"] == "pending"
+    assert crystal_count == 0
+    assert term_count == 0
+    assert audit_count == 0
+
+
 def test_reinforce_and_decay_crystal_update_scores_and_audit(
     config: HieronymusConfig,
 ) -> None:
@@ -231,19 +250,7 @@ def test_approve_proposal_rejects_multiple_forbidden_variants_atomically(
     with pytest.raises(ValueError, match="rule crystals support at most one forbidden variant"):
         AdminStore(config).approve_proposal(proposal_id)
 
-    with connect(config.database_path) as conn:
-        proposal = conn.execute(
-            "select status from strict_concept_proposals where id = ?",
-            (proposal_id,),
-        ).fetchone()
-        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
-        term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
-        audit_count = conn.execute("select count(*) from audit_log").fetchone()[0]
-
-    assert proposal["status"] == "pending"
-    assert crystal_count == 0
-    assert term_count == 0
-    assert audit_count == 0
+    _assert_proposal_approval_rejected_atomically(config, proposal_id)
 
 
 def test_approve_proposal_rejects_noncanonical_approved_variant_atomically(
@@ -269,19 +276,53 @@ def test_approve_proposal_rejects_noncanonical_approved_variant_atomically(
     ):
         AdminStore(config).approve_proposal(proposal_id)
 
-    with connect(config.database_path) as conn:
-        proposal = conn.execute(
-            "select status from strict_concept_proposals where id = ?",
-            (proposal_id,),
-        ).fetchone()
-        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
-        term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
-        audit_count = conn.execute("select count(*) from audit_log").fetchone()[0]
+    _assert_proposal_approval_rejected_atomically(config, proposal_id)
 
-    assert proposal["status"] == "pending"
-    assert crystal_count == 0
-    assert term_count == 0
-    assert audit_count == 0
+
+def test_approve_proposal_rejects_canonical_with_rule_delimiter_atomically(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    proposal_id = ConceptProposalStore(config).create(
+        dream_run_id=None,
+        series_slug=context.series_slug,
+        source_language=context.source_language,
+        target_language=context.target_language,
+        concept_text="センス",
+        source_form="センス",
+        canonical_rendering="сенс, not sense",
+        approved_variants=[],
+        forbidden_variants=[],
+        rationale="Use the established Russian rendering.",
+    )
+
+    with pytest.raises(ValueError, match="rule crystal text cannot round-trip parsed fields"):
+        AdminStore(config).approve_proposal(proposal_id)
+
+    _assert_proposal_approval_rejected_atomically(config, proposal_id)
+
+
+def test_approve_proposal_rejects_source_with_rule_delimiter_atomically(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    proposal_id = ConceptProposalStore(config).create(
+        dream_run_id=None,
+        series_slug=context.series_slug,
+        source_language=context.source_language,
+        target_language=context.target_language,
+        concept_text="センス",
+        source_form="Sense is translated as Ability",
+        canonical_rendering="сенс",
+        approved_variants=[],
+        forbidden_variants=[],
+        rationale="Use the established Russian rendering.",
+    )
+
+    with pytest.raises(ValueError, match="rule crystal text cannot round-trip parsed fields"):
+        AdminStore(config).approve_proposal(proposal_id)
+
+    _assert_proposal_approval_rejected_atomically(config, proposal_id)
 
 
 def test_rejecting_approved_proposal_raises_without_mutating(

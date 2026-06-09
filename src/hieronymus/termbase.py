@@ -78,6 +78,7 @@ def _rule_text(source_text: str, canonical_translation: str, forbidden_variants:
 
 def _validate_rule_shape(
     *,
+    source_text: str,
     canonical_translation: str,
     approved_variants: list[str],
     forbidden_variants: list[str],
@@ -86,6 +87,15 @@ def _validate_rule_shape(
         raise ValueError("rule crystals support at most one forbidden variant")
     if any(variant != canonical_translation for variant in approved_variants):
         raise ValueError("approved variants that differ from canonical rendering are unsupported")
+    text = _rule_text(source_text, canonical_translation, forbidden_variants)
+    parsed = _parse_rule_crystal(text)
+    if (
+        parsed is None
+        or parsed.source_text != source_text
+        or parsed.canonical_translation != canonical_translation
+        or parsed.forbidden_variants != forbidden_variants
+    ):
+        raise ValueError("rule crystal text cannot round-trip parsed fields")
 
 
 _UNSUPPORTED_RULE_ALIAS_KINDS = frozenset({"source_variant", "search_alias"})
@@ -381,6 +391,7 @@ class Termbase:
             if row["kind"] == "forbidden_variant" and row["text"].strip()
         ]
         _validate_rule_shape(
+            source_text=term["source_text"],
             canonical_translation=term["canonical_translation"],
             approved_variants=approved_variants,
             forbidden_variants=forbidden_variants,
