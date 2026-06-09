@@ -14,6 +14,7 @@ def test_memory_design_tables_exist(config: HieronymusConfig) -> None:
 
     assert {
         "concepts",
+        "concepts_fts",
         "concept_facets",
         "concept_semantic_tags",
         "concept_renames",
