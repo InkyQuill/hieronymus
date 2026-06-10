@@ -350,6 +350,166 @@ def test_strict_term_with_case_insensitive_forbidden_alias_is_skipped(
         assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
 
 
+def test_strict_term_with_source_alias_in_partial_alias_schema_is_skipped(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        _create_partial_alias_schema(conn)
+        term_id = _insert_strict_term(conn)
+        conn.execute(
+            """
+            insert into strict_term_aliases(term_id, language, text, kind)
+            values (?, 'ja', '攻撃バフ', 'source_variant')
+            """,
+            (term_id,),
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator(config).run()
+
+    assert report.skipped == {"strict_terms.unsupported_alias": 1}
+    with connect(config.database_path) as conn:
+        assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
+        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+
+
+def test_strict_term_with_search_alias_in_partial_alias_schema_is_skipped(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        _create_partial_alias_schema(conn)
+        term_id = _insert_strict_term(conn)
+        conn.execute(
+            """
+            insert into strict_term_aliases(term_id, language, text, kind)
+            values (?, 'ja', 'atk buff', 'search_alias')
+            """,
+            (term_id,),
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator(config).run()
+
+    assert report.skipped == {"strict_terms.unsupported_alias": 1}
+    with connect(config.database_path) as conn:
+        assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
+        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+
+
+def test_skipped_strict_term_does_not_remain_pending_in_dry_report(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        term_id = _insert_strict_term(conn)
+        conn.execute(
+            """
+            insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
+            values (?, 'ja', '攻撃バフ', 'source_variant', 1)
+            """,
+            (term_id,),
+        )
+        conn.commit()
+
+    MemoryGraphMigrator(config).run()
+    report = MemoryGraphMigrator.inspect(config)
+
+    assert report.pending.get("strict_terms", 0) == 0
+
+
+def test_doctor_does_not_warn_for_skipped_strict_term(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        term_id = _insert_strict_term(conn)
+        conn.execute(
+            """
+            insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
+            values (?, 'ja', '攻撃バフ', 'source_variant', 1)
+            """,
+            (term_id,),
+        )
+        conn.commit()
+
+    MemoryGraphMigrator(config).run()
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        report = Doctor(config).run(autofix=False)
+
+    assert all(finding.code != "memory-graph-migration-pending" for finding in report["warnings"])
+
+
+def test_dry_report_counts_missing_crystal_semantic_tag_pairs(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        crystal_id = conn.execute(
+            """
+            insert into crystals(
+              crystal_type,
+              text,
+              scope_type,
+              tags_json,
+              strength,
+              confidence,
+              status,
+              created_at,
+              updated_at
+            )
+            values ('lesson', 'Legacy lesson.', 'series', '["ui", "term"]', 0.5, 0.5,
+                    'active', ?, ?)
+            """,
+            (NOW, NOW),
+        ).lastrowid
+        conn.execute(
+            """
+            insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+            values (?, 'ui', 0.5, ?)
+            """,
+            (crystal_id, NOW),
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator.inspect(config)
+
+    assert report.pending["crystal_semantic_tags"] == 1
+
+
+def test_dry_report_counts_missing_task_session_semantic_tag_pairs(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table task_sessions (
+              id integer primary key,
+              tags_json text not null default '[]'
+            );
+            create table task_session_semantic_tags (
+              session_id integer not null,
+              semantic_tag text not null,
+              primary key (session_id, semantic_tag)
+            );
+            insert into task_sessions(id, tags_json) values (1, '["ui", "term"]');
+            insert into task_session_semantic_tags(session_id, semantic_tag)
+            values (1, 'ui');
+            """
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator.inspect(config)
+
+    assert report.pending["task_session_semantic_tags"] == 1
+
+
 def test_migrator_tolerates_partial_older_task_and_crystal_tables(
     tmp_path: Path,
 ) -> None:
@@ -501,6 +661,58 @@ def _seed_base(config: HieronymusConfig) -> None:
             (NOW, NOW),
         )
         conn.commit()
+
+
+def _create_partial_alias_schema(conn) -> None:
+    conn.executescript(
+        """
+        create table series (
+          id integer primary key,
+          slug text not null unique,
+          title text not null,
+          default_source_language text not null,
+          default_target_language text not null,
+          created_at text not null,
+          updated_at text not null
+        );
+        create table strict_terms (
+          id integer primary key,
+          series_slug text not null references series(slug),
+          source_language text not null,
+          target_language text not null,
+          category text not null,
+          source_text text not null,
+          canonical_translation text not null,
+          status text not null,
+          notes text not null default '',
+          created_at text not null,
+          updated_at text not null
+        );
+        create table strict_term_tags (
+          term_id integer not null references strict_terms(id) on delete cascade,
+          tag text not null,
+          primary key(term_id, tag)
+        );
+        create table strict_term_aliases (
+          id integer primary key,
+          term_id integer not null references strict_terms(id) on delete cascade,
+          language text not null,
+          text text not null,
+          kind text not null
+        );
+        insert into series(
+          slug,
+          title,
+          default_source_language,
+          default_target_language,
+          created_at,
+          updated_at
+        )
+        values ('book', 'Book', 'ja', 'en', '2026-06-10T00:00:00+00:00',
+                '2026-06-10T00:00:00+00:00');
+        """
+    )
+    conn.commit()
 
 
 def _insert_strict_term(conn) -> int:

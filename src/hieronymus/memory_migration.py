@@ -826,18 +826,17 @@ class MemoryGraphMigrator:
     ) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
         if not _has_table(conn, "strict_term_aliases"):
             return ((), ())
-        if not _has_columns(
-            conn,
-            "strict_term_aliases",
-            {"term_id", "text", "kind", "case_sensitive"},
-        ):
-            return ((), ())
+        columns = _columns(conn, "strict_term_aliases")
+        if not {"term_id", "text", "kind"} <= columns:
+            return None
+        case_sensitive_sql = "case_sensitive" if "case_sensitive" in columns else "1"
+        order_column = "id" if "id" in columns else "rowid"
         rows = conn.execute(
-            """
-            select text, kind, case_sensitive
+            f"""
+            select text, kind, {case_sensitive_sql} as case_sensitive
             from strict_term_aliases
             where term_id = ?
-            order by id
+            order by {order_column}
             """,
             (term_id,),
         ).fetchall()
@@ -1133,29 +1132,18 @@ class MemoryGraphMigrator:
         if _has_table(conn, "strict_terms") and _has_columns(
             conn,
             "strict_terms",
-            {"id", "status"},
+            {
+                "id",
+                "status",
+                "source_text",
+                "canonical_translation",
+                "notes",
+                "series_slug",
+                "source_language",
+                "target_language",
+            },
         ):
-            if _has_table(conn, "memory_graph_migration_ledger"):
-                pending["strict_terms"] = _scalar_count(
-                    conn,
-                    """
-                    select count(*)
-                    from strict_terms
-                    where status in ('approved', 'active')
-                      and not exists (
-                        select 1
-                        from memory_graph_migration_ledger ledger
-                        where ledger.source_table = 'strict_terms'
-                          and ledger.source_id = cast(strict_terms.id as text)
-                          and ledger.target_table = 'crystals'
-                      )
-                    """,
-                )
-            else:
-                pending["strict_terms"] = _scalar_count(
-                    conn,
-                    "select count(*) from strict_terms where status in ('approved', 'active')",
-                )
+            pending["strict_terms"] = self._count_migratable_strict_terms(conn)
         if _has_table(conn, "strict_concept_proposals") and _has_columns(
             conn,
             "strict_concept_proposals",
@@ -1182,6 +1170,48 @@ class MemoryGraphMigrator:
                     conn,
                     "select count(*) from strict_concept_proposals where status != 'rejected'",
                 )
+
+    def _count_migratable_strict_terms(self, conn: sqlite3.Connection) -> int:
+        if _has_table(conn, "memory_graph_migration_ledger"):
+            rows = conn.execute(
+                """
+                select *
+                from strict_terms
+                where status in ('approved', 'active')
+                  and not exists (
+                    select 1
+                    from memory_graph_migration_ledger ledger
+                    where ledger.source_table = 'strict_terms'
+                      and ledger.source_id = cast(strict_terms.id as text)
+                      and ledger.target_table = 'crystals'
+                  )
+                order by id
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                select *
+                from strict_terms
+                where status in ('approved', 'active')
+                order by id
+                """
+            ).fetchall()
+
+        count = 0
+        for term in rows:
+            aliases = self._strict_term_rule_aliases(conn, int(term["id"]))
+            if aliases is None:
+                continue
+            approved, forbidden = aliases
+            if _validate_rule_shape(
+                source_text=term["source_text"],
+                canonical_translation=term["canonical_translation"],
+                approved_variants=approved,
+                forbidden_variants=forbidden,
+            ):
+                count += 1
+        return count
 
 
 def _database_path(db: Database | HieronymusConfig | Path | str) -> Path:
@@ -1298,20 +1328,32 @@ def _pending_owner_rows_with_legacy_values(
     present_source_columns = [column for column in value_source_columns if column in owner_columns]
     if not present_source_columns:
         return 0
-    non_empty_conditions = " or ".join(
-        f"trim(coalesce({column}, '')) not in ('', '[]')" for column in present_source_columns
+    wanted_sql = "\nunion\n".join(
+        f"""
+        select distinct owner.id as owner_id, trim(json_each.value) as value
+        from {owner_table} owner,
+             json_each(
+               case
+                 when json_valid(owner.{column}) then owner.{column}
+                 else '[]'
+               end
+             ) as json_each
+        where json_each.type = 'text'
+          and trim(json_each.value) != ''
+        """
+        for column in present_source_columns
     )
     return _scalar_count(
         conn,
         f"""
         select count(*)
-        from {owner_table} owner
-        where ({non_empty_conditions})
+        from ({wanted_sql}) wanted
+        where wanted.value != ''
           and not exists (
             select 1
             from {target_table} target
-            where target.{owner_column} = owner.id
-              and trim(coalesce(target.{value_column}, '')) != ''
+            where target.{owner_column} = wanted.owner_id
+              and target.{value_column} = wanted.value
           )
         """,
     )
