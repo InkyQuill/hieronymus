@@ -52,8 +52,12 @@ description: Commit material into short-term memory for later dreaming and cryst
 # Hieronymus Learn
 
 Use when the user says to absorb, remember, study, ingest, import, or learn from a source.
-Call `hieronymus_learn` with provenance. Do not promote strict terminology directly; dreaming
-can produce crystals, lessons, erudition, and proposals later.
+The agent does the judgment: split material into small observed facts, attach source credibility,
+language tags, story scopes, and semantic tags, then call `hieronymus_short_term_add`.
+
+MCP tools are storage and retrieval primitives, not judgment engines. There is no supported Learn
+judgment MCP tool; use this skill workflow plus `hieronymus_short_term_add`. Do not promote strict
+terminology directly; dreaming can produce crystals, lessons, erudition, and proposals later.
 
 {BOUNDARY_TEXT}
 """
@@ -65,8 +69,34 @@ description: Inspect material for the current task without committing the whole 
 
 # Hieronymus Read
 
-Use for casual lookup, extraction, summaries, or temporary understanding. Call `hieronymus_read`.
-By default, do not store every block as short-term memory.
+Use for casual lookup, extraction, summaries, or temporary understanding. The agent summarizes
+source text into small short-term extracts only when an extract is useful for the current task.
+Store those extracts with `hieronymus_short_term_add`.
+
+MCP tools are storage and retrieval primitives, not judgment engines. There is no supported Read
+judgment MCP tool; use this skill workflow plus `hieronymus_short_term_add`.
+
+Do not store the whole source by default.
+
+{BOUNDARY_TEXT}
+"""
+
+REMEMBER_SKILL = f"""---
+name: hieronymus-remember
+description: Record user corrections as high-credibility short-term memory.
+---
+
+# Hieronymus Remember
+
+Use when the user corrects terminology, style, facts, or workflow rules. The agent does the
+judgment: turn the correction into a short short-term memory, preserve scope and tags, and call
+`hieronymus_short_term_add`.
+
+For high-credibility user rules, phrase the memory as `User told me to ...`, use source_role `user`,
+kind `correction`, source_credibility `user_rule`, and a specific rule_intent when known.
+
+MCP tools are storage and retrieval primitives, not judgment engines. Do not create or promote rule
+crystals manually; dreaming handles crystallization later.
 
 {BOUNDARY_TEXT}
 """
@@ -117,6 +147,7 @@ def asset_map() -> dict[str, str]:
         "skills/hieronymus-recall/SKILL.md": RECALL_SKILL,
         "skills/hieronymus-learn/SKILL.md": LEARN_SKILL,
         "skills/hieronymus-read/SKILL.md": READ_SKILL,
+        "skills/hieronymus-remember/SKILL.md": REMEMBER_SKILL,
         "skills/hieronymus-translate/SKILL.md": TRANSLATE_SKILL,
         "skills/hieronymus-review/SKILL.md": REVIEW_SKILL,
         "skills/hieronymus-orchestrate/SKILL.md": ORCHESTRATE_SKILL,

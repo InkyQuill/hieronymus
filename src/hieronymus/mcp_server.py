@@ -6,7 +6,6 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from hieronymus.agent_ingestion import IngestionService
 from hieronymus.concept_models import ConceptFacetRecord, ConceptRecord
 from hieronymus.concepts import CONCEPT_CANDIDATE, ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig, load_config
@@ -874,53 +873,6 @@ def hieronymus_short_term_add(
         soft_origin=soft_origin,
     )
     return {"memory_id": memory_id}
-
-
-@server.tool()
-def hieronymus_learn(
-    session_id: int,
-    text: str,
-    source_role: str,
-    source_ref: str = "",
-    kind: str = "learned_block",
-) -> dict[str, object]:
-    """Split material into short-term memories eligible for dreaming."""
-    config = _load_validated_config()
-    result = IngestionService(config).learn(
-        session_id=session_id,
-        text=text,
-        source_role=source_role,
-        source_ref=source_ref,
-        kind=kind,
-    )
-    return {
-        "session_id": result.session_id,
-        "block_count": result.block_count,
-        "memory_ids": result.memory_ids,
-    }
-
-
-@server.tool()
-def hieronymus_read(
-    session_id: int,
-    text: str,
-    source_ref: str = "",
-    store_observation: bool = False,
-) -> dict[str, object]:
-    """Extract temporary concepts/terms without committing the full source by default."""
-    config = _load_validated_config()
-    result = IngestionService(config).read(
-        session_id=session_id,
-        text=text,
-        source_ref=source_ref,
-        store_observation=store_observation,
-    )
-    return {
-        "session_id": result.session_id,
-        "candidate_terms": result.candidate_terms,
-        "findings": result.findings,
-        "stored_memory_ids": result.stored_memory_ids,
-    }
 
 
 @server.tool()

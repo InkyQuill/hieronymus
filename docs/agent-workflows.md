@@ -31,8 +31,10 @@ installer wiring and is not referenced from the Codex plugin manifest.
 
 ## Learn vs Read
 
-`learn` is deliberate ingestion. It stores source blocks as short-term memories with provenance so
-later dreaming can distill crystals, lessons, erudition, and terminology proposals.
+`learn` is deliberate ingestion. The agent splits source material into observed facts or compact
+blocks, records source credibility, language tags, story scopes, and semantic tags, then stores the
+result as short-term memories. Later dreaming can distill crystals, lessons, erudition, and
+terminology proposals.
 
 Legacy `remember` and memory-add integrations are compatibility wrappers around the same short-term
 queue. They preserve the old searchable entry shape for callers, but the stored memory remains
@@ -43,9 +45,16 @@ short-term memory would otherwise share the same legacy `id`, the crystal is ret
 compatibility ID. Vague concept suggestions in proposal lists also use negative compatibility IDs;
 only positive proposal IDs are actionable strict proposals.
 
-`read` is temporary inspection. It extracts useful concepts and terms for the current task without
-committing the whole source by default. Agents should use `read` for casual lookup, summaries, and
-one-off context unless the user asks Hieronymus to learn the material.
+`read` is temporary inspection. The agent summarizes source text into small short-term extracts only
+when an extract is useful for the current task. Agents should use `read` for casual lookup,
+summaries, and one-off context unless the user asks Hieronymus to learn the material.
+
+Read, Learn, and Remember are agent judgment workflows. MCP tools are storage and retrieval
+primitives, not judgment engines. Read and Learn are no longer exposed as judgment-heavy MCP tools;
+agents should use the skill workflows plus `hieronymus_short_term_add`.
+
+`remember` records corrections as short-term memory. For high-credibility user rules, phrase the
+memory as "User told me to ...", use user-rule credibility, and let dreaming crystallize it later.
 
 ## Strict vs Advisory
 

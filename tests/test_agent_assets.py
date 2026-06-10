@@ -17,6 +17,7 @@ def test_asset_map_contains_required_skills() -> None:
     assert "skills/hieronymus-recall/SKILL.md" in assets
     assert "skills/hieronymus-learn/SKILL.md" in assets
     assert "skills/hieronymus-read/SKILL.md" in assets
+    assert "skills/hieronymus-remember/SKILL.md" in assets
     assert "skills/hieronymus-translate/SKILL.md" in assets
     assert "skills/hieronymus-review/SKILL.md" in assets
     assert "skills/hieronymus-orchestrate/SKILL.md" in assets
@@ -42,6 +43,25 @@ def test_all_skills_include_boundary_contract() -> None:
         assert "Strict concept contracts are mandatory" in skill
         assert "Crystals and lessons are advisory" in skill
         assert "Do not approve terminology proposals yourself" in skill
+
+
+def test_read_learn_remember_skills_keep_judgment_out_of_mcp() -> None:
+    assets = asset_map()
+    learn = assets["skills/hieronymus-learn/SKILL.md"]
+    read = assets["skills/hieronymus-read/SKILL.md"]
+    remember = assets["skills/hieronymus-remember/SKILL.md"]
+
+    for skill in (learn, read, remember):
+        assert "MCP tools are storage and retrieval primitives, not judgment engines." in skill
+        assert "hieronymus_short_term_add" in skill
+
+    assert "source credibility" in learn
+    assert "language tags" in learn
+    assert "story scopes" in learn
+    assert "semantic tags" in learn
+    assert "small short-term extracts" in read
+    assert "User told me to ..." in remember
+    assert "source_credibility `user_rule`" in remember
 
 
 def test_mcp_config_references_hieronymus_mcp() -> None:
