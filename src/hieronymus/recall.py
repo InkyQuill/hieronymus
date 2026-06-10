@@ -480,12 +480,15 @@ class RecallService:
                       )
                       and (c.source_language = ? or c.source_language = '')
                       and (c.target_language = ? or c.target_language = '')
+                    order by c.id, cc.concept_id
+                    limit ?
                     """,
                     (
                         *concept_scores,
                         context.scope_key,
                         context.source_language,
                         context.target_language,
+                        limit,
                     ),
                 ).fetchall()
                 for row in rows:

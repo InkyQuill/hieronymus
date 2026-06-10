@@ -478,6 +478,39 @@ def test_concept_label_finds_linked_crystal_without_text_or_facet_match(
     assert results[0].reason == "metadata recall match"
 
 
+def test_concept_label_link_expansion_is_bounded_and_deterministic(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    concept = ConceptStore(config).create_concept(
+        "Enchant",
+        status="established",
+        confidence=0.9,
+        scope_type="series",
+        scope_key=context.scope_key,
+    )
+    crystal_ids = [
+        CrystalStore(config).add_crystal(
+            context,
+            crystal_type="lesson",
+            text=f"Treat the linked skill entry {index} as a proper noun.",
+            title=f"Linked Skill {index}",
+            concept_ids=(concept.id,),
+            strength=0.7,
+            confidence=0.8,
+        )
+        for index in range(60)
+    ]
+
+    results = RecallService(config).recall(session.id, context, "Enchant", limit=5)
+
+    assert [result.id for result in results] == crystal_ids[:5]
+    assert all(result.concept_ids == (concept.id,) for result in results)
+    assert all(result.reason == "metadata recall match" for result in results)
+
+
 def test_concept_semantic_tags_find_linked_crystal_without_text_match(
     config: HieronymusConfig,
 ) -> None:
