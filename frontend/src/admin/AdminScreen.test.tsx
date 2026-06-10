@@ -14,6 +14,7 @@ function bootstrap() {
       "Short-Term Sessions",
       "Dream Runs",
       "Proposals",
+      "Dream Audits",
       "Audit Log",
     ],
     default_view: "Crystals",
@@ -168,6 +169,7 @@ describe("AdminScreen", () => {
 
     expect(app.lastFrame()).toContain("f filter");
     expect(app.lastFrame()).toContain("e edit");
+    expect(app.lastFrame()).toContain("1-9 view");
 
     await nextTick();
     app.stdin.write("f");
@@ -321,6 +323,40 @@ describe("AdminScreen", () => {
       },
     ]);
     expect(app.lastFrame()).toContain("> Lessons");
+  });
+
+  it("navigates to eighth and ninth backend views", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: snapshotForView(String(params.view)),
+      });
+    });
+    const app = render(<AdminScreen initial={bootstrap()} client={client} />);
+
+    await nextTick();
+    app.stdin.write("8");
+    await waitFor(() =>
+      expect(app.lastFrame()).toContain("Loaded Dream Audits"),
+    );
+
+    app.stdin.write("9");
+    await waitFor(() => expect(app.lastFrame()).toContain("Loaded Audit Log"));
+
+    expect(calls).toEqual([
+      {
+        method: "admin.snapshot",
+        params: { view: "Dream Audits" },
+      },
+      {
+        method: "admin.snapshot",
+        params: { view: "Audit Log" },
+      },
+    ]);
+    expect(app.lastFrame()).toContain("> Audit Log");
   });
 
   it("ignores view and action keys while an operation is in flight", async () => {

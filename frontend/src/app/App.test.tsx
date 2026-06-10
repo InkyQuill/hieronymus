@@ -33,6 +33,7 @@ function fakeClient(): JsonRpcClient {
           "Short-Term Sessions",
           "Dream Runs",
           "Proposals",
+          "Dream Audits",
           "Audit Log",
         ],
         default_view: "Crystals",

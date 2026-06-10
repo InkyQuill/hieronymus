@@ -118,15 +118,48 @@ async def test_tui_starts_with_navigation_stats_table_and_detail(
 @pytest.mark.anyio
 async def test_tui_status_pane_displays_short_term_and_drain_progress(
     config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _seed(config)
     _seed_completed_short_term_memory(config)
+    monkeypatch.setattr(
+        AdminStore,
+        "dashboard_status_payload",
+        lambda _store: {
+            "short_term_status": {
+                "pending_count": 3,
+                "min_pending_short_term_memories": 20,
+                "max_pending_short_term_memories": 200,
+                "urgent": False,
+                "drain_in_progress": True,
+                "drain_completed": 7,
+                "drain_remaining": 3,
+                "drain_total": 10,
+                "drain_progress": 0.7,
+            },
+            "dream_status": {
+                "state": "WORKING",
+                "current_phase": "maintenance",
+                "progress": 0.75,
+                "run_id": 12,
+                "cycle_id": 4,
+                "owner": "admin",
+                "started_at": "2026-06-10T00:00:00+00:00",
+            },
+            "dream_config_error": "",
+        },
+    )
     app = HieronymusAdminApp(config)
 
     async with app.run_test():
         status_text = _plain_text(_query(app, "#status-pane"))
-        assert "Short-term pending 1 / min 20 / max 200" in status_text
-        assert "Dream DISABLED" in status_text
+        assert "Short-term pending 3 / min 20 / max 200" in status_text
+        assert "drain 7/10 (70%) remaining 3" in status_text
+        assert "Dream WORKING" in status_text
+        assert "phase maintenance" in status_text
+        assert "progress 75%" in status_text
+        assert "run 12" in status_text
+        assert "cycle 4" in status_text
 
 
 @pytest.mark.anyio

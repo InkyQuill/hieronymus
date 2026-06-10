@@ -32,7 +32,6 @@ type Status = {
   error: boolean;
 };
 
-const viewKeys = ["1", "2", "3", "4", "5", "6", "7", "8"] as const;
 const crystalMutationViews = new Set(["Crystals", "Lessons"]);
 const AdminOperationResponseSchema = z
   .object({
@@ -87,7 +86,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       return;
     }
 
-    const viewIndex = viewKeys.indexOf(input as (typeof viewKeys)[number]);
+    const viewIndex = viewIndexForInput(input, initial.views.length);
     if (viewIndex >= 0) {
       const view = initial.views[viewIndex];
       if (view) {
@@ -202,6 +201,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
   }, [canUseInkInput, client, handleInput, stdin]);
 
   const selectedViewIndex = Math.max(initial.views.indexOf(snapshot.view), 0);
+  const viewKeyLimit = Math.min(initial.views.length, 9);
 
   return (
     <Box flexDirection="column">
@@ -235,7 +235,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       <StatusLine message={status.message} error={status.error} />
       <KeyHelp
         keys={[
-          "1-8 view",
+          `1-${viewKeyLimit} view`,
           "ctrl+p commands",
           "+ reinforce",
           "- decay",
@@ -247,6 +247,14 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       />
     </Box>
   );
+}
+
+function viewIndexForInput(input: string, viewCount: number) {
+  if (!/^[1-9]$/.test(input)) {
+    return -1;
+  }
+  const index = Number(input) - 1;
+  return index < Math.min(viewCount, 9) ? index : -1;
 }
 
 async function runSnapshotOperation({
