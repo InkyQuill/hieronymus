@@ -53,6 +53,29 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _trigger_type_from_owner(owner: str) -> str:
+    if owner in {"manual", "admin"}:
+        return "manual"
+    if owner == "scheduler":
+        return "scheduled"
+    return owner
+
+
+def _selected_memory_ids(groups: DreamBatch) -> tuple[int, ...]:
+    return tuple(memory.id for _session_id, _context, memories in groups for memory in memories)
+
+
+def _unique_ints(values: tuple[int, ...]) -> tuple[int, ...]:
+    seen: set[int] = set()
+    unique: list[int] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return tuple(unique)
+
+
 def _clamp_score(value: float) -> float:
     return min(max(value, 0.0), 1.0)
 
@@ -165,6 +188,19 @@ class DreamRunRecord:
     error: str = ""
 
 
+@dataclass(frozen=True)
+class _DreamApplySummary:
+    created_crystal_ids: tuple[int, ...] = ()
+    created_concept_ids: tuple[int, ...] = ()
+    created_facet_ids: tuple[int, ...] = ()
+    created_links: tuple[dict[str, int | str], ...] = ()
+    superseded_crystal_ids: tuple[int, ...] = ()
+    reinforced_crystal_ids: tuple[int, ...] = ()
+    decayed_crystal_ids: tuple[int, ...] = ()
+    searched_related_candidates: dict[str, object] = field(default_factory=dict)
+    affected_memory_set: dict[str, object] = field(default_factory=dict)
+
+
 class DreamProvider(Protocol):
     name: str
 
@@ -217,11 +253,12 @@ class DreamService:
         max_short_term_memories_per_cycle: int | None = None,
     ) -> None:
         self.config = config
+        self.dream_config = load_dream_config(config)
         self.provider = provider
         self.max_short_term_memories_per_cycle = (
             max_short_term_memories_per_cycle
             if max_short_term_memories_per_cycle is not None
-            else load_dream_config(config).max_short_term_memories_per_cycle
+            else self.dream_config.max_short_term_memories_per_cycle
         )
         if self.max_short_term_memories_per_cycle < 1:
             raise ValueError("max_short_term_memories_per_cycle must be at least 1")
@@ -353,12 +390,16 @@ class DreamService:
         owner: str = "manual",
         wait: bool = False,
         skip_when_locked: bool = False,
+        trigger_type: str | None = None,
     ) -> DreamRunRecord:
         lock_acquired = False
         try:
             with dream_cycle_lock(self.config, owner=owner, wait=wait):
                 lock_acquired = True
-                return self._run_cycle_unlocked(max_batches=1)
+                return self._run_cycle_unlocked(
+                    max_batches=1,
+                    trigger_type=trigger_type or _trigger_type_from_owner(owner),
+                )
         except DreamCycleAlreadyRunning:
             if skip_when_locked and not lock_acquired:
                 return self._record_skipped_run("dream cycle already running")
@@ -371,6 +412,7 @@ class DreamService:
         skip_when_locked: bool = False,
         wait: bool = False,
         ignore_minimum: bool = True,
+        trigger_type: str | None = None,
     ) -> DreamRunRecord:
         lock_acquired = False
         try:
@@ -379,6 +421,7 @@ class DreamService:
                 return self._run_cycle_unlocked(
                     max_batches=None,
                     ignore_minimum=ignore_minimum,
+                    trigger_type=trigger_type or _trigger_type_from_owner(owner),
                 )
         except DreamCycleAlreadyRunning:
             if skip_when_locked and not lock_acquired:
@@ -390,6 +433,7 @@ class DreamService:
         *,
         max_batches: int | None,
         ignore_minimum: bool = True,
+        trigger_type: str,
     ) -> DreamRunRecord:
         now = _now()
         with connect(self.config.database_path) as conn:
@@ -409,7 +453,12 @@ class DreamService:
         proposal_count = 0
         try:
             pending_count = self._pending_short_term_memory_count()
-            minimum = load_dream_config(self.config).min_pending_short_term_memories
+            minimum = self.dream_config.min_pending_short_term_memories
+            threshold_state = self._threshold_state(
+                pending_count=pending_count,
+                ignore_minimum=ignore_minimum,
+                trigger_type=trigger_type,
+            )
             if not ignore_minimum and pending_count < minimum:
                 self._complete_run(
                     run_id=run_id,
@@ -438,12 +487,21 @@ class DreamService:
                     break
 
                 batch_input_count = sum(len(memories) for _sid, _context, memories in groups)
+                selected_memory_ids = _selected_memory_ids(groups)
                 phase_run_id = self._start_phase_run(
                     run_id=run_id,
                     phase="crystallization",
                     input_count=batch_input_count,
                 )
                 try:
+                    self._audit_provider_request(
+                        run_id=run_id,
+                        phase_run_id=phase_run_id,
+                        trigger_type=trigger_type,
+                        threshold_state=threshold_state,
+                        selected_memory_ids=selected_memory_ids,
+                        groups=groups,
+                    )
                     raw_outputs = [
                         (
                             context,
@@ -461,7 +519,14 @@ class DreamService:
                             context,
                             allowed_memory_ids,
                         )
-                        self._audit_parse_warnings(run_id, phase_run_id, output.warnings)
+                        self._audit_parse_warnings(
+                            run_id,
+                            phase_run_id,
+                            output.warnings,
+                            trigger_type=trigger_type,
+                            threshold_state=threshold_state,
+                            selected_memory_ids=selected_memory_ids,
+                        )
                         self._validate_normalized_output(
                             output,
                             context,
@@ -469,12 +534,16 @@ class DreamService:
                         )
                         outputs.append((context, session_id, memories, output))
 
-                    batch_created_crystals, batch_proposals = self._apply_outputs(
+                    apply_summary = self._apply_outputs(
                         run_id=run_id,
                         cycle_id=cycle_id,
                         groups=groups,
                         outputs=outputs,
                         archive_memories=True,
+                    )
+                    batch_created_crystals = len(apply_summary.created_crystal_ids)
+                    batch_proposals = sum(
+                        len(output.concept_proposals) for *_rest, output in outputs
                     )
                     input_count += batch_input_count
                     created_crystal_count += batch_created_crystals
@@ -485,6 +554,24 @@ class DreamService:
                     self._complete_phase_run(
                         phase_run_id=phase_run_id,
                         output_count=batch_created_crystals + batch_proposals,
+                    )
+                    self._audit_provider_response(
+                        run_id=run_id,
+                        phase_run_id=phase_run_id,
+                        trigger_type=trigger_type,
+                        threshold_state=threshold_state,
+                        selected_memory_ids=selected_memory_ids,
+                        outputs=outputs,
+                    )
+                    self._audit_phase_completed(
+                        run_id=run_id,
+                        phase_run_id=phase_run_id,
+                        trigger_type=trigger_type,
+                        threshold_state=threshold_state,
+                        selected_memory_ids=selected_memory_ids,
+                        groups=groups,
+                        outputs=outputs,
+                        apply_summary=apply_summary,
                     )
                 except Exception as exc:
                     self._fail_phase_run(phase_run_id, exc)
@@ -849,13 +936,13 @@ class DreamService:
         *,
         limit: int,
     ) -> DreamBatch:
-        selected_session_ids = self._select_pending_completed_session_batch(limit=limit)
-        if not selected_session_ids:
+        if limit < 1:
             return []
-        placeholders = ", ".join("?" for _ in selected_session_ids)
+        groups_by_session: dict[int, tuple[TranslationContext, list[ShortTermMemoryRecord]]] = {}
+        workspace = WorkspaceStore(self.config)
         with connect(self.config.database_path) as conn:
             memory_rows = conn.execute(
-                f"""
+                """
                 select
                   short_term_memories.*,
                   task_sessions.series_slug,
@@ -868,25 +955,23 @@ class DreamService:
                 join task_sessions
                   on task_sessions.id = short_term_memories.session_id
                 where task_sessions.status = 'completed'
-                  and task_sessions.id in ({placeholders})
                   and short_term_memories.archived_at is null
                 order by task_sessions.id, short_term_memories.id
+                limit ?
                 """,
-                selected_session_ids,
+                (limit,),
             ).fetchall()
 
-        groups_by_session: dict[int, tuple[TranslationContext, list[ShortTermMemoryRecord]]] = {}
-        workspace = WorkspaceStore(self.config)
-        for row in memory_rows:
-            session_id = int(row["session_id"])
-            group = groups_by_session.get(session_id)
-            if group is None:
-                group = (
-                    workspace.get_session(session_id).context,
-                    [],
-                )
-                groups_by_session[session_id] = group
-            group[1].append(short_memory_from_row(conn, row))
+            for row in memory_rows:
+                session_id = int(row["session_id"])
+                group = groups_by_session.get(session_id)
+                if group is None:
+                    group = (
+                        workspace.get_session(session_id).context,
+                        [],
+                    )
+                    groups_by_session[session_id] = group
+                group[1].append(short_memory_from_row(conn, row))
 
         return [
             (session_id, context, memories)
@@ -962,6 +1047,9 @@ class DreamService:
 
     def _start_phase_run(self, *, run_id: int, phase: str, input_count: int) -> int:
         now = _now()
+        provider_profile = self._provider_profile()
+        provider_type = self.provider.name
+        model = self._provider_model()
         with connect(self.config.database_path) as conn:
             cursor = conn.execute(
                 """
@@ -980,9 +1068,9 @@ class DreamService:
                 (
                     run_id,
                     phase,
-                    self.provider.name,
-                    self.provider.name,
-                    self.provider.name,
+                    provider_profile,
+                    provider_type,
+                    model,
                     input_count,
                     now,
                 ),
@@ -1115,9 +1203,12 @@ class DreamService:
         groups: DreamBatch,
         outputs: list[DreamBatchOutput],
         archive_memories: bool,
-    ) -> tuple[int, int]:
-        created_crystal_count = 0
-        proposal_count = 0
+    ) -> _DreamApplySummary:
+        created_crystal_ids: list[int] = []
+        created_concept_ids: list[int] = []
+        created_facet_ids: list[int] = []
+        created_links: list[dict[str, int | str]] = []
+        superseded_crystal_ids: list[int] = []
         now = _now()
         with connect(self.config.database_path) as conn:
             try:
@@ -1134,6 +1225,7 @@ class DreamService:
                             scope_key="",
                         )
                         concept_ids_by_name[concept.canonical_name.casefold()] = concept_id
+                        created_concept_ids.append(concept_id)
 
                     for facet in output.facets:
                         key = facet.concept_name.casefold()
@@ -1147,7 +1239,7 @@ class DreamService:
                                 scope_key="",
                             )
                             concept_ids_by_name[key] = concept_id
-                        self.concepts._add_facet_with_connection(
+                        facet_id = self.concepts._add_facet_with_connection(
                             conn,
                             concept_id,
                             facet.value,
@@ -1159,6 +1251,7 @@ class DreamService:
                             semantic_tags=facet.semantic_tags,
                             now=now,
                         )
+                        created_facet_ids.append(facet_id)
 
                     for candidate in output.crystals:
                         candidate = self._resolve_candidate_concepts(
@@ -1175,9 +1268,16 @@ class DreamService:
                             """,
                             (cycle_id, crystal_id),
                         )
-                        created_crystal_count += 1
+                        created_crystal_ids.append(crystal_id)
+                        created_links.extend(
+                            {
+                                "crystal_id": crystal_id,
+                                "concept_id": concept_id,
+                                "link_type": "mentions",
+                            }
+                            for concept_id in candidate.concept_ids
+                        )
                     self._insert_concept_proposals(conn, run_id, output.concept_proposals)
-                    proposal_count += len(output.concept_proposals)
                     for action in output.supersede_actions:
                         self.crystals._supersede_with_connection(
                             conn,
@@ -1186,6 +1286,16 @@ class DreamService:
                             reason=action.reason,
                             cycle_id=cycle_id,
                         )
+                        superseded_crystal_ids.append(action.old_crystal_id)
+
+                related_candidates = self._searched_related_candidates(
+                    conn,
+                    created_concept_ids=tuple(created_concept_ids),
+                )
+                affected_memory_set = self._affected_memory_set(
+                    changed_crystal_ids=tuple([*created_crystal_ids, *superseded_crystal_ids]),
+                    related_candidates=related_candidates,
+                )
 
                 if archive_memories:
                     self._archive_memories(conn, groups)
@@ -1198,13 +1308,218 @@ class DreamService:
             except Exception:
                 conn.rollback()
                 raise
-        return created_crystal_count, proposal_count
+        return _DreamApplySummary(
+            created_crystal_ids=tuple(created_crystal_ids),
+            created_concept_ids=tuple(created_concept_ids),
+            created_facet_ids=tuple(created_facet_ids),
+            created_links=tuple(created_links),
+            superseded_crystal_ids=tuple(superseded_crystal_ids),
+            searched_related_candidates=related_candidates,
+            affected_memory_set=affected_memory_set,
+        )
+
+    def _searched_related_candidates(
+        self,
+        conn,
+        *,
+        created_concept_ids: tuple[int, ...],
+    ) -> dict[str, object]:
+        concept_ids = _unique_ints(created_concept_ids)[
+            : self.dream_config.max_related_concepts_per_cycle
+        ]
+        crystals_by_concept: list[dict[str, object]] = []
+        for concept_id in concept_ids:
+            rows = conn.execute(
+                """
+                select crystal_id
+                from crystal_concepts
+                where concept_id = ?
+                order by crystal_id
+                limit ?
+                """,
+                (concept_id, self.dream_config.max_related_crystals_per_concept),
+            ).fetchall()
+            crystals_by_concept.append(
+                {
+                    "concept_id": concept_id,
+                    "crystal_ids": [int(row["crystal_id"]) for row in rows],
+                }
+            )
+        return {
+            "concept_ids": list(concept_ids),
+            "crystals_by_concept": crystals_by_concept,
+            "caps": {
+                "max_related_concepts_per_cycle": (
+                    self.dream_config.max_related_concepts_per_cycle
+                ),
+                "max_related_crystals_per_concept": (
+                    self.dream_config.max_related_crystals_per_concept
+                ),
+            },
+        }
+
+    def _affected_memory_set(
+        self,
+        *,
+        changed_crystal_ids: tuple[int, ...],
+        related_candidates: dict[str, object],
+    ) -> dict[str, object]:
+        changed_ids = _unique_ints(changed_crystal_ids)[
+            : self.dream_config.max_changed_crystals_per_cycle
+        ]
+        related_ids: list[int] = []
+        crystals_by_concept = related_candidates.get("crystals_by_concept")
+        if isinstance(crystals_by_concept, list):
+            for item in crystals_by_concept:
+                if not isinstance(item, dict):
+                    continue
+                crystal_ids = item.get("crystal_ids")
+                if not isinstance(crystal_ids, list):
+                    continue
+                related_ids.extend(
+                    crystal_id for crystal_id in crystal_ids if type(crystal_id) is int
+                )
+        related_ids = [
+            crystal_id
+            for crystal_id in _unique_ints(tuple(related_ids))
+            if crystal_id not in changed_ids
+        ]
+
+        affected_ids: list[int] = []
+        for crystal_id in (*changed_ids, *related_ids):
+            if len(affected_ids) >= self.dream_config.max_total_affected_crystals:
+                break
+            affected_ids.append(crystal_id)
+        capped_changed_ids = [
+            crystal_id for crystal_id in changed_ids if crystal_id in set(affected_ids)
+        ]
+        capped_related_ids = [
+            crystal_id for crystal_id in related_ids if crystal_id in set(affected_ids)
+        ]
+        return {
+            "changed_crystal_ids": capped_changed_ids,
+            "related_crystal_ids": capped_related_ids,
+            "all_crystal_ids": affected_ids,
+            "total_crystal_count": len(affected_ids),
+            "caps": {
+                "max_changed_crystals_per_cycle": (
+                    self.dream_config.max_changed_crystals_per_cycle
+                ),
+                "max_total_affected_crystals": self.dream_config.max_total_affected_crystals,
+            },
+        }
+
+    def _audit_provider_request(
+        self,
+        *,
+        run_id: int,
+        phase_run_id: int,
+        trigger_type: str,
+        threshold_state: dict[str, object],
+        selected_memory_ids: tuple[int, ...],
+        groups: DreamBatch,
+    ) -> None:
+        self.audit.append(
+            dream_run_id=run_id,
+            phase_run_id=phase_run_id,
+            event_type="provider_request",
+            severity="info",
+            summary="sent crystallization request",
+            payload={
+                "trigger_type": trigger_type,
+                "threshold_state": threshold_state,
+                "selected_short_term_memory_ids": list(selected_memory_ids),
+                "phase_name": "crystallization",
+                "prompt_version": self._prompt_version("crystallization"),
+                "provider_profile": self._provider_profile(),
+                "model": self._provider_model(),
+                "request_summary": self._request_summary(groups),
+            },
+        )
+
+    def _audit_provider_response(
+        self,
+        *,
+        run_id: int,
+        phase_run_id: int,
+        trigger_type: str,
+        threshold_state: dict[str, object],
+        selected_memory_ids: tuple[int, ...],
+        outputs: list[DreamBatchOutput],
+    ) -> None:
+        self.audit.append(
+            dream_run_id=run_id,
+            phase_run_id=phase_run_id,
+            event_type="provider_response",
+            severity="info",
+            summary="received crystallization response",
+            payload={
+                "trigger_type": trigger_type,
+                "threshold_state": threshold_state,
+                "selected_short_term_memory_ids": list(selected_memory_ids),
+                "phase_name": "crystallization",
+                "prompt_version": self._prompt_version("crystallization"),
+                "provider_profile": self._provider_profile(),
+                "model": self._provider_model(),
+                "response_summary": self._response_summary(outputs),
+                "parse_warnings": self._parse_warning_payload(outputs),
+            },
+        )
+
+    def _audit_phase_completed(
+        self,
+        *,
+        run_id: int,
+        phase_run_id: int,
+        trigger_type: str,
+        threshold_state: dict[str, object],
+        selected_memory_ids: tuple[int, ...],
+        groups: DreamBatch,
+        outputs: list[DreamBatchOutput],
+        apply_summary: _DreamApplySummary,
+    ) -> None:
+        self.audit.append(
+            dream_run_id=run_id,
+            phase_run_id=phase_run_id,
+            event_type="phase_completed",
+            severity="info",
+            summary="completed crystallization phase",
+            payload={
+                "trigger_type": trigger_type,
+                "threshold_state": threshold_state,
+                "selected_short_term_memory_ids": list(selected_memory_ids),
+                "phase_name": "crystallization",
+                "prompt_version": self._prompt_version("crystallization"),
+                "provider_profile": self._provider_profile(),
+                "model": self._provider_model(),
+                "request_summary": self._request_summary(groups),
+                "response_summary": self._response_summary(outputs),
+                "parse_warnings": self._parse_warning_payload(outputs),
+                "accepted_entries": self._accepted_entries(outputs),
+                "rejected_entries": [],
+                "confidence_penalties": self._confidence_penalties(outputs),
+                "created_crystals": list(apply_summary.created_crystal_ids),
+                "created_concepts": list(apply_summary.created_concept_ids),
+                "created_facets": list(apply_summary.created_facet_ids),
+                "created_links": list(apply_summary.created_links),
+                "superseded_crystals": list(apply_summary.superseded_crystal_ids),
+                "reinforced_crystals": list(apply_summary.reinforced_crystal_ids),
+                "decayed_crystals": list(apply_summary.decayed_crystal_ids),
+                "searched_related_candidates": apply_summary.searched_related_candidates,
+                "affected_memory_set": apply_summary.affected_memory_set,
+                "skipped_candidates": [],
+            },
+        )
 
     def _audit_parse_warnings(
         self,
         run_id: int,
         phase_run_id: int,
         warnings: list[DreamParseWarning],
+        *,
+        trigger_type: str = "",
+        threshold_state: dict[str, object] | None = None,
+        selected_memory_ids: tuple[int, ...] = (),
     ) -> None:
         if not warnings:
             return
@@ -1215,6 +1530,13 @@ class DreamService:
             severity="warning",
             summary="dream response parsed with recoverable warnings",
             payload={
+                "trigger_type": trigger_type,
+                "threshold_state": threshold_state or {},
+                "selected_short_term_memory_ids": list(selected_memory_ids),
+                "phase_name": "crystallization",
+                "prompt_version": self._prompt_version("crystallization"),
+                "provider_profile": self._provider_profile(),
+                "model": self._provider_model(),
                 "warnings": [
                     {
                         "entry_path": warning.entry_path,
@@ -1223,9 +1545,106 @@ class DreamService:
                         "confidence_penalty": warning.confidence_penalty,
                     }
                     for warning in warnings
-                ]
+                ],
             },
         )
+
+    def _threshold_state(
+        self,
+        *,
+        pending_count: int,
+        ignore_minimum: bool,
+        trigger_type: str,
+    ) -> dict[str, object]:
+        minimum = self.dream_config.min_pending_short_term_memories
+        maximum = self.dream_config.max_pending_short_term_memories
+        return {
+            "pending_short_term_memories": pending_count,
+            "min_pending_short_term_memories": minimum,
+            "max_pending_short_term_memories": maximum,
+            "max_short_term_memories_per_cycle": self.max_short_term_memories_per_cycle,
+            "minimum_met": pending_count >= minimum,
+            "urgent_threshold_met": pending_count >= maximum,
+            "ignore_minimum": ignore_minimum,
+            "stale_cycle_override": trigger_type == "backlog_escape",
+            "not_enough_memories_cycle_threshold": (
+                self.dream_config.not_enough_memories_cycle_threshold
+            ),
+        }
+
+    def _request_summary(self, groups: DreamBatch) -> dict[str, object]:
+        return {
+            "memory_count": sum(len(memories) for _session_id, _context, memories in groups),
+            "session_ids": [session_id for session_id, _context, _memories in groups],
+            "context_count": len(groups),
+            "batch_cap": self.max_short_term_memories_per_cycle,
+        }
+
+    def _response_summary(self, outputs: list[DreamBatchOutput]) -> dict[str, object]:
+        accepted = self._accepted_entries(outputs)
+        return {
+            "crystal_count": accepted["crystals"],
+            "concept_count": accepted["concepts"],
+            "facet_count": accepted["facets"],
+            "concept_proposal_count": accepted["concept_proposals"],
+            "supersede_action_count": accepted["supersede_actions"],
+            "parse_warning_count": len(self._parse_warning_payload(outputs)),
+        }
+
+    def _accepted_entries(self, outputs: list[DreamBatchOutput]) -> dict[str, int]:
+        return {
+            "crystals": sum(len(output.crystals) for *_rest, output in outputs),
+            "concepts": sum(len(output.concepts) for *_rest, output in outputs),
+            "facets": sum(len(output.facets) for *_rest, output in outputs),
+            "concept_proposals": sum(len(output.concept_proposals) for *_rest, output in outputs),
+            "supersede_actions": sum(len(output.supersede_actions) for *_rest, output in outputs),
+        }
+
+    def _parse_warning_payload(
+        self,
+        outputs: list[DreamBatchOutput],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "entry_path": warning.entry_path,
+                "code": warning.code,
+                "message": warning.message,
+                "confidence_penalty": warning.confidence_penalty,
+            }
+            for *_rest, output in outputs
+            for warning in output.warnings
+        ]
+
+    def _confidence_penalties(
+        self,
+        outputs: list[DreamBatchOutput],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "entry_path": warning.entry_path,
+                "code": warning.code,
+                "confidence_penalty": warning.confidence_penalty,
+            }
+            for *_rest, output in outputs
+            for warning in output.warnings
+            if warning.confidence_penalty > 0
+        ]
+
+    def _provider_profile(self) -> str:
+        profile_name = getattr(self.provider, "profile_name", "")
+        if isinstance(profile_name, str) and profile_name.strip():
+            return profile_name.strip()
+        return self.provider.name
+
+    def _provider_model(self) -> str:
+        settings = getattr(self.provider, "settings", None)
+        model = getattr(settings, "model", "")
+        if isinstance(model, str) and model.strip():
+            return model.strip()
+        return self.provider.name
+
+    def _prompt_version(self, phase: str) -> str:
+        return f"{phase}:v1"
 
     def _apply_passive_events(self, conn, cycle_id: int) -> None:
         now = _now()

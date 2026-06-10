@@ -286,17 +286,17 @@ def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
         ).fetchall()
 
     assert failed_run["status"] == "failed"
-    assert failed_run["input_count"] == 3
+    assert failed_run["input_count"] == 2
     assert failed_run["created_crystal_count"] == 0
     assert failed_run["proposal_count"] == 0
     assert [memory["archived_at"] is not None for memory in first_memories] == [
         True,
         True,
-        True,
+        False,
     ]
     assert second_memory["archived_at"] is None
-    assert first_session_after_failure["status"] == "dreamed"
-    assert first_session_after_failure["cycle_id"] == failed_run["cycle_id"]
+    assert first_session_after_failure["status"] == "completed"
+    assert first_session_after_failure["cycle_id"] is None
     assert [row["status"] for row in phase_rows] == ["completed", "failed"]
 
     later_run = DreamService(
@@ -317,7 +317,7 @@ def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
 
     assert later_run.cycle_id != failed_run["cycle_id"]
     assert first_session_after_later_run["status"] == "dreamed"
-    assert first_session_after_later_run["cycle_id"] == failed_run["cycle_id"]
+    assert first_session_after_later_run["cycle_id"] == later_run.cycle_id
     assert second_session_after_later_run["status"] == "dreamed"
     assert second_session_after_later_run["cycle_id"] == later_run.cycle_id
 

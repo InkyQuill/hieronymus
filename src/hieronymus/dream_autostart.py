@@ -174,6 +174,7 @@ class DreamAutostart:
                 owner="autostart",
                 skip_when_locked=True,
                 ignore_minimum=ignore_minimum,
+                trigger_type=reason,
             )
             if run.status == "skipped":
                 save_autostart_state(

@@ -78,7 +78,11 @@ def test_malformed_optional_facet_metadata_is_accepted_with_lower_confidence(
             """
         ).fetchall()
         audit = conn.execute(
-            "select event_type, severity, payload_json from dream_audit_entries"
+            """
+            select event_type, severity, payload_json
+            from dream_audit_entries
+            where event_type = 'parse_warnings'
+            """
         ).fetchone()
 
     assert run.status == "completed"
@@ -185,7 +189,13 @@ def test_malformed_optional_crystal_concept_metadata_warns_and_penalizes(
             """
         ).fetchone()
         concept_count = conn.execute("select count(*) from concepts").fetchone()[0]
-        audit = conn.execute("select payload_json from dream_audit_entries").fetchone()
+        audit = conn.execute(
+            """
+            select payload_json
+            from dream_audit_entries
+            where event_type = 'parse_warnings'
+            """
+        ).fetchone()
 
     assert run.status == "completed"
     assert crystal["text"] == "Yun should remain the protagonist rendering in UI notes."
@@ -234,7 +244,13 @@ def test_malformed_optional_crystal_metadata_warns_and_penalizes(
             (crystal["id"],),
         ).fetchall()
         linked_concepts = conn.execute("select count(*) from crystal_concepts").fetchone()[0]
-        audit = conn.execute("select payload_json from dream_audit_entries").fetchone()
+        audit = conn.execute(
+            """
+            select payload_json
+            from dream_audit_entries
+            where event_type = 'parse_warnings'
+            """
+        ).fetchone()
 
     assert crystal["confidence"] == pytest.approx(0.25)
     assert crystal["malformed_penalty"] == pytest.approx(0.6)
@@ -278,7 +294,13 @@ def test_nonexistent_optional_crystal_concept_id_warns_and_is_skipped(
             "select confidence, malformed_penalty from crystals",
         ).fetchone()
         linked_concepts = conn.execute("select count(*) from crystal_concepts").fetchone()[0]
-        audit = conn.execute("select payload_json from dream_audit_entries").fetchone()
+        audit = conn.execute(
+            """
+            select payload_json
+            from dream_audit_entries
+            where event_type = 'parse_warnings'
+            """
+        ).fetchone()
 
     assert run.status == "completed"
     assert crystal["confidence"] == pytest.approx(0.65)

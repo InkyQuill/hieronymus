@@ -55,6 +55,10 @@ class DreamConfig:
     max_pending_short_term_memories: int
     max_short_term_memories_per_cycle: int
     not_enough_memories_cycle_threshold: int
+    max_changed_crystals_per_cycle: int
+    max_related_concepts_per_cycle: int
+    max_related_crystals_per_concept: int
+    max_total_affected_crystals: int
     general_prompt: str
     providers: dict[str, ProviderProfile]
     workflows: dict[str, WorkflowProfile]
@@ -73,6 +77,10 @@ class DreamConfig:
             "max_pending_short_term_memories": self.max_pending_short_term_memories,
             "max_short_term_memories_per_cycle": self.max_short_term_memories_per_cycle,
             "not_enough_memories_cycle_threshold": (self.not_enough_memories_cycle_threshold),
+            "max_changed_crystals_per_cycle": self.max_changed_crystals_per_cycle,
+            "max_related_concepts_per_cycle": self.max_related_concepts_per_cycle,
+            "max_related_crystals_per_concept": self.max_related_crystals_per_concept,
+            "max_total_affected_crystals": self.max_total_affected_crystals,
             "general_prompt": self.general_prompt,
         }
         providers = {
@@ -94,6 +102,10 @@ def default_dream_config() -> DreamConfig:
         max_pending_short_term_memories=200,
         max_short_term_memories_per_cycle=50,
         not_enough_memories_cycle_threshold=5,
+        max_changed_crystals_per_cycle=200,
+        max_related_concepts_per_cycle=80,
+        max_related_crystals_per_concept=20,
+        max_total_affected_crystals=500,
         general_prompt=(
             "Use English as the primary searchable memory language. Preserve Japanese, "
             "Russian, and other languages only as terms, names, renderings, quoted "
@@ -183,6 +195,22 @@ def validate_dream_config(dream_config: DreamConfig) -> DreamConfig:
     _require_positive_int(
         "not_enough_memories_cycle_threshold",
         dream_config.not_enough_memories_cycle_threshold,
+    )
+    _require_positive_int(
+        "max_changed_crystals_per_cycle",
+        dream_config.max_changed_crystals_per_cycle,
+    )
+    _require_positive_int(
+        "max_related_concepts_per_cycle",
+        dream_config.max_related_concepts_per_cycle,
+    )
+    _require_positive_int(
+        "max_related_crystals_per_concept",
+        dream_config.max_related_crystals_per_concept,
+    )
+    _require_positive_int(
+        "max_total_affected_crystals",
+        dream_config.max_total_affected_crystals,
     )
     if dream_config.max_pending_short_term_memories < dream_config.min_pending_short_term_memories:
         raise DreamConfigError(
@@ -288,6 +316,22 @@ def _dream_config_from_payload(payload: dict[str, Any]) -> DreamConfig:
             "not_enough_memories_cycle_threshold",
             defaults.not_enough_memories_cycle_threshold,
         ),
+        max_changed_crystals_per_cycle=dreaming.get(
+            "max_changed_crystals_per_cycle",
+            defaults.max_changed_crystals_per_cycle,
+        ),
+        max_related_concepts_per_cycle=dreaming.get(
+            "max_related_concepts_per_cycle",
+            defaults.max_related_concepts_per_cycle,
+        ),
+        max_related_crystals_per_concept=dreaming.get(
+            "max_related_crystals_per_concept",
+            defaults.max_related_crystals_per_concept,
+        ),
+        max_total_affected_crystals=dreaming.get(
+            "max_total_affected_crystals",
+            defaults.max_total_affected_crystals,
+        ),
         general_prompt=dreaming.get("general_prompt", defaults.general_prompt),
         providers=providers,
         workflows=workflows,
@@ -321,6 +365,26 @@ def _validate_dreaming_payload(payload: dict[str, Any]) -> None:
         _require_exact_int(
             "not_enough_memories_cycle_threshold",
             payload["not_enough_memories_cycle_threshold"],
+        )
+    if "max_changed_crystals_per_cycle" in payload:
+        _require_exact_int(
+            "max_changed_crystals_per_cycle",
+            payload["max_changed_crystals_per_cycle"],
+        )
+    if "max_related_concepts_per_cycle" in payload:
+        _require_exact_int(
+            "max_related_concepts_per_cycle",
+            payload["max_related_concepts_per_cycle"],
+        )
+    if "max_related_crystals_per_concept" in payload:
+        _require_exact_int(
+            "max_related_crystals_per_concept",
+            payload["max_related_crystals_per_concept"],
+        )
+    if "max_total_affected_crystals" in payload:
+        _require_exact_int(
+            "max_total_affected_crystals",
+            payload["max_total_affected_crystals"],
         )
     if "general_prompt" in payload:
         _require_exact_str("general_prompt", payload["general_prompt"])
