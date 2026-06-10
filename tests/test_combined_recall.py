@@ -117,6 +117,53 @@ def test_story_scope_boosts_long_term_crystals_without_filtering(
     }
 
 
+def test_hydrated_story_scopes_boost_long_term_crystals_without_legacy_tags(
+    config: HieronymusConfig,
+) -> None:
+    base_context = _context(config)
+    context = TranslationContext(
+        series_slug=base_context.series_slug,
+        source_language=base_context.source_language,
+        target_language=base_context.target_language,
+        task_type=base_context.task_type,
+        volume=base_context.volume,
+        chapter=base_context.chapter,
+        story_scopes=("Book 5 Chapter 5",),
+        semantic_tags=(),
+    )
+    crystals = CrystalStore(config)
+    unscoped_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    matching_scope_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use guarded phrasing for crafting failures.",
+        strength=0.5,
+        confidence=0.5,
+        story_scopes=("Book 5 Chapter 5",),
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    hydrated_context = workspace.get_session(session.id).context
+
+    results = RecallService(config).recall(
+        session.id,
+        hydrated_context,
+        "guarded crafting",
+        limit=2,
+    )
+
+    assert hydrated_context.tags == ()
+    assert hydrated_context.story_scopes == ("Book 5 Chapter 5",)
+    assert [result.crystal.id for result in results] == [matching_scope_id, unscoped_id]
+    assert results[0].score > results[1].score
+
+
 def test_story_scope_boost_applies_before_final_limit(
     config: HieronymusConfig,
 ) -> None:

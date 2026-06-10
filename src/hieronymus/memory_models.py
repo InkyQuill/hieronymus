@@ -1,7 +1,26 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
+
+
+def normalize_string_tuple(
+    values: Iterable[str],
+    *,
+    lowercase: bool = False,
+) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = value.strip()
+        if lowercase:
+            item = item.lower()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return tuple(normalized)
 
 
 @dataclass(frozen=True)
@@ -13,6 +32,39 @@ class TranslationContext:
     volume: str = ""
     chapter: str = ""
     tags: tuple[str, ...] = ()
+    language_tags: tuple[str, ...] | None = None
+    story_scopes: tuple[str, ...] | None = None
+    semantic_tags: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        story_scope_seeds: list[str] = []
+        if self.volume.strip():
+            story_scope_seeds.append(f"volume:{self.volume.strip()}")
+        if self.chapter.strip():
+            story_scope_seeds.append(f"chapter:{self.chapter.strip()}")
+        language_tag_seeds = (
+            (self.source_language, self.target_language)
+            if self.language_tags is None
+            else self.language_tags
+        )
+        story_scope_values = story_scope_seeds if self.story_scopes is None else self.story_scopes
+        semantic_tag_values = self.tags if self.semantic_tags is None else self.semantic_tags
+
+        object.__setattr__(
+            self,
+            "language_tags",
+            normalize_string_tuple(language_tag_seeds, lowercase=True),
+        )
+        object.__setattr__(
+            self,
+            "story_scopes",
+            normalize_string_tuple(story_scope_values),
+        )
+        object.__setattr__(
+            self,
+            "semantic_tags",
+            normalize_string_tuple(semantic_tag_values),
+        )
 
     @property
     def scope_key(self) -> str:

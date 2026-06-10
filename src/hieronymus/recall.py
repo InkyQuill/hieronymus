@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore, search_expression
 from hieronymus.db import apply_migration, connect
 from hieronymus.memory_models import RecallResult, ShortTermMemoryRecord, TranslationContext
+from hieronymus.workspace import short_memory_from_row
 
 _RECALL_REASON = "weighted search match"
 _SHORT_TERM_REASON = "active session short-term memory match"
@@ -19,18 +19,6 @@ _MAX_SHORT_TERM_LIMIT = 50
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _short_memory_from_row(row) -> ShortTermMemoryRecord:
-    return ShortTermMemoryRecord(
-        id=row["id"],
-        session_id=row["session_id"],
-        source_role=row["source_role"],
-        kind=row["kind"],
-        text=row["text"],
-        source_ref=row["source_ref"],
-        metadata=json.loads(row["metadata_json"]),
-    )
 
 
 def _long_term_candidate_limit(limit: int) -> int:
@@ -71,10 +59,10 @@ class RecallService:
             limit=_long_term_candidate_limit(limit),
         )
         ranked_items: list[tuple[str, float, int, object]] = []
-        context_tags = set(context.tags)
+        context_story_scopes = set(context.story_scopes).union(context.tags)
         for crystal, score in scored_crystals:
             ranked_score = score
-            if context_tags.intersection(crystal.story_scopes):
+            if context_story_scopes.intersection(crystal.story_scopes):
                 ranked_score += _STORY_SCOPE_BOOST
             ranked_items.append(("long_term", ranked_score, crystal.id, crystal))
         for memory, score in short_term_memories:
@@ -172,7 +160,10 @@ class RecallService:
             (expression, session_id, bounded_limit),
         ).fetchall()
         return [
-            (_short_memory_from_row(row), _SHORT_TERM_BASE_SCORE - (index * _SHORT_TERM_RANK_STEP))
+            (
+                short_memory_from_row(conn, row),
+                _SHORT_TERM_BASE_SCORE - (index * _SHORT_TERM_RANK_STEP),
+            )
             for index, row in enumerate(rows)
         ]
 

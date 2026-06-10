@@ -118,6 +118,42 @@ def test_manual_dreaming_drains_small_batch_even_below_minimum(
     assert _pending_short_term_memory_count(config) == 0
 
 
+def test_dreaming_preserves_typed_session_metadata_for_provider(
+    config: HieronymusConfig,
+) -> None:
+    class CapturingProvider:
+        name = "capturing"
+
+        def __init__(self) -> None:
+            self.contexts = []
+
+        def crystallize(self, context, memories):
+            self.contexts.append(context)
+            return DreamOutput(crystals=[], concept_proposals=[])
+
+    base_context = _context(config)
+    context = TranslationContext(
+        series_slug=base_context.series_slug,
+        source_language=base_context.source_language,
+        target_language=base_context.target_language,
+        task_type=base_context.task_type,
+        volume=base_context.volume,
+        chapter=base_context.chapter,
+        language_tags=("ja", "ru", "en"),
+        story_scopes=("arc:academy",),
+        semantic_tags=("terminology",),
+    )
+    _completed_session(config, context)
+    provider = CapturingProvider()
+
+    run = DreamService(config, provider).run_all(owner="admin")
+
+    assert run.status == "completed"
+    assert provider.contexts[0].language_tags == ("ja", "ru", "en")
+    assert provider.contexts[0].story_scopes == ("arc:academy",)
+    assert provider.contexts[0].semantic_tags == ("terminology",)
+
+
 def test_scheduled_dreaming_drains_all_pending_in_capped_cycles(
     config: HieronymusConfig,
 ) -> None:

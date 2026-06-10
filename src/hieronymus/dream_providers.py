@@ -658,6 +658,12 @@ def _dream_prompt(
             "kind": memory.kind,
             "text": memory.text,
             "source_ref": memory.source_ref,
+            "language_tags": list(memory.language_tags),
+            "story_scopes": list(memory.story_scopes),
+            "semantic_tags": list(memory.semantic_tags),
+            "source_credibility": memory.source_credibility,
+            "rule_intent": memory.rule_intent,
+            "soft_origin": memory.soft_origin,
         }
         for memory in memories
     ]
@@ -675,6 +681,9 @@ def _dream_prompt(
                 "volume": context.volume,
                 "chapter": context.chapter,
                 "tags": list(context.tags),
+                "language_tags": list(context.language_tags),
+                "story_scopes": list(context.story_scopes),
+                "semantic_tags": list(context.semantic_tags),
             },
             "memories": memory_payload,
             "schema": {

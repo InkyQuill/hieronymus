@@ -939,6 +939,39 @@ def _memory() -> ShortTermMemoryRecord:
     )
 
 
+def _typed_context() -> TranslationContext:
+    return TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="en",
+        task_type="translation",
+        volume="1",
+        chapter="2",
+        tags=("legacy-tag",),
+        language_tags=("ja", "en", "fr"),
+        story_scopes=("arc:academy",),
+        semantic_tags=("ui", "term"),
+    )
+
+
+def _typed_memory() -> ShortTermMemoryRecord:
+    return ShortTermMemoryRecord(
+        id=8,
+        session_id=3,
+        source_role="user",
+        kind="correction",
+        text="Use Sense as a game-system term.",
+        source_ref="chapter 2",
+        metadata={},
+        language_tags=("ja", "en"),
+        story_scopes=("arc:academy",),
+        semantic_tags=("term",),
+        source_credibility="user_rule",
+        rule_intent="terminology",
+        soft_origin="inline-correction",
+    )
+
+
 def _llm_payload() -> dict[str, object]:
     return {
         "crystals": [
@@ -1000,6 +1033,68 @@ def test_openai_provider_crystallizes_structured_response(tmp_path, monkeypatch)
     assert output.concept_proposals[0].source_form == "センス"
     assert transport.requests[0]["url"] == "https://api.openai.test/v1/chat/completions"
     assert transport.requests[0]["timeout"] == 12.5
+
+
+def test_openai_provider_prompt_includes_typed_context_and_memory_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = (
+        load_settings(config)
+        .with_provider(
+            "openai",
+            ProviderSettings(
+                enabled=True,
+                model="gpt-4.1-mini",
+                api_key_env="OPENAI_API_KEY",
+                base_url="https://api.openai.test/v1",
+            ),
+        )
+        .with_dreaming(DreamingSettings(active_provider="openai"))
+    )
+    save_settings(config, settings)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = FakeTransport(
+        HTTPResponse(
+            status=200,
+            body=json.dumps({"choices": [{"message": {"content": json.dumps(_llm_payload())}}]}),
+        ),
+        [],
+    )
+
+    provider = resolve_provider(config, transport=transport)
+    provider.crystallize(_typed_context(), [_typed_memory()])
+
+    request_payload = transport.requests[0]["payload"]
+    prompt = json.loads(request_payload["messages"][0]["content"])
+    assert prompt["context"] == {
+        "series_slug": "only-sense-online",
+        "source_language": "ja",
+        "target_language": "en",
+        "task_type": "translation",
+        "volume": "1",
+        "chapter": "2",
+        "tags": ["legacy-tag"],
+        "language_tags": ["ja", "en", "fr"],
+        "story_scopes": ["arc:academy"],
+        "semantic_tags": ["ui", "term"],
+    }
+    assert prompt["memories"] == [
+        {
+            "id": 8,
+            "source_role": "user",
+            "kind": "correction",
+            "text": "Use Sense as a game-system term.",
+            "source_ref": "chapter 2",
+            "language_tags": ["ja", "en"],
+            "story_scopes": ["arc:academy"],
+            "semantic_tags": ["term"],
+            "source_credibility": "user_rule",
+            "rule_intent": "terminology",
+            "soft_origin": "inline-correction",
+        }
+    ]
 
 
 def test_gemini_provider_crystallizes_structured_response(tmp_path, monkeypatch) -> None:

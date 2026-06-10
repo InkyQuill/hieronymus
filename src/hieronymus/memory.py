@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import search_expression
 from hieronymus.db import connect
-from hieronymus.memory_models import TranslationContext
+from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.models import MemoryEntry
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry, Series
@@ -60,6 +61,45 @@ class MemoryStore:
                 "storage_semantics": "short_term_until_dreamed",
             },
         )
+
+    def add_short_term_memory(
+        self,
+        *,
+        session_id: int | None,
+        content: str,
+        language_tags: Iterable[str] = (),
+        story_scopes: Iterable[str] = (),
+        semantic_tags: Iterable[str] = (),
+        source_credibility: str = "observation",
+        rule_intent: str = "",
+        soft_origin: str = "",
+    ) -> ShortTermMemoryRecord:
+        if not content.strip():
+            raise ValueError("content must not be empty")
+        if session_id is None:
+            context = self._context_for_add(None)
+            session_id = self._ensure_default_session(context).id
+        kind = (
+            "correction"
+            if rule_intent.strip() or source_credibility.startswith("user_")
+            else "note"
+        )
+        memory_id = self._workspace.add_short_term_memory(
+            session_id,
+            source_role="user",
+            kind=kind,
+            text=content,
+            language_tags=language_tags,
+            story_scopes=story_scopes,
+            semantic_tags=semantic_tags,
+            source_credibility=source_credibility,
+            rule_intent=rule_intent,
+            soft_origin=soft_origin,
+        )
+        for memory in self._workspace.list_short_term_memories(session_id):
+            if memory.id == memory_id:
+                return memory
+        raise KeyError(f"unknown short-term memory: {memory_id}")
 
     def search(self, *args: str, limit: int = 5) -> list[MemoryEntry]:
         if limit < 1:

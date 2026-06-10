@@ -76,6 +76,12 @@ def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str
         "kind": memory.kind,
         "text": memory.text,
         "metadata": memory.metadata,
+        "language_tags": list(memory.language_tags),
+        "story_scopes": list(memory.story_scopes),
+        "semantic_tags": list(memory.semantic_tags),
+        "source_credibility": memory.source_credibility,
+        "rule_intent": memory.rule_intent,
+        "soft_origin": memory.soft_origin,
     }
 
 
@@ -493,6 +499,12 @@ def hieronymus_short_term_add(
     text: str,
     source_ref: str = "",
     metadata: dict[str, object] | None = None,
+    language_tags: list[str] | None = None,
+    story_scopes: list[str] | None = None,
+    semantic_tags: list[str] | None = None,
+    source_credibility: str = "observation",
+    rule_intent: str = "",
+    soft_origin: str = "",
 ) -> dict[str, int]:
     """Add a short-term memory to an active session."""
     config = _load_validated_config()
@@ -503,6 +515,12 @@ def hieronymus_short_term_add(
         text=text,
         source_ref=source_ref,
         metadata=metadata,
+        language_tags=language_tags or (),
+        story_scopes=story_scopes or (),
+        semantic_tags=semantic_tags or (),
+        source_credibility=source_credibility,
+        rule_intent=rule_intent,
+        soft_origin=soft_origin,
     )
     return {"memory_id": memory_id}
 
@@ -569,20 +587,19 @@ def hieronymus_recall(
     """Recall long-term crystals and active short-term memories for a stored session."""
     config, series = _series_context(series_slug)
     session = WorkspaceStore(config).get_session(session_id)
-    context = _translation_context(
-        series,
-        source_language=(
-            session.context.source_language if source_language is None else source_language
-        ),
-        target_language=(
-            session.context.target_language if target_language is None else target_language
-        ),
-        task_type=session.context.task_type if task_type is None else task_type,
-        volume=session.context.volume if volume is None else volume,
-        chapter=session.context.chapter if chapter is None else chapter,
-    )
-    if session.context != context:
+    context = session.context
+    if context.series_slug != series.slug:
         raise ValueError("session context mismatch")
+    override_values = {
+        "source_language": source_language,
+        "target_language": target_language,
+        "task_type": task_type,
+        "volume": volume,
+        "chapter": chapter,
+    }
+    for field_name, override in override_values.items():
+        if override is not None and override != getattr(context, field_name):
+            raise ValueError(f"session context mismatch: {field_name}")
 
     results = RecallService(config).recall(session_id, context, query, limit=limit)
     return [

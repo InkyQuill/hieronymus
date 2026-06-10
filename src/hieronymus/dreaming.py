@@ -16,6 +16,7 @@ from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.scoring import PASSIVE_EVENT_DELTAS, apply_score_delta
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.settings import SettingsError, load_settings
+from hieronymus.workspace import WorkspaceStore, short_memory_from_row
 
 _ALLOWED_CRYSTAL_TYPES = frozenset(
     {"lesson", "rule", "thought", "observation", "concept_note", "concept", "erudition"}
@@ -844,33 +845,17 @@ class DreamService:
             ).fetchall()
 
         groups_by_session: dict[int, tuple[TranslationContext, list[ShortTermMemoryRecord]]] = {}
+        workspace = WorkspaceStore(self.config)
         for row in memory_rows:
             session_id = int(row["session_id"])
             group = groups_by_session.get(session_id)
             if group is None:
                 group = (
-                    TranslationContext(
-                        series_slug=row["series_slug"],
-                        source_language=row["source_language"],
-                        target_language=row["target_language"],
-                        task_type=row["task_type"],
-                        volume=row["volume"],
-                        chapter=row["chapter"],
-                    ),
+                    workspace.get_session(session_id).context,
                     [],
                 )
                 groups_by_session[session_id] = group
-            group[1].append(
-                ShortTermMemoryRecord(
-                    id=row["id"],
-                    session_id=row["session_id"],
-                    source_role=row["source_role"],
-                    kind=row["kind"],
-                    text=row["text"],
-                    source_ref=row["source_ref"],
-                    metadata=json.loads(row["metadata_json"]),
-                )
-            )
+            group[1].append(short_memory_from_row(conn, row))
 
         return [
             (session_id, context, memories)

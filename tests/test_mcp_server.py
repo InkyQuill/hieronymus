@@ -531,6 +531,12 @@ def test_mcp_recall_returns_short_term_payload(monkeypatch, tmp_path):
                     "sentence_count": 1,
                     "source": "review",
                 },
+                "language_tags": [],
+                "story_scopes": [],
+                "semantic_tags": [],
+                "source_credibility": "observation",
+                "rule_intent": "",
+                "soft_origin": "",
             },
         }
     ]
