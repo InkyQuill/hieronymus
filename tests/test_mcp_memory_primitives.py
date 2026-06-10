@@ -41,7 +41,9 @@ def test_memory_primitive_tools_are_registered() -> None:
     tools = {tool.name: tool for tool in asyncio.run(mcp_server.server.list_tools())}
 
     assert NEW_MEMORY_PRIMITIVE_TOOLS <= set(tools)
+    assert tools["hieronymus_series_init"].description == COMPATIBILITY_DESCRIPTION
     assert tools["hieronymus_termbase_contract"].description == COMPATIBILITY_DESCRIPTION
+    assert tools["hieronymus_termbase_validate"].description == COMPATIBILITY_DESCRIPTION
     assert tools["hieronymus_termbase_propose"].description == COMPATIBILITY_DESCRIPTION
     assert tools["hieronymus_termbase_approve"].description == COMPATIBILITY_DESCRIPTION
     assert tools["hieronymus_memory_search"].description == COMPATIBILITY_DESCRIPTION

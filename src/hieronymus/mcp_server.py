@@ -325,7 +325,7 @@ def hieronymus_series_create(
     return _series_payload(series)
 
 
-@server.tool()
+@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_series_init(
     slug: str,
     title: str,
@@ -681,7 +681,7 @@ def hieronymus_termbase_contract(
     return [asdict(term) for term in terms]
 
 
-@server.tool()
+@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_termbase_validate(
     series_slug: str,
     raw_text: str,
