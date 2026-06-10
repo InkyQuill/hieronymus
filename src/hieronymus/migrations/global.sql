@@ -8,6 +8,13 @@ create table if not exists series (
   updated_at text not null
 );
 
+create table if not exists series_language_tags (
+  series_id integer not null references series(id) on delete cascade,
+  language_tag text not null,
+  created_at text not null default (datetime('now')),
+  primary key (series_id, language_tag)
+);
+
 create table if not exists task_sessions (
   id integer primary key,
   series_slug text not null references series(slug),
@@ -22,6 +29,24 @@ create table if not exists task_sessions (
   completed_at text
 );
 
+create table if not exists task_session_language_tags (
+  session_id integer not null references task_sessions(id) on delete cascade,
+  language_tag text not null,
+  primary key (session_id, language_tag)
+);
+
+create table if not exists task_session_story_scopes (
+  session_id integer not null references task_sessions(id) on delete cascade,
+  story_scope text not null,
+  primary key (session_id, story_scope)
+);
+
+create table if not exists task_session_semantic_tags (
+  session_id integer not null references task_sessions(id) on delete cascade,
+  semantic_tag text not null,
+  primary key (session_id, semantic_tag)
+);
+
 create table if not exists short_term_memories (
   id integer primary key,
   session_id integer not null references task_sessions(id) on delete cascade,
@@ -30,8 +55,29 @@ create table if not exists short_term_memories (
   text text not null,
   source_ref text not null default '',
   metadata_json text not null default '{}',
+  source_credibility text,
+  rule_intent text,
+  soft_origin text,
   created_at text not null,
   archived_at text
+);
+
+create table if not exists short_term_memory_language_tags (
+  memory_id integer not null references short_term_memories(id) on delete cascade,
+  language_tag text not null,
+  primary key (memory_id, language_tag)
+);
+
+create table if not exists short_term_memory_story_scopes (
+  memory_id integer not null references short_term_memories(id) on delete cascade,
+  story_scope text not null,
+  primary key (memory_id, story_scope)
+);
+
+create table if not exists short_term_memory_semantic_tags (
+  memory_id integer not null references short_term_memories(id) on delete cascade,
+  semantic_tag text not null,
+  primary key (memory_id, semantic_tag)
 );
 
 create virtual table if not exists short_term_memories_fts using fts5(
@@ -55,6 +101,8 @@ create table if not exists crystals (
   confidence real not null,
   source_credibility text not null default 'observation',
   rule_intent text not null default '',
+  soft_origin text,
+  is_inferred integer not null default 0,
   malformed_penalty real not null default 0.0,
   supersedes_crystal_id integer references crystals(id) on delete set null,
   status text not null,
@@ -63,6 +111,12 @@ create table if not exists crystals (
   last_reinforced_cycle integer,
   created_at text not null,
   updated_at text not null
+);
+
+create table if not exists crystal_language_tags (
+  crystal_id integer not null references crystals(id) on delete cascade,
+  language_tag text not null,
+  primary key (crystal_id, language_tag)
 );
 
 create virtual table if not exists crystals_fts using fts5(
@@ -198,6 +252,7 @@ create table if not exists concepts (
   scope_key text not null default '',
   status text not null default 'vague',
   confidence real not null default 0.2,
+  merged_into_concept_id integer references concepts(id),
   created_at text not null,
   updated_at text not null,
   check ((scope_type = 'global' and scope_key = '') or (scope_type != 'global' and scope_key != '')),
@@ -242,8 +297,22 @@ create table if not exists concept_facets (
   value text not null,
   source_crystal_id integer references crystals(id) on delete set null,
   confidence real not null default 0.2,
+  is_canonical integer not null default 0,
+  superseded_at text,
   created_at text not null,
   updated_at text not null
+);
+
+create table if not exists concept_facet_story_scopes (
+  facet_id integer not null references concept_facets(id) on delete cascade,
+  story_scope text not null,
+  primary key (facet_id, story_scope)
+);
+
+create table if not exists concept_facet_semantic_tags (
+  facet_id integer not null references concept_facets(id) on delete cascade,
+  semantic_tag text not null,
+  primary key (facet_id, semantic_tag)
 );
 
 create table if not exists concept_semantic_tags (

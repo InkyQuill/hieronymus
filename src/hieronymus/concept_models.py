@@ -33,6 +33,10 @@ class ConceptFacetRecord:
     value: str
     confidence: float
     source_crystal_id: int | None = None
+    language_tags: tuple[str, ...] = ()
+    story_scopes: tuple[str, ...] = ()
+    semantic_tags: tuple[str, ...] = ()
+    is_canonical: bool = False
 
 
 @dataclass(frozen=True)

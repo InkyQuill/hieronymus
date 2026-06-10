@@ -36,6 +36,12 @@ class ShortTermMemoryRecord:
     text: str
     source_ref: str
     metadata: dict[str, object] = field(default_factory=dict)
+    language_tags: tuple[str, ...] = ()
+    story_scopes: tuple[str, ...] = ()
+    semantic_tags: tuple[str, ...] = ()
+    source_credibility: str = "observation"
+    rule_intent: str = ""
+    soft_origin: str = ""
 
 
 @dataclass(frozen=True)
@@ -56,9 +62,12 @@ class CrystalRecord:
     rule_intent: str = ""
     malformed_penalty: float = 0.0
     supersedes_crystal_id: int | None = None
-    # Side-table-backed fields stay empty until CrystalStore hydration is added.
+    # Side-table-backed language tags stay empty until CrystalStore hydration is added.
+    language_tags: tuple[str, ...] = ()
     story_scopes: tuple[str, ...] = ()
     semantic_tags: tuple[str, ...] = ()
+    soft_origin: str = ""
+    is_inferred: bool = False
     concept_ids: tuple[int, ...] = ()
 
 
