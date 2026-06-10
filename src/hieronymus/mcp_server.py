@@ -7,8 +7,10 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from hieronymus.agent_ingestion import IngestionService
-from hieronymus.concepts import ConceptProposalStore
+from hieronymus.concept_models import ConceptFacetRecord, ConceptRecord
+from hieronymus.concepts import CONCEPT_CANDIDATE, ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig, load_config
+from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamService
@@ -25,6 +27,10 @@ from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
 server = FastMCP("hieronymus")
+_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION = (
+    "Compatibility wrapper. New workflows should use concept, facet, short-term memory, "
+    "and rule-crystal primitives."
+)
 
 
 def _load_validated_config() -> HieronymusConfig:
@@ -64,6 +70,37 @@ def _crystal_payload(crystal: CrystalRecord | None) -> dict[str, Any] | None:
         "story_scopes": list(crystal.story_scopes),
         "semantic_tags": list(crystal.semantic_tags),
         "concept_ids": list(crystal.concept_ids),
+    }
+
+
+def _concept_payload(concept: ConceptRecord) -> dict[str, Any]:
+    return {
+        "id": concept.id,
+        "canonical_name": concept.canonical_name,
+        "description": concept.description,
+        "status": concept.status,
+        "confidence": concept.confidence,
+        "scope_type": concept.scope_type,
+        "scope_key": concept.scope_key,
+        "semantic_tags": list(concept.tags),
+        "merged_into_concept_id": concept.merged_into_concept_id,
+    }
+
+
+def _facet_payload(facet: ConceptFacetRecord) -> dict[str, Any]:
+    return {
+        "id": facet.id,
+        "concept_id": facet.concept_id,
+        "language": facet.language,
+        "facet_type": facet.facet_type,
+        "kind": facet.kind,
+        "value": facet.value,
+        "confidence": facet.confidence,
+        "source_crystal_id": facet.source_crystal_id,
+        "language_tags": list(facet.language_tags),
+        "story_scopes": list(facet.story_scopes),
+        "semantic_tags": list(facet.semantic_tags),
+        "is_canonical": facet.is_canonical,
     }
 
 
@@ -329,6 +366,300 @@ def hieronymus_series_set_language_tags(
 
 
 @server.tool()
+def hieronymus_concept_list(
+    status: str | None = None,
+    semantic_tag: str | None = None,
+    series_slug: str | None = None,
+    include_global: bool = True,
+) -> list[dict[str, Any]]:
+    """List concepts with optional status, tag, and series-scope filters."""
+    config = _load_validated_config()
+    concepts = ConceptStore(config).list_concepts(status=status, semantic_tag=semantic_tag)
+    if series_slug is not None:
+        scope_key = f"series:{series_slug}"
+        concepts = [
+            concept
+            for concept in concepts
+            if concept.scope_key == scope_key or (include_global and concept.scope_type == "global")
+        ]
+    return [_concept_payload(concept) for concept in concepts]
+
+
+@server.tool()
+def hieronymus_concept_get(concept_id: int) -> dict[str, Any]:
+    """Get one concept by id."""
+    config = _load_validated_config()
+    return _concept_payload(ConceptStore(config).get(concept_id))
+
+
+@server.tool()
+def hieronymus_concept_create(
+    canonical_name: str,
+    description: str = "",
+    status: str = CONCEPT_CANDIDATE,
+    confidence: float = 0.2,
+    semantic_tags: list[str] | None = None,
+    series_slug: str = "",
+    scope_type: str = "global",
+    scope_key: str = "",
+) -> dict[str, Any]:
+    """Create a concept primitive."""
+    config = _load_validated_config()
+    if series_slug:
+        Registry(config).get_series(series_slug)
+        scope_type = "series"
+        scope_key = f"series:{series_slug}"
+    concept = ConceptStore(config).create_concept(
+        canonical_name,
+        description=description,
+        status=status,
+        confidence=confidence,
+        scope_type=scope_type,
+        scope_key=scope_key,
+        semantic_tags=semantic_tags or (),
+    )
+    return _concept_payload(concept)
+
+
+@server.tool()
+def hieronymus_concept_update(
+    concept_id: int,
+    description: str | None = None,
+    status: str | None = None,
+    confidence: float | None = None,
+) -> dict[str, Any]:
+    """Update concept mutable metadata."""
+    config = _load_validated_config()
+    concept = ConceptStore(config).update_concept(
+        concept_id,
+        description=description,
+        status=status,
+        confidence=confidence,
+    )
+    return _concept_payload(concept)
+
+
+@server.tool()
+def hieronymus_concept_archive(concept_id: int, reason: str = "") -> dict[str, Any]:
+    """Archive a concept so recall and strict rule logic stop using it."""
+    config = _load_validated_config()
+    store = ConceptStore(config)
+    store.archive_concept(concept_id, reason)
+    return _concept_payload(store.get(concept_id))
+
+
+@server.tool()
+def hieronymus_concept_merge(
+    source_concept_id: int,
+    target_concept_id: int,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Merge one concept into another active concept."""
+    config = _load_validated_config()
+    store = ConceptStore(config)
+    store.merge_concepts(source_concept_id, target_concept_id, reason)
+    return {
+        "source": _concept_payload(store.get(source_concept_id)),
+        "target": _concept_payload(store.get(target_concept_id)),
+    }
+
+
+@server.tool()
+def hieronymus_concept_rename(
+    concept_id: int,
+    new_label: str,
+    source_crystal_id: int | None = None,
+) -> dict[str, Any]:
+    """Rename a concept while retaining the old name as a former-label facet."""
+    config = _load_validated_config()
+    concept = ConceptStore(config).rename_concept(
+        concept_id,
+        new_label,
+        source_crystal_id=source_crystal_id,
+    )
+    return _concept_payload(concept)
+
+
+@server.tool()
+def hieronymus_concept_facet_add(
+    concept_id: int,
+    value: str,
+    language: str = "",
+    language_tags: list[str] | None = None,
+    kind: str | None = "name",
+    facet_type: str | None = None,
+    confidence: float = 0.2,
+    source_crystal_id: int | None = None,
+    is_canonical: bool = False,
+    story_scopes: list[str] | None = None,
+    semantic_tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Add a multilingual concept facet."""
+    config = _load_validated_config()
+    facet = ConceptStore(config).add_facet(
+        concept_id,
+        value,
+        language=language,
+        language_tags=language_tags or (),
+        kind=kind,
+        facet_type=facet_type,
+        confidence=confidence,
+        source_crystal_id=source_crystal_id,
+        is_canonical=is_canonical,
+        story_scopes=story_scopes or (),
+        semantic_tags=semantic_tags or (),
+    )
+    return _facet_payload(facet)
+
+
+@server.tool()
+def hieronymus_concept_facet_update(
+    facet_id: int,
+    value: str | None = None,
+    language: str | None = None,
+    language_tags: list[str] | None = None,
+    kind: str | None = None,
+    facet_type: str | None = None,
+    confidence: float | None = None,
+    source_crystal_id: int | None = None,
+    is_canonical: bool | None = None,
+    story_scopes: list[str] | None = None,
+    semantic_tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Update a concept facet primitive."""
+    config = _load_validated_config()
+    facet = ConceptStore(config).update_facet(
+        facet_id,
+        value=value,
+        language=language,
+        language_tags=language_tags,
+        kind=kind,
+        facet_type=facet_type,
+        confidence=confidence,
+        source_crystal_id=source_crystal_id,
+        is_canonical=is_canonical,
+        story_scopes=story_scopes,
+        semantic_tags=semantic_tags,
+    )
+    return _facet_payload(facet)
+
+
+@server.tool()
+def hieronymus_concept_facet_list(concept_id: int) -> list[dict[str, Any]]:
+    """List active facets for a concept."""
+    config = _load_validated_config()
+    return [_facet_payload(facet) for facet in ConceptStore(config).list_facets(concept_id)]
+
+
+@server.tool()
+def hieronymus_concept_facet_set_canonical(
+    concept_id: int,
+    facet_id: int,
+) -> dict[str, Any]:
+    """Set one concept facet as canonical for its concept."""
+    config = _load_validated_config()
+    store = ConceptStore(config)
+    store.set_canonical_facet(concept_id, facet_id)
+    return _facet_payload(store.get_facet(facet_id))
+
+
+@server.tool()
+def hieronymus_concept_semantic_tags_set(
+    concept_id: int,
+    semantic_tags: list[str],
+) -> dict[str, Any]:
+    """Replace semantic tags for a concept."""
+    config = _load_validated_config()
+    store = ConceptStore(config)
+    store.set_semantic_tags(concept_id, semantic_tags)
+    return _concept_payload(store.get(concept_id))
+
+
+@server.tool()
+def hieronymus_crystal_link_concept(
+    crystal_id: int,
+    concept_id: int,
+    link_type: str = "mentions",
+    confidence: float = 0.2,
+) -> dict[str, Any]:
+    """Link a long-term crystal to a concept."""
+    config = _load_validated_config()
+    ConceptStore(config).link_crystal(
+        crystal_id,
+        concept_id,
+        link_type=link_type,
+        confidence=confidence,
+    )
+    crystal = CrystalStore(config).get(crystal_id)
+    return _crystal_payload(crystal) or {}
+
+
+@server.tool()
+def hieronymus_crystal_story_scopes_set(
+    crystal_id: int,
+    story_scopes: list[str],
+    confidence: float = 0.2,
+) -> dict[str, Any]:
+    """Replace story scopes for a crystal."""
+    config = _load_validated_config()
+    crystal = CrystalStore(config).set_story_scopes(
+        crystal_id,
+        tuple(story_scopes),
+        confidence=confidence,
+    )
+    return _crystal_payload(crystal) or {}
+
+
+@server.tool()
+def hieronymus_crystal_semantic_tags_set(
+    crystal_id: int,
+    semantic_tags: list[str],
+    confidence: float = 0.2,
+) -> dict[str, Any]:
+    """Replace semantic tags for a crystal."""
+    config = _load_validated_config()
+    crystal = CrystalStore(config).set_semantic_tags(
+        crystal_id,
+        tuple(semantic_tags),
+        confidence=confidence,
+    )
+    return _crystal_payload(crystal) or {}
+
+
+@server.tool()
+def hieronymus_rule_crystals_list(
+    status: str | None = None,
+    series_slug: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """List rule crystals for review."""
+    config = _load_validated_config()
+    return [
+        _crystal_payload(crystal) or {}
+        for crystal in CrystalStore(config).list_rule_crystals(
+            status=status,
+            series_slug=series_slug,
+            limit=limit,
+        )
+    ]
+
+
+@server.tool()
+def hieronymus_rule_crystal_archive(crystal_id: int) -> dict[str, Any]:
+    """Archive a rule crystal."""
+    config = _load_validated_config()
+    crystal = CrystalStore(config).archive_rule_crystal(crystal_id)
+    return _crystal_payload(crystal) or {}
+
+
+@server.tool()
+def hieronymus_rule_crystal_validate(crystal_id: int) -> dict[str, Any]:
+    """Validate rule-crystal shape and deterministic enforceability."""
+    config = _load_validated_config()
+    return CrystalStore(config).validate_rule_crystal(crystal_id)
+
+
+@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_termbase_contract(
     series_slug: str,
     raw_text: str,
@@ -376,7 +707,7 @@ def hieronymus_termbase_validate(
     return [asdict(finding) for finding in findings]
 
 
-@server.tool()
+@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_termbase_propose(
     series_slug: str,
     category: str,
@@ -408,7 +739,7 @@ def hieronymus_termbase_propose(
     return {"term_id": term_id}
 
 
-@server.tool()
+@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_termbase_approve(
     series_slug: str,
     term_id: int,
@@ -662,7 +993,7 @@ def hieronymus_dream(
     }
 
 
-@server.tool()
+@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_concept_proposals_list() -> list[dict[str, Any]]:
     """List strict proposals and legacy-compatible candidate concept suggestions."""
     config = _load_validated_config()

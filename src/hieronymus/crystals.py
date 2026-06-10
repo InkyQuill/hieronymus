@@ -3,10 +3,16 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, datetime
+from typing import Any
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
 from hieronymus.memory_models import CrystalRecord, TranslationContext
+from hieronymus.rule_crystals import (
+    DETERMINISTIC_RULE_CONFIDENCE_THRESHOLD,
+    DETERMINISTIC_RULE_STRENGTH_THRESHOLD,
+    parse_rule_crystal,
+)
 
 _ALLOWED_CRYSTAL_TYPES = frozenset(
     {"lesson", "rule", "thought", "observation", "concept_note", "concept", "erudition"}
@@ -246,6 +252,150 @@ class CrystalStore:
                 raise KeyError(f"unknown crystal: {crystal_id}")
             crystal = self._hydrate_crystal(conn, row)
         return crystal
+
+    def list_rule_crystals(
+        self,
+        *,
+        status: str | None = None,
+        series_slug: str | None = None,
+        limit: int = 50,
+    ) -> list[CrystalRecord]:
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        query = ["select * from crystals where crystal_type = 'rule'"]
+        params: list[object] = []
+        if status is not None:
+            self._validate_status(status)
+            query.append("and status = ?")
+            params.append(status)
+        if series_slug is not None:
+            query.append("and series_slug = ?")
+            params.append(series_slug)
+        query.append("order by id desc limit ?")
+        params.append(min(limit, _MAX_SEARCH_LIMIT))
+
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute("\n".join(query), params).fetchall()
+            return [self._hydrate_crystal(conn, row) for row in rows]
+
+    def archive_rule_crystal(self, crystal_id: int) -> CrystalRecord:
+        now = _now()
+        with connect(self.config.database_path) as conn:
+            row = conn.execute(
+                "select * from crystals where id = ?",
+                (crystal_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown crystal: {crystal_id}")
+            if row["crystal_type"] != "rule":
+                raise ValueError("crystal is not a rule crystal")
+            conn.execute(
+                """
+                update crystals
+                set status = 'archived',
+                    updated_at = ?
+                where id = ?
+                """,
+                (now, crystal_id),
+            )
+            conn.commit()
+        return self.get(crystal_id)
+
+    def validate_rule_crystal(self, crystal_id: int) -> dict[str, Any]:
+        crystal = self.get(crystal_id)
+        errors: list[str] = []
+        warnings: list[str] = []
+        parsed_payload: dict[str, Any] | None = None
+
+        if crystal.crystal_type != "rule":
+            errors.append("crystal_type must be 'rule'")
+        parsed = parse_rule_crystal(crystal.text)
+        if parsed is None:
+            errors.append(
+                "rule text must match '<source> is translated as <target>[, not <forbidden>]'."
+            )
+        else:
+            parsed_payload = {
+                "source_text": parsed.source_text,
+                "canonical_translation": parsed.canonical_translation,
+                "forbidden_variants": list(parsed.forbidden_variants),
+            }
+
+        if crystal.status != "active":
+            warnings.append("rule crystal is not active")
+        if crystal.confidence < DETERMINISTIC_RULE_CONFIDENCE_THRESHOLD:
+            warnings.append("confidence is below deterministic validation threshold")
+        if crystal.strength < DETERMINISTIC_RULE_STRENGTH_THRESHOLD:
+            warnings.append("strength is below deterministic validation threshold")
+        if not crystal.concept_ids:
+            warnings.append("rule crystal is not linked to a concept")
+
+        valid = not errors
+        enforceable = (
+            valid
+            and crystal.status == "active"
+            and crystal.confidence >= DETERMINISTIC_RULE_CONFIDENCE_THRESHOLD
+            and crystal.strength >= DETERMINISTIC_RULE_STRENGTH_THRESHOLD
+            and bool(crystal.concept_ids)
+        )
+        return {
+            "crystal_id": crystal.id,
+            "valid": valid,
+            "enforceable": enforceable,
+            "errors": errors,
+            "warnings": warnings,
+            "parsed_rule": parsed_payload,
+        }
+
+    def set_story_scopes(
+        self,
+        crystal_id: int,
+        story_scopes: tuple[str, ...],
+        *,
+        confidence: float = 0.2,
+    ) -> CrystalRecord:
+        self.get(crystal_id)
+        clean_story_scopes = _clean_text_tuple(story_scopes)
+        clean_confidence = _clamp_score(confidence)
+        now = _now()
+        with connect(self.config.database_path) as conn:
+            conn.execute("delete from crystal_story_scopes where crystal_id = ?", (crystal_id,))
+            for story_scope in clean_story_scopes:
+                conn.execute(
+                    """
+                    insert into crystal_story_scopes(crystal_id, scope, confidence, created_at)
+                    values (?, ?, ?, ?)
+                    """,
+                    (crystal_id, story_scope, clean_confidence, now),
+                )
+            conn.execute("update crystals set updated_at = ? where id = ?", (now, crystal_id))
+            conn.commit()
+        return self.get(crystal_id)
+
+    def set_semantic_tags(
+        self,
+        crystal_id: int,
+        semantic_tags: tuple[str, ...],
+        *,
+        confidence: float = 0.2,
+    ) -> CrystalRecord:
+        self.get(crystal_id)
+        clean_semantic_tags = _clean_text_tuple(semantic_tags)
+        clean_confidence = _clamp_score(confidence)
+        now = _now()
+        with connect(self.config.database_path) as conn:
+            conn.execute("delete from crystal_semantic_tags where crystal_id = ?", (crystal_id,))
+            for semantic_tag in clean_semantic_tags:
+                conn.execute(
+                    """
+                    insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+                    values (?, ?, ?, ?)
+                    """,
+                    (crystal_id, semantic_tag, clean_confidence, now),
+                )
+            conn.execute("update crystals set updated_at = ? where id = ?", (now, crystal_id))
+            conn.commit()
+        return self.get(crystal_id)
 
     def low_confidence_first(
         self,

@@ -585,6 +585,36 @@ class ConceptStore:
                 raise KeyError(f"unknown concept: {concept_id}")
             return _row_to_concept_record(conn, row)
 
+    def update_concept(
+        self,
+        concept_id: int,
+        *,
+        description: str | None = None,
+        status: str | None = None,
+        confidence: float | None = None,
+    ) -> ConceptRecord:
+        now = _now()
+        with connect(self.config.database_path) as conn:
+            row = self._require_concept_with_connection(conn, concept_id)
+            next_description = row["description"] if description is None else description.strip()
+            next_status = row["status"] if status is None else _storage_status(status)
+            next_confidence = (
+                float(row["confidence"]) if confidence is None else _clamp_confidence(confidence)
+            )
+            conn.execute(
+                """
+                update concepts
+                set description = ?,
+                    status = ?,
+                    confidence = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (next_description, next_status, next_confidence, now, concept_id),
+            )
+            conn.commit()
+        return self.get(concept_id)
+
     def add_facet(
         self,
         concept_id: int,
@@ -623,6 +653,90 @@ class ConceptStore:
             conn.commit()
         return self._get_facet(facet_id)
 
+    def update_facet(
+        self,
+        facet_id: int,
+        *,
+        value: str | None = None,
+        language: str | None = None,
+        language_tags: Iterable[str] | None = None,
+        kind: str | None = None,
+        facet_type: str | None = None,
+        confidence: float | None = None,
+        source_crystal_id: int | None = None,
+        is_canonical: bool | None = None,
+        story_scopes: Iterable[str] | None = None,
+        semantic_tags: Iterable[str] | None = None,
+    ) -> ConceptFacetRecord:
+        now = _now()
+        with connect(self.config.database_path) as conn:
+            row = conn.execute(
+                "select * from concept_facets where id = ? and superseded_at is null",
+                (facet_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown concept facet: {facet_id}")
+            concept_id = int(row["concept_id"])
+            self._require_concept_with_connection(conn, concept_id)
+
+            next_value = row["value"] if value is None else value.strip()
+            if not next_value:
+                raise ValueError("concept facet value must not be empty")
+            next_kind = (
+                row["facet_type"]
+                if kind is None and facet_type is None
+                else _normalize_facet_storage_kind(kind=kind, facet_type=facet_type)
+            )
+            next_language_tags = (
+                None
+                if language_tags is None and language is None
+                else _clean_language_tags(language_tags or (), legacy_language=language or "")
+            )
+            next_language = (
+                row["language"]
+                if next_language_tags is None
+                else next_language_tags[0]
+                if next_language_tags
+                else ""
+            )
+            next_confidence = (
+                float(row["confidence"]) if confidence is None else _clamp_confidence(confidence)
+            )
+            next_is_canonical = bool(row["is_canonical"]) if is_canonical is None else is_canonical
+            conn.execute(
+                """
+                update concept_facets
+                set language = ?,
+                    facet_type = ?,
+                    value = ?,
+                    source_crystal_id = ?,
+                    confidence = ?,
+                    is_canonical = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (
+                    next_language,
+                    next_kind,
+                    next_value,
+                    row["source_crystal_id"] if source_crystal_id is None else source_crystal_id,
+                    next_confidence,
+                    int(next_is_canonical),
+                    now,
+                    facet_id,
+                ),
+            )
+            if next_language_tags is not None:
+                self._set_facet_language_tags_with_connection(conn, facet_id, next_language_tags)
+            if story_scopes is not None:
+                self._set_facet_story_scopes_with_connection(conn, facet_id, story_scopes)
+            if semantic_tags is not None:
+                self._set_facet_semantic_tags_with_connection(conn, facet_id, semantic_tags)
+            if next_is_canonical:
+                self._set_canonical_facet_with_connection(conn, concept_id, facet_id)
+            conn.commit()
+        return self._get_facet(facet_id)
+
     def list_facets(self, concept_id: int) -> list[ConceptFacetRecord]:
         with connect(self.config.database_path) as conn:
             self._require_concept_with_connection(conn, concept_id)
@@ -637,6 +751,9 @@ class ConceptStore:
                 (concept_id,),
             ).fetchall()
             return [_row_to_facet_record(conn, row) for row in rows]
+
+    def get_facet(self, facet_id: int) -> ConceptFacetRecord:
+        return self._get_facet(facet_id)
 
     def set_canonical_facet(self, concept_id: int, facet_id: int) -> None:
         with connect(self.config.database_path) as conn:
