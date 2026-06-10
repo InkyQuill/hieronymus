@@ -5,7 +5,7 @@ import json
 import pytest
 
 from hieronymus.admin import AdminStore
-from hieronymus.concepts import ConceptProposalStore
+from hieronymus.concepts import CONCEPT_ESTABLISHED, ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
@@ -202,6 +202,54 @@ def test_approve_proposal_creates_rule_crystal_and_audit(
     assert [term.id for term in Termbase(config, context).contract("センス appears.")] == [
         crystal_id
     ]
+
+
+def test_approve_proposal_creates_new_concept_when_duplicate_name_has_no_tag_match(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    concepts = ConceptStore(config)
+    first = concepts.create_concept(
+        "センス",
+        status=CONCEPT_ESTABLISHED,
+        confidence=0.95,
+        scope_type="series",
+        scope_key=context.scope_key,
+        semantic_tags=("role:first",),
+    )
+    second = concepts.create_concept(
+        "センス",
+        status=CONCEPT_ESTABLISHED,
+        confidence=0.95,
+        scope_type="series",
+        scope_key=context.scope_key,
+        semantic_tags=("role:second",),
+    )
+    proposal_id = _create_proposal(config, context)
+
+    crystal_id = AdminStore(config).approve_proposal(proposal_id)
+
+    with connect(config.database_path) as conn:
+        linked = conn.execute(
+            """
+            select concept_id
+            from crystal_concepts
+            where crystal_id = ?
+            """,
+            (crystal_id,),
+        ).fetchone()
+        concept_count = conn.execute(
+            """
+            select count(*) as concept_count
+            from concepts
+            where canonical_name = 'センス'
+              and scope_key = ?
+            """,
+            (context.scope_key,),
+        ).fetchone()
+
+    assert linked["concept_id"] not in {first.id, second.id}
+    assert concept_count["concept_count"] == 3
 
 
 def test_approve_proposal_requires_pending_and_does_not_duplicate_crystals(

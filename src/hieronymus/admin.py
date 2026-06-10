@@ -28,8 +28,8 @@ from hieronymus.dream_config import (
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamRunRecord, DreamService
 from hieronymus.memory_models import TranslationContext
+from hieronymus.rule_crystals import parse_rule_crystal
 from hieronymus.service_manager import ServiceManager
-from hieronymus.termbase import _parse_rule_crystal
 
 ADMIN_VIEWS = (
     "Concepts",
@@ -106,7 +106,7 @@ def _validate_rule_crystal_shape(
     if any(variant != canonical_rendering for variant in approved_variants):
         raise ValueError("approved variants that differ from canonical rendering are unsupported")
     text = _rule_crystal_text(source_form, canonical_rendering, forbidden_variants)
-    parsed = _parse_rule_crystal(text)
+    parsed = parse_rule_crystal(text)
     if (
         parsed is None
         or parsed.source_text != source_form
@@ -114,6 +114,25 @@ def _validate_rule_crystal_shape(
         or parsed.forbidden_variants != forbidden_variants
     ):
         raise ValueError("rule crystal text cannot round-trip parsed fields")
+
+
+def _proposal_match_tags(proposal: sqlite3.Row, semantic_tags: tuple[str, ...]) -> tuple[str, ...]:
+    values: list[str] = list(semantic_tags)
+    for token in str(proposal["rationale"]).replace(",", " ").replace(".", " ").split():
+        clean = token.strip().casefold()
+        if clean:
+            values.append(clean)
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value not in seen:
+            result.append(value)
+            seen.add(value)
+    return tuple(result)
+
+
+def _tag_score(candidate_tags: tuple[str, ...], wanted_tags: tuple[str, ...]) -> int:
+    return len(set(candidate_tags).intersection(wanted_tags))
 
 
 _ARCHIVE_STRENGTH_THRESHOLD = 0.05
@@ -1537,7 +1556,223 @@ class AdminStore:
                 """,
                 (crystal_id, tag, now),
             )
+        concept_id = self._ensure_concept_for_proposal(
+            conn,
+            proposal,
+            source_form=source_form,
+            semantic_tags=semantic_tags,
+            now=now,
+        )
+        conn.execute(
+            """
+            insert into crystal_concepts(
+              crystal_id,
+              concept_id,
+              link_type,
+              confidence,
+              created_at
+            )
+            values (?, ?, 'defines', 0.95, ?)
+            on conflict(crystal_id, concept_id, link_type) do update set
+              confidence = max(crystal_concepts.confidence, excluded.confidence)
+            """,
+            (crystal_id, concept_id, now),
+        )
         return crystal_id
+
+    def _ensure_concept_for_proposal(
+        self,
+        conn: sqlite3.Connection,
+        proposal: sqlite3.Row,
+        *,
+        source_form: str,
+        semantic_tags: tuple[str, ...],
+        now: str,
+    ) -> int:
+        scope_key = f"series:{proposal['series_slug']}"
+        concept_id = self._matching_concept_id_for_proposal(
+            conn,
+            proposal,
+            semantic_tags=semantic_tags,
+            scope_key=scope_key,
+        )
+        if concept_id is None:
+            cursor = conn.execute(
+                """
+                insert into concepts(
+                  canonical_name,
+                  description,
+                  scope_type,
+                  scope_key,
+                  status,
+                  confidence,
+                  created_at,
+                  updated_at
+                )
+                values (?, ?, 'series', ?, 'established', 0.95, ?, ?)
+                """,
+                (
+                    proposal["concept_text"],
+                    proposal["rationale"],
+                    scope_key,
+                    now,
+                    now,
+                ),
+            )
+            concept_id = int(cursor.lastrowid)
+
+        for tag in semantic_tags:
+            conn.execute(
+                """
+                insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
+                values (?, ?, 0.95, ?)
+                on conflict(concept_id, tag) do update set
+                  confidence = max(concept_semantic_tags.confidence, excluded.confidence)
+                """,
+                (concept_id, tag, now),
+            )
+        self._ensure_concept_facet(
+            conn,
+            concept_id=concept_id,
+            value=source_form,
+            facet_type="name",
+            language_tag=proposal["source_language"],
+            is_canonical=True,
+            now=now,
+        )
+        self._ensure_concept_facet(
+            conn,
+            concept_id=concept_id,
+            value=proposal["canonical_rendering"],
+            facet_type="rendering",
+            language_tag=proposal["target_language"],
+            is_canonical=False,
+            now=now,
+        )
+        return concept_id
+
+    def _matching_concept_id_for_proposal(
+        self,
+        conn: sqlite3.Connection,
+        proposal: sqlite3.Row,
+        *,
+        semantic_tags: tuple[str, ...],
+        scope_key: str,
+    ) -> int | None:
+        candidate_rows = conn.execute(
+            """
+            select id
+            from concepts
+            where canonical_name = ?
+              and scope_type = 'series'
+              and scope_key = ?
+              and status not in ('archived', 'merged')
+            order by id
+            """,
+            (proposal["concept_text"], scope_key),
+        ).fetchall()
+        if not candidate_rows:
+            return None
+        if len(candidate_rows) == 1:
+            return int(candidate_rows[0]["id"])
+
+        wanted_tags = _proposal_match_tags(proposal, semantic_tags)
+        scored = [
+            (
+                _tag_score(
+                    self._concept_semantic_tags(conn, int(row["id"])),
+                    wanted_tags,
+                ),
+                int(row["id"]),
+            )
+            for row in candidate_rows
+        ]
+        best_score = max(score for score, _ in scored)
+        if best_score <= 0:
+            return None
+        best_ids = [concept_id for score, concept_id in scored if score == best_score]
+        if len(best_ids) != 1:
+            return None
+        return best_ids[0]
+
+    def _concept_semantic_tags(
+        self,
+        conn: sqlite3.Connection,
+        concept_id: int,
+    ) -> tuple[str, ...]:
+        rows = conn.execute(
+            """
+            select tag
+            from concept_semantic_tags
+            where concept_id = ?
+            order by tag
+            """,
+            (concept_id,),
+        ).fetchall()
+        return tuple(row["tag"] for row in rows)
+
+    def _ensure_concept_facet(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        concept_id: int,
+        value: str,
+        facet_type: str,
+        language_tag: str,
+        is_canonical: bool,
+        now: str,
+    ) -> None:
+        existing = conn.execute(
+            """
+            select id
+            from concept_facets
+            where concept_id = ?
+              and value = ?
+              and facet_type = ?
+              and superseded_at is null
+            order by id
+            limit 1
+            """,
+            (concept_id, value, facet_type),
+        ).fetchone()
+        if existing is None:
+            cursor = conn.execute(
+                """
+                insert into concept_facets(
+                  concept_id,
+                  language,
+                  facet_type,
+                  value,
+                  source_crystal_id,
+                  confidence,
+                  is_canonical,
+                  created_at,
+                  updated_at
+                )
+                values (?, ?, ?, ?, null, 0.95, ?, ?, ?)
+                """,
+                (
+                    concept_id,
+                    language_tag,
+                    facet_type,
+                    value,
+                    int(is_canonical),
+                    now,
+                    now,
+                ),
+            )
+            facet_id = int(cursor.lastrowid)
+        else:
+            facet_id = int(existing["id"])
+
+        if language_tag:
+            conn.execute(
+                """
+                insert or ignore into concept_facet_language_tags(facet_id, language_tag)
+                values (?, ?)
+                """,
+                (facet_id, language_tag.casefold()),
+            )
 
     def _insert_alias(
         self,

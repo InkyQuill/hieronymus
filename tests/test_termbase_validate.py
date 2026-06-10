@@ -1,9 +1,12 @@
 import pytest
 
+from hieronymus.concepts import CONCEPT_ESTABLISHED, ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
+from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
+from hieronymus.rule_crystals import parse_rule_crystal
 from hieronymus.termbase import Termbase
 
 
@@ -26,15 +29,38 @@ def _add_rule_crystal(
     text: str,
     *,
     semantic_tags: tuple[str, ...] = (),
+    confidence: float = 0.95,
+    strength: float = 0.8,
+    link_concept: bool = True,
 ) -> int:
+    concept_ids: tuple[int, ...] = ()
+    parsed = parse_rule_crystal(text)
+    if link_concept and parsed is not None:
+        concept = ConceptStore(config).create_concept(
+            parsed.source_text,
+            status=CONCEPT_ESTABLISHED,
+            confidence=0.95,
+            scope_type="series",
+            scope_key=context.scope_key,
+            semantic_tags=semantic_tags,
+        )
+        ConceptStore(config).add_facet(
+            concept.id,
+            parsed.source_text,
+            kind="name",
+            language_tags=(context.source_language,),
+            semantic_tags=semantic_tags,
+        )
+        concept_ids = (concept.id,)
     return CrystalStore(config).add_crystal(
         context,
         crystal_type="rule",
         text=text,
         source_credibility="user_rule",
-        confidence=0.95,
-        strength=0.8,
+        confidence=confidence,
+        strength=strength,
         semantic_tags=semantic_tags,
+        concept_ids=concept_ids,
     )
 
 
@@ -167,6 +193,31 @@ def test_validate_isolated_by_target_language(config):
     assert findings == []
 
 
+def test_unlinked_low_confidence_rule_crystal_does_not_validate(config):
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    termbase = _termbase_for_series(config, series)
+    _add_rule_crystal(
+        config,
+        termbase.context,
+        "攻撃力上昇 is translated as ATK Up, not Attack Increase.",
+        confidence=0.2,
+        strength=0.2,
+        link_concept=False,
+    )
+
+    findings = termbase.validate(
+        raw_text="攻撃力上昇を取るべきだ。",
+        translated_text="You should pick up Attack Increase.",
+    )
+
+    assert findings == []
+
+
 def test_reapproving_strict_term_does_not_duplicate_validation_findings(config):
     series = Registry(config).create_series(
         slug="only-sense-online",
@@ -194,6 +245,53 @@ def test_reapproving_strict_term_does_not_duplicate_validation_findings(config):
         "forbidden_variant",
         "missing_canonical",
     ]
+
+
+def test_existing_approved_strict_term_rule_is_migrated_before_validation(config):
+    series = Registry(config).create_series(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    termbase = _termbase_for_series(config, series)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+    )
+    termbase.add_alias(term_id, kind="forbidden_variant", text="Attack Increase", language="en")
+    with connect(termbase.config.database_path) as conn:
+        conn.execute("update strict_terms set status = 'approved' where id = ?", (term_id,))
+        conn.commit()
+    crystal_id = _add_rule_crystal(
+        config,
+        termbase.context,
+        "攻撃力上昇 is translated as ATK Up, not Attack Increase.",
+        link_concept=False,
+    )
+
+    findings = termbase.validate(
+        raw_text="攻撃力上昇を取るべきだ。",
+        translated_text="You should pick up Attack Increase.",
+    )
+
+    with connect(termbase.config.database_path) as conn:
+        links = conn.execute(
+            """
+            select concept_id
+            from crystal_concepts
+            where crystal_id = ?
+            """,
+            (crystal_id,),
+        ).fetchall()
+
+    assert [finding.kind for finding in findings] == [
+        "forbidden_variant",
+        "missing_canonical",
+    ]
+    assert [finding.term_id for finding in findings] == [crystal_id, crystal_id]
+    assert len(links) == 1
 
 
 def test_approve_rejects_multiple_forbidden_variants(config):
@@ -256,6 +354,18 @@ def test_rule_crystal_validation_reports_forbidden_old_rendering(
         confidence=0.95,
         strength=0.8,
         semantic_tags=("translation-rule", "cooking"),
+        concept_ids=(
+            ConceptStore(config)
+            .create_concept(
+                "Cooking Talent",
+                status=CONCEPT_ESTABLISHED,
+                confidence=0.95,
+                scope_type="series",
+                scope_key=context.scope_key,
+                semantic_tags=("translation-rule", "cooking"),
+            )
+            .id,
+        ),
     )
 
     findings = Termbase(config, context).validate(
