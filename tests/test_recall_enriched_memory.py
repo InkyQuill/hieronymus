@@ -13,12 +13,13 @@ from hieronymus.workspace import WorkspaceStore
 def _context(
     config: HieronymusConfig,
     *,
+    slug: str = "only-sense-online",
     story_scopes: tuple[str, ...] = (),
     semantic_tags: tuple[str, ...] = (),
 ) -> TranslationContext:
     series = Registry(config).create_series(
-        slug="only-sense-online",
-        title="Only Sense Online",
+        slug=slug,
+        title=slug.replace("-", " ").title(),
         source_language="ja",
         target_language="en",
     )
@@ -509,6 +510,56 @@ def test_concept_label_link_expansion_is_bounded_and_deterministic(
     assert [result.id for result in results] == crystal_ids[:5]
     assert all(result.concept_ids == (concept.id,) for result in results)
     assert all(result.reason == "metadata recall match" for result in results)
+
+
+def test_concept_label_candidate_limit_applies_after_visibility_scope(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config, slug="target-series")
+    other_context = _context(config, slug="other-series")
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    concepts = ConceptStore(config)
+    crystals = CrystalStore(config)
+    for index in range(60):
+        concept = concepts.create_concept(
+            "Enchant",
+            status="established",
+            confidence=0.9,
+            scope_type="series",
+            scope_key=other_context.scope_key,
+        )
+        crystals.add_crystal(
+            other_context,
+            crystal_type="lesson",
+            text=f"Treat out-of-scope linked skill entry {index} as a proper noun.",
+            title=f"Out Of Scope Linked Skill {index}",
+            concept_ids=(concept.id,),
+            strength=0.7,
+            confidence=0.8,
+        )
+    target_concept = concepts.create_concept(
+        "Enchant",
+        status="established",
+        confidence=0.9,
+        scope_type="series",
+        scope_key=context.scope_key,
+    )
+    target_crystal_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Treat the in-scope linked skill entry as a proper noun.",
+        title="In Scope Linked Skill",
+        concept_ids=(target_concept.id,),
+        strength=0.7,
+        confidence=0.8,
+    )
+
+    results = RecallService(config).recall(session.id, context, "Enchant", limit=5)
+
+    assert [result.id for result in results] == [target_crystal_id]
+    assert results[0].concept_ids == (target_concept.id,)
+    assert results[0].concept_labels == ("Enchant",)
 
 
 def test_concept_semantic_tags_find_linked_crystal_without_text_match(

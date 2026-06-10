@@ -459,7 +459,13 @@ class RecallService:
                 limit=limit,
             )
 
-            concept_scores = self._concept_candidate_scores(conn, query, lookup_values, limit=limit)
+            concept_scores = self._concept_candidate_scores(
+                conn,
+                context,
+                query,
+                lookup_values,
+                limit=limit,
+            )
             if concept_scores:
                 placeholders = ", ".join("?" for _ in concept_scores)
                 rows = conn.execute(
@@ -556,6 +562,7 @@ class RecallService:
     def _concept_candidate_scores(
         self,
         conn,
+        context: TranslationContext,
         query: str,
         lookup_values: tuple[str, ...],
         *,
@@ -569,14 +576,29 @@ class RecallService:
         if exact_query:
             rows = conn.execute(
                 """
-                select id
-                from concepts
-                where canonical_name = ? collate nocase
-                  and status not in ('archived', 'merged')
-                order by id
+                select distinct c.id
+                from concepts c
+                join crystal_concepts cc on cc.concept_id = c.id
+                join crystals cr on cr.id = cc.crystal_id
+                where c.canonical_name = ? collate nocase
+                  and c.status not in ('archived', 'merged')
+                  and cr.status in ('active', 'candidate')
+                  and (
+                    (cr.scope_type = 'series' and cr.scope_key = ?)
+                    or cr.scope_type = 'global'
+                  )
+                  and (cr.source_language = ? or cr.source_language = '')
+                  and (cr.target_language = ? or cr.target_language = '')
+                order by c.id
                 limit ?
                 """,
-                (exact_query, limit),
+                (
+                    exact_query,
+                    context.scope_key,
+                    context.source_language,
+                    context.target_language,
+                    limit,
+                ),
             ).fetchall()
         for row in rows:
             concept_id = int(row["id"])
@@ -585,15 +607,30 @@ class RecallService:
         if expression:
             rows = conn.execute(
                 """
-                select c.id
+                select distinct c.id
                 from concepts_fts
                 join concepts c on c.id = concepts_fts.rowid
+                join crystal_concepts cc on cc.concept_id = c.id
+                join crystals cr on cr.id = cc.crystal_id
                 where concepts_fts match ?
                   and c.status not in ('archived', 'merged')
+                  and cr.status in ('active', 'candidate')
+                  and (
+                    (cr.scope_type = 'series' and cr.scope_key = ?)
+                    or cr.scope_type = 'global'
+                  )
+                  and (cr.source_language = ? or cr.source_language = '')
+                  and (cr.target_language = ? or cr.target_language = '')
                 order by c.id
                 limit ?
                 """,
-                (expression, limit),
+                (
+                    expression,
+                    context.scope_key,
+                    context.source_language,
+                    context.target_language,
+                    limit,
+                ),
             ).fetchall()
             for row in rows:
                 concept_id = int(row["id"])
@@ -605,13 +642,28 @@ class RecallService:
                 from concept_facet_fts
                 join concept_facets f on f.id = concept_facet_fts.rowid
                 join concepts c on c.id = f.concept_id
+                join crystal_concepts cc on cc.concept_id = c.id
+                join crystals cr on cr.id = cc.crystal_id
                 where concept_facet_fts match ?
                   and f.superseded_at is null
                   and c.status not in ('archived', 'merged')
+                  and cr.status in ('active', 'candidate')
+                  and (
+                    (cr.scope_type = 'series' and cr.scope_key = ?)
+                    or cr.scope_type = 'global'
+                  )
+                  and (cr.source_language = ? or cr.source_language = '')
+                  and (cr.target_language = ? or cr.target_language = '')
                 order by c.id
                 limit ?
                 """,
-                (expression, limit),
+                (
+                    expression,
+                    context.scope_key,
+                    context.source_language,
+                    context.target_language,
+                    limit,
+                ),
             ).fetchall()
             for row in rows:
                 concept_id = int(row["id"])
@@ -624,12 +676,27 @@ class RecallService:
                 select distinct c.id
                 from concept_semantic_tags t
                 join concepts c on c.id = t.concept_id
+                join crystal_concepts cc on cc.concept_id = c.id
+                join crystals cr on cr.id = cc.crystal_id
                 where c.status not in ('archived', 'merged')
                   and t.tag collate nocase in ({placeholders})
+                  and cr.status in ('active', 'candidate')
+                  and (
+                    (cr.scope_type = 'series' and cr.scope_key = ?)
+                    or cr.scope_type = 'global'
+                  )
+                  and (cr.source_language = ? or cr.source_language = '')
+                  and (cr.target_language = ? or cr.target_language = '')
                 order by c.id
                 limit ?
                 """,
-                (*lookup_values, limit),
+                (
+                    *lookup_values,
+                    context.scope_key,
+                    context.source_language,
+                    context.target_language,
+                    limit,
+                ),
             ).fetchall()
             for row in rows:
                 concept_id = int(row["id"])
@@ -641,13 +708,28 @@ class RecallService:
                 from concept_facet_semantic_tags t
                 join concept_facets f on f.id = t.facet_id
                 join concepts c on c.id = f.concept_id
+                join crystal_concepts cc on cc.concept_id = c.id
+                join crystals cr on cr.id = cc.crystal_id
                 where f.superseded_at is null
                   and c.status not in ('archived', 'merged')
                   and t.semantic_tag collate nocase in ({placeholders})
+                  and cr.status in ('active', 'candidate')
+                  and (
+                    (cr.scope_type = 'series' and cr.scope_key = ?)
+                    or cr.scope_type = 'global'
+                  )
+                  and (cr.source_language = ? or cr.source_language = '')
+                  and (cr.target_language = ? or cr.target_language = '')
                 order by c.id
                 limit ?
                 """,
-                (*lookup_values, limit),
+                (
+                    *lookup_values,
+                    context.scope_key,
+                    context.source_language,
+                    context.target_language,
+                    limit,
+                ),
             ).fetchall()
             for row in rows:
                 concept_id = int(row["id"])
@@ -659,13 +741,28 @@ class RecallService:
                 from concept_facet_story_scopes s
                 join concept_facets f on f.id = s.facet_id
                 join concepts c on c.id = f.concept_id
+                join crystal_concepts cc on cc.concept_id = c.id
+                join crystals cr on cr.id = cc.crystal_id
                 where f.superseded_at is null
                   and c.status not in ('archived', 'merged')
                   and s.story_scope collate nocase in ({placeholders})
+                  and cr.status in ('active', 'candidate')
+                  and (
+                    (cr.scope_type = 'series' and cr.scope_key = ?)
+                    or cr.scope_type = 'global'
+                  )
+                  and (cr.source_language = ? or cr.source_language = '')
+                  and (cr.target_language = ? or cr.target_language = '')
                 order by c.id
                 limit ?
                 """,
-                (*lookup_values, limit),
+                (
+                    *lookup_values,
+                    context.scope_key,
+                    context.source_language,
+                    context.target_language,
+                    limit,
+                ),
             ).fetchall()
             for row in rows:
                 concept_id = int(row["id"])
