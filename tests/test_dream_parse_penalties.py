@@ -154,6 +154,102 @@ def test_provider_suggested_thoughts_are_low_confidence_inferred_crystals(
     }
 
 
+def test_malformed_optional_crystal_concept_metadata_warns_and_penalizes(
+    config: HieronymusConfig,
+) -> None:
+    class MalformedConceptMetadataProvider:
+        name = "malformed-crystal-concepts"
+
+        def crystallize(self, context, memories):
+            return {
+                "crystals": [
+                    {
+                        "content": "Yun should remain the protagonist rendering in UI notes.",
+                        "type": "lesson",
+                        "source_credibility": "expert",
+                        "concepts": [{"description": "Missing name should not reject."}],
+                    }
+                ]
+            }
+
+    context = _context(config)
+    _completed_session(config, context)
+
+    run = DreamService(config, MalformedConceptMetadataProvider()).run_all()
+
+    with connect(config.database_path) as conn:
+        crystal = conn.execute(
+            """
+            select text, confidence, malformed_penalty
+            from crystals
+            """
+        ).fetchone()
+        concept_count = conn.execute("select count(*) from concepts").fetchone()[0]
+        audit = conn.execute("select payload_json from dream_audit_entries").fetchone()
+
+    assert run.status == "completed"
+    assert crystal["text"] == "Yun should remain the protagonist rendering in UI notes."
+    assert crystal["confidence"] == pytest.approx(0.65)
+    assert crystal["malformed_penalty"] == pytest.approx(0.2)
+    assert concept_count == 0
+    warning_codes = {warning["code"] for warning in json.loads(audit["payload_json"])["warnings"]}
+    assert "malformed_crystal_concept_metadata" in warning_codes
+
+
+def test_malformed_optional_crystal_metadata_warns_and_penalizes(
+    config: HieronymusConfig,
+) -> None:
+    class MalformedCrystalMetadataProvider:
+        name = "malformed-crystal-metadata"
+
+        def crystallize(self, context, memories):
+            return {
+                "crystals": [
+                    {
+                        "content": "Crafting menu notes should stay concise.",
+                        "type": "lesson",
+                        "source_credibility": "expert",
+                        "story_scopes": ["arc:crafting", {"bad": "shape"}],
+                        "semantic_tags": ["ui", None],
+                        "concept_ids": {"bad": "shape"},
+                    }
+                ]
+            }
+
+    context = _context(config)
+    _completed_session(config, context)
+
+    DreamService(config, MalformedCrystalMetadataProvider()).run_all()
+
+    with connect(config.database_path) as conn:
+        crystal = conn.execute(
+            "select id, confidence, malformed_penalty, tags_json from crystals"
+        ).fetchone()
+        story_scopes = conn.execute(
+            "select scope from crystal_story_scopes where crystal_id = ?",
+            (crystal["id"],),
+        ).fetchall()
+        semantic_tags = conn.execute(
+            "select tag from crystal_semantic_tags where crystal_id = ?",
+            (crystal["id"],),
+        ).fetchall()
+        linked_concepts = conn.execute("select count(*) from crystal_concepts").fetchone()[0]
+        audit = conn.execute("select payload_json from dream_audit_entries").fetchone()
+
+    assert crystal["confidence"] == pytest.approx(0.25)
+    assert crystal["malformed_penalty"] == pytest.approx(0.6)
+    assert crystal["tags_json"] == '["ui"]'
+    assert [row["scope"] for row in story_scopes] == ["arc:crafting"]
+    assert [row["tag"] for row in semantic_tags] == ["ui"]
+    assert linked_concepts == 0
+    warning_codes = {warning["code"] for warning in json.loads(audit["payload_json"])["warnings"]}
+    assert {
+        "malformed_crystal_story_scopes",
+        "malformed_crystal_semantic_tags",
+        "malformed_crystal_concept_ids",
+    } <= warning_codes
+
+
 def test_user_rule_short_term_memory_creates_stronger_rule_than_thought(
     config: HieronymusConfig,
 ) -> None:

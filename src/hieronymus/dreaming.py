@@ -1873,6 +1873,36 @@ def _normalize_dict_crystal(
     if is_inferred and not force_thought:
         crystal_type = "thought"
         source_credibility = "thought"
+    story_scopes, story_scope_penalty = _recover_crystal_string_tuple(
+        payload,
+        entry_path,
+        warnings,
+        "malformed_crystal_story_scopes",
+        "ignored malformed crystal story scope metadata",
+        "story_scopes",
+    )
+    semantic_tags, semantic_tag_penalty = _recover_crystal_string_tuple(
+        payload,
+        entry_path,
+        warnings,
+        "malformed_crystal_semantic_tags",
+        "ignored malformed crystal semantic tag metadata",
+        "semantic_tags",
+        "tags",
+    )
+    concept_ids, concept_id_penalty = _recover_crystal_int_tuple(
+        payload,
+        entry_path,
+        warnings,
+        "malformed_crystal_concept_ids",
+        "ignored malformed crystal concept id metadata",
+        "concept_ids",
+        "concept_id",
+    )
+    concept_names, concept_name_penalty = _concept_names_from_payload(payload, entry_path, warnings)
+    penalty += (
+        story_scope_penalty + semantic_tag_penalty + concept_id_penalty + concept_name_penalty
+    )
     confidence = _normalized_confidence(payload, source_credibility, penalty)
     title = _string_field(payload.get("title")).strip() or _title_from_kind(crystal_type)
     source_memory_ids = _source_memory_ids(payload, allowed_memory_ids)
@@ -1890,13 +1920,10 @@ def _normalize_dict_crystal(
         malformed_penalty=penalty,
         is_inferred=is_inferred,
         supersedes_crystal_id=_optional_int(payload.get("supersedes_crystal_id")),
-        story_scopes=_clean_string_tuple(payload.get("story_scopes")),
-        semantic_tags=_clean_string_tuple(payload.get("semantic_tags"), payload.get("tags")),
-        concept_ids=_clean_int_tuple(
-            payload.get("concept_ids"),
-            payload.get("concept_id"),
-        ),
-        concept_names=_concept_names_from_payload(payload, entry_path, warnings),
+        story_scopes=story_scopes,
+        semantic_tags=semantic_tags,
+        concept_ids=concept_ids,
+        concept_names=concept_names,
     )
 
 
@@ -2295,11 +2322,58 @@ def _source_memory_ids(
     return sorted(allowed_memory_ids)
 
 
+def _recover_crystal_string_tuple(
+    payload: dict[object, object],
+    entry_path: str,
+    warnings: list[DreamParseWarning],
+    code: str,
+    message: str,
+    *keys: str,
+) -> tuple[tuple[str, ...], float]:
+    values, penalty = _recover_facet_string_tuple(payload, *keys)
+    if penalty:
+        _append_parse_warning(warnings, entry_path, code, message, penalty)
+    return (values, penalty)
+
+
+def _recover_crystal_int_tuple(
+    payload: dict[object, object],
+    entry_path: str,
+    warnings: list[DreamParseWarning],
+    code: str,
+    message: str,
+    *keys: str,
+) -> tuple[tuple[int, ...], float]:
+    integers: list[int] = []
+    penalty = 0.0
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload[key]
+        if isinstance(value, bool):
+            penalty += MALFORMED_CONFIDENCE_PENALTY
+        elif isinstance(value, int):
+            integers.append(value)
+        elif type(value) is list:
+            for item in value:
+                if isinstance(item, bool):
+                    penalty += MALFORMED_CONFIDENCE_PENALTY
+                elif isinstance(item, int):
+                    integers.append(item)
+                else:
+                    penalty += MALFORMED_CONFIDENCE_PENALTY
+        else:
+            penalty += MALFORMED_CONFIDENCE_PENALTY
+    if penalty:
+        _append_parse_warning(warnings, entry_path, code, message, penalty)
+    return (tuple(sorted(set(integers))), penalty)
+
+
 def _concept_names_from_payload(
     payload: dict[object, object],
     entry_path: str,
     warnings: list[DreamParseWarning],
-) -> tuple[str, ...]:
+) -> tuple[tuple[str, ...], float]:
     values: list[object] = []
     for key in ("concept_names", "concepts"):
         value = payload.get(key)
@@ -2312,14 +2386,42 @@ def _concept_names_from_payload(
         values.append(name)
 
     names: list[str] = []
+    penalty = 0.0
     for value in values:
         if isinstance(value, str):
-            names.append(value)
+            if value.strip():
+                names.append(value)
+            else:
+                penalty += MALFORMED_CONFIDENCE_PENALTY
         elif type(value) is dict:
-            concept = _normalize_dict_concept(value, f"{entry_path}.concepts", warnings)
-            if concept is not None:
-                names.append(concept.canonical_name)
-    return _clean_text_tuple(tuple(names))
+            name, name_penalty = _recover_optional_concept_name(value)
+            penalty += name_penalty
+            if name:
+                names.append(name)
+        else:
+            penalty += MALFORMED_CONFIDENCE_PENALTY
+    if penalty:
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "malformed_crystal_concept_metadata",
+            "ignored malformed crystal concept metadata",
+            penalty,
+        )
+    return (_clean_text_tuple(tuple(names)), penalty)
+
+
+def _recover_optional_concept_name(payload: dict[object, object]) -> tuple[str, float]:
+    name = _string_field(payload.get("canonical_name")).strip()
+    if name:
+        return (name, 0.0)
+    name = _string_field(payload.get("name")).strip()
+    if name:
+        return (name, 0.0)
+    name = _string_field(payload.get("label")).strip()
+    if name:
+        return (name, MALFORMED_CONFIDENCE_PENALTY)
+    return ("", MALFORMED_CONFIDENCE_PENALTY)
 
 
 def _clean_string_tuple(*values: object) -> tuple[str, ...]:
