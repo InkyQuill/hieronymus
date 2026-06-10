@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_audit import DreamAuditStore
 from hieronymus.dream_autostart import DreamAutostart
@@ -12,6 +13,8 @@ from hieronymus.dream_config import default_dream_config, load_dream_config, sav
 from hieronymus.dreaming import DreamService
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
+from hieronymus.scoring import FeedbackStore
+from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -49,6 +52,13 @@ class CapturingDictProvider:
                 }
             ],
         }
+
+
+class EmptyDreamProvider:
+    name = "empty"
+
+    def crystallize(self, context, memories):
+        return {}
 
 
 def _context(config: HieronymusConfig) -> TranslationContext:
@@ -130,6 +140,31 @@ def _pending_memory_count(config: HieronymusConfig) -> int:
             "select count(*) from short_term_memories where archived_at is null",
         ).fetchone()
     return int(row[0])
+
+
+def _add_crystal(
+    config: HieronymusConfig,
+    context: TranslationContext,
+    *,
+    text: str,
+    strength: float = 0.5,
+    confidence: float = 0.5,
+) -> int:
+    return CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text=text,
+        strength=strength,
+        confidence=confidence,
+    )
+
+
+def _phase_completed_payloads(config: HieronymusConfig, run_id: int) -> list[dict[str, object]]:
+    return [
+        entry.payload
+        for entry in DreamAuditStore(config).list_for_run(run_id)
+        if entry.event_type == "phase_completed"
+    ]
 
 
 def test_default_affected_set_caps_are_configured(config: HieronymusConfig) -> None:
@@ -274,7 +309,126 @@ def test_affected_set_and_phase_audit_payloads_are_bounded_and_complete(
     assert phase_payload["affected_memory_set"]["total_crystal_count"] <= 1
 
 
-def test_audit_lookup_returns_phase_entries_and_parse_warning_records(
+def test_phase_audit_includes_passive_reinforcement_and_cycle_decay(
+    config: HieronymusConfig,
+) -> None:
+    _save_dreaming_config(config, min_pending=1, max_pending=10, per_cycle=1, max_changed=3)
+    context = _context(config)
+    reinforced_id = _add_crystal(
+        config,
+        context,
+        text="Recently cited memory.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    decayed_id = _add_crystal(
+        config,
+        context,
+        text="Inactive memory for decay.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    FeedbackStore(config).record(
+        reinforced_id,
+        event_type="used_in_translation",
+        source_role="system",
+        evidence="provider used this memory",
+    )
+    _completed_session(config, context, memories=1)
+
+    run = DreamService(config, CapturingDictProvider()).run_all(owner="admin")
+
+    phase_payload = _phase_completed_payloads(config, run.id)[-1]
+    assert phase_payload["reinforced_crystals"] == [reinforced_id]
+    assert phase_payload["decayed_crystals"] == [decayed_id]
+    assert set(phase_payload["affected_memory_set"]["changed_crystal_ids"]) == {
+        reinforced_id,
+        decayed_id,
+        *phase_payload["created_crystals"],
+    }
+
+
+def test_cycle_decay_respects_changed_crystal_cap_and_audits_skipped_candidate(
+    config: HieronymusConfig,
+) -> None:
+    _save_dreaming_config(config, min_pending=1, max_pending=10, per_cycle=1, max_changed=1)
+    context = _context(config)
+    reinforced_id = _add_crystal(
+        config,
+        context,
+        text="Passive event consumes mutation cap.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    skipped_decay_id = _add_crystal(
+        config,
+        context,
+        text="Decay should be skipped by cap.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    FeedbackStore(config).record(
+        reinforced_id,
+        event_type="used_in_translation",
+        source_role="system",
+        evidence="provider used this memory",
+    )
+    _completed_session(config, context, memories=1)
+
+    run = DreamService(config, EmptyDreamProvider()).run_all(owner="admin")
+
+    skipped_decay = CrystalStore(config).get(skipped_decay_id)
+    phase_payload = _phase_completed_payloads(config, run.id)[-1]
+    assert skipped_decay.strength == 0.5
+    assert phase_payload["reinforced_crystals"] == [reinforced_id]
+    assert phase_payload["decayed_crystals"] == []
+    assert phase_payload["affected_memory_set"]["changed_crystal_ids"] == [reinforced_id]
+    assert {
+        "entry_path": f"cycle_decay.crystals[{skipped_decay_id}]",
+        "reason": "changed_crystal_cap",
+        "crystal_id": skipped_decay_id,
+    } in phase_payload["skipped_candidates"]
+
+
+def test_skipped_provider_candidates_are_audited_with_reasons(
+    config: HieronymusConfig,
+) -> None:
+    class InvalidSourceProvider:
+        name = "invalid-source"
+
+        def crystallize(self, context, memories):
+            return {
+                "crystals": [
+                    {
+                        "content": "This candidate cites an unknown source memory.",
+                        "source_memory_ids": [999999],
+                    },
+                    123,
+                ]
+            }
+
+    _save_dreaming_config(config, min_pending=1, max_pending=10, per_cycle=1)
+    _completed_session(config, _context(config), memories=1)
+
+    run = DreamService(config, InvalidSourceProvider()).run_all(owner="admin")
+
+    phase_payload = _phase_completed_payloads(config, run.id)[-1]
+    assert phase_payload["created_crystals"] == []
+    assert phase_payload["skipped_candidates"] == [
+        {
+            "entry_path": "crystals[0]",
+            "reason": "invalid_source_memory_ids",
+            "source_memory_ids": [999999],
+        },
+        {
+            "entry_path": "crystals[1]",
+            "reason": "malformed_candidate",
+            "candidate_type": "int",
+        },
+    ]
+
+
+def test_admin_bridge_audit_lookup_returns_phase_entries_and_parse_warning_records(
     config: HieronymusConfig,
 ) -> None:
     _save_dreaming_config(config, min_pending=1, max_pending=10, per_cycle=1)
@@ -283,15 +437,30 @@ def test_audit_lookup_returns_phase_entries_and_parse_warning_records(
 
     run = DreamService(config, provider).run_all(owner="admin")
 
+    payload = AdminBridge(config).snapshot({"view": "Dream Audits"})
+    labels = [row["label"] for row in payload["snapshot"]["rows"]]
+    assert labels == [
+        "phase_completed: completed crystallization phase",
+        "phase_completed: completed crystallization phase",
+        "provider_response: received crystallization response",
+        "parse_warnings: dream response parsed with recoverable warnings",
+        "provider_request: sent crystallization request",
+        "provider_response: received crystallization response",
+        "parse_warnings: dream response parsed with recoverable warnings",
+        "provider_request: sent crystallization request",
+    ]
+    assert payload["snapshot"]["detail"]["title"] == labels[0]
+    assert '"parse_warnings"' in payload["snapshot"]["detail"]["body"]
+
     entries = DreamAuditStore(config).list_for_run(run.id)
     assert [entry.event_type for entry in entries] == [
         "provider_request",
         "parse_warnings",
         "provider_response",
-        "phase_completed",
         "provider_request",
         "parse_warnings",
         "provider_response",
+        "phase_completed",
         "phase_completed",
     ]
     assert all(entry.phase_run_id is not None for entry in entries)

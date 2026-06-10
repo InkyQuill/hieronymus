@@ -76,6 +76,29 @@ def _unique_ints(values: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(unique)
 
 
+def _summary_changed_crystal_ids(summaries: list[_DreamApplySummary]) -> tuple[int, ...]:
+    return _unique_ints(
+        tuple(
+            crystal_id
+            for summary in summaries
+            for crystal_id in (
+                *summary.created_crystal_ids,
+                *summary.superseded_crystal_ids,
+                *summary.reinforced_crystal_ids,
+                *summary.decayed_crystal_ids,
+            )
+        )
+    )
+
+
+def _output_rejected_entries(outputs: list[DreamBatchOutput]) -> list[dict[str, object]]:
+    return [entry for *_rest, output in outputs for entry in output.rejected_entries]
+
+
+def _output_skipped_candidates(outputs: list[DreamBatchOutput]) -> list[dict[str, object]]:
+    return [item for *_rest, output in outputs for item in output.skipped_candidates]
+
+
 def _clamp_score(value: float) -> float:
     return min(max(value, 0.0), 1.0)
 
@@ -174,6 +197,8 @@ class _NormalizedDreamOutput:
     facets: list[_NormalizedDreamFacet] = field(default_factory=list)
     supersede_actions: list[_DreamSupersedeAction] = field(default_factory=list)
     warnings: list[DreamParseWarning] = field(default_factory=list)
+    rejected_entries: list[dict[str, object]] = field(default_factory=list)
+    skipped_candidates: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -197,6 +222,8 @@ class _DreamApplySummary:
     superseded_crystal_ids: tuple[int, ...] = ()
     reinforced_crystal_ids: tuple[int, ...] = ()
     decayed_crystal_ids: tuple[int, ...] = ()
+    rejected_entries: tuple[dict[str, object], ...] = ()
+    skipped_candidates: tuple[dict[str, object], ...] = ()
     searched_related_candidates: dict[str, object] = field(default_factory=dict)
     affected_memory_set: dict[str, object] = field(default_factory=dict)
 
@@ -451,6 +478,8 @@ class DreamService:
         input_count = 0
         created_crystal_count = 0
         proposal_count = 0
+        pending_phase_audits: list[dict[str, object]] = []
+        batch_apply_summaries: list[_DreamApplySummary] = []
         try:
             pending_count = self._pending_short_term_memory_count()
             minimum = self.dream_config.min_pending_short_term_memories
@@ -563,15 +592,17 @@ class DreamService:
                         selected_memory_ids=selected_memory_ids,
                         outputs=outputs,
                     )
-                    self._audit_phase_completed(
-                        run_id=run_id,
-                        phase_run_id=phase_run_id,
-                        trigger_type=trigger_type,
-                        threshold_state=threshold_state,
-                        selected_memory_ids=selected_memory_ids,
-                        groups=groups,
-                        outputs=outputs,
-                        apply_summary=apply_summary,
+                    batch_apply_summaries.append(apply_summary)
+                    pending_phase_audits.append(
+                        {
+                            "run_id": run_id,
+                            "phase_run_id": phase_run_id,
+                            "trigger_type": trigger_type,
+                            "threshold_state": threshold_state,
+                            "selected_memory_ids": selected_memory_ids,
+                            "groups": groups,
+                            "outputs": outputs,
+                        }
                     )
                 except Exception as exc:
                     self._fail_phase_run(phase_run_id, exc)
@@ -580,14 +611,45 @@ class DreamService:
                 processed_batches += 1
 
             processed_session_ids.update(self._completed_session_ids_without_pending_memories())
+            finalized_apply_summaries: list[_DreamApplySummary] = list(batch_apply_summaries)
             with connect(self.config.database_path) as conn:
-                self._apply_passive_events(conn, cycle_id)
+                changed_ids_before_maintenance = _summary_changed_crystal_ids(batch_apply_summaries)
+                remaining_changed_crystals = max(
+                    0,
+                    self.dream_config.max_changed_crystals_per_cycle
+                    - len(changed_ids_before_maintenance),
+                )
+                passive_summary = self._apply_passive_events(
+                    conn,
+                    cycle_id,
+                    max_changed_crystals=remaining_changed_crystals,
+                )
+                remaining_changed_crystals = max(
+                    0,
+                    remaining_changed_crystals
+                    - len(_summary_changed_crystal_ids([passive_summary])),
+                )
                 self._mark_activations_for_cycle(
                     conn,
                     cycle_id,
                     sorted(processed_session_ids),
                 )
-                self._apply_cycle_decay(conn, cycle_id)
+                decay_summary = self._apply_cycle_decay(
+                    conn,
+                    cycle_id,
+                    max_changed_crystals=remaining_changed_crystals,
+                )
+                maintenance_summary = self._merge_apply_summaries(
+                    conn,
+                    passive_summary,
+                    decay_summary,
+                )
+                if finalized_apply_summaries:
+                    finalized_apply_summaries[-1] = self._merge_apply_summaries(
+                        conn,
+                        finalized_apply_summaries[-1],
+                        maintenance_summary,
+                    )
                 self._mark_fully_archived_completed_sessions(
                     conn,
                     cycle_id,
@@ -601,6 +663,21 @@ class DreamService:
                     proposal_count=proposal_count,
                 )
                 conn.commit()
+            for audit_payload, apply_summary in zip(
+                pending_phase_audits,
+                finalized_apply_summaries,
+                strict=True,
+            ):
+                self._audit_phase_completed(
+                    run_id=int(audit_payload["run_id"]),
+                    phase_run_id=int(audit_payload["phase_run_id"]),
+                    trigger_type=str(audit_payload["trigger_type"]),
+                    threshold_state=audit_payload["threshold_state"],
+                    selected_memory_ids=audit_payload["selected_memory_ids"],
+                    groups=audit_payload["groups"],
+                    outputs=audit_payload["outputs"],
+                    apply_summary=apply_summary,
+                )
             return DreamRunRecord(
                 id=run_id,
                 cycle_id=cycle_id,
@@ -1314,8 +1391,70 @@ class DreamService:
             created_facet_ids=tuple(created_facet_ids),
             created_links=tuple(created_links),
             superseded_crystal_ids=tuple(superseded_crystal_ids),
+            rejected_entries=tuple(_output_rejected_entries(outputs)),
+            skipped_candidates=tuple(_output_skipped_candidates(outputs)),
             searched_related_candidates=related_candidates,
             affected_memory_set=affected_memory_set,
+        )
+
+    def _merge_apply_summaries(
+        self,
+        conn,
+        *summaries: _DreamApplySummary,
+    ) -> _DreamApplySummary:
+        created_concept_ids = tuple(
+            concept_id for summary in summaries for concept_id in summary.created_concept_ids
+        )
+        related_candidates = self._searched_related_candidates(
+            conn,
+            created_concept_ids=created_concept_ids,
+        )
+        changed_crystal_ids = _summary_changed_crystal_ids(list(summaries))
+        return _DreamApplySummary(
+            created_crystal_ids=_unique_ints(
+                tuple(
+                    crystal_id
+                    for summary in summaries
+                    for crystal_id in summary.created_crystal_ids
+                )
+            ),
+            created_concept_ids=_unique_ints(created_concept_ids),
+            created_facet_ids=_unique_ints(
+                tuple(facet_id for summary in summaries for facet_id in summary.created_facet_ids)
+            ),
+            created_links=tuple(link for summary in summaries for link in summary.created_links),
+            superseded_crystal_ids=_unique_ints(
+                tuple(
+                    crystal_id
+                    for summary in summaries
+                    for crystal_id in summary.superseded_crystal_ids
+                )
+            ),
+            reinforced_crystal_ids=_unique_ints(
+                tuple(
+                    crystal_id
+                    for summary in summaries
+                    for crystal_id in summary.reinforced_crystal_ids
+                )
+            ),
+            decayed_crystal_ids=_unique_ints(
+                tuple(
+                    crystal_id
+                    for summary in summaries
+                    for crystal_id in summary.decayed_crystal_ids
+                )
+            ),
+            rejected_entries=tuple(
+                entry for summary in summaries for entry in summary.rejected_entries
+            ),
+            skipped_candidates=tuple(
+                item for summary in summaries for item in summary.skipped_candidates
+            ),
+            searched_related_candidates=related_candidates,
+            affected_memory_set=self._affected_memory_set(
+                changed_crystal_ids=changed_crystal_ids,
+                related_candidates=related_candidates,
+            ),
         )
 
     def _searched_related_candidates(
@@ -1496,7 +1635,7 @@ class DreamService:
                 "response_summary": self._response_summary(outputs),
                 "parse_warnings": self._parse_warning_payload(outputs),
                 "accepted_entries": self._accepted_entries(outputs),
-                "rejected_entries": [],
+                "rejected_entries": list(apply_summary.rejected_entries),
                 "confidence_penalties": self._confidence_penalties(outputs),
                 "created_crystals": list(apply_summary.created_crystal_ids),
                 "created_concepts": list(apply_summary.created_concept_ids),
@@ -1507,7 +1646,7 @@ class DreamService:
                 "decayed_crystals": list(apply_summary.decayed_crystal_ids),
                 "searched_related_candidates": apply_summary.searched_related_candidates,
                 "affected_memory_set": apply_summary.affected_memory_set,
-                "skipped_candidates": [],
+                "skipped_candidates": list(apply_summary.skipped_candidates),
             },
         )
 
@@ -1646,7 +1785,13 @@ class DreamService:
     def _prompt_version(self, phase: str) -> str:
         return f"{phase}:v1"
 
-    def _apply_passive_events(self, conn, cycle_id: int) -> None:
+    def _apply_passive_events(
+        self,
+        conn,
+        cycle_id: int,
+        *,
+        max_changed_crystals: int,
+    ) -> _DreamApplySummary:
         now = _now()
         rows = conn.execute(
             """
@@ -1656,59 +1801,108 @@ class DreamService:
             order by id
             """
         ).fetchall()
+        reinforced_ids: list[int] = []
+        decayed_ids: list[int] = []
+        skipped_candidates: list[dict[str, object]] = []
+        changed_count = 0
         for event in rows:
             crystal_id = event["crystal_id"]
-            if crystal_id is not None:
-                crystal = conn.execute(
-                    """
-                    select strength, confidence
-                    from crystals
-                    where id = ?
-                    """,
-                    (crystal_id,),
-                ).fetchone()
-                if crystal is not None:
-                    strength_delta = float(event["strength_delta"])
-                    confidence_delta = float(event["confidence_delta"])
-                    strength = _clamp_score(float(crystal["strength"]) + strength_delta)
-                    confidence = _clamp_score(float(crystal["confidence"]) + confidence_delta)
-                    last_reinforced_cycle = (
-                        cycle_id
-                        if strength_delta > 0 and event["event_type"] in PASSIVE_EVENT_DELTAS
-                        else None
-                    )
-                    if last_reinforced_cycle is None:
-                        conn.execute(
-                            """
-                            update crystals
-                            set strength = ?,
-                                confidence = ?,
-                                updated_at = ?
-                            where id = ?
-                            """,
-                            (strength, confidence, now, crystal_id),
-                        )
-                    else:
-                        conn.execute(
-                            """
-                            update crystals
-                            set strength = ?,
-                                confidence = ?,
-                                last_reinforced_cycle = ?,
-                                updated_at = ?
-                            where id = ?
-                            """,
-                            (strength, confidence, last_reinforced_cycle, now, crystal_id),
-                        )
-            conn.execute(
+            event_id = int(event["id"])
+            if crystal_id is None:
+                skipped_candidates.append(
+                    {
+                        "entry_path": f"passive_events[{event_id}]",
+                        "reason": "missing_crystal_id",
+                        "event_id": event_id,
+                    }
+                )
+                self._mark_memory_event_applied(conn, event_id, cycle_id)
+                continue
+
+            crystal = conn.execute(
                 """
-                update memory_events
-                set applied = 1,
-                    cycle_id = ?
+                select strength, confidence
+                from crystals
                 where id = ?
                 """,
-                (cycle_id, event["id"]),
+                (crystal_id,),
+            ).fetchone()
+            if crystal is None:
+                skipped_candidates.append(
+                    {
+                        "entry_path": f"passive_events[{event_id}]",
+                        "reason": "unknown_crystal",
+                        "event_id": event_id,
+                        "crystal_id": int(crystal_id),
+                    }
+                )
+                self._mark_memory_event_applied(conn, event_id, cycle_id)
+                continue
+            if changed_count >= max_changed_crystals:
+                skipped_candidates.append(
+                    {
+                        "entry_path": f"passive_events[{event_id}]",
+                        "reason": "changed_crystal_cap",
+                        "event_id": event_id,
+                        "crystal_id": int(crystal_id),
+                    }
+                )
+                continue
+
+            strength_delta = float(event["strength_delta"])
+            confidence_delta = float(event["confidence_delta"])
+            strength = _clamp_score(float(crystal["strength"]) + strength_delta)
+            confidence = _clamp_score(float(crystal["confidence"]) + confidence_delta)
+            last_reinforced_cycle = (
+                cycle_id
+                if strength_delta > 0 and event["event_type"] in PASSIVE_EVENT_DELTAS
+                else None
             )
+            if last_reinforced_cycle is None:
+                conn.execute(
+                    """
+                    update crystals
+                    set strength = ?,
+                        confidence = ?,
+                        updated_at = ?
+                    where id = ?
+                    """,
+                    (strength, confidence, now, crystal_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    update crystals
+                    set strength = ?,
+                        confidence = ?,
+                        last_reinforced_cycle = ?,
+                        updated_at = ?
+                    where id = ?
+                    """,
+                    (strength, confidence, last_reinforced_cycle, now, crystal_id),
+                )
+            changed_count += 1
+            if strength_delta > 0 or confidence_delta > 0:
+                reinforced_ids.append(int(crystal_id))
+            if strength_delta < 0 or confidence_delta < 0:
+                decayed_ids.append(int(crystal_id))
+            self._mark_memory_event_applied(conn, event_id, cycle_id)
+        return _DreamApplySummary(
+            reinforced_crystal_ids=tuple(reinforced_ids),
+            decayed_crystal_ids=tuple(decayed_ids),
+            skipped_candidates=tuple(skipped_candidates),
+        )
+
+    def _mark_memory_event_applied(self, conn, event_id: int, cycle_id: int) -> None:
+        conn.execute(
+            """
+            update memory_events
+            set applied = 1,
+                cycle_id = ?
+            where id = ?
+            """,
+            (cycle_id, event_id),
+        )
 
     def _mark_activations_for_cycle(
         self,
@@ -1742,7 +1936,13 @@ class DreamService:
             (cycle_id, now, *session_ids),
         )
 
-    def _apply_cycle_decay(self, conn, cycle_id: int) -> None:
+    def _apply_cycle_decay(
+        self,
+        conn,
+        cycle_id: int,
+        *,
+        max_changed_crystals: int,
+    ) -> _DreamApplySummary:
         now = _now()
         rows = conn.execute(
             """
@@ -1757,7 +1957,20 @@ class DreamService:
             """,
             (cycle_id, cycle_id, cycle_id),
         ).fetchall()
+        decayed_ids: list[int] = []
+        skipped_candidates: list[dict[str, object]] = []
+        changed_count = 0
         for crystal in rows:
+            crystal_id = int(crystal["id"])
+            if changed_count >= max_changed_crystals:
+                skipped_candidates.append(
+                    {
+                        "entry_path": f"cycle_decay.crystals[{crystal_id}]",
+                        "reason": "changed_crystal_cap",
+                        "crystal_id": crystal_id,
+                    }
+                )
+                continue
             original_strength = float(crystal["strength"])
             original_confidence = float(crystal["confidence"])
             strength = _clamp_score(original_strength - STRENGTH_DECAY_PER_CYCLE)
@@ -1784,11 +1997,13 @@ class DreamService:
                     updated_at = ?
                 where id = ?
                 """,
-                (strength, confidence, status, now, crystal["id"]),
+                (strength, confidence, status, now, crystal_id),
             )
+            changed_count += 1
             strength_delta = strength - original_strength
             confidence_delta = confidence - original_confidence
             if strength_delta != 0.0 or confidence_delta != 0.0:
+                decayed_ids.append(crystal_id)
                 conn.execute(
                     """
                     insert into memory_events(
@@ -1806,13 +2021,17 @@ class DreamService:
                     values (?, null, 'cycle_decay', 'system', 'cycle decay', ?, ?, 1, ?, ?)
                     """,
                     (
-                        crystal["id"],
+                        crystal_id,
                         strength_delta,
                         confidence_delta,
                         cycle_id,
                         now,
                     ),
                 )
+        return _DreamApplySummary(
+            decayed_crystal_ids=tuple(decayed_ids),
+            skipped_candidates=tuple(skipped_candidates),
+        )
 
     def _insert_crystal_for_dream(
         self,
@@ -1987,6 +2206,7 @@ class DreamService:
         concepts: list[_NormalizedDreamConcept] = []
         facets: list[_NormalizedDreamFacet] = []
         warnings: list[DreamParseWarning] = []
+        skipped_candidates: list[dict[str, object]] = []
         valid_concept_ids = self._valid_concept_ids()
 
         for index, item in enumerate(_list_from_payload(payload.get("concepts"))):
@@ -2003,6 +2223,7 @@ class DreamService:
                 item,
                 entry_path=f"crystals[{index}]",
                 warnings=warnings,
+                skipped_candidates=skipped_candidates,
                 default_crystal_type="observation",
                 default_source_credibility="observation",
                 allowed_memory_ids=allowed_memory_ids,
@@ -2015,6 +2236,7 @@ class DreamService:
                 item,
                 entry_path=f"rule_crystals[{index}]",
                 warnings=warnings,
+                skipped_candidates=skipped_candidates,
                 default_crystal_type="rule",
                 default_source_credibility="user_rule",
                 allowed_memory_ids=allowed_memory_ids,
@@ -2027,6 +2249,7 @@ class DreamService:
                 item,
                 entry_path=f"thoughts[{index}]",
                 warnings=warnings,
+                skipped_candidates=skipped_candidates,
                 default_crystal_type="thought",
                 default_source_credibility="thought",
                 allowed_memory_ids=allowed_memory_ids,
@@ -2041,6 +2264,7 @@ class DreamService:
                 item,
                 entry_path=f"inferred_additions[{index}]",
                 warnings=warnings,
+                skipped_candidates=skipped_candidates,
                 default_crystal_type="thought",
                 default_source_credibility="thought",
                 allowed_memory_ids=allowed_memory_ids,
@@ -2051,20 +2275,26 @@ class DreamService:
             if crystal is not None:
                 crystals.append(crystal)
 
-        supersede_actions = [
-            action
-            for action in (
-                _normalize_supersede_action(item)
-                for item in _list_from_payload(payload.get("supersede"))
-            )
-            if action is not None
-        ]
+        supersede_actions = []
+        for index, item in enumerate(_list_from_payload(payload.get("supersede"))):
+            action = _normalize_supersede_action(item)
+            if action is None:
+                skipped_candidates.append(
+                    {
+                        "entry_path": f"supersede[{index}]",
+                        "reason": "malformed_supersede_action",
+                        "candidate_type": type(item).__name__,
+                    }
+                )
+                continue
+            supersede_actions.append(action)
         return _NormalizedDreamOutput(
             crystals=crystals,
             concepts=concepts,
             facets=facets,
             supersede_actions=supersede_actions,
             warnings=warnings,
+            skipped_candidates=skipped_candidates,
         )
 
     def _valid_concept_ids(self) -> set[int]:
@@ -2252,6 +2482,7 @@ def _normalize_dict_crystal(
     *,
     entry_path: str,
     warnings: list[DreamParseWarning],
+    skipped_candidates: list[dict[str, object]],
     default_crystal_type: str,
     default_source_credibility: str,
     allowed_memory_ids: set[int],
@@ -2265,6 +2496,13 @@ def _normalize_dict_crystal(
     elif type(item) is dict:
         payload = item
     else:
+        skipped_candidates.append(
+            {
+                "entry_path": entry_path,
+                "reason": "malformed_candidate",
+                "candidate_type": type(item).__name__,
+            }
+        )
         return None
 
     text, penalty = _recover_crystal_text(payload)
@@ -2344,6 +2582,13 @@ def _normalize_dict_crystal(
     title = _string_field(payload.get("title")).strip() or _title_from_kind(crystal_type)
     source_memory_ids = _source_memory_ids(payload, allowed_memory_ids)
     if source_memory_ids is None:
+        skipped_candidates.append(
+            {
+                "entry_path": entry_path,
+                "reason": "invalid_source_memory_ids",
+                "source_memory_ids": list(_raw_source_memory_ids(payload)),
+            }
+        )
         return None
     return _NormalizedDreamCrystal(
         crystal_type=crystal_type,
@@ -2757,6 +3002,10 @@ def _source_memory_ids(
     if has_source_field:
         return None
     return sorted(allowed_memory_ids)
+
+
+def _raw_source_memory_ids(payload: dict[object, object]) -> tuple[int, ...]:
+    return _clean_int_tuple(payload.get("source_memory_ids"), payload.get("source_memory_id"))
 
 
 def _recover_crystal_string_tuple(
