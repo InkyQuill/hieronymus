@@ -250,13 +250,12 @@ create table if not exists concepts (
   description text not null default '',
   scope_type text not null default 'global',
   scope_key text not null default '',
-  status text not null default 'vague',
+  status text not null default 'candidate',
   confidence real not null default 0.2,
   merged_into_concept_id integer references concepts(id),
   created_at text not null,
   updated_at text not null,
-  check ((scope_type = 'global' and scope_key = '') or (scope_type != 'global' and scope_key != '')),
-  unique(scope_type, scope_key, canonical_name)
+  check ((scope_type = 'global' and scope_key = '') or (scope_type != 'global' and scope_key != ''))
 );
 
 create virtual table if not exists concepts_fts using fts5(

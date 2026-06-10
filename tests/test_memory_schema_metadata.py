@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from hieronymus.concepts import ConceptStore
+from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
 
 EXPECTED_METADATA_TABLES = {
@@ -85,6 +87,58 @@ def test_global_schema_adds_compatibility_columns_without_dropping_rows(tmp_path
         "concepts": 1,
         "concept_facets": 1,
     }
+
+
+def test_global_schema_removes_old_concept_name_unique_constraint(tmp_path):
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        _create_previous_schema(conn)
+        _insert_previous_schema_rows(conn)
+        apply_migration(conn, "global.sql")
+
+    store = ConceptStore(config)
+    talent = store.create_concept(
+        "Sense",
+        description="A game-like aptitude category.",
+        semantic_tags=("talent",),
+    )
+    subskill = store.create_concept(
+        "Sense",
+        description="A subordinate skill concept.",
+        semantic_tags=("subskill",),
+    )
+
+    with connect(config.database_path) as conn:
+        same_name_rows = conn.execute(
+            """
+            select id
+            from concepts
+            where canonical_name = 'Sense'
+            order by id
+            """
+        ).fetchall()
+        old_facet = conn.execute(
+            """
+            select value
+            from concept_facets
+            where id = 1
+            """
+        ).fetchone()
+        fts_rows = conn.execute(
+            """
+            select rowid
+            from concepts_fts
+            where concepts_fts match 'aptitude'
+            """
+        ).fetchall()
+        foreign_key_errors = conn.execute("pragma foreign_key_check").fetchall()
+
+    assert [row["id"] for row in same_name_rows] == [talent.id, subskill.id]
+    assert store.list_concepts(semantic_tag="talent") == [talent]
+    assert store.list_concepts(semantic_tag="subskill") == [subskill]
+    assert old_facet["value"] == "Approved Name"
+    assert [row["rowid"] for row in fts_rows] == [talent.id]
+    assert foreign_key_errors == []
 
 
 def _create_previous_schema(conn: sqlite3.Connection) -> None:

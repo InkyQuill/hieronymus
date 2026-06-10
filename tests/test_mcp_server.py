@@ -719,7 +719,7 @@ def test_mcp_concept_proposals_list_returns_pending(monkeypatch, tmp_path):
     ]
 
 
-def test_mcp_concept_proposals_list_includes_vague_concepts(monkeypatch, tmp_path):
+def test_mcp_concept_proposals_list_includes_candidate_concepts(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     ConceptStore(load_config()).create_or_reinforce(
         "Sense",
@@ -743,7 +743,7 @@ def test_mcp_concept_proposals_list_includes_vague_concepts(monkeypatch, tmp_pat
             "approved_variants": [],
             "forbidden_variants": [],
             "rationale": "A game-like aptitude category.",
-            "status": "vague",
+            "status": "candidate",
         }
     ]
 

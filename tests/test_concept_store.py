@@ -44,7 +44,7 @@ def test_memory_design_tables_exist(config: HieronymusConfig) -> None:
     }.issubset(table_names)
 
 
-def test_concept_store_creates_vague_then_solid_concept(
+def test_concept_store_creates_candidate_concept(
     config: HieronymusConfig,
 ) -> None:
     store = ConceptStore(config)
@@ -59,7 +59,7 @@ def test_concept_store_creates_vague_then_solid_concept(
 
     assert first.canonical_name == "Sense"
     assert first.description == "A game-like aptitude category."
-    assert first.status == "vague"
+    assert first.status == "candidate"
     assert first.confidence == 0.4
     assert first.tags == ("domain:system", "term:skill")
 
@@ -73,7 +73,7 @@ def test_concept_store_creates_vague_then_solid_concept(
 
     assert reinforced_id == concept_id
     assert reinforced.description == "A reinforced description."
-    assert reinforced.status == "solid"
+    assert reinforced.status == "candidate"
     assert reinforced.confidence == 0.8
     assert reinforced.tags == ("domain:system", "plot:core", "term:skill")
 
@@ -262,15 +262,26 @@ def test_concept_insert_helper_uses_global_scope_defaults(
     assert dict(row) == {"scope_type": "global", "scope_key": ""}
 
 
-def test_duplicate_concept_identity_in_same_scope_is_rejected(
+def test_same_concept_name_can_exist_in_same_scope(
     config: HieronymusConfig,
 ) -> None:
     with connect(config.database_path) as conn:
         apply_migration(conn, "global.sql")
-        _insert_concept(conn, canonical_name="Sense")
+        first_id = _insert_concept(conn, canonical_name="Sense")
+        second_id = _insert_concept(conn, canonical_name="Sense")
+        rows = conn.execute(
+            """
+            select id, canonical_name, scope_type, scope_key
+            from concepts
+            where canonical_name = 'Sense'
+            order by id
+            """
+        ).fetchall()
 
-        with pytest.raises(sqlite3.IntegrityError):
-            _insert_concept(conn, canonical_name="Sense")
+    assert [dict(row) for row in rows] == [
+        {"id": first_id, "canonical_name": "Sense", "scope_type": "global", "scope_key": ""},
+        {"id": second_id, "canonical_name": "Sense", "scope_type": "global", "scope_key": ""},
+    ]
 
 
 def test_same_concept_name_can_exist_in_different_scopes(

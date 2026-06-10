@@ -13,6 +13,7 @@ class ConceptRecord:
     scope_type: str = "global"
     scope_key: str = ""
     tags: tuple[str, ...] = ()
+    merged_into_concept_id: int | None = None
 
     def __post_init__(self) -> None:
         if self.scope_type == "global":

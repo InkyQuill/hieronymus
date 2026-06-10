@@ -71,7 +71,7 @@ def test_list_pending_returns_only_pending_ordered_by_id(config: HieronymusConfi
     assert [proposal.status for proposal in pending] == ["pending", "pending"]
 
 
-def test_list_pending_includes_vague_concepts_with_facet_suggestions(
+def test_list_pending_includes_candidate_concepts_with_facet_suggestions(
     config: HieronymusConfig,
 ) -> None:
     concept_id = ConceptStore(config).create_or_reinforce(
@@ -114,16 +114,16 @@ def test_list_pending_includes_vague_concepts_with_facet_suggestions(
     assert pending[0].approved_variants == ["Сенс"]
     assert pending[0].forbidden_variants == []
     assert pending[0].rationale == "A game-like aptitude category."
-    assert pending[0].status == "vague"
+    assert pending[0].status == "candidate"
 
 
-def test_list_pending_uses_non_overlapping_ids_for_strict_and_vague_proposals(
+def test_list_pending_uses_non_overlapping_ids_for_strict_and_candidate_proposals(
     config: HieronymusConfig,
 ) -> None:
     strict_id = ConceptProposalStore(config).create(**_valid_proposal())
     concept_id = ConceptStore(config).create_or_reinforce(
         "Sense",
-        description="A vague duplicate concept.",
+        description="A candidate duplicate concept.",
         confidence_delta=0.2,
         scope_type="project",
         scope_key="only-sense-online",
@@ -134,7 +134,7 @@ def test_list_pending_uses_non_overlapping_ids_for_strict_and_vague_proposals(
 
     assert [(proposal.id, proposal.status) for proposal in pending] == [
         (strict_id, "pending"),
-        (-concept_id, "vague"),
+        (-concept_id, "candidate"),
     ]
     store = ConceptProposalStore(config)
     with pytest.raises(KeyError, match="unknown concept proposal"):
@@ -143,6 +143,23 @@ def test_list_pending_uses_non_overlapping_ids_for_strict_and_vague_proposals(
         store.approve(-concept_id)
     with pytest.raises(KeyError, match="unknown concept proposal"):
         store.reject(-concept_id)
+
+
+def test_list_pending_includes_candidate_semantic_tags_in_rationale(
+    config: HieronymusConfig,
+) -> None:
+    ConceptStore(config).create_or_reinforce(
+        "Sense",
+        description="A candidate duplicate concept.",
+        tags=("subskill", "talent"),
+        confidence_delta=0.2,
+        scope_type="project",
+        scope_key="only-sense-online",
+    )
+
+    pending = ConceptProposalStore(config).list_pending()
+
+    assert pending[0].rationale == "A candidate duplicate concept.\nSemantic tags: subskill, talent"
 
 
 def test_approve_and_reject_only_change_status(config: HieronymusConfig) -> None:

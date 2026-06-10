@@ -654,7 +654,7 @@ def hieronymus_dream(
 
 @server.tool()
 def hieronymus_concept_proposals_list() -> list[dict[str, Any]]:
-    """List strict proposals and legacy-compatible vague concept suggestions."""
+    """List strict proposals and legacy-compatible candidate concept suggestions."""
     config = _load_validated_config()
     return [
         *[

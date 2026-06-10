@@ -8,7 +8,7 @@ def test_concept_record_accepts_global_scope_without_key() -> None:
         id=1,
         canonical_name="Sense",
         description="A game-like aptitude category.",
-        status="vague",
+        status="candidate",
         confidence=0.2,
     )
 
@@ -22,7 +22,7 @@ def test_concept_record_rejects_global_scope_with_key() -> None:
             id=1,
             canonical_name="Sense",
             description="A game-like aptitude category.",
-            status="vague",
+            status="candidate",
             confidence=0.2,
             scope_type="global",
             scope_key="oso",
@@ -35,7 +35,7 @@ def test_concept_record_rejects_non_global_scope_without_key() -> None:
             id=1,
             canonical_name="Sense",
             description="A game-like aptitude category.",
-            status="vague",
+            status="candidate",
             confidence=0.2,
             scope_type="project",
             scope_key="",
