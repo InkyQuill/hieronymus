@@ -45,6 +45,7 @@ def _search_expression(query: str) -> str:
 def _row_to_crystal(
     row,
     *,
+    language_tags: tuple[str, ...] = (),
     story_scopes: tuple[str, ...] = (),
     semantic_tags: tuple[str, ...] = (),
     concept_ids: tuple[int, ...] = (),
@@ -66,8 +67,11 @@ def _row_to_crystal(
         malformed_penalty=float(row["malformed_penalty"]),
         supersedes_crystal_id=row["supersedes_crystal_id"],
         status=row["status"],
+        language_tags=language_tags,
         story_scopes=story_scopes,
         semantic_tags=semantic_tags,
+        soft_origin=row["soft_origin"] or "",
+        is_inferred=bool(row["is_inferred"]),
         concept_ids=concept_ids,
     )
 
@@ -106,6 +110,9 @@ class CrystalStore:
         supersedes_crystal_id: int | None = None,
         story_scopes: tuple[str, ...] = (),
         semantic_tags: tuple[str, ...] = (),
+        language_tags: tuple[str, ...] = (),
+        soft_origin: str = "",
+        is_inferred: bool = False,
         concept_ids: tuple[int, ...] = (),
         status: str = "active",
         source_memory_ids: list[int] | None = None,
@@ -119,7 +126,9 @@ class CrystalStore:
         clamped_confidence = _clamp_score(confidence)
         clean_story_scopes = _clean_text_tuple(story_scopes)
         clean_semantic_tags = _clean_text_tuple(semantic_tags)
+        clean_language_tags = _clean_text_tuple(language_tags)
         clean_concept_ids = _clean_int_tuple(concept_ids)
+        soft_origin = soft_origin.strip()
         legacy_tags = list(clean_semantic_tags) if clean_semantic_tags else list(context.tags)
         tags_json = json.dumps(legacy_tags, ensure_ascii=False, sort_keys=True)
         now = _now()
@@ -141,13 +150,15 @@ class CrystalStore:
                   confidence,
                   source_credibility,
                   rule_intent,
+                  soft_origin,
+                  is_inferred,
                   malformed_penalty,
                   supersedes_crystal_id,
                   status,
                   created_at,
                   updated_at
                 )
-                values (?, ?, ?, 'series', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, 'series', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     crystal_type,
@@ -162,6 +173,8 @@ class CrystalStore:
                     clamped_confidence,
                     source_credibility,
                     rule_intent,
+                    soft_origin,
+                    int(is_inferred),
                     malformed_penalty,
                     supersedes_crystal_id,
                     status,
@@ -189,6 +202,14 @@ class CrystalStore:
                     values (?, ?, ?, ?)
                     """,
                     (crystal_id, semantic_tag, clamped_confidence, now),
+                )
+            for language_tag in clean_language_tags:
+                conn.execute(
+                    """
+                    insert into crystal_language_tags(crystal_id, language_tag)
+                    values (?, ?)
+                    """,
+                    (crystal_id, language_tag),
                 )
             for concept_id in clean_concept_ids:
                 conn.execute(
@@ -406,6 +427,18 @@ class CrystalStore:
             return [(self._hydrate_crystal(conn, row), float(row["search_score"])) for row in rows]
 
     def _hydrate_crystal(self, conn, row) -> CrystalRecord:
+        language_tags = tuple(
+            tag_row["language_tag"]
+            for tag_row in conn.execute(
+                """
+                select language_tag
+                from crystal_language_tags
+                where crystal_id = ?
+                order by language_tag
+                """,
+                (row["id"],),
+            )
+        )
         story_scopes = tuple(
             scope_row["scope"]
             for scope_row in conn.execute(
@@ -444,6 +477,7 @@ class CrystalStore:
         )
         return _row_to_crystal(
             row,
+            language_tags=language_tags,
             story_scopes=story_scopes,
             semantic_tags=semantic_tags,
             concept_ids=concept_ids,

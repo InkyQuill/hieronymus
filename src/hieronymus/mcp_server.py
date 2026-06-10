@@ -85,6 +85,26 @@ def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str
     }
 
 
+def _recall_payload(result) -> dict[str, Any]:
+    payload = result.enriched_payload()
+    for key in (
+        "concept_ids",
+        "concept_labels",
+        "language_tags",
+        "story_scopes",
+        "semantic_tags",
+    ):
+        payload[key] = list(payload[key])
+    return {
+        **payload,
+        "source": result.source,
+        "rank": result.rank,
+        "reason": result.reason,
+        "crystal": _crystal_payload(result.crystal),
+        "short_term_memory": _short_term_memory_payload(result.short_term_memory),
+    }
+
+
 def _series_payload(series: Series) -> dict[str, Any]:
     payload = {
         "slug": series.slug,
@@ -602,17 +622,7 @@ def hieronymus_recall(
             raise ValueError(f"session context mismatch: {field_name}")
 
     results = RecallService(config).recall(session_id, context, query, limit=limit)
-    return [
-        {
-            "source": result.source,
-            "rank": result.rank,
-            "score": result.score,
-            "reason": result.reason,
-            "crystal": _crystal_payload(result.crystal),
-            "short_term_memory": _short_term_memory_payload(result.short_term_memory),
-        }
-        for result in results
-    ]
+    return [_recall_payload(result) for result in results]
 
 
 @server.tool()

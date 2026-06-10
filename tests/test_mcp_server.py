@@ -388,7 +388,17 @@ def test_mcp_recall_returns_expected_dict(monkeypatch, tmp_path):
     )
 
     assert len(recalled) == 1
-    assert recalled[0] == {
+    assert {
+        key: recalled[0][key]
+        for key in (
+            "source",
+            "rank",
+            "score",
+            "reason",
+            "crystal",
+            "short_term_memory",
+        )
+    } == {
         "source": "long_term",
         "rank": 1,
         "score": pytest.approx(recalled[0]["score"]),
@@ -408,6 +418,48 @@ def test_mcp_recall_returns_expected_dict(monkeypatch, tmp_path):
             "concept_ids": [],
         },
         "short_term_memory": None,
+    }
+    assert {
+        key: recalled[0][key]
+        for key in (
+            "tier",
+            "id",
+            "title",
+            "kind",
+            "text",
+            "crystal_type",
+            "concept_ids",
+            "concept_labels",
+            "language_tags",
+            "story_scopes",
+            "semantic_tags",
+            "source_credibility",
+            "confidence",
+            "strength",
+            "soft_origin",
+            "is_rule",
+            "is_thought",
+            "rank_reason",
+        )
+    } == {
+        "tier": "long_term",
+        "id": crystal_id,
+        "title": "Sense Rendering",
+        "kind": "lesson",
+        "text": "Render Sense as Sense in UI references.",
+        "crystal_type": "lesson",
+        "concept_ids": [],
+        "concept_labels": [],
+        "language_tags": [],
+        "story_scopes": [],
+        "semantic_tags": [],
+        "source_credibility": "observation",
+        "confidence": 0.9,
+        "strength": 0.8,
+        "soft_origin": "",
+        "is_rule": False,
+        "is_thought": False,
+        "rank_reason": "weighted search match",
     }
 
 
@@ -515,31 +567,82 @@ def test_mcp_recall_returns_short_term_payload(monkeypatch, tmp_path):
 
     recalled = mcp_server.hieronymus_recall(session_id, series.slug, "Sense labels")
 
-    assert recalled == [
-        {
-            "source": "short_term",
-            "rank": 1,
-            "score": pytest.approx(recalled[0]["score"]),
-            "reason": "active session short-term memory match",
-            "crystal": None,
-            "short_term_memory": {
-                "id": memory_id,
-                "source_role": "mentor",
-                "kind": "note",
-                "text": "Keep Sense as Sense in menu labels.",
-                "metadata": {
-                    "sentence_count": 1,
-                    "source": "review",
-                },
-                "language_tags": [],
-                "story_scopes": [],
-                "semantic_tags": [],
-                "source_credibility": "observation",
-                "rule_intent": "",
-                "soft_origin": "",
+    assert len(recalled) == 1
+    assert {
+        key: recalled[0][key]
+        for key in (
+            "source",
+            "rank",
+            "score",
+            "reason",
+            "crystal",
+            "short_term_memory",
+        )
+    } == {
+        "source": "short_term",
+        "rank": 1,
+        "score": pytest.approx(recalled[0]["score"]),
+        "reason": "active session short-term memory match",
+        "crystal": None,
+        "short_term_memory": {
+            "id": memory_id,
+            "source_role": "mentor",
+            "kind": "note",
+            "text": "Keep Sense as Sense in menu labels.",
+            "metadata": {
+                "sentence_count": 1,
+                "source": "review",
             },
-        }
-    ]
+            "language_tags": [],
+            "story_scopes": [],
+            "semantic_tags": [],
+            "source_credibility": "observation",
+            "rule_intent": "",
+            "soft_origin": "",
+        },
+    }
+    assert {
+        key: recalled[0][key]
+        for key in (
+            "tier",
+            "id",
+            "title",
+            "kind",
+            "text",
+            "crystal_type",
+            "concept_ids",
+            "concept_labels",
+            "language_tags",
+            "story_scopes",
+            "semantic_tags",
+            "source_credibility",
+            "confidence",
+            "strength",
+            "soft_origin",
+            "is_rule",
+            "is_thought",
+            "rank_reason",
+        )
+    } == {
+        "tier": "short_term",
+        "id": memory_id,
+        "title": "note",
+        "kind": "note",
+        "text": "Keep Sense as Sense in menu labels.",
+        "crystal_type": None,
+        "concept_ids": [],
+        "concept_labels": [],
+        "language_tags": [],
+        "story_scopes": [],
+        "semantic_tags": [],
+        "source_credibility": "observation",
+        "confidence": 0.0,
+        "strength": 0.0,
+        "soft_origin": "",
+        "is_rule": False,
+        "is_thought": False,
+        "rank_reason": "active session short-term memory match",
+    }
 
 
 def test_mcp_recall_rejects_mismatched_session_context_without_activation(

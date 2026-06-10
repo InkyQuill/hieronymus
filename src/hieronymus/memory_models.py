@@ -131,6 +131,7 @@ class RecallResult:
     reason: str
     crystal: CrystalRecord | None = None
     short_term_memory: ShortTermMemoryRecord | None = None
+    concept_labels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.source == "long_term":
@@ -157,6 +158,7 @@ class RecallResult:
         rank: int,
         score: float,
         reason: str,
+        concept_labels: tuple[str, ...] = (),
     ) -> RecallResult:
         return cls(
             source="long_term",
@@ -164,6 +166,7 @@ class RecallResult:
             score=score,
             reason=reason,
             crystal=crystal,
+            concept_labels=concept_labels,
         )
 
     @classmethod
@@ -182,3 +185,127 @@ class RecallResult:
             reason=reason,
             short_term_memory=short_term_memory,
         )
+
+    @property
+    def tier(self) -> Literal["short_term", "long_term"]:
+        return self.source
+
+    @property
+    def id(self) -> int:
+        if self.crystal is not None:
+            return self.crystal.id
+        assert self.short_term_memory is not None
+        return self.short_term_memory.id
+
+    @property
+    def title(self) -> str:
+        if self.crystal is not None:
+            return self.crystal.title
+        assert self.short_term_memory is not None
+        return self.short_term_memory.kind
+
+    @property
+    def kind(self) -> str:
+        if self.crystal is not None:
+            return self.crystal.crystal_type
+        assert self.short_term_memory is not None
+        return self.short_term_memory.kind
+
+    @property
+    def text(self) -> str:
+        if self.crystal is not None:
+            return self.crystal.text
+        assert self.short_term_memory is not None
+        return self.short_term_memory.text
+
+    @property
+    def crystal_type(self) -> str | None:
+        return self.crystal.crystal_type if self.crystal is not None else None
+
+    @property
+    def concept_ids(self) -> tuple[int, ...]:
+        return self.crystal.concept_ids if self.crystal is not None else ()
+
+    @property
+    def language_tags(self) -> tuple[str, ...]:
+        if self.crystal is not None:
+            return self.crystal.language_tags
+        assert self.short_term_memory is not None
+        return self.short_term_memory.language_tags
+
+    @property
+    def story_scopes(self) -> tuple[str, ...]:
+        if self.crystal is not None:
+            return self.crystal.story_scopes
+        assert self.short_term_memory is not None
+        return self.short_term_memory.story_scopes
+
+    @property
+    def semantic_tags(self) -> tuple[str, ...]:
+        if self.crystal is not None:
+            return self.crystal.semantic_tags
+        assert self.short_term_memory is not None
+        return self.short_term_memory.semantic_tags
+
+    @property
+    def source_credibility(self) -> str:
+        if self.crystal is not None:
+            return self.crystal.source_credibility
+        assert self.short_term_memory is not None
+        return self.short_term_memory.source_credibility
+
+    @property
+    def confidence(self) -> float:
+        return self.crystal.confidence if self.crystal is not None else 0.0
+
+    @property
+    def strength(self) -> float:
+        return self.crystal.strength if self.crystal is not None else 0.0
+
+    @property
+    def soft_origin(self) -> str:
+        if self.crystal is not None:
+            return self.crystal.soft_origin
+        assert self.short_term_memory is not None
+        return self.short_term_memory.soft_origin
+
+    @property
+    def is_rule(self) -> bool:
+        if self.crystal is not None:
+            return self.crystal.crystal_type == "rule" and self.crystal.status == "active"
+        assert self.short_term_memory is not None
+        return bool(self.short_term_memory.rule_intent)
+
+    @property
+    def is_thought(self) -> bool:
+        if self.crystal is not None:
+            return self.crystal.crystal_type == "thought" or self.crystal.is_inferred
+        assert self.short_term_memory is not None
+        return self.short_term_memory.source_credibility == "thought"
+
+    @property
+    def rank_reason(self) -> str:
+        return self.reason
+
+    def enriched_payload(self) -> dict[str, object]:
+        return {
+            "tier": self.tier,
+            "id": self.id,
+            "title": self.title,
+            "kind": self.kind,
+            "text": self.text,
+            "crystal_type": self.crystal_type,
+            "concept_ids": self.concept_ids,
+            "concept_labels": self.concept_labels,
+            "language_tags": self.language_tags,
+            "story_scopes": self.story_scopes,
+            "semantic_tags": self.semantic_tags,
+            "source_credibility": self.source_credibility,
+            "confidence": self.confidence,
+            "strength": self.strength,
+            "soft_origin": self.soft_origin,
+            "is_rule": self.is_rule,
+            "is_thought": self.is_thought,
+            "score": self.score,
+            "rank_reason": self.rank_reason,
+        }
