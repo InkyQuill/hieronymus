@@ -78,9 +78,13 @@ def test_status_payload_reports_admin_counts(config: HieronymusConfig) -> None:
     assert payload["short_term_status"]["pending_count"] == 0
     assert payload["short_term_status"]["urgent"] is False
     assert payload["dream_status"] == {
-        "state": "DISABLED",
+        "state": "IDLE",
         "current_phase": "",
         "progress": 0.0,
+        "run_id": None,
+        "cycle_id": None,
+        "owner": "",
+        "started_at": "",
     }
     assert "concepts" in payload["view_keys"]
     assert "dream_audits" in payload["view_keys"]
@@ -99,8 +103,13 @@ def test_status_payload_survives_malformed_dream_config(
         "min_pending_short_term_memories": 20,
         "max_pending_short_term_memories": 200,
         "urgent": False,
+        "drain_in_progress": False,
+        "drain_completed": 0,
+        "drain_remaining": 0,
+        "drain_total": 0,
+        "drain_progress": 0.0,
     }
-    assert payload["dream_status"]["state"] == "DISABLED"
+    assert payload["dream_status"]["state"] == "IDLE"
     assert payload["dream_status"]["current_phase"] == ""
     assert payload["dream_status"]["progress"] == 0.0
     assert "dream.conf is not valid TOML" in payload["dream_status"]["reason"]
@@ -352,20 +361,17 @@ def test_admin_runs_manual_dreaming_and_reviews_outputs(
     assert audit["note"] == f"Manual dream run {run.cycle_id} with provider deterministic"
 
 
-def test_admin_manual_dreaming_rejects_without_completed_pending_memory(
+def test_admin_manual_dreaming_runs_without_completed_pending_memory(
     config: HieronymusConfig,
 ) -> None:
     admin = AdminStore(config)
 
-    with pytest.raises(
-        ValueError,
-        match="dream all requires at least one completed pending short-term memory",
-    ):
-        admin.run_manual_dreaming()
+    run = admin.run_manual_dreaming()
 
     with connect(config.database_path) as conn:
-        count = conn.execute("select count(*) from dream_runs").fetchone()[0]
-    assert count == 0
+        row = conn.execute("select * from dream_runs where id = ?", (run.id,)).fetchone()
+    assert row["status"] == "completed"
+    assert row["input_count"] == 0
 
 
 def test_admin_manual_dreaming_uses_ignore_minimum_when_pending_exists(

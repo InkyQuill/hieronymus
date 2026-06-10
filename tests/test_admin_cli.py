@@ -55,7 +55,7 @@ def test_admin_json_survives_malformed_dream_config(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["tui"] == "available"
-    assert payload["dream_status"]["state"] == "DISABLED"
+    assert payload["dream_status"]["state"] == "IDLE"
     assert "dream.conf is not valid TOML" in payload["dream_status"]["reason"]
     assert "dream.conf is not valid TOML" in payload["dream_config_error"]
 

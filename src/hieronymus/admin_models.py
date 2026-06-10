@@ -68,13 +68,23 @@ class AdminShortTermStatus:
     min_pending_short_term_memories: int
     max_pending_short_term_memories: int
     urgent: bool
+    drain_in_progress: bool = False
+    drain_completed: int = 0
+    drain_remaining: int = 0
+    drain_total: int = 0
+    drain_progress: float = 0.0
 
-    def as_dict(self) -> dict[str, int | bool]:
+    def as_dict(self) -> dict[str, int | bool | float]:
         return {
             "pending_count": self.pending_count,
             "min_pending_short_term_memories": self.min_pending_short_term_memories,
             "max_pending_short_term_memories": self.max_pending_short_term_memories,
             "urgent": self.urgent,
+            "drain_in_progress": self.drain_in_progress,
+            "drain_completed": self.drain_completed,
+            "drain_remaining": self.drain_remaining,
+            "drain_total": self.drain_total,
+            "drain_progress": self.drain_progress,
         }
 
 
@@ -83,12 +93,20 @@ class AdminDreamStatus:
     state: str
     current_phase: str
     progress: float
+    run_id: int | None = None
+    cycle_id: int | None = None
+    owner: str = ""
+    started_at: str = ""
 
-    def as_dict(self) -> dict[str, str | float]:
+    def as_dict(self) -> dict[str, str | float | int | None]:
         return {
             "state": self.state,
             "current_phase": self.current_phase,
             "progress": self.progress,
+            "run_id": self.run_id,
+            "cycle_id": self.cycle_id,
+            "owner": self.owner,
+            "started_at": self.started_at,
         }
 
 

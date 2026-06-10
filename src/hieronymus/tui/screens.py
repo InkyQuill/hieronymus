@@ -436,8 +436,6 @@ class ManagementScreen(Screen[None]):
         if self.active_view == "Proposals":
             return PROPOSAL_COMMANDS
         if self.active_view == "Dream Runs":
-            if self.store.pending_completed_short_term_memory_count() == 0:
-                return ("review dream outputs",)
             return DREAM_COMMANDS
         return ()
 

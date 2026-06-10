@@ -251,7 +251,7 @@ async def test_tui_command_palette_lists_proposal_commands(
                 "inspect recall reason",
             },
         ),
-        ("6", {"review dream outputs"}),
+        ("6", {"run manual dreaming", "review dream outputs"}),
         ("7", {"approve", "reject"}),
     ],
 )
@@ -272,7 +272,7 @@ async def test_tui_command_palette_commands_are_view_executable(
 
 
 @pytest.mark.anyio
-async def test_tui_hides_manual_dream_command_without_pending_memory(
+async def test_tui_keeps_manual_dream_command_without_pending_memory(
     config: HieronymusConfig,
 ) -> None:
     _seed(config)
@@ -283,7 +283,7 @@ async def test_tui_hides_manual_dream_command_without_pending_memory(
         await pilot.press("ctrl+p")
 
         commands = _command_labels(app)
-        assert "run manual dreaming" not in commands
+        assert "run manual dreaming" in commands
         assert "review dream outputs" in commands
 
 

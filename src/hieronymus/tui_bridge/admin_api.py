@@ -47,6 +47,7 @@ class AdminBridge:
             "view_options": admin_view_options(),
             "default_view": DEFAULT_VIEW,
             "default_view_key": "crystals",
+            "header": self.store.header_status_payload(),
             "stats": dataclass_to_json(self.store.stats()),
             "service": dataclass_to_json(ServiceManager(self.config).status()),
             "snapshot": dataclass_to_json(self._snapshot(view, selected_id, filters)),
@@ -251,8 +252,6 @@ class AdminBridge:
 
     def run_manual_dreaming(self, params: dict[str, object]) -> dict[str, object]:
         view, filters = _refresh_context(params, default_view="Dream Runs")
-        if self.store.pending_completed_short_term_memory_count() == 0:
-            raise ValueError("dream all requires at least one completed pending short-term memory")
         run = self.store.run_manual_dreaming()
         return self._mutation_payload(
             dataclass_to_json(run),
@@ -261,6 +260,195 @@ class AdminBridge:
             filters=filters,
             selected_id=run.id,
         )
+
+    def memory_contracts(self, _params: dict[str, object] | None = None) -> dict[str, object]:
+        return {
+            "header": self.store.header_status_payload(),
+            "crystals": {
+                "view": "Crystals",
+                "actions": ["reinforce", "decay"],
+            },
+            "concepts": {
+                "items": self.store.list_concepts(),
+                "actions": [
+                    "add",
+                    "edit",
+                    "reinforce",
+                    "decay",
+                    "rename",
+                    "merge",
+                    "archive",
+                ],
+            },
+            "short_term_memories": {
+                "items": self.store.list_short_term_memories(),
+                "actions": ["remove", "add_user_correction"],
+            },
+            "dream_audits": {
+                "view": "Dream Audits",
+                "actions": ["list", "detail"],
+            },
+            "config_editor": self.store.config_editor_payload(),
+            **self.store.dashboard_status_payload(),
+        }
+
+    def config_editor(self, _params: dict[str, object] | None = None) -> dict[str, object]:
+        return {
+            "config_editor": self.store.config_editor_payload(),
+            **self.store.dashboard_status_payload(),
+        }
+
+    def concept_detail(self, params: dict[str, object]) -> dict[str, object]:
+        concept_id = _required_int(_aliased_param(params, "concept_id", "id"), "concept_id")
+        return {
+            "concept": self.store.concept_detail(concept_id),
+            **self.store.dashboard_status_payload(),
+        }
+
+    def add_concept(self, params: dict[str, object]) -> dict[str, object]:
+        result = self.store.add_concept(
+            canonical_name=_required_string(params.get("canonical_name"), "canonical_name"),
+            description=_optional_string(params.get("description"), "description") or "",
+            status=_optional_string(params.get("status"), "status") or "candidate",
+            confidence=_optional_float(params.get("confidence"), "confidence", default=0.2),
+            scope_type=_optional_string(params.get("scope_type"), "scope_type") or "global",
+            scope_key=_optional_string(params.get("scope_key"), "scope_key") or "",
+            semantic_tags=_string_tuple(params.get("semantic_tags"), "semantic_tags"),
+        )
+        return self._mutation_payload(
+            result,
+            params,
+            view="Concepts",
+            selected_id=result.entity_id,
+        )
+
+    def update_concept(self, params: dict[str, object]) -> dict[str, object]:
+        concept_id = _required_int(_aliased_param(params, "concept_id", "id"), "concept_id")
+        result = self.store.update_concept(
+            concept_id,
+            description=_optional_string(params.get("description"), "description"),
+            status=_optional_string(params.get("status"), "status"),
+            confidence=_optional_float_or_none(params.get("confidence"), "confidence"),
+        )
+        return self._mutation_payload(result, params, view="Concepts", selected_id=concept_id)
+
+    def reinforce_concept(self, params: dict[str, object]) -> dict[str, object]:
+        concept_id = _required_int(_aliased_param(params, "concept_id", "id"), "concept_id")
+        result = self.store.reinforce_concept(
+            concept_id,
+            evidence=_evidence(params, default="Reinforced from admin bridge"),
+        )
+        return self._mutation_payload(result, params, view="Concepts", selected_id=concept_id)
+
+    def decay_concept(self, params: dict[str, object]) -> dict[str, object]:
+        concept_id = _required_int(_aliased_param(params, "concept_id", "id"), "concept_id")
+        result = self.store.decay_concept(
+            concept_id,
+            evidence=_evidence(params, default="Decayed from admin bridge"),
+        )
+        return self._mutation_payload(result, params, view="Concepts", selected_id=concept_id)
+
+    def rename_concept(self, params: dict[str, object]) -> dict[str, object]:
+        concept_id = _required_int(_aliased_param(params, "concept_id", "id"), "concept_id")
+        result = self.store.rename_concept(
+            concept_id,
+            canonical_name=_required_string(params.get("canonical_name"), "canonical_name"),
+        )
+        return self._mutation_payload(result, params, view="Concepts", selected_id=concept_id)
+
+    def merge_concepts(self, params: dict[str, object]) -> dict[str, object]:
+        source_id = _required_int(params.get("source_concept_id"), "source_concept_id")
+        target_id = _required_int(params.get("target_concept_id"), "target_concept_id")
+        result = self.store.merge_concepts(
+            source_id,
+            target_id,
+            reason=_evidence(params, default="Merged from admin bridge"),
+        )
+        return self._mutation_payload(result, params, view="Concepts", selected_id=target_id)
+
+    def archive_concept(self, params: dict[str, object]) -> dict[str, object]:
+        concept_id = _required_int(_aliased_param(params, "concept_id", "id"), "concept_id")
+        result = self.store.archive_concept(
+            concept_id,
+            reason=_evidence(params, default="Archived from admin bridge"),
+        )
+        return self._mutation_payload(result, params, view="Concepts", selected_id=concept_id)
+
+    def list_concept_facets(self, params: dict[str, object]) -> dict[str, object]:
+        concept_id = _required_int(_aliased_param(params, "concept_id", "id"), "concept_id")
+        return {
+            "facets": self.store.list_concept_facets(concept_id),
+            **self.store.dashboard_status_payload(),
+        }
+
+    def add_concept_facet(self, params: dict[str, object]) -> dict[str, object]:
+        concept_id = _required_int(_aliased_param(params, "concept_id", "id"), "concept_id")
+        result = self.store.add_concept_facet(
+            concept_id,
+            value=_required_string(params.get("value"), "value"),
+            language=_optional_string(params.get("language"), "language") or "",
+            language_tags=_string_tuple(params.get("language_tags"), "language_tags"),
+            kind=_optional_string(params.get("kind"), "kind"),
+            facet_type=_optional_string(params.get("facet_type"), "facet_type"),
+            confidence=_optional_float(params.get("confidence"), "confidence", default=0.2),
+            source_crystal_id=_optional_int(params.get("source_crystal_id"), "source_crystal_id"),
+            is_canonical=_optional_bool(params.get("is_canonical"), "is_canonical", default=False),
+            story_scopes=_string_tuple(params.get("story_scopes"), "story_scopes"),
+            semantic_tags=_string_tuple(params.get("semantic_tags"), "semantic_tags"),
+        )
+        return self._mutation_payload(result, params, view="Concepts", selected_id=concept_id)
+
+    def update_concept_facet(self, params: dict[str, object]) -> dict[str, object]:
+        facet_id = _required_int(_aliased_param(params, "facet_id", "id"), "facet_id")
+        result = self.store.update_concept_facet(
+            facet_id,
+            value=_optional_string(params.get("value"), "value"),
+            language=_optional_string(params.get("language"), "language"),
+            language_tags=_optional_string_tuple(params.get("language_tags"), "language_tags"),
+            kind=_optional_string(params.get("kind"), "kind"),
+            facet_type=_optional_string(params.get("facet_type"), "facet_type"),
+            confidence=_optional_float_or_none(params.get("confidence"), "confidence"),
+            source_crystal_id=_optional_int(params.get("source_crystal_id"), "source_crystal_id"),
+            is_canonical=_optional_bool_or_none(params.get("is_canonical"), "is_canonical"),
+            story_scopes=_optional_string_tuple(params.get("story_scopes"), "story_scopes"),
+            semantic_tags=_optional_string_tuple(params.get("semantic_tags"), "semantic_tags"),
+        )
+        return self._mutation_payload(result, params, view="Concepts", selected_id=None)
+
+    def set_canonical_concept_facet(self, params: dict[str, object]) -> dict[str, object]:
+        concept_id = _required_int(_aliased_param(params, "concept_id", "concept"), "concept_id")
+        facet_id = _required_int(_aliased_param(params, "facet_id", "id"), "facet_id")
+        result = self.store.set_canonical_concept_facet(concept_id, facet_id)
+        return self._mutation_payload(result, params, view="Concepts", selected_id=concept_id)
+
+    def list_short_term_memories(self, params: dict[str, object]) -> dict[str, object]:
+        return {
+            "short_term_memories": self.store.list_short_term_memories(
+                limit=_optional_int(params.get("limit"), "limit") or 200,
+            ),
+            **self.store.dashboard_status_payload(),
+        }
+
+    def remove_short_term_memory(self, params: dict[str, object]) -> dict[str, object]:
+        memory_id = _required_int(_aliased_param(params, "memory_id", "id"), "memory_id")
+        result = self.store.remove_short_term_memory(
+            memory_id,
+            reason=_evidence(params, default="Removed from admin bridge"),
+        )
+        return self._mutation_payload(result, params, view="Short-Term Sessions", selected_id=None)
+
+    def add_user_correction(self, params: dict[str, object]) -> dict[str, object]:
+        result = self.store.add_user_correction(
+            session_id=_required_int(params.get("session_id"), "session_id"),
+            text=_required_string(params.get("text"), "text"),
+            source_ref=_optional_string(params.get("source_ref"), "source_ref")
+            or "admin:user-correction",
+            language_tags=_string_tuple(params.get("language_tags"), "language_tags"),
+            story_scopes=_string_tuple(params.get("story_scopes"), "story_scopes"),
+            semantic_tags=_string_tuple(params.get("semantic_tags"), "semantic_tags"),
+            rule_intent=_optional_string(params.get("rule_intent"), "rule_intent") or "correction",
+        )
+        return self._mutation_payload(result, params, view="Short-Term Sessions", selected_id=None)
 
     def dream_review(self, params: dict[str, object]) -> dict[str, object]:
         run_id = _required_int(_aliased_param(params, "run_id", "id"), "run_id")
@@ -369,6 +557,12 @@ def _required_int(value: object, name: str) -> int:
     return value
 
 
+def _optional_int(value: object, name: str) -> int | None:
+    if value is None:
+        return None
+    return _required_int(value, name)
+
+
 def _required_int_list(value: object, name: str) -> list[int]:
     if type(value) is not list or not value:
         raise ValueError(f"{name} must be a non-empty list of integers")
@@ -394,6 +588,34 @@ def _optional_string(value: object, name: str) -> str | None:
     return _required_string(value, name)
 
 
+def _optional_bool(value: object, name: str, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if type(value) is not bool:
+        raise ValueError(f"{name} must be a boolean")
+    return value
+
+
+def _optional_bool_or_none(value: object, name: str) -> bool | None:
+    if value is None:
+        return None
+    return _optional_bool(value, name, default=False)
+
+
+def _optional_float(value: object, name: str, *, default: float) -> float:
+    if value is None:
+        return default
+    if type(value) not in {int, float} or type(value) is bool:
+        raise ValueError(f"{name} must be a number")
+    return float(value)
+
+
+def _optional_float_or_none(value: object, name: str) -> float | None:
+    if value is None:
+        return None
+    return _optional_float(value, name, default=0.0)
+
+
 def _string_tuple(value: object, name: str) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -402,6 +624,12 @@ def _string_tuple(value: object, name: str) -> tuple[str, ...]:
     if type(value) not in {list, tuple}:
         raise ValueError(f"{name} must be a list of strings")
     return tuple(_required_string(item, f"{name} item") for item in value)
+
+
+def _optional_string_tuple(value: object, name: str) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    return _string_tuple(value, name)
 
 
 def _crystal_type(params: dict[str, object]) -> str:

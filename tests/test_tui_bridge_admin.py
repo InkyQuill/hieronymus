@@ -84,11 +84,11 @@ def test_admin_bridge_survives_malformed_dream_config(
     snapshot = api.snapshot({"view": "Crystals"})
 
     assert bootstrap["snapshot"]["selected"]["label"] == "Guild Ledger"
-    assert bootstrap["dream_status"]["state"] == "DISABLED"
+    assert bootstrap["dream_status"]["state"] == "IDLE"
     assert "dream.conf is not valid TOML" in bootstrap["dream_status"]["reason"]
     assert "dream.conf is not valid TOML" in bootstrap["dream_config_error"]
     assert snapshot["snapshot"]["selected"]["label"] == "Guild Ledger"
-    assert snapshot["dream_status"]["state"] == "DISABLED"
+    assert snapshot["dream_status"]["state"] == "IDLE"
     assert "dream.conf is not valid TOML" in snapshot["dream_config_error"]
 
 
@@ -535,19 +535,19 @@ def test_admin_dream_review_uses_run_id_param(tmp_path: Path) -> None:
         AdminBridge(config).dream_review({"run_id": 999})
 
 
-def test_admin_dream_all_rejects_when_no_completed_pending_memory(tmp_path: Path) -> None:
+def test_admin_dream_all_runs_when_no_completed_pending_memory(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bridge = AdminBridge(config)
 
-    with pytest.raises(
-        ValueError,
-        match="dream all requires at least one completed pending short-term memory",
-    ):
-        bridge.run_manual_dreaming({})
+    payload = bridge.run_manual_dreaming({})
 
     with connect(config.database_path) as conn:
-        count = conn.execute("select count(*) from dream_runs").fetchone()[0]
-    assert count == 0
+        row = conn.execute(
+            "select * from dream_runs where id = ?",
+            (payload["result"]["id"],),
+        ).fetchone()
+    assert row["status"] == "completed"
+    assert row["input_count"] == 0
 
 
 def test_admin_dream_all_ignores_service_minimum_when_pending_exists(

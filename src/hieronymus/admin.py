@@ -16,6 +16,7 @@ from hieronymus.admin_models import (
     DreamReview,
     ProvenanceDetail,
 )
+from hieronymus.concepts import ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
@@ -24,12 +25,17 @@ from hieronymus.dream_config import (
     DreamConfigError,
     default_dream_config,
     load_dream_config,
+    redacted_dream_config_payload,
 )
+from hieronymus.dream_locks import read_dream_cycle_state
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamRunRecord, DreamService
+from hieronymus.llm_cache import dream_profile_cache_identity, load_model_cache
 from hieronymus.memory_models import TranslationContext
+from hieronymus.presentation import GREETING_ICON, TAGLINE, package_version
 from hieronymus.rule_crystals import parse_rule_crystal
 from hieronymus.service_manager import ServiceManager
+from hieronymus.workspace import WorkspaceStore
 
 ADMIN_VIEWS = (
     "Concepts",
@@ -147,6 +153,7 @@ class AdminStore:
     def status_payload(self) -> dict[str, object]:
         return {
             "tui": "available",
+            "header": self.header_status_payload(),
             "views": list(ADMIN_VIEWS),
             "view_keys": list(ADMIN_VIEW_KEYS),
             "view_labels": dict(ADMIN_VIEW_LABELS),
@@ -156,9 +163,22 @@ class AdminStore:
             **self.dashboard_status_payload(),
         }
 
+    def header_status_payload(self) -> dict[str, object]:
+        return {
+            "product": "Hieronymus",
+            "version": package_version(),
+            "tagline": TAGLINE,
+            "logo": {
+                "text": GREETING_ICON,
+                "name": "feather",
+                "alt": "Hieronymus feather logo",
+            },
+        }
+
     def dashboard_status_payload(self) -> dict[str, object]:
         dream_config, dream_config_error = _safe_dream_config(self.config)
         pending_count = self.pending_completed_short_term_memory_count()
+        drain_progress = self._dream_drain_progress(pending_count)
         dream_status = self._dream_status(dream_config).as_dict()
         if dream_config_error:
             dream_status["reason"] = dream_config_error
@@ -166,6 +186,7 @@ class AdminStore:
             "short_term_status": self._short_term_status(
                 dream_config,
                 pending_count,
+                drain_progress=drain_progress,
             ).as_dict(),
             "dream_status": dream_status,
             "dream_config_error": dream_config_error,
@@ -189,18 +210,106 @@ class AdminStore:
         self,
         dream_config: DreamConfig,
         pending_count: int,
+        *,
+        drain_progress: dict[str, int | bool | float],
     ) -> AdminShortTermStatus:
         return AdminShortTermStatus(
             pending_count=pending_count,
             min_pending_short_term_memories=dream_config.min_pending_short_term_memories,
             max_pending_short_term_memories=dream_config.max_pending_short_term_memories,
             urgent=pending_count >= dream_config.max_pending_short_term_memories,
+            drain_in_progress=bool(drain_progress["in_progress"]),
+            drain_completed=int(drain_progress["completed"]),
+            drain_remaining=int(drain_progress["remaining"]),
+            drain_total=int(drain_progress["total"]),
+            drain_progress=float(drain_progress["progress"]),
         )
 
     def _dream_status(self, dream_config: DreamConfig) -> AdminDreamStatus:
-        if not dream_config.enabled:
-            return AdminDreamStatus(state="DISABLED", current_phase="", progress=0.0)
-        return AdminDreamStatus(state="IDLE", current_phase="", progress=0.0)
+        active_cycle = read_dream_cycle_state(self.config)
+        with connect(self.config.database_path) as conn:
+            run = conn.execute(
+                """
+                select *
+                from dream_runs
+                where status = 'running'
+                order by id desc
+                limit 1
+                """
+            ).fetchone()
+            phase = None
+            if run is not None:
+                phase = conn.execute(
+                    """
+                    select *
+                    from dream_phase_runs
+                    where dream_run_id = ?
+                    order by case status when 'running' then 0 else 1 end, id desc
+                    limit 1
+                    """,
+                    (run["id"],),
+                ).fetchone()
+
+        if active_cycle is None and run is None:
+            return AdminDreamStatus(state="IDLE", current_phase="", progress=0.0)
+
+        current_phase = "starting" if phase is None else phase["phase"]
+        return AdminDreamStatus(
+            state="WORKING",
+            current_phase=current_phase,
+            progress=self._phase_progress(current_phase),
+            run_id=None if run is None else int(run["id"]),
+            cycle_id=None if run is None else int(run["cycle_id"]),
+            owner="" if active_cycle is None else active_cycle.owner,
+            started_at="" if active_cycle is None else active_cycle.started_at,
+        )
+
+    def _phase_progress(self, current_phase: str) -> float:
+        if current_phase == "starting":
+            return 0.0
+        drain = self._dream_drain_progress(self.pending_completed_short_term_memory_count())
+        if int(drain["total"]) > 0:
+            return float(drain["progress"])
+        return 0.5
+
+    def _dream_drain_progress(self, pending_count: int) -> dict[str, int | bool | float]:
+        with connect(self.config.database_path) as conn:
+            run = conn.execute(
+                """
+                select id
+                from dream_runs
+                where status = 'running'
+                order by id desc
+                limit 1
+                """
+            ).fetchone()
+            if run is None and read_dream_cycle_state(self.config) is None:
+                return {
+                    "in_progress": False,
+                    "completed": 0,
+                    "remaining": pending_count,
+                    "total": pending_count,
+                    "progress": 0.0,
+                }
+            completed_row = conn.execute(
+                """
+                select coalesce(sum(input_count), 0) as input_count
+                from dream_phase_runs
+                where dream_run_id = ?
+                  and status = 'completed'
+                """,
+                (-1 if run is None else int(run["id"]),),
+            ).fetchone()
+        completed = int(completed_row["input_count"]) if completed_row is not None else 0
+        total = completed + pending_count
+        progress = 1.0 if total == 0 else completed / total
+        return {
+            "in_progress": True,
+            "completed": completed,
+            "remaining": pending_count,
+            "total": total,
+            "progress": round(progress, 4),
+        }
 
     def provenance_for_crystal(self, crystal_id: int) -> ProvenanceDetail:
         with connect(self.config.database_path) as conn:
@@ -292,9 +401,258 @@ class AdminStore:
         self._audit("add", "crystal", crystal_id, note="Added from admin TUI")
         return crystal_id
 
+    def list_concepts(self) -> list[dict[str, object]]:
+        return [
+            self._concept_payload(record) for record in ConceptStore(self.config).list_concepts()
+        ]
+
+    def concept_detail(self, concept_id: int) -> dict[str, object]:
+        concepts = ConceptStore(self.config)
+        concept = concepts.get(concept_id)
+        return {
+            **self._concept_payload(concept),
+            "facets": [self._facet_payload(facet) for facet in concepts.list_facets(concept_id)],
+        }
+
+    def add_concept(
+        self,
+        *,
+        canonical_name: str,
+        description: str = "",
+        status: str = "candidate",
+        confidence: float = 0.2,
+        scope_type: str = "global",
+        scope_key: str = "",
+        semantic_tags: tuple[str, ...] = (),
+    ) -> ActionResult:
+        record = ConceptStore(self.config).create_concept(
+            canonical_name,
+            description=description,
+            status=status,
+            confidence=confidence,
+            scope_type=scope_type,
+            scope_key=scope_key,
+            semantic_tags=semantic_tags,
+        )
+        self._audit("add", "concept", record.id, note="Added from admin contract")
+        return ActionResult("concept", record.id, "add", "Concept added")
+
+    def update_concept(
+        self,
+        concept_id: int,
+        *,
+        description: str | None = None,
+        status: str | None = None,
+        confidence: float | None = None,
+    ) -> ActionResult:
+        ConceptStore(self.config).update_concept(
+            concept_id,
+            description=description,
+            status=status,
+            confidence=confidence,
+        )
+        self._audit("edit", "concept", concept_id, note="Edited from admin contract")
+        return ActionResult("concept", concept_id, "edit", "Concept edited")
+
+    def reinforce_concept(self, concept_id: int, *, evidence: str) -> ActionResult:
+        concepts = ConceptStore(self.config)
+        record = concepts.get(concept_id)
+        concepts.update_concept(concept_id, confidence=_clamp_score(record.confidence + 0.15))
+        self._audit("reinforce", "concept", concept_id, note=evidence)
+        return ActionResult("concept", concept_id, "reinforce", "Concept reinforced")
+
+    def decay_concept(self, concept_id: int, *, evidence: str) -> ActionResult:
+        concepts = ConceptStore(self.config)
+        record = concepts.get(concept_id)
+        concepts.update_concept(concept_id, confidence=_clamp_score(record.confidence - 0.15))
+        self._audit("decay", "concept", concept_id, note=evidence)
+        return ActionResult("concept", concept_id, "decay", "Concept decayed")
+
+    def rename_concept(self, concept_id: int, *, canonical_name: str) -> ActionResult:
+        ConceptStore(self.config).rename_concept(concept_id, canonical_name)
+        self._audit("rename", "concept", concept_id, note="Renamed from admin contract")
+        return ActionResult("concept", concept_id, "rename", "Concept renamed")
+
+    def merge_concepts(
+        self,
+        source_concept_id: int,
+        target_concept_id: int,
+        *,
+        reason: str,
+    ) -> ActionResult:
+        ConceptStore(self.config).merge_concepts(source_concept_id, target_concept_id, reason)
+        self._audit("merge", "concept", source_concept_id, note=reason)
+        return ActionResult("concept", source_concept_id, "merge", "Concept merged")
+
+    def archive_concept(self, concept_id: int, *, reason: str) -> ActionResult:
+        ConceptStore(self.config).archive_concept(concept_id, reason)
+        self._audit("archive", "concept", concept_id, note=reason)
+        return ActionResult("concept", concept_id, "archive", "Concept archived")
+
+    def list_concept_facets(self, concept_id: int) -> list[dict[str, object]]:
+        return [
+            self._facet_payload(facet)
+            for facet in ConceptStore(self.config).list_facets(concept_id)
+        ]
+
+    def add_concept_facet(
+        self,
+        concept_id: int,
+        *,
+        value: str,
+        language: str = "",
+        language_tags: tuple[str, ...] = (),
+        kind: str | None = None,
+        facet_type: str | None = None,
+        confidence: float = 0.2,
+        source_crystal_id: int | None = None,
+        is_canonical: bool = False,
+        story_scopes: tuple[str, ...] = (),
+        semantic_tags: tuple[str, ...] = (),
+    ) -> ActionResult:
+        facet = ConceptStore(self.config).add_facet(
+            concept_id,
+            value,
+            language=language,
+            language_tags=language_tags,
+            kind=kind,
+            facet_type=facet_type,
+            confidence=confidence,
+            source_crystal_id=source_crystal_id,
+            is_canonical=is_canonical,
+            story_scopes=story_scopes,
+            semantic_tags=semantic_tags,
+        )
+        self._audit("add", "concept_facet", facet.id, note="Added from admin contract")
+        return ActionResult("concept_facet", facet.id, "add", "Concept facet added")
+
+    def update_concept_facet(
+        self,
+        facet_id: int,
+        *,
+        value: str | None = None,
+        language: str | None = None,
+        language_tags: tuple[str, ...] | None = None,
+        kind: str | None = None,
+        facet_type: str | None = None,
+        confidence: float | None = None,
+        source_crystal_id: int | None = None,
+        is_canonical: bool | None = None,
+        story_scopes: tuple[str, ...] | None = None,
+        semantic_tags: tuple[str, ...] | None = None,
+    ) -> ActionResult:
+        facet = ConceptStore(self.config).update_facet(
+            facet_id,
+            value=value,
+            language=language,
+            language_tags=language_tags,
+            kind=kind,
+            facet_type=facet_type,
+            confidence=confidence,
+            source_crystal_id=source_crystal_id,
+            is_canonical=is_canonical,
+            story_scopes=story_scopes,
+            semantic_tags=semantic_tags,
+        )
+        self._audit("edit", "concept_facet", facet.id, note="Edited from admin contract")
+        return ActionResult("concept_facet", facet.id, "edit", "Concept facet edited")
+
+    def set_canonical_concept_facet(self, concept_id: int, facet_id: int) -> ActionResult:
+        ConceptStore(self.config).set_canonical_facet(concept_id, facet_id)
+        self._audit("canonical", "concept_facet", facet_id, note="Set canonical from admin")
+        return ActionResult("concept_facet", facet_id, "canonical", "Canonical facet set")
+
+    def list_short_term_memories(self, *, limit: int = 200) -> list[dict[str, object]]:
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute(
+                """
+                select
+                  m.*,
+                  s.series_slug,
+                  s.source_language,
+                  s.target_language,
+                  s.status as session_status
+                from short_term_memories as m
+                join task_sessions as s
+                  on s.id = m.session_id
+                where m.archived_at is null
+                order by m.id desc
+                limit ?
+                """,
+                (max(limit, 1),),
+            ).fetchall()
+        return [
+            {
+                "id": int(row["id"]),
+                "session_id": int(row["session_id"]),
+                "source_role": row["source_role"],
+                "kind": row["kind"],
+                "text": row["text"],
+                "source_ref": row["source_ref"],
+                "series_slug": row["series_slug"],
+                "language_pair": _language_pair(row),
+                "session_status": row["session_status"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def remove_short_term_memory(self, memory_id: int, *, reason: str) -> ActionResult:
+        with connect(self.config.database_path) as conn:
+            cursor = conn.execute(
+                """
+                update short_term_memories
+                set archived_at = ?
+                where id = ?
+                  and archived_at is null
+                """,
+                (self._now(), memory_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"unknown active short-term memory: {memory_id}")
+            self._audit_with_connection(
+                conn,
+                "remove",
+                "short_term_memory",
+                memory_id,
+                note=reason,
+            )
+            conn.commit()
+        return ActionResult("short_term_memory", memory_id, "remove", "Short-term memory removed")
+
+    def add_user_correction(
+        self,
+        *,
+        session_id: int,
+        text: str,
+        source_ref: str = "admin:user-correction",
+        language_tags: tuple[str, ...] = (),
+        story_scopes: tuple[str, ...] = (),
+        semantic_tags: tuple[str, ...] = (),
+        rule_intent: str = "correction",
+    ) -> ActionResult:
+        memory_id = WorkspaceStore(self.config).add_short_term_memory(
+            session_id,
+            source_role="user",
+            kind="correction",
+            text=text,
+            source_ref=source_ref,
+            metadata={"admin_command": "user_correction"},
+            language_tags=language_tags,
+            story_scopes=story_scopes,
+            semantic_tags=semantic_tags,
+            source_credibility="user_rule",
+            rule_intent=rule_intent,
+        )
+        self._audit("add", "short_term_memory", memory_id, note="User correction from admin")
+        return ActionResult(
+            "short_term_memory",
+            memory_id,
+            "add_user_correction",
+            "User correction recorded",
+        )
+
     def run_manual_dreaming(self) -> DreamRunRecord:
-        if self.pending_completed_short_term_memory_count() == 0:
-            raise ValueError("dream all requires at least one completed pending short-term memory")
         run = DreamService(self.config, resolve_provider(self.config)).run_all(
             owner="admin",
             ignore_minimum=True,
@@ -391,6 +749,94 @@ class AdminStore:
             failed_outputs=failed_outputs,
             validation_errors=[],
         )
+
+    def config_editor_payload(self) -> dict[str, object]:
+        dream_config, dream_config_error = _safe_dream_config(self.config)
+        cache = load_model_cache(self.config)
+        warnings: list[dict[str, str]] = []
+        for workflow_name, workflow in dream_config.workflows.items():
+            provider = dream_config.providers.get(workflow.provider)
+            if provider is None:
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "provider_missing",
+                        "message": "workflow provider is not configured",
+                    }
+                )
+                continue
+            entry = cache.providers.get(workflow.provider)
+            expected_identity = dream_profile_cache_identity(workflow.provider, provider)
+            if entry is None:
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "model_cache_missing",
+                        "message": "model cache has not been fetched for provider",
+                    }
+                )
+                continue
+            if entry.identity and entry.identity != expected_identity:
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "model_cache_identity_mismatch",
+                        "message": "model cache was fetched for different provider settings",
+                    }
+                )
+            if entry.is_stale():
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "model_cache_stale",
+                        "message": "model cache is stale",
+                    }
+                )
+            if workflow.model and workflow.model not in entry.models:
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "workflow_model_not_cached",
+                        "message": "workflow model is not present in cached model list",
+                    }
+                )
+            if entry.error:
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "model_cache_error",
+                        "message": entry.error,
+                    }
+                )
+        return {
+            "config": redacted_dream_config_payload(dream_config),
+            "config_error": dream_config_error,
+            "providers": redacted_dream_config_payload(dream_config)["providers"],
+            "workflows": redacted_dream_config_payload(dream_config)["workflows"],
+            "prompts": {"general": dream_config.general_prompt},
+            "thresholds": {
+                "min_pending_short_term_memories": (dream_config.min_pending_short_term_memories),
+                "max_pending_short_term_memories": (dream_config.max_pending_short_term_memories),
+                "max_short_term_memories_per_cycle": (
+                    dream_config.max_short_term_memories_per_cycle
+                ),
+                "not_enough_memories_cycle_threshold": (
+                    dream_config.not_enough_memories_cycle_threshold
+                ),
+                "max_changed_crystals_per_cycle": dream_config.max_changed_crystals_per_cycle,
+                "max_related_concepts_per_cycle": dream_config.max_related_concepts_per_cycle,
+                "max_related_crystals_per_concept": (dream_config.max_related_crystals_per_concept),
+                "max_total_affected_crystals": dream_config.max_total_affected_crystals,
+            },
+            "model_cache": cache.to_payload(),
+            "model_cache_warnings": warnings,
+        }
 
     def reinforce_crystal(self, crystal_id: int, *, evidence: str) -> ActionResult:
         with connect(self.config.database_path) as conn:
@@ -905,7 +1351,7 @@ class AdminStore:
 
     def _rows_for_view(self, view: str) -> list[AdminRow]:
         if view == "Concepts":
-            return self._list_strict_terms(label_column="source_text")
+            return self._list_concept_rows()
         if view == "Renderings":
             return self._list_strict_terms(label_column="canonical_translation")
         if view == "Crystals":
@@ -923,6 +1369,21 @@ class AdminStore:
         if view == "Audit Log":
             return self._list_audit_log()
         raise ValueError(f"unknown admin view: {view}")
+
+    def _list_concept_rows(self) -> list[AdminRow]:
+        return [
+            AdminRow(
+                id=record.id,
+                kind=record.scope_type,
+                label=record.canonical_name,
+                status=record.status,
+                scope=record.scope_key or record.scope_type,
+                language_pair="",
+                quality_label=f"{_percent(record.confidence)} conf",
+                tags=record.tags,
+            )
+            for record in ConceptStore(self.config).list_concepts()
+        ][:200]
 
     def _list_strict_terms(self, *, label_column: str) -> list[AdminRow]:
         with connect(self.config.database_path) as conn:
@@ -1110,6 +1571,35 @@ class AdminStore:
             tags=tags,
         )
 
+    def _concept_payload(self, record) -> dict[str, object]:
+        return {
+            "id": record.id,
+            "canonical_name": record.canonical_name,
+            "description": record.description,
+            "status": record.status,
+            "confidence": record.confidence,
+            "scope_type": record.scope_type,
+            "scope_key": record.scope_key,
+            "tags": list(record.tags),
+            "merged_into_concept_id": record.merged_into_concept_id,
+        }
+
+    def _facet_payload(self, record) -> dict[str, object]:
+        return {
+            "id": record.id,
+            "concept_id": record.concept_id,
+            "language": record.language,
+            "kind": record.kind,
+            "facet_type": record.facet_type,
+            "value": record.value,
+            "confidence": record.confidence,
+            "source_crystal_id": record.source_crystal_id,
+            "language_tags": list(record.language_tags),
+            "story_scopes": list(record.story_scopes),
+            "semantic_tags": list(record.semantic_tags),
+            "is_canonical": record.is_canonical,
+        }
+
     def _select_row(
         self,
         rows: list[AdminRow],
@@ -1127,7 +1617,9 @@ class AdminStore:
             return AdminDetail(title=view, subtitle="No rows", body="")
         if view in {"Crystals", "Lessons"}:
             return self._crystal_detail(int(selected.id))
-        if view in {"Concepts", "Renderings"}:
+        if view == "Concepts":
+            return self._concept_detail(int(selected.id))
+        if view == "Renderings":
             return self._strict_term_detail(int(selected.id))
         if view == "Short-Term Sessions":
             return self._session_detail(int(selected.id))
@@ -1164,6 +1656,25 @@ class AdminStore:
                     "Quality",
                     f"{_percent(row['confidence'])} conf / {_percent(row['strength'])} str",
                 ),
+            ),
+        )
+
+    def _concept_detail(self, concept_id: int) -> AdminDetail:
+        detail = self.concept_detail(concept_id)
+        facets = detail["facets"]
+        facet_lines = [
+            f"{facet['kind']} [{','.join(facet['language_tags'])}]: {facet['value']}"
+            for facet in facets
+        ]
+        return AdminDetail(
+            title=str(detail["canonical_name"]),
+            subtitle=f"{detail['scope_type']} / {detail['status']}",
+            body="\n".join(facet_lines) or str(detail["description"]),
+            fields=(
+                ("Description", str(detail["description"])),
+                ("Scope", str(detail["scope_key"] or detail["scope_type"])),
+                ("Confidence", _percent(float(detail["confidence"]))),
+                ("Facets", str(len(facets))),
             ),
         )
 
