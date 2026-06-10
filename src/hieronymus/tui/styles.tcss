@@ -23,6 +23,14 @@ StatsBar {
     color: #8e99a8;
 }
 
+StatusPane {
+    dock: top;
+    height: 2;
+    padding: 0 1;
+    background: #15191e;
+    color: #b4bdc9;
+}
+
 #workspace {
     height: 1fr;
 }

@@ -68,9 +68,60 @@ export const AdminSnapshotSchema = z.object({
   filters: z.array(z.string()),
 });
 
+export const AdminHeaderSchema = z.object({
+  product: z.string(),
+  version: z.string(),
+  tagline: z.string(),
+  logo: z
+    .object({
+      text: z.string(),
+      name: z.string(),
+      alt: z.string(),
+    })
+    .passthrough(),
+});
+
+export const AdminShortTermStatusSchema = z.object({
+  pending_count: z.number(),
+  min_pending_short_term_memories: z.number(),
+  max_pending_short_term_memories: z.number(),
+  urgent: z.boolean(),
+  drain_in_progress: z.boolean().default(false),
+  drain_completed: z.number().default(0),
+  drain_remaining: z.number().default(0),
+  drain_total: z.number().default(0),
+  drain_progress: z.number().default(0),
+});
+
+export const AdminDreamStatusSchema = z
+  .object({
+    state: z.string(),
+    current_phase: z.string(),
+    progress: z.number(),
+    run_id: z.number().nullable(),
+    cycle_id: z.number().nullable(),
+    owner: z.string(),
+    started_at: z.string(),
+  })
+  .passthrough();
+
+export const AdminConfigEditorSchema = z
+  .object({
+    config: z.record(z.unknown()).default({}),
+    config_error: z.string().default(""),
+    providers: z.record(z.record(z.unknown())),
+    workflows: z.record(z.record(z.unknown())),
+    prompts: z.record(z.string()),
+    thresholds: z.record(z.number()),
+    model_cache: z.record(z.unknown()).default({}),
+    model_cache_warnings: z.array(z.record(z.string())),
+  })
+  .passthrough();
+
 export const AdminBootstrapSchema = z.object({
   views: z.array(z.string()),
   default_view: z.string(),
+  header: AdminHeaderSchema,
   stats: z.record(z.number()),
   service: z
     .object({
@@ -78,6 +129,9 @@ export const AdminBootstrapSchema = z.object({
     })
     .passthrough(),
   snapshot: AdminSnapshotSchema,
+  short_term_status: AdminShortTermStatusSchema,
+  dream_status: AdminDreamStatusSchema,
+  config_editor: AdminConfigEditorSchema,
 });
 
 export const ConfigBootstrapSchema = z
@@ -119,5 +173,9 @@ export type ConfigDetail = z.infer<typeof ConfigDetailSchema>;
 export type AdminRow = z.infer<typeof AdminRowSchema>;
 export type AdminDetail = z.infer<typeof AdminDetailSchema>;
 export type AdminSnapshot = z.infer<typeof AdminSnapshotSchema>;
+export type AdminHeader = z.infer<typeof AdminHeaderSchema>;
+export type AdminShortTermStatus = z.infer<typeof AdminShortTermStatusSchema>;
+export type AdminDreamStatus = z.infer<typeof AdminDreamStatusSchema>;
+export type AdminConfigEditor = z.infer<typeof AdminConfigEditorSchema>;
 export type AdminBootstrap = z.infer<typeof AdminBootstrapSchema>;
 export type ConfigBootstrap = z.infer<typeof ConfigBootstrapSchema>;

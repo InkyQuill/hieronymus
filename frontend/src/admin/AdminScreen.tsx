@@ -2,9 +2,16 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdin } from "ink";
 import { z } from "zod";
 import {
+  AdminConfigEditorSchema,
+  AdminDreamStatusSchema,
+  AdminShortTermStatusSchema,
   AdminSnapshotSchema,
   type AdminBootstrap,
+  type AdminConfigEditor,
+  type AdminDreamStatus,
+  type AdminHeader,
   type AdminSnapshot,
+  type AdminShortTermStatus,
 } from "../rpc/schema.js";
 import type { JsonRpcClient } from "../rpc/client.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
@@ -31,6 +38,9 @@ const AdminOperationResponseSchema = z
   .object({
     stats: z.record(z.number()).optional(),
     snapshot: AdminSnapshotSchema,
+    short_term_status: AdminShortTermStatusSchema.optional(),
+    dream_status: AdminDreamStatusSchema.optional(),
+    config_editor: AdminConfigEditorSchema.optional(),
   })
   .passthrough();
 
@@ -39,6 +49,11 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
   const { stdin, isRawModeSupported } = useStdin();
   const [snapshot, setSnapshot] = useState(initial.snapshot);
   const [stats, setStats] = useState(initial.stats);
+  const [shortTermStatus, setShortTermStatus] = useState(
+    initial.short_term_status,
+  );
+  const [dreamStatus, setDreamStatus] = useState(initial.dream_status);
+  const [configEditor, setConfigEditor] = useState(initial.config_editor);
   const [commandsOpen, setCommandsOpen] = useState(showCommands);
   const [status, setStatus] = useState<Status>({
     message: serviceStatus(initial.service.running),
@@ -83,6 +98,9 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           successMessage: `Loaded ${view}`,
           setSnapshot,
           setStats,
+          setShortTermStatus,
+          setDreamStatus,
+          setConfigEditor,
           setStatus,
           operationInFlight,
         });
@@ -113,6 +131,9 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         successMessage: "Deleted crystal",
         setSnapshot,
         setStats,
+        setShortTermStatus,
+        setDreamStatus,
+        setConfigEditor,
         setStatus,
         operationInFlight,
       });
@@ -127,6 +148,9 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         successMessage: "Reinforced crystal",
         setSnapshot,
         setStats,
+        setShortTermStatus,
+        setDreamStatus,
+        setConfigEditor,
         setStatus,
         operationInFlight,
       });
@@ -141,6 +165,9 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         successMessage: "Decayed crystal",
         setSnapshot,
         setStats,
+        setShortTermStatus,
+        setDreamStatus,
+        setConfigEditor,
         setStatus,
         operationInFlight,
       });
@@ -178,7 +205,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
 
   return (
     <Box flexDirection="column">
-      <Text bold>Hieronymus Admin</Text>
+      <Header header={initial.header} />
       <Box marginTop={1}>
         <Box flexDirection="column" width={28}>
           <Text bold>Views</Text>
@@ -190,6 +217,11 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         </Box>
         <Box flexDirection="column">
           <Text>{formatStats(stats)}</Text>
+          <StatusPanels
+            shortTermStatus={shortTermStatus}
+            dreamStatus={dreamStatus}
+          />
+          <ConfigSummary configEditor={configEditor} />
           <Box marginTop={1}>
             <AdminTable
               rows={snapshot.rows}
@@ -224,6 +256,9 @@ async function runSnapshotOperation({
   successMessage,
   setSnapshot,
   setStats,
+  setShortTermStatus,
+  setDreamStatus,
+  setConfigEditor,
   setStatus,
   operationInFlight,
 }: {
@@ -233,6 +268,9 @@ async function runSnapshotOperation({
   successMessage: string;
   setSnapshot: (snapshot: AdminSnapshot) => void;
   setStats: (stats: Record<string, number>) => void;
+  setShortTermStatus: (status: AdminShortTermStatus) => void;
+  setDreamStatus: (status: AdminDreamStatus) => void;
+  setConfigEditor: (configEditor: AdminConfigEditor) => void;
   setStatus: (status: Status) => void;
   operationInFlight: React.MutableRefObject<boolean>;
 }) {
@@ -245,6 +283,15 @@ async function runSnapshotOperation({
     if (next.stats) {
       setStats(next.stats);
     }
+    if (next.short_term_status) {
+      setShortTermStatus(next.short_term_status);
+    }
+    if (next.dream_status) {
+      setDreamStatus(next.dream_status);
+    }
+    if (next.config_editor) {
+      setConfigEditor(next.config_editor);
+    }
     setStatus({ message: successMessage, error: false });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -254,10 +301,88 @@ async function runSnapshotOperation({
   }
 }
 
+function Header({ header }: { header: AdminHeader }) {
+  return (
+    <Box flexDirection="column">
+      <Text bold>
+        {header.logo.text} {header.product} Admin {header.version}
+      </Text>
+      <Text dimColor>{header.tagline}</Text>
+    </Box>
+  );
+}
+
+function StatusPanels({
+  shortTermStatus,
+  dreamStatus,
+}: {
+  shortTermStatus: AdminShortTermStatus;
+  dreamStatus: AdminDreamStatus;
+}) {
+  const drain = shortTermStatus.drain_in_progress
+    ? `  drain ${shortTermStatus.drain_completed}/${shortTermStatus.drain_total} (${formatPercent(
+        shortTermStatus.drain_progress,
+      )}) remaining ${shortTermStatus.drain_remaining}`
+    : "";
+  const dream = [
+    `Dream ${dreamStatus.state}`,
+    dreamStatus.current_phase ? `phase ${dreamStatus.current_phase}` : "",
+    dreamStatus.progress > 0
+      ? `progress ${formatPercent(dreamStatus.progress)}`
+      : "",
+    dreamStatus.run_id === null ? "" : `run ${dreamStatus.run_id}`,
+    dreamStatus.cycle_id === null ? "" : `cycle ${dreamStatus.cycle_id}`,
+  ]
+    .filter(Boolean)
+    .join("  ");
+
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text>
+        Short-term pending {shortTermStatus.pending_count} / min{" "}
+        {shortTermStatus.min_pending_short_term_memories} / max{" "}
+        {shortTermStatus.max_pending_short_term_memories}
+        {shortTermStatus.urgent ? " urgent" : ""}
+        {drain}
+      </Text>
+      <Text>{dream}</Text>
+    </Box>
+  );
+}
+
+function ConfigSummary({ configEditor }: { configEditor: AdminConfigEditor }) {
+  const providerNames = Object.keys(configEditor.providers);
+  const workflowNames = Object.entries(configEditor.workflows).map(
+    ([name, workflow]) => `${name}:${String(workflow.model ?? "")}`,
+  );
+  const promptNames = Object.keys(configEditor.prompts);
+  const thresholdNames = Object.keys(configEditor.thresholds);
+  const warnings = configEditor.model_cache_warnings;
+
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text>
+        Config providers {providerNames.join(", ") || "none"} workflows{" "}
+        {workflowNames.join(", ") || "none"}
+      </Text>
+      <Text>
+        Prompts {promptNames.join(", ") || "none"} thresholds{" "}
+        {thresholdNames.length}
+        {"  "}model cache warnings {warnings.length}
+      </Text>
+      {warnings[0] ? <Text color="yellow">{warnings[0].message}</Text> : null}
+    </Box>
+  );
+}
+
 function formatStats(stats: Record<string, number>) {
   return Object.entries(stats)
     .map(([name, value]) => `${name.replaceAll("_", " ")} ${value}`)
     .join("  ");
+}
+
+function formatPercent(value: number) {
+  return `${Math.round(value * 100)}%`;
 }
 
 function serviceStatus(running: boolean) {

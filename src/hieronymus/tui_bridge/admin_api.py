@@ -51,6 +51,7 @@ class AdminBridge:
             "stats": dataclass_to_json(self.store.stats()),
             "service": dataclass_to_json(ServiceManager(self.config).status()),
             "snapshot": dataclass_to_json(self._snapshot(view, selected_id, filters)),
+            "config_editor": self.store.config_editor_payload(),
             **self.store.dashboard_status_payload(),
         }
 

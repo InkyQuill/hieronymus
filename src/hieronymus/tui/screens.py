@@ -15,7 +15,7 @@ from hieronymus.tui.dialogs import (
     FilterDialog,
     FormDialog,
 )
-from hieronymus.tui.widgets import AdminTable, DetailPane, StatsBar, ViewTabs
+from hieronymus.tui.widgets import AdminTable, DetailPane, StatsBar, StatusPane, ViewTabs
 
 CRYSTAL_COMMANDS = (
     "add",
@@ -64,6 +64,7 @@ class ManagementScreen(Screen[None]):
     def compose(self) -> ComposeResult:
         yield ViewTabs(id="view-tabs")
         yield StatsBar(id="stats")
+        yield StatusPane(id="status-pane")
         with Horizontal(id="workspace"):
             yield AdminTable(id="entries")
             yield DetailPane(id="detail")
@@ -365,8 +366,13 @@ class ManagementScreen(Screen[None]):
     def refresh_view(self, selected_id: int | str | None = None) -> None:
         snapshot = self._snapshot(selected_id)
         stats = self.store.stats().as_dict()
+        status_payload = self.store.dashboard_status_payload()
         self.query_one("#view-tabs", ViewTabs).update_views(ADMIN_VIEWS, self.active_view)
         self.query_one("#stats", StatsBar).update_stats(stats)
+        self.query_one("#status-pane", StatusPane).update_status(
+            status_payload["short_term_status"],
+            status_payload["dream_status"],
+        )
         table = self.query_one("#entries", AdminTable)
         table.load_rows(snapshot.rows)
         if snapshot.selected is not None:

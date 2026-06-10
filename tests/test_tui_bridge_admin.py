@@ -54,6 +54,10 @@ def test_admin_bootstrap_returns_views_stats_and_initial_snapshot(tmp_path: Path
     assert payload["stats"]["series"] == 1
     assert payload["short_term_status"]["pending_count"] == 0
     assert payload["dream_status"]["state"] in {"IDLE", "WORKING", "DISABLED"}
+    assert payload["config_editor"]["providers"]
+    assert payload["config_editor"]["workflows"]
+    assert "general" in payload["config_editor"]["prompts"]
+    assert "max_pending_short_term_memories" in payload["config_editor"]["thresholds"]
     assert payload["snapshot"]["view"] == "Crystals"
     assert payload["snapshot"]["selected"]["label"] == "Guild Ledger"
 

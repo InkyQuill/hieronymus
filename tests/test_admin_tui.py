@@ -105,11 +105,28 @@ async def test_tui_starts_with_navigation_stats_table_and_detail(
         assert _query(app, "#view-tabs").has_focus
         assert "Crystals" in _plain_text(_query(app, "#view-tabs"))
         assert "series 1" in _plain_text(_query(app, "#stats"))
+        status_text = _plain_text(_query(app, "#status-pane"))
+        assert "Short-term pending 0 / min 20 / max 200" in status_text
+        assert "Dream DISABLED" in status_text
         detail_text = _plain_text(_query(app, "#detail"))
         assert "Inventory UI" in detail_text
         assert "Guild Ledger" not in detail_text
         table = _query(app, "#entries")
         assert table.row_count == 2
+
+
+@pytest.mark.anyio
+async def test_tui_status_pane_displays_short_term_and_drain_progress(
+    config: HieronymusConfig,
+) -> None:
+    _seed(config)
+    _seed_completed_short_term_memory(config)
+    app = HieronymusAdminApp(config)
+
+    async with app.run_test():
+        status_text = _plain_text(_query(app, "#status-pane"))
+        assert "Short-term pending 1 / min 20 / max 200" in status_text
+        assert "Dream DISABLED" in status_text
 
 
 @pytest.mark.anyio

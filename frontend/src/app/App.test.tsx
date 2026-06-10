@@ -36,6 +36,16 @@ function fakeClient(): JsonRpcClient {
           "Audit Log",
         ],
         default_view: "Crystals",
+        header: {
+          product: "Hieronymus",
+          version: "0.1.0",
+          tagline: "Local translation memory.",
+          logo: {
+            text: "H",
+            name: "feather",
+            alt: "Hieronymus feather logo",
+          },
+        },
         stats: {
           series: 1,
           crystals: 1,
@@ -78,6 +88,52 @@ function fakeClient(): JsonRpcClient {
             fields: [],
           },
           filters: [],
+        },
+        short_term_status: {
+          pending_count: 0,
+          min_pending_short_term_memories: 20,
+          max_pending_short_term_memories: 200,
+          urgent: false,
+          drain_in_progress: false,
+          drain_completed: 0,
+          drain_remaining: 0,
+          drain_total: 0,
+          drain_progress: 0,
+        },
+        dream_status: {
+          state: "DISABLED",
+          current_phase: "",
+          progress: 0,
+          run_id: null,
+          cycle_id: null,
+          owner: "",
+          started_at: "",
+        },
+        config_editor: {
+          config: {},
+          config_error: "",
+          providers: {
+            anthropic: {
+              provider_type: "anthropic",
+              model: "claude-sonnet-4-20250514",
+            },
+          },
+          workflows: {
+            crystallization: {
+              provider: "anthropic",
+              model: "claude-sonnet-4-20250514",
+            },
+          },
+          prompts: {
+            general: "Translate with continuity.",
+          },
+          thresholds: {
+            min_pending_short_term_memories: 20,
+            max_pending_short_term_memories: 200,
+            max_short_term_memories_per_cycle: 50,
+          },
+          model_cache: {},
+          model_cache_warnings: [],
         },
       });
     },

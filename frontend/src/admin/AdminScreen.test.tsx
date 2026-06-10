@@ -17,6 +17,16 @@ function bootstrap() {
       "Audit Log",
     ],
     default_view: "Crystals",
+    header: {
+      product: "Hieronymus",
+      version: "0.1.0",
+      tagline: "Local translation memory.",
+      logo: {
+        text: "H",
+        name: "feather",
+        alt: "Hieronymus feather logo",
+      },
+    },
     stats: {
       series: 1,
       crystals: 1,
@@ -60,6 +70,59 @@ function bootstrap() {
       },
       filters: [],
     },
+    short_term_status: {
+      pending_count: 0,
+      min_pending_short_term_memories: 20,
+      max_pending_short_term_memories: 200,
+      urgent: false,
+      drain_in_progress: false,
+      drain_completed: 0,
+      drain_remaining: 0,
+      drain_total: 0,
+      drain_progress: 0,
+    },
+    dream_status: {
+      state: "DISABLED",
+      current_phase: "",
+      progress: 0,
+      run_id: null,
+      cycle_id: null,
+      owner: "",
+      started_at: "",
+    },
+    config_editor: {
+      config: {},
+      config_error: "",
+      providers: {
+        anthropic: {
+          provider_type: "anthropic",
+          model: "claude-sonnet-4-20250514",
+        },
+      },
+      workflows: {
+        crystallization: {
+          provider: "anthropic",
+          model: "claude-sonnet-4-20250514",
+        },
+      },
+      prompts: {
+        general: "Translate with continuity.",
+      },
+      thresholds: {
+        min_pending_short_term_memories: 20,
+        max_pending_short_term_memories: 200,
+        max_short_term_memories_per_cycle: 50,
+      },
+      model_cache: {},
+      model_cache_warnings: [
+        {
+          workflow: "crystallization",
+          provider: "anthropic",
+          code: "model_cache_missing",
+          message: "model cache has not been fetched for provider",
+        },
+      ],
+    },
   };
 }
 
@@ -70,7 +133,19 @@ describe("AdminScreen", () => {
     );
 
     expect(app.lastFrame()).toContain("Crystals");
+    expect(app.lastFrame()).toContain("H Hieronymus Admin 0.1.0");
+    expect(app.lastFrame()).toContain("Local translation memory.");
     expect(app.lastFrame()).toContain("series 1");
+    expect(app.lastFrame()).toContain("Short-term pending 0");
+    expect(app.lastFrame()).toContain("Dream DISABLED");
+    expect(app.lastFrame()).toContain("Config providers anthropic");
+    expect(app.lastFrame()).toContain(
+      "workflows crystallization:claude-sonnet-4-20250514",
+    );
+    expect(app.lastFrame()).toContain("model cache warnings 1");
+    expect(app.lastFrame()).toContain(
+      "model cache has not been fetched for provider",
+    );
     expect(app.lastFrame()).toContain("Guild Ledger");
     expect(app.lastFrame()).toContain("Guild ledger detail marker.");
   });
@@ -140,6 +215,23 @@ describe("AdminScreen", () => {
             body: "Reinforced detail marker.",
           },
         },
+        short_term_status: {
+          ...bootstrap().short_term_status,
+          pending_count: 3,
+          drain_in_progress: true,
+          drain_completed: 7,
+          drain_remaining: 3,
+          drain_total: 10,
+          drain_progress: 0.7,
+        },
+        dream_status: {
+          ...bootstrap().dream_status,
+          state: "WORKING",
+          current_phase: "maintenance",
+          progress: 0.75,
+          run_id: 12,
+          cycle_id: 4,
+        },
       });
     });
     const app = render(<AdminScreen initial={bootstrap()} client={client} />);
@@ -158,6 +250,11 @@ describe("AdminScreen", () => {
     ]);
     expect(app.lastFrame()).toContain("series 2");
     expect(app.lastFrame()).toContain("reinforced");
+    expect(app.lastFrame()).toContain("Short-term pending 3");
+    expect(app.lastFrame()).toContain("drain 7/10 (70%) remaining 3");
+    expect(app.lastFrame()).toContain("Dream WORKING");
+    expect(app.lastFrame()).toContain("phase maintenance");
+    expect(app.lastFrame()).toContain("progress 75%");
   });
 
   it("does not send crystal mutations from proposals", async () => {
