@@ -48,6 +48,17 @@ _ROLE_CONFIDENCE = {
 }
 _SENTENCE_RE = re.compile(r"[^.!?。！？]+[.!?。！？]?")
 _MAX_SKIPPED_CANDIDATE_RECORDS = 2
+_INVALID_PASSIVE_EVENT_WHERE = """
+memory_events.applied = 0
+and (
+  memory_events.crystal_id is null
+  or not exists (
+    select 1
+    from crystals
+    where crystals.id = memory_events.crystal_id
+  )
+)
+"""
 
 
 def _now() -> str:
@@ -1823,6 +1834,7 @@ class DreamService:
         max_changed_crystals: int,
     ) -> _DreamApplySummary:
         now = _now()
+        skipped_candidates = self._apply_invalid_passive_events(conn, cycle_id)
         selected_crystal_ids = self._select_passive_event_crystal_ids(
             conn,
             max_changed_crystals=max_changed_crystals,
@@ -1830,7 +1842,6 @@ class DreamService:
         rows = self._pending_passive_event_rows(conn, selected_crystal_ids)
         reinforced_ids: list[int] = []
         decayed_ids: list[int] = []
-        skipped_candidates: list[dict[str, object]] = []
         changed_crystal_ids: set[int] = set()
         for event in rows:
             crystal_id = event["crystal_id"]
@@ -1915,6 +1926,70 @@ class DreamService:
             decayed_crystal_ids=_unique_ints(tuple(decayed_ids)),
             skipped_candidates=tuple(skipped_candidates),
         )
+
+    def _apply_invalid_passive_events(self, conn, cycle_id: int) -> list[dict[str, object]]:
+        total = conn.execute(
+            f"""
+            select count(*)
+            from memory_events
+            where {_INVALID_PASSIVE_EVENT_WHERE}
+            """,
+        ).fetchone()[0]
+        if total == 0:
+            return []
+
+        rows = conn.execute(
+            f"""
+            select id, crystal_id
+            from memory_events
+            where {_INVALID_PASSIVE_EVENT_WHERE}
+            order by id
+            limit ?
+            """,
+            (_MAX_SKIPPED_CANDIDATE_RECORDS,),
+        ).fetchall()
+        skipped: list[dict[str, object]] = []
+        for row in rows:
+            event_id = int(row["id"])
+            crystal_id = row["crystal_id"]
+            if crystal_id is None:
+                skipped.append(
+                    {
+                        "entry_path": f"passive_events[{event_id}]",
+                        "reason": "missing_crystal_id",
+                        "event_id": event_id,
+                    }
+                )
+            else:
+                skipped.append(
+                    {
+                        "entry_path": f"passive_events[{event_id}]",
+                        "reason": "unknown_crystal",
+                        "event_id": event_id,
+                        "crystal_id": int(crystal_id),
+                    }
+                )
+
+        remaining_count = int(total) - len(skipped)
+        if remaining_count > 0:
+            skipped.append(
+                {
+                    "entry_path": "passive_events",
+                    "reason": "invalid_passive_event",
+                    "skipped_count": remaining_count,
+                }
+            )
+
+        conn.execute(
+            f"""
+            update memory_events
+            set applied = 1,
+                cycle_id = ?
+            where {_INVALID_PASSIVE_EVENT_WHERE}
+            """,
+            (cycle_id,),
+        )
+        return skipped
 
     def _select_passive_event_crystal_ids(
         self,

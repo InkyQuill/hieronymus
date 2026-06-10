@@ -398,6 +398,50 @@ def test_maintenance_only_run_creates_admin_visible_audit(
     ]
 
 
+def test_invalid_passive_event_is_applied_and_audited_as_skipped_candidate(
+    config: HieronymusConfig,
+) -> None:
+    _save_dreaming_config(config, min_pending=1, max_pending=10, per_cycle=1, max_changed=2)
+    context = _context(config)
+    crystal_id = _add_crystal(
+        config,
+        context,
+        text="Deleted passive event target.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    event_id = FeedbackStore(config).record(
+        crystal_id,
+        event_type="used_in_translation",
+        source_role="system",
+        evidence="event should be skipped after target deletion",
+    )
+    with connect(config.database_path) as conn:
+        conn.execute("delete from crystals where id = ?", (crystal_id,))
+        conn.commit()
+
+    run = DreamService(config, EmptyDreamProvider()).run_all(owner="admin")
+
+    with connect(config.database_path) as conn:
+        event = conn.execute(
+            "select applied, cycle_id, crystal_id from memory_events where id = ?",
+            (event_id,),
+        ).fetchone()
+    phase_payload = _phase_completed_payloads(config, run.id)[-1]
+    assert event["applied"] == 1
+    assert event["cycle_id"] == run.cycle_id
+    assert event["crystal_id"] is None
+    assert phase_payload["phase_name"] == "maintenance"
+    assert {
+        "entry_path": f"passive_events[{event_id}]",
+        "reason": "missing_crystal_id",
+        "event_id": event_id,
+    } in phase_payload["skipped_candidates"]
+    assert _dream_audit_labels(config) == [
+        "phase_completed: completed maintenance phase",
+    ]
+
+
 def test_duplicate_passive_events_count_as_one_changed_crystal_under_cap(
     config: HieronymusConfig,
 ) -> None:
