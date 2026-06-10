@@ -710,7 +710,11 @@ class MemoryGraphMigrator:
         created: Counter[str],
     ) -> int:
         existing = self._ledger_target(conn, source_table, source_id, "concept_facets")
-        if existing is not None and _row_exists(conn, "concept_facets", existing):
+        if (
+            existing is not None
+            and _row_exists(conn, "concept_facets", existing)
+            and _facet_belongs_to_concept(conn, existing, concept_id)
+        ):
             facet_id = existing
         else:
             row = conn.execute(
@@ -1202,7 +1206,11 @@ class MemoryGraphMigrator:
             )
         if (
             _has_table(conn, "crystal_semantic_tags")
-            and _has_columns(conn, "crystal_semantic_tags", {"crystal_id", "tag"})
+            and _has_columns(
+                conn,
+                "crystal_semantic_tags",
+                {"crystal_id", "tag", "confidence", "created_at"},
+            )
             and {"id", "tags_json"} <= columns
         ):
             pending["crystal_semantic_tags"] += _pending_owner_rows_with_legacy_values(

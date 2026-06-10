@@ -663,6 +663,85 @@ def test_dry_report_counts_proposal_when_ledger_facet_target_is_dangling(
     assert report.pending["strict_concept_proposals"] == 1
 
 
+def test_run_repairs_strict_term_ledger_facet_with_wrong_concept(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        term_id = _insert_strict_term(conn)
+        conn.commit()
+
+    MemoryGraphMigrator(config).run()
+    with connect(config.database_path) as conn:
+        original_concept_id = conn.execute(
+            """
+            select target_id
+            from memory_graph_migration_ledger
+            where source_table = 'strict_terms'
+              and source_id = ?
+              and target_table = 'concepts'
+            """,
+            (str(term_id),),
+        ).fetchone()["target_id"]
+        source_facet_id = conn.execute(
+            """
+            select target_id
+            from memory_graph_migration_ledger
+            where source_table = 'strict_terms'
+              and source_id = ?
+              and target_table = 'concept_facets'
+            """,
+            (f"{term_id}:source",),
+        ).fetchone()["target_id"]
+        other_concept_id = conn.execute(
+            """
+            insert into concepts(
+              canonical_name,
+              description,
+              scope_type,
+              scope_key,
+              status,
+              confidence,
+              created_at,
+              updated_at
+            )
+            values ('Other', '', 'series', 'series:book', 'established', 0.5, ?, ?)
+            """,
+            (NOW, NOW),
+        ).lastrowid
+        conn.execute(
+            "update concept_facets set concept_id = ? where id = ?",
+            (other_concept_id, source_facet_id),
+        )
+        conn.commit()
+
+    pending_report = MemoryGraphMigrator.inspect(config)
+    repair_report = MemoryGraphMigrator(config).run()
+    final_report = MemoryGraphMigrator.inspect(config)
+
+    assert pending_report.pending["strict_terms"] == 1
+    assert repair_report.created["concept_facets"] == 1
+    assert final_report.pending.get("strict_terms", 0) == 0
+    with connect(config.database_path) as conn:
+        repaired_facet_id = conn.execute(
+            """
+            select target_id
+            from memory_graph_migration_ledger
+            where source_table = 'strict_terms'
+              and source_id = ?
+              and target_table = 'concept_facets'
+            """,
+            (f"{term_id}:source",),
+        ).fetchone()["target_id"]
+        repaired_concept_id = conn.execute(
+            "select concept_id from concept_facets where id = ?",
+            (repaired_facet_id,),
+        ).fetchone()["concept_id"]
+
+    assert repaired_facet_id != source_facet_id
+    assert repaired_concept_id == original_concept_id
+
+
 def test_strict_term_generation_skips_when_destination_graph_schema_is_partial(
     tmp_path: Path,
 ) -> None:
@@ -932,6 +1011,33 @@ def test_migrator_tolerates_partial_crystal_side_table_destinations(
     assert dry_report.pending.get("crystal_language_tags", 0) == 0
     assert dry_report.pending.get("crystal_semantic_tags", 0) == 0
     assert "crystal_language_tags" not in run_report.updated
+    assert "crystal_semantic_tags" not in run_report.updated
+
+
+def test_dry_report_skips_partial_crystal_semantic_tags_missing_metadata(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table crystals (
+              id integer primary key,
+              tags_json text not null
+            );
+            create table crystal_semantic_tags (
+              crystal_id integer not null,
+              tag text not null
+            );
+            insert into crystals(id, tags_json) values (1, '["ui"]');
+            """
+        )
+        conn.commit()
+
+    dry_report = MemoryGraphMigrator.inspect(config)
+    run_report = MemoryGraphMigrator(config).run()
+
+    assert dry_report.pending.get("crystal_semantic_tags", 0) == 0
     assert "crystal_semantic_tags" not in run_report.updated
 
 
