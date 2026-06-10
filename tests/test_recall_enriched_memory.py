@@ -591,6 +591,58 @@ def test_concept_link_candidate_limit_prefers_stronger_later_match(
     assert results[0].score > next(result.score for result in results if result.id == low_ids[0])
 
 
+def test_concept_label_candidate_limit_prefers_stronger_later_visible_concept(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    concepts = ConceptStore(config)
+    crystals = CrystalStore(config)
+    low_ids = []
+    for index in range(60):
+        concept = concepts.create_concept(
+            "Enchant",
+            status="established",
+            confidence=0.9,
+            scope_type="series",
+            scope_key=context.scope_key,
+        )
+        low_ids.append(
+            crystals.add_crystal(
+                context,
+                crystal_type="lesson",
+                text=f"Treat low confidence visible concept entry {index} as a proper noun.",
+                title=f"Low Visible Concept {index}",
+                concept_ids=(concept.id,),
+                strength=0.1,
+                confidence=0.1,
+            )
+        )
+    high_concept = concepts.create_concept(
+        "Enchant",
+        status="established",
+        confidence=0.9,
+        scope_type="series",
+        scope_key=context.scope_key,
+    )
+    high_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Treat high confidence visible concept entry as a proper noun.",
+        title="High Visible Concept",
+        concept_ids=(high_concept.id,),
+        strength=0.95,
+        confidence=0.95,
+    )
+
+    results = RecallService(config).recall(session.id, context, "Enchant", limit=5)
+
+    assert results[0].id == high_id
+    assert high_id in {result.id for result in results}
+    assert results[0].score > next(result.score for result in results if result.id == low_ids[0])
+
+
 def test_concept_label_candidate_limit_applies_after_visibility_scope(
     config: HieronymusConfig,
 ) -> None:
@@ -639,6 +691,60 @@ def test_concept_label_candidate_limit_applies_after_visibility_scope(
     assert [result.id for result in results] == [target_crystal_id]
     assert results[0].concept_ids == (target_concept.id,)
     assert results[0].concept_labels == ("Enchant",)
+
+
+def test_concept_semantic_tag_candidate_limit_prefers_stronger_later_visible_concept(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    concepts = ConceptStore(config)
+    crystals = CrystalStore(config)
+    low_ids = []
+    for index in range(60):
+        concept = concepts.create_concept(
+            f"Low Menu Skill {index}",
+            status="established",
+            confidence=0.9,
+            scope_type="series",
+            scope_key=context.scope_key,
+            semantic_tags=("skill:name",),
+        )
+        low_ids.append(
+            crystals.add_crystal(
+                context,
+                crystal_type="lesson",
+                text=f"Treat low confidence tagged concept entry {index} as a proper noun.",
+                title=f"Low Tagged Concept {index}",
+                concept_ids=(concept.id,),
+                strength=0.1,
+                confidence=0.1,
+            )
+        )
+    high_concept = concepts.create_concept(
+        "High Menu Skill",
+        status="established",
+        confidence=0.9,
+        scope_type="series",
+        scope_key=context.scope_key,
+        semantic_tags=("skill:name",),
+    )
+    high_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Treat high confidence tagged concept entry as a proper noun.",
+        title="High Tagged Concept",
+        concept_ids=(high_concept.id,),
+        strength=0.95,
+        confidence=0.95,
+    )
+
+    results = RecallService(config).recall(session.id, context, "skill:name", limit=5)
+
+    assert results[0].id == high_id
+    assert high_id in {result.id for result in results}
+    assert results[0].score > next(result.score for result in results if result.id == low_ids[0])
 
 
 def test_concept_semantic_tags_find_linked_crystal_without_text_match(

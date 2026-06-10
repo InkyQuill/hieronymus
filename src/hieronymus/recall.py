@@ -466,59 +466,14 @@ class RecallService:
                 limit=limit,
             )
 
-            concept_scores = self._concept_candidate_scores(
+            self._add_concept_linked_scores(
                 conn,
+                scores,
                 context,
                 query,
                 lookup_values,
                 limit=limit,
             )
-            if concept_scores:
-                concept_score_rows = tuple(sorted(concept_scores.items()))
-                values_sql = ", ".join("(?, ?)" for _concept_id, _score in concept_score_rows)
-                concept_score_params = tuple(value for row in concept_score_rows for value in row)
-                rows = conn.execute(
-                    f"""
-                    with recall_concept_scores(concept_id, concept_boost) as (
-                      values {values_sql}
-                    )
-                    select distinct
-                      c.id,
-                      c.strength,
-                      c.confidence,
-                      c.scope_type,
-                      cc.concept_id,
-                      rcs.concept_boost
-                    from crystal_concepts cc
-                    join recall_concept_scores rcs
-                      on rcs.concept_id = cc.concept_id
-                    join crystals c on c.id = cc.crystal_id
-                    where c.status in ('active', 'candidate')
-                      and (
-                        (c.scope_type = 'series' and c.scope_key = ?)
-                        or c.scope_type = 'global'
-                      )
-                      and (c.source_language = ? or c.source_language = '')
-                      and (c.target_language = ? or c.target_language = '')
-                    order by ({_SQL_METADATA_SCORE} + rcs.concept_boost) desc,
-                             c.id,
-                             cc.concept_id
-                    limit ?
-                    """,
-                    (
-                        *concept_score_params,
-                        context.scope_key,
-                        context.source_language,
-                        context.target_language,
-                        limit,
-                    ),
-                ).fetchall()
-                for row in rows:
-                    self._add_long_term_metadata_score(
-                        scores,
-                        row,
-                        concept_scores[int(row["concept_id"])],
-                    )
 
         return dict(
             sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:limit],
@@ -575,216 +530,156 @@ class RecallService:
         )
         scores[int(row["id"])] = max(scores.get(int(row["id"]), 0.0), score)
 
-    def _concept_candidate_scores(
+    def _add_concept_linked_scores(
         self,
         conn,
+        scores: dict[int, float],
         context: TranslationContext,
         query: str,
         lookup_values: tuple[str, ...],
         *,
         limit: int,
-    ) -> dict[int, float]:
-        scores: dict[int, float] = {}
+    ) -> None:
         expression = search_expression(query)
         exact_query = query.strip()
 
-        rows = []
         if exact_query:
-            rows = conn.execute(
-                """
-                select distinct c.id
-                from concepts c
-                join crystal_concepts cc on cc.concept_id = c.id
-                join crystals cr on cr.id = cc.crystal_id
-                where c.canonical_name = ? collate nocase
-                  and c.status not in ('archived', 'merged')
-                  and cr.status in ('active', 'candidate')
-                  and (
-                    (cr.scope_type = 'series' and cr.scope_key = ?)
-                    or cr.scope_type = 'global'
-                  )
-                  and (cr.source_language = ? or cr.source_language = '')
-                  and (cr.target_language = ? or cr.target_language = '')
-                order by c.id
-                limit ?
-                """,
-                (
-                    exact_query,
-                    context.scope_key,
-                    context.source_language,
-                    context.target_language,
-                    limit,
-                ),
-            ).fetchall()
-        for row in rows:
-            concept_id = int(row["id"])
-            scores[concept_id] = max(scores.get(concept_id, 0.0), _EXACT_CONCEPT_BOOST)
+            self._add_concept_linked_score_rows(
+                conn,
+                scores,
+                context=context,
+                concept_from_sql="concepts concept",
+                match_sql="concept.canonical_name = ? collate nocase",
+                match_params=(exact_query,),
+                boost=_EXACT_CONCEPT_BOOST,
+                limit=limit,
+            )
 
         if expression:
-            rows = conn.execute(
-                """
-                select distinct c.id
-                from concepts_fts
-                join concepts c on c.id = concepts_fts.rowid
-                join crystal_concepts cc on cc.concept_id = c.id
-                join crystals cr on cr.id = cc.crystal_id
-                where concepts_fts match ?
-                  and c.status not in ('archived', 'merged')
-                  and cr.status in ('active', 'candidate')
-                  and (
-                    (cr.scope_type = 'series' and cr.scope_key = ?)
-                    or cr.scope_type = 'global'
-                  )
-                  and (cr.source_language = ? or cr.source_language = '')
-                  and (cr.target_language = ? or cr.target_language = '')
-                order by c.id
-                limit ?
+            self._add_concept_linked_score_rows(
+                conn,
+                scores,
+                context=context,
+                concept_from_sql="""
+                concepts_fts
+                join concepts concept on concept.id = concepts_fts.rowid
                 """,
-                (
-                    expression,
-                    context.scope_key,
-                    context.source_language,
-                    context.target_language,
-                    limit,
-                ),
-            ).fetchall()
-            for row in rows:
-                concept_id = int(row["id"])
-                scores[concept_id] = max(scores.get(concept_id, 0.0), _CONCEPT_LINK_BASE_BOOST)
-
-            rows = conn.execute(
-                """
-                select distinct c.id
-                from concept_facet_fts
+                match_sql="concepts_fts match ?",
+                match_params=(expression,),
+                boost=_CONCEPT_LINK_BASE_BOOST,
+                limit=limit,
+            )
+            self._add_concept_linked_score_rows(
+                conn,
+                scores,
+                context=context,
+                concept_from_sql="""
+                concept_facet_fts
                 join concept_facets f on f.id = concept_facet_fts.rowid
-                join concepts c on c.id = f.concept_id
-                join crystal_concepts cc on cc.concept_id = c.id
-                join crystals cr on cr.id = cc.crystal_id
-                where concept_facet_fts match ?
-                  and f.superseded_at is null
-                  and c.status not in ('archived', 'merged')
-                  and cr.status in ('active', 'candidate')
-                  and (
-                    (cr.scope_type = 'series' and cr.scope_key = ?)
-                    or cr.scope_type = 'global'
-                  )
-                  and (cr.source_language = ? or cr.source_language = '')
-                  and (cr.target_language = ? or cr.target_language = '')
-                order by c.id
-                limit ?
+                join concepts concept on concept.id = f.concept_id
                 """,
-                (
-                    expression,
-                    context.scope_key,
-                    context.source_language,
-                    context.target_language,
-                    limit,
-                ),
-            ).fetchall()
-            for row in rows:
-                concept_id = int(row["id"])
-                scores[concept_id] = max(scores.get(concept_id, 0.0), _EXACT_CONCEPT_BOOST)
+                match_sql="concept_facet_fts match ? and f.superseded_at is null",
+                match_params=(expression,),
+                boost=_EXACT_CONCEPT_BOOST,
+                limit=limit,
+            )
 
         if lookup_values:
             placeholders = ", ".join("?" for _ in lookup_values)
-            rows = conn.execute(
-                f"""
-                select distinct c.id
-                from concept_semantic_tags t
-                join concepts c on c.id = t.concept_id
-                join crystal_concepts cc on cc.concept_id = c.id
-                join crystals cr on cr.id = cc.crystal_id
-                where c.status not in ('archived', 'merged')
-                  and t.tag collate nocase in ({placeholders})
-                  and cr.status in ('active', 'candidate')
-                  and (
-                    (cr.scope_type = 'series' and cr.scope_key = ?)
-                    or cr.scope_type = 'global'
-                  )
-                  and (cr.source_language = ? or cr.source_language = '')
-                  and (cr.target_language = ? or cr.target_language = '')
-                order by c.id
-                limit ?
+            self._add_concept_linked_score_rows(
+                conn,
+                scores,
+                context=context,
+                concept_from_sql="""
+                concept_semantic_tags t
+                join concepts concept on concept.id = t.concept_id
                 """,
-                (
-                    *lookup_values,
-                    context.scope_key,
-                    context.source_language,
-                    context.target_language,
-                    limit,
-                ),
-            ).fetchall()
-            for row in rows:
-                concept_id = int(row["id"])
-                scores[concept_id] = max(scores.get(concept_id, 0.0), _SEMANTIC_TAG_BOOST)
-
-            rows = conn.execute(
-                f"""
-                select distinct c.id
-                from concept_facet_semantic_tags t
+                match_sql=f"t.tag collate nocase in ({placeholders})",
+                match_params=lookup_values,
+                boost=_SEMANTIC_TAG_BOOST,
+                limit=limit,
+            )
+            self._add_concept_linked_score_rows(
+                conn,
+                scores,
+                context=context,
+                concept_from_sql="""
+                concept_facet_semantic_tags t
                 join concept_facets f on f.id = t.facet_id
-                join concepts c on c.id = f.concept_id
-                join crystal_concepts cc on cc.concept_id = c.id
-                join crystals cr on cr.id = cc.crystal_id
-                where f.superseded_at is null
-                  and c.status not in ('archived', 'merged')
-                  and t.semantic_tag collate nocase in ({placeholders})
-                  and cr.status in ('active', 'candidate')
-                  and (
-                    (cr.scope_type = 'series' and cr.scope_key = ?)
-                    or cr.scope_type = 'global'
-                  )
-                  and (cr.source_language = ? or cr.source_language = '')
-                  and (cr.target_language = ? or cr.target_language = '')
-                order by c.id
-                limit ?
+                join concepts concept on concept.id = f.concept_id
                 """,
-                (
-                    *lookup_values,
-                    context.scope_key,
-                    context.source_language,
-                    context.target_language,
-                    limit,
+                match_sql=(
+                    f"f.superseded_at is null and t.semantic_tag collate nocase in ({placeholders})"
                 ),
-            ).fetchall()
-            for row in rows:
-                concept_id = int(row["id"])
-                scores[concept_id] = max(scores.get(concept_id, 0.0), _SEMANTIC_TAG_BOOST)
-
-            rows = conn.execute(
-                f"""
-                select distinct c.id
-                from concept_facet_story_scopes s
+                match_params=lookup_values,
+                boost=_SEMANTIC_TAG_BOOST,
+                limit=limit,
+            )
+            self._add_concept_linked_score_rows(
+                conn,
+                scores,
+                context=context,
+                concept_from_sql="""
+                concept_facet_story_scopes s
                 join concept_facets f on f.id = s.facet_id
-                join concepts c on c.id = f.concept_id
-                join crystal_concepts cc on cc.concept_id = c.id
-                join crystals cr on cr.id = cc.crystal_id
-                where f.superseded_at is null
-                  and c.status not in ('archived', 'merged')
-                  and s.story_scope collate nocase in ({placeholders})
-                  and cr.status in ('active', 'candidate')
-                  and (
-                    (cr.scope_type = 'series' and cr.scope_key = ?)
-                    or cr.scope_type = 'global'
-                  )
-                  and (cr.source_language = ? or cr.source_language = '')
-                  and (cr.target_language = ? or cr.target_language = '')
-                order by c.id
-                limit ?
+                join concepts concept on concept.id = f.concept_id
                 """,
-                (
-                    *lookup_values,
-                    context.scope_key,
-                    context.source_language,
-                    context.target_language,
-                    limit,
+                match_sql=(
+                    f"f.superseded_at is null and s.story_scope collate nocase in ({placeholders})"
                 ),
-            ).fetchall()
-            for row in rows:
-                concept_id = int(row["id"])
-                scores[concept_id] = max(scores.get(concept_id, 0.0), _CONCEPT_LINK_BASE_BOOST)
+                match_params=lookup_values,
+                boost=_CONCEPT_LINK_BASE_BOOST,
+                limit=limit,
+            )
 
-        return dict(sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:limit])
+    def _add_concept_linked_score_rows(
+        self,
+        conn,
+        scores: dict[int, float],
+        *,
+        context: TranslationContext,
+        concept_from_sql: str,
+        match_sql: str,
+        match_params: tuple[object, ...],
+        boost: float,
+        limit: int,
+    ) -> None:
+        rows = conn.execute(
+            f"""
+            select distinct
+              c.id,
+              c.strength,
+              c.confidence,
+              c.scope_type,
+              concept.id as concept_id
+            from {concept_from_sql}
+            join crystal_concepts cc on cc.concept_id = concept.id
+            join crystals c on c.id = cc.crystal_id
+            where {match_sql}
+              and concept.status not in ('archived', 'merged')
+              and c.status in ('active', 'candidate')
+              and (
+                (c.scope_type = 'series' and c.scope_key = ?)
+                or c.scope_type = 'global'
+              )
+              and (c.source_language = ? or c.source_language = '')
+              and (c.target_language = ? or c.target_language = '')
+            order by ({_SQL_METADATA_SCORE} + ?) desc,
+                     c.id,
+                     concept.id
+            limit ?
+            """,
+            (
+                *match_params,
+                context.scope_key,
+                context.source_language,
+                context.target_language,
+                boost,
+                limit,
+            ),
+        ).fetchall()
+        for row in rows:
+            self._add_long_term_metadata_score(scores, row, boost)
 
     def _concept_labels_for_crystals(
         self,
