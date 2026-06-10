@@ -589,10 +589,10 @@ def test_admin_bridge_audit_lookup_returns_phase_entries_and_parse_warning_recor
     labels = [row["label"] for row in payload["snapshot"]["rows"]]
     assert labels == [
         "phase_completed: completed crystallization phase",
-        "phase_completed: completed crystallization phase",
         "provider_response: received crystallization response",
         "parse_warnings: dream response parsed with recoverable warnings",
         "provider_request: sent crystallization request",
+        "phase_completed: completed crystallization phase",
         "provider_response: received crystallization response",
         "parse_warnings: dream response parsed with recoverable warnings",
         "provider_request: sent crystallization request",
@@ -605,10 +605,10 @@ def test_admin_bridge_audit_lookup_returns_phase_entries_and_parse_warning_recor
         "provider_request",
         "parse_warnings",
         "provider_response",
+        "phase_completed",
         "provider_request",
         "parse_warnings",
         "provider_response",
-        "phase_completed",
         "phase_completed",
     ]
     assert all(entry.phase_run_id is not None for entry in entries)

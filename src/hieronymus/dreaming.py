@@ -510,7 +510,6 @@ class DreamService:
         input_count = 0
         created_crystal_count = 0
         proposal_count = 0
-        pending_phase_audits: list[dict[str, object]] = []
         batch_apply_summaries: list[_DreamApplySummary] = []
         try:
             pending_count = self._pending_short_term_memory_count()
@@ -625,16 +624,15 @@ class DreamService:
                         outputs=outputs,
                     )
                     batch_apply_summaries.append(apply_summary)
-                    pending_phase_audits.append(
-                        {
-                            "run_id": run_id,
-                            "phase_run_id": phase_run_id,
-                            "trigger_type": trigger_type,
-                            "threshold_state": threshold_state,
-                            "selected_memory_ids": selected_memory_ids,
-                            "groups": groups,
-                            "outputs": outputs,
-                        }
+                    self._audit_phase_completed(
+                        run_id=run_id,
+                        phase_run_id=phase_run_id,
+                        trigger_type=trigger_type,
+                        threshold_state=threshold_state,
+                        selected_memory_ids=selected_memory_ids,
+                        groups=groups,
+                        outputs=outputs,
+                        apply_summary=apply_summary,
                     )
                 except Exception as exc:
                     self._fail_phase_run(phase_run_id, exc)
@@ -643,7 +641,6 @@ class DreamService:
                 processed_batches += 1
 
             processed_session_ids.update(self._completed_session_ids_without_pending_memories())
-            finalized_apply_summaries: list[_DreamApplySummary] = list(batch_apply_summaries)
             with connect(self.config.database_path) as conn:
                 changed_ids_before_maintenance = _summary_changed_crystal_ids(batch_apply_summaries)
                 remaining_changed_crystals = max(
@@ -676,12 +673,6 @@ class DreamService:
                     passive_summary,
                     decay_summary,
                 )
-                if finalized_apply_summaries:
-                    finalized_apply_summaries[-1] = self._merge_apply_summaries(
-                        conn,
-                        finalized_apply_summaries[-1],
-                        maintenance_summary,
-                    )
                 self._mark_fully_archived_completed_sessions(
                     conn,
                     cycle_id,
@@ -695,7 +686,7 @@ class DreamService:
                     proposal_count=proposal_count,
                 )
                 conn.commit()
-            if not finalized_apply_summaries and _summary_has_activity(maintenance_summary):
+            if _summary_has_activity(maintenance_summary):
                 phase_run_id = self._start_phase_run(
                     run_id=run_id,
                     phase="maintenance",
@@ -705,34 +696,16 @@ class DreamService:
                     phase_run_id=phase_run_id,
                     output_count=_summary_output_count(maintenance_summary),
                 )
-                pending_phase_audits.append(
-                    {
-                        "run_id": run_id,
-                        "phase_run_id": phase_run_id,
-                        "trigger_type": trigger_type,
-                        "threshold_state": threshold_state,
-                        "selected_memory_ids": (),
-                        "groups": [],
-                        "outputs": [],
-                        "phase_name": "maintenance",
-                    }
-                )
-                finalized_apply_summaries.append(maintenance_summary)
-            for audit_payload, apply_summary in zip(
-                pending_phase_audits,
-                finalized_apply_summaries,
-                strict=True,
-            ):
                 self._audit_phase_completed(
-                    run_id=int(audit_payload["run_id"]),
-                    phase_run_id=int(audit_payload["phase_run_id"]),
-                    trigger_type=str(audit_payload["trigger_type"]),
-                    threshold_state=audit_payload["threshold_state"],
-                    selected_memory_ids=audit_payload["selected_memory_ids"],
-                    groups=audit_payload["groups"],
-                    outputs=audit_payload["outputs"],
-                    apply_summary=apply_summary,
-                    phase_name=str(audit_payload.get("phase_name", "crystallization")),
+                    run_id=run_id,
+                    phase_run_id=phase_run_id,
+                    trigger_type=trigger_type,
+                    threshold_state=threshold_state,
+                    selected_memory_ids=(),
+                    groups=[],
+                    outputs=[],
+                    apply_summary=maintenance_summary,
+                    phase_name="maintenance",
                 )
             return DreamRunRecord(
                 id=run_id,

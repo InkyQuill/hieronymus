@@ -284,6 +284,13 @@ def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
         phase_rows = conn.execute(
             "select status from dream_phase_runs order by id",
         ).fetchall()
+        audit_rows = conn.execute(
+            """
+            select event_type, summary, phase_run_id
+            from dream_audit_entries
+            order by id
+            """
+        ).fetchall()
 
     assert failed_run["status"] == "failed"
     assert failed_run["input_count"] == 2
@@ -298,6 +305,13 @@ def test_run_all_failed_later_batch_keeps_successful_batch_cycle_attribution(
     assert first_session_after_failure["status"] == "completed"
     assert first_session_after_failure["cycle_id"] is None
     assert [row["status"] for row in phase_rows] == ["completed", "failed"]
+    assert [(row["event_type"], row["summary"]) for row in audit_rows] == [
+        ("provider_request", "sent crystallization request"),
+        ("provider_response", "received crystallization response"),
+        ("phase_completed", "completed crystallization phase"),
+        ("provider_request", "sent crystallization request"),
+    ]
+    assert audit_rows[2]["phase_run_id"] is not None
 
     later_run = DreamService(
         config,
