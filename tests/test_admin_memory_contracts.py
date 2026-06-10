@@ -67,7 +67,7 @@ def test_memory_contracts_expose_header_status_controls_and_config(
     assert "add_user_correction" in payload["short_term_memories"]["actions"]
     assert "merge" in payload["concepts"]["actions"]
     assert payload["short_term_status"]["pending_count"] == 0
-    assert payload["dream_status"]["state"] in {"IDLE", "WORKING"}
+    assert payload["dream_status"]["state"] == "DISABLED"
     editor = payload["config_editor"]
     assert "providers" in editor
     assert "workflows" in editor
@@ -163,6 +163,84 @@ def test_audit_list_detail_displays_dream_cycle_with_multiple_phases(
     }
     assert snapshot.detail.fields[1] == ("Phase run", str(crystallization_id))
     assert '"phase_name": "crystallization"' in snapshot.detail.body
+
+
+def test_admin_status_reports_running_maintenance_phase_for_completed_run(
+    config: HieronymusConfig,
+) -> None:
+    store = AdminStore(config)
+    with connect(config.database_path) as conn:
+        run_id = int(
+            conn.execute(
+                """
+                insert into dream_runs(
+                  cycle_id,
+                  status,
+                  provider,
+                  input_count,
+                  created_crystal_count,
+                  proposal_count,
+                  created_at,
+                  completed_at
+                )
+                values (12, 'completed', 'deterministic', 3, 1, 0, ?, ?)
+                """,
+                ("2026-06-10T00:00:00+00:00", "2026-06-10T00:00:06+00:00"),
+            ).lastrowid
+        )
+        conn.execute(
+            """
+            insert into dream_phase_runs(
+              dream_run_id,
+              phase,
+              provider_profile,
+              provider_type,
+              model,
+              status,
+              input_count,
+              output_count,
+              created_at,
+              completed_at
+            )
+            values (?, 'crystallization', 'deterministic', 'deterministic', '',
+                    'completed', 3, 1, ?, ?)
+            """,
+            (run_id, "2026-06-10T00:00:01+00:00", "2026-06-10T00:00:05+00:00"),
+        )
+        conn.execute(
+            """
+            insert into dream_phase_runs(
+              dream_run_id,
+              phase,
+              provider_profile,
+              provider_type,
+              model,
+              status,
+              input_count,
+              output_count,
+              created_at
+            )
+            values (?, 'maintenance', 'deterministic', 'deterministic', '',
+                    'running', 0, 0, ?)
+            """,
+            (run_id, "2026-06-10T00:00:07+00:00"),
+        )
+        conn.commit()
+
+    payload = store.status_payload()
+
+    assert payload["dream_status"] == {
+        "state": "WORKING",
+        "current_phase": "maintenance",
+        "progress": 0.9,
+        "run_id": run_id,
+        "cycle_id": 12,
+        "owner": "",
+        "started_at": "",
+    }
+    assert payload["short_term_status"]["drain_in_progress"] is True
+    assert payload["short_term_status"]["drain_completed"] == 3
+    assert payload["short_term_status"]["drain_progress"] == 1.0
 
 
 def test_user_correction_creates_short_term_memory_and_not_rule_crystal(

@@ -78,7 +78,7 @@ def test_status_payload_reports_admin_counts(config: HieronymusConfig) -> None:
     assert payload["short_term_status"]["pending_count"] == 0
     assert payload["short_term_status"]["urgent"] is False
     assert payload["dream_status"] == {
-        "state": "IDLE",
+        "state": "DISABLED",
         "current_phase": "",
         "progress": 0.0,
         "run_id": None,
@@ -109,7 +109,7 @@ def test_status_payload_survives_malformed_dream_config(
         "drain_total": 0,
         "drain_progress": 0.0,
     }
-    assert payload["dream_status"]["state"] == "IDLE"
+    assert payload["dream_status"]["state"] == "DISABLED"
     assert payload["dream_status"]["current_phase"] == ""
     assert payload["dream_status"]["progress"] == 0.0
     assert "dream.conf is not valid TOML" in payload["dream_status"]["reason"]

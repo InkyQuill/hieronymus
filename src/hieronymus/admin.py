@@ -228,16 +228,32 @@ class AdminStore:
     def _dream_status(self, dream_config: DreamConfig) -> AdminDreamStatus:
         active_cycle = read_dream_cycle_state(self.config)
         with connect(self.config.database_path) as conn:
-            run = conn.execute(
+            running_phase = conn.execute(
                 """
-                select *
-                from dream_runs
-                where status = 'running'
-                order by id desc
+                select
+                  p.*,
+                  r.id as dream_run_id,
+                  r.cycle_id as dream_cycle_id
+                from dream_phase_runs as p
+                join dream_runs as r
+                  on r.id = p.dream_run_id
+                where p.status = 'running'
+                order by p.id desc
                 limit 1
                 """
             ).fetchone()
-            phase = None
+            run = None
+            if running_phase is None:
+                run = conn.execute(
+                    """
+                    select *
+                    from dream_runs
+                    where status = 'running'
+                    order by id desc
+                    limit 1
+                    """
+                ).fetchone()
+            phase = running_phase
             if run is not None:
                 phase = conn.execute(
                     """
@@ -250,16 +266,26 @@ class AdminStore:
                     (run["id"],),
                 ).fetchone()
 
-        if active_cycle is None and run is None:
-            return AdminDreamStatus(state="IDLE", current_phase="", progress=0.0)
+        run_id = None
+        cycle_id = None
+        if running_phase is not None:
+            run_id = int(running_phase["dream_run_id"])
+            cycle_id = int(running_phase["dream_cycle_id"])
+        elif run is not None:
+            run_id = int(run["id"])
+            cycle_id = int(run["cycle_id"])
+
+        if active_cycle is None and run_id is None:
+            state = "IDLE" if dream_config.enabled else "DISABLED"
+            return AdminDreamStatus(state=state, current_phase="", progress=0.0)
 
         current_phase = "starting" if phase is None else phase["phase"]
         return AdminDreamStatus(
             state="WORKING",
             current_phase=current_phase,
             progress=self._phase_progress(current_phase),
-            run_id=None if run is None else int(run["id"]),
-            cycle_id=None if run is None else int(run["cycle_id"]),
+            run_id=run_id,
+            cycle_id=cycle_id,
             owner="" if active_cycle is None else active_cycle.owner,
             started_at="" if active_cycle is None else active_cycle.started_at,
         )
@@ -267,6 +293,8 @@ class AdminStore:
     def _phase_progress(self, current_phase: str) -> float:
         if current_phase == "starting":
             return 0.0
+        if current_phase == "maintenance":
+            return 0.9
         drain = self._dream_drain_progress(self.pending_completed_short_term_memory_count())
         if int(drain["total"]) > 0:
             return float(drain["progress"])
@@ -274,16 +302,31 @@ class AdminStore:
 
     def _dream_drain_progress(self, pending_count: int) -> dict[str, int | bool | float]:
         with connect(self.config.database_path) as conn:
-            run = conn.execute(
+            running_phase = conn.execute(
                 """
-                select id
-                from dream_runs
+                select dream_run_id
+                from dream_phase_runs
                 where status = 'running'
                 order by id desc
                 limit 1
                 """
             ).fetchone()
-            if run is None and read_dream_cycle_state(self.config) is None:
+            run_id = None
+            if running_phase is not None:
+                run_id = int(running_phase["dream_run_id"])
+            else:
+                run = conn.execute(
+                    """
+                    select id
+                    from dream_runs
+                    where status = 'running'
+                    order by id desc
+                    limit 1
+                    """
+                ).fetchone()
+                if run is not None:
+                    run_id = int(run["id"])
+            if run_id is None and read_dream_cycle_state(self.config) is None:
                 return {
                     "in_progress": False,
                     "completed": 0,
@@ -298,7 +341,7 @@ class AdminStore:
                 where dream_run_id = ?
                   and status = 'completed'
                 """,
-                (-1 if run is None else int(run["id"]),),
+                (-1 if run_id is None else run_id,),
             ).fetchone()
         completed = int(completed_row["input_count"]) if completed_row is not None else 0
         total = completed + pending_count
