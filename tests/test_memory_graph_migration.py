@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
+from hieronymus.doctor import Doctor, DoctorFinding
 from hieronymus.memory_migration import MemoryGraphMigrator
 
 NOW = "2026-06-10T00:00:00+00:00"
@@ -258,6 +263,224 @@ def test_migration_is_idempotent_across_second_run(config: HieronymusConfig) -> 
     second_counts = _graph_counts(config)
 
     assert second_counts == first_counts
+
+
+def test_migration_rolls_back_partial_backfill_on_failure(config: HieronymusConfig) -> None:
+    _seed_base(config)
+    migrator = MemoryGraphMigrator(config)
+
+    with pytest.raises(RuntimeError, match="forced migration failure"):
+        with patch.object(
+            migrator,
+            "_migrate_strict_terms",
+            side_effect=RuntimeError("forced migration failure"),
+        ):
+            migrator.run()
+
+    with connect(config.database_path) as conn:
+        assert conn.execute("select count(*) from series_language_tags").fetchone()[0] == 0
+
+
+def test_strict_term_with_unsupported_source_alias_is_skipped(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        term_id = _insert_strict_term(conn)
+        conn.execute(
+            """
+            insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
+            values (?, 'ja', '攻撃バフ', 'source_variant', 1)
+            """,
+            (term_id,),
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator(config).run()
+
+    assert report.skipped == {"strict_terms.unsupported_alias": 1}
+    with connect(config.database_path) as conn:
+        assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
+        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+
+
+def test_strict_term_with_unsupported_search_alias_is_skipped(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        term_id = _insert_strict_term(conn)
+        conn.execute(
+            """
+            insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
+            values (?, 'ja', 'atk buff', 'search_alias', 1)
+            """,
+            (term_id,),
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator(config).run()
+
+    assert report.skipped == {"strict_terms.unsupported_alias": 1}
+    with connect(config.database_path) as conn:
+        assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
+        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+
+
+def test_strict_term_with_case_insensitive_forbidden_alias_is_skipped(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        term_id = _insert_strict_term(conn)
+        conn.execute(
+            """
+            insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
+            values (?, 'en', 'Attack Up', 'forbidden_variant', 0)
+            """,
+            (term_id,),
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator(config).run()
+
+    assert report.skipped == {"strict_terms.unsupported_alias": 1}
+    with connect(config.database_path) as conn:
+        assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
+        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+
+
+def test_migrator_tolerates_partial_older_task_and_crystal_tables(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table task_sessions (
+              id integer primary key,
+              status text not null
+            );
+            create table crystals (
+              id integer primary key,
+              crystal_type text not null,
+              text text not null,
+              confidence real not null,
+              created_at text not null
+            );
+            insert into task_sessions(id, status) values (1, 'active');
+            insert into crystals(id, crystal_type, text, confidence, created_at)
+            values (1, 'lesson', 'Legacy.', 0.4, '2026-06-10T00:00:00+00:00');
+            """
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator(config).run()
+
+    assert report.skipped == {}
+
+
+def test_doctor_tolerates_partial_older_task_and_crystal_tables(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table task_sessions (
+              id integer primary key,
+              status text not null
+            );
+            create table crystals (
+              id integer primary key,
+              crystal_type text not null
+            );
+            insert into task_sessions(id, status) values (1, 'active');
+            insert into crystals(id, crystal_type) values (1, 'lesson');
+            """
+        )
+        conn.commit()
+
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        report = Doctor(config).run(autofix=False)
+
+    assert all(finding.code != "database-unreadable" for finding in report["errors"])
+
+
+def test_dry_report_counts_crystal_soft_origin_backfill(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table crystals (
+              id integer primary key,
+              source_ref text not null default '',
+              soft_origin text
+            );
+            insert into crystals(id, source_ref, soft_origin)
+            values (1, 'legacy-note', '');
+            """
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator.inspect(config)
+
+    assert report.pending["crystals.soft_origin"] == 1
+
+
+def test_doctor_reports_crystal_soft_origin_dry_run_work(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table crystals (
+              id integer primary key,
+              source_ref text not null default '',
+              soft_origin text
+            );
+            insert into crystals(id, source_ref, soft_origin)
+            values (1, 'legacy-note', '');
+            """
+        )
+        conn.commit()
+
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        report = Doctor(config).run(autofix=False)
+
+    assert (
+        DoctorFinding(
+            level="warning",
+            code="memory-graph-migration-pending",
+            message=(
+                "Legacy memory graph migration has pending dry-run work: crystals.soft_origin: 1"
+            ),
+        )
+        in report["warnings"]
+    )
+
+
+def test_doctor_migration_inspect_does_not_use_per_row_missing_value_scan(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    _seed_base(config)
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        with patch(
+            "hieronymus.memory_migration._missing_values",
+            create=True,
+            side_effect=AssertionError("per-row scan should not run during doctor"),
+        ):
+            Doctor(config).run(autofix=False)
 
 
 def _seed_base(config: HieronymusConfig) -> None:

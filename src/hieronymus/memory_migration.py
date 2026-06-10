@@ -12,6 +12,8 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
 from hieronymus.rule_crystals import parse_rule_crystal
 
+_UNSUPPORTED_RULE_ALIAS_KINDS = frozenset({"source_variant", "search_alias"})
+
 
 class Database(Protocol):
     database_path: Path
@@ -145,7 +147,15 @@ class MemoryGraphMigrator:
         conn: sqlite3.Connection,
         updated: Counter[str],
     ) -> None:
-        if not _has_table(conn, "series") or not _has_table(conn, "series_language_tags"):
+        if not (
+            _has_table(conn, "series")
+            and _has_table(conn, "series_language_tags")
+            and _has_columns(
+                conn,
+                "series",
+                {"id", "default_source_language", "default_target_language"},
+            )
+        ):
             return
         for row in conn.execute(
             "select id, default_source_language, default_target_language from series"
@@ -174,7 +184,15 @@ class MemoryGraphMigrator:
         columns = _columns(conn, "task_sessions")
         rows = conn.execute("select * from task_sessions order by id").fetchall()
         for row in rows:
-            if _has_table(conn, "task_session_language_tags"):
+            if (
+                _has_table(conn, "task_session_language_tags")
+                and {
+                    "id",
+                    "source_language",
+                    "target_language",
+                }
+                <= columns
+            ):
                 for language_tag in _clean_tags(
                     (row["source_language"], row["target_language"]),
                     lowercase=True,
@@ -188,7 +206,7 @@ class MemoryGraphMigrator:
                         (row["id"], language_tag),
                     )
 
-            if _has_table(conn, "task_session_story_scopes"):
+            if _has_table(conn, "task_session_story_scopes") and "id" in columns:
                 story_scopes = []
                 if "volume" in columns and str(row["volume"]).strip():
                     story_scopes.append(f"volume:{str(row['volume']).strip()}")
@@ -204,7 +222,7 @@ class MemoryGraphMigrator:
                         (row["id"], story_scope),
                     )
 
-            if _has_table(conn, "task_session_semantic_tags"):
+            if _has_table(conn, "task_session_semantic_tags") and "id" in columns:
                 for semantic_tag in _legacy_session_tags(row, columns):
                     updated["task_session_semantic_tags"] += _insert_ignore(
                         conn,
@@ -222,8 +240,17 @@ class MemoryGraphMigrator:
     ) -> None:
         if not _has_table(conn, "crystals"):
             return
+        columns = _columns(conn, "crystals")
         for row in conn.execute("select * from crystals order by id"):
-            if _has_table(conn, "crystal_language_tags"):
+            if (
+                _has_table(conn, "crystal_language_tags")
+                and {
+                    "id",
+                    "source_language",
+                    "target_language",
+                }
+                <= columns
+            ):
                 for language_tag in _clean_tags(
                     (row["source_language"], row["target_language"]),
                     lowercase=True,
@@ -237,7 +264,7 @@ class MemoryGraphMigrator:
                         (row["id"], language_tag),
                     )
 
-            if _has_table(conn, "crystal_semantic_tags"):
+            if _has_table(conn, "crystal_semantic_tags") and {"id", "tags_json"} <= columns:
                 for tag in _json_string_values(row["tags_json"]):
                     updated["crystal_semantic_tags"] += _insert_ignore(
                         conn,
@@ -250,7 +277,12 @@ class MemoryGraphMigrator:
                         )
                         values (?, ?, ?, ?)
                         """,
-                        (row["id"], tag, row["confidence"], row["created_at"]),
+                        (
+                            row["id"],
+                            tag,
+                            _row_value(row, columns, "confidence", 0.2),
+                            _row_value(row, columns, "created_at", _now(conn)),
+                        ),
                     )
 
     def _migrate_soft_origins(
@@ -310,7 +342,23 @@ class MemoryGraphMigrator:
         created: Counter[str],
         skipped: Counter[str],
     ) -> None:
-        if not _has_table(conn, "strict_terms"):
+        if not (
+            _has_table(conn, "strict_terms")
+            and _has_columns(
+                conn,
+                "strict_terms",
+                {
+                    "id",
+                    "status",
+                    "source_text",
+                    "canonical_translation",
+                    "notes",
+                    "series_slug",
+                    "source_language",
+                    "target_language",
+                },
+            )
+        ):
             return
         rows = conn.execute(
             """
@@ -322,8 +370,11 @@ class MemoryGraphMigrator:
         ).fetchall()
         for term in rows:
             tags = self._strict_term_tags(conn, int(term["id"]))
-            forbidden = self._strict_term_forbidden_variants(conn, int(term["id"]))
-            approved = self._strict_term_approved_variants(conn, int(term["id"]))
+            aliases = self._strict_term_rule_aliases(conn, int(term["id"]))
+            if aliases is None:
+                skipped["strict_terms.unsupported_alias"] += 1
+                continue
+            approved, forbidden = aliases
             if not _validate_rule_shape(
                 source_text=term["source_text"],
                 canonical_translation=term["canonical_translation"],
@@ -392,7 +443,26 @@ class MemoryGraphMigrator:
         created: Counter[str],
         skipped: Counter[str],
     ) -> None:
-        if not _has_table(conn, "strict_concept_proposals"):
+        if not (
+            _has_table(conn, "strict_concept_proposals")
+            and _has_columns(
+                conn,
+                "strict_concept_proposals",
+                {
+                    "id",
+                    "status",
+                    "source_form",
+                    "concept_text",
+                    "canonical_rendering",
+                    "approved_variants_json",
+                    "forbidden_variants_json",
+                    "rationale",
+                    "series_slug",
+                    "source_language",
+                    "target_language",
+                },
+            )
+        ):
             return
         for proposal in conn.execute("select * from strict_concept_proposals order by id"):
             status = str(proposal["status"])
@@ -749,41 +819,44 @@ class MemoryGraphMigrator:
             )
         )
 
-    def _strict_term_forbidden_variants(
+    def _strict_term_rule_aliases(
         self,
         conn: sqlite3.Connection,
         term_id: int,
-    ) -> tuple[str, ...]:
-        return self._strict_term_aliases(conn, term_id, "forbidden_variant")
-
-    def _strict_term_approved_variants(
-        self,
-        conn: sqlite3.Connection,
-        term_id: int,
-    ) -> tuple[str, ...]:
-        return self._strict_term_aliases(conn, term_id, "approved_variant")
-
-    def _strict_term_aliases(
-        self,
-        conn: sqlite3.Connection,
-        term_id: int,
-        kind: str,
-    ) -> tuple[str, ...]:
+    ) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
         if not _has_table(conn, "strict_term_aliases"):
-            return ()
-        return tuple(
-            row["text"]
-            for row in conn.execute(
-                """
-                select text
-                from strict_term_aliases
-                where term_id = ? and kind = ?
-                order by id
-                """,
-                (term_id, kind),
-            )
-            if str(row["text"]).strip()
+            return ((), ())
+        if not _has_columns(
+            conn,
+            "strict_term_aliases",
+            {"term_id", "text", "kind", "case_sensitive"},
+        ):
+            return ((), ())
+        rows = conn.execute(
+            """
+            select text, kind, case_sensitive
+            from strict_term_aliases
+            where term_id = ?
+            order by id
+            """,
+            (term_id,),
+        ).fetchall()
+        for row in rows:
+            if row["kind"] in _UNSUPPORTED_RULE_ALIAS_KINDS:
+                return None
+            if not bool(row["case_sensitive"]):
+                return None
+        approved = tuple(
+            row["text"].strip()
+            for row in rows
+            if row["kind"] == "approved_variant" and row["text"].strip()
         )
+        forbidden = tuple(
+            row["text"].strip()
+            for row in rows
+            if row["kind"] == "forbidden_variant" and row["text"].strip()
+        )
+        return (approved, forbidden)
 
     def _matching_concept(
         self,
@@ -885,7 +958,15 @@ class MemoryGraphMigrator:
         conn: sqlite3.Connection,
         pending: Counter[str],
     ) -> None:
-        if _has_table(conn, "series") and _has_table(conn, "series_language_tags"):
+        if (
+            _has_table(conn, "series")
+            and _has_table(conn, "series_language_tags")
+            and _has_columns(
+                conn,
+                "series",
+                {"id", "default_source_language", "default_target_language"},
+            )
+        ):
             pending["series_language_tags"] = _pending_default_language_tags(conn, "series")
 
     def _count_pending_task_sessions(
@@ -896,35 +977,65 @@ class MemoryGraphMigrator:
         if not _has_table(conn, "task_sessions"):
             return
         columns = _columns(conn, "task_sessions")
-        for row in conn.execute("select * from task_sessions"):
-            pending["task_session_language_tags"] += _missing_values(
+        if (
+            _has_table(conn, "task_session_language_tags")
+            and {
+                "id",
+                "source_language",
+                "target_language",
+            }
+            <= columns
+        ):
+            pending["task_session_language_tags"] += _pending_owner_values(
                 conn,
                 "task_session_language_tags",
                 "session_id",
-                int(row["id"]),
                 "language_tag",
-                _clean_tags((row["source_language"], row["target_language"]), lowercase=True),
+                """
+                select id as owner_id, lower(trim(source_language)) as value
+                from task_sessions
+                where trim(source_language) != ''
+                union
+                select id as owner_id, lower(trim(target_language)) as value
+                from task_sessions
+                where trim(target_language) != ''
+                """,
             )
-            story_scopes = []
-            if "volume" in columns and str(row["volume"]).strip():
-                story_scopes.append(f"volume:{str(row['volume']).strip()}")
-            if "chapter" in columns and str(row["chapter"]).strip():
-                story_scopes.append(f"chapter:{str(row['chapter']).strip()}")
-            pending["task_session_story_scopes"] += _missing_values(
+
+        story_selects: list[str] = []
+        if _has_table(conn, "task_session_story_scopes") and "id" in columns:
+            if "volume" in columns:
+                story_selects.append(
+                    """
+                    select id as owner_id, 'volume:' || trim(volume) as value
+                    from task_sessions
+                    where trim(volume) != ''
+                    """
+                )
+            if "chapter" in columns:
+                story_selects.append(
+                    """
+                    select id as owner_id, 'chapter:' || trim(chapter) as value
+                    from task_sessions
+                    where trim(chapter) != ''
+                    """
+                )
+        if story_selects:
+            pending["task_session_story_scopes"] += _pending_owner_values(
                 conn,
                 "task_session_story_scopes",
                 "session_id",
-                int(row["id"]),
                 "story_scope",
-                _clean_tags(story_scopes),
+                "\nunion\n".join(story_selects),
             )
-            pending["task_session_semantic_tags"] += _missing_values(
-                conn,
-                "task_session_semantic_tags",
-                "session_id",
-                int(row["id"]),
-                "semantic_tag",
-                _legacy_session_tags(row, columns),
+        if _has_table(conn, "task_session_semantic_tags") and "id" in columns:
+            pending["task_session_semantic_tags"] += _pending_owner_rows_with_legacy_values(
+                conn=conn,
+                owner_table="task_sessions",
+                target_table="task_session_semantic_tags",
+                owner_column="session_id",
+                value_column="semantic_tag",
+                value_source_columns=("tags_json", "semantic_tags_json", "tags"),
             )
 
     def _count_pending_crystal_metadata(
@@ -934,22 +1045,39 @@ class MemoryGraphMigrator:
     ) -> None:
         if not _has_table(conn, "crystals"):
             return
-        for row in conn.execute("select * from crystals"):
-            pending["crystal_language_tags"] += _missing_values(
+        columns = _columns(conn, "crystals")
+        if (
+            _has_table(conn, "crystal_language_tags")
+            and {
+                "id",
+                "source_language",
+                "target_language",
+            }
+            <= columns
+        ):
+            pending["crystal_language_tags"] += _pending_owner_values(
                 conn,
                 "crystal_language_tags",
                 "crystal_id",
-                int(row["id"]),
                 "language_tag",
-                _clean_tags((row["source_language"], row["target_language"]), lowercase=True),
+                """
+                select id as owner_id, lower(trim(source_language)) as value
+                from crystals
+                where trim(source_language) != ''
+                union
+                select id as owner_id, lower(trim(target_language)) as value
+                from crystals
+                where trim(target_language) != ''
+                """,
             )
-            pending["crystal_semantic_tags"] += _missing_values(
-                conn,
-                "crystal_semantic_tags",
-                "crystal_id",
-                int(row["id"]),
-                "tag",
-                _json_string_values(row["tags_json"]),
+        if _has_table(conn, "crystal_semantic_tags") and {"id", "tags_json"} <= columns:
+            pending["crystal_semantic_tags"] += _pending_owner_rows_with_legacy_values(
+                conn=conn,
+                owner_table="crystals",
+                target_table="crystal_semantic_tags",
+                owner_column="crystal_id",
+                value_column="tag",
+                value_source_columns=("tags_json",),
             )
 
     def _count_pending_soft_origins(
@@ -971,6 +1099,20 @@ class MemoryGraphMigrator:
                   and (soft_origin is null or soft_origin = '')
                 """,
             )
+        if _has_table(conn, "crystals") and _has_columns(
+            conn,
+            "crystals",
+            {"source_ref", "soft_origin"},
+        ):
+            pending["crystals.soft_origin"] = _scalar_count(
+                conn,
+                """
+                select count(*)
+                from crystals
+                where source_ref != ''
+                  and (soft_origin is null or soft_origin = '')
+                """,
+            )
 
     def _count_pending_legacy_concept_statuses(
         self,
@@ -988,7 +1130,11 @@ class MemoryGraphMigrator:
         conn: sqlite3.Connection,
         pending: Counter[str],
     ) -> None:
-        if _has_table(conn, "strict_terms"):
+        if _has_table(conn, "strict_terms") and _has_columns(
+            conn,
+            "strict_terms",
+            {"id", "status"},
+        ):
             if _has_table(conn, "memory_graph_migration_ledger"):
                 pending["strict_terms"] = _scalar_count(
                     conn,
@@ -1010,7 +1156,11 @@ class MemoryGraphMigrator:
                     conn,
                     "select count(*) from strict_terms where status in ('approved', 'active')",
                 )
-        if _has_table(conn, "strict_concept_proposals"):
+        if _has_table(conn, "strict_concept_proposals") and _has_columns(
+            conn,
+            "strict_concept_proposals",
+            {"id", "status"},
+        ):
             if _has_table(conn, "memory_graph_migration_ledger"):
                 pending["strict_concept_proposals"] = _scalar_count(
                     conn,
@@ -1096,44 +1246,93 @@ def _legacy_session_tags(row: sqlite3.Row, columns: set[str]) -> tuple[str, ...]
     return ()
 
 
-def _missing_values(
+def _row_value(
+    row: sqlite3.Row,
+    columns: set[str],
+    column: str,
+    default: object,
+) -> object:
+    if column not in columns:
+        return default
+    value = row[column]
+    return default if value is None else value
+
+
+def _pending_owner_values(
     conn: sqlite3.Connection,
-    table: str,
+    target_table: str,
     owner_column: str,
-    owner_id: int,
     value_column: str,
-    values: tuple[str, ...],
+    wanted_sql: str,
 ) -> int:
-    if not values or not _has_table(conn, table):
+    if not _has_table(conn, target_table):
         return 0
-    return sum(
-        1
-        for value in values
-        if conn.execute(
-            f"select 1 from {table} where {owner_column} = ? and {value_column} = ?",
-            (owner_id, value),
-        ).fetchone()
-        is None
+    return _scalar_count(
+        conn,
+        f"""
+        select count(*)
+        from ({wanted_sql}) wanted
+        where wanted.value != ''
+          and not exists (
+            select 1
+            from {target_table} target
+            where target.{owner_column} = wanted.owner_id
+              and target.{value_column} = wanted.value
+          )
+        """,
+    )
+
+
+def _pending_owner_rows_with_legacy_values(
+    *,
+    conn: sqlite3.Connection,
+    owner_table: str,
+    target_table: str,
+    owner_column: str,
+    value_column: str,
+    value_source_columns: tuple[str, ...],
+) -> int:
+    owner_columns = _columns(conn, owner_table)
+    if not (_has_table(conn, target_table) and "id" in owner_columns):
+        return 0
+    present_source_columns = [column for column in value_source_columns if column in owner_columns]
+    if not present_source_columns:
+        return 0
+    non_empty_conditions = " or ".join(
+        f"trim(coalesce({column}, '')) not in ('', '[]')" for column in present_source_columns
+    )
+    return _scalar_count(
+        conn,
+        f"""
+        select count(*)
+        from {owner_table} owner
+        where ({non_empty_conditions})
+          and not exists (
+            select 1
+            from {target_table} target
+            where target.{owner_column} = owner.id
+              and trim(coalesce(target.{value_column}, '')) != ''
+          )
+        """,
     )
 
 
 def _pending_default_language_tags(conn: sqlite3.Connection, table: str) -> int:
-    total = 0
-    for row in conn.execute(
-        f"select id, default_source_language, default_target_language from {table}"
-    ):
-        total += _missing_values(
-            conn,
-            "series_language_tags",
-            "series_id",
-            int(row["id"]),
-            "language_tag",
-            _clean_tags(
-                (row["default_source_language"], row["default_target_language"]),
-                lowercase=True,
-            ),
-        )
-    return total
+    return _pending_owner_values(
+        conn,
+        "series_language_tags",
+        "series_id",
+        "language_tag",
+        f"""
+        select id as owner_id, lower(trim(default_source_language)) as value
+        from {table}
+        where trim(default_source_language) != ''
+        union
+        select id as owner_id, lower(trim(default_target_language)) as value
+        from {table}
+        where trim(default_target_language) != ''
+        """,
+    )
 
 
 def _scalar_count(conn: sqlite3.Connection, sql: str) -> int:
