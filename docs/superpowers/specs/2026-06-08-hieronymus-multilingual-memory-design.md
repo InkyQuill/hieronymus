@@ -181,7 +181,7 @@ Promotion from advisory rule-like memory to an active rule crystal is performed
 by later dreaming only when clean explicit rule intent and reliable concept
 disambiguation are present.
 
-The admin interface should not provide a manual "promote to rule" action.
+The admin interface should not provide a manual rule-promotion action.
 Corrections should enter the system as new high-credibility short-term memories,
 such as user-rule correction memories, and dreaming decides how to supersede or
 create active rule crystals.

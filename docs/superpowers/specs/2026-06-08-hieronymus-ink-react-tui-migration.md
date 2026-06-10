@@ -153,7 +153,7 @@ Minimum admin methods needed for parity with the current management TUI:
   - Equivalent to `admin.snapshot` with filters, kept as a named method only if
     it simplifies the frontend state machine.
 - `admin.add_crystal`
-  - Inputs: `series_slug`, `source_language`, `target_language`, `type`,
+  - Inputs: `series_slug`, compatibility source/target language fields, `type`,
     `title`, `text`, `tags`.
   - Returns: new crystal id and refreshed snapshot.
 - `admin.edit_crystal`
@@ -540,7 +540,7 @@ required by the multilingual memory design:
   behavior should create correction memories instead of mutating long-term
   memory directly. Correction memories do not request immediate dreaming.
 - Rule Crystal list with inspection, archive, and correction-memory creation.
-  The admin UI must not expose a manual "promote to rule" action; rule
+  The admin UI must not expose a manual rule-promotion action; rule
   activation remains a dreaming decision from clean explicit rule intent.
   Archiving an active rule crystal stops validation from using it immediately;
   replacement rules still enter as correction memories and are processed by
