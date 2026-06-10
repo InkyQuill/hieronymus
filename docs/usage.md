@@ -140,7 +140,69 @@ hieronymus init-series only-sense-online --title "Only Sense Online" --source-la
 hieronymus init-series death-march --title "Death March to the Parallel World Rhapsody" --source-language ja --target-language en
 ```
 
-## Propose a Term
+The CLI options are compatibility hints for existing workflows. The current
+memory model treats a series as language-neutral and stores active languages as
+language tags on series, sessions, facets, short-term memories, and crystals.
+
+## Store a Concept With Facets
+
+Agent integrations should use primitive MCP/admin operations when they already
+know a concept and its metadata. This example creates one concept with an English
+canonical name, a Japanese source form, a Russian rendering, semantic tag
+`talent`, and story scope `book:5/chapter:5`:
+
+```text
+hieronymus_series_create(
+  slug="only-sense-online",
+  title="Only Sense Online",
+  language_tags=["ja", "en", "ru"],
+)
+
+hieronymus_concept_create(
+  canonical_name="Cooking Talent",
+  series_slug="only-sense-online",
+  semantic_tags=["talent"],
+  status="established",
+)
+
+hieronymus_concept_facet_add(
+  concept_id=<concept_id>,
+  value="Cooking Talent",
+  language_tags=["en"],
+  kind="name",
+  is_canonical=true,
+  story_scopes=["book:5/chapter:5"],
+  semantic_tags=["talent"],
+)
+
+hieronymus_concept_facet_add(
+  concept_id=<concept_id>,
+  value="料理",
+  language_tags=["ja"],
+  kind="source_form",
+  story_scopes=["book:5/chapter:5"],
+  semantic_tags=["talent"],
+)
+
+hieronymus_concept_facet_add(
+  concept_id=<concept_id>,
+  value="Готовка",
+  language_tags=["ru"],
+  kind="rendering",
+  story_scopes=["book:5/chapter:5"],
+  semantic_tags=["talent"],
+)
+```
+
+Use rule-crystal admin actions only to inspect, validate, archive, or otherwise
+manage existing long-term rules. User corrections should enter as short-term
+memory and be crystallized by dreaming.
+
+## Compatibility Term Proposal
+
+The term proposal command remains available for older translation workflows, but
+new agent workflows should prefer concept, facet, short-term memory, and
+rule-crystal primitives.
 
 ```bash
 hieronymus propose-term only-sense-online --category person_name --source "ユン" --translation "Yun" --tag name
@@ -153,10 +215,53 @@ cd /home/inky/Yandex.Disk/Translation
 hieronymus validate only-sense-online --raw-file only-sense-online/vol01/raw/chapter-002.xhtml --translated-file only-sense-online/vol01/translated/chapter-002.md
 ```
 
-## Remember Translation Context
+## Agent Memory Skills
 
-```bash
-hieronymus remember only-sense-online --kind translation_rationale --text "Use Yun for ユン." --source-ref only-sense-online/vol01/chapter-002
+Read, Learn, and Remember are agent skill workflows, not preferred MCP judgment
+tools. The agent decides what is worth recording, how credible it is, and which
+language tags, story scopes, semantic tags, concept links, or source references
+apply. It then calls storage and retrieval primitives such as
+`hieronymus_short_term_add`, `hieronymus_recall`, concept primitives, and facet
+primitives.
+
+There is no preferred `hieronymus_read` or `hieronymus_learn` interface. Those
+judgment-heavy wrappers are no longer exposed as the current MCP workflow. See
+[Read, Learn, And Remember Skills](skills/read-learn-remember.md) and
+[Agent workflows](agent-workflows.md).
+
+For a high-credibility correction, Remember should store a short memory like:
+
+```text
+hieronymus_short_term_add(
+  session_id=2,
+  source_role="user",
+  kind="correction",
+  text="User told me to render Cooking Talent as Готовка in Russian.",
+  language_tags=["en", "ja", "ru"],
+  story_scopes=["book:5/chapter:5"],
+  semantic_tags=["talent"],
+  source_credibility="user_rule",
+  rule_intent="terminology",
+)
+```
+
+For recall, the agent opens or reuses an active session and calls the primitive
+retrieval tool directly:
+
+```text
+hieronymus_session_start(
+  series_slug="only-sense-online",
+  task_type="translation",
+  volume="05",
+  chapter="005",
+)
+
+hieronymus_recall(
+  session_id=<session_id>,
+  series_slug="only-sense-online",
+  query="Cooking Talent Russian rendering",
+  limit=10,
+)
 ```
 
 ## Memory Dreaming Workflow
