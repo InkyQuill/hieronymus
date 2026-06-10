@@ -334,7 +334,8 @@ The command palette exposes the broader admin action surface where the selected
 view supports it: add, edit, delete, merge, split, supersede, reinforce, decay,
 promote a local lesson to a global candidate, activate a global lesson, inspect
 provenance, inspect recall reasons, run manual dreaming, review dream outputs,
-and approve or reject strict-concept proposals.
+and review concept, facet, rule-crystal, or legacy compatibility proposal
+records.
 
 For scripts and health checks, use:
 

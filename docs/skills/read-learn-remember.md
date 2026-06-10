@@ -43,4 +43,4 @@ User told me to ...
 
 Use `source_role="user"`, `kind="correction"`, `source_credibility="user_rule"`, and a specific
 `rule_intent` when known. Keep the memory short, scoped, and tagged so dreaming can crystallize it
-later without silently overriding approved termbase entries.
+later without silently overriding active rule crystals.
