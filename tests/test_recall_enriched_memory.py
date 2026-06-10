@@ -225,6 +225,86 @@ def test_short_term_semantic_tags_are_searchable_without_text_match(
     assert results[0].score > 0
 
 
+def test_short_term_structured_semantic_tags_do_not_match_sibling_tags(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    character_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Keep this character naming note available for later consistency checks.",
+        semantic_tags=("character:name",),
+    )
+    skill_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Keep this skill naming note available for later consistency checks.",
+        semantic_tags=("skill:name",),
+    )
+
+    results = RecallService(config).recall(session.id, context, "skill:name", limit=5)
+
+    assert [result.id for result in results] == [skill_id]
+    assert character_id not in {result.id for result in results}
+
+
+def test_short_term_structured_story_scopes_do_not_match_partial_sibling_scopes(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    sibling_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Keep this sibling scene note available for later consistency checks.",
+        story_scopes=("book:1/chapter:5",),
+    )
+    target_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Keep this target scene note available for later consistency checks.",
+        story_scopes=("book:5/chapter:5",),
+    )
+
+    results = RecallService(config).recall(session.id, context, "book:5/chapter:5", limit=5)
+
+    assert [result.id for result in results] == [target_id]
+    assert sibling_id not in {result.id for result in results}
+
+
+def test_short_term_metadata_search_reaches_beyond_first_fifty_memories(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    for index in range(55):
+        workspace.add_short_term_memory(
+            session.id,
+            source_role="mentor",
+            kind="note",
+            text=f"Unrelated transient note {index}.",
+        )
+    memory_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Keep this late naming note available for later consistency checks.",
+        semantic_tags=("skill:name",),
+    )
+
+    results = RecallService(config).recall(session.id, context, "skill:name", limit=5)
+
+    assert [result.id for result in results] == [memory_id]
+
+
 def test_short_term_source_credibility_and_rule_intent_boost_ranking(
     config: HieronymusConfig,
 ) -> None:
@@ -279,6 +359,38 @@ def test_crystal_semantic_tags_are_searchable_without_text_match(
     assert results[0].reason == "metadata recall match"
 
 
+def test_crystal_structured_semantic_tags_do_not_match_sibling_tags(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    crystals = CrystalStore(config)
+    character_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Keep the character naming display terse in menus.",
+        title="Character Naming",
+        semantic_tags=("character:name",),
+        strength=0.6,
+        confidence=0.7,
+    )
+    skill_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Keep the skill naming display terse in menus.",
+        title="Skill Naming",
+        semantic_tags=("skill:name",),
+        strength=0.6,
+        confidence=0.7,
+    )
+
+    results = RecallService(config).recall(session.id, context, "skill:name", limit=5)
+
+    assert [result.id for result in results] == [skill_id]
+    assert character_id not in {result.id for result in results}
+
+
 def test_crystal_story_scopes_are_searchable_without_text_match(
     config: HieronymusConfig,
 ) -> None:
@@ -301,6 +413,38 @@ def test_crystal_story_scopes_are_searchable_without_text_match(
     assert results[0].tier == "long_term"
     assert results[0].story_scopes == ("book:5/chapter:5",)
     assert results[0].reason == "metadata recall match"
+
+
+def test_crystal_structured_story_scopes_do_not_match_partial_sibling_scopes(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    crystals = CrystalStore(config)
+    sibling_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Keep the sibling scene display terse in menus.",
+        title="Sibling Scene",
+        story_scopes=("book:1/chapter:5",),
+        strength=0.6,
+        confidence=0.7,
+    )
+    target_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Keep the target scene display terse in menus.",
+        title="Target Scene",
+        story_scopes=("book:5/chapter:5",),
+        strength=0.6,
+        confidence=0.7,
+    )
+
+    results = RecallService(config).recall(session.id, context, "book:5/chapter:5", limit=5)
+
+    assert [result.id for result in results] == [target_id]
+    assert sibling_id not in {result.id for result in results}
 
 
 def test_concept_label_finds_linked_crystal_without_text_or_facet_match(

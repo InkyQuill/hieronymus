@@ -31,6 +31,7 @@ _SHORT_TERM_RULE_INTENT_BOOST = 0.12
 _MAX_LONG_TERM_CANDIDATE_LIMIT = 50
 _MAX_SHORT_TERM_LIMIT = 50
 _TOKEN_RE = re.compile(r"\w+")
+_STRUCTURED_DELIMITERS = frozenset({":", "/"})
 
 
 def _now() -> str:
@@ -45,16 +46,30 @@ def _query_terms(query: str) -> frozenset[str]:
     return frozenset(token.casefold() for token in _TOKEN_RE.findall(query))
 
 
-def _matches_query(query: str, query_terms: frozenset[str], value: str) -> bool:
-    clean_value = value.strip()
-    if not clean_value:
-        return False
-    folded_value = clean_value.casefold()
-    folded_query = query.strip().casefold()
-    if folded_query and (folded_query == folded_value or folded_query in folded_value):
-        return True
-    value_terms = {token.casefold() for token in _TOKEN_RE.findall(clean_value)}
-    return bool(query_terms and value_terms and query_terms.intersection(value_terms))
+def _normalized_metadata_value(value: str) -> str:
+    return " ".join(value.strip().casefold().split())
+
+
+def _is_structured_value(value: str) -> bool:
+    return any(delimiter in value for delimiter in _STRUCTURED_DELIMITERS)
+
+
+def _metadata_lookup_values(query: str) -> tuple[str, ...]:
+    clean_query = query.strip()
+    if not clean_query:
+        return ()
+    if _is_structured_value(clean_query):
+        return (clean_query,)
+    values = [clean_query, *_query_terms(clean_query)]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized_value = _normalized_metadata_value(value)
+        if not normalized_value or normalized_value in seen:
+            continue
+        seen.add(normalized_value)
+        normalized.append(value)
+    return tuple(normalized)
 
 
 def _metadata_search_score(strength: float, confidence: float, scope_type: str) -> float:
@@ -228,7 +243,8 @@ class RecallService:
         limit: int,
     ) -> list[tuple[ShortTermMemoryRecord, float]]:
         expression = search_expression(query)
-        if not expression:
+        lookup_values = _metadata_lookup_values(query)
+        if not expression and not lookup_values:
             return []
 
         bounded_limit = min(limit, _MAX_SHORT_TERM_LIMIT)
@@ -255,43 +271,159 @@ class RecallService:
                     _SHORT_TERM_BASE_SCORE - (index * _SHORT_TERM_RANK_STEP),
                 )
 
-        metadata_rows = conn.execute(
-            """
-            select *
-            from short_term_memories
-            where session_id = ?
-              and archived_at is null
-            order by id
-            limit ?
-            """,
-            (session_id, _MAX_SHORT_TERM_LIMIT),
-        ).fetchall()
-        query_terms = _query_terms(query)
-        for row in metadata_rows:
-            memory = short_memory_from_row(conn, row)
-            boost = 0.0
-            if any(_matches_query(query, query_terms, tag) for tag in memory.language_tags):
-                boost += _SHORT_TERM_LANGUAGE_TAG_BOOST
-            if any(_matches_query(query, query_terms, scope) for scope in memory.story_scopes):
-                boost += _SHORT_TERM_STORY_SCOPE_BOOST
-            if any(_matches_query(query, query_terms, tag) for tag in memory.semantic_tags):
-                boost += _SHORT_TERM_SEMANTIC_TAG_BOOST
-            if _matches_query(query, query_terms, memory.source_credibility):
-                boost += _SHORT_TERM_SOURCE_CREDIBILITY_BOOST
-            if _matches_query(query, query_terms, memory.rule_intent):
-                boost += _SHORT_TERM_RULE_INTENT_BOOST
-            if boost <= 0:
-                continue
-            _existing_memory, score = scored.get(
-                memory.id,
-                (memory, _SHORT_TERM_METADATA_BASE_SCORE),
-            )
-            scored[memory.id] = (memory, score + boost)
+        metadata_boosts = self._short_term_metadata_candidate_boosts(
+            conn,
+            session_id=session_id,
+            lookup_values=lookup_values,
+            limit=_MAX_SHORT_TERM_LIMIT,
+        )
+        if metadata_boosts:
+            placeholders = ", ".join("?" for _ in metadata_boosts)
+            rows = conn.execute(
+                f"""
+                select *
+                from short_term_memories
+                where id in ({placeholders})
+                  and session_id = ?
+                  and archived_at is null
+                """,
+                (*metadata_boosts, session_id),
+            ).fetchall()
+            for row in rows:
+                memory = short_memory_from_row(conn, row)
+                boost = metadata_boosts[memory.id]
+                if boost <= 0:
+                    continue
+                _existing_memory, score = scored.get(
+                    memory.id,
+                    (memory, _SHORT_TERM_METADATA_BASE_SCORE),
+                )
+                scored[memory.id] = (memory, score + boost)
 
         return sorted(
             scored.values(),
             key=lambda item: (-item[1], item[0].id),
         )[:bounded_limit]
+
+    def _short_term_metadata_candidate_boosts(
+        self,
+        conn,
+        *,
+        session_id: int,
+        lookup_values: tuple[str, ...],
+        limit: int,
+    ) -> dict[int, float]:
+        if not lookup_values:
+            return {}
+
+        boosts: dict[int, float] = {}
+        self._add_short_term_side_table_boosts(
+            conn,
+            boosts,
+            session_id=session_id,
+            table="short_term_memory_language_tags",
+            value_column="language_tag",
+            lookup_values=lookup_values,
+            boost=_SHORT_TERM_LANGUAGE_TAG_BOOST,
+            limit=limit,
+        )
+        self._add_short_term_side_table_boosts(
+            conn,
+            boosts,
+            session_id=session_id,
+            table="short_term_memory_story_scopes",
+            value_column="story_scope",
+            lookup_values=lookup_values,
+            boost=_SHORT_TERM_STORY_SCOPE_BOOST,
+            limit=limit,
+        )
+        self._add_short_term_side_table_boosts(
+            conn,
+            boosts,
+            session_id=session_id,
+            table="short_term_memory_semantic_tags",
+            value_column="semantic_tag",
+            lookup_values=lookup_values,
+            boost=_SHORT_TERM_SEMANTIC_TAG_BOOST,
+            limit=limit,
+        )
+        self._add_short_term_scalar_boosts(
+            conn,
+            boosts,
+            session_id=session_id,
+            column="source_credibility",
+            lookup_values=lookup_values,
+            boost=_SHORT_TERM_SOURCE_CREDIBILITY_BOOST,
+            limit=limit,
+        )
+        self._add_short_term_scalar_boosts(
+            conn,
+            boosts,
+            session_id=session_id,
+            column="rule_intent",
+            lookup_values=lookup_values,
+            boost=_SHORT_TERM_RULE_INTENT_BOOST,
+            limit=limit,
+        )
+        return dict(sorted(boosts.items(), key=lambda item: (-item[1], item[0]))[:limit])
+
+    def _add_short_term_side_table_boosts(
+        self,
+        conn,
+        boosts: dict[int, float],
+        *,
+        session_id: int,
+        table: str,
+        value_column: str,
+        lookup_values: tuple[str, ...],
+        boost: float,
+        limit: int,
+    ) -> None:
+        placeholders = ", ".join("?" for _ in lookup_values)
+        rows = conn.execute(
+            f"""
+            select distinct m.id
+            from {table} t
+            join short_term_memories m on m.id = t.memory_id
+            where m.session_id = ?
+              and m.archived_at is null
+              and t.{value_column} collate nocase in ({placeholders})
+            order by m.id
+            limit ?
+            """,
+            (session_id, *lookup_values, limit),
+        ).fetchall()
+        for row in rows:
+            memory_id = int(row["id"])
+            boosts[memory_id] = boosts.get(memory_id, 0.0) + boost
+
+    def _add_short_term_scalar_boosts(
+        self,
+        conn,
+        boosts: dict[int, float],
+        *,
+        session_id: int,
+        column: str,
+        lookup_values: tuple[str, ...],
+        boost: float,
+        limit: int,
+    ) -> None:
+        placeholders = ", ".join("?" for _ in lookup_values)
+        rows = conn.execute(
+            f"""
+            select id
+            from short_term_memories
+            where session_id = ?
+              and archived_at is null
+              and {column} collate nocase in ({placeholders})
+            order by id
+            limit ?
+            """,
+            (session_id, *lookup_values, limit),
+        ).fetchall()
+        for row in rows:
+            memory_id = int(row["id"])
+            boosts[memory_id] = boosts.get(memory_id, 0.0) + boost
 
     def _long_term_metadata_candidate_scores(
         self,
@@ -300,59 +432,34 @@ class RecallService:
         *,
         limit: int,
     ) -> dict[int, float]:
-        query_terms = _query_terms(query)
-        if not query_terms and not query.strip():
+        lookup_values = _metadata_lookup_values(query)
+        if not lookup_values:
             return {}
 
         scores: dict[int, float] = {}
         with connect(self.config.database_path) as conn:
-            rows = conn.execute(
-                """
-                select c.id, c.strength, c.confidence, c.scope_type, s.tag as matched_value
-                from crystal_semantic_tags s
-                join crystals c on c.id = s.crystal_id
-                where c.status in ('active', 'candidate')
-                  and (
-                    (c.scope_type = 'series' and c.scope_key = ?)
-                    or c.scope_type = 'global'
-                  )
-                  and (c.source_language = ? or c.source_language = '')
-                  and (c.target_language = ? or c.target_language = '')
-                """,
-                (context.scope_key, context.source_language, context.target_language),
-            ).fetchall()
-            for row in rows:
-                if _matches_query(query, query_terms, row["matched_value"]):
-                    self._add_long_term_metadata_score(
-                        scores,
-                        row,
-                        _SEMANTIC_TAG_BOOST,
-                    )
+            self._add_long_term_side_table_scores(
+                conn,
+                scores,
+                context=context,
+                table="crystal_semantic_tags",
+                value_column="tag",
+                lookup_values=lookup_values,
+                boost=_SEMANTIC_TAG_BOOST,
+                limit=limit,
+            )
+            self._add_long_term_side_table_scores(
+                conn,
+                scores,
+                context=context,
+                table="crystal_story_scopes",
+                value_column="scope",
+                lookup_values=lookup_values,
+                boost=_STORY_SCOPE_BOOST,
+                limit=limit,
+            )
 
-            rows = conn.execute(
-                """
-                select c.id, c.strength, c.confidence, c.scope_type, s.scope as matched_value
-                from crystal_story_scopes s
-                join crystals c on c.id = s.crystal_id
-                where c.status in ('active', 'candidate')
-                  and (
-                    (c.scope_type = 'series' and c.scope_key = ?)
-                    or c.scope_type = 'global'
-                  )
-                  and (c.source_language = ? or c.source_language = '')
-                  and (c.target_language = ? or c.target_language = '')
-                """,
-                (context.scope_key, context.source_language, context.target_language),
-            ).fetchall()
-            for row in rows:
-                if _matches_query(query, query_terms, row["matched_value"]):
-                    self._add_long_term_metadata_score(
-                        scores,
-                        row,
-                        _STORY_SCOPE_BOOST,
-                    )
-
-            concept_scores = self._concept_candidate_scores(conn, query, query_terms)
+            concept_scores = self._concept_candidate_scores(conn, query, lookup_values, limit=limit)
             if concept_scores:
                 placeholders = ", ".join("?" for _ in concept_scores)
                 rows = conn.execute(
@@ -392,6 +499,46 @@ class RecallService:
             sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:limit],
         )
 
+    def _add_long_term_side_table_scores(
+        self,
+        conn,
+        scores: dict[int, float],
+        *,
+        context: TranslationContext,
+        table: str,
+        value_column: str,
+        lookup_values: tuple[str, ...],
+        boost: float,
+        limit: int,
+    ) -> None:
+        placeholders = ", ".join("?" for _ in lookup_values)
+        rows = conn.execute(
+            f"""
+            select distinct c.id, c.strength, c.confidence, c.scope_type
+            from {table} t
+            join crystals c on c.id = t.crystal_id
+            where c.status in ('active', 'candidate')
+              and (
+                (c.scope_type = 'series' and c.scope_key = ?)
+                or c.scope_type = 'global'
+              )
+              and (c.source_language = ? or c.source_language = '')
+              and (c.target_language = ? or c.target_language = '')
+              and t.{value_column} collate nocase in ({placeholders})
+            order by c.id
+            limit ?
+            """,
+            (
+                context.scope_key,
+                context.source_language,
+                context.target_language,
+                *lookup_values,
+                limit,
+            ),
+        ).fetchall()
+        for row in rows:
+            self._add_long_term_metadata_score(scores, row, boost)
+
     def _add_long_term_metadata_score(self, scores: dict[int, float], row, boost: float) -> None:
         score = (
             _metadata_search_score(
@@ -407,24 +554,30 @@ class RecallService:
         self,
         conn,
         query: str,
-        query_terms: frozenset[str],
+        lookup_values: tuple[str, ...],
+        *,
+        limit: int,
     ) -> dict[int, float]:
         scores: dict[int, float] = {}
         expression = search_expression(query)
+        exact_query = query.strip()
 
-        rows = conn.execute(
-            """
-            select id, canonical_name, description
-            from concepts
-            where status not in ('archived', 'merged')
-            """
-        ).fetchall()
+        rows = []
+        if exact_query:
+            rows = conn.execute(
+                """
+                select id
+                from concepts
+                where canonical_name = ? collate nocase
+                  and status not in ('archived', 'merged')
+                order by id
+                limit ?
+                """,
+                (exact_query, limit),
+            ).fetchall()
         for row in rows:
             concept_id = int(row["id"])
-            if _matches_query(query, query_terms, row["canonical_name"]):
-                scores[concept_id] = max(scores.get(concept_id, 0.0), _EXACT_CONCEPT_BOOST)
-            elif _matches_query(query, query_terms, row["description"]):
-                scores[concept_id] = max(scores.get(concept_id, 0.0), _CONCEPT_LINK_BASE_BOOST)
+            scores[concept_id] = max(scores.get(concept_id, 0.0), _EXACT_CONCEPT_BOOST)
 
         if expression:
             rows = conn.execute(
@@ -434,8 +587,10 @@ class RecallService:
                 join concepts c on c.id = concepts_fts.rowid
                 where concepts_fts match ?
                   and c.status not in ('archived', 'merged')
+                order by c.id
+                limit ?
                 """,
-                (expression,),
+                (expression, limit),
             ).fetchall()
             for row in rows:
                 concept_id = int(row["id"])
@@ -450,57 +605,70 @@ class RecallService:
                 where concept_facet_fts match ?
                   and f.superseded_at is null
                   and c.status not in ('archived', 'merged')
+                order by c.id
+                limit ?
                 """,
-                (expression,),
+                (expression, limit),
             ).fetchall()
             for row in rows:
                 concept_id = int(row["id"])
                 scores[concept_id] = max(scores.get(concept_id, 0.0), _EXACT_CONCEPT_BOOST)
 
-        rows = conn.execute(
-            """
-            select distinct c.id, t.tag
-            from concept_semantic_tags t
-            join concepts c on c.id = t.concept_id
-            where c.status not in ('archived', 'merged')
-            """
-        ).fetchall()
-        for row in rows:
-            if _matches_query(query, query_terms, row["tag"]):
+        if lookup_values:
+            placeholders = ", ".join("?" for _ in lookup_values)
+            rows = conn.execute(
+                f"""
+                select distinct c.id
+                from concept_semantic_tags t
+                join concepts c on c.id = t.concept_id
+                where c.status not in ('archived', 'merged')
+                  and t.tag collate nocase in ({placeholders})
+                order by c.id
+                limit ?
+                """,
+                (*lookup_values, limit),
+            ).fetchall()
+            for row in rows:
                 concept_id = int(row["id"])
                 scores[concept_id] = max(scores.get(concept_id, 0.0), _SEMANTIC_TAG_BOOST)
 
-        rows = conn.execute(
-            """
-            select distinct c.id, t.semantic_tag
-            from concept_facet_semantic_tags t
-            join concept_facets f on f.id = t.facet_id
-            join concepts c on c.id = f.concept_id
-            where f.superseded_at is null
-              and c.status not in ('archived', 'merged')
-            """
-        ).fetchall()
-        for row in rows:
-            if _matches_query(query, query_terms, row["semantic_tag"]):
+            rows = conn.execute(
+                f"""
+                select distinct c.id
+                from concept_facet_semantic_tags t
+                join concept_facets f on f.id = t.facet_id
+                join concepts c on c.id = f.concept_id
+                where f.superseded_at is null
+                  and c.status not in ('archived', 'merged')
+                  and t.semantic_tag collate nocase in ({placeholders})
+                order by c.id
+                limit ?
+                """,
+                (*lookup_values, limit),
+            ).fetchall()
+            for row in rows:
                 concept_id = int(row["id"])
                 scores[concept_id] = max(scores.get(concept_id, 0.0), _SEMANTIC_TAG_BOOST)
 
-        rows = conn.execute(
-            """
-            select distinct c.id, s.story_scope
-            from concept_facet_story_scopes s
-            join concept_facets f on f.id = s.facet_id
-            join concepts c on c.id = f.concept_id
-            where f.superseded_at is null
-              and c.status not in ('archived', 'merged')
-            """
-        ).fetchall()
-        for row in rows:
-            if _matches_query(query, query_terms, row["story_scope"]):
+            rows = conn.execute(
+                f"""
+                select distinct c.id
+                from concept_facet_story_scopes s
+                join concept_facets f on f.id = s.facet_id
+                join concepts c on c.id = f.concept_id
+                where f.superseded_at is null
+                  and c.status not in ('archived', 'merged')
+                  and s.story_scope collate nocase in ({placeholders})
+                order by c.id
+                limit ?
+                """,
+                (*lookup_values, limit),
+            ).fetchall()
+            for row in rows:
                 concept_id = int(row["id"])
                 scores[concept_id] = max(scores.get(concept_id, 0.0), _CONCEPT_LINK_BASE_BOOST)
 
-        return scores
+        return dict(sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:limit])
 
     def _concept_labels_for_crystals(
         self,
