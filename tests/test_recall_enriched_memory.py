@@ -159,6 +159,247 @@ def test_concept_facet_finds_linked_crystal_without_exact_prose_match(
     assert results[0].score > 0
 
 
+def test_short_term_language_tags_are_searchable_without_text_match(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    memory_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Keep this transient note available for locale-sensitive checks.",
+        language_tags=("ja",),
+    )
+
+    results = RecallService(config).recall(session.id, context, "ja", limit=5)
+
+    assert [result.id for result in results] == [memory_id]
+    assert results[0].tier == "short_term"
+    assert results[0].language_tags == ("ja",)
+    assert results[0].score > 0
+
+
+def test_short_term_story_scopes_are_searchable_without_text_match(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    memory_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Keep this scene-local note available for later consistency checks.",
+        story_scopes=("book:5/chapter:5",),
+    )
+
+    results = RecallService(config).recall(session.id, context, "book:5/chapter:5", limit=5)
+
+    assert [result.id for result in results] == [memory_id]
+    assert results[0].tier == "short_term"
+    assert results[0].story_scopes == ("book:5/chapter:5",)
+    assert results[0].score > 0
+
+
+def test_short_term_semantic_tags_are_searchable_without_text_match(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    memory_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="Keep this naming note available for later consistency checks.",
+        semantic_tags=("skill:name",),
+    )
+
+    results = RecallService(config).recall(session.id, context, "skill:name", limit=5)
+
+    assert [result.id for result in results] == [memory_id]
+    assert results[0].tier == "short_term"
+    assert results[0].semantic_tags == ("skill:name",)
+    assert results[0].score > 0
+
+
+def test_short_term_source_credibility_and_rule_intent_boost_ranking(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    fts_only_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="mentor",
+        kind="note",
+        text="terminology user_rule appears in this ordinary note.",
+    )
+    rule_memory_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="correction",
+        text="Keep this correction available even when prose does not repeat metadata.",
+        source_credibility="user_rule",
+        rule_intent="terminology",
+    )
+
+    results = RecallService(config).recall(session.id, context, "terminology user_rule", limit=5)
+
+    assert [result.id for result in results] == [rule_memory_id, fts_only_id]
+    assert results[0].tier == "short_term"
+    assert results[0].source_credibility == "user_rule"
+    assert results[0].is_rule
+    assert results[0].score > results[1].score
+
+
+def test_crystal_semantic_tags_are_searchable_without_text_match(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Keep the status display terse in menus.",
+        title="Menu Status Style",
+        semantic_tags=("skill:name",),
+        strength=0.6,
+        confidence=0.7,
+    )
+
+    results = RecallService(config).recall(session.id, context, "skill:name", limit=5)
+
+    assert [result.id for result in results] == [crystal_id]
+    assert results[0].tier == "long_term"
+    assert results[0].semantic_tags == ("skill:name",)
+    assert results[0].reason == "metadata recall match"
+
+
+def test_crystal_story_scopes_are_searchable_without_text_match(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Keep the status display terse in menus.",
+        title="Scoped Menu Status Style",
+        story_scopes=("book:5/chapter:5",),
+        strength=0.6,
+        confidence=0.7,
+    )
+
+    results = RecallService(config).recall(session.id, context, "book:5/chapter:5", limit=5)
+
+    assert [result.id for result in results] == [crystal_id]
+    assert results[0].tier == "long_term"
+    assert results[0].story_scopes == ("book:5/chapter:5",)
+    assert results[0].reason == "metadata recall match"
+
+
+def test_concept_label_finds_linked_crystal_without_text_or_facet_match(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    concept = ConceptStore(config).create_concept(
+        "Enchant",
+        status="established",
+        confidence=0.9,
+        scope_type="series",
+        scope_key=context.scope_key,
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Treat the weapon imbue skill as a proper noun.",
+        title="Imbue Skill Naming",
+        concept_ids=(concept.id,),
+        strength=0.7,
+        confidence=0.8,
+    )
+
+    results = RecallService(config).recall(session.id, context, "Enchant", limit=5)
+
+    assert [result.id for result in results] == [crystal_id]
+    assert results[0].concept_ids == (concept.id,)
+    assert results[0].concept_labels == ("Enchant",)
+    assert results[0].reason == "metadata recall match"
+
+
+def test_concept_semantic_tags_find_linked_crystal_without_text_match(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    concept = ConceptStore(config).create_concept(
+        "Menu Skill",
+        status="established",
+        confidence=0.9,
+        scope_type="series",
+        scope_key=context.scope_key,
+        semantic_tags=("skill:name",),
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Treat the weapon imbue skill as a proper noun.",
+        title="Imbue Skill Naming",
+        concept_ids=(concept.id,),
+        strength=0.7,
+        confidence=0.8,
+    )
+
+    results = RecallService(config).recall(session.id, context, "skill:name", limit=5)
+
+    assert [result.id for result in results] == [crystal_id]
+    assert results[0].concept_ids == (concept.id,)
+    assert results[0].concept_labels == ("Menu Skill",)
+    assert results[0].reason == "metadata recall match"
+
+
+def test_active_relevant_rule_crystals_boost_but_do_not_filter_other_hits(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    crystals = CrystalStore(config)
+    lesson_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Yun Enchant keeps its skill-name rendering.",
+        title="Enchant Lesson",
+        strength=0.6,
+        confidence=0.7,
+    )
+    rule_id = crystals.add_crystal(
+        context,
+        crystal_type="rule",
+        text="Yun Enchant keeps its skill-name rendering.",
+        title="Enchant Rule",
+        source_credibility="user_rule",
+        rule_intent="terminology",
+        strength=0.6,
+        confidence=0.7,
+    )
+
+    results = RecallService(config).recall(session.id, context, "Yun Enchant", limit=5)
+
+    assert [result.id for result in results] == [rule_id, lesson_id]
+    assert results[0].is_rule
+    assert results[0].score > results[1].score
+    assert {result.id for result in results} == {rule_id, lesson_id}
+
+
 def test_story_scope_boosts_without_removing_relevant_book_one_result(
     config: HieronymusConfig,
 ) -> None:
