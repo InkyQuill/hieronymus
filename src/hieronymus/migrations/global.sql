@@ -418,3 +418,12 @@ create table if not exists dream_audit_entries (
   payload_json text not null default '{}',
   created_at text not null
 );
+
+create table if not exists memory_graph_migration_ledger (
+  source_table text not null,
+  source_id text not null,
+  target_table text not null,
+  target_id integer not null,
+  created_at text not null default (datetime('now')),
+  primary key (source_table, source_id, target_table)
+);

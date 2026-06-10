@@ -22,6 +22,7 @@ from hieronymus.llm_cache import (
     load_model_cache,
     model_cache_identity,
 )
+from hieronymus.memory_migration import MemoryGraphMigrator
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_manager import ServiceManager
 from hieronymus.settings import SettingsError, load_settings
@@ -50,6 +51,7 @@ class Doctor:
 
         self._check_config_root(report, autofix=autofix)
         self._check_database(report)
+        self._check_memory_graph_migration(report)
         self._check_daemon(report)
         self._check_ink_runtime(report)
         self._check_settings_and_providers(report)
@@ -107,6 +109,28 @@ class Doctor:
                     message=f"Database file is unreadable: {database_path}",
                 )
             )
+
+    def _check_memory_graph_migration(self, report: DoctorReport) -> None:
+        database_path = self.config.database_path
+        if not database_path.exists():
+            return
+
+        try:
+            migration_report = MemoryGraphMigrator.inspect(self.config)
+        except sqlite3.DatabaseError:
+            return
+
+        pending = {key: count for key, count in migration_report.pending.items() if count > 0}
+        if not pending:
+            return
+        pending_text = ", ".join(f"{key}: {count}" for key, count in sorted(pending.items()))
+        report["warnings"].append(
+            DoctorFinding(
+                level="warning",
+                code="memory-graph-migration-pending",
+                message=f"Legacy memory graph migration has pending dry-run work: {pending_text}",
+            )
+        )
 
     def _check_daemon(self, report: DoctorReport) -> None:
         status = ServiceManager(self.config).status()
