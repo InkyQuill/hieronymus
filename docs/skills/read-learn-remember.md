@@ -27,7 +27,7 @@ source into observed facts or compact blocks, record source credibility, and att
 story scopes, and semantic tags before writing short-term memory.
 
 Learn must not create long-term crystals directly. Dreaming is the path from learned short-term
-memory to lessons, erudition, rule crystals, and terminology proposals. There is no supported Learn
+memory to lessons, erudition, concept/facet updates, and rule crystals. There is no supported Learn
 MCP judgment tool; use the skill workflow plus `hieronymus_short_term_add`.
 
 ## Remember

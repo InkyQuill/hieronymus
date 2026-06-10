@@ -312,9 +312,10 @@ HIERONYMUS_TUI=ink hiero admin
 
 The TUI is a local-first management surface for reviewing and controlling
 Hieronymus memory data. It shows global status and statistics, then lets an
-admin switch between crystals, lessons, concepts, proposals, dream runs, and
-audit events. Each view supports keyboard navigation through entries, filter
-dialogs, a detail pane, and command actions that match the selected entry type.
+admin switch between crystals, lessons, concepts, legacy compatibility proposal
+records, dream runs, and audit events. Each view supports keyboard navigation
+through entries, filter dialogs, a detail pane, and command actions that match
+the selected entry type.
 
 Useful controls:
 
@@ -322,8 +323,8 @@ Useful controls:
 - `j` / `k`: move through entries
 - `f` or `/`: filter the current view
 - `e`: edit the selected crystal or lesson
-- `a`: approve the selected proposal
-- `x`: reject the selected proposal
+- `a`: approve the selected legacy compatibility proposal record
+- `x`: reject the selected legacy compatibility proposal record
 - `+` / `-`: reinforce or decay the selected crystal or lesson
 - `d`: deprecate the selected crystal or lesson
 - `delete`: delete after confirmation
