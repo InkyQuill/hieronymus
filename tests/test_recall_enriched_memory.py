@@ -360,6 +360,42 @@ def test_crystal_semantic_tags_are_searchable_without_text_match(
     assert results[0].reason == "metadata recall match"
 
 
+def test_crystal_semantic_tag_candidate_limit_prefers_stronger_later_match(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    crystals = CrystalStore(config)
+    low_ids = [
+        crystals.add_crystal(
+            context,
+            crystal_type="lesson",
+            text=f"Keep low confidence skill naming note {index}.",
+            title=f"Low Skill Naming {index}",
+            semantic_tags=("skill:name",),
+            strength=0.1,
+            confidence=0.1,
+        )
+        for index in range(20)
+    ]
+    high_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Keep high confidence skill naming note.",
+        title="High Skill Naming",
+        semantic_tags=("skill:name",),
+        strength=0.95,
+        confidence=0.95,
+    )
+
+    results = RecallService(config).recall(session.id, context, "skill:name", limit=5)
+
+    assert results[0].id == high_id
+    assert high_id in {result.id for result in results}
+    assert results[0].score > next(result.score for result in results if result.id == low_ids[0])
+
+
 def test_crystal_structured_semantic_tags_do_not_match_sibling_tags(
     config: HieronymusConfig,
 ) -> None:
@@ -510,6 +546,49 @@ def test_concept_label_link_expansion_is_bounded_and_deterministic(
     assert [result.id for result in results] == crystal_ids[:5]
     assert all(result.concept_ids == (concept.id,) for result in results)
     assert all(result.reason == "metadata recall match" for result in results)
+
+
+def test_concept_link_candidate_limit_prefers_stronger_later_match(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    concept = ConceptStore(config).create_concept(
+        "Enchant",
+        status="established",
+        confidence=0.9,
+        scope_type="series",
+        scope_key=context.scope_key,
+    )
+    crystals = CrystalStore(config)
+    low_ids = [
+        crystals.add_crystal(
+            context,
+            crystal_type="lesson",
+            text=f"Treat low confidence linked skill entry {index} as a proper noun.",
+            title=f"Low Linked Skill {index}",
+            concept_ids=(concept.id,),
+            strength=0.1,
+            confidence=0.1,
+        )
+        for index in range(20)
+    ]
+    high_id = crystals.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Treat high confidence linked skill entry as a proper noun.",
+        title="High Linked Skill",
+        concept_ids=(concept.id,),
+        strength=0.95,
+        confidence=0.95,
+    )
+
+    results = RecallService(config).recall(session.id, context, "Enchant", limit=5)
+
+    assert results[0].id == high_id
+    assert high_id in {result.id for result in results}
+    assert results[0].score > next(result.score for result in results if result.id == low_ids[0])
 
 
 def test_concept_label_candidate_limit_applies_after_visibility_scope(

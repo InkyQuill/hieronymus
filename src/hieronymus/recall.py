@@ -32,6 +32,13 @@ _MAX_LONG_TERM_CANDIDATE_LIMIT = 50
 _MAX_SHORT_TERM_LIMIT = 50
 _TOKEN_RE = re.compile(r"\w+")
 _STRUCTURED_DELIMITERS = frozenset({":", "/"})
+_SQL_METADATA_SCORE = """
+(
+  c.strength * 0.35
+  + c.confidence * 0.20
+  + case when c.scope_type = 'series' then 0.05 else 0 end
+)
+"""
 
 
 def _now() -> str:
@@ -467,30 +474,39 @@ class RecallService:
                 limit=limit,
             )
             if concept_scores:
-                placeholders = ", ".join("?" for _ in concept_scores)
+                concept_score_rows = tuple(sorted(concept_scores.items()))
+                values_sql = ", ".join("(?, ?)" for _concept_id, _score in concept_score_rows)
+                concept_score_params = tuple(value for row in concept_score_rows for value in row)
                 rows = conn.execute(
                     f"""
+                    with recall_concept_scores(concept_id, concept_boost) as (
+                      values {values_sql}
+                    )
                     select distinct
                       c.id,
                       c.strength,
                       c.confidence,
                       c.scope_type,
-                      cc.concept_id
+                      cc.concept_id,
+                      rcs.concept_boost
                     from crystal_concepts cc
+                    join recall_concept_scores rcs
+                      on rcs.concept_id = cc.concept_id
                     join crystals c on c.id = cc.crystal_id
-                    where cc.concept_id in ({placeholders})
-                      and c.status in ('active', 'candidate')
+                    where c.status in ('active', 'candidate')
                       and (
                         (c.scope_type = 'series' and c.scope_key = ?)
                         or c.scope_type = 'global'
                       )
                       and (c.source_language = ? or c.source_language = '')
                       and (c.target_language = ? or c.target_language = '')
-                    order by c.id, cc.concept_id
+                    order by ({_SQL_METADATA_SCORE} + rcs.concept_boost) desc,
+                             c.id,
+                             cc.concept_id
                     limit ?
                     """,
                     (
-                        *concept_scores,
+                        *concept_score_params,
                         context.scope_key,
                         context.source_language,
                         context.target_language,
@@ -533,8 +549,8 @@ class RecallService:
               )
               and (c.source_language = ? or c.source_language = '')
               and (c.target_language = ? or c.target_language = '')
-              and t.{value_column} collate nocase in ({placeholders})
-            order by c.id
+            and t.{value_column} collate nocase in ({placeholders})
+            order by {_SQL_METADATA_SCORE} desc, c.id
             limit ?
             """,
             (
