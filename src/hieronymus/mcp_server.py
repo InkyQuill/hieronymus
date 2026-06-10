@@ -79,6 +79,19 @@ def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str
     }
 
 
+def _series_payload(series: Series) -> dict[str, Any]:
+    payload = {
+        "slug": series.slug,
+        "title": series.title,
+        "source_language": series.source_language,
+        "target_language": series.target_language,
+        "language_tags": list(series.language_tags),
+    }
+    if series.id is not None:
+        payload["id"] = series.id
+    return payload
+
+
 def _translation_context(
     series: Series,
     *,
@@ -227,6 +240,66 @@ def _recent_dream_audit_proposal_payloads(config: HieronymusConfig) -> list[dict
                 }
             )
     return payloads
+
+
+@server.tool()
+def hieronymus_series_create(
+    slug: str,
+    title: str,
+    source_language: str = "",
+    target_language: str = "",
+    language_tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Create or update a language-neutral series."""
+    config = _load_validated_config()
+    series = Registry(config).create_series(
+        slug=slug,
+        title=title,
+        source_language=source_language,
+        target_language=target_language,
+        language_tags=language_tags,
+    )
+    return _series_payload(series)
+
+
+@server.tool()
+def hieronymus_series_init(
+    slug: str,
+    title: str,
+    source_language: str = "",
+    target_language: str = "",
+    language_tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Compatibility wrapper for creating or updating a series."""
+    return hieronymus_series_create(
+        slug=slug,
+        title=title,
+        source_language=source_language,
+        target_language=target_language,
+        language_tags=language_tags,
+    )
+
+
+@server.tool()
+def hieronymus_series_list() -> list[dict[str, Any]]:
+    """List registered series with language tags."""
+    config = _load_validated_config()
+    return [_series_payload(series) for series in Registry(config).list_series()]
+
+
+@server.tool()
+def hieronymus_series_set_language_tags(
+    series_id: int,
+    language_tags: list[str],
+) -> dict[str, Any]:
+    """Replace language tags for a series without changing compatibility fields."""
+    config = _load_validated_config()
+    registry = Registry(config)
+    registry.set_series_language_tags(series_id, language_tags)
+    for series in registry.list_series():
+        if series.id == series_id:
+            return _series_payload(series)
+    raise KeyError(f"unknown series id: {series_id}")
 
 
 @server.tool()

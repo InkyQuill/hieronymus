@@ -267,6 +267,10 @@ def test_mcp_server_registers_expected_tool_names():
     tools = asyncio.run(server.list_tools())
 
     assert {tool.name for tool in tools} == {
+        "hieronymus_series_create",
+        "hieronymus_series_init",
+        "hieronymus_series_list",
+        "hieronymus_series_set_language_tags",
         "hieronymus_termbase_contract",
         "hieronymus_termbase_validate",
         "hieronymus_termbase_propose",
