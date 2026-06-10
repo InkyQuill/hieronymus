@@ -167,6 +167,13 @@ def _phase_completed_payloads(config: HieronymusConfig, run_id: int) -> list[dic
     ]
 
 
+def _dream_audit_labels(config: HieronymusConfig) -> list[str]:
+    return [
+        row["label"]
+        for row in AdminBridge(config).snapshot({"view": "Dream Audits"})["snapshot"]["rows"]
+    ]
+
+
 def test_default_affected_set_caps_are_configured(config: HieronymusConfig) -> None:
     dream_config = load_dream_config(config)
 
@@ -348,6 +355,94 @@ def test_phase_audit_includes_passive_reinforcement_and_cycle_decay(
     }
 
 
+def test_maintenance_only_run_creates_admin_visible_audit(
+    config: HieronymusConfig,
+) -> None:
+    _save_dreaming_config(config, min_pending=1, max_pending=10, per_cycle=1, max_changed=2)
+    context = _context(config)
+    reinforced_id = _add_crystal(
+        config,
+        context,
+        text="Maintenance-only passive memory.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    decayed_id = _add_crystal(
+        config,
+        context,
+        text="Maintenance-only decay memory.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    FeedbackStore(config).record(
+        reinforced_id,
+        event_type="used_in_translation",
+        source_role="system",
+        evidence="maintenance-only reinforcement",
+    )
+
+    run = DreamService(config, EmptyDreamProvider()).run_all(owner="admin")
+
+    phase_payload = _phase_completed_payloads(config, run.id)[-1]
+    assert run.input_count == 0
+    assert phase_payload["phase_name"] == "maintenance"
+    assert phase_payload["selected_short_term_memory_ids"] == []
+    assert phase_payload["reinforced_crystals"] == [reinforced_id]
+    assert phase_payload["decayed_crystals"] == [decayed_id]
+    assert set(phase_payload["affected_memory_set"]["changed_crystal_ids"]) == {
+        reinforced_id,
+        decayed_id,
+    }
+    assert _dream_audit_labels(config) == [
+        "phase_completed: completed maintenance phase",
+    ]
+
+
+def test_duplicate_passive_events_count_as_one_changed_crystal_under_cap(
+    config: HieronymusConfig,
+) -> None:
+    _save_dreaming_config(config, min_pending=1, max_pending=10, per_cycle=1, max_changed=2)
+    context = _context(config)
+    duplicated_id = _add_crystal(
+        config,
+        context,
+        text="Duplicated passive events target.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    decayed_id = _add_crystal(
+        config,
+        context,
+        text="Decay still has remaining budget.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    feedback = FeedbackStore(config)
+    feedback.record(
+        duplicated_id,
+        event_type="used_in_translation",
+        source_role="system",
+        evidence="first duplicate event",
+    )
+    feedback.record(
+        duplicated_id,
+        event_type="passed_review",
+        source_role="system",
+        evidence="second duplicate event",
+    )
+
+    run = DreamService(config, EmptyDreamProvider()).run_all(owner="admin")
+
+    phase_payload = _phase_completed_payloads(config, run.id)[-1]
+    assert phase_payload["reinforced_crystals"] == [duplicated_id]
+    assert phase_payload["decayed_crystals"] == [decayed_id]
+    assert phase_payload["affected_memory_set"]["changed_crystal_ids"] == [
+        duplicated_id,
+        decayed_id,
+    ]
+    assert phase_payload["skipped_candidates"] == []
+
+
 def test_cycle_decay_respects_changed_crystal_cap_and_audits_skipped_candidate(
     config: HieronymusConfig,
 ) -> None:
@@ -388,6 +483,59 @@ def test_cycle_decay_respects_changed_crystal_cap_and_audits_skipped_candidate(
         "reason": "changed_crystal_cap",
         "crystal_id": skipped_decay_id,
     } in phase_payload["skipped_candidates"]
+
+
+def test_large_post_cap_maintenance_backlog_uses_bounded_skip_summary(
+    config: HieronymusConfig,
+) -> None:
+    _save_dreaming_config(config, min_pending=1, max_pending=10, per_cycle=1, max_changed=1)
+    context = _context(config)
+    reinforced_id = _add_crystal(
+        config,
+        context,
+        text="Only changed maintenance crystal.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    skipped_ids = [
+        _add_crystal(
+            config,
+            context,
+            text=f"Large skipped decay backlog {index}.",
+            strength=0.5,
+            confidence=0.5,
+        )
+        for index in range(30)
+    ]
+    FeedbackStore(config).record(
+        reinforced_id,
+        event_type="used_in_translation",
+        source_role="system",
+        evidence="consume cap",
+    )
+
+    run = DreamService(config, EmptyDreamProvider()).run_all(owner="admin")
+
+    phase_payload = _phase_completed_payloads(config, run.id)[-1]
+    skipped_candidates = phase_payload["skipped_candidates"]
+    assert phase_payload["affected_memory_set"]["changed_crystal_ids"] == [reinforced_id]
+    assert skipped_candidates == [
+        {
+            "entry_path": f"cycle_decay.crystals[{skipped_ids[0]}]",
+            "reason": "changed_crystal_cap",
+            "crystal_id": skipped_ids[0],
+        },
+        {
+            "entry_path": f"cycle_decay.crystals[{skipped_ids[1]}]",
+            "reason": "changed_crystal_cap",
+            "crystal_id": skipped_ids[1],
+        },
+        {
+            "entry_path": "cycle_decay.crystals",
+            "reason": "changed_crystal_cap",
+            "skipped_count": 28,
+        },
+    ]
 
 
 def test_skipped_provider_candidates_are_audited_with_reasons(

@@ -47,6 +47,7 @@ _ROLE_CONFIDENCE = {
     "mundane": 0.6,
 }
 _SENTENCE_RE = re.compile(r"[^.!?。！？]+[.!?。！？]?")
+_MAX_SKIPPED_CANDIDATE_RECORDS = 2
 
 
 def _now() -> str:
@@ -97,6 +98,37 @@ def _output_rejected_entries(outputs: list[DreamBatchOutput]) -> list[dict[str, 
 
 def _output_skipped_candidates(outputs: list[DreamBatchOutput]) -> list[dict[str, object]]:
     return [item for *_rest, output in outputs for item in output.skipped_candidates]
+
+
+def _summary_has_activity(summary: _DreamApplySummary) -> bool:
+    return any(
+        (
+            summary.created_crystal_ids,
+            summary.created_concept_ids,
+            summary.created_facet_ids,
+            summary.created_links,
+            summary.superseded_crystal_ids,
+            summary.reinforced_crystal_ids,
+            summary.decayed_crystal_ids,
+            summary.rejected_entries,
+            summary.skipped_candidates,
+        )
+    )
+
+
+def _summary_output_count(summary: _DreamApplySummary) -> int:
+    return sum(
+        len(values)
+        for values in (
+            summary.created_crystal_ids,
+            summary.created_concept_ids,
+            summary.created_facet_ids,
+            summary.created_links,
+            summary.superseded_crystal_ids,
+            summary.reinforced_crystal_ids,
+            summary.decayed_crystal_ids,
+        )
+    )
 
 
 def _clamp_score(value: float) -> float:
@@ -663,6 +695,29 @@ class DreamService:
                     proposal_count=proposal_count,
                 )
                 conn.commit()
+            if not finalized_apply_summaries and _summary_has_activity(maintenance_summary):
+                phase_run_id = self._start_phase_run(
+                    run_id=run_id,
+                    phase="maintenance",
+                    input_count=0,
+                )
+                self._complete_phase_run(
+                    phase_run_id=phase_run_id,
+                    output_count=_summary_output_count(maintenance_summary),
+                )
+                pending_phase_audits.append(
+                    {
+                        "run_id": run_id,
+                        "phase_run_id": phase_run_id,
+                        "trigger_type": trigger_type,
+                        "threshold_state": threshold_state,
+                        "selected_memory_ids": (),
+                        "groups": [],
+                        "outputs": [],
+                        "phase_name": "maintenance",
+                    }
+                )
+                finalized_apply_summaries.append(maintenance_summary)
             for audit_payload, apply_summary in zip(
                 pending_phase_audits,
                 finalized_apply_summaries,
@@ -677,6 +732,7 @@ class DreamService:
                     groups=audit_payload["groups"],
                     outputs=audit_payload["outputs"],
                     apply_summary=apply_summary,
+                    phase_name=str(audit_payload.get("phase_name", "crystallization")),
                 )
             return DreamRunRecord(
                 id=run_id,
@@ -1616,19 +1672,20 @@ class DreamService:
         groups: DreamBatch,
         outputs: list[DreamBatchOutput],
         apply_summary: _DreamApplySummary,
+        phase_name: str = "crystallization",
     ) -> None:
         self.audit.append(
             dream_run_id=run_id,
             phase_run_id=phase_run_id,
             event_type="phase_completed",
             severity="info",
-            summary="completed crystallization phase",
+            summary=f"completed {phase_name} phase",
             payload={
                 "trigger_type": trigger_type,
                 "threshold_state": threshold_state,
                 "selected_short_term_memory_ids": list(selected_memory_ids),
-                "phase_name": "crystallization",
-                "prompt_version": self._prompt_version("crystallization"),
+                "phase_name": phase_name,
+                "prompt_version": self._prompt_version(phase_name),
                 "provider_profile": self._provider_profile(),
                 "model": self._provider_model(),
                 "request_summary": self._request_summary(groups),
@@ -1793,18 +1850,15 @@ class DreamService:
         max_changed_crystals: int,
     ) -> _DreamApplySummary:
         now = _now()
-        rows = conn.execute(
-            """
-            select *
-            from memory_events
-            where applied = 0
-            order by id
-            """
-        ).fetchall()
+        selected_crystal_ids = self._select_passive_event_crystal_ids(
+            conn,
+            max_changed_crystals=max_changed_crystals,
+        )
+        rows = self._pending_passive_event_rows(conn, selected_crystal_ids)
         reinforced_ids: list[int] = []
         decayed_ids: list[int] = []
         skipped_candidates: list[dict[str, object]] = []
-        changed_count = 0
+        changed_crystal_ids: set[int] = set()
         for event in rows:
             crystal_id = event["crystal_id"]
             event_id = int(event["id"])
@@ -1837,16 +1891,6 @@ class DreamService:
                     }
                 )
                 self._mark_memory_event_applied(conn, event_id, cycle_id)
-                continue
-            if changed_count >= max_changed_crystals:
-                skipped_candidates.append(
-                    {
-                        "entry_path": f"passive_events[{event_id}]",
-                        "reason": "changed_crystal_cap",
-                        "event_id": event_id,
-                        "crystal_id": int(crystal_id),
-                    }
-                )
                 continue
 
             strength_delta = float(event["strength_delta"])
@@ -1881,17 +1925,122 @@ class DreamService:
                     """,
                     (strength, confidence, last_reinforced_cycle, now, crystal_id),
                 )
-            changed_count += 1
+            changed_crystal_ids.add(int(crystal_id))
             if strength_delta > 0 or confidence_delta > 0:
                 reinforced_ids.append(int(crystal_id))
             if strength_delta < 0 or confidence_delta < 0:
                 decayed_ids.append(int(crystal_id))
             self._mark_memory_event_applied(conn, event_id, cycle_id)
+        skipped_candidates.extend(
+            self._passive_event_cap_skips(
+                conn,
+                selected_crystal_ids=selected_crystal_ids,
+            )
+        )
         return _DreamApplySummary(
-            reinforced_crystal_ids=tuple(reinforced_ids),
-            decayed_crystal_ids=tuple(decayed_ids),
+            reinforced_crystal_ids=_unique_ints(tuple(reinforced_ids)),
+            decayed_crystal_ids=_unique_ints(tuple(decayed_ids)),
             skipped_candidates=tuple(skipped_candidates),
         )
+
+    def _select_passive_event_crystal_ids(
+        self,
+        conn,
+        *,
+        max_changed_crystals: int,
+    ) -> tuple[int, ...]:
+        if max_changed_crystals < 1:
+            return ()
+        rows = conn.execute(
+            """
+            select memory_events.crystal_id
+            from memory_events
+            join crystals on crystals.id = memory_events.crystal_id
+            where memory_events.applied = 0
+              and memory_events.crystal_id is not null
+            group by memory_events.crystal_id
+            order by min(memory_events.id)
+            limit ?
+            """,
+            (max_changed_crystals,),
+        ).fetchall()
+        return tuple(int(row["crystal_id"]) for row in rows)
+
+    def _pending_passive_event_rows(
+        self,
+        conn,
+        selected_crystal_ids: tuple[int, ...],
+    ):
+        if not selected_crystal_ids:
+            return []
+        placeholders = ", ".join("?" for _ in selected_crystal_ids)
+        return conn.execute(
+            f"""
+            select *
+            from memory_events
+            where applied = 0
+              and crystal_id in ({placeholders})
+            order by id
+            """,
+            selected_crystal_ids,
+        ).fetchall()
+
+    def _passive_event_cap_skips(
+        self,
+        conn,
+        *,
+        selected_crystal_ids: tuple[int, ...],
+    ) -> list[dict[str, object]]:
+        skip_where = "memory_events.applied = 0 and memory_events.crystal_id is not null"
+        params: list[object] = []
+        if selected_crystal_ids:
+            placeholders = ", ".join("?" for _ in selected_crystal_ids)
+            skip_where += f" and memory_events.crystal_id not in ({placeholders})"
+            params.extend(selected_crystal_ids)
+        rows = conn.execute(
+            f"""
+            select memory_events.id, memory_events.crystal_id
+            from memory_events
+            join crystals on crystals.id = memory_events.crystal_id
+            where {skip_where}
+            group by memory_events.crystal_id
+            order by min(memory_events.id)
+            limit ?
+            """,
+            (*params, _MAX_SKIPPED_CANDIDATE_RECORDS),
+        ).fetchall()
+        total = conn.execute(
+            f"""
+            select count(*)
+            from (
+              select memory_events.crystal_id
+              from memory_events
+              join crystals on crystals.id = memory_events.crystal_id
+              where {skip_where}
+              group by memory_events.crystal_id
+            )
+            """,
+            params,
+        ).fetchone()[0]
+        skipped = [
+            {
+                "entry_path": f"passive_events[{int(row['id'])}]",
+                "reason": "changed_crystal_cap",
+                "event_id": int(row["id"]),
+                "crystal_id": int(row["crystal_id"]),
+            }
+            for row in rows
+        ]
+        remaining_count = int(total) - len(skipped)
+        if remaining_count > 0:
+            skipped.append(
+                {
+                    "entry_path": "passive_events",
+                    "reason": "changed_crystal_cap",
+                    "skipped_count": remaining_count,
+                }
+            )
+        return skipped
 
     def _mark_memory_event_applied(self, conn, event_id: int, cycle_id: int) -> None:
         conn.execute(
@@ -1944,33 +2093,42 @@ class DreamService:
         max_changed_crystals: int,
     ) -> _DreamApplySummary:
         now = _now()
-        rows = conn.execute(
-            """
-            select id, crystal_type, strength, confidence, status
-            from crystals
-            where status in ('active', 'candidate')
-              and created_cycle != ?
-              and coalesce(last_activated_cycle, -1) != ?
-              and coalesce(last_reinforced_cycle, -1) != ?
-              and not (crystal_type = 'rule' and status = 'active')
-            order by id
-            """,
-            (cycle_id, cycle_id, cycle_id),
-        ).fetchall()
+        total_candidates = self._cycle_decay_candidate_count(conn, cycle_id)
+        rows = self._cycle_decay_candidate_rows(
+            conn,
+            cycle_id,
+            limit=max(max_changed_crystals, 0),
+            offset=0,
+        )
+        skipped_rows = self._cycle_decay_candidate_rows(
+            conn,
+            cycle_id,
+            limit=_MAX_SKIPPED_CANDIDATE_RECORDS,
+            offset=max(max_changed_crystals, 0),
+        )
+        skipped_summary_count = max(
+            0,
+            total_candidates - max(max_changed_crystals, 0) - len(skipped_rows),
+        )
         decayed_ids: list[int] = []
-        skipped_candidates: list[dict[str, object]] = []
-        changed_count = 0
+        skipped_candidates: list[dict[str, object]] = [
+            {
+                "entry_path": f"cycle_decay.crystals[{int(row['id'])}]",
+                "reason": "changed_crystal_cap",
+                "crystal_id": int(row["id"]),
+            }
+            for row in skipped_rows
+        ]
+        if skipped_summary_count > 0:
+            skipped_candidates.append(
+                {
+                    "entry_path": "cycle_decay.crystals",
+                    "reason": "changed_crystal_cap",
+                    "skipped_count": skipped_summary_count,
+                }
+            )
         for crystal in rows:
             crystal_id = int(crystal["id"])
-            if changed_count >= max_changed_crystals:
-                skipped_candidates.append(
-                    {
-                        "entry_path": f"cycle_decay.crystals[{crystal_id}]",
-                        "reason": "changed_crystal_cap",
-                        "crystal_id": crystal_id,
-                    }
-                )
-                continue
             original_strength = float(crystal["strength"])
             original_confidence = float(crystal["confidence"])
             strength = _clamp_score(original_strength - STRENGTH_DECAY_PER_CYCLE)
@@ -1999,7 +2157,6 @@ class DreamService:
                 """,
                 (strength, confidence, status, now, crystal_id),
             )
-            changed_count += 1
             strength_delta = strength - original_strength
             confidence_delta = confidence - original_confidence
             if strength_delta != 0.0 or confidence_delta != 0.0:
@@ -2032,6 +2189,48 @@ class DreamService:
             decayed_crystal_ids=tuple(decayed_ids),
             skipped_candidates=tuple(skipped_candidates),
         )
+
+    def _cycle_decay_candidate_count(self, conn, cycle_id: int) -> int:
+        return int(
+            conn.execute(
+                """
+                select count(*)
+                from crystals
+                where status in ('active', 'candidate')
+                  and created_cycle != ?
+                  and coalesce(last_activated_cycle, -1) != ?
+                  and coalesce(last_reinforced_cycle, -1) != ?
+                  and not (crystal_type = 'rule' and status = 'active')
+                """,
+                (cycle_id, cycle_id, cycle_id),
+            ).fetchone()[0]
+        )
+
+    def _cycle_decay_candidate_rows(
+        self,
+        conn,
+        cycle_id: int,
+        *,
+        limit: int,
+        offset: int,
+    ):
+        if limit < 1:
+            return []
+        return conn.execute(
+            """
+            select id, crystal_type, strength, confidence, status
+            from crystals
+            where status in ('active', 'candidate')
+              and created_cycle != ?
+              and coalesce(last_activated_cycle, -1) != ?
+              and coalesce(last_reinforced_cycle, -1) != ?
+              and not (crystal_type = 'rule' and status = 'active')
+            order by id
+            limit ?
+            offset ?
+            """,
+            (cycle_id, cycle_id, cycle_id, limit, offset),
+        ).fetchall()
 
     def _insert_crystal_for_dream(
         self,
