@@ -1568,6 +1568,7 @@ class DreamService:
         concepts: list[_NormalizedDreamConcept] = []
         facets: list[_NormalizedDreamFacet] = []
         warnings: list[DreamParseWarning] = []
+        valid_concept_ids = self._valid_concept_ids()
 
         for index, item in enumerate(_list_from_payload(payload.get("concepts"))):
             concept = _normalize_dict_concept(item, f"concepts[{index}]", warnings)
@@ -1586,6 +1587,7 @@ class DreamService:
                 default_crystal_type="observation",
                 default_source_credibility="observation",
                 allowed_memory_ids=allowed_memory_ids,
+                valid_concept_ids=valid_concept_ids,
             )
             if crystal is not None:
                 crystals.append(crystal)
@@ -1597,6 +1599,7 @@ class DreamService:
                 default_crystal_type="rule",
                 default_source_credibility="user_rule",
                 allowed_memory_ids=allowed_memory_ids,
+                valid_concept_ids=valid_concept_ids,
             )
             if crystal is not None:
                 crystals.append(crystal)
@@ -1608,6 +1611,7 @@ class DreamService:
                 default_crystal_type="thought",
                 default_source_credibility="thought",
                 allowed_memory_ids=allowed_memory_ids,
+                valid_concept_ids=valid_concept_ids,
                 force_thought=True,
                 force_inferred=True,
             )
@@ -1621,6 +1625,7 @@ class DreamService:
                 default_crystal_type="thought",
                 default_source_credibility="thought",
                 allowed_memory_ids=allowed_memory_ids,
+                valid_concept_ids=valid_concept_ids,
                 force_thought=True,
                 force_inferred=True,
             )
@@ -1642,6 +1647,17 @@ class DreamService:
             supersede_actions=supersede_actions,
             warnings=warnings,
         )
+
+    def _valid_concept_ids(self) -> set[int]:
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute(
+                """
+                select id
+                from concepts
+                where status not in ('archived', 'merged')
+                """
+            ).fetchall()
+        return {int(row["id"]) for row in rows}
 
     def _resolve_candidate_concepts(
         self,
@@ -1820,6 +1836,7 @@ def _normalize_dict_crystal(
     default_crystal_type: str,
     default_source_credibility: str,
     allowed_memory_ids: set[int],
+    valid_concept_ids: set[int],
     force_thought: bool = False,
     force_inferred: bool = False,
 ) -> _NormalizedDreamCrystal | None:
@@ -1898,6 +1915,7 @@ def _normalize_dict_crystal(
         "ignored malformed crystal concept id metadata",
         "concept_ids",
         "concept_id",
+        valid_ids=valid_concept_ids,
     )
     concept_names, concept_name_penalty = _concept_names_from_payload(payload, entry_path, warnings)
     penalty += (
@@ -2343,6 +2361,7 @@ def _recover_crystal_int_tuple(
     code: str,
     message: str,
     *keys: str,
+    valid_ids: set[int] | None = None,
 ) -> tuple[tuple[int, ...], float]:
     integers: list[int] = []
     penalty = 0.0
@@ -2366,7 +2385,22 @@ def _recover_crystal_int_tuple(
             penalty += MALFORMED_CONFIDENCE_PENALTY
     if penalty:
         _append_parse_warning(warnings, entry_path, code, message, penalty)
-    return (tuple(sorted(set(integers))), penalty)
+    clean_ids = tuple(sorted(set(integers)))
+    if valid_ids is None:
+        return (clean_ids, penalty)
+    valid = tuple(concept_id for concept_id in clean_ids if concept_id in valid_ids)
+    invalid_count = len(clean_ids) - len(valid)
+    if invalid_count:
+        invalid_penalty = MALFORMED_CONFIDENCE_PENALTY * invalid_count
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "invalid_crystal_concept_ids",
+            "ignored unknown or inactive crystal concept ids",
+            invalid_penalty,
+        )
+        penalty += invalid_penalty
+    return (valid, penalty)
 
 
 def _concept_names_from_payload(

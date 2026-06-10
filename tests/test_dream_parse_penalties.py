@@ -250,6 +250,44 @@ def test_malformed_optional_crystal_metadata_warns_and_penalizes(
     } <= warning_codes
 
 
+def test_nonexistent_optional_crystal_concept_id_warns_and_is_skipped(
+    config: HieronymusConfig,
+) -> None:
+    class MissingConceptIdProvider:
+        name = "missing-concept-id"
+
+        def crystallize(self, context, memories):
+            return {
+                "crystals": [
+                    {
+                        "content": "Inventory labels should keep crafting terms stable.",
+                        "type": "lesson",
+                        "source_credibility": "expert",
+                        "concept_ids": [999999],
+                    }
+                ]
+            }
+
+    context = _context(config)
+    _completed_session(config, context)
+
+    run = DreamService(config, MissingConceptIdProvider()).run_all()
+
+    with connect(config.database_path) as conn:
+        crystal = conn.execute(
+            "select confidence, malformed_penalty from crystals",
+        ).fetchone()
+        linked_concepts = conn.execute("select count(*) from crystal_concepts").fetchone()[0]
+        audit = conn.execute("select payload_json from dream_audit_entries").fetchone()
+
+    assert run.status == "completed"
+    assert crystal["confidence"] == pytest.approx(0.65)
+    assert crystal["malformed_penalty"] == pytest.approx(0.2)
+    assert linked_concepts == 0
+    warning_codes = {warning["code"] for warning in json.loads(audit["payload_json"])["warnings"]}
+    assert "invalid_crystal_concept_ids" in warning_codes
+
+
 def test_user_rule_short_term_memory_creates_stronger_rule_than_thought(
     config: HieronymusConfig,
 ) -> None:
