@@ -130,6 +130,30 @@ def test_concept_create_facet_add_crystal_link_and_recall_via_mcp(
     assert results[0]["concept_labels"] == ["センス"]
 
 
+def test_concept_create_allows_only_active_initial_statuses(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+
+    from hieronymus import mcp_server
+
+    default = mcp_server.hieronymus_concept_create("Default Sense")
+    candidate = mcp_server.hieronymus_concept_create("Candidate Sense", status="candidate")
+    established = mcp_server.hieronymus_concept_create(
+        "Established Sense",
+        status="established",
+    )
+
+    assert default["status"] == "candidate"
+    assert candidate["status"] == "candidate"
+    assert established["status"] == "established"
+    with pytest.raises(ValueError, match="concept_create cannot set inactive status"):
+        mcp_server.hieronymus_concept_create("Archived Sense", status="archived")
+    with pytest.raises(ValueError, match="concept_create cannot set inactive status"):
+        mcp_server.hieronymus_concept_create("Merged Sense", status="merged")
+
+
 def test_user_correction_mcp_path_stores_short_term_memory_without_rule_crystal(
     monkeypatch,
     tmp_path,

@@ -281,6 +281,8 @@ class ConceptStore:
 
         clean_description = description.strip()
         storage_status = _storage_status(status)
+        if _is_inactive_status(storage_status):
+            raise ValueError("concept_create cannot set inactive status")
         now = _now()
         with connect(self.config.database_path) as conn:
             cursor = conn.execute(
