@@ -13,6 +13,59 @@ from hieronymus.db import apply_migration, connect
 from hieronymus.rule_crystals import parse_rule_crystal
 
 _UNSUPPORTED_RULE_ALIAS_KINDS = frozenset({"source_variant", "search_alias"})
+_REQUIRED_GENERATED_GRAPH_COLUMNS = {
+    "concepts": {
+        "id",
+        "canonical_name",
+        "description",
+        "scope_type",
+        "scope_key",
+        "status",
+        "confidence",
+        "created_at",
+        "updated_at",
+    },
+    "concept_semantic_tags": {"concept_id", "tag", "confidence", "created_at"},
+    "concept_facets": {
+        "id",
+        "concept_id",
+        "language",
+        "facet_type",
+        "value",
+        "source_crystal_id",
+        "confidence",
+        "is_canonical",
+        "superseded_at",
+        "created_at",
+        "updated_at",
+    },
+    "concept_facet_language_tags": {"facet_id", "language_tag"},
+    "crystals": {
+        "id",
+        "crystal_type",
+        "text",
+        "title",
+        "scope_type",
+        "scope_key",
+        "series_slug",
+        "source_language",
+        "target_language",
+        "tags_json",
+        "strength",
+        "confidence",
+        "source_credibility",
+        "rule_intent",
+        "malformed_penalty",
+        "supersedes_crystal_id",
+        "status",
+        "created_at",
+        "updated_at",
+    },
+    "crystals_fts": {"title", "text"},
+    "crystal_language_tags": {"crystal_id", "language_tag"},
+    "crystal_semantic_tags": {"crystal_id", "tag", "confidence", "created_at"},
+    "crystal_concepts": {"crystal_id", "concept_id", "link_type", "confidence", "created_at"},
+}
 
 
 class Database(Protocol):
@@ -360,6 +413,13 @@ class MemoryGraphMigrator:
             )
         ):
             return
+        if not _generated_graph_schema_is_complete(conn):
+            if _scalar_count(
+                conn,
+                "select count(*) from strict_terms where status in ('approved', 'active')",
+            ):
+                skipped["generated_graph.incomplete_schema"] += 1
+            return
         rows = conn.execute(
             """
             select *
@@ -463,6 +523,13 @@ class MemoryGraphMigrator:
                 },
             )
         ):
+            return
+        if not _generated_graph_schema_is_complete(conn):
+            if _scalar_count(
+                conn,
+                "select count(*) from strict_concept_proposals where status != 'rejected'",
+            ):
+                skipped["generated_graph.incomplete_schema"] += 1
             return
         for proposal in conn.execute("select * from strict_concept_proposals order by id"):
             status = str(proposal["status"])
@@ -806,6 +873,8 @@ class MemoryGraphMigrator:
     def _strict_term_tags(self, conn: sqlite3.Connection, term_id: int) -> tuple[str, ...]:
         if not _has_table(conn, "strict_term_tags"):
             return ()
+        if not _has_columns(conn, "strict_term_tags", {"term_id", "tag"}):
+            return ()
         return tuple(
             row["tag"]
             for row in conn.execute(
@@ -1143,33 +1212,27 @@ class MemoryGraphMigrator:
                 "target_language",
             },
         ):
-            pending["strict_terms"] = self._count_migratable_strict_terms(conn)
+            if _generated_graph_schema_is_complete(conn):
+                pending["strict_terms"] = self._count_migratable_strict_terms(conn)
         if _has_table(conn, "strict_concept_proposals") and _has_columns(
             conn,
             "strict_concept_proposals",
-            {"id", "status"},
+            {
+                "id",
+                "status",
+                "source_form",
+                "concept_text",
+                "canonical_rendering",
+                "approved_variants_json",
+                "forbidden_variants_json",
+                "rationale",
+                "series_slug",
+                "source_language",
+                "target_language",
+            },
         ):
-            if _has_table(conn, "memory_graph_migration_ledger"):
-                pending["strict_concept_proposals"] = _scalar_count(
-                    conn,
-                    """
-                    select count(*)
-                    from strict_concept_proposals
-                    where status != 'rejected'
-                      and not exists (
-                        select 1
-                        from memory_graph_migration_ledger ledger
-                        where ledger.source_table = 'strict_concept_proposals'
-                          and ledger.source_id = cast(strict_concept_proposals.id as text)
-                          and ledger.target_table = 'concepts'
-                      )
-                    """,
-                )
-            else:
-                pending["strict_concept_proposals"] = _scalar_count(
-                    conn,
-                    "select count(*) from strict_concept_proposals where status != 'rejected'",
-                )
+            if _generated_graph_schema_is_complete(conn):
+                pending["strict_concept_proposals"] = self._count_migratable_proposals(conn)
 
     def _count_migratable_strict_terms(self, conn: sqlite3.Connection) -> int:
         if _has_table(conn, "memory_graph_migration_ledger"):
@@ -1213,6 +1276,45 @@ class MemoryGraphMigrator:
                 count += 1
         return count
 
+    def _count_migratable_proposals(self, conn: sqlite3.Connection) -> int:
+        if _has_table(conn, "memory_graph_migration_ledger"):
+            rows = conn.execute(
+                """
+                select *
+                from strict_concept_proposals
+                where status != 'rejected'
+                  and not exists (
+                    select 1
+                    from memory_graph_migration_ledger ledger
+                    where ledger.source_table = 'strict_concept_proposals'
+                      and ledger.source_id = cast(strict_concept_proposals.id as text)
+                      and ledger.target_table = 'concepts'
+                  )
+                order by id
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                select *
+                from strict_concept_proposals
+                where status != 'rejected'
+                order by id
+                """
+            ).fetchall()
+
+        count = 0
+        for proposal in rows:
+            source_form = str(proposal["source_form"]).strip() or proposal["concept_text"]
+            if _validate_rule_shape(
+                source_text=source_form,
+                canonical_translation=proposal["canonical_rendering"],
+                approved_variants=_json_string_values(proposal["approved_variants_json"]),
+                forbidden_variants=_json_string_values(proposal["forbidden_variants_json"]),
+            ):
+                count += 1
+        return count
+
 
 def _database_path(db: Database | HieronymusConfig | Path | str) -> Path:
     if isinstance(db, str):
@@ -1238,6 +1340,13 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 def _has_columns(conn: sqlite3.Connection, table: str, columns: set[str]) -> bool:
     return columns <= _columns(conn, table)
+
+
+def _generated_graph_schema_is_complete(conn: sqlite3.Connection) -> bool:
+    return all(
+        _has_table(conn, table) and _has_columns(conn, table, columns)
+        for table, columns in _REQUIRED_GENERATED_GRAPH_COLUMNS.items()
+    )
 
 
 def _row_exists(conn: sqlite3.Connection, table: str, row_id: int) -> bool:

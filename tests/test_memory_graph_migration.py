@@ -510,6 +510,100 @@ def test_dry_report_counts_missing_task_session_semantic_tag_pairs(
     assert report.pending["task_session_semantic_tags"] == 1
 
 
+def test_strict_term_generation_skips_when_destination_graph_schema_is_partial(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        _create_partial_alias_schema(conn)
+        _insert_strict_term(conn)
+        conn.execute(
+            """
+            create table crystals (
+              id integer primary key,
+              crystal_type text not null,
+              text text not null
+            )
+            """
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator(config).run()
+
+    assert report.skipped == {"generated_graph.incomplete_schema": 1}
+    with connect(config.database_path) as conn:
+        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+
+
+def test_unsupported_proposal_shape_does_not_remain_pending_in_dry_report(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        conn.execute(
+            """
+            insert into strict_concept_proposals(
+              series_slug,
+              source_language,
+              target_language,
+              concept_text,
+              source_form,
+              canonical_rendering,
+              approved_variants_json,
+              forbidden_variants_json,
+              rationale,
+              status,
+              created_at,
+              updated_at
+            )
+            values (
+              'book',
+              'ja',
+              'en',
+              'Sense',
+              'センス',
+              'Sense',
+              '["Sense", "Senses"]',
+              '[]',
+              'Unsupported approved variant.',
+              'pending',
+              ?,
+              ?
+            )
+            """,
+            (NOW, NOW),
+        )
+        conn.commit()
+
+    run_report = MemoryGraphMigrator(config).run()
+    dry_report = MemoryGraphMigrator.inspect(config)
+
+    assert run_report.skipped == {"strict_concept_proposals.unsupported_rule_shape": 1}
+    assert dry_report.pending.get("strict_concept_proposals", 0) == 0
+
+
+def test_strict_term_with_partial_tags_schema_does_not_crash(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        _create_partial_alias_schema(conn)
+        conn.execute("drop table strict_term_tags")
+        conn.execute("create table strict_term_tags(term_id integer not null)")
+        _insert_strict_term(conn, insert_tag=False)
+        conn.execute("insert into strict_term_tags(term_id) values (1)")
+        conn.commit()
+
+    report = MemoryGraphMigrator(config).run()
+
+    assert report.skipped == {}
+    with connect(config.database_path) as conn:
+        assert (
+            conn.execute("select count(*) from crystals where crystal_type = 'rule'").fetchone()[0]
+            == 1
+        )
+
+
 def test_migrator_tolerates_partial_older_task_and_crystal_tables(
     tmp_path: Path,
 ) -> None:
@@ -715,7 +809,7 @@ def _create_partial_alias_schema(conn) -> None:
     conn.commit()
 
 
-def _insert_strict_term(conn) -> int:
+def _insert_strict_term(conn, *, insert_tag: bool = True) -> int:
     term_id = conn.execute(
         """
         insert into strict_terms(
@@ -735,10 +829,11 @@ def _insert_strict_term(conn) -> int:
         """,
         (NOW, NOW),
     ).lastrowid
-    conn.execute(
-        "insert into strict_term_tags(term_id, tag) values (?, 'skill')",
-        (term_id,),
-    )
+    if insert_tag:
+        conn.execute(
+            "insert into strict_term_tags(term_id, tag) values (?, 'skill')",
+            (term_id,),
+        )
     return int(term_id)
 
 
