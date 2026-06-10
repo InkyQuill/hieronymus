@@ -147,7 +147,7 @@ def _validate_rule_shape(
 
 
 class MemoryGraphMigrator:
-    def __init__(self, db: Database | HieronymusConfig | Path | str) -> None:
+    def __init__(self, db: Database) -> None:
         self.database_path = _database_path(db)
         with connect(self.database_path) as conn:
             apply_migration(conn, "global.sql")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +13,12 @@ from hieronymus.doctor import Doctor, DoctorFinding
 from hieronymus.memory_migration import MemoryGraphMigrator
 
 NOW = "2026-06-10T00:00:00+00:00"
+
+
+def test_memory_graph_migrator_constructor_signature_matches_public_api() -> None:
+    parameter = inspect.signature(MemoryGraphMigrator).parameters["db"]
+
+    assert parameter.annotation == "Database"
 
 
 def test_strict_term_migration_creates_rule_graph(config: HieronymusConfig) -> None:
