@@ -180,6 +180,10 @@ def _concept_ids_for_rule(conn: sqlite3.Connection, crystal_id: int) -> tuple[in
     return tuple(int(row["concept_id"]) for row in rows)
 
 
+def active_concept_ids_for_rule(conn: sqlite3.Connection, crystal_id: int) -> tuple[int, ...]:
+    return _concept_ids_for_rule(conn, crystal_id)
+
+
 def _crystal_language_tags(conn: sqlite3.Connection, crystal_id: int) -> tuple[str, ...]:
     rows = conn.execute(
         """

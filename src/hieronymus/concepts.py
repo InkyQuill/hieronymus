@@ -595,9 +595,11 @@ class ConceptStore:
     ) -> ConceptRecord:
         now = _now()
         with connect(self.config.database_path) as conn:
-            row = self._require_concept_with_connection(conn, concept_id)
+            row = self._require_active_concept_with_connection(conn, concept_id)
             next_description = row["description"] if description is None else description.strip()
             next_status = row["status"] if status is None else _storage_status(status)
+            if _is_inactive_status(next_status):
+                raise ValueError("concept_update cannot set inactive status")
             next_confidence = (
                 float(row["confidence"]) if confidence is None else _clamp_confidence(confidence)
             )
@@ -677,7 +679,7 @@ class ConceptStore:
             if row is None:
                 raise KeyError(f"unknown concept facet: {facet_id}")
             concept_id = int(row["concept_id"])
-            self._require_concept_with_connection(conn, concept_id)
+            self._require_active_concept_with_connection(conn, concept_id)
 
             next_value = row["value"] if value is None else value.strip()
             if not next_value:
@@ -757,6 +759,7 @@ class ConceptStore:
 
     def set_canonical_facet(self, concept_id: int, facet_id: int) -> None:
         with connect(self.config.database_path) as conn:
+            self._require_active_concept_with_connection(conn, concept_id)
             self._set_canonical_facet_with_connection(conn, concept_id, facet_id)
             conn.commit()
 
@@ -772,7 +775,7 @@ class ConceptStore:
             raise ValueError("concept canonical_name must not be empty")
         now = _now()
         with connect(self.config.database_path) as conn:
-            row = self._require_concept_with_connection(conn, concept_id)
+            row = self._require_active_concept_with_connection(conn, concept_id)
             old_label = row["canonical_name"]
             if old_label == clean_label:
                 return _row_to_concept_record(conn, row)
@@ -936,7 +939,7 @@ class ConceptStore:
 
     def set_semantic_tags(self, concept_id: int, tags: Iterable[str]) -> None:
         with connect(self.config.database_path) as conn:
-            self._require_concept_with_connection(conn, concept_id)
+            self._require_active_concept_with_connection(conn, concept_id)
             self._set_semantic_tags_with_connection(conn, concept_id, tags, now=_now())
             conn.commit()
 
@@ -1071,6 +1074,16 @@ class ConceptStore:
             raise KeyError(f"unknown concept: {concept_id}")
         return row
 
+    def _require_active_concept_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        concept_id: int,
+    ) -> sqlite3.Row:
+        row = self._require_concept_with_connection(conn, concept_id)
+        if _is_inactive_status(row["status"]):
+            raise ValueError("cannot mutate inactive concept")
+        return row
+
     def _get_facet(self, facet_id: int) -> ConceptFacetRecord:
         with connect(self.config.database_path) as conn:
             row = conn.execute("select * from concept_facets where id = ?", (facet_id,)).fetchone()
@@ -1200,7 +1213,7 @@ class ConceptStore:
         clean_language_tags = _clean_language_tags(language_tags, legacy_language=language)
         legacy_language = clean_language_tags[0] if clean_language_tags else ""
         event_time = now or _now()
-        self._require_concept_with_connection(conn, concept_id)
+        self._require_active_concept_with_connection(conn, concept_id)
         cursor = conn.execute(
             """
             insert into concept_facets(
@@ -1276,6 +1289,7 @@ class ConceptStore:
         facet_id: int,
         story_scopes: Iterable[str],
     ) -> None:
+        conn.execute("delete from concept_facet_story_scopes where facet_id = ?", (facet_id,))
         for story_scope in _clean_tags(story_scopes):
             conn.execute(
                 """
@@ -1291,6 +1305,7 @@ class ConceptStore:
         facet_id: int,
         semantic_tags: Iterable[str],
     ) -> None:
+        conn.execute("delete from concept_facet_semantic_tags where facet_id = ?", (facet_id,))
         for semantic_tag in _clean_tags(semantic_tags):
             conn.execute(
                 """

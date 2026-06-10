@@ -11,6 +11,7 @@ from hieronymus.memory_models import CrystalRecord, TranslationContext
 from hieronymus.rule_crystals import (
     DETERMINISTIC_RULE_CONFIDENCE_THRESHOLD,
     DETERMINISTIC_RULE_STRENGTH_THRESHOLD,
+    active_concept_ids_for_rule,
     parse_rule_crystal,
 )
 
@@ -303,6 +304,8 @@ class CrystalStore:
 
     def validate_rule_crystal(self, crystal_id: int) -> dict[str, Any]:
         crystal = self.get(crystal_id)
+        with connect(self.config.database_path) as conn:
+            active_concept_ids = active_concept_ids_for_rule(conn, crystal_id)
         errors: list[str] = []
         warnings: list[str] = []
         parsed_payload: dict[str, Any] | None = None
@@ -329,6 +332,8 @@ class CrystalStore:
             warnings.append("strength is below deterministic validation threshold")
         if not crystal.concept_ids:
             warnings.append("rule crystal is not linked to a concept")
+        elif not active_concept_ids:
+            warnings.append("rule crystal is not linked to an active concept")
 
         valid = not errors
         enforceable = (
@@ -336,7 +341,7 @@ class CrystalStore:
             and crystal.status == "active"
             and crystal.confidence >= DETERMINISTIC_RULE_CONFIDENCE_THRESHOLD
             and crystal.strength >= DETERMINISTIC_RULE_STRENGTH_THRESHOLD
-            and bool(crystal.concept_ids)
+            and bool(active_concept_ids)
         )
         return {
             "crystal_id": crystal.id,
