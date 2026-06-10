@@ -10,10 +10,11 @@ from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_audit import DreamAuditStore
 from hieronymus.dream_config import default_dream_config
-from hieronymus.dreaming import DreamRunRecord
+from hieronymus.dreaming import DreamRunRecord, DreamService
 from hieronymus.llm_cache import CachedModels, ModelCacheEntry, save_model_cache
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
+from hieronymus.scoring import FeedbackStore
 from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.tui_bridge.server import dispatch
 from hieronymus.workspace import WorkspaceStore
@@ -241,6 +242,73 @@ def test_admin_status_reports_running_maintenance_phase_for_completed_run(
     assert payload["short_term_status"]["drain_in_progress"] is True
     assert payload["short_term_status"]["drain_completed"] == 3
     assert payload["short_term_status"]["drain_progress"] == 1.0
+
+
+def test_admin_status_reports_maintenance_during_real_maintenance_path(
+    config: HieronymusConfig,
+    monkeypatch,
+) -> None:
+    class EmptyDreamProvider:
+        name = "empty"
+
+        def crystallize(self, context, memories):
+            return {}
+
+    context = _context(config)
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Maintenance target",
+        text="Maintenance target should be reinforced.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    FeedbackStore(config).record(
+        crystal_id,
+        event_type="used_in_translation",
+        source_role="system",
+        evidence="sample admin status during maintenance",
+    )
+    samples: list[dict[str, object]] = []
+    original_apply_passive_events = DreamService._apply_passive_events
+
+    def sample_status_during_passive_events(
+        self,
+        conn,
+        cycle_id: int,
+        *,
+        max_changed_crystals: int,
+    ):
+        samples.append(AdminStore(self.config).status_payload()["dream_status"])
+        return original_apply_passive_events(
+            self,
+            conn,
+            cycle_id,
+            max_changed_crystals=max_changed_crystals,
+        )
+
+    monkeypatch.setattr(
+        DreamService,
+        "_apply_passive_events",
+        sample_status_during_passive_events,
+    )
+
+    run = DreamService(config, EmptyDreamProvider()).run_all(owner="admin")
+
+    assert run.status == "completed"
+    assert samples == [
+        {
+            "state": "WORKING",
+            "current_phase": "maintenance",
+            "progress": 0.9,
+            "run_id": run.id,
+            "cycle_id": run.cycle_id,
+            "owner": "admin",
+            "started_at": samples[0]["started_at"],
+        }
+    ]
+    assert isinstance(samples[0]["started_at"], str)
+    assert samples[0]["started_at"]
 
 
 def test_user_correction_creates_short_term_memory_and_not_rule_crystal(

@@ -522,6 +522,7 @@ class DreamService:
         created_crystal_count = 0
         proposal_count = 0
         batch_apply_summaries: list[_DreamApplySummary] = []
+        maintenance_phase_run_id: int | None = None
         try:
             pending_count = self._pending_short_term_memory_count()
             minimum = self.dream_config.min_pending_short_term_memories
@@ -659,6 +660,12 @@ class DreamService:
                     self.dream_config.max_changed_crystals_per_cycle
                     - len(changed_ids_before_maintenance),
                 )
+                if self._has_maintenance_candidates(conn, cycle_id):
+                    maintenance_phase_run_id = self._start_phase_run(
+                        run_id=run_id,
+                        phase="maintenance",
+                        input_count=0,
+                    )
                 passive_summary = self._apply_passive_events(
                     conn,
                     cycle_id,
@@ -689,35 +696,31 @@ class DreamService:
                     cycle_id,
                     sorted(processed_session_ids),
                 )
-                self._complete_run_with_connection(
-                    conn,
-                    run_id=run_id,
-                    input_count=input_count,
-                    created_crystal_count=created_crystal_count,
-                    proposal_count=proposal_count,
-                )
                 conn.commit()
-            if _summary_has_activity(maintenance_summary):
-                phase_run_id = self._start_phase_run(
-                    run_id=run_id,
-                    phase="maintenance",
-                    input_count=0,
-                )
+            if maintenance_phase_run_id is not None:
                 self._complete_phase_run(
-                    phase_run_id=phase_run_id,
+                    phase_run_id=maintenance_phase_run_id,
                     output_count=_summary_output_count(maintenance_summary),
                 )
-                self._audit_phase_completed(
-                    run_id=run_id,
-                    phase_run_id=phase_run_id,
-                    trigger_type=trigger_type,
-                    threshold_state=threshold_state,
-                    selected_memory_ids=(),
-                    groups=[],
-                    outputs=[],
-                    apply_summary=maintenance_summary,
-                    phase_name="maintenance",
-                )
+                if _summary_has_activity(maintenance_summary):
+                    self._audit_phase_completed(
+                        run_id=run_id,
+                        phase_run_id=maintenance_phase_run_id,
+                        trigger_type=trigger_type,
+                        threshold_state=threshold_state,
+                        selected_memory_ids=(),
+                        groups=[],
+                        outputs=[],
+                        apply_summary=maintenance_summary,
+                        phase_name="maintenance",
+                    )
+            self._complete_run(
+                run_id=run_id,
+                input_count=input_count,
+                created_crystal_count=created_crystal_count,
+                proposal_count=proposal_count,
+            )
+            maintenance_phase_run_id = None
             return DreamRunRecord(
                 id=run_id,
                 cycle_id=cycle_id,
@@ -728,6 +731,14 @@ class DreamService:
                 proposal_count=proposal_count,
             )
         except Exception as exc:
+            if maintenance_phase_run_id is not None:
+                with connect(self.config.database_path) as conn:
+                    phase = conn.execute(
+                        "select status from dream_phase_runs where id = ?",
+                        (maintenance_phase_run_id,),
+                    ).fetchone()
+                if phase is not None and phase["status"] == "running":
+                    self._fail_phase_run(maintenance_phase_run_id, exc)
             with connect(self.config.database_path) as conn:
                 conn.execute(
                     """
@@ -1825,6 +1836,30 @@ class DreamService:
 
     def _prompt_version(self, phase: str) -> str:
         return f"{phase}:v1"
+
+    def _has_maintenance_candidates(self, conn, cycle_id: int) -> bool:
+        invalid_passive_count = conn.execute(
+            f"""
+            select count(*)
+            from memory_events
+            where {_INVALID_PASSIVE_EVENT_WHERE}
+            """
+        ).fetchone()[0]
+        if int(invalid_passive_count) > 0:
+            return True
+
+        passive_count = conn.execute(
+            """
+            select count(*)
+            from memory_events
+            where applied = 0
+              and crystal_id is not null
+            """
+        ).fetchone()[0]
+        if int(passive_count) > 0:
+            return True
+
+        return self._cycle_decay_candidate_count(conn, cycle_id) > 0
 
     def _apply_passive_events(
         self,
