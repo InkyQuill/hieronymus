@@ -829,7 +829,7 @@ class ConceptStore:
         _ = reason.strip()
         now = _now()
         with connect(self.config.database_path) as conn:
-            self._require_concept_with_connection(conn, concept_id)
+            self._require_active_concept_with_connection(conn, concept_id)
             conn.execute(
                 """
                 update concepts
@@ -852,7 +852,7 @@ class ConceptStore:
         _ = reason.strip()
         now = _now()
         with connect(self.config.database_path) as conn:
-            source_row = self._require_concept_with_connection(conn, source_concept_id)
+            source_row = self._require_active_concept_with_connection(conn, source_concept_id)
             target_row = self._require_concept_with_connection(conn, target_concept_id)
             if _is_inactive_status(target_row["status"]):
                 raise ValueError("merge target concept must be active")

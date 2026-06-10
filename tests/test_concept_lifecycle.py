@@ -220,6 +220,64 @@ def test_merge_rejects_merged_target(config: HieronymusConfig) -> None:
         store.merge_concepts(source.id, merged_target.id, "Should not merge into merged target.")
 
 
+def test_merge_rejects_archived_source_without_moving_rule_link(
+    config: HieronymusConfig,
+) -> None:
+    store = ConceptStore(config)
+    source = store.create_concept("Archived Sense")
+    target = store.create_concept("Active Sense")
+    crystal_id = CrystalStore(config).add_crystal(
+        _context(),
+        crystal_type="rule",
+        text="Archived Sense is translated as Sense.",
+        strength=0.9,
+        confidence=0.9,
+    )
+
+    store.link_crystal(crystal_id, source.id, link_type="rule", confidence=0.9)
+    store.archive_concept(source.id, "Inactive source.")
+
+    before = CrystalStore(config).validate_rule_crystal(crystal_id)
+    with pytest.raises(ValueError, match="cannot mutate inactive concept"):
+        store.merge_concepts(source.id, target.id, "Should not move inactive rule link.")
+    after = CrystalStore(config).validate_rule_crystal(crystal_id)
+
+    assert store.concept_ids_for_crystal(crystal_id) == (source.id,)
+    assert before["enforceable"] is False
+    assert after["enforceable"] is False
+    assert after["warnings"] == ["rule crystal is not linked to an active concept"]
+
+
+def test_merge_rejects_merged_source(config: HieronymusConfig) -> None:
+    store = ConceptStore(config)
+    source = store.create_concept("Yun")
+    first_target = store.create_concept("Yun Talent")
+    second_target = store.create_concept("Yun Talent Final")
+    store.merge_concepts(source.id, first_target.id, "First merge.")
+
+    with pytest.raises(ValueError, match="cannot mutate inactive concept"):
+        store.merge_concepts(source.id, second_target.id, "Should not merge twice.")
+
+
+def test_archive_rejects_inactive_concepts(config: HieronymusConfig) -> None:
+    store = ConceptStore(config)
+    archived = store.create_concept("Archived Sense")
+    merged = store.create_concept("Merged Sense")
+    target = store.create_concept("Active Sense")
+
+    store.archive_concept(archived.id, "Inactive.")
+    store.merge_concepts(merged.id, target.id, "Merged.")
+
+    with pytest.raises(ValueError, match="cannot mutate inactive concept"):
+        store.archive_concept(archived.id, "Already archived.")
+    with pytest.raises(ValueError, match="cannot mutate inactive concept"):
+        store.archive_concept(merged.id, "Must not rewrite merged lifecycle.")
+
+    merged_after = store.get(merged.id)
+    assert merged_after.status == CONCEPT_MERGED
+    assert merged_after.merged_into_concept_id == target.id
+
+
 def test_merge_preserves_crystal_links_rule_links_and_facet_searchability(
     config: HieronymusConfig,
 ) -> None:

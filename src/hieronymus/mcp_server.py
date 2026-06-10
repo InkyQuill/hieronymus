@@ -761,7 +761,7 @@ def hieronymus_termbase_approve(
     return {"term_id": term_id, "approved": True}
 
 
-@server.tool()
+@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_memory_search(
     series_slug: str,
     query: str,
@@ -780,7 +780,7 @@ def hieronymus_memory_search(
     return [asdict(memory) for memory in memories]
 
 
-@server.tool()
+@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_memory_add(
     series_slug: str,
     kind: str,

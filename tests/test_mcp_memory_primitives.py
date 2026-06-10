@@ -44,6 +44,8 @@ def test_memory_primitive_tools_are_registered() -> None:
     assert tools["hieronymus_termbase_contract"].description == COMPATIBILITY_DESCRIPTION
     assert tools["hieronymus_termbase_propose"].description == COMPATIBILITY_DESCRIPTION
     assert tools["hieronymus_termbase_approve"].description == COMPATIBILITY_DESCRIPTION
+    assert tools["hieronymus_memory_search"].description == COMPATIBILITY_DESCRIPTION
+    assert tools["hieronymus_memory_add"].description == COMPATIBILITY_DESCRIPTION
     assert tools["hieronymus_concept_proposals_list"].description == COMPATIBILITY_DESCRIPTION
 
 
@@ -453,3 +455,77 @@ def test_rule_validation_requires_active_linked_concept(
     assert validation["valid"] is True
     assert validation["enforceable"] is False
     assert validation["warnings"] == ["rule crystal is not linked to an active concept"]
+
+
+def test_lifecycle_mcp_rejects_inactive_archive_and_merge_without_reenabling_rule(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+
+    from hieronymus import mcp_server
+
+    series = mcp_server.hieronymus_series_create(
+        slug="only-sense-online",
+        title="Only Sense Online",
+        source_language="ja",
+        target_language="en",
+    )
+    archived = mcp_server.hieronymus_concept_create(
+        "Archived Sense",
+        confidence=0.9,
+        series_slug=series["slug"],
+    )
+    merged_source = mcp_server.hieronymus_concept_create(
+        "Merged Sense",
+        confidence=0.9,
+        series_slug=series["slug"],
+    )
+    target = mcp_server.hieronymus_concept_create(
+        "Active Sense",
+        confidence=0.9,
+        series_slug=series["slug"],
+    )
+    context = TranslationContext(
+        series_slug=series["slug"],
+        source_language=series["source_language"],
+        target_language=series["target_language"],
+        task_type="translation",
+    )
+    crystal_id = CrystalStore(load_config()).add_crystal(
+        context,
+        crystal_type="rule",
+        text="Archived Sense is translated as Sense.",
+        strength=0.9,
+        confidence=0.9,
+    )
+    mcp_server.hieronymus_crystal_link_concept(crystal_id, archived["id"], confidence=0.9)
+
+    mcp_server.hieronymus_concept_archive(archived["id"], reason="Inactive.")
+    mcp_server.hieronymus_concept_merge(
+        merged_source["id"],
+        target["id"],
+        reason="Initial merge.",
+    )
+
+    before = mcp_server.hieronymus_rule_crystal_validate(crystal_id)
+    with pytest.raises(ValueError, match="cannot mutate inactive concept"):
+        mcp_server.hieronymus_concept_merge(
+            archived["id"],
+            target["id"],
+            reason="Should not re-enable archived rule.",
+        )
+    with pytest.raises(ValueError, match="cannot mutate inactive concept"):
+        mcp_server.hieronymus_concept_merge(
+            merged_source["id"],
+            target["id"],
+            reason="Already merged.",
+        )
+    with pytest.raises(ValueError, match="cannot mutate inactive concept"):
+        mcp_server.hieronymus_concept_archive(merged_source["id"], reason="Ambiguous.")
+    after = mcp_server.hieronymus_rule_crystal_validate(crystal_id)
+
+    assert before["enforceable"] is False
+    assert after["enforceable"] is False
+    assert after["warnings"] == ["rule crystal is not linked to an active concept"]
+    assert after["crystal_id"] == crystal_id
