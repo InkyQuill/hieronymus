@@ -482,6 +482,43 @@ def test_dry_report_counts_missing_crystal_semantic_tag_pairs(
     assert report.pending["crystal_semantic_tags"] == 1
 
 
+def test_dry_report_counts_missing_crystal_semantic_tag_pairs_from_csv(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        crystal_id = conn.execute(
+            """
+            insert into crystals(
+              crystal_type,
+              text,
+              scope_type,
+              tags_json,
+              strength,
+              confidence,
+              status,
+              created_at,
+              updated_at
+            )
+            values ('lesson', 'Legacy lesson.', 'series', 'ui, term', 0.5, 0.5,
+                    'active', ?, ?)
+            """,
+            (NOW, NOW),
+        ).lastrowid
+        conn.execute(
+            """
+            insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+            values (?, 'ui', 0.5, ?)
+            """,
+            (crystal_id, NOW),
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator.inspect(config)
+
+    assert report.pending["crystal_semantic_tags"] == 1
+
+
 def test_dry_report_counts_missing_task_session_semantic_tag_pairs(
     tmp_path: Path,
 ) -> None:
@@ -508,6 +545,122 @@ def test_dry_report_counts_missing_task_session_semantic_tag_pairs(
     report = MemoryGraphMigrator.inspect(config)
 
     assert report.pending["task_session_semantic_tags"] == 1
+
+
+def test_dry_report_counts_missing_task_session_semantic_tag_pairs_from_csv(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table task_sessions (
+              id integer primary key,
+              tags text not null default ''
+            );
+            create table task_session_semantic_tags (
+              session_id integer not null,
+              semantic_tag text not null,
+              primary key (session_id, semantic_tag)
+            );
+            insert into task_sessions(id, tags) values (1, 'ui, term');
+            insert into task_session_semantic_tags(session_id, semantic_tag)
+            values (1, 'ui');
+            """
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator.inspect(config)
+
+    assert report.pending["task_session_semantic_tags"] == 1
+
+
+def test_dry_report_counts_strict_term_when_ledger_rule_target_is_dangling(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        _insert_strict_term(conn)
+        conn.commit()
+
+    MemoryGraphMigrator(config).run()
+    with connect(config.database_path) as conn:
+        crystal_id = conn.execute(
+            """
+            select target_id
+            from memory_graph_migration_ledger
+            where source_table = 'strict_terms'
+              and target_table = 'crystals'
+            """
+        ).fetchone()["target_id"]
+        conn.execute("delete from crystal_concepts where crystal_id = ?", (crystal_id,))
+        conn.execute("delete from crystals where id = ?", (crystal_id,))
+        conn.commit()
+
+    report = MemoryGraphMigrator.inspect(config)
+
+    assert report.pending["strict_terms"] == 1
+
+
+def test_dry_report_counts_proposal_when_ledger_facet_target_is_dangling(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        proposal_id = conn.execute(
+            """
+            insert into strict_concept_proposals(
+              series_slug,
+              source_language,
+              target_language,
+              concept_text,
+              source_form,
+              canonical_rendering,
+              approved_variants_json,
+              forbidden_variants_json,
+              rationale,
+              status,
+              created_at,
+              updated_at
+            )
+            values (
+              'book',
+              'ja',
+              'en',
+              'Sense',
+              'センス',
+              'Sense',
+              '["Sense"]',
+              '[]',
+              'Translator needs review.',
+              'pending',
+              ?,
+              ?
+            )
+            """,
+            (NOW, NOW),
+        ).lastrowid
+        conn.commit()
+
+    MemoryGraphMigrator(config).run()
+    with connect(config.database_path) as conn:
+        facet_id = conn.execute(
+            """
+            select target_id
+            from memory_graph_migration_ledger
+            where source_table = 'strict_concept_proposals'
+              and source_id = ?
+              and target_table = 'concept_facets'
+            """,
+            (f"{proposal_id}:rendering",),
+        ).fetchone()["target_id"]
+        conn.execute("delete from concept_facet_language_tags where facet_id = ?", (facet_id,))
+        conn.execute("delete from concept_facets where id = ?", (facet_id,))
+        conn.commit()
+
+    report = MemoryGraphMigrator.inspect(config)
+
+    assert report.pending["strict_concept_proposals"] == 1
 
 
 def test_strict_term_generation_skips_when_destination_graph_schema_is_partial(

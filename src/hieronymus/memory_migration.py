@@ -1235,34 +1235,19 @@ class MemoryGraphMigrator:
                 pending["strict_concept_proposals"] = self._count_migratable_proposals(conn)
 
     def _count_migratable_strict_terms(self, conn: sqlite3.Connection) -> int:
-        if _has_table(conn, "memory_graph_migration_ledger"):
-            rows = conn.execute(
-                """
-                select *
-                from strict_terms
-                where status in ('approved', 'active')
-                  and not exists (
-                    select 1
-                    from memory_graph_migration_ledger ledger
-                    where ledger.source_table = 'strict_terms'
-                      and ledger.source_id = cast(strict_terms.id as text)
-                      and ledger.target_table = 'crystals'
-                  )
-                order by id
-                """
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                select *
-                from strict_terms
-                where status in ('approved', 'active')
-                order by id
-                """
-            ).fetchall()
+        rows = conn.execute(
+            """
+            select *
+            from strict_terms
+            where status in ('approved', 'active')
+            order by id
+            """
+        ).fetchall()
 
         count = 0
         for term in rows:
+            if _generated_rule_artifacts_exist(conn, "strict_terms", str(term["id"])):
+                continue
             aliases = self._strict_term_rule_aliases(conn, int(term["id"]))
             if aliases is None:
                 continue
@@ -1277,34 +1262,23 @@ class MemoryGraphMigrator:
         return count
 
     def _count_migratable_proposals(self, conn: sqlite3.Connection) -> int:
-        if _has_table(conn, "memory_graph_migration_ledger"):
-            rows = conn.execute(
-                """
-                select *
-                from strict_concept_proposals
-                where status != 'rejected'
-                  and not exists (
-                    select 1
-                    from memory_graph_migration_ledger ledger
-                    where ledger.source_table = 'strict_concept_proposals'
-                      and ledger.source_id = cast(strict_concept_proposals.id as text)
-                      and ledger.target_table = 'concepts'
-                  )
-                order by id
-                """
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                select *
-                from strict_concept_proposals
-                where status != 'rejected'
-                order by id
-                """
-            ).fetchall()
+        rows = conn.execute(
+            """
+            select *
+            from strict_concept_proposals
+            where status != 'rejected'
+            order by id
+            """
+        ).fetchall()
 
         count = 0
         for proposal in rows:
+            if _generated_rule_artifacts_exist(
+                conn,
+                "strict_concept_proposals",
+                str(proposal["id"]),
+            ):
+                continue
             source_form = str(proposal["source_form"]).strip() or proposal["concept_text"]
             if _validate_rule_shape(
                 source_text=source_form,
@@ -1432,40 +1406,115 @@ def _pending_owner_rows_with_legacy_values(
     value_source_columns: tuple[str, ...],
 ) -> int:
     owner_columns = _columns(conn, owner_table)
-    if not (_has_table(conn, target_table) and "id" in owner_columns):
+    if not (
+        _has_table(conn, target_table)
+        and _has_columns(conn, target_table, {owner_column, value_column})
+        and "id" in owner_columns
+    ):
         return 0
     present_source_columns = [column for column in value_source_columns if column in owner_columns]
     if not present_source_columns:
         return 0
-    wanted_sql = "\nunion\n".join(
-        f"""
-        select distinct owner.id as owner_id, trim(json_each.value) as value
-        from {owner_table} owner,
-             json_each(
-               case
-                 when json_valid(owner.{column}) then owner.{column}
-                 else '[]'
-               end
-             ) as json_each
-        where json_each.type = 'text'
-          and trim(json_each.value) != ''
-        """
-        for column in present_source_columns
-    )
-    return _scalar_count(
+
+    owner_select_columns = ", ".join(["id", *present_source_columns])
+    wanted: set[tuple[int, str]] = set()
+    for row in conn.execute(f"select {owner_select_columns} from {owner_table}"):
+        source_column = present_source_columns[0]
+        for value in _json_string_values(row[source_column]):
+            wanted.add((int(row["id"]), value))
+    if not wanted:
+        return 0
+
+    existing = {
+        (int(row[owner_column]), row[value_column])
+        for row in conn.execute(
+            f"""
+            select {owner_column}, {value_column}
+            from {target_table}
+            """
+        )
+    }
+    return len(wanted - existing)
+
+
+def _generated_rule_artifacts_exist(
+    conn: sqlite3.Connection,
+    source_table: str,
+    source_id: str,
+) -> bool:
+    concept_id = _valid_ledger_target(conn, source_table, source_id, "concepts")
+    source_facet_id = _valid_ledger_target(
         conn,
-        f"""
-        select count(*)
-        from ({wanted_sql}) wanted
-        where wanted.value != ''
-          and not exists (
-            select 1
-            from {target_table} target
-            where target.{owner_column} = wanted.owner_id
-              and target.{value_column} = wanted.value
-          )
-        """,
+        source_table,
+        f"{source_id}:source",
+        "concept_facets",
     )
+    rendering_facet_id = _valid_ledger_target(
+        conn,
+        source_table,
+        f"{source_id}:rendering",
+        "concept_facets",
+    )
+    crystal_id = _valid_ledger_target(conn, source_table, source_id, "crystals")
+    if None in {concept_id, source_facet_id, rendering_facet_id, crystal_id}:
+        return False
+    if not (
+        _facet_belongs_to_concept(conn, source_facet_id, concept_id)
+        and _facet_belongs_to_concept(conn, rendering_facet_id, concept_id)
+    ):
+        return False
+    row = conn.execute(
+        """
+        select 1
+        from crystal_concepts
+        where crystal_id = ?
+          and concept_id = ?
+          and link_type = 'defines'
+        """,
+        (crystal_id, concept_id),
+    ).fetchone()
+    return row is not None
+
+
+def _valid_ledger_target(
+    conn: sqlite3.Connection,
+    source_table: str,
+    source_id: str,
+    target_table: str,
+) -> int | None:
+    if not _has_table(conn, "memory_graph_migration_ledger"):
+        return None
+    row = conn.execute(
+        """
+        select ledger.target_id
+        from memory_graph_migration_ledger ledger
+        where ledger.source_table = ?
+          and ledger.source_id = ?
+          and ledger.target_table = ?
+        """,
+        (source_table, source_id, target_table),
+    ).fetchone()
+    if row is None:
+        return None
+    target_id = int(row["target_id"])
+    return target_id if _row_exists(conn, target_table, target_id) else None
+
+
+def _facet_belongs_to_concept(
+    conn: sqlite3.Connection,
+    facet_id: int,
+    concept_id: int,
+) -> bool:
+    row = conn.execute(
+        """
+        select 1
+        from concept_facets
+        where id = ?
+          and concept_id = ?
+        """,
+        (facet_id, concept_id),
+    )
+    return row.fetchone() is not None
 
 
 def _pending_default_language_tags(conn: sqlite3.Connection, table: str) -> int:
