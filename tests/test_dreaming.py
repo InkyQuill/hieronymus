@@ -1042,7 +1042,7 @@ def test_dream_candidate_content_helper_requires_content() -> None:
     assert str(exc_info.value) == "dream candidate content is required"
 
 
-def test_dreaming_skips_unrecoverable_dict_entries_without_poisoning_good_entries(
+def test_dreaming_rejects_dict_entries_missing_required_content(
     config: HieronymusConfig,
 ) -> None:
     class PartlyMalformedProvider:
@@ -1064,18 +1064,13 @@ def test_dreaming_skips_unrecoverable_dict_entries_without_poisoning_good_entrie
     workspace.add_short_term_memory(session.id, "user", "note", "Partial malformed input.")
     workspace.complete_session(session.id)
 
-    run = DreamService(config, PartlyMalformedProvider()).run_all()
+    with pytest.raises(ValueError, match="dream candidate content is required"):
+        DreamService(config, PartlyMalformedProvider()).run_all()
 
     with connect(config.database_path) as conn:
-        rows = conn.execute(
-            "select crystal_type, text from crystals order by id",
-        ).fetchall()
+        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
 
-    assert run.status == "completed"
-    assert [(row["crystal_type"], row["text"]) for row in rows] == [
-        ("lesson", "Good recovered lesson."),
-        ("thought", "Recoverable thought."),
-    ]
+    assert crystal_count == 0
 
 
 def test_dreaming_skips_dict_candidate_with_only_invalid_source_memory_ids(

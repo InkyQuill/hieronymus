@@ -4,10 +4,13 @@ import pytest
 
 from hieronymus.dream_config import default_dream_config
 from hieronymus.dream_workflows import (
+    CONCEPT_DISCOVERY_PHASE,
+    CONSOLIDATION_COMPACTION_PHASE,
     CRYSTALLIZATION_PHASE,
+    DECAY_REINFORCEMENT_REVIEW_PHASE,
     PHASE_PROMPTS,
-    REINFORCEMENT_COMPACTION_PHASE,
     RELATION_DISCOVERY_PHASE,
+    RULE_DISCOVERY_PHASE,
     build_phase_prompt,
     resolve_enabled_workflows,
 )
@@ -16,14 +19,20 @@ from hieronymus.dream_workflows import (
 def test_default_workflows_have_separate_phase_prompts() -> None:
     assert set(PHASE_PROMPTS) == {
         CRYSTALLIZATION_PHASE,
-        RELATION_DISCOVERY_PHASE,
-        REINFORCEMENT_COMPACTION_PHASE,
+        CONCEPT_DISCOVERY_PHASE,
+        RULE_DISCOVERY_PHASE,
+        CONSOLIDATION_COMPACTION_PHASE,
+        DECAY_REINFORCEMENT_REVIEW_PHASE,
     }
     assert "Convert short-term memories" in PHASE_PROMPTS[CRYSTALLIZATION_PHASE]
-    assert (
-        "reinforce, combine, supersede, or decay" in PHASE_PROMPTS[REINFORCEMENT_COMPACTION_PHASE]
-    )
-    assert len(set(PHASE_PROMPTS.values())) == 3
+    assert "Discover deterministic translation rules" in PHASE_PROMPTS[RULE_DISCOVERY_PHASE]
+    assert "combine or supersede" in PHASE_PROMPTS[CONSOLIDATION_COMPACTION_PHASE]
+    assert "reinforce or decay" in PHASE_PROMPTS[DECAY_REINFORCEMENT_REVIEW_PHASE]
+    assert len(set(PHASE_PROMPTS.values())) == 5
+    for prompt in PHASE_PROMPTS.values():
+        assert "Use English memory prose by default." in prompt
+        assert "Long-term crystals must be 1-2 sentences." in prompt
+        assert "Short-term memories must be 1-6 sentences." in prompt
 
 
 def test_default_enabled_workflows_exclude_disabled_relation_discovery() -> None:
@@ -31,10 +40,10 @@ def test_default_enabled_workflows_exclude_disabled_relation_discovery() -> None
 
     assert set(resolved) == {
         CRYSTALLIZATION_PHASE,
-        REINFORCEMENT_COMPACTION_PHASE,
+        "reinforcement_compaction",
     }
     assert resolved[CRYSTALLIZATION_PHASE].provider == "anthropic"
-    assert resolved[REINFORCEMENT_COMPACTION_PHASE].provider == "ollama"
+    assert resolved["reinforcement_compaction"].provider == "ollama"
     assert RELATION_DISCOVERY_PHASE not in resolved
 
 

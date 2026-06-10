@@ -300,7 +300,7 @@ def test_global_migration_backfills_legacy_facet_language_tags(
     assert facets[0].language_tags == ("ru",)
 
 
-def test_dream_facets_penalize_malformed_metadata_but_drop_missing_content(
+def test_dream_facets_penalize_malformed_metadata(
     config: HieronymusConfig,
 ) -> None:
     class FacetProvider:
@@ -326,11 +326,6 @@ def test_dream_facets_penalize_malformed_metadata_but_drop_missing_content(
                         "canonical": "true",
                         "confidence": 0.9,
                     },
-                    {
-                        "concept_name": "Yun",
-                        "kind": "name",
-                        "language_tags": ["en"],
-                    },
                 ],
             }
 
@@ -354,6 +349,33 @@ def test_dream_facets_penalize_malformed_metadata_but_drop_missing_content(
     assert facets[0].confidence == pytest.approx(0.05)
     assert facets[0].is_canonical is True
     assert facets[1].confidence == pytest.approx(0.3)
+
+
+def test_dream_facet_missing_content_is_rejected(config: HieronymusConfig) -> None:
+    class MissingFacetContentProvider:
+        name = "missing-facet-content-provider"
+
+        def crystallize(self, _context, _memories):
+            return {
+                "facets": [
+                    {
+                        "concept_name": "Yun",
+                        "kind": "name",
+                        "language_tags": ["en"],
+                    }
+                ],
+            }
+
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "mentor", "note", "Yun rendering was discussed.")
+    workspace.complete_session(session.id)
+
+    with pytest.raises(ValueError, match=r"facets\[0\]\.value is required"):
+        DreamService(config, MissingFacetContentProvider()).run_all()
+
+    assert ConceptStore(config).search("Yun") == []
 
 
 def test_dream_facet_missing_kind_defaults_to_note_without_penalty(

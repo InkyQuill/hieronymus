@@ -95,8 +95,10 @@ def default_dream_config() -> DreamConfig:
         max_short_term_memories_per_cycle=50,
         not_enough_memories_cycle_threshold=5,
         general_prompt=(
-            "Use English as the primary searchable memory language. Preserve Japanese "
-            "and Russian only as names, translations, quoted evidence, or metadata."
+            "Use English as the primary searchable memory language. Preserve Japanese, "
+            "Russian, and other languages only as terms, names, renderings, quoted "
+            "evidence, or metadata. Long-term crystals must be 1-2 sentences. "
+            "Short-term memories must be 1-6 sentences."
         ),
         providers={
             "anthropic": ProviderProfile(

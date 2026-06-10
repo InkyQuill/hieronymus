@@ -671,7 +671,11 @@ def _dream_prompt(
         {
             "instruction": (
                 "Return only JSON with keys crystals and concept_proposals. "
-                "Use only provided source memory ids. Do not add markdown."
+                "Use English memory prose by default; Japanese, Russian, or other "
+                "languages may appear only as terms, names, renderings, quotes, or "
+                "metadata. Long-term crystals must be 1-2 sentences. Short-term "
+                "memories must be 1-6 sentences. Use only provided source memory ids. "
+                "Do not add markdown."
             ),
             "context": {
                 "series_slug": context.series_slug,

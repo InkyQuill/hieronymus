@@ -10,6 +10,7 @@ from hieronymus.concepts import VALID_FACET_KINDS, ConceptProposalStore, Concept
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
+from hieronymus.dream_audit import DreamAuditStore
 from hieronymus.dream_config import load_dream_config
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
@@ -64,6 +65,9 @@ class DreamCrystalCandidate:
     strength: float
     confidence: float
     source_memory_ids: list[int] = field(default_factory=list)
+    source_credibility: str = "observation"
+    rule_intent: str = ""
+    is_inferred: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,6 +90,14 @@ class DreamOutput:
 
 
 @dataclass(frozen=True)
+class DreamParseWarning:
+    entry_path: str
+    code: str
+    message: str
+    confidence_penalty: float
+
+
+@dataclass(frozen=True)
 class _NormalizedDreamCrystal:
     crystal_type: str
     title: str
@@ -96,6 +108,7 @@ class _NormalizedDreamCrystal:
     source_credibility: str = "observation"
     rule_intent: str = ""
     malformed_penalty: float = 0.0
+    is_inferred: bool = False
     supersedes_crystal_id: int | None = None
     story_scopes: tuple[str, ...] = ()
     semantic_tags: tuple[str, ...] = ()
@@ -137,6 +150,7 @@ class _NormalizedDreamOutput:
     concepts: list[_NormalizedDreamConcept] = field(default_factory=list)
     facets: list[_NormalizedDreamFacet] = field(default_factory=list)
     supersede_actions: list[_DreamSupersedeAction] = field(default_factory=list)
+    warnings: list[DreamParseWarning] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -171,7 +185,7 @@ class DeterministicDreamProvider:
     ) -> DreamOutput:
         candidates = []
         for memory in memories:
-            crystal_type = _ROLE_TYPES.get(memory.source_role)
+            crystal_type = _crystal_type_for_short_memory(memory)
             if crystal_type is None:
                 continue
             candidates.append(
@@ -180,8 +194,10 @@ class DeterministicDreamProvider:
                     title=_title_from_kind(memory.kind),
                     text=_normalize_candidate_text(memory.text),
                     strength=0.6,
-                    confidence=_ROLE_CONFIDENCE[memory.source_role],
+                    confidence=_confidence_for_short_memory(memory),
                     source_memory_ids=[memory.id],
+                    source_credibility=memory.source_credibility,
+                    rule_intent=memory.rule_intent,
                 )
             )
         return DreamOutput(crystals=candidates, concept_proposals=[])
@@ -212,6 +228,7 @@ class DreamService:
         self.concept_proposals = ConceptProposalStore(config)
         self.concepts = ConceptStore(config)
         self.crystals = CrystalStore(config)
+        self.audit = DreamAuditStore(config)
         with connect(self.config.database_path) as conn:
             apply_migration(conn, "global.sql")
 
@@ -444,6 +461,7 @@ class DreamService:
                             context,
                             allowed_memory_ids,
                         )
+                        self._audit_parse_warnings(run_id, phase_run_id, output.warnings)
                         self._validate_normalized_output(
                             output,
                             context,
@@ -1182,6 +1200,33 @@ class DreamService:
                 raise
         return created_crystal_count, proposal_count
 
+    def _audit_parse_warnings(
+        self,
+        run_id: int,
+        phase_run_id: int,
+        warnings: list[DreamParseWarning],
+    ) -> None:
+        if not warnings:
+            return
+        self.audit.append(
+            dream_run_id=run_id,
+            phase_run_id=phase_run_id,
+            event_type="parse_warnings",
+            severity="warning",
+            summary="dream response parsed with recoverable warnings",
+            payload={
+                "warnings": [
+                    {
+                        "entry_path": warning.entry_path,
+                        "code": warning.code,
+                        "message": warning.message,
+                        "confidence_penalty": warning.confidence_penalty,
+                    }
+                    for warning in warnings
+                ]
+            },
+        )
+
     def _apply_passive_events(self, conn, cycle_id: int) -> None:
         now = _now()
         rows = conn.execute(
@@ -1382,13 +1427,14 @@ class DreamService:
               confidence,
               source_credibility,
               rule_intent,
+              is_inferred,
               malformed_penalty,
               supersedes_crystal_id,
               status,
               created_at,
               updated_at
             )
-            values (?, ?, ?, 'series', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            values (?, ?, ?, 'series', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
             """,
             (
                 candidate.crystal_type,
@@ -1403,6 +1449,7 @@ class DreamService:
                 candidate.confidence,
                 candidate.source_credibility,
                 candidate.rule_intent,
+                int(candidate.is_inferred),
                 candidate.malformed_penalty,
                 candidate.supersedes_crystal_id,
                 now,
@@ -1500,6 +1547,9 @@ class DreamService:
                         strength=candidate.strength,
                         confidence=candidate.confidence,
                         source_memory_ids=candidate.source_memory_ids,
+                        source_credibility=candidate.source_credibility,
+                        rule_intent=candidate.rule_intent,
+                        is_inferred=candidate.is_inferred,
                     )
                     for candidate in raw_output.crystals
                 ],
@@ -1517,40 +1567,62 @@ class DreamService:
         crystals: list[_NormalizedDreamCrystal] = []
         concepts: list[_NormalizedDreamConcept] = []
         facets: list[_NormalizedDreamFacet] = []
+        warnings: list[DreamParseWarning] = []
 
-        for item in _list_from_payload(payload.get("concepts")):
-            concept = _normalize_dict_concept(item)
+        for index, item in enumerate(_list_from_payload(payload.get("concepts"))):
+            concept = _normalize_dict_concept(item, f"concepts[{index}]", warnings)
             if concept is not None:
                 concepts.append(concept)
-        for item in _list_from_payload(payload.get("facets")):
-            facet = _normalize_dict_facet(item)
+        for index, item in enumerate(_list_from_payload(payload.get("facets"))):
+            facet = _normalize_dict_facet(item, f"facets[{index}]", warnings)
             if facet is not None:
                 facets.append(facet)
 
-        for item in _list_from_payload(payload.get("crystals")):
+        for index, item in enumerate(_list_from_payload(payload.get("crystals"))):
             crystal = _normalize_dict_crystal(
                 item,
+                entry_path=f"crystals[{index}]",
+                warnings=warnings,
                 default_crystal_type="observation",
                 default_source_credibility="observation",
                 allowed_memory_ids=allowed_memory_ids,
             )
             if crystal is not None:
                 crystals.append(crystal)
-        for item in _list_from_payload(payload.get("rule_crystals")):
+        for index, item in enumerate(_list_from_payload(payload.get("rule_crystals"))):
             crystal = _normalize_dict_crystal(
                 item,
+                entry_path=f"rule_crystals[{index}]",
+                warnings=warnings,
                 default_crystal_type="rule",
                 default_source_credibility="user_rule",
                 allowed_memory_ids=allowed_memory_ids,
             )
             if crystal is not None:
                 crystals.append(crystal)
-        for item in _list_from_payload(payload.get("thoughts")):
+        for index, item in enumerate(_list_from_payload(payload.get("thoughts"))):
             crystal = _normalize_dict_crystal(
                 item,
+                entry_path=f"thoughts[{index}]",
+                warnings=warnings,
                 default_crystal_type="thought",
                 default_source_credibility="thought",
                 allowed_memory_ids=allowed_memory_ids,
+                force_thought=True,
+                force_inferred=True,
+            )
+            if crystal is not None:
+                crystals.append(crystal)
+        for index, item in enumerate(_list_from_payload(payload.get("inferred_additions"))):
+            crystal = _normalize_dict_crystal(
+                item,
+                entry_path=f"inferred_additions[{index}]",
+                warnings=warnings,
+                default_crystal_type="thought",
+                default_source_credibility="thought",
+                allowed_memory_ids=allowed_memory_ids,
+                force_thought=True,
+                force_inferred=True,
             )
             if crystal is not None:
                 crystals.append(crystal)
@@ -1568,6 +1640,7 @@ class DreamService:
             concepts=concepts,
             facets=facets,
             supersede_actions=supersede_actions,
+            warnings=warnings,
         )
 
     def _resolve_candidate_concepts(
@@ -1602,6 +1675,7 @@ class DreamService:
             source_credibility=candidate.source_credibility,
             rule_intent=candidate.rule_intent,
             malformed_penalty=candidate.malformed_penalty,
+            is_inferred=candidate.is_inferred,
             supersedes_crystal_id=candidate.supersedes_crystal_id,
             story_scopes=candidate.story_scopes,
             semantic_tags=candidate.semantic_tags,
@@ -1741,9 +1815,13 @@ def _normalize_candidate_text(text: str) -> str:
 def _normalize_dict_crystal(
     item: object,
     *,
+    entry_path: str,
+    warnings: list[DreamParseWarning],
     default_crystal_type: str,
     default_source_credibility: str,
     allowed_memory_ids: set[int],
+    force_thought: bool = False,
+    force_inferred: bool = False,
 ) -> _NormalizedDreamCrystal | None:
     payload: dict[object, object]
     if isinstance(item, str):
@@ -1753,19 +1831,48 @@ def _normalize_dict_crystal(
     else:
         return None
 
-    try:
-        text, penalty = _recover_crystal_text(payload)
-    except ValueError:
-        return None
+    text, penalty = _recover_crystal_text(payload)
+    if penalty:
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "malformed_content_field",
+            "used fallback content field",
+            penalty,
+        )
     crystal_type, kind_penalty = _recover_crystal_type(payload, default_crystal_type)
+    if force_thought:
+        crystal_type = "thought"
     penalty += kind_penalty
+    if kind_penalty:
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "malformed_crystal_type",
+            "used fallback crystal type",
+            kind_penalty,
+        )
     source_credibility, credibility_penalty = _recover_source_credibility(
         payload,
         default_source_credibility,
     )
+    if force_thought:
+        source_credibility = "thought"
     penalty += credibility_penalty
+    if credibility_penalty:
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "malformed_source_credibility",
+            "used fallback source credibility",
+            credibility_penalty,
+        )
     penalty += max(_numeric_field(payload.get("malformed_penalty"), default=0.0), 0.0)
 
+    is_inferred = force_inferred or _bool_field(payload.get("is_inferred"), default=False)
+    if is_inferred and not force_thought:
+        crystal_type = "thought"
+        source_credibility = "thought"
     confidence = _normalized_confidence(payload, source_credibility, penalty)
     title = _string_field(payload.get("title")).strip() or _title_from_kind(crystal_type)
     source_memory_ids = _source_memory_ids(payload, allowed_memory_ids)
@@ -1781,6 +1888,7 @@ def _normalize_dict_crystal(
         source_credibility=source_credibility,
         rule_intent=_string_field(payload.get("rule_intent")),
         malformed_penalty=penalty,
+        is_inferred=is_inferred,
         supersedes_crystal_id=_optional_int(payload.get("supersedes_crystal_id")),
         story_scopes=_clean_string_tuple(payload.get("story_scopes")),
         semantic_tags=_clean_string_tuple(payload.get("semantic_tags"), payload.get("tags")),
@@ -1788,7 +1896,7 @@ def _normalize_dict_crystal(
             payload.get("concept_ids"),
             payload.get("concept_id"),
         ),
-        concept_names=_concept_names_from_payload(payload),
+        concept_names=_concept_names_from_payload(payload, entry_path, warnings),
     )
 
 
@@ -1852,7 +1960,11 @@ def _normalized_confidence(
     return min(max(base - penalty, _MIN_NORMALIZED_CONFIDENCE), 1.0)
 
 
-def _normalize_dict_concept(item: object) -> _NormalizedDreamConcept | None:
+def _normalize_dict_concept(
+    item: object,
+    entry_path: str,
+    warnings: list[DreamParseWarning],
+) -> _NormalizedDreamConcept | None:
     if type(item) is not dict:
         return None
     payload: dict[object, object] = item
@@ -1864,8 +1976,15 @@ def _normalize_dict_concept(item: object) -> _NormalizedDreamConcept | None:
         name = _string_field(payload.get("label")).strip()
         if name:
             penalty += MALFORMED_CONFIDENCE_PENALTY
+            _append_parse_warning(
+                warnings,
+                entry_path,
+                "malformed_concept_name",
+                "used fallback concept label",
+                MALFORMED_CONFIDENCE_PENALTY,
+            )
     if name == "":
-        return None
+        raise ValueError(f"{entry_path}.canonical_name is required")
     confidence = _numeric_field(payload.get("confidence"), default=0.2)
     confidence_delta = min(max(confidence - penalty, _MIN_NORMALIZED_CONFIDENCE), 1.0)
     return _NormalizedDreamConcept(
@@ -1876,17 +1995,29 @@ def _normalize_dict_concept(item: object) -> _NormalizedDreamConcept | None:
     )
 
 
-def _normalize_dict_facet(item: object) -> _NormalizedDreamFacet | None:
+def _normalize_dict_facet(
+    item: object,
+    entry_path: str,
+    warnings: list[DreamParseWarning],
+) -> _NormalizedDreamFacet | None:
     if type(item) is not dict:
         return None
     payload: dict[object, object] = item
     value, content_penalty = _recover_facet_value(payload)
     if value is None:
-        return None
+        raise ValueError(f"{entry_path}.value is required")
+    if content_penalty:
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "malformed_facet_value",
+            "used fallback facet value field",
+            content_penalty,
+        )
 
-    concept_name = _facet_concept_name_from_payload(payload)
+    concept_name = _facet_concept_name_from_payload(payload, entry_path, warnings)
     if concept_name == "":
-        return None
+        raise ValueError(f"{entry_path}.concept_name is required")
 
     kind, kind_penalty = _recover_facet_kind(payload)
     language_tags, language_penalty = _recover_facet_string_tuple(
@@ -1913,6 +2044,46 @@ def _normalize_dict_facet(item: object) -> _NormalizedDreamFacet | None:
         + semantic_tag_penalty
         + canonical_penalty
     )
+    if kind_penalty:
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "malformed_facet_kind",
+            "used fallback facet kind",
+            kind_penalty,
+        )
+    if language_penalty:
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "malformed_facet_language_tags",
+            "ignored malformed facet language metadata",
+            language_penalty,
+        )
+    if story_scope_penalty:
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "malformed_facet_story_scopes",
+            "ignored malformed facet story scope metadata",
+            story_scope_penalty,
+        )
+    if semantic_tag_penalty:
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "malformed_facet_semantic_tags",
+            "ignored malformed facet semantic tag metadata",
+            semantic_tag_penalty,
+        )
+    if canonical_penalty:
+        _append_parse_warning(
+            warnings,
+            entry_path,
+            "malformed_facet_canonical",
+            "parsed non-boolean canonical metadata",
+            canonical_penalty,
+        )
     confidence = _numeric_field(payload.get("confidence"), default=0.2)
     return _NormalizedDreamFacet(
         concept_name=concept_name,
@@ -2001,7 +2172,11 @@ def _parse_facet_canonical(value: object) -> tuple[bool, float]:
     return (False, MALFORMED_CONFIDENCE_PENALTY)
 
 
-def _facet_concept_name_from_payload(payload: dict[object, object]) -> str:
+def _facet_concept_name_from_payload(
+    payload: dict[object, object],
+    entry_path: str,
+    warnings: list[DreamParseWarning],
+) -> str:
     for key in ("concept_name", "concept_label", "canonical_name"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
@@ -2010,7 +2185,7 @@ def _facet_concept_name_from_payload(payload: dict[object, object]) -> str:
     if isinstance(concept, str) and concept.strip():
         return concept.strip()
     if type(concept) is dict:
-        normalized = _normalize_dict_concept(concept)
+        normalized = _normalize_dict_concept(concept, f"{entry_path}.concept", warnings)
         if normalized is not None:
             return normalized.canonical_name
     return ""
@@ -2065,6 +2240,29 @@ def _numeric_field(value: object, *, default: float) -> float:
     return default
 
 
+def _bool_field(value: object, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    return default
+
+
+def _append_parse_warning(
+    warnings: list[DreamParseWarning],
+    entry_path: str,
+    code: str,
+    message: str,
+    confidence_penalty: float,
+) -> None:
+    warnings.append(
+        DreamParseWarning(
+            entry_path=entry_path,
+            code=code,
+            message=message,
+            confidence_penalty=confidence_penalty,
+        )
+    )
+
+
 def _optional_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
@@ -2097,7 +2295,11 @@ def _source_memory_ids(
     return sorted(allowed_memory_ids)
 
 
-def _concept_names_from_payload(payload: dict[object, object]) -> tuple[str, ...]:
+def _concept_names_from_payload(
+    payload: dict[object, object],
+    entry_path: str,
+    warnings: list[DreamParseWarning],
+) -> tuple[str, ...]:
     values: list[object] = []
     for key in ("concept_names", "concepts"):
         value = payload.get(key)
@@ -2114,7 +2316,7 @@ def _concept_names_from_payload(payload: dict[object, object]) -> tuple[str, ...
         if isinstance(value, str):
             names.append(value)
         elif type(value) is dict:
-            concept = _normalize_dict_concept(value)
+            concept = _normalize_dict_concept(value, f"{entry_path}.concepts", warnings)
             if concept is not None:
                 names.append(concept.canonical_name)
     return _clean_text_tuple(tuple(names))
@@ -2153,3 +2355,15 @@ def _title_from_kind(kind: str) -> str:
     if not words:
         return ""
     return " ".join(word[:1].upper() + word[1:] for word in words[:4])
+
+
+def _crystal_type_for_short_memory(memory: ShortTermMemoryRecord) -> str | None:
+    if memory.source_credibility == "user_rule" or memory.rule_intent.strip():
+        return "rule"
+    return _ROLE_TYPES.get(memory.source_role)
+
+
+def _confidence_for_short_memory(memory: ShortTermMemoryRecord) -> float:
+    if memory.source_credibility in SOURCE_CREDIBILITY_CONFIDENCE:
+        return SOURCE_CREDIBILITY_CONFIDENCE[memory.source_credibility]
+    return _ROLE_CONFIDENCE[memory.source_role]
