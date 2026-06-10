@@ -203,6 +203,7 @@ class MemoryGraphMigrator:
         if not (
             _has_table(conn, "series")
             and _has_table(conn, "series_language_tags")
+            and _has_columns(conn, "series_language_tags", {"series_id", "language_tag"})
             and _has_columns(
                 conn,
                 "series",
@@ -239,6 +240,11 @@ class MemoryGraphMigrator:
         for row in rows:
             if (
                 _has_table(conn, "task_session_language_tags")
+                and _has_columns(
+                    conn,
+                    "task_session_language_tags",
+                    {"session_id", "language_tag"},
+                )
                 and {
                     "id",
                     "source_language",
@@ -259,7 +265,15 @@ class MemoryGraphMigrator:
                         (row["id"], language_tag),
                     )
 
-            if _has_table(conn, "task_session_story_scopes") and "id" in columns:
+            if (
+                _has_table(conn, "task_session_story_scopes")
+                and _has_columns(
+                    conn,
+                    "task_session_story_scopes",
+                    {"session_id", "story_scope"},
+                )
+                and "id" in columns
+            ):
                 story_scopes = []
                 if "volume" in columns and str(row["volume"]).strip():
                     story_scopes.append(f"volume:{str(row['volume']).strip()}")
@@ -275,7 +289,15 @@ class MemoryGraphMigrator:
                         (row["id"], story_scope),
                     )
 
-            if _has_table(conn, "task_session_semantic_tags") and "id" in columns:
+            if (
+                _has_table(conn, "task_session_semantic_tags")
+                and _has_columns(
+                    conn,
+                    "task_session_semantic_tags",
+                    {"session_id", "semantic_tag"},
+                )
+                and "id" in columns
+            ):
                 for semantic_tag in _legacy_session_tags(row, columns):
                     updated["task_session_semantic_tags"] += _insert_ignore(
                         conn,
@@ -297,6 +319,11 @@ class MemoryGraphMigrator:
         for row in conn.execute("select * from crystals order by id"):
             if (
                 _has_table(conn, "crystal_language_tags")
+                and _has_columns(
+                    conn,
+                    "crystal_language_tags",
+                    {"crystal_id", "language_tag"},
+                )
                 and {
                     "id",
                     "source_language",
@@ -317,7 +344,15 @@ class MemoryGraphMigrator:
                         (row["id"], language_tag),
                     )
 
-            if _has_table(conn, "crystal_semantic_tags") and {"id", "tags_json"} <= columns:
+            if (
+                _has_table(conn, "crystal_semantic_tags")
+                and _has_columns(
+                    conn,
+                    "crystal_semantic_tags",
+                    {"crystal_id", "tag", "confidence", "created_at"},
+                )
+                and {"id", "tags_json"} <= columns
+            ):
                 for tag in _json_string_values(row["tags_json"]):
                     updated["crystal_semantic_tags"] += _insert_ignore(
                         conn,
@@ -378,7 +413,7 @@ class MemoryGraphMigrator:
         conn: sqlite3.Connection,
         updated: Counter[str],
     ) -> None:
-        if not _has_table(conn, "concepts"):
+        if not _has_columns(conn, "concepts", {"status"}):
             return
         updated["concepts.status"] += _execute_rowcount(
             conn,
@@ -1029,6 +1064,7 @@ class MemoryGraphMigrator:
         if (
             _has_table(conn, "series")
             and _has_table(conn, "series_language_tags")
+            and _has_columns(conn, "series_language_tags", {"series_id", "language_tag"})
             and _has_columns(
                 conn,
                 "series",
@@ -1047,6 +1083,11 @@ class MemoryGraphMigrator:
         columns = _columns(conn, "task_sessions")
         if (
             _has_table(conn, "task_session_language_tags")
+            and _has_columns(
+                conn,
+                "task_session_language_tags",
+                {"session_id", "language_tag"},
+            )
             and {
                 "id",
                 "source_language",
@@ -1071,7 +1112,15 @@ class MemoryGraphMigrator:
             )
 
         story_selects: list[str] = []
-        if _has_table(conn, "task_session_story_scopes") and "id" in columns:
+        if (
+            _has_table(conn, "task_session_story_scopes")
+            and _has_columns(
+                conn,
+                "task_session_story_scopes",
+                {"session_id", "story_scope"},
+            )
+            and "id" in columns
+        ):
             if "volume" in columns:
                 story_selects.append(
                     """
@@ -1096,7 +1145,15 @@ class MemoryGraphMigrator:
                 "story_scope",
                 "\nunion\n".join(story_selects),
             )
-        if _has_table(conn, "task_session_semantic_tags") and "id" in columns:
+        if (
+            _has_table(conn, "task_session_semantic_tags")
+            and _has_columns(
+                conn,
+                "task_session_semantic_tags",
+                {"session_id", "semantic_tag"},
+            )
+            and "id" in columns
+        ):
             pending["task_session_semantic_tags"] += _pending_owner_rows_with_legacy_values(
                 conn=conn,
                 owner_table="task_sessions",
@@ -1116,6 +1173,11 @@ class MemoryGraphMigrator:
         columns = _columns(conn, "crystals")
         if (
             _has_table(conn, "crystal_language_tags")
+            and _has_columns(
+                conn,
+                "crystal_language_tags",
+                {"crystal_id", "language_tag"},
+            )
             and {
                 "id",
                 "source_language",
@@ -1138,7 +1200,11 @@ class MemoryGraphMigrator:
                 where trim(target_language) != ''
                 """,
             )
-        if _has_table(conn, "crystal_semantic_tags") and {"id", "tags_json"} <= columns:
+        if (
+            _has_table(conn, "crystal_semantic_tags")
+            and _has_columns(conn, "crystal_semantic_tags", {"crystal_id", "tag"})
+            and {"id", "tags_json"} <= columns
+        ):
             pending["crystal_semantic_tags"] += _pending_owner_rows_with_legacy_values(
                 conn=conn,
                 owner_table="crystals",
@@ -1187,7 +1253,7 @@ class MemoryGraphMigrator:
         conn: sqlite3.Connection,
         pending: Counter[str],
     ) -> None:
-        if _has_table(conn, "concepts"):
+        if _has_columns(conn, "concepts", {"status"}):
             pending["concepts.status"] = _scalar_count(
                 conn,
                 "select count(*) from concepts where status in ('vague', 'solid')",
@@ -1378,7 +1444,7 @@ def _pending_owner_values(
     value_column: str,
     wanted_sql: str,
 ) -> int:
-    if not _has_table(conn, target_table):
+    if not _has_columns(conn, target_table, {owner_column, value_column}):
         return 0
     return _scalar_count(
         conn,

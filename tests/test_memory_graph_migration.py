@@ -787,6 +787,154 @@ def test_migrator_tolerates_partial_older_task_and_crystal_tables(
     assert report.skipped == {}
 
 
+def test_migrator_tolerates_partial_concepts_without_status(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table concepts (
+              id integer primary key,
+              canonical_name text not null
+            );
+            insert into concepts(id, canonical_name) values (1, 'Legacy');
+            """
+        )
+        conn.commit()
+
+    dry_report = MemoryGraphMigrator.inspect(config)
+    run_report = MemoryGraphMigrator(config).run()
+
+    assert dry_report.pending.get("concepts.status", 0) == 0
+    assert "concepts.status" not in run_report.updated
+
+
+def test_migrator_tolerates_partial_series_language_tags_destination(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table series (
+              id integer primary key,
+              slug text not null unique,
+              title text not null,
+              default_source_language text not null,
+              default_target_language text not null,
+              created_at text not null,
+              updated_at text not null
+            );
+            create table series_language_tags (
+              series_id integer not null
+            );
+            """
+        )
+        conn.execute(
+            """
+            insert into series(
+              id,
+              slug,
+              title,
+              default_source_language,
+              default_target_language,
+              created_at,
+              updated_at
+            )
+            values (1, 'book', 'Book', 'ja', 'en', ?, ?);
+            """,
+            (NOW, NOW),
+        )
+        conn.commit()
+
+    dry_report = MemoryGraphMigrator.inspect(config)
+    run_report = MemoryGraphMigrator(config).run()
+
+    assert dry_report.pending.get("series_language_tags", 0) == 0
+    assert "series_language_tags" not in run_report.updated
+
+
+def test_migrator_tolerates_partial_task_session_side_table_destinations(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table task_sessions (
+              id integer primary key,
+              source_language text not null,
+              target_language text not null,
+              volume text not null,
+              chapter text not null,
+              tags_json text not null
+            );
+            create table task_session_language_tags (
+              session_id integer not null
+            );
+            create table task_session_story_scopes (
+              session_id integer not null
+            );
+            create table task_session_semantic_tags (
+              session_id integer not null
+            );
+            insert into task_sessions(
+              id,
+              source_language,
+              target_language,
+              volume,
+              chapter,
+              tags_json
+            )
+            values (1, 'ja', 'en', '1', '2', '["ui"]');
+            """
+        )
+        conn.commit()
+
+    dry_report = MemoryGraphMigrator.inspect(config)
+    run_report = MemoryGraphMigrator(config).run()
+
+    assert dry_report.pending.get("task_session_language_tags", 0) == 0
+    assert dry_report.pending.get("task_session_story_scopes", 0) == 0
+    assert dry_report.pending.get("task_session_semantic_tags", 0) == 0
+    assert "task_session_language_tags" not in run_report.updated
+    assert "task_session_story_scopes" not in run_report.updated
+    assert "task_session_semantic_tags" not in run_report.updated
+
+
+def test_migrator_tolerates_partial_crystal_side_table_destinations(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        conn.executescript(
+            """
+            create table crystals (
+              id integer primary key,
+              source_language text not null,
+              target_language text not null,
+              tags_json text not null
+            );
+            create table crystal_language_tags (
+              crystal_id integer not null
+            );
+            create table crystal_semantic_tags (
+              crystal_id integer not null
+            );
+            insert into crystals(id, source_language, target_language, tags_json)
+            values (1, 'ja', 'en', '["ui"]');
+            """
+        )
+        conn.commit()
+
+    dry_report = MemoryGraphMigrator.inspect(config)
+    run_report = MemoryGraphMigrator(config).run()
+
+    assert dry_report.pending.get("crystal_language_tags", 0) == 0
+    assert dry_report.pending.get("crystal_semantic_tags", 0) == 0
+    assert "crystal_language_tags" not in run_report.updated
+    assert "crystal_semantic_tags" not in run_report.updated
+
+
 def test_doctor_tolerates_partial_older_task_and_crystal_tables(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "memory")
     with connect(config.database_path) as conn:
