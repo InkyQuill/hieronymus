@@ -86,9 +86,10 @@ Modify:
 - `src/hieronymus/tui_bridge/admin_api.py` - expose the new admin data shape for Ink.
 - `src/hieronymus/tui_bridge/config_api.py` - expose provider profiles, workflow
   assignments, prompt editors, test results, and cached model suggestions.
-- `src/hieronymus/mcp_server.py` - update `hieronymus_short_term_add`,
-  `hieronymus_learn`, `hieronymus_recall`, `hieronymus_feedback`, and
-  `hieronymus_dream` behavior.
+- `src/hieronymus/mcp_server.py` - update primitive memory tools such as
+  `hieronymus_short_term_add`, `hieronymus_recall`, `hieronymus_feedback`, and
+  `hieronymus_dream`; do not treat old read/learn workflow tools as current
+  MCP surface.
 - `src/hieronymus/cli.py` - update `remember-short`, `recall`, `dream`, config JSON,
   and doctor-facing output.
 - Existing tests covering the touched modules.
@@ -2371,8 +2372,14 @@ git commit -m "feat: expose memory admin contracts"
 
 - [x] **Step 1: Write MCP tool list update test**
 
+Superseded note: this dated plan originally kept the judgment-heavy
+`hieronymus_read` and `hieronymus_learn` tools. The current memory model uses
+primitive storage/recall tools plus agent skill workflows instead; do not
+reintroduce those tools from this historical checklist.
+
 Update `tests/test_mcp_server.py::test_mcp_server_registers_expected_tool_names` so
-the set remains stable unless a new tool is needed. Keep these existing names:
+the set remains stable unless a new tool is needed. The current primitive tool
+surface is:
 
 ```python
 {
@@ -2385,8 +2392,6 @@ the set remains stable unless a new tool is needed. Keep these existing names:
     "hieronymus_session_start",
     "hieronymus_session_complete",
     "hieronymus_short_term_add",
-    "hieronymus_learn",
-    "hieronymus_read",
     "hieronymus_recall",
     "hieronymus_feedback",
     "hieronymus_dream",
