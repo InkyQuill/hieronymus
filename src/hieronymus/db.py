@@ -55,6 +55,26 @@ def ensure_global_compatibility_columns(conn: sqlite3.Connection) -> None:
             ensure_column(conn, table, column, definition)
     conn.commit()
     ensure_concepts_allow_duplicate_names(conn)
+    ensure_concept_facet_compatibility(conn)
+
+
+def ensure_concept_facet_compatibility(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "concept_facets") and _table_exists(
+        conn,
+        "concept_facet_language_tags",
+    ):
+        conn.execute(
+            """
+            insert or ignore into concept_facet_language_tags(facet_id, language_tag)
+            select id, language
+            from concept_facets
+            where language != ''
+            """
+        )
+
+    if _concept_facet_fts_needs_rebuild(conn):
+        conn.execute("insert into concept_facet_fts(concept_facet_fts) values ('rebuild')")
+    conn.commit()
 
 
 def ensure_concepts_allow_duplicate_names(conn: sqlite3.Connection) -> None:
@@ -192,3 +212,20 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
         (table,),
     ).fetchone()
     return row is not None
+
+
+def _table_row_count(conn: sqlite3.Connection, table: str) -> int:
+    row = conn.execute(f"select count(*) from {table}").fetchone()
+    return int(row[0])
+
+
+def _concept_facet_fts_needs_rebuild(conn: sqlite3.Connection) -> bool:
+    if not (
+        _table_exists(conn, "concept_facets")
+        and _table_exists(conn, "concept_facet_fts")
+        and _table_exists(conn, "concept_facet_fts_idx")
+    ):
+        return False
+    if _table_row_count(conn, "concept_facets") == 0:
+        return False
+    return _table_row_count(conn, "concept_facet_fts_idx") == 0

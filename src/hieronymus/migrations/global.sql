@@ -302,6 +302,41 @@ create table if not exists concept_facets (
   updated_at text not null
 );
 
+create virtual table if not exists concept_facet_fts using fts5(
+  value,
+  content='concept_facets',
+  content_rowid='id'
+);
+
+create trigger if not exists concept_facets_ai
+after insert on concept_facets
+begin
+  insert into concept_facet_fts(rowid, value)
+  values (new.id, new.value);
+end;
+
+create trigger if not exists concept_facets_ad
+after delete on concept_facets
+begin
+  insert into concept_facet_fts(concept_facet_fts, rowid, value)
+  values ('delete', old.id, old.value);
+end;
+
+create trigger if not exists concept_facets_au
+after update on concept_facets
+begin
+  insert into concept_facet_fts(concept_facet_fts, rowid, value)
+  values ('delete', old.id, old.value);
+  insert into concept_facet_fts(rowid, value)
+  values (new.id, new.value);
+end;
+
+create table if not exists concept_facet_language_tags (
+  facet_id integer not null references concept_facets(id) on delete cascade,
+  language_tag text not null,
+  primary key (facet_id, language_tag)
+);
+
 create table if not exists concept_facet_story_scopes (
   facet_id integer not null references concept_facets(id) on delete cascade,
   story_scope text not null,

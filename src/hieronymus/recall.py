@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from hieronymus.concepts import ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore, search_expression
 from hieronymus.db import apply_migration, connect
@@ -29,6 +30,7 @@ class RecallService:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
         self.crystals = CrystalStore(config)
+        self.concepts = ConceptStore(config)
         with connect(self.config.database_path) as conn:
             apply_migration(conn, "global.sql")
 
@@ -60,10 +62,16 @@ class RecallService:
         )
         ranked_items: list[tuple[str, float, int, object]] = []
         context_story_scopes = set(context.story_scopes).union(context.tags)
+        concept_boosts = self.concepts.recall_boosts_for_crystals(
+            (crystal.id for crystal, _score in scored_crystals),
+            query,
+            story_scopes=context_story_scopes,
+        )
         for crystal, score in scored_crystals:
             ranked_score = score
             if context_story_scopes.intersection(crystal.story_scopes):
                 ranked_score += _STORY_SCOPE_BOOST
+            ranked_score += concept_boosts.get(crystal.id, 0.0)
             ranked_items.append(("long_term", ranked_score, crystal.id, crystal))
         for memory, score in short_term_memories:
             ranked_items.append(("short_term", score, memory.id, memory))

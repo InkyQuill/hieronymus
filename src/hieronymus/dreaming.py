@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
-from hieronymus.concepts import ConceptProposalStore, ConceptStore
+from hieronymus.concepts import VALID_FACET_KINDS, ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
@@ -112,6 +112,18 @@ class _NormalizedDreamConcept:
 
 
 @dataclass(frozen=True)
+class _NormalizedDreamFacet:
+    concept_name: str
+    value: str
+    kind: str = "note"
+    language_tags: tuple[str, ...] = ()
+    story_scopes: tuple[str, ...] = ()
+    semantic_tags: tuple[str, ...] = ()
+    confidence: float = 0.2
+    is_canonical: bool = False
+
+
+@dataclass(frozen=True)
 class _DreamSupersedeAction:
     old_crystal_id: int
     new_crystal_id: int
@@ -123,6 +135,7 @@ class _NormalizedDreamOutput:
     crystals: list[_NormalizedDreamCrystal] = field(default_factory=list)
     concept_proposals: list[DreamConceptProposal] = field(default_factory=list)
     concepts: list[_NormalizedDreamConcept] = field(default_factory=list)
+    facets: list[_NormalizedDreamFacet] = field(default_factory=list)
     supersede_actions: list[_DreamSupersedeAction] = field(default_factory=list)
 
 
@@ -1087,6 +1100,7 @@ class DreamService:
     ) -> tuple[int, int]:
         created_crystal_count = 0
         proposal_count = 0
+        now = _now()
         with connect(self.config.database_path) as conn:
             try:
                 for context, _session_id, _memories, output in outputs:
@@ -1102,6 +1116,31 @@ class DreamService:
                             scope_key="",
                         )
                         concept_ids_by_name[concept.canonical_name.casefold()] = concept_id
+
+                    for facet in output.facets:
+                        key = facet.concept_name.casefold()
+                        concept_id = concept_ids_by_name.get(key)
+                        if concept_id is None:
+                            concept_id = self.concepts._create_or_reinforce_with_connection(
+                                conn,
+                                facet.concept_name,
+                                confidence_delta=0.2,
+                                scope_type="global",
+                                scope_key="",
+                            )
+                            concept_ids_by_name[key] = concept_id
+                        self.concepts._add_facet_with_connection(
+                            conn,
+                            concept_id,
+                            facet.value,
+                            kind=facet.kind,
+                            language_tags=facet.language_tags,
+                            confidence=facet.confidence,
+                            is_canonical=facet.is_canonical,
+                            story_scopes=facet.story_scopes,
+                            semantic_tags=facet.semantic_tags,
+                            now=now,
+                        )
 
                     for candidate in output.crystals:
                         candidate = self._resolve_candidate_concepts(
@@ -1477,15 +1516,16 @@ class DreamService:
     ) -> _NormalizedDreamOutput:
         crystals: list[_NormalizedDreamCrystal] = []
         concepts: list[_NormalizedDreamConcept] = []
+        facets: list[_NormalizedDreamFacet] = []
 
         for item in _list_from_payload(payload.get("concepts")):
             concept = _normalize_dict_concept(item)
             if concept is not None:
                 concepts.append(concept)
         for item in _list_from_payload(payload.get("facets")):
-            concept = _normalize_dict_concept(item)
-            if concept is not None:
-                concepts.append(concept)
+            facet = _normalize_dict_facet(item)
+            if facet is not None:
+                facets.append(facet)
 
         for item in _list_from_payload(payload.get("crystals")):
             crystal = _normalize_dict_crystal(
@@ -1526,6 +1566,7 @@ class DreamService:
         return _NormalizedDreamOutput(
             crystals=crystals,
             concepts=concepts,
+            facets=facets,
             supersede_actions=supersede_actions,
         )
 
@@ -1615,6 +1656,16 @@ class DreamService:
                 raise ValueError("proposal source_language must match context")
             if proposal.target_language != context.target_language:
                 raise ValueError("proposal target_language must match context")
+
+        for facet in output.facets:
+            if not facet.concept_name.strip():
+                raise ValueError("facet concept_name must not be empty")
+            if not facet.value.strip():
+                raise ValueError("facet value must not be empty")
+            if facet.kind not in VALID_FACET_KINDS:
+                raise ValueError(f"unknown facet kind: {facet.kind}")
+            if not 0.0 <= facet.confidence <= 1.0:
+                raise ValueError("facet confidence must be between 0 and 1")
 
     def _validate_output(
         self,
@@ -1823,6 +1874,146 @@ def _normalize_dict_concept(item: object) -> _NormalizedDreamConcept | None:
         tags=_clean_string_tuple(payload.get("tags"), payload.get("semantic_tags")),
         confidence_delta=confidence_delta,
     )
+
+
+def _normalize_dict_facet(item: object) -> _NormalizedDreamFacet | None:
+    if type(item) is not dict:
+        return None
+    payload: dict[object, object] = item
+    value, content_penalty = _recover_facet_value(payload)
+    if value is None:
+        return None
+
+    concept_name = _facet_concept_name_from_payload(payload)
+    if concept_name == "":
+        return None
+
+    kind, kind_penalty = _recover_facet_kind(payload)
+    language_tags, language_penalty = _recover_facet_string_tuple(
+        payload,
+        "language_tags",
+        "language",
+    )
+    story_scopes, story_scope_penalty = _recover_facet_string_tuple(
+        payload,
+        "story_scopes",
+        "story_scope",
+    )
+    semantic_tags, semantic_tag_penalty = _recover_facet_string_tuple(
+        payload,
+        "semantic_tags",
+        "tags",
+    )
+    is_canonical, canonical_penalty = _recover_facet_canonical(payload)
+    metadata_penalty = (
+        kind_penalty
+        + content_penalty
+        + language_penalty
+        + story_scope_penalty
+        + semantic_tag_penalty
+        + canonical_penalty
+    )
+    confidence = _numeric_field(payload.get("confidence"), default=0.2)
+    return _NormalizedDreamFacet(
+        concept_name=concept_name,
+        value=value,
+        kind=kind,
+        language_tags=language_tags,
+        story_scopes=story_scopes,
+        semantic_tags=semantic_tags,
+        confidence=min(max(confidence - metadata_penalty, _MIN_NORMALIZED_CONFIDENCE), 1.0),
+        is_canonical=is_canonical,
+    )
+
+
+def _recover_facet_value(payload: dict[object, object]) -> tuple[str | None, float]:
+    for key in ("content", "value", "text"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return (" ".join(value.split()), 0.0)
+    value = payload.get("body")
+    if isinstance(value, str) and value.strip():
+        return (" ".join(value.split()), MALFORMED_CONFIDENCE_PENALTY)
+    return (None, 0.0)
+
+
+def _recover_facet_kind(payload: dict[object, object]) -> tuple[str, float]:
+    if "kind" not in payload and "facet_type" not in payload:
+        return ("note", 0.0)
+    value = payload.get("kind", payload.get("facet_type"))
+    if not isinstance(value, str) or not value.strip():
+        return ("note", MALFORMED_CONFIDENCE_PENALTY)
+    clean_kind = value.strip().casefold().replace("-", "_")
+    if clean_kind in VALID_FACET_KINDS:
+        return (clean_kind, 0.0)
+    if clean_kind in {"alias", "former_label"}:
+        return ("name", MALFORMED_CONFIDENCE_PENALTY)
+    return ("note", MALFORMED_CONFIDENCE_PENALTY)
+
+
+def _recover_facet_string_tuple(
+    payload: dict[object, object],
+    *keys: str,
+) -> tuple[tuple[str, ...], float]:
+    values: list[str] = []
+    penalty = 0.0
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload[key]
+        if isinstance(value, str):
+            if value.strip():
+                values.append(value)
+            else:
+                penalty += MALFORMED_CONFIDENCE_PENALTY
+            continue
+        if type(value) is list:
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    values.append(item)
+                else:
+                    penalty += MALFORMED_CONFIDENCE_PENALTY
+            continue
+        penalty += MALFORMED_CONFIDENCE_PENALTY
+    return (_clean_text_tuple(tuple(values)), penalty)
+
+
+def _recover_facet_canonical(payload: dict[object, object]) -> tuple[bool, float]:
+    if "is_canonical" in payload:
+        return _parse_facet_canonical(payload["is_canonical"])
+    if "canonical" in payload:
+        return _parse_facet_canonical(payload["canonical"])
+    return (False, 0.0)
+
+
+def _parse_facet_canonical(value: object) -> tuple[bool, float]:
+    if isinstance(value, bool):
+        return (value, 0.0)
+    if isinstance(value, str):
+        clean_value = value.strip().casefold()
+        if clean_value in {"true", "yes", "1"}:
+            return (True, MALFORMED_CONFIDENCE_PENALTY)
+        if clean_value in {"false", "no", "0"}:
+            return (False, MALFORMED_CONFIDENCE_PENALTY)
+        return (False, MALFORMED_CONFIDENCE_PENALTY)
+    if isinstance(value, int) and value in {0, 1}:
+        return (bool(value), MALFORMED_CONFIDENCE_PENALTY)
+    return (False, MALFORMED_CONFIDENCE_PENALTY)
+
+
+def _facet_concept_name_from_payload(payload: dict[object, object]) -> str:
+    for key in ("concept_name", "concept_label", "canonical_name"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    concept = payload.get("concept")
+    if isinstance(concept, str) and concept.strip():
+        return concept.strip()
+    if type(concept) is dict:
+        normalized = _normalize_dict_concept(concept)
+        if normalized is not None:
+            return normalized.canonical_name
+    return ""
 
 
 def _normalize_supersede_action(item: object) -> _DreamSupersedeAction | None:

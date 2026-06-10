@@ -8,12 +8,17 @@ from datetime import UTC, datetime
 
 from hieronymus.concept_models import ConceptFacetRecord, ConceptRecord
 from hieronymus.config import HieronymusConfig
+from hieronymus.crystals import search_expression
 from hieronymus.db import apply_migration, connect
 
 CONCEPT_CANDIDATE = "candidate"
 CONCEPT_ESTABLISHED = "established"
 CONCEPT_ARCHIVED = "archived"
 CONCEPT_MERGED = "merged"
+VALID_FACET_KINDS = {"name", "rendering", "description", "note"}
+_COMPATIBILITY_FACET_TYPES = {"alias", "former_label"}
+_CONCEPT_RECALL_TEXT_BOOST = 0.15
+_CONCEPT_RECALL_STORY_SCOPE_BOOST = 0.25
 
 _LEGACY_PUBLIC_STATUSES = {
     "vague": CONCEPT_CANDIDATE,
@@ -104,6 +109,48 @@ def _clean_tags(tags: Iterable[str]) -> tuple[str, ...]:
     return tuple(sorted({tag.strip() for tag in tags if tag.strip()}))
 
 
+def normalize_facet_kind(kind: str) -> str:
+    clean_kind = kind.strip()
+    if clean_kind not in VALID_FACET_KINDS:
+        raise ValueError(f"unknown concept facet kind: {kind}")
+    return clean_kind
+
+
+def _normalize_facet_storage_kind(
+    *,
+    kind: str | None,
+    facet_type: str | None,
+) -> str:
+    if kind is not None:
+        clean_kind = normalize_facet_kind(kind)
+        if facet_type is not None and facet_type.strip() and facet_type.strip() != clean_kind:
+            raise ValueError("kind and facet_type must not conflict")
+        return clean_kind
+
+    if facet_type is None:
+        return "name"
+
+    clean_type = facet_type.strip()
+    if clean_type in VALID_FACET_KINDS or clean_type in _COMPATIBILITY_FACET_TYPES:
+        return clean_type
+    raise ValueError(f"unknown concept facet kind: {facet_type}")
+
+
+def _clean_language_tags(
+    language_tags: Iterable[str],
+    *,
+    legacy_language: str = "",
+) -> tuple[str, ...]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for tag in (legacy_language, *language_tags):
+        clean_tag = tag.strip().casefold()
+        if clean_tag and clean_tag not in seen:
+            cleaned.append(clean_tag)
+            seen.add(clean_tag)
+    return tuple(cleaned)
+
+
 def _row_to_concept_record(conn: sqlite3.Connection, row: sqlite3.Row) -> ConceptRecord:
     tags = tuple(
         tag_row["tag"]
@@ -131,6 +178,20 @@ def _row_to_concept_record(conn: sqlite3.Connection, row: sqlite3.Row) -> Concep
 
 
 def _row_to_facet_record(conn: sqlite3.Connection, row: sqlite3.Row) -> ConceptFacetRecord:
+    language_tags = tuple(
+        tag_row["language_tag"]
+        for tag_row in conn.execute(
+            """
+            select language_tag
+            from concept_facet_language_tags
+            where facet_id = ?
+            order by case when language_tag = ? then 0 else 1 end, language_tag
+            """,
+            (row["id"], row["language"]),
+        )
+    )
+    if not language_tags and row["language"]:
+        language_tags = (row["language"],)
     story_scopes = tuple(
         scope_row["story_scope"]
         for scope_row in conn.execute(
@@ -163,6 +224,7 @@ def _row_to_facet_record(conn: sqlite3.Connection, row: sqlite3.Row) -> ConceptF
         value=row["value"],
         confidence=float(row["confidence"]),
         source_crystal_id=row["source_crystal_id"],
+        language_tags=language_tags,
         story_scopes=story_scopes,
         semantic_tags=semantic_tags,
         is_canonical=bool(row["is_canonical"]),
@@ -279,29 +341,112 @@ class ConceptStore:
             rows = conn.execute("\n".join(query), params).fetchall()
             return [_row_to_concept_record(conn, row) for row in rows]
 
-    def search(self, query: str) -> list[ConceptRecord]:
+    def search(
+        self,
+        query: str,
+        *,
+        semantic_tag: str | None = None,
+        story_scopes: Iterable[str] = (),
+    ) -> list[ConceptRecord]:
         clean_query = query.strip()
-        if not clean_query:
+        clean_semantic_tag = semantic_tag.strip() if semantic_tag is not None else ""
+        clean_story_scopes = _clean_tags(story_scopes)
+        if not clean_query and not clean_semantic_tag:
             return []
 
         with connect(self.config.database_path) as conn:
+            scores: dict[int, float] = {}
+            if clean_query:
+                exact_rows = conn.execute(
+                    """
+                    select distinct c.id
+                    from concepts c
+                    left join concept_facets f
+                      on f.concept_id = c.id
+                     and f.superseded_at is null
+                    where c.status not in (?, ?)
+                      and (
+                        c.canonical_name = ? collate nocase
+                        or f.value = ? collate nocase
+                      )
+                    """,
+                    (CONCEPT_ARCHIVED, CONCEPT_MERGED, clean_query, clean_query),
+                ).fetchall()
+                for row in exact_rows:
+                    scores[int(row["id"])] = max(scores.get(int(row["id"]), 0.0), 100.0)
+
+                expression = search_expression(clean_query)
+                if expression:
+                    concept_rows = conn.execute(
+                        """
+                        select c.id
+                        from concepts_fts
+                        join concepts c on c.id = concepts_fts.rowid
+                        where concepts_fts match ?
+                          and c.status not in (?, ?)
+                        """,
+                        (expression, CONCEPT_ARCHIVED, CONCEPT_MERGED),
+                    ).fetchall()
+                    for row in concept_rows:
+                        scores[int(row["id"])] = max(scores.get(int(row["id"]), 0.0), 60.0)
+
+                    facet_rows = conn.execute(
+                        """
+                        select distinct c.id
+                        from concept_facet_fts
+                        join concept_facets f on f.id = concept_facet_fts.rowid
+                        join concepts c on c.id = f.concept_id
+                        where concept_facet_fts match ?
+                          and f.superseded_at is null
+                          and c.status not in (?, ?)
+                        """,
+                        (expression, CONCEPT_ARCHIVED, CONCEPT_MERGED),
+                    ).fetchall()
+                    for row in facet_rows:
+                        scores[int(row["id"])] = max(scores.get(int(row["id"]), 0.0), 55.0)
+
+            if clean_semantic_tag:
+                tagged_ids = self._concept_ids_for_semantic_tag_with_connection(
+                    conn,
+                    clean_semantic_tag,
+                )
+                if clean_query:
+                    scores = {
+                        concept_id: score + 50.0
+                        for concept_id, score in scores.items()
+                        if concept_id in tagged_ids
+                    }
+                else:
+                    scores = {concept_id: 50.0 for concept_id in tagged_ids}
+
+            if clean_story_scopes and scores:
+                scoped_ids = self._concept_ids_for_story_scopes_with_connection(
+                    conn,
+                    clean_story_scopes,
+                )
+                for concept_id in scoped_ids:
+                    if concept_id in scores:
+                        scores[concept_id] += 10.0
+
+            if not scores:
+                return []
+
+            placeholders = ", ".join("?" for _ in scores)
             rows = conn.execute(
                 """
-                select distinct c.*
+                select *
                 from concepts c
-                left join concept_facets f
-                  on f.concept_id = c.id
-                 and f.superseded_at is null
-                where c.status not in (?, ?)
-                  and (
-                    c.canonical_name = ? collate nocase
-                    or f.value = ? collate nocase
-                  )
-                order by c.id
+                where c.id in (
+                """
+                + placeholders
+                + """
+                )
                 """,
-                (CONCEPT_ARCHIVED, CONCEPT_MERGED, clean_query, clean_query),
+                tuple(scores),
             ).fetchall()
-            return [_row_to_concept_record(conn, row) for row in rows]
+            records = [_row_to_concept_record(conn, row) for row in rows]
+            records.sort(key=lambda record: (-scores[record.id], record.id))
+            return records
 
     def create_or_reinforce(
         self,
@@ -446,7 +591,9 @@ class ConceptStore:
         value: str,
         *,
         language: str = "",
-        facet_type: str = "alias",
+        language_tags: Iterable[str] = (),
+        kind: str | None = None,
+        facet_type: str | None = None,
         confidence: float = 0.2,
         source_crystal_id: int | None = None,
         is_canonical: bool = False,
@@ -458,39 +605,21 @@ class ConceptStore:
             raise ValueError("concept facet value must not be empty")
         now = _now()
         with connect(self.config.database_path) as conn:
-            self._require_concept_with_connection(conn, concept_id)
-            cursor = conn.execute(
-                """
-                insert into concept_facets(
-                  concept_id,
-                  language,
-                  facet_type,
-                  value,
-                  source_crystal_id,
-                  confidence,
-                  is_canonical,
-                  created_at,
-                  updated_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    concept_id,
-                    language.strip(),
-                    facet_type.strip() or "alias",
-                    clean_value,
-                    source_crystal_id,
-                    _clamp_confidence(confidence),
-                    int(is_canonical),
-                    now,
-                    now,
-                ),
+            facet_id = self._add_facet_with_connection(
+                conn,
+                concept_id,
+                clean_value,
+                language=language,
+                language_tags=language_tags,
+                kind=kind,
+                facet_type=facet_type,
+                confidence=confidence,
+                source_crystal_id=source_crystal_id,
+                is_canonical=is_canonical,
+                story_scopes=story_scopes,
+                semantic_tags=semantic_tags,
+                now=now,
             )
-            facet_id = int(cursor.lastrowid)
-            self._set_facet_story_scopes_with_connection(conn, facet_id, story_scopes)
-            self._set_facet_semantic_tags_with_connection(conn, facet_id, semantic_tags)
-            if is_canonical:
-                self._set_canonical_facet_with_connection(conn, concept_id, facet_id)
             conn.commit()
         return self._get_facet(facet_id)
 
@@ -738,6 +867,72 @@ class ConceptStore:
             ).fetchall()
         return tuple(int(row["concept_id"]) for row in rows)
 
+    def recall_boosts_for_crystals(
+        self,
+        crystal_ids: Iterable[int],
+        query: str,
+        *,
+        story_scopes: Iterable[str] = (),
+    ) -> dict[int, float]:
+        clean_crystal_ids = tuple(sorted(set(crystal_ids)))
+        clean_query = query.strip()
+        if not clean_crystal_ids or not clean_query:
+            return {}
+
+        boosts = {crystal_id: 0.0 for crystal_id in clean_crystal_ids}
+        clean_story_scopes = _clean_tags(story_scopes)
+
+        with connect(self.config.database_path) as conn:
+            matching_concept_ids = self._concept_ids_matching_recall_query_with_connection(
+                conn,
+                clean_query,
+            )
+
+            if matching_concept_ids:
+                crystal_placeholders = ", ".join("?" for _ in clean_crystal_ids)
+                concept_placeholders = ", ".join("?" for _ in matching_concept_ids)
+                rows = conn.execute(
+                    f"""
+                    select distinct crystal_id
+                    from crystal_concepts
+                    where crystal_id in ({crystal_placeholders})
+                      and concept_id in ({concept_placeholders})
+                    """,
+                    (*clean_crystal_ids, *matching_concept_ids),
+                ).fetchall()
+                for row in rows:
+                    boosts[int(row["crystal_id"])] += _CONCEPT_RECALL_TEXT_BOOST
+
+            if clean_story_scopes:
+                matching_facet_ids = self._facet_ids_matching_query_with_connection(
+                    conn,
+                    clean_query,
+                )
+                if not matching_facet_ids:
+                    return {crystal_id: boost for crystal_id, boost in boosts.items() if boost > 0}
+                crystal_placeholders = ", ".join("?" for _ in clean_crystal_ids)
+                scope_placeholders = ", ".join("?" for _ in clean_story_scopes)
+                facet_placeholders = ", ".join("?" for _ in matching_facet_ids)
+                rows = conn.execute(
+                    f"""
+                    select distinct cc.crystal_id
+                    from crystal_concepts cc
+                    join concept_facets f
+                      on f.concept_id = cc.concept_id
+                     and f.superseded_at is null
+                    join concept_facet_story_scopes s
+                      on s.facet_id = f.id
+                    where f.id in ({facet_placeholders})
+                      and cc.crystal_id in ({crystal_placeholders})
+                      and s.story_scope in ({scope_placeholders})
+                    """,
+                    (*matching_facet_ids, *clean_crystal_ids, *clean_story_scopes),
+                ).fetchall()
+                for row in rows:
+                    boosts[int(row["crystal_id"])] += _CONCEPT_RECALL_STORY_SCOPE_BOOST
+
+        return {crystal_id: boost for crystal_id, boost in boosts.items() if boost > 0}
+
     def _validate_scope(self, scope_type: str, scope_key: str) -> None:
         ConceptRecord(
             id=0,
@@ -864,6 +1059,66 @@ class ConceptStore:
                 (status, now, concept_id),
             )
 
+    def _add_facet_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        concept_id: int,
+        value: str,
+        *,
+        language: str = "",
+        language_tags: Iterable[str] = (),
+        kind: str | None = None,
+        facet_type: str | None = None,
+        confidence: float = 0.2,
+        source_crystal_id: int | None = None,
+        is_canonical: bool = False,
+        story_scopes: Iterable[str] = (),
+        semantic_tags: Iterable[str] = (),
+        now: str | None = None,
+    ) -> int:
+        clean_value = value.strip()
+        if not clean_value:
+            raise ValueError("concept facet value must not be empty")
+        clean_kind = _normalize_facet_storage_kind(kind=kind, facet_type=facet_type)
+        clean_language_tags = _clean_language_tags(language_tags, legacy_language=language)
+        legacy_language = clean_language_tags[0] if clean_language_tags else ""
+        event_time = now or _now()
+        self._require_concept_with_connection(conn, concept_id)
+        cursor = conn.execute(
+            """
+            insert into concept_facets(
+              concept_id,
+              language,
+              facet_type,
+              value,
+              source_crystal_id,
+              confidence,
+              is_canonical,
+              created_at,
+              updated_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                concept_id,
+                legacy_language,
+                clean_kind,
+                clean_value,
+                source_crystal_id,
+                _clamp_confidence(confidence),
+                int(is_canonical),
+                event_time,
+                event_time,
+            ),
+        )
+        facet_id = int(cursor.lastrowid)
+        self._set_facet_language_tags_with_connection(conn, facet_id, clean_language_tags)
+        self._set_facet_story_scopes_with_connection(conn, facet_id, story_scopes)
+        self._set_facet_semantic_tags_with_connection(conn, facet_id, semantic_tags)
+        if is_canonical:
+            self._set_canonical_facet_with_connection(conn, concept_id, facet_id)
+        return facet_id
+
     def _set_semantic_tags_with_connection(
         self,
         conn: sqlite3.Connection,
@@ -880,6 +1135,22 @@ class ConceptStore:
                 values (?, ?, ?)
                 """,
                 (concept_id, tag, now),
+            )
+
+    def _set_facet_language_tags_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        facet_id: int,
+        language_tags: Iterable[str],
+    ) -> None:
+        conn.execute("delete from concept_facet_language_tags where facet_id = ?", (facet_id,))
+        for language_tag in _clean_language_tags(language_tags):
+            conn.execute(
+                """
+                insert into concept_facet_language_tags(facet_id, language_tag)
+                values (?, ?)
+                """,
+                (facet_id, language_tag),
             )
 
     def _set_facet_story_scopes_with_connection(
@@ -911,6 +1182,126 @@ class ConceptStore:
                 """,
                 (facet_id, semantic_tag),
             )
+
+    def _concept_ids_for_semantic_tag_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        semantic_tag: str,
+    ) -> set[int]:
+        rows = conn.execute(
+            """
+            select distinct c.id
+            from concepts c
+            left join concept_semantic_tags ct
+              on ct.concept_id = c.id
+             and ct.tag = ?
+            left join concept_facets f
+              on f.concept_id = c.id
+             and f.superseded_at is null
+            left join concept_facet_semantic_tags ft
+              on ft.facet_id = f.id
+             and ft.semantic_tag = ?
+            where c.status not in (?, ?)
+              and (
+                ct.concept_id is not null
+                or ft.facet_id is not null
+              )
+            """,
+            (semantic_tag, semantic_tag, CONCEPT_ARCHIVED, CONCEPT_MERGED),
+        ).fetchall()
+        return {int(row["id"]) for row in rows}
+
+    def _concept_ids_matching_recall_query_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        query: str,
+    ) -> set[int]:
+        concept_ids = {
+            int(row["id"])
+            for row in conn.execute(
+                """
+                select id
+                from concepts
+                where canonical_name = ? collate nocase
+                  and status not in (?, ?)
+                """,
+                (query, CONCEPT_ARCHIVED, CONCEPT_MERGED),
+            ).fetchall()
+        }
+        facet_ids = self._facet_ids_matching_query_with_connection(conn, query)
+        if not facet_ids:
+            return concept_ids
+
+        placeholders = ", ".join("?" for _ in facet_ids)
+        rows = conn.execute(
+            f"""
+            select distinct c.id
+            from concepts c
+            join concept_facets f on f.concept_id = c.id
+            where f.id in ({placeholders})
+              and c.status not in (?, ?)
+            """,
+            (*facet_ids, CONCEPT_ARCHIVED, CONCEPT_MERGED),
+        ).fetchall()
+        concept_ids.update(int(row["id"]) for row in rows)
+        return concept_ids
+
+    def _facet_ids_matching_query_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        query: str,
+    ) -> tuple[int, ...]:
+        facet_ids = {
+            int(row["id"])
+            for row in conn.execute(
+                """
+                select id
+                from concept_facets
+                where value = ? collate nocase
+                  and superseded_at is null
+                """,
+                (query,),
+            ).fetchall()
+        }
+        expression = search_expression(query)
+        if expression:
+            rows = conn.execute(
+                """
+                select f.id
+                from concept_facet_fts
+                join concept_facets f on f.id = concept_facet_fts.rowid
+                where concept_facet_fts match ?
+                  and f.superseded_at is null
+                """,
+                (expression,),
+            ).fetchall()
+            facet_ids.update(int(row["id"]) for row in rows)
+        return tuple(sorted(facet_ids))
+
+    def _concept_ids_for_story_scopes_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        story_scopes: Iterable[str],
+    ) -> set[int]:
+        clean_story_scopes = _clean_tags(story_scopes)
+        if not clean_story_scopes:
+            return set()
+        placeholders = ", ".join("?" for _ in clean_story_scopes)
+        rows = conn.execute(
+            f"""
+            select distinct c.id
+            from concepts c
+            join concept_facets f
+              on f.concept_id = c.id
+             and f.superseded_at is null
+            join concept_facet_story_scopes s
+              on s.facet_id = f.id
+            where c.status not in (?, ?)
+              and s.story_scope in ({placeholders})
+            """,
+            (CONCEPT_ARCHIVED, CONCEPT_MERGED, *clean_story_scopes),
+        ).fetchall()
+        return {int(row["id"]) for row in rows}
 
     def _set_canonical_facet_with_connection(
         self,
@@ -975,15 +1366,20 @@ class ConceptStore:
         concept_id: int,
         value: str,
         *,
-        facet_type: str,
+        facet_type: str | None = None,
+        kind: str | None = None,
         language: str = "",
+        language_tags: Iterable[str] = (),
         source_crystal_id: int | None = None,
         confidence: float = 0.2,
         now: str,
     ) -> int:
         clean_value = value.strip()
-        clean_type = facet_type.strip() or "alias"
-        clean_language = language.strip()
+        if not clean_value:
+            raise ValueError("concept facet value must not be empty")
+        clean_type = _normalize_facet_storage_kind(kind=kind, facet_type=facet_type)
+        clean_language_tags = _clean_language_tags(language_tags, legacy_language=language)
+        clean_language = clean_language_tags[0] if clean_language_tags else ""
         existing = self._facet_by_identity_with_connection(
             conn,
             concept_id,
@@ -1033,7 +1429,9 @@ class ConceptStore:
                 now,
             ),
         )
-        return int(cursor.lastrowid)
+        facet_id = int(cursor.lastrowid)
+        self._set_facet_language_tags_with_connection(conn, facet_id, clean_language_tags)
+        return facet_id
 
     def _move_facets_to_target_with_connection(
         self,
@@ -1112,6 +1510,15 @@ class ConceptStore:
         source_facet_id: int,
         target_facet_id: int,
     ) -> None:
+        conn.execute(
+            """
+            insert or ignore into concept_facet_language_tags(facet_id, language_tag)
+            select ?, language_tag
+            from concept_facet_language_tags
+            where facet_id = ?
+            """,
+            (target_facet_id, source_facet_id),
+        )
         conn.execute(
             """
             insert or ignore into concept_facet_story_scopes(facet_id, story_scope)

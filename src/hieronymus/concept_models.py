@@ -39,6 +39,12 @@ class ConceptFacetRecord:
     semantic_tags: tuple[str, ...] = ()
     is_canonical: bool = False
 
+    @property
+    def kind(self) -> str:
+        if self.facet_type in {"alias", "former_label"}:
+            return "name"
+        return self.facet_type
+
 
 @dataclass(frozen=True)
 class ConceptLinkRecord:

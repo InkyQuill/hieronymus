@@ -15,6 +15,7 @@ EXPECTED_METADATA_TABLES = {
     "short_term_memory_story_scopes",
     "short_term_memory_semantic_tags",
     "crystal_language_tags",
+    "concept_facet_language_tags",
     "concept_facet_story_scopes",
     "concept_facet_semantic_tags",
 }
@@ -141,6 +142,28 @@ def test_global_schema_removes_old_concept_name_unique_constraint(tmp_path):
     assert foreign_key_errors == []
 
 
+def test_global_schema_rebuilds_facet_fts_for_previous_schema_rows(tmp_path):
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    with connect(config.database_path) as conn:
+        _create_previous_schema(conn)
+        _insert_previous_schema_rows(conn)
+        conn.execute(
+            """
+            update concept_facets
+            set value = 'Legacy Alias'
+            where id = 1
+            """
+        )
+        conn.commit()
+
+        assert not _sqlite_table_exists(conn, "concept_facet_fts")
+        apply_migration(conn, "global.sql")
+
+    assert [concept.canonical_name for concept in ConceptStore(config).search("Legacy")] == [
+        "Approved Name"
+    ]
+
+
 def _create_previous_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
@@ -236,6 +259,19 @@ def _create_previous_schema(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+
+
+def _sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        """
+        select 1
+        from sqlite_master
+        where type = 'table'
+          and name = ?
+        """,
+        (table,),
+    ).fetchone()
+    return row is not None
 
 
 def _insert_previous_schema_rows(conn: sqlite3.Connection) -> None:
