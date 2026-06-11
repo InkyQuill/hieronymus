@@ -160,7 +160,8 @@ class Doctor:
                     level="warning",
                     code="node-runtime-missing",
                     message=(
-                        "Node.js is not available; install Node.js >=22 to run the Hieronymus terminal user interface (TUI)."
+                        "Node.js is not available; install Node.js >=22 "
+                        "to run the Hieronymus terminal user interface (TUI)."
                     ),
                 )
             )

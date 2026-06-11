@@ -256,4 +256,3 @@ def test_cli_json_config_bypasses_ink_launcher(tmp_path, monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert '"settings_path"' in result.output
-
