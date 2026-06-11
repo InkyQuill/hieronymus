@@ -12,8 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@opentui/core": "latest",
-    "@opentui/react": "latest",
+    "@opentui/core": "0.4.0",
+    "@opentui/react": "0.4.0",
     "react": "^19",
     "unicode-animations": "^1.0.3",
     "zod": "^3.25.0"

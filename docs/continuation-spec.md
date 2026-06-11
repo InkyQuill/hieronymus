@@ -32,6 +32,13 @@ Acceptance:
 - Repeated OpenTUI test renders do not emit listener-leak warnings.
 - The fix does not hide real React state-update failures by globally muting
   stderr.
+- If OpenTUI exposes textarea scrollbar controls in a newer release, enable a
+  visible scrollbar for multiline memory editors. The current `0.4.0` textarea
+  supports wrapping and internal scrolling but not a visible scrollbar prop.
+- Replace the current lightweight memory-detail markdown renderer with a full
+  markdown renderer once OpenTUI markdown output is reliable in the test
+  renderer. The current implementation covers readable paragraphs, headings,
+  list markers, `**strong**`, and literal `<strong>...</strong>` spans.
 
 ### 2. Real TUI Smoke Coverage
 

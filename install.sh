@@ -25,7 +25,7 @@ confirm() {
             *) return 1 ;;
         esac
     fi
-    echo "info: no interactive terminal; proceeding. Set HIERONYMUS_INSTALL_YES=0 is not supported for non-interactive installs." >&2
+    echo "info: no interactive terminal; proceeding automatically. Set HIERONYMUS_INSTALL_YES=0 to abort instead." >&2
     return 0
 }
 
@@ -71,20 +71,24 @@ ensure_bun() {
     fi
 
     BUN_VER=$(bun --version)
-    if ! bun -e "
-      const ver = (process.versions.bun || process.version).replace(/^v/, '').split('.').map(Number);
-      process.exit((ver[0] > 1 || (ver[0] === 1 && ver[1] >= 3)) ? 0 : 1);
-    " >/dev/null 2>&1; then
+    BUN_MAJOR=${BUN_VER%%.*}
+    BUN_REST=${BUN_VER#*.}
+    BUN_MINOR=${BUN_REST%%.*}
+    case "$BUN_MAJOR" in ""|*[!0-9]*) BUN_MAJOR=0; BUN_MINOR=0 ;; esac
+    case "$BUN_MINOR" in ""|*[!0-9]*) BUN_MAJOR=0; BUN_MINOR=0 ;; esac
+    if [ "$BUN_MAJOR" -lt 1 ] || { [ "$BUN_MAJOR" -eq 1 ] && [ "$BUN_MINOR" -lt 3 ]; }; then
         if ! confirm "Bun version is ${BUN_VER}. Upgrade Bun to >= 1.3 now?"; then
             echo "error: Bun >= 1.3 is required to build and run the Hieronymus TUI" >&2
             exit 1
         fi
         bun upgrade
         BUN_VER=$(bun --version)
-        if ! bun -e "
-          const ver = (process.versions.bun || process.version).replace(/^v/, '').split('.').map(Number);
-          process.exit((ver[0] > 1 || (ver[0] === 1 && ver[1] >= 3)) ? 0 : 1);
-        " >/dev/null 2>&1; then
+        BUN_MAJOR=${BUN_VER%%.*}
+        BUN_REST=${BUN_VER#*.}
+        BUN_MINOR=${BUN_REST%%.*}
+        case "$BUN_MAJOR" in ""|*[!0-9]*) BUN_MAJOR=0; BUN_MINOR=0 ;; esac
+        case "$BUN_MINOR" in ""|*[!0-9]*) BUN_MAJOR=0; BUN_MINOR=0 ;; esac
+        if [ "$BUN_MAJOR" -lt 1 ] || { [ "$BUN_MAJOR" -eq 1 ] && [ "$BUN_MINOR" -lt 3 ]; }; then
             echo "error: Bun version is still ${BUN_VER}; Bun >= 1.3 is required" >&2
             exit 1
         fi

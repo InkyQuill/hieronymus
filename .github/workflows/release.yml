@@ -46,6 +46,8 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: oven-sh/setup-bun@v2
+
       - run: uv sync --dev
 
       - run: uv run semantic-release version

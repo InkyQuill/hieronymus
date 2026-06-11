@@ -104,6 +104,8 @@ def test_release_workflow_release_job_publishes_after_verification() -> None:
         assert "        env:" in step
         assert "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in step
 
+    assert any("setup-bun" in line for line in release)
+
 
 def test_pyproject_configures_semantic_release() -> None:
     pyproject_text = (ROOT / "pyproject.toml").read_text()

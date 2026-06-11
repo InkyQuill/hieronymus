@@ -448,7 +448,7 @@ def _bun_version(bun_path: str) -> tuple[int, int] | None:
         if len(parts) >= 2:
             return int(parts[0]), int(parts[1])
     except ValueError:
-        pass
+        return None
     return None
 
 

@@ -176,19 +176,26 @@ def test_run_update_fetches_checks_out_and_reinstalls_managed_install(
 ) -> None:
     checkout = tmp_path / "app"
     commands: list[tuple[list[str], Path | None]] = []
+    outputs: list[tuple[list[str], Path | None]] = []
 
     def record_run(command: list[str], *, cwd: Path | None = None) -> None:
         commands.append((command, cwd))
+
+    def record_output(command: list[str], *, cwd: Path | None = None) -> str:
+        outputs.append((command, cwd))
+        return "1.3.14"
 
     monkeypatch.setattr(release, "managed_app_path", lambda: checkout)
     monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: True)
     monkeypatch.setattr(release, "package_version", lambda: "0.1.0")
     monkeypatch.setattr(release, "fetch_remote_tags", lambda: ["refs/tags/v0.2.0"])
     monkeypatch.setattr(release, "_run", record_run)
+    monkeypatch.setattr(release, "_output", record_output)
 
     status = run_update()
 
     assert status.latest_tag == "v0.2.0"
+    assert outputs == [(["bun", "--version"], None)]
     assert commands == [
         (
             [
@@ -213,18 +220,25 @@ def test_run_update_fetches_origin_main_before_checkout(
 ) -> None:
     checkout = tmp_path / "app"
     commands: list[tuple[list[str], Path | None]] = []
+    outputs: list[tuple[list[str], Path | None]] = []
 
     def record_run(command: list[str], *, cwd: Path | None = None) -> None:
         commands.append((command, cwd))
+
+    def record_output(command: list[str], *, cwd: Path | None = None) -> str:
+        outputs.append((command, cwd))
+        return "1.3.14"
 
     monkeypatch.setattr(release, "managed_app_path", lambda: checkout)
     monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: True)
     monkeypatch.setattr(release, "package_version", lambda: "0.1.0")
     monkeypatch.setattr(release, "_run", record_run)
+    monkeypatch.setattr(release, "_output", record_output)
 
     status = run_update(target="main")
 
     assert status.target == "main"
+    assert outputs == [(["bun", "--version"], None)]
     assert commands == [
         (["git", "fetch", release.GITHUB_REPO_URL, "main"], checkout),
         (["git", "checkout", "--detach", "FETCH_HEAD"], checkout),
@@ -246,12 +260,36 @@ def test_run_update_returns_refreshed_status_after_reinstall(
     monkeypatch.setattr(release, "package_version", lambda: next(versions))
     monkeypatch.setattr(release, "fetch_remote_tags", lambda: ["refs/tags/v0.2.0"])
     monkeypatch.setattr(release, "_run", lambda command, *, cwd=None: None)
+    monkeypatch.setattr(release, "_output", lambda command, *, cwd=None: "1.3.14")
 
     status = run_update()
 
     assert status.current_version == "0.2.0"
     assert status.latest_version == "0.2.0"
     assert status.update_available is False
+
+
+def test_run_update_checks_bun_before_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout = tmp_path / "app"
+    commands: list[tuple[list[str], Path | None]] = []
+
+    def record_run(command: list[str], *, cwd: Path | None = None) -> None:
+        commands.append((command, cwd))
+
+    monkeypatch.setattr(release, "managed_app_path", lambda: checkout)
+    monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: True)
+    monkeypatch.setattr(release, "package_version", lambda: "0.1.0")
+    monkeypatch.setattr(release, "fetch_remote_tags", lambda: ["refs/tags/v0.2.0"])
+    monkeypatch.setattr(release, "_run", record_run)
+    monkeypatch.setattr(release, "_output", lambda command, *, cwd=None: "1.2.0")
+
+    with pytest.raises(RuntimeError, match="Bun >= 1.3"):
+        run_update()
+
+    assert commands == []
 
 
 def test_is_managed_install_rejects_wrong_origin(

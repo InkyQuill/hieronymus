@@ -27,7 +27,7 @@ export function StatusLine({ message, error = false, busy = false }: Props) {
       timeline.pause();
       return;
     }
-    timeline.add(
+    timeline.once(
       { value: 0 },
       {
         value: 1,

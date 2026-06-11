@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useKeyboard } from "@opentui/react";
-import { TextInput } from "../ui/TextInput.js";
+import { TextAreaInput, TextInput } from "../ui/TextInput.js";
 
 export type DialogKind =
   | "add"
@@ -159,9 +159,7 @@ function DeleteDialog({
   return (
     <box {...overlayStyle}>
       <box {...modalStyle} borderColor="red">
-        <text fg="red">
-          Confirm Deletion
-        </text>
+        <text fg="red">Confirm Deletion</text>
         <box marginTop={1}>
           <text>
             Are you sure you want to delete this {state.entityType || "item"}?
@@ -197,31 +195,13 @@ function AddDialog({
   overlayStyle: any;
   modalStyle: any;
 }) {
-  const [type, setType] = useState<"crystal" | "lesson" | "rule" | string>("crystal");
+  const [type, setType] = useState<"crystal" | "lesson" | "rule" | string>(
+    "crystal",
+  );
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [tags, setTags] = useState("");
   const [focusedIndex, setFocusedIndex] = useState(0); // 0 = type, 1 = title, 2 = text, 3 = tags
-
-  useKeyboard((key) => {
-    if (key.name === "escape") {
-      onClose();
-      return;
-    }
-    if (key.name === "up") {
-      setFocusedIndex((prev) => Math.max(0, prev - 1));
-    } else if (key.name === "down") {
-      setFocusedIndex((prev) => Math.min(3, prev + 1));
-    } else if (focusedIndex === 0) {
-      if (key.name === "left" || key.name === "right" || key.name === "space" || key.name === " ") {
-        setType((prev) => {
-          if (prev === "crystal") return "lesson";
-          if (prev === "lesson") return "rule";
-          return "crystal";
-        });
-      }
-    }
-  });
 
   const handleSubmit = () => {
     onSubmit({
@@ -238,12 +218,39 @@ function AddDialog({
     });
   };
 
+  useKeyboard((key) => {
+    if (key.name === "escape") {
+      onClose();
+      return;
+    }
+    if (key.name === "enter") {
+      handleSubmit();
+      return;
+    }
+    if (key.name === "up") {
+      setFocusedIndex((prev) => Math.max(0, prev - 1));
+    } else if (key.name === "down") {
+      setFocusedIndex((prev) => Math.min(3, prev + 1));
+    } else if (focusedIndex === 0) {
+      if (
+        key.name === "left" ||
+        key.name === "right" ||
+        key.name === "space" ||
+        key.name === " "
+      ) {
+        setType((prev) => {
+          if (prev === "crystal") return "lesson";
+          if (prev === "lesson") return "rule";
+          return "crystal";
+        });
+      }
+    }
+  });
+
   return (
     <box {...overlayStyle}>
       <box {...modalStyle}>
-        <text fg="cyan">
-          Add New Crystal / Lesson / Rule
-        </text>
+        <text fg="cyan">Add New Crystal / Lesson / Rule</text>
         <box marginTop={1} flexDirection="column">
           <box flexDirection="row">
             <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Type: </text>
@@ -257,8 +264,16 @@ function AddDialog({
               selectedBackgroundColor="transparent"
               focusedBackgroundColor="transparent"
               options={[
-                { name: "Crystal", description: "Long-term memory", value: "crystal" },
-                { name: "Lesson", description: "Learned lesson", value: "lesson" },
+                {
+                  name: "Crystal",
+                  description: "Long-term memory",
+                  value: "crystal",
+                },
+                {
+                  name: "Lesson",
+                  description: "Learned lesson",
+                  value: "lesson",
+                },
                 { name: "Rule", description: "Strict rule", value: "rule" },
               ]}
               onChange={(_index, option) => {
@@ -286,11 +301,12 @@ function AddDialog({
 
           <box flexDirection="row" marginTop={1}>
             <text fg={focusedIndex === 2 ? "cyan" : "gray"}>Text: </text>
-            <TextInput
+            <TextAreaInput
               value={text}
               onChange={setText}
               focus={focusedIndex === 2}
               placeholder="Enter content/observation..."
+              onSubmit={handleSubmit}
             />
           </box>
 
@@ -332,9 +348,21 @@ function EditDialog({
   const [text, setText] = useState(state.initialText || "");
   const [focusedIndex, setFocusedIndex] = useState(0); // 0 = title, 1 = text
 
+  const handleSubmit = () => {
+    onSubmit({
+      id: state.entityId,
+      title,
+      text,
+    });
+  };
+
   useKeyboard((key) => {
     if (key.name === "escape") {
       onClose();
+      return;
+    }
+    if (key.name === "enter") {
+      handleSubmit();
       return;
     }
     if (key.name === "up") {
@@ -344,20 +372,10 @@ function EditDialog({
     }
   });
 
-  const handleSubmit = () => {
-    onSubmit({
-      id: state.entityId,
-      title,
-      text,
-    });
-  };
-
   return (
     <box {...overlayStyle}>
       <box {...modalStyle}>
-        <text fg="cyan">
-          Edit Memory
-        </text>
+        <text fg="cyan">Edit Memory</text>
         <box marginTop={1} flexDirection="column">
           <box flexDirection="row">
             <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Title: </text>
@@ -371,7 +389,7 @@ function EditDialog({
 
           <box flexDirection="row" marginTop={1}>
             <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Text: </text>
-            <TextInput
+            <TextAreaInput
               value={text}
               onChange={setText}
               focus={focusedIndex === 1}
@@ -426,9 +444,7 @@ function RenameDialog({
   return (
     <box {...overlayStyle}>
       <box {...modalStyle}>
-        <text fg="cyan">
-          Rename Concept
-        </text>
+        <text fg="cyan">Rename Concept</text>
         <box marginTop={1} flexDirection="row">
           <text fg="cyan">Name: </text>
           <TextInput
@@ -477,18 +493,6 @@ function MergeDialog({
 
   const maxIndex = isConcept ? 1 : 2; // concept: 0=targetId, 1=evidence. crystal: 0=targetId, 1=title, 2=text.
 
-  useKeyboard((key) => {
-    if (key.name === "escape") {
-      onClose();
-      return;
-    }
-    if (key.name === "up") {
-      setFocusedIndex((prev) => Math.max(0, prev - 1));
-    } else if (key.name === "down") {
-      setFocusedIndex((prev) => Math.min(maxIndex, prev + 1));
-    }
-  });
-
   const handleSubmit = () => {
     const parsedTarget = parseInt(targetId, 10);
     if (!targetId.trim() || isNaN(parsedTarget)) {
@@ -512,12 +516,26 @@ function MergeDialog({
     }
   };
 
+  useKeyboard((key) => {
+    if (key.name === "escape") {
+      onClose();
+      return;
+    }
+    if (key.name === "enter") {
+      handleSubmit();
+      return;
+    }
+    if (key.name === "up") {
+      setFocusedIndex((prev) => Math.max(0, prev - 1));
+    } else if (key.name === "down") {
+      setFocusedIndex((prev) => Math.min(maxIndex, prev + 1));
+    }
+  });
+
   return (
     <box {...overlayStyle}>
       <box {...modalStyle}>
-        <text fg="cyan">
-          Merge {isConcept ? "Concepts" : "Crystals"}
-        </text>
+        <text fg="cyan">Merge {isConcept ? "Concepts" : "Crystals"}</text>
         <box marginTop={1} flexDirection="column">
           <text>
             Merging source {isConcept ? "Concept" : "Crystal"} ID:{" "}
@@ -557,7 +575,7 @@ function MergeDialog({
               </box>
               <box flexDirection="row" marginTop={1}>
                 <text fg={focusedIndex === 2 ? "cyan" : "gray"}>Text: </text>
-                <TextInput
+                <TextAreaInput
                   value={text}
                   onChange={setText}
                   focus={focusedIndex === 2}
@@ -602,18 +620,6 @@ function SplitDialog({
   const [partTwoText, setPartTwoText] = useState("");
   const [focusedIndex, setFocusedIndex] = useState(0); // 0=p1 title, 1=p1 text, 2=p2 title, 3=p2 text
 
-  useKeyboard((key) => {
-    if (key.name === "escape") {
-      onClose();
-      return;
-    }
-    if (key.name === "up") {
-      setFocusedIndex((prev) => Math.max(0, prev - 1));
-    } else if (key.name === "down") {
-      setFocusedIndex((prev) => Math.min(3, prev + 1));
-    }
-  });
-
   const handleSubmit = () => {
     onSubmit({
       id: state.entityId,
@@ -624,18 +630,30 @@ function SplitDialog({
     });
   };
 
+  useKeyboard((key) => {
+    if (key.name === "escape") {
+      onClose();
+      return;
+    }
+    if (key.name === "enter") {
+      handleSubmit();
+      return;
+    }
+    if (key.name === "up") {
+      setFocusedIndex((prev) => Math.max(0, prev - 1));
+    } else if (key.name === "down") {
+      setFocusedIndex((prev) => Math.min(3, prev + 1));
+    }
+  });
+
   return (
     <box {...overlayStyle}>
       <box {...modalStyle}>
-        <text fg="cyan">
-          Split Crystal
-        </text>
+        <text fg="cyan">Split Crystal</text>
         <box marginTop={1} flexDirection="column">
           <text>Splitting Crystal ID: {state.entityId}</text>
           <box marginTop={1}>
-            <text>
-              Part 1
-            </text>
+            <text>Part 1</text>
           </box>
           <box flexDirection="row">
             <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Title: </text>
@@ -648,18 +666,17 @@ function SplitDialog({
           </box>
           <box flexDirection="row" marginTop={1}>
             <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Text: </text>
-            <TextInput
+            <TextAreaInput
               value={partOneText}
               onChange={setPartOneText}
               focus={focusedIndex === 1}
               placeholder="Part 1 content..."
+              onSubmit={handleSubmit}
             />
           </box>
 
           <box marginTop={1}>
-            <text>
-              Part 2
-            </text>
+            <text>Part 2</text>
           </box>
           <box flexDirection="row">
             <text fg={focusedIndex === 2 ? "cyan" : "gray"}>Title: </text>
@@ -672,7 +689,7 @@ function SplitDialog({
           </box>
           <box flexDirection="row" marginTop={1}>
             <text fg={focusedIndex === 3 ? "cyan" : "gray"}>Text: </text>
-            <TextInput
+            <TextAreaInput
               value={partTwoText}
               onChange={setPartTwoText}
               focus={focusedIndex === 3}

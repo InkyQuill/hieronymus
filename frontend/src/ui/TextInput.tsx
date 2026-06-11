@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useRef } from "react";
+import type { TextareaRenderable } from "@opentui/core";
 
 type TextInputProps = {
   value: string;
@@ -22,6 +23,43 @@ export function TextInput({
       onSubmit={onSubmit}
       placeholder={placeholder}
       focused={focus}
+    />
+  );
+}
+
+type TextAreaInputProps = TextInputProps & {
+  width?: number;
+  height?: number;
+};
+
+export function TextAreaInput({
+  value,
+  onChange,
+  onSubmit,
+  placeholder = "",
+  focus = true,
+  width = 46,
+  height = 6,
+}: TextAreaInputProps) {
+  const textareaRef = useRef<TextareaRenderable>(null);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      initialValue={value}
+      onContentChange={() => {
+        onChange(textareaRef.current?.plainText ?? value);
+      }}
+      onSubmit={onSubmit}
+      placeholder={placeholder}
+      focused={focus}
+      width={width}
+      height={height}
+      wrapMode="word"
+      scrollMargin={2}
+      cursorColor="cyan"
+      focusedTextColor="white"
+      focusedBackgroundColor="transparent"
     />
   );
 }

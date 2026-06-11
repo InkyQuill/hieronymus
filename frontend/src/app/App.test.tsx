@@ -27,9 +27,12 @@ async function setupTest() {
     mockInput: {},
     flush,
     captureCharFrame: () => setup?.captureCharFrame() ?? "",
-    waitFor: async (predicate: () => boolean | Promise<boolean>) => {
+    waitFor: async (
+      predicate: () => boolean | Promise<boolean>,
+      maxAttempts = 25,
+    ) => {
       const current = await ensureSetup();
-      for (let index = 0; index < 25; index += 1) {
+      for (let index = 0; index < maxAttempts; index += 1) {
         await act(async () => {
           await Promise.resolve();
           await current.renderOnce();
@@ -66,10 +69,7 @@ describe("App", () => {
     const { root, flush, captureCharFrame, waitFor } = await setupTest();
 
     root.render(
-      <App
-        mode="admin"
-        client={fakeClient(() => Promise.reject("offline"))}
-      />,
+      <App mode="admin" client={fakeClient(() => Promise.reject("offline"))} />,
     );
     await flush();
 

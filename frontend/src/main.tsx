@@ -7,6 +7,8 @@ import { createBridgeClient } from "./rpc/client.js";
 import type { AppMode } from "./app/routes.js";
 
 const [modeArg, ...args] = process.argv.slice(2);
+const usage =
+  "Usage: main.js <admin|config> --bridge-command <command> [--bridge-arg <arg>...]";
 
 function parseBridgeArgs(argv: string[]) {
   let bridgeCommand: string | undefined;
@@ -14,33 +16,42 @@ function parseBridgeArgs(argv: string[]) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--bridge-command") {
-      bridgeCommand = argv[index + 1];
+      const value = argv[index + 1];
+      if (value === undefined) {
+        throw new Error("--bridge-command requires a value");
+      }
+      bridgeCommand = value;
       index += 1;
       continue;
     }
     if (arg === "--bridge-arg") {
       const value = argv[index + 1];
-      if (value !== undefined) {
-        bridgeArgs.push(value);
+      if (value === undefined) {
+        throw new Error("--bridge-arg requires a value");
       }
+      bridgeArgs.push(value);
       index += 1;
       continue;
     }
-    return { bridgeCommand: undefined, bridgeArgs: [] };
+    throw new Error(`Unknown argument: ${arg}`);
   }
   return { bridgeCommand, bridgeArgs };
 }
 
-const { bridgeCommand, bridgeArgs } = parseBridgeArgs(args);
-
 async function main() {
-  if (
-    (modeArg !== "admin" && modeArg !== "config") ||
-    !bridgeCommand
-  ) {
-    console.error(
-      "Usage: main.js <admin|config> --bridge-command <command> [--bridge-arg <arg>...]",
-    );
+  let bridgeCommand: string | undefined;
+  let bridgeArgs: string[];
+  try {
+    ({ bridgeCommand, bridgeArgs } = parseBridgeArgs(args));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    console.error(usage);
+    process.exitCode = 1;
+    return;
+  }
+
+  if ((modeArg !== "admin" && modeArg !== "config") || !bridgeCommand) {
+    console.error(usage);
     process.exitCode = 1;
     return;
   }
@@ -49,7 +60,9 @@ async function main() {
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
   });
-  createRoot(renderer).render(<App mode={modeArg as AppMode} client={client} />);
+  createRoot(renderer).render(
+    <App mode={modeArg as AppMode} client={client} />,
+  );
 }
 
 main().catch((err) => {
