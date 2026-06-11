@@ -249,24 +249,23 @@ def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     assert payload["providers"][0]["name"] == "deterministic"
 
 
-def test_config_launch_invokes_textual_app(tmp_path: Path, monkeypatch) -> None:
+def test_config_launch_invokes_ink_tui(tmp_path: Path, monkeypatch) -> None:
     data_root = tmp_path / "hieronymus"
     launched = {}
 
-    class FakeApp:
-        def __init__(self, config) -> None:
-            launched["config"] = config
+    def fake_launch_ink(mode, *, data_root):
+        launched["mode"] = mode
+        launched["data_root"] = data_root
 
-        def run(self) -> None:
-            launched["ran"] = True
-
-    monkeypatch.setattr("hieronymus.cli.HieronymusConfigApp", FakeApp)
+    monkeypatch.setattr("hieronymus.cli._launch_ink", fake_launch_ink)
 
     result = CliRunner().invoke(main, ["--data-root", str(data_root), "config"])
 
     assert result.exit_code == 0
-    assert launched["config"].data_root == data_root
-    assert launched["ran"] is True
+    assert launched == {
+        "mode": "config",
+        "data_root": data_root,
+    }
 
 
 def test_dream_json_uses_configured_active_provider(tmp_path: Path) -> None:

@@ -119,18 +119,14 @@ def test_frontend_entrypoint_fails_when_bundle_is_missing(
         cli._frontend_entrypoint()
 
 
-def test_cli_config_defaults_to_textual_when_tui_env_unset(tmp_path, monkeypatch) -> None:
+def test_cli_config_launches_ink_when_tui_env_unset(tmp_path, monkeypatch) -> None:
     calls = []
 
-    def fail_launch_ink(*args, **kwargs):
-        raise AssertionError("unset HIERONYMUS_TUI must not launch Ink")
-
-    def fake_run(app):
-        calls.append(app.config.data_root)
+    def fake_launch_ink(mode, *, data_root):
+        calls.append((mode, data_root))
 
     monkeypatch.delenv("HIERONYMUS_TUI", raising=False)
-    monkeypatch.setattr("hieronymus.cli._launch_ink", fail_launch_ink)
-    monkeypatch.setattr("hieronymus.cli.HieronymusConfigApp.run", fake_run)
+    monkeypatch.setattr("hieronymus.cli._launch_ink", fake_launch_ink)
 
     data_root = tmp_path / "hieronymus"
     result = CliRunner().invoke(
@@ -139,21 +135,17 @@ def test_cli_config_defaults_to_textual_when_tui_env_unset(tmp_path, monkeypatch
     )
 
     assert result.exit_code == 0
-    assert calls == [data_root]
+    assert calls == [("config", data_root)]
 
 
-def test_cli_admin_defaults_to_textual_when_tui_env_unset(tmp_path, monkeypatch) -> None:
+def test_cli_admin_launches_ink_when_tui_env_unset(tmp_path, monkeypatch) -> None:
     calls = []
 
-    def fail_launch_ink(*args, **kwargs):
-        raise AssertionError("unset HIERONYMUS_TUI must not launch Ink")
-
-    def fake_run(app):
-        calls.append(app.config.data_root)
+    def fake_launch_ink(mode, *, data_root):
+        calls.append((mode, data_root))
 
     monkeypatch.delenv("HIERONYMUS_TUI", raising=False)
-    monkeypatch.setattr("hieronymus.cli._launch_ink", fail_launch_ink)
-    monkeypatch.setattr("hieronymus.cli.HieronymusAdminApp.run", fake_run)
+    monkeypatch.setattr("hieronymus.cli._launch_ink", fake_launch_ink)
 
     data_root = tmp_path / "hieronymus"
     result = CliRunner().invoke(
@@ -162,40 +154,7 @@ def test_cli_admin_defaults_to_textual_when_tui_env_unset(tmp_path, monkeypatch)
     )
 
     assert result.exit_code == 0
-    assert calls == [data_root]
-
-
-def test_cli_textual_env_forces_textual_for_config_and_admin(tmp_path, monkeypatch) -> None:
-    calls = []
-
-    def fail_launch_ink(*args, **kwargs):
-        raise AssertionError("HIERONYMUS_TUI=textual must not launch Ink")
-
-    def fake_config_run(app):
-        calls.append(("config", app.config.data_root))
-
-    def fake_admin_run(app):
-        calls.append(("admin", app.config.data_root))
-
-    monkeypatch.setenv("HIERONYMUS_TUI", "textual")
-    monkeypatch.setattr("hieronymus.cli._launch_ink", fail_launch_ink)
-    monkeypatch.setattr("hieronymus.cli.HieronymusConfigApp.run", fake_config_run)
-    monkeypatch.setattr("hieronymus.cli.HieronymusAdminApp.run", fake_admin_run)
-
-    data_root = tmp_path / "hieronymus"
-    runner = CliRunner()
-    config_result = runner.invoke(
-        main,
-        ["--data-root", str(data_root), "config"],
-    )
-    admin_result = runner.invoke(
-        main,
-        ["--data-root", str(data_root), "admin"],
-    )
-
-    assert config_result.exit_code == 0
-    assert admin_result.exit_code == 0
-    assert calls == [("config", data_root), ("admin", data_root)]
+    assert calls == [("admin", data_root)]
 
 
 def test_cli_ink_config_launches_frontend_with_data_root(tmp_path, monkeypatch) -> None:
@@ -205,7 +164,6 @@ def test_cli_ink_config_launches_frontend_with_data_root(tmp_path, monkeypatch) 
     def fake_run(command, check, env):
         calls.append((command, env))
 
-    monkeypatch.setenv("HIERONYMUS_TUI", "ink")
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fake_run)
     monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-ink.js")
 
@@ -233,7 +191,6 @@ def test_cli_ink_admin_launches_frontend_when_requested(tmp_path, monkeypatch) -
     def fake_run(command, check, env):
         calls.append((command, env))
 
-    monkeypatch.setenv("HIERONYMUS_TUI", "ink")
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fake_run)
     monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-ink.js")
 
@@ -256,7 +213,6 @@ def test_cli_ink_launch_failure_returns_clean_error(tmp_path, monkeypatch) -> No
     def fail_run(command, check, env):
         raise FileNotFoundError(command[0])
 
-    monkeypatch.setenv("HIERONYMUS_TUI", "ink")
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fail_run)
     monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-ink.js")
 
@@ -274,7 +230,6 @@ def test_cli_ink_nonzero_exit_returns_clean_error(tmp_path, monkeypatch) -> None
     def fail_run(command, check, env):
         raise subprocess.CalledProcessError(7, command)
 
-    monkeypatch.setenv("HIERONYMUS_TUI", "ink")
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fail_run)
     monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-ink.js")
 
@@ -292,7 +247,6 @@ def test_cli_json_config_bypasses_ink_launcher(tmp_path, monkeypatch) -> None:
     def fail_run(*args, **kwargs):
         raise AssertionError("JSON output must not launch frontend")
 
-    monkeypatch.setenv("HIERONYMUS_TUI", "ink")
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fail_run)
 
     result = CliRunner().invoke(
@@ -302,3 +256,4 @@ def test_cli_json_config_bypasses_ink_launcher(tmp_path, monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert '"settings_path"' in result.output
+
