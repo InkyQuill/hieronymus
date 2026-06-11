@@ -14,6 +14,8 @@ env/
 .coverage
 coverage.xml
 htmlcov/
+.pnpm-debug.log
+frontend/.pnpm-debug.log
 
 # Frontend / Node
 node_modules/
