@@ -9,9 +9,10 @@ We migrated the Textual TUI to a TypeScript Ink/React frontend, preserving the P
 2. **Ink Frontend**: An independent `frontend/` project is created, utilizing React 19, Ink 7, Zod for payload validation, and Nanostores for state.
 3. **Packaging & Delivery**: The frontend is built into `frontend/dist/main.js` and bundled directly inside the Python wheel via Hatch.
 4. **Node Runtime Requirement**: The Python CLI invokes the built JavaScript bundle using Node.js. `hiero doctor` reports Node.js runtime availability.
-5. **Feature Flag**: During the transition phase, the `HIERONYMUS_TUI` environment variable can select `textual` or `ink`.
+5. **Eradication of Textual**: The transition phase is complete; the `HIERONYMUS_TUI` environment variable has been removed, the legacy Textual codebase has been deleted, and the React/Ink TUI is now the default and sole terminal UI.
 
 ## Consequences
 - Clean separation between terminal visualization and domain validation.
-- Node.js is introduced as a runtime dependency for terminal TUI users (non-TUI JSON/MCP commands are unaffected).
+- Node.js is a runtime dependency for terminal TUI users (non-TUI JSON/MCP commands are unaffected).
 - Secret API key values are redacted at the JSON-RPC boundary before entering the TypeScript process space.
+- Legacy Textual dependency and all related modules are completely eradicated.

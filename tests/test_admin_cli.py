@@ -60,23 +60,20 @@ def test_admin_json_survives_malformed_dream_config(tmp_path: Path) -> None:
     assert "dream.conf is not valid TOML" in payload["dream_config_error"]
 
 
-def test_admin_launch_invokes_textual_app(monkeypatch, tmp_path: Path) -> None:
+def test_admin_launch_invokes_ink_tui(monkeypatch, tmp_path: Path) -> None:
     launched: dict[str, object] = {}
 
-    class FakeApp:
-        def __init__(self, config):
-            launched["database_path"] = str(config.database_path)
+    def fake_launch_ink(mode, *, data_root):
+        launched["mode"] = mode
+        launched["data_root"] = data_root
 
-        def run(self):
-            launched["ran"] = True
-
-    monkeypatch.setattr("hieronymus.cli.HieronymusAdminApp", FakeApp)
+    monkeypatch.setattr("hieronymus.cli._launch_ink", fake_launch_ink)
     runner = CliRunner()
 
     result = runner.invoke(main, ["--data-root", str(tmp_path), "admin"])
 
     assert result.exit_code == 0
     assert launched == {
-        "database_path": str(tmp_path / "hieronymus.sqlite"),
-        "ran": True,
+        "mode": "admin",
+        "data_root": tmp_path,
     }

@@ -76,11 +76,10 @@ Open the local configuration TUI:
 hiero config
 ```
 
-Textual is the default TUI. In source checkouts, the Ink/React TUI is available
-as a preview after the frontend has been built and Node.js >=22 is installed:
+The TUI uses a TypeScript React/Ink terminal UI. This requires Node.js >=22 installed:
 
 ```bash
-HIERONYMUS_TUI=ink hiero config
+hiero config
 ```
 
 For machine-readable status, use:
@@ -303,11 +302,10 @@ Open the local admin interface with:
 hiero admin
 ```
 
-Textual is the default admin TUI. In source checkouts, the Ink/React admin
-preview is available after the frontend has been built:
+The admin interface uses a TypeScript React/Ink terminal UI. This requires Node.js >=22 installed:
 
 ```bash
-HIERONYMUS_TUI=ink hiero admin
+hiero admin
 ```
 
 The TUI is a local-first management surface for reviewing and controlling
@@ -347,32 +345,11 @@ hiero admin --json
 This prints management counts and available TUI views without opening the
 interactive app.
 
-## Ink Preview
+## TUI Requirements and Keys
 
-The Ink TUI is feature-flagged with `HIERONYMUS_TUI=ink`; Textual remains the
-default unless that environment variable is set.
+The React/Ink TUI requires Node.js >=22 to run. `hiero doctor` reports Node.js runtime availability.
 
-Ink can become the default only after all default-switch criteria are verified
-for the same release candidate:
-
-- Installed packages include a bundled, self-contained
-  `hieronymus/frontend/dist/main.js` frontend artifact before installed
-  packages default to Ink.
-- Python verification passes with `uv run pytest`, `uv run ruff check .`, and
-  `uv run ruff format --check .`.
-- Frontend verification passes with `pnpm --dir frontend install`,
-  `pnpm --dir frontend test`, and `pnpm --dir frontend build`.
-- Non-interactive config and admin smoke tests pass with `hiero config --json`
-  and `hiero admin --json` against a temporary data root.
-- Ink config and admin smoke tests pass on supported platforms, or documented
-  manual checks cover the interactive `HIERONYMUS_TUI=ink hiero config` and
-  `HIERONYMUS_TUI=ink hiero admin` flows.
-- Textual fallback remains verified with `HIERONYMUS_TUI=textual` for config
-  and admin during the switch window.
-- User-facing docs are updated and `hiero doctor` verifies the required Ink
-  runtime.
-
-Ink config MVP keys:
+### Config TUI Keys
 
 - `1` / `2` / `3`: select `openai`, `gemini`, or `anthropic`
 - `s`: save
@@ -380,7 +357,7 @@ Ink config MVP keys:
 - `c`: check the selected provider
 - `q`: quit
 
-Ink admin MVP keys:
+### Admin TUI Keys
 
 - `1`-`8`: switch views
 - `f`: select filter command
@@ -391,15 +368,13 @@ Ink admin MVP keys:
 - `ctrl+p`: toggle command palette
 - `q`: quit
 
-Frontend development and source-checkout preview builds require Node.js >=22 and
-pnpm:
+### Frontend Development
+
+Frontend development and source-checkout builds require Node.js >=22 and pnpm:
 
 ```bash
 pnpm --dir frontend install
 pnpm --dir frontend build
 ```
 
-After that build, `HIERONYMUS_TUI=ink` uses the CLI fallback to
-`frontend/dist/main.js` from the current working directory. Installed packages
-should not be treated as shipping a self-contained Ink frontend until release
-tooling produces a bundled `hieronymus/frontend/dist/main.js` artifact.
+After that build, the CLI uses the fallback to `frontend/dist/main.js` from the current working directory.

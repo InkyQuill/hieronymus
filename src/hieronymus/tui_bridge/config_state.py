@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 from hieronymus.settings import (
@@ -10,42 +10,6 @@ from hieronymus.settings import (
     SettingsError,
     validate_settings,
 )
-
-
-@dataclass(frozen=True)
-class ConfigDraft:
-    saved: HieronymusSettings
-    edited: HieronymusSettings
-    errors: tuple[str, ...] = ()
-    check_result: str = ""
-
-    @property
-    def has_unsaved_changes(self) -> bool:
-        return self.saved != self.edited
-
-    def with_edited(self, settings: HieronymusSettings) -> ConfigDraft:
-        return ConfigDraft(
-            saved=self.saved,
-            edited=settings,
-            errors=(),
-            check_result="",
-        )
-
-    def with_errors(self, errors: list[str]) -> ConfigDraft:
-        return ConfigDraft(
-            saved=self.saved,
-            edited=self.edited,
-            errors=tuple(errors),
-            check_result="",
-        )
-
-    def with_check_result(self, result: str) -> ConfigDraft:
-        return ConfigDraft(
-            saved=self.saved,
-            edited=self.edited,
-            errors=self.errors,
-            check_result=result,
-        )
 
 
 def parse_bool(field_name: str, raw: str) -> bool:
