@@ -37,7 +37,7 @@ export function TextInput({
         return;
       }
       // Capture standard printable characters, excluding control and meta combos
-      if (input && input.length === 1 && !key.ctrl && !key.meta) {
+      if (input && input.length === 1 && !key.ctrl && !key.meta && input !== "\t") {
         onChange(value + input);
       }
     },

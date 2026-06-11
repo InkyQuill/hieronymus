@@ -14,6 +14,63 @@ type ConfigFormProps = {
   onSubmitField: () => void;
 };
 
+export type FieldDefinition = {
+  label: string;
+  key: string;
+  placeholder?: string;
+  type: "text" | "toggle";
+};
+
+export const fieldDefinitions: FieldDefinition[] = [
+  {
+    label: "Model",
+    key: "provider.model",
+    placeholder: "e.g. gpt-4.1-mini",
+    type: "text",
+  },
+  {
+    label: "API Key Env",
+    key: "provider.api_key_env",
+    placeholder: "e.g. OPENAI_API_KEY",
+    type: "text",
+  },
+  {
+    label: "API Path",
+    key: "provider.api_path",
+    placeholder: "e.g. https://api.openai.com/v1",
+    type: "text",
+  },
+  {
+    label: "Timeout (seconds)",
+    key: "provider.timeout_seconds",
+    placeholder: "e.g. 30",
+    type: "text",
+  },
+  {
+    label: "Autostart Enabled",
+    key: "dreaming.autostart_enabled",
+    type: "toggle",
+  },
+  {
+    label: "Min Interval (minutes)",
+    key: "dreaming.min_interval_minutes",
+    placeholder: "e.g. 30",
+    type: "text",
+  },
+  {
+    label: "New Memory Threshold",
+    key: "dreaming.new_short_term_memory_threshold",
+    placeholder: "e.g. 25",
+    type: "text",
+  },
+  {
+    label: "Max Cycles Per Autostart",
+    key: "dreaming.max_cycles_per_autostart",
+    placeholder: "e.g. 1",
+    type: "text",
+  },
+];
+
 export function ConfigForm({
   formValues,
   focusedFieldIndex,
@@ -25,63 +82,25 @@ export function ConfigForm({
   const provider = formValues.provider;
   const dreaming = formValues.dreaming;
 
-  const fields = [
-    {
-      label: "Model",
-      value: provider.model || "",
-      key: "provider.model",
-      placeholder: "e.g. gpt-4.1-mini",
-      type: "text",
-    },
-    {
-      label: "API Key Env",
-      value: provider.api_key_env || "",
-      key: "provider.api_key_env",
-      placeholder: "e.g. OPENAI_API_KEY",
-      type: "text",
-    },
-    {
-      label: "API Path",
-      value: provider.api_path || "",
-      key: "provider.api_path",
-      placeholder: "e.g. https://api.openai.com/v1",
-      type: "text",
-    },
-    {
-      label: "Timeout (seconds)",
-      value: provider.timeout_seconds || "",
-      key: "provider.timeout_seconds",
-      placeholder: "e.g. 30",
-      type: "text",
-    },
-    {
-      label: "Autostart Enabled",
-      value: dreaming.autostart_enabled || "no",
-      key: "dreaming.autostart_enabled",
-      type: "toggle",
-    },
-    {
-      label: "Min Interval (minutes)",
-      value: dreaming.min_interval_minutes || "",
-      key: "dreaming.min_interval_minutes",
-      placeholder: "e.g. 30",
-      type: "text",
-    },
-    {
-      label: "New Memory Threshold",
-      value: dreaming.new_short_term_memory_threshold || "",
-      key: "dreaming.new_short_term_memory_threshold",
-      placeholder: "e.g. 25",
-      type: "text",
-    },
-    {
-      label: "Max Cycles Per Autostart",
-      value: dreaming.max_cycles_per_autostart || "",
-      key: "dreaming.max_cycles_per_autostart",
-      placeholder: "e.g. 1",
-      type: "text",
-    },
-  ];
+  const fields = fieldDefinitions.map((field) => {
+    let value = "";
+    if (field.key.startsWith("provider.")) {
+      value = provider[field.key.slice(9)] || "";
+    } else if (field.key.startsWith("dreaming.")) {
+      value = dreaming[field.key.slice(9)] || "";
+    }
+    if (field.key === "dreaming.autostart_enabled" && !value) {
+      value = "no";
+    }
+    return {
+      ...field,
+      value,
+    };
+  });
+
+  const autostartIndex = fieldDefinitions.findIndex(
+    (f) => f.key === "dreaming.autostart_enabled",
+  );
 
   return (
     <Box flexDirection="column" width={68}>
@@ -94,7 +113,7 @@ export function ConfigForm({
           const labelColor = isFieldFocused ? "cyan" : "gray";
 
           return (
-            <Box key={field.key} flexDirection="row" marginTop={index === 4 ? 1 : 0}>
+            <Box key={field.key} flexDirection="row" marginTop={index === autostartIndex ? 1 : 0}>
               <Text color={labelColor} bold={isFieldFocused}>
                 {isFieldFocused ? ">" : " "} {field.label}:{" "}
               </Text>

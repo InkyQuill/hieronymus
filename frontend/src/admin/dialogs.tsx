@@ -494,6 +494,7 @@ function MergeDialog({
   const [text, setText] = useState("");
   const [evidence, setEvidence] = useState("");
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [localError, setLocalError] = useState("");
 
   const maxIndex = isConcept ? 1 : 2; // concept: 0=targetId, 1=evidence. crystal: 0=targetId, 1=title, 2=text.
 
@@ -513,17 +514,22 @@ function MergeDialog({
   );
 
   const handleSubmit = () => {
+    const parsedTarget = parseInt(targetId, 10);
+    if (!targetId.trim() || isNaN(parsedTarget)) {
+      setLocalError("Target ID must be a valid number");
+      return;
+    }
+    setLocalError("");
+
     if (isConcept) {
       onSubmit({
         source_concept_id: state.entityId,
-        target_concept_id: parseInt(targetId, 10),
+        target_concept_id: parsedTarget,
         evidence,
       });
     } else {
       onSubmit({
-        ids: [state.entityId, parseInt(targetId, 10)].filter(
-          (id) => !isNaN(id as number),
-        ),
+        ids: [state.entityId, parsedTarget],
         title,
         text,
       });
@@ -586,9 +592,9 @@ function MergeDialog({
             </>
           )}
         </Box>
-        {state.error ? (
+        {localError || state.error ? (
           <Box marginTop={1}>
-            <Text color="red">{state.error}</Text>
+            <Text color="red">{localError || state.error}</Text>
           </Box>
         ) : null}
         <Box marginTop={1} justifyContent="space-between">

@@ -163,12 +163,19 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     if (input === "m") {
       const selected = snapshot.selected;
       if (selected) {
-        setDialog({
-          kind: "merge",
-          error: "",
-          entityId: selected.id,
-          entityType: snapshot.view === "Concepts" ? "concept" : "crystal",
-        });
+        if (snapshot.view === "Concepts" || snapshot.view === "Crystals") {
+          setDialog({
+            kind: "merge",
+            error: "",
+            entityId: selected.id,
+            entityType: snapshot.view === "Concepts" ? "concept" : "crystal",
+          });
+        } else {
+          setStatus({
+            message: "Merge only supported for Concepts or Crystals",
+            error: true,
+          });
+        }
       } else {
         setStatus({ message: "No row selected to merge", error: true });
       }
@@ -311,6 +318,9 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
 
       if (activePanel === "table") {
         if (key.upArrow) {
+          if (operationInFlight.current) {
+            return;
+          }
           const currentIndex = snapshot.rows.findIndex(
             (r) => r.id === snapshot.selected?.id,
           );
@@ -339,6 +349,9 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           return;
         }
         if (key.downArrow) {
+          if (operationInFlight.current) {
+            return;
+          }
           const currentIndex = snapshot.rows.findIndex(
             (r) => r.id === snapshot.selected?.id,
           );
@@ -380,7 +393,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     }
 
     const onData = (chunk: Buffer | string) => {
-      if (dialog.kind !== "none") {
+      if (dialog.kind !== "none" && canUseInkInput) {
         return;
       }
       const text = String(chunk);

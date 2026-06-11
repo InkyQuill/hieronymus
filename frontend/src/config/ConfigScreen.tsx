@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useStdin, useInput } from "ink";
 import { ConfigBootstrapSchema, type ConfigBootstrap } from "../rpc/schema.js";
 import type { RpcClient } from "../rpc/client.js";
-import { ConfigForm } from "./ConfigForm.js";
+import { ConfigForm, fieldDefinitions } from "./ConfigForm.js";
 import { ProviderSelector } from "./ProviderSelector.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
@@ -204,7 +204,10 @@ export function ConfigScreen({ initial, client }: Props) {
         return;
       }
 
-      if (focusedFieldIndex === 4) {
+      const autostartIndex = fieldDefinitions.findIndex(
+        (f) => f.key === "dreaming.autostart_enabled",
+      );
+      if (focusedFieldIndex === autostartIndex) {
         // Autostart toggle key logic (Left/Right arrow or Space)
         if (leftArrow || rightArrow || input === " ") {
           const currentVal = localFormValues.dreaming.autostart_enabled || "no";
@@ -240,7 +243,7 @@ export function ConfigScreen({ initial, client }: Props) {
         return;
       }
       if (downArrow) {
-        setFocusedFieldIndex((prev) => Math.min(7, prev + 1));
+        setFocusedFieldIndex((prev) => Math.min(fieldDefinitions.length - 1, prev + 1));
         return;
       }
       if (enter) {
