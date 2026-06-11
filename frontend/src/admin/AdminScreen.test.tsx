@@ -179,7 +179,7 @@ describe("AdminScreen", () => {
 
     app.stdin.write("e");
     await waitFor(() =>
-      expect(app.lastFrame()).toContain("Edit command selected"),
+      expect(app.lastFrame()).toContain("Edit Memory"),
     );
   });
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useStdin } from "ink";
+import { Box, Text, useApp, useStdin, useInput } from "ink";
 import { ConfigBootstrapSchema, type ConfigBootstrap } from "../rpc/schema.js";
 import type { RpcClient } from "../rpc/client.js";
 import { ConfigForm } from "./ConfigForm.js";
@@ -19,6 +19,7 @@ type Status = {
 
 export function ConfigScreen({ initial, client }: Props) {
   const { exit } = useApp();
+  const { stdin, isRawModeSupported } = useStdin();
   const [payload, setPayload] = useState(initial);
   const [status, setStatus] = useState<Status>({
     message: "Ready",
@@ -26,50 +27,347 @@ export function ConfigScreen({ initial, client }: Props) {
   });
   const [busy, setBusy] = useState(false);
   const operationInFlight = useRef(false);
+
+  // Focus and local form state
+  const [activePanel, setActivePanel] = useState<"provider" | "form">("provider");
+  const [focusedFieldIndex, setFocusedFieldIndex] = useState(0);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Local form state draft to prevent lag on keystrokes
+  const [localFormValues, setLocalFormValues] = useState({
+    provider: { ...payload.form_values.provider },
+    dreaming: { ...payload.form_values.dreaming },
+  });
+
+  // Keep local values in sync when payload changes
+  useEffect(() => {
+    setLocalFormValues({
+      provider: { ...payload.form_values.provider },
+      dreaming: { ...payload.form_values.dreaming },
+    });
+  }, [payload.form_values]);
+
+  const canUseInkInput = Boolean(
+    isRawModeSupported &&
+      typeof stdin.ref === "function" &&
+      typeof stdin.unref === "function",
+  );
+
+  const providerChoices = payload.provider_choices;
+  const selectedProvider = payload.selected_provider;
+
+  const currentProviderIndex = Math.max(
+    providerChoices.findIndex((p) => p.name === selectedProvider),
+    0,
+  );
+
   const suggestions = modelSuggestions(payload);
   const detailErrors = getDetailErrors(payload);
 
+  const selectProviderByIndex = (index: number) => {
+    const provider = providerChoices[index]?.name;
+    if (provider && client && !busy && !operationInFlight.current) {
+      void runConfigOperation({
+        client,
+        method: "config.select_provider",
+        params: {
+          provider,
+          draft: payload.draft,
+        },
+        pendingMessage: `Selecting ${provider}`,
+        successMessage: `Selected ${provider}`,
+        setBusy,
+        setPayload,
+        setStatus,
+        operationInFlight,
+      });
+    }
+  };
+
+  const handleFieldChange = (key: string, value: string) => {
+    setLocalFormValues((prev) => {
+      const providerDraft = { ...prev.provider };
+      const dreamingDraft = { ...prev.dreaming };
+
+      if (key.startsWith("provider.")) {
+        providerDraft[key.slice(9)] = value;
+      } else if (key.startsWith("dreaming.")) {
+        dreamingDraft[key.slice(9)] = value;
+      }
+
+      return { provider: providerDraft, dreaming: dreamingDraft };
+    });
+  };
+
+  const submitField = () => {
+    setIsEditing(false);
+    if (!client || busy || operationInFlight.current) {
+      return;
+    }
+
+    void runConfigOperation({
+      client,
+      method: "config.update_draft",
+      params: {
+        selected_provider: payload.selected_provider,
+        provider: localFormValues.provider,
+        dreaming: localFormValues.dreaming,
+      },
+      pendingMessage: "Updating draft settings",
+      successMessage: "Draft settings updated",
+      setBusy,
+      setPayload,
+      setStatus,
+      operationInFlight,
+    });
+  };
+
+  const handleSave = () => {
+    if (!client || busy || operationInFlight.current) return;
+    void runConfigOperation({
+      client,
+      method: "config.save",
+      params: { draft: payload.draft },
+      pendingMessage: "Saving configuration",
+      successMessage: "Saved configuration",
+      setBusy,
+      setPayload,
+      setStatus,
+      operationInFlight,
+    });
+  };
+
+  const handleReload = () => {
+    if (!client || busy || operationInFlight.current) return;
+    void runConfigOperation({
+      client,
+      method: "config.reload",
+      params: {
+        selected_provider: payload.selected_provider,
+      },
+      pendingMessage: "Reloading configuration",
+      successMessage: "Reloaded configuration",
+      setBusy,
+      setPayload,
+      setStatus,
+      operationInFlight,
+    });
+  };
+
+  const handleCheck = () => {
+    if (!client || busy || operationInFlight.current) return;
+    void runConfigOperation({
+      client,
+      method: "config.check_provider",
+      params: {
+        selected_provider: payload.selected_provider,
+        draft: payload.draft,
+      },
+      pendingMessage: "Checking provider",
+      successMessage: "Provider check complete",
+      setBusy,
+      setPayload,
+      setStatus,
+      operationInFlight,
+    });
+  };
+
+  const handleInput = (input: string, key?: any) => {
+    const ctrl = key ? key.ctrl : false;
+    const tab = key ? key.tab : (input === "\t");
+    const shift = key ? key.shift : false;
+    const upArrow = key ? key.upArrow : false;
+    const downArrow = key ? key.downArrow : false;
+    const leftArrow = key ? key.leftArrow : false;
+    const rightArrow = key ? key.rightArrow : false;
+    const enter = key ? key.return : (input === "\r" || input === "\n");
+    const escape = key ? key.escape : false;
+
+    // 1. Focus Cycling
+    if (tab) {
+      if (isEditing) {
+        submitField();
+      }
+      setActivePanel((current) => (current === "provider" ? "form" : "provider"));
+      return;
+    }
+
+    // 2. Editing toggle handling
+    if (isEditing) {
+      if (escape) {
+        // Discard edits
+        setLocalFormValues({
+          provider: { ...payload.form_values.provider },
+          dreaming: { ...payload.form_values.dreaming },
+        });
+        setIsEditing(false);
+        return;
+      }
+
+      if (focusedFieldIndex === 4) {
+        // Autostart toggle key logic (Left/Right arrow or Space)
+        if (leftArrow || rightArrow || input === " ") {
+          const currentVal = localFormValues.dreaming.autostart_enabled || "no";
+          handleFieldChange("dreaming.autostart_enabled", currentVal === "yes" ? "no" : "yes");
+        } else if (enter) {
+          submitField();
+        }
+      }
+      return;
+    }
+
+    // 3. Panel navigation
+    if (activePanel === "provider") {
+      if (upArrow) {
+        const nextIndex = Math.max(0, currentProviderIndex - 1);
+        if (nextIndex !== currentProviderIndex) {
+          selectProviderByIndex(nextIndex);
+        }
+        return;
+      }
+      if (downArrow) {
+        const nextIndex = Math.min(providerChoices.length - 1, currentProviderIndex + 1);
+        if (nextIndex !== currentProviderIndex) {
+          selectProviderByIndex(nextIndex);
+        }
+        return;
+      }
+    }
+
+    if (activePanel === "form") {
+      if (upArrow) {
+        setFocusedFieldIndex((prev) => Math.max(0, prev - 1));
+        return;
+      }
+      if (downArrow) {
+        setFocusedFieldIndex((prev) => Math.min(7, prev + 1));
+        return;
+      }
+      if (enter) {
+        setIsEditing(true);
+        return;
+      }
+    }
+
+    // 4. Global hotkeys
+    if (input === "q") {
+      client?.close();
+      exit();
+      return;
+    }
+
+    if (input === "s") {
+      handleSave();
+      return;
+    }
+
+    if (input === "r") {
+      handleReload();
+      return;
+    }
+
+    if (input === "c") {
+      handleCheck();
+      return;
+    }
+
+    // Numeric provider selection shortcuts
+    const providerIndex = providerIndexForInput(input, providerChoices.length);
+    if (providerIndex >= 0) {
+      selectProviderByIndex(providerIndex);
+    }
+  };
+
+  useInput(
+    (input, key) => {
+      handleInput(input, key);
+    },
+    { isActive: canUseInkInput },
+  );
+
+  useEffect(() => {
+    if (canUseInkInput) {
+      return undefined;
+    }
+
+    const onData = (chunk: Buffer | string) => {
+      const text = String(chunk);
+      handleInput(text[0] ?? "");
+    };
+
+    stdin.on("data", onData);
+    return () => {
+      stdin.off("data", onData);
+    };
+  }, [canUseInkInput, stdin, activePanel, isEditing, focusedFieldIndex, localFormValues, payload]);
+
   return (
-    <Box flexDirection="column">
-      <ConfigInputHandler
-        client={client}
-        payload={payload}
-        busy={busy}
-        setPayload={setPayload}
-        setStatus={setStatus}
-        setBusy={setBusy}
-        operationInFlight={operationInFlight}
-        exit={exit}
-      />
+    <Box flexDirection="column" width={100}>
       <Text bold>Hieronymus Config</Text>
       <Text dimColor>{payload.config_paths.settings_path}</Text>
-      <Box marginTop={1}>
-        <ProviderSelector
-          choices={payload.provider_choices}
-          selected={payload.selected_provider}
-        />
-        <ConfigForm payload={payload} />
+
+      <Box flexDirection="row" marginTop={1}>
+        {/* Left Column: Provider Selector */}
+        <Box
+          flexDirection="column"
+          width={28}
+          borderStyle="round"
+          borderColor={activePanel === "provider" ? "cyan" : "gray"}
+          paddingX={1}
+        >
+          <Text bold color={activePanel === "provider" ? "cyan" : undefined}>
+            Providers
+          </Text>
+          <ProviderSelector
+            choices={providerChoices}
+            selected={selectedProvider}
+            focused={activePanel === "provider"}
+          />
+        </Box>
+
+        {/* Right Column: Configuration Form */}
+        <Box
+          flexDirection="column"
+          width={70}
+          borderStyle="round"
+          borderColor={activePanel === "form" ? "cyan" : "gray"}
+          paddingX={1}
+        >
+          <ConfigForm
+            formValues={localFormValues}
+            focusedFieldIndex={focusedFieldIndex}
+            isEditing={isEditing}
+            focused={activePanel === "form"}
+            onFieldChange={handleFieldChange}
+            onSubmitField={submitField}
+          />
+        </Box>
       </Box>
-      <Text>
-        Models: {suggestions.length > 0 ? suggestions.join(", ") : "-"}
-      </Text>
-      {payload.validation.errors.map((error) => (
-        <Text key={error} color="red">
-          {error}
+
+      <Box marginTop={1} flexDirection="column">
+        <Text>
+          Models: {suggestions.length > 0 ? suggestions.join(", ") : "-"}
         </Text>
-      ))}
-      {detailErrors.map((error) => (
-        <Text key={error} color="red">
-          {error}
-        </Text>
-      ))}
+        {payload.validation.errors.map((error) => (
+          <Text key={error} color="red">
+            {error}
+          </Text>
+        ))}
+        {detailErrors.map((error) => (
+          <Text key={error} color="red">
+            {error}
+          </Text>
+        ))}
+      </Box>
+
       <StatusLine
         message={busy ? `Working: ${status.message}` : status.message}
         error={status.error}
       />
       <KeyHelp
         keys={[
-          `${providerKeyRange(payload.provider_choices)} provider`,
+          "Tab focus",
+          `${providerKeyRange(providerChoices)} provider`,
           "s save",
           "r reload",
           "c check",
@@ -78,149 +376,6 @@ export function ConfigScreen({ initial, client }: Props) {
       />
     </Box>
   );
-}
-
-function ConfigInputHandler({
-  client,
-  payload,
-  busy,
-  setPayload,
-  setStatus,
-  setBusy,
-  operationInFlight,
-  exit,
-}: {
-  client: RpcClient | undefined;
-  payload: ConfigBootstrap;
-  busy: boolean;
-  setPayload: (payload: ConfigBootstrap) => void;
-  setStatus: (status: Status) => void;
-  setBusy: (busy: boolean) => void;
-  operationInFlight: React.MutableRefObject<boolean>;
-  exit: () => void;
-}) {
-  const { stdin, setRawMode, isRawModeSupported } = useStdin();
-
-  useEffect(() => {
-    const canUseInkRawMode =
-      isRawModeSupported &&
-      typeof stdin.ref === "function" &&
-      typeof stdin.unref === "function";
-    if (!canUseInkRawMode) {
-      return undefined;
-    }
-
-    setRawMode(true);
-    return () => {
-      setRawMode(false);
-    };
-  }, [isRawModeSupported, setRawMode, stdin]);
-
-  useEffect(() => {
-    const onData = (chunk: Buffer | string) => {
-      const input = String(chunk)[0] ?? "";
-      if (input === "q") {
-        client?.close();
-        exit();
-        return;
-      }
-
-      if (!client || busy || operationInFlight.current) {
-        return;
-      }
-
-      const providerIndex = providerIndexForInput(
-        input,
-        payload.provider_choices.length,
-      );
-      if (providerIndex >= 0) {
-        const provider = payload.provider_choices[providerIndex]?.name;
-        if (provider) {
-          void runConfigOperation({
-            client,
-            method: "config.select_provider",
-            params: {
-              provider,
-              draft: payload.draft,
-            },
-            pendingMessage: `Selecting ${provider}`,
-            successMessage: `Selected ${provider}`,
-            setBusy,
-            setPayload,
-            setStatus,
-            operationInFlight,
-          });
-        }
-        return;
-      }
-
-      if (input === "s") {
-        void runConfigOperation({
-          client,
-          method: "config.save",
-          params: { draft: payload.draft },
-          pendingMessage: "Saving configuration",
-          successMessage: "Saved configuration",
-          setBusy,
-          setPayload,
-          setStatus,
-          operationInFlight,
-        });
-        return;
-      }
-
-      if (input === "r") {
-        void runConfigOperation({
-          client,
-          method: "config.reload",
-          params: {
-            selected_provider: payload.selected_provider,
-          },
-          pendingMessage: "Reloading configuration",
-          successMessage: "Reloaded configuration",
-          setBusy,
-          setPayload,
-          setStatus,
-          operationInFlight,
-        });
-        return;
-      }
-
-      if (input === "c") {
-        void runConfigOperation({
-          client,
-          method: "config.check_provider",
-          params: {
-            selected_provider: payload.selected_provider,
-            draft: payload.draft,
-          },
-          pendingMessage: "Checking provider",
-          successMessage: "Provider check complete",
-          setBusy,
-          setPayload,
-          setStatus,
-          operationInFlight,
-        });
-      }
-    };
-
-    stdin.on("data", onData);
-    return () => {
-      stdin.off("data", onData);
-    };
-  }, [
-    busy,
-    client,
-    exit,
-    operationInFlight,
-    payload,
-    setBusy,
-    setPayload,
-    setStatus,
-    stdin,
-  ]);
-
-  return null;
 }
 
 async function runConfigOperation({
@@ -252,7 +407,8 @@ async function runConfigOperation({
     setPayload(next);
     setStatus({ message: successMessage, error: false });
   } catch (error) {
-    setErrorStatus(setStatus)(error);
+    const message = error instanceof Error ? error.message : String(error);
+    setStatus({ message, error: true });
   } finally {
     operationInFlight.current = false;
     setBusy(false);
@@ -267,13 +423,6 @@ function requestBootstrap(
   return client
     .request(method, params)
     .then((response) => ConfigBootstrapSchema.parse(response));
-}
-
-function setErrorStatus(setStatus: (status: Status) => void) {
-  return (error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    setStatus({ message, error: true });
-  };
 }
 
 function modelSuggestions(payload: ConfigBootstrap): string[] {
