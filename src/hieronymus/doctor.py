@@ -160,7 +160,7 @@ class Doctor:
                     level="warning",
                     code="node-runtime-missing",
                     message=(
-                        "Node.js is not available; install Node.js >=22 to use HIERONYMUS_TUI=ink."
+                        "Node.js is not available; install Node.js >=22 to run the Hieronymus terminal user interface (TUI)."
                     ),
                 )
             )
@@ -171,7 +171,7 @@ class Doctor:
                     DoctorFinding(
                         level="info",
                         code="node-runtime-available",
-                        message="Node.js runtime is available for the Ink TUI.",
+                        message="Node.js runtime is available for the Hieronymus TUI.",
                     )
                 )
             elif node_major is None:
@@ -181,7 +181,7 @@ class Doctor:
                         code="node-runtime-unusable",
                         message=(
                             "Node.js version could not be checked; install Node.js >=22 "
-                            "to use HIERONYMUS_TUI=ink."
+                            "to run the Hieronymus TUI."
                         ),
                     )
                 )
@@ -191,7 +191,7 @@ class Doctor:
                         level="warning",
                         code="node-runtime-too-old",
                         message=(
-                            "Node.js >=22 is required for the Ink TUI; install or activate "
+                            "Node.js >=22 is required for the Hieronymus TUI; install or activate "
                             "a supported Node.js runtime."
                         ),
                     )

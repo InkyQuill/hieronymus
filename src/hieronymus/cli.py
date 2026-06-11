@@ -27,8 +27,6 @@ from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
 from hieronymus.settings import SettingsError, load_settings
 from hieronymus.termbase import Termbase
-from hieronymus.tui.app import HieronymusAdminApp
-from hieronymus.tui.config_app import HieronymusConfigApp
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -144,13 +142,6 @@ def _subprocess_error_message(error: subprocess.CalledProcessError) -> str:
     return f"Update command failed: {command} exited with code {error.returncode}"
 
 
-def _tui_mode() -> str:
-    value = os.environ.get("HIERONYMUS_TUI", "textual").strip().lower()
-    if value not in {"textual", "ink"}:
-        raise click.ClickException("HIERONYMUS_TUI must be textual or ink")
-    return value
-
-
 def _frontend_entrypoint() -> str:
     candidate = Path(__file__).resolve().parent / "frontend" / "dist" / "main.js"
     searched = [candidate]
@@ -248,10 +239,7 @@ def restart(ctx: click.Context, json_output: bool) -> None:
 def config_command(ctx: click.Context, json_output: bool) -> None:
     config = ctx.obj["config"]
     if not json_output:
-        if _tui_mode() == "ink":
-            _launch_ink("config", data_root=config.data_root)
-            return
-        HieronymusConfigApp(config).run()
+        _launch_ink("config", data_root=config.data_root)
         return
 
     try:
@@ -377,10 +365,7 @@ def admin(ctx: click.Context, json_output: bool) -> None:
         click.echo(render_json(payload))
         return
 
-    if _tui_mode() == "ink":
-        _launch_ink("admin", data_root=config.data_root)
-        return
-    HieronymusAdminApp(config).run()
+    _launch_ink("admin", data_root=config.data_root)
 
 
 @main.command("doctor")

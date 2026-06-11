@@ -22,7 +22,7 @@ from hieronymus.settings import (
     load_settings,
     save_settings,
 )
-from hieronymus.tui.config_state import (
+from hieronymus.tui_bridge.config_state import (
     apply_dreaming_form,
     apply_provider_form,
     field_value,
