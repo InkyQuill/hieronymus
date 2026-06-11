@@ -2,6 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from hieronymus.cli import main
@@ -101,6 +102,21 @@ def test_frontend_entrypoint_searches_from_module_parents(
     monkeypatch.chdir(tmp_path)
 
     assert cli._frontend_entrypoint() == str(bundle)
+
+
+def test_frontend_entrypoint_fails_when_bundle_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from hieronymus import cli
+
+    module_file = tmp_path / "repo" / "src" / "hieronymus" / "cli.py"
+    module_file.parent.mkdir(parents=True)
+    module_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli, "__file__", str(module_file))
+
+    with pytest.raises(FileNotFoundError, match="Ink frontend bundle not found; looked for:"):
+        cli._frontend_entrypoint()
 
 
 def test_cli_config_defaults_to_textual_when_tui_env_unset(tmp_path, monkeypatch) -> None:

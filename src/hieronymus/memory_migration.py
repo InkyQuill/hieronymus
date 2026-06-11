@@ -724,6 +724,16 @@ class MemoryGraphMigrator:
         status: str,
         confidence: float,
     ) -> None:
+        existing = conn.execute(
+            "select status, confidence from concepts where id = ?",
+            (concept_id,),
+        ).fetchone()
+        if existing is None:
+            return
+        existing_confidence = float(existing["confidence"])
+        if confidence < existing_confidence:
+            return
+        next_confidence = max(existing_confidence, confidence)
         conn.execute(
             """
             update concepts
@@ -732,11 +742,19 @@ class MemoryGraphMigrator:
                 scope_type = 'series',
                 scope_key = ?,
                 status = ?,
-                confidence = max(confidence, ?),
+                confidence = ?,
                 updated_at = ?
             where id = ?
             """,
-            (canonical_name, description, scope_key, status, confidence, _now(conn), concept_id),
+            (
+                canonical_name,
+                description,
+                scope_key,
+                status,
+                next_confidence,
+                _now(conn),
+                concept_id,
+            ),
         )
 
     def _ensure_facet(
@@ -760,10 +778,16 @@ class MemoryGraphMigrator:
             and _facet_belongs_to_concept(conn, existing, concept_id)
         ):
             facet_id = existing
+            self._reconcile_facet(
+                conn,
+                facet_id,
+                confidence=confidence,
+                is_canonical=is_canonical,
+            )
         else:
             row = conn.execute(
                 """
-                select id
+                select id, confidence, is_canonical
                 from concept_facets
                 where concept_id = ?
                   and value = ?
@@ -806,6 +830,13 @@ class MemoryGraphMigrator:
                 created["concept_facets"] += 1
             else:
                 facet_id = int(row["id"])
+                self._reconcile_facet(
+                    conn,
+                    facet_id,
+                    confidence=confidence,
+                    is_canonical=is_canonical,
+                    row=row,
+                )
             self._record_ledger(conn, source_table, source_id, "concept_facets", facet_id)
 
         for language_tag in _clean_tags((language,), lowercase=True):
@@ -817,6 +848,41 @@ class MemoryGraphMigrator:
                 (facet_id, language_tag),
             )
         return facet_id
+
+    def _reconcile_facet(
+        self,
+        conn: sqlite3.Connection,
+        facet_id: int,
+        *,
+        confidence: float,
+        is_canonical: bool,
+        row: sqlite3.Row | None = None,
+    ) -> None:
+        existing = (
+            row
+            or conn.execute(
+                "select confidence, is_canonical from concept_facets where id = ?",
+                (facet_id,),
+            ).fetchone()
+        )
+        if existing is None:
+            return
+        next_confidence = max(float(existing["confidence"]), confidence)
+        next_is_canonical = bool(existing["is_canonical"]) or is_canonical
+        if next_confidence == float(existing["confidence"]) and next_is_canonical == bool(
+            existing["is_canonical"]
+        ):
+            return
+        conn.execute(
+            """
+            update concept_facets
+            set confidence = ?,
+                is_canonical = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (next_confidence, int(next_is_canonical), _now(conn), facet_id),
+        )
 
     def _ensure_rule_crystal(
         self,

@@ -2,7 +2,7 @@
   "name": "hieronymus-ink-tui",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.0.0",
+  "packageManager": "pnpm@11.5.3",
   "engines": {
     "node": ">=22"
   },
@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "format": "prettier --check src",
+    "format:write": "prettier --write src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

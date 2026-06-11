@@ -153,13 +153,16 @@ def _tui_mode() -> str:
 
 def _frontend_entrypoint() -> str:
     candidate = Path(__file__).resolve().parent / "frontend" / "dist" / "main.js"
+    searched = [candidate]
     if candidate.exists():
         return str(candidate)
     for ancestor in Path(__file__).resolve().parents[:5]:
         repo_candidate = ancestor / "frontend" / "dist" / "main.js"
+        searched.append(repo_candidate)
         if repo_candidate.exists():
             return str(repo_candidate)
-    return str(candidate)
+    searched_paths = ", ".join(str(path) for path in searched)
+    raise FileNotFoundError(f"Ink frontend bundle not found; looked for: {searched_paths}")
 
 
 def _launch_ink(mode: str, *, data_root: Path) -> None:

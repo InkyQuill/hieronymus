@@ -145,6 +145,85 @@ def test_migration_reconciles_existing_ledger_concept(
     assert row["confidence"] == 0.95
 
 
+def test_migration_does_not_downgrade_stronger_matching_concept(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        concept_id = conn.execute(
+            """
+            insert into concepts(
+              canonical_name,
+              description,
+              scope_type,
+              scope_key,
+              status,
+              confidence,
+              created_at,
+              updated_at
+            )
+            values ('Sense', 'Established identity.', 'series', 'series:book',
+                    'established', 0.95, ?, ?)
+            """,
+            (NOW, NOW),
+        ).lastrowid
+        source_facet_id = conn.execute(
+            """
+            insert into concept_facets(
+              concept_id,
+              language,
+              facet_type,
+              value,
+              confidence,
+              is_canonical,
+              created_at,
+              updated_at
+            )
+            values (?, 'ja', 'name', 'センス', 0.1, 0, ?, ?)
+            """,
+            (concept_id, NOW, NOW),
+        ).lastrowid
+        conn.execute(
+            """
+            insert into strict_concept_proposals(
+              series_slug,
+              source_language,
+              target_language,
+              concept_text,
+              source_form,
+              canonical_rendering,
+              approved_variants_json,
+              forbidden_variants_json,
+              rationale,
+              status,
+              created_at,
+              updated_at
+            )
+            values ('book', 'ja', 'en', 'Sense', 'センス', 'Sense', '["Sense"]',
+                    '[]', 'Weaker pending proposal.', 'pending', ?, ?)
+            """,
+            (NOW, NOW),
+        )
+        conn.commit()
+
+    MemoryGraphMigrator(config).run()
+
+    with connect(config.database_path) as conn:
+        concept = conn.execute(
+            "select description, status, confidence from concepts where id = ?",
+            (concept_id,),
+        ).fetchone()
+        source_facet = conn.execute(
+            "select confidence, is_canonical from concept_facets where id = ?",
+            (source_facet_id,),
+        ).fetchone()
+    assert concept["description"] == "Established identity."
+    assert concept["status"] == "established"
+    assert concept["confidence"] == 0.95
+    assert source_facet["confidence"] == 0.45
+    assert source_facet["is_canonical"] == 1
+
+
 def test_migration_reconciles_existing_ledger_rule_crystal(
     config: HieronymusConfig,
 ) -> None:
@@ -213,6 +292,47 @@ def test_migration_reconciles_existing_ledger_rule_crystal(
     assert row["status"] == "active"
     assert row["confidence"] == 0.95
     assert fts_text == "攻撃力上昇 is translated as Attack Boost."
+
+
+def test_migration_reconciles_existing_ledger_facet(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        term_id = _insert_strict_term(conn)
+        conn.commit()
+    MemoryGraphMigrator(config).run()
+    with connect(config.database_path) as conn:
+        source_facet_id = conn.execute(
+            """
+            select target_id
+            from memory_graph_migration_ledger
+            where source_table = 'strict_terms'
+              and source_id = ?
+              and target_table = 'concept_facets'
+            """,
+            (f"{term_id}:source",),
+        ).fetchone()["target_id"]
+        conn.execute(
+            """
+            update concept_facets
+            set confidence = 0.1,
+                is_canonical = 0
+            where id = ?
+            """,
+            (source_facet_id,),
+        )
+        conn.commit()
+
+    MemoryGraphMigrator(config).run()
+
+    with connect(config.database_path) as conn:
+        row = conn.execute(
+            "select confidence, is_canonical from concept_facets where id = ?",
+            (source_facet_id,),
+        ).fetchone()
+    assert row["confidence"] == 0.95
+    assert row["is_canonical"] == 1
 
 
 def test_crystal_legacy_languages_and_tags_migrate_to_side_tables(
