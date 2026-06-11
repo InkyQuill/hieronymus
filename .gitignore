@@ -1,4 +1,46 @@
-.worktrees/
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+.python-version
+.venv/
+venv/
+env/
+
+# Python tooling
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Frontend / Node
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+coverage/
+frontend/coverage/
+*.tsbuildinfo
+
+# Local editor and workspace state
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Runtime logs and temporary files
+*.log
+tmp/
+temp/
+
+# Project-local worktrees
+.worktrees/
