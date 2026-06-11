@@ -70,7 +70,7 @@ def test_package_version_falls_back_to_module_version(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr("hieronymus.release.version", missing_version)
 
-    assert package_version() == "0.1.0"
+    assert package_version() == "1.0.0"
 
 
 def test_update_status_as_dict_serializes_cli_payload(tmp_path: Path) -> None:
