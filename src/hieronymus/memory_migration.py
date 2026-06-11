@@ -657,6 +657,15 @@ class MemoryGraphMigrator:
         existing = self._ledger_target(conn, source_table, source_id, "concepts")
         if existing is not None and _row_exists(conn, "concepts", existing):
             concept_id = existing
+            self._reconcile_concept(
+                conn,
+                concept_id,
+                canonical_name=canonical_name,
+                description=description,
+                scope_key=scope_key,
+                status=status,
+                confidence=confidence,
+            )
         else:
             natural = self._matching_concept(conn, canonical_name, scope_key, semantic_tags)
             if natural is None:
@@ -681,6 +690,15 @@ class MemoryGraphMigrator:
                 created["concepts"] += 1
             else:
                 concept_id = natural
+                self._reconcile_concept(
+                    conn,
+                    concept_id,
+                    canonical_name=canonical_name,
+                    description=description,
+                    scope_key=scope_key,
+                    status=status,
+                    confidence=confidence,
+                )
             self._record_ledger(conn, source_table, source_id, "concepts", concept_id)
 
         for tag in semantic_tags:
@@ -694,6 +712,32 @@ class MemoryGraphMigrator:
                 (concept_id, tag, confidence, _now(conn)),
             )
         return concept_id
+
+    def _reconcile_concept(
+        self,
+        conn: sqlite3.Connection,
+        concept_id: int,
+        *,
+        canonical_name: str,
+        description: str,
+        scope_key: str,
+        status: str,
+        confidence: float,
+    ) -> None:
+        conn.execute(
+            """
+            update concepts
+            set canonical_name = ?,
+                description = ?,
+                scope_type = 'series',
+                scope_key = ?,
+                status = ?,
+                confidence = max(confidence, ?),
+                updated_at = ?
+            where id = ?
+            """,
+            (canonical_name, description, scope_key, status, confidence, _now(conn), concept_id),
+        )
 
     def _ensure_facet(
         self,
@@ -794,6 +838,19 @@ class MemoryGraphMigrator:
         existing = self._ledger_target(conn, source_table, source_id, "crystals")
         if existing is not None and _row_exists(conn, "crystals", existing):
             crystal_id = existing
+            self._reconcile_rule_crystal(
+                conn,
+                crystal_id,
+                title=title,
+                text=text,
+                series_slug=series_slug,
+                source_language=source_language,
+                target_language=target_language,
+                status=status,
+                strength=strength,
+                confidence=confidence,
+                semantic_tags=semantic_tags,
+            )
         else:
             scope_key = f"series:{series_slug}"
             row = conn.execute(
@@ -863,6 +920,19 @@ class MemoryGraphMigrator:
                 created["crystals"] += 1
             else:
                 crystal_id = int(row["id"])
+                self._reconcile_rule_crystal(
+                    conn,
+                    crystal_id,
+                    title=title,
+                    text=text,
+                    series_slug=series_slug,
+                    source_language=source_language,
+                    target_language=target_language,
+                    status=status,
+                    strength=strength,
+                    confidence=confidence,
+                    semantic_tags=semantic_tags,
+                )
             self._record_ledger(conn, source_table, source_id, "crystals", crystal_id)
 
         for language_tag in _clean_tags((source_language, target_language), lowercase=True):
@@ -884,6 +954,63 @@ class MemoryGraphMigrator:
                 (crystal_id, tag, confidence, _now(conn)),
             )
         return crystal_id
+
+    def _reconcile_rule_crystal(
+        self,
+        conn: sqlite3.Connection,
+        crystal_id: int,
+        *,
+        title: str,
+        text: str,
+        series_slug: str,
+        source_language: str,
+        target_language: str,
+        status: str,
+        strength: float,
+        confidence: float,
+        semantic_tags: tuple[str, ...],
+    ) -> None:
+        scope_key = f"series:{series_slug}"
+        conn.execute(
+            """
+            update crystals
+            set text = ?,
+                title = ?,
+                scope_type = 'series',
+                scope_key = ?,
+                series_slug = ?,
+                source_language = ?,
+                target_language = ?,
+                tags_json = ?,
+                strength = max(strength, ?),
+                confidence = max(confidence, ?),
+                source_credibility = 'user_rule',
+                status = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (
+                text,
+                title,
+                scope_key,
+                series_slug,
+                source_language,
+                target_language,
+                json.dumps(semantic_tags, ensure_ascii=False, sort_keys=True),
+                strength,
+                confidence,
+                status,
+                _now(conn),
+                crystal_id,
+            ),
+        )
+        conn.execute(
+            """
+            insert or replace into crystals_fts(rowid, title, text)
+            values (?, ?, ?)
+            """,
+            (crystal_id, title, text),
+        )
 
     def _ensure_crystal_concept_link(
         self,

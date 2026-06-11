@@ -134,6 +134,25 @@ def test_concept_create_facet_add_crystal_link_and_recall_via_mcp(
     assert results[0]["concept_labels"] == ["センス"]
 
 
+def test_mcp_concept_facet_add_accepts_facet_type_with_default_kind(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+
+    from hieronymus import mcp_server
+
+    concept = mcp_server.hieronymus_concept_create("Cooking")
+
+    facet = mcp_server.hieronymus_concept_facet_add(
+        concept["id"],
+        "Кулинария",
+        facet_type="rendering",
+    )
+
+    assert facet["kind"] == "rendering"
+
+
 def test_concept_create_allows_only_active_initial_statuses(
     monkeypatch,
     tmp_path,

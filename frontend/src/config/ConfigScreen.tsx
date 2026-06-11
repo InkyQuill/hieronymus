@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useStdin } from "ink";
 import { ConfigBootstrapSchema, type ConfigBootstrap } from "../rpc/schema.js";
-import type { JsonRpcClient } from "../rpc/client.js";
+import type { RpcClient } from "../rpc/client.js";
 import { ConfigForm } from "./ConfigForm.js";
 import { ProviderSelector } from "./ProviderSelector.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
@@ -9,15 +9,13 @@ import { StatusLine } from "../ui/StatusLine.js";
 
 type Props = {
   initial: ConfigBootstrap;
-  client: JsonRpcClient | undefined;
+  client: RpcClient | undefined;
 };
 
 type Status = {
   message: string;
   error: boolean;
 };
-
-const providerKeys = ["1", "2", "3"] as const;
 
 export function ConfigScreen({ initial, client }: Props) {
   const { exit } = useApp();
@@ -33,18 +31,16 @@ export function ConfigScreen({ initial, client }: Props) {
 
   return (
     <Box flexDirection="column">
-      {client ? (
-        <ConfigInputHandler
-          client={client}
-          payload={payload}
-          busy={busy}
-          setPayload={setPayload}
-          setStatus={setStatus}
-          setBusy={setBusy}
-          operationInFlight={operationInFlight}
-          exit={exit}
-        />
-      ) : null}
+      <ConfigInputHandler
+        client={client}
+        payload={payload}
+        busy={busy}
+        setPayload={setPayload}
+        setStatus={setStatus}
+        setBusy={setBusy}
+        operationInFlight={operationInFlight}
+        exit={exit}
+      />
       <Text bold>Hieronymus Config</Text>
       <Text dimColor>{payload.config_paths.settings_path}</Text>
       <Box marginTop={1}>
@@ -72,7 +68,13 @@ export function ConfigScreen({ initial, client }: Props) {
         error={status.error}
       />
       <KeyHelp
-        keys={["1/2/3 provider", "s save", "r reload", "c check", "q quit"]}
+        keys={[
+          `${providerKeyRange(payload.provider_choices)} provider`,
+          "s save",
+          "r reload",
+          "c check",
+          "q quit",
+        ]}
       />
     </Box>
   );
@@ -88,7 +90,7 @@ function ConfigInputHandler({
   operationInFlight,
   exit,
 }: {
-  client: JsonRpcClient;
+  client: RpcClient | undefined;
   payload: ConfigBootstrap;
   busy: boolean;
   setPayload: (payload: ConfigBootstrap) => void;
@@ -118,17 +120,18 @@ function ConfigInputHandler({
     const onData = (chunk: Buffer | string) => {
       const input = String(chunk)[0] ?? "";
       if (input === "q") {
-        client.close?.();
+        client?.close();
         exit();
         return;
       }
 
-      if (busy || operationInFlight.current) {
+      if (!client || busy || operationInFlight.current) {
         return;
       }
 
-      const providerIndex = providerKeys.indexOf(
-        input as (typeof providerKeys)[number],
+      const providerIndex = providerIndexForInput(
+        input,
+        payload.provider_choices.length,
       );
       if (providerIndex >= 0) {
         const provider = payload.provider_choices[providerIndex]?.name;
@@ -231,7 +234,7 @@ async function runConfigOperation({
   setStatus,
   operationInFlight,
 }: {
-  client: JsonRpcClient;
+  client: RpcClient;
   method: string;
   params: Record<string, unknown>;
   pendingMessage: string;
@@ -257,7 +260,7 @@ async function runConfigOperation({
 }
 
 function requestBootstrap(
-  client: JsonRpcClient,
+  client: RpcClient,
   method: string,
   params: Record<string, unknown>,
 ): Promise<ConfigBootstrap> {
@@ -290,4 +293,28 @@ function getDetailErrors(payload: ConfigBootstrap): string[] {
     return [detail];
   }
   return [];
+}
+
+function providerKeys(providerCount: number): string[] {
+  return Array.from({ length: Math.min(providerCount, 9) }, (_, index) =>
+    String(index + 1),
+  );
+}
+
+function providerKeyRange(
+  providerChoices: ConfigBootstrap["provider_choices"],
+) {
+  const keys = providerKeys(providerChoices.length);
+  if (keys.length === 0) {
+    return "-";
+  }
+  if (keys.length === 1) {
+    return keys[0];
+  }
+  return `${keys[0]}-${keys[keys.length - 1]}`;
+}
+
+function providerIndexForInput(input: string, providerCount: number) {
+  const index = providerKeys(providerCount).indexOf(input);
+  return index >= 0 ? index : -1;
 }

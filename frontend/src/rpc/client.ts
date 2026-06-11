@@ -7,7 +7,15 @@ type Pending = {
   reject: (error: Error) => void;
 };
 
-export class JsonRpcClient {
+export interface RpcClient {
+  request(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>>;
+  close(): void;
+}
+
+export class JsonRpcClient implements RpcClient {
   private nextId = 1;
   private readonly pending = new Map<string, Pending>();
   private closedError: Error | undefined;

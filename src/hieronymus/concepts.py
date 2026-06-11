@@ -1842,6 +1842,19 @@ class ConceptProposalStore:
             (row["id"],),
         ).fetchall()
         facet_values = [facet["value"] for facet in facet_rows]
+        rendering_rows = conn.execute(
+            """
+            select value
+            from concept_facets
+            where concept_id = ?
+              and facet_type = 'rendering'
+              and value != ''
+              and superseded_at is null
+            order by confidence desc, id
+            """,
+            (row["id"],),
+        ).fetchall()
+        rendering_values = [facet["value"] for facet in rendering_rows]
         semantic_tags = tuple(
             tag_row["tag"]
             for tag_row in conn.execute(
@@ -1855,7 +1868,7 @@ class ConceptProposalStore:
             )
         )
         canonical_name = row["canonical_name"]
-        canonical_rendering = facet_values[0] if facet_values else canonical_name
+        canonical_rendering = rendering_values[0] if rendering_values else canonical_name
         rationale = row["description"]
         if semantic_tags:
             tag_note = f"Semantic tags: {', '.join(semantic_tags)}"

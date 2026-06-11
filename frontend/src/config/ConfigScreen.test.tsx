@@ -2,7 +2,7 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import { ConfigScreen } from "./ConfigScreen.js";
-import type { JsonRpcClient } from "../rpc/client.js";
+import type { RpcClient } from "../rpc/client.js";
 import type { ConfigBootstrap, ProviderName } from "../rpc/schema.js";
 
 function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
@@ -97,6 +97,21 @@ describe("ConfigScreen", () => {
     expect(app.lastFrame()).toContain("Models: -");
   });
 
+  it("renders provider shortcut help from provider choices", () => {
+    const app = render(
+      <ConfigScreen
+        initial={{
+          ...payload(),
+          provider_choices: payload().provider_choices.slice(0, 2),
+        }}
+        client={undefined}
+      />,
+    );
+
+    expect(app.lastFrame()).toContain("1-2 provider");
+    expect(app.lastFrame()).not.toContain("1/2/3 provider");
+  });
+
   it("selects a provider through the configured RPC", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
@@ -170,8 +185,8 @@ function fakeClient(
     params: Record<string, unknown>,
   ) => Promise<Record<string, unknown>>,
   close?: () => void,
-): JsonRpcClient {
-  return { request, close } as unknown as JsonRpcClient;
+): RpcClient {
+  return { request, close: close ?? (() => {}) };
 }
 
 function deferredPayload() {

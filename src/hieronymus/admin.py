@@ -1378,6 +1378,7 @@ class AdminStore:
         return admin_rows
 
     def snapshot(self, view: str, selected_id: int | str | None = None) -> AdminSnapshot:
+        view = admin_view_label(view)
         if view not in ADMIN_VIEWS:
             raise ValueError(f"unknown admin view: {view}")
 
@@ -1777,7 +1778,15 @@ class AdminStore:
             ).fetchone()
         if row is None:
             return AdminDetail(title="Missing dream audit", subtitle="", body="")
-        payload = json.loads(row["payload_json"])
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            payload = {"_invalid_json": row["payload_json"]}
+        except Exception as error:
+            payload = {
+                "_invalid_json": row["payload_json"],
+                "_error": str(error),
+            }
         return AdminDetail(
             title=f"{row['event_type']}: {row['summary']}",
             subtitle=row["severity"],
@@ -2278,7 +2287,7 @@ class AdminStore:
     ) -> None:
         existing = conn.execute(
             """
-            select id
+            select id, is_canonical, confidence
             from concept_facets
             where concept_id = ?
               and value = ?
@@ -2318,6 +2327,21 @@ class AdminStore:
             facet_id = int(cursor.lastrowid)
         else:
             facet_id = int(existing["id"])
+            current_is_canonical = bool(existing["is_canonical"])
+            current_confidence = float(existing["confidence"])
+            next_is_canonical = current_is_canonical or is_canonical
+            next_confidence = max(current_confidence, 0.95)
+            if next_is_canonical != current_is_canonical or next_confidence > current_confidence:
+                conn.execute(
+                    """
+                    update concept_facets
+                    set is_canonical = ?,
+                        confidence = ?,
+                        updated_at = ?
+                    where id = ?
+                    """,
+                    (int(next_is_canonical), next_confidence, now, facet_id),
+                )
 
         if language_tag:
             conn.execute(

@@ -164,6 +164,27 @@ def test_global_schema_rebuilds_facet_fts_for_previous_schema_rows(tmp_path):
     ]
 
 
+def test_global_schema_backfills_normalized_facet_language_tags(tmp_path):
+    db_path = tmp_path / "global.db"
+    with connect(db_path) as conn:
+        _create_previous_schema(conn)
+        _insert_previous_schema_rows(conn)
+        conn.execute("update concept_facets set language = ' JA ' where id = 1")
+        conn.commit()
+
+        apply_migration(conn, "global.sql")
+
+        tags = conn.execute(
+            """
+            select language_tag
+            from concept_facet_language_tags
+            where facet_id = 1
+            """
+        ).fetchall()
+
+    assert [row["language_tag"] for row in tags] == ["ja"]
+
+
 def _create_previous_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """

@@ -8,12 +8,12 @@ import {
 } from "../rpc/schema.js";
 import { AdminScreen } from "../admin/AdminScreen.js";
 import { ConfigScreen } from "../config/ConfigScreen.js";
-import type { JsonRpcClient } from "../rpc/client.js";
+import type { RpcClient } from "../rpc/client.js";
 import type { AppMode } from "./routes.js";
 
 type Props = {
   mode: AppMode;
-  client: JsonRpcClient;
+  client: RpcClient;
 };
 
 export function App({ mode, client }: Props) {
@@ -37,9 +37,9 @@ export function App({ mode, client }: Props) {
             setAdminInitial(AdminBootstrapSchema.parse(payload));
           }
         })
-        .catch((err: Error) => {
+        .catch((err: unknown) => {
           if (active) {
-            setError(err.message);
+            setError(errorMessage(err));
           }
         });
     }
@@ -54,9 +54,9 @@ export function App({ mode, client }: Props) {
             setConfigInitial(ConfigBootstrapSchema.parse(payload));
           }
         })
-        .catch((err: Error) => {
+        .catch((err: unknown) => {
           if (active) {
-            setError(err.message);
+            setError(errorMessage(err));
           }
         });
     }
@@ -76,4 +76,8 @@ export function App({ mode, client }: Props) {
     return <ConfigScreen initial={configInitial} client={client} />;
   }
   return <Text>Loading {mode}...</Text>;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

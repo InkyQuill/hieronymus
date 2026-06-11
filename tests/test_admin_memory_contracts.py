@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from hieronymus.admin import AdminStore
-from hieronymus.concepts import ConceptStore
+from hieronymus.concepts import ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
@@ -533,6 +533,91 @@ def test_concept_facet_bridge_dispatches_to_admin_contract(
     assert add_response["ok"] is True
     assert detail_response["ok"] is True
     assert detail_response["result"]["concept"]["facets"][0]["value"] == "гильдейская книга"
+
+
+def test_proposal_approval_upgrades_existing_concept_facet_state(
+    config: HieronymusConfig,
+) -> None:
+    concept_id = (
+        ConceptStore(config)
+        .create_concept(
+            "Guild Ledger",
+            scope_type="series",
+            scope_key="series:only-sense-online",
+        )
+        .id
+    )
+    with connect(config.database_path) as conn:
+        source_facet_id = conn.execute(
+            """
+            insert into concept_facets(
+              concept_id,
+              language,
+              facet_type,
+              value,
+              confidence,
+              is_canonical,
+              created_at,
+              updated_at
+            )
+            values (?, 'ja', 'name', 'ギルド台帳', 0.2, 0, ?, ?)
+            """,
+            (
+                concept_id,
+                "2026-06-10T00:00:00+00:00",
+                "2026-06-10T00:00:00+00:00",
+            ),
+        ).lastrowid
+        rendering_facet_id = conn.execute(
+            """
+            insert into concept_facets(
+              concept_id,
+              language,
+              facet_type,
+              value,
+              confidence,
+              is_canonical,
+              created_at,
+              updated_at
+            )
+            values (?, 'ru', 'rendering', 'гильдейская книга', 0.2, 0, ?, ?)
+            """,
+            (
+                concept_id,
+                "2026-06-10T00:00:00+00:00",
+                "2026-06-10T00:00:00+00:00",
+            ),
+        ).lastrowid
+        conn.commit()
+
+    proposal_id = ConceptProposalStore(config).create(
+        dream_run_id=None,
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="ru",
+        concept_text="Guild Ledger",
+        source_form="ギルド台帳",
+        canonical_rendering="гильдейская книга",
+        approved_variants=["гильдейская книга"],
+        forbidden_variants=[],
+        rationale="Existing facet should be reinforced.",
+    )
+
+    AdminStore(config).approve_proposal(proposal_id)
+
+    with connect(config.database_path) as conn:
+        source_row = conn.execute(
+            "select is_canonical, confidence from concept_facets where id = ?",
+            (source_facet_id,),
+        ).fetchone()
+        rendering_row = conn.execute(
+            "select is_canonical, confidence from concept_facets where id = ?",
+            (rendering_facet_id,),
+        ).fetchone()
+    assert source_row["is_canonical"] == 1
+    assert source_row["confidence"] == 0.95
+    assert rendering_row["is_canonical"] == 0
+    assert rendering_row["confidence"] == 0.95
 
 
 def test_concepts_snapshot_uses_memory_graph_concepts(config: HieronymusConfig) -> None:

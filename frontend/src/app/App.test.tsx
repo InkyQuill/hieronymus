@@ -2,7 +2,7 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "./App.js";
-import type { JsonRpcClient } from "../rpc/client.js";
+import type { RpcClient } from "../rpc/client.js";
 
 describe("App", () => {
   it("bootstraps and renders the admin screen", async () => {
@@ -15,11 +15,27 @@ describe("App", () => {
     expect(app.lastFrame()).toContain("Guild Ledger");
     expect(app.lastFrame()).toContain("Guild ledger detail marker.");
   });
+
+  it("renders non-error bootstrap rejections", async () => {
+    const app = render(
+      <App mode="admin" client={fakeClient(() => Promise.reject("offline"))} />,
+    );
+
+    await waitFor(() => expect(app.lastFrame()).toContain("offline"));
+  });
 });
 
-function fakeClient(): JsonRpcClient {
+function fakeClient(
+  requestOverride?: (
+    method: string,
+    params: Record<string, unknown>,
+  ) => Promise<Record<string, unknown>>,
+): RpcClient {
   return {
-    request: (method: string) => {
+    request: (method: string, params: Record<string, unknown>) => {
+      if (requestOverride) {
+        return requestOverride(method, params);
+      }
       if (method !== "admin.bootstrap") {
         return Promise.reject(new Error(`unexpected request ${method}`));
       }
@@ -138,7 +154,8 @@ function fakeClient(): JsonRpcClient {
         },
       });
     },
-  } as unknown as JsonRpcClient;
+    close: () => {},
+  };
 }
 
 async function waitFor(assertion: () => void) {

@@ -526,7 +526,7 @@ The previous migration implemented most of the dream configuration, dream schedu
 
 ### 8. Add Primitive MCP Concept, Facet, Tag, and Rule Tools
 
-- [ ] Open `src/hieronymus/mcp_server.py`.
+- [x] Open `src/hieronymus/mcp_server.py`.
 
 - [x] Add concept primitives:
 

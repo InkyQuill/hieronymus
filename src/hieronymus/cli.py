@@ -155,7 +155,11 @@ def _frontend_entrypoint() -> str:
     candidate = Path(__file__).resolve().parent / "frontend" / "dist" / "main.js"
     if candidate.exists():
         return str(candidate)
-    return str(Path.cwd() / "frontend" / "dist" / "main.js")
+    for ancestor in Path(__file__).resolve().parents[:5]:
+        repo_candidate = ancestor / "frontend" / "dist" / "main.js"
+        if repo_candidate.exists():
+            return str(repo_candidate)
+    return str(candidate)
 
 
 def _launch_ink(mode: str, *, data_root: Path) -> None:

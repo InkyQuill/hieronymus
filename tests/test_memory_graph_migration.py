@@ -87,6 +87,134 @@ def test_strict_term_migration_creates_rule_graph(config: HieronymusConfig) -> N
     assert ledger_targets == {"concepts", "concept_facets", "crystals"}
 
 
+def test_migration_reconciles_existing_ledger_concept(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        term_id = _insert_strict_term(conn)
+        conn.commit()
+    MemoryGraphMigrator(config).run()
+    with connect(config.database_path) as conn:
+        conn.execute(
+            """
+            update strict_terms
+            set notes = 'A corrected skill rendering.'
+            where id = ?
+            """,
+            (term_id,),
+        )
+        conn.execute(
+            """
+            update concepts
+            set description = 'stale',
+                status = 'established',
+                confidence = 0.1
+            where id = (
+              select target_id
+              from memory_graph_migration_ledger
+              where source_table = 'strict_terms'
+                and source_id = ?
+                and target_table = 'concepts'
+            )
+            """,
+            (str(term_id),),
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator(config).run()
+
+    with connect(config.database_path) as conn:
+        row = conn.execute(
+            """
+            select description, status, confidence
+            from concepts
+            where id = (
+              select target_id
+              from memory_graph_migration_ledger
+              where source_table = 'strict_terms'
+                and source_id = ?
+                and target_table = 'concepts'
+            )
+            """,
+            (str(term_id),),
+        ).fetchone()
+    assert report.created == {}
+    assert row["description"] == "A corrected skill rendering."
+    assert row["status"] == "established"
+    assert row["confidence"] == 0.95
+
+
+def test_migration_reconciles_existing_ledger_rule_crystal(
+    config: HieronymusConfig,
+) -> None:
+    _seed_base(config)
+    with connect(config.database_path) as conn:
+        term_id = _insert_strict_term(conn)
+        conn.commit()
+    MemoryGraphMigrator(config).run()
+    with connect(config.database_path) as conn:
+        conn.execute(
+            """
+            update strict_terms
+            set canonical_translation = 'Attack Boost',
+                notes = 'A renamed skill rendering.'
+            where id = ?
+            """,
+            (term_id,),
+        )
+        conn.execute(
+            """
+            update crystals
+            set text = 'stale',
+                title = 'stale',
+                status = 'active',
+                confidence = 0.1
+            where id = (
+              select target_id
+              from memory_graph_migration_ledger
+              where source_table = 'strict_terms'
+                and source_id = ?
+                and target_table = 'crystals'
+            )
+            """,
+            (str(term_id),),
+        )
+        conn.commit()
+
+    report = MemoryGraphMigrator(config).run()
+
+    with connect(config.database_path) as conn:
+        row = conn.execute(
+            """
+            select id, text, title, status, confidence
+            from crystals
+            where id = (
+              select target_id
+              from memory_graph_migration_ledger
+              where source_table = 'strict_terms'
+                and source_id = ?
+                and target_table = 'crystals'
+            )
+            """,
+            (str(term_id),),
+        ).fetchone()
+        fts_text = conn.execute(
+            """
+            select text
+            from crystals_fts
+            where rowid = ?
+            """,
+            (row["id"],),
+        ).fetchone()["text"]
+    assert report.created == {}
+    assert row["text"] == "攻撃力上昇 is translated as Attack Boost."
+    assert row["title"] == ""
+    assert row["status"] == "active"
+    assert row["confidence"] == 0.95
+    assert fts_text == "攻撃力上昇 is translated as Attack Boost."
+
+
 def test_crystal_legacy_languages_and_tags_migrate_to_side_tables(
     config: HieronymusConfig,
 ) -> None:

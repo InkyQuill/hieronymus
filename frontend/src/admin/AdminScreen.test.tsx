@@ -1,7 +1,7 @@
 import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
-import type { JsonRpcClient } from "../rpc/client.js";
+import type { RpcClient } from "../rpc/client.js";
 import { AdminScreen } from "./AdminScreen.js";
 
 function bootstrap() {
@@ -406,8 +406,8 @@ function fakeClient(
     method: string,
     params: Record<string, unknown>,
   ) => Promise<Record<string, unknown>>,
-): JsonRpcClient {
-  return { request } as unknown as JsonRpcClient;
+): RpcClient {
+  return { request, close: () => {} };
 }
 
 function deferredResponse() {

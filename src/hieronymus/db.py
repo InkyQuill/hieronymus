@@ -66,9 +66,9 @@ def ensure_concept_facet_compatibility(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             insert or ignore into concept_facet_language_tags(facet_id, language_tag)
-            select id, language
+            select id, lower(trim(language))
             from concept_facets
-            where language != ''
+            where trim(language) != ''
             """
         )
 

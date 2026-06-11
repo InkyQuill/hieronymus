@@ -93,7 +93,26 @@ def test_list_pending_includes_candidate_concepts_with_facet_suggestions(
               created_at,
               updated_at
             )
-            values (?, 'ru', 'translation', 'Сенс', 0.4, ?, ?)
+            values (?, 'ja', 'alias', 'センス', 0.9, ?, ?)
+            """,
+            (
+                concept_id,
+                "2026-06-09T00:00:00+00:00",
+                "2026-06-09T00:00:00+00:00",
+            ),
+        )
+        conn.execute(
+            """
+            insert into concept_facets(
+              concept_id,
+              language,
+              facet_type,
+              value,
+              confidence,
+              created_at,
+              updated_at
+            )
+            values (?, 'ru', 'rendering', 'Сенс', 0.4, ?, ?)
             """,
             (
                 concept_id,
@@ -111,7 +130,7 @@ def test_list_pending_includes_candidate_concepts_with_facet_suggestions(
     assert pending[0].concept_text == "Sense"
     assert pending[0].source_form == "Sense"
     assert pending[0].canonical_rendering == "Сенс"
-    assert pending[0].approved_variants == ["Сенс"]
+    assert pending[0].approved_variants == ["センス", "Сенс"]
     assert pending[0].forbidden_variants == []
     assert pending[0].rationale == "A game-like aptitude category."
     assert pending[0].status == "candidate"

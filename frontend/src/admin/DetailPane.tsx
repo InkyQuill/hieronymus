@@ -8,8 +8,8 @@ export function DetailPane({ detail }: { detail: AdminSnapshot["detail"] }) {
       <Text bold>{detail.title}</Text>
       <Text dimColor>{detail.subtitle}</Text>
       <Text>{detail.body}</Text>
-      {detail.fields.map(([name, value]) => (
-        <Text key={name}>
+      {detail.fields.map(([name, value], index) => (
+        <Text key={`${name}-${index}`}>
           {name}: {value}
         </Text>
       ))}

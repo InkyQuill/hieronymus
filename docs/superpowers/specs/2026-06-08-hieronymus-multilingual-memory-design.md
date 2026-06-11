@@ -284,14 +284,14 @@ the CLI.
 
 Read, Learn, and Remember are skills, not MCP judgment tools.
 
-Read instructs the agent to inspect material for the current task. It should not
-bulk-store the source. It may add a short-term memory only when the agent finds a
-useful observation or the user asks it to remember something.
+When using Read, the agent inspects material for the current task without
+bulk-storing the source. It may add a short-term memory only when the agent
+finds a useful observation or the user asks it to remember something.
 
-Learn instructs the agent to commit material into memory. It should split the
-material into small extracts, infer useful language tags, story scopes,
-semantic tags, source credibility, and soft origin hints, then write short-term
-memories. Learn must not create crystals directly.
+Learn commits material into memory by splitting it into small extracts,
+inferring useful language tags, story scopes, semantic tags, source credibility,
+and soft origin hints, then writing short-term memories. Learn must not create
+crystals directly.
 
 Remember must preserve rule intent. If the user says to always render a concept
 in a particular way, the skill should write a short-term memory such as "User
@@ -472,9 +472,9 @@ to the Ollama stub, and reinforcement/compaction should point to the Ollama
 stub. Workflows remain invalid until required models, endpoints, and credentials
 are configured.
 
-Dreaming is disabled until all required enabled provider-backed workflows are
-valid. Deterministic fallback must not silently replace misconfigured dreaming
-workflows in automatic or admin-triggered dreaming.
+Dreaming is disabled until all enabled and required provider-backed workflows
+are valid. Deterministic fallback must not silently replace misconfigured
+dreaming workflows in automatic or admin-triggered dreaming.
 Disabled dreaming blocks conversion and maintenance only. Recall still searches
 both short-term and long-term memory so newly captured observations remain
 usable while dreaming configuration is incomplete.

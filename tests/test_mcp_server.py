@@ -997,7 +997,7 @@ def test_mcp_concept_proposals_list_cleans_malformed_audit_payloads(
 
     assert mcp_server.hieronymus_concept_proposals_list() == [
         {
-            "id": 51,
+            "id": "51-3",
             "series_slug": "",
             "source_language": "",
             "target_language": "",
@@ -1010,6 +1010,58 @@ def test_mcp_concept_proposals_list_cleans_malformed_audit_payloads(
             "status": "audit",
         }
     ]
+
+
+def test_mcp_concept_proposals_list_uses_unique_audit_proposal_ids(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config = load_config()
+    ConceptProposalStore(config)
+    with connect(config.database_path) as conn:
+        run_id = conn.execute(
+            """
+            insert into dream_runs(cycle_id, status, provider, created_at)
+            values (1, 'completed', 'deterministic', '2026-06-09T00:00:00+00:00')
+            """
+        ).lastrowid
+        audit_id = conn.execute(
+            """
+            insert into dream_audit_entries(
+              dream_run_id,
+              phase_run_id,
+              event_type,
+              severity,
+              summary,
+              payload_json,
+              created_at
+            )
+            values (?, null, 'provider_output', 'info', 'recent proposals', ?, ?)
+            """,
+            (
+                run_id,
+                json.dumps(
+                    {
+                        "concept_proposals": [
+                            {"concept_text": "Sense"},
+                            {"concept_text": "Enchant"},
+                        ]
+                    }
+                ),
+                "2026-06-09T00:00:00+00:00",
+            ),
+        ).lastrowid
+        conn.commit()
+
+    from hieronymus import mcp_server
+
+    ids = [
+        proposal["id"]
+        for proposal in mcp_server.hieronymus_concept_proposals_list()
+        if proposal["status"] == "audit"
+    ]
+    assert ids == [f"{audit_id}-0", f"{audit_id}-1"]
 
 
 def test_mcp_dream_rejects_unsupported_provider(monkeypatch, tmp_path):

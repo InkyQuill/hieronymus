@@ -251,7 +251,7 @@ class CrystalStore:
             ).fetchone()
             if row is None:
                 raise KeyError(f"unknown crystal: {crystal_id}")
-            crystal = self._hydrate_crystal(conn, row)
+            crystal = self._hydrate_crystals(conn, [row])[0]
         return crystal
 
     def list_rule_crystals(
@@ -277,7 +277,7 @@ class CrystalStore:
 
         with connect(self.config.database_path) as conn:
             rows = conn.execute("\n".join(query), params).fetchall()
-            return [self._hydrate_crystal(conn, row) for row in rows]
+            return self._hydrate_crystals(conn, rows)
 
     def archive_rule_crystal(self, crystal_id: int) -> CrystalRecord:
         now = _now()
@@ -579,64 +579,83 @@ class CrystalStore:
                     bounded_limit,
                 ),
             ).fetchall()
-            return [(self._hydrate_crystal(conn, row), float(row["search_score"])) for row in rows]
+            crystals = self._hydrate_crystals(conn, rows)
+            return list(zip(crystals, (float(row["search_score"]) for row in rows), strict=True))
 
-    def _hydrate_crystal(self, conn, row) -> CrystalRecord:
-        language_tags = tuple(
-            tag_row["language_tag"]
-            for tag_row in conn.execute(
-                """
-                select language_tag
-                from crystal_language_tags
-                where crystal_id = ?
-                order by language_tag
-                """,
-                (row["id"],),
+    def _hydrate_crystals(self, conn, rows) -> list[CrystalRecord]:
+        crystal_ids = [int(row["id"]) for row in rows]
+        language_tags = self._crystal_text_map(
+            conn,
+            crystal_ids,
+            table="crystal_language_tags",
+            value_column="language_tag",
+        )
+        story_scopes = self._crystal_text_map(
+            conn,
+            crystal_ids,
+            table="crystal_story_scopes",
+            value_column="scope",
+        )
+        semantic_tags = self._crystal_text_map(
+            conn,
+            crystal_ids,
+            table="crystal_semantic_tags",
+            value_column="tag",
+        )
+        concept_ids = self._crystal_concept_map(conn, crystal_ids)
+        return [
+            _row_to_crystal(
+                row,
+                language_tags=language_tags.get(int(row["id"]), ()),
+                story_scopes=story_scopes.get(int(row["id"]), ()),
+                semantic_tags=semantic_tags.get(int(row["id"]), ()),
+                concept_ids=concept_ids.get(int(row["id"]), ()),
             )
-        )
-        story_scopes = tuple(
-            scope_row["scope"]
-            for scope_row in conn.execute(
-                """
-                select scope
-                from crystal_story_scopes
-                where crystal_id = ?
-                order by scope
-                """,
-                (row["id"],),
-            )
-        )
-        semantic_tags = tuple(
-            tag_row["tag"]
-            for tag_row in conn.execute(
-                """
-                select tag
-                from crystal_semantic_tags
-                where crystal_id = ?
-                order by tag
-                """,
-                (row["id"],),
-            )
-        )
-        concept_ids = tuple(
-            int(concept_row["concept_id"])
-            for concept_row in conn.execute(
-                """
-                select distinct concept_id
-                from crystal_concepts
-                where crystal_id = ?
-                order by concept_id
-                """,
-                (row["id"],),
-            )
-        )
-        return _row_to_crystal(
-            row,
-            language_tags=language_tags,
-            story_scopes=story_scopes,
-            semantic_tags=semantic_tags,
-            concept_ids=concept_ids,
-        )
+            for row in rows
+        ]
+
+    def _crystal_text_map(
+        self,
+        conn,
+        crystal_ids: list[int],
+        *,
+        table: str,
+        value_column: str,
+    ) -> dict[int, tuple[str, ...]]:
+        if not crystal_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in crystal_ids)
+        rows = conn.execute(
+            f"""
+            select crystal_id, {value_column} as value
+            from {table}
+            where crystal_id in ({placeholders})
+            order by crystal_id, value
+            """,
+            crystal_ids,
+        ).fetchall()
+        values: dict[int, list[str]] = {crystal_id: [] for crystal_id in crystal_ids}
+        for row in rows:
+            values[int(row["crystal_id"])].append(row["value"])
+        return {crystal_id: tuple(items) for crystal_id, items in values.items()}
+
+    def _crystal_concept_map(self, conn, crystal_ids: list[int]) -> dict[int, tuple[int, ...]]:
+        if not crystal_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in crystal_ids)
+        rows = conn.execute(
+            f"""
+            select distinct crystal_id, concept_id
+            from crystal_concepts
+            where crystal_id in ({placeholders})
+            order by crystal_id, concept_id
+            """,
+            crystal_ids,
+        ).fetchall()
+        values: dict[int, list[int]] = {crystal_id: [] for crystal_id in crystal_ids}
+        for row in rows:
+            values[int(row["crystal_id"])].append(int(row["concept_id"]))
+        return {crystal_id: tuple(items) for crystal_id, items in values.items()}
 
     def _validate_crystal_type(self, crystal_type: str) -> None:
         if crystal_type not in _ALLOWED_CRYSTAL_TYPES:

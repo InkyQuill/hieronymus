@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -81,6 +82,25 @@ def test_cli_bridge_command_preserves_id_for_invalid_params(tmp_path) -> None:
         "ok": False,
         "error": {"code": "invalid_request", "message": "params must be an object"},
     }
+
+
+def test_frontend_entrypoint_searches_from_module_parents(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from hieronymus import cli
+
+    repo = tmp_path / "repo"
+    module_file = repo / "src" / "hieronymus" / "cli.py"
+    bundle = repo / "frontend" / "dist" / "main.js"
+    module_file.parent.mkdir(parents=True)
+    module_file.write_text("", encoding="utf-8")
+    bundle.parent.mkdir(parents=True)
+    bundle.write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli, "__file__", str(module_file))
+    monkeypatch.chdir(tmp_path)
+
+    assert cli._frontend_entrypoint() == str(bundle)
 
 
 def test_cli_config_defaults_to_textual_when_tui_env_unset(tmp_path, monkeypatch) -> None:

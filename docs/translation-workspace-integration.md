@@ -6,7 +6,7 @@ compatibility; the contract is generated from active rule crystals.
 
 After translation, the orchestrator calls
 `hieronymus_termbase_validate(series_slug, raw_text, translated_text)` with the
-same raw chapter text and the translated chapter. Any high severity finding goes
+same raw chapter text and the translated chapter. Any high-severity finding goes
 back to the Translator before Accuracy Review.
 
 Volume, chapter, and other story position markers are freeform workflow context.

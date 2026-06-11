@@ -13,7 +13,7 @@ import {
   type AdminSnapshot,
   type AdminShortTermStatus,
 } from "../rpc/schema.js";
-import type { JsonRpcClient } from "../rpc/client.js";
+import type { RpcClient } from "../rpc/client.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
 import { FocusableList } from "../ui/FocusableList.js";
@@ -23,7 +23,7 @@ import { CommandPalette } from "./CommandPalette.js";
 
 type Props = {
   initial: AdminBootstrap;
-  client: JsonRpcClient | undefined;
+  client: RpcClient | undefined;
   showCommands?: boolean;
 };
 
@@ -60,7 +60,6 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
   });
   const operationInFlight = useRef(false);
   const canUseInkInput = Boolean(
-    client &&
     isRawModeSupported &&
     typeof stdin.ref === "function" &&
     typeof stdin.unref === "function",
@@ -78,16 +77,11 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       return;
     }
 
-    if (!client) {
-      return;
-    }
-
-    if (operationInFlight.current) {
-      return;
-    }
-
     const viewIndex = viewIndexForInput(input, initial.views.length);
     if (viewIndex >= 0) {
+      if (!client || operationInFlight.current) {
+        return;
+      }
       const view = initial.views[viewIndex];
       if (view) {
         void runSnapshotOperation({
@@ -114,6 +108,10 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
 
     if (input === "e") {
       setStatus({ message: "Edit command selected", error: false });
+      return;
+    }
+
+    if (!client || operationInFlight.current) {
       return;
     }
 
@@ -181,7 +179,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
   );
 
   useEffect(() => {
-    if (!client || canUseInkInput) {
+    if (canUseInkInput) {
       return undefined;
     }
 
@@ -198,7 +196,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     return () => {
       stdin.off("data", onData);
     };
-  }, [canUseInkInput, client, handleInput, stdin]);
+  }, [canUseInkInput, handleInput, stdin]);
 
   const selectedViewIndex = Math.max(initial.views.indexOf(snapshot.view), 0);
   const viewKeyLimit = Math.min(initial.views.length, 9);
@@ -270,7 +268,7 @@ async function runSnapshotOperation({
   setStatus,
   operationInFlight,
 }: {
-  client: JsonRpcClient;
+  client: RpcClient;
   method: string;
   params: Record<string, unknown>;
   successMessage: string;

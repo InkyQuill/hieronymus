@@ -289,6 +289,46 @@ def test_admin_snapshot_exposes_dream_audit_entries(config: HieronymusConfig) ->
     )
 
 
+def test_snapshot_accepts_machine_view_key(config: HieronymusConfig) -> None:
+    snapshot = AdminStore(config).snapshot("dream_audits")
+
+    assert snapshot.view == "Dream Audits"
+
+
+def test_dream_audit_detail_survives_malformed_payload_json(
+    config: HieronymusConfig,
+) -> None:
+    store = AdminStore(config)
+    with connect(config.database_path) as conn:
+        dream_run_id = conn.execute(
+            """
+            insert into dream_runs(cycle_id, status, provider, created_at)
+            values (1, 'running', 'test', '2026-06-09T00:00:00+00:00')
+            """
+        ).lastrowid
+        audit_id = conn.execute(
+            """
+            insert into dream_audit_entries(
+              dream_run_id,
+              phase_run_id,
+              event_type,
+              severity,
+              summary,
+              payload_json,
+              created_at
+            )
+            values (?, null, 'provider_output', 'warning', 'malformed', ?, ?)
+            """,
+            (dream_run_id, "{not json", "2026-06-09T00:00:00+00:00"),
+        ).lastrowid
+        conn.commit()
+
+    snapshot = store.snapshot("Dream Audits", selected_id=audit_id)
+
+    assert snapshot.detail.title == "provider_output: malformed"
+    assert '"_invalid_json": "{not json"' in snapshot.detail.body
+
+
 def test_admin_exposes_crystal_provenance_and_recall_reason(
     config: HieronymusConfig,
 ) -> None:

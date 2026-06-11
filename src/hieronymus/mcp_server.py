@@ -272,7 +272,8 @@ def _recent_dream_audit_proposal_payloads(config: HieronymusConfig) -> list[dict
         proposals = payload.get("concept_proposals") if isinstance(payload, dict) else None
         if not isinstance(proposals, list):
             continue
-        for proposal in proposals:
+        row_id = int(row["id"])
+        for index, proposal in enumerate(proposals):
             if not isinstance(proposal, dict):
                 continue
             concept_text = _required_string(proposal.get("concept_text"))
@@ -288,7 +289,7 @@ def _recent_dream_audit_proposal_payloads(config: HieronymusConfig) -> list[dict
                 canonical_rendering = concept_text
             payloads.append(
                 {
-                    "id": int(row["id"]),
+                    "id": f"{row_id}-{index}",
                     "series_slug": _optional_string(proposal.get("series_slug")),
                     "source_language": _optional_string(proposal.get("source_language")),
                     "target_language": _optional_string(proposal.get("target_language")),
@@ -495,12 +496,13 @@ def hieronymus_concept_facet_add(
 ) -> dict[str, Any]:
     """Add a multilingual concept facet."""
     config = _load_validated_config()
+    storage_kind = None if facet_type and kind == "name" else kind
     facet = ConceptStore(config).add_facet(
         concept_id,
         value,
         language=language,
         language_tags=language_tags or (),
-        kind=kind,
+        kind=storage_kind,
         facet_type=facet_type,
         confidence=confidence,
         source_crystal_id=source_crystal_id,
