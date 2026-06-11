@@ -4,7 +4,9 @@ from hieronymus.admin import ADMIN_VIEWS, AdminStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_audit import DreamAuditStore
 from hieronymus.dream_locks import dream_cycle_lock
+from hieronymus.dreaming import DreamRunRecord
 from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
@@ -73,6 +75,45 @@ def test_status_payload_reports_admin_counts(config: HieronymusConfig) -> None:
     assert payload["counts"]["sessions"] == 1
     assert payload["counts"]["pending_proposals"] == 0
     assert payload["service"]["running"] is False
+    assert payload["short_term_status"]["pending_count"] == 0
+    assert payload["short_term_status"]["urgent"] is False
+    assert payload["dream_status"] == {
+        "state": "DISABLED",
+        "current_phase": "",
+        "progress": 0.0,
+        "run_id": None,
+        "cycle_id": None,
+        "owner": "",
+        "started_at": "",
+    }
+    assert "concepts" in payload["view_keys"]
+    assert "dream_audits" in payload["view_keys"]
+
+
+def test_status_payload_survives_malformed_dream_config(
+    config: HieronymusConfig,
+) -> None:
+    config.config_root.mkdir(parents=True)
+    config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
+
+    payload = AdminStore(config).status_payload()
+
+    assert payload["short_term_status"] == {
+        "pending_count": 0,
+        "min_pending_short_term_memories": 20,
+        "max_pending_short_term_memories": 200,
+        "urgent": False,
+        "drain_in_progress": False,
+        "drain_completed": 0,
+        "drain_remaining": 0,
+        "drain_total": 0,
+        "drain_progress": 0.0,
+    }
+    assert payload["dream_status"]["state"] == "DISABLED"
+    assert payload["dream_status"]["current_phase"] == ""
+    assert payload["dream_status"]["progress"] == 0.0
+    assert "dream.conf is not valid TOML" in payload["dream_status"]["reason"]
+    assert "dream.conf is not valid TOML" in payload["dream_config_error"]
 
 
 def test_list_crystals_filters_by_series_type_status_and_tags(
@@ -203,6 +244,91 @@ def test_snapshot_smoke_for_admin_views(config: HieronymusConfig, view: str) -> 
     assert snapshot.view == view
 
 
+def test_admin_snapshot_exposes_dream_audit_entries(config: HieronymusConfig) -> None:
+    store = AdminStore(config)
+    with connect(config.database_path) as conn:
+        cursor = conn.execute(
+            """
+            insert into dream_runs(cycle_id, status, provider, created_at)
+            values (1, 'running', 'test', '2026-06-09T00:00:00+00:00')
+            """
+        )
+        dream_run_id = int(cursor.lastrowid)
+        conn.commit()
+    audit_id = DreamAuditStore(config).append(
+        dream_run_id=dream_run_id,
+        phase_run_id=None,
+        event_type="provider_request",
+        severity="warning",
+        summary="sent request",
+        payload={
+            "model": "claude-test",
+            "headers": {"Authorization": "Bearer secret"},
+        },
+    )
+
+    snapshot = store.snapshot("Dream Audits", selected_id=audit_id)
+
+    assert snapshot.view == "Dream Audits"
+    assert snapshot.selected is not None
+    assert snapshot.selected.id == audit_id
+    assert snapshot.selected.kind == "dream audit"
+    assert snapshot.selected.label == "provider_request: sent request"
+    assert snapshot.selected.status == "warning"
+    assert snapshot.selected.scope == f"dream:{dream_run_id}"
+    assert snapshot.detail.title == "provider_request: sent request"
+    assert snapshot.detail.subtitle == "warning"
+    assert snapshot.detail.fields == (
+        ("Dream run", str(dream_run_id)),
+        ("Phase run", ""),
+        ("Severity", "warning"),
+        ("Created", snapshot.selected.quality_label),
+    )
+    assert snapshot.detail.body == (
+        '{\n  "headers": {\n    "Authorization": "[REDACTED]"\n  },\n  "model": "claude-test"\n}'
+    )
+
+
+def test_snapshot_accepts_machine_view_key(config: HieronymusConfig) -> None:
+    snapshot = AdminStore(config).snapshot("dream_audits")
+
+    assert snapshot.view == "Dream Audits"
+
+
+def test_dream_audit_detail_survives_malformed_payload_json(
+    config: HieronymusConfig,
+) -> None:
+    store = AdminStore(config)
+    with connect(config.database_path) as conn:
+        dream_run_id = conn.execute(
+            """
+            insert into dream_runs(cycle_id, status, provider, created_at)
+            values (1, 'running', 'test', '2026-06-09T00:00:00+00:00')
+            """
+        ).lastrowid
+        audit_id = conn.execute(
+            """
+            insert into dream_audit_entries(
+              dream_run_id,
+              phase_run_id,
+              event_type,
+              severity,
+              summary,
+              payload_json,
+              created_at
+            )
+            values (?, null, 'provider_output', 'warning', 'malformed', ?, ?)
+            """,
+            (dream_run_id, "{not json", "2026-06-09T00:00:00+00:00"),
+        ).lastrowid
+        conn.commit()
+
+    snapshot = store.snapshot("Dream Audits", selected_id=audit_id)
+
+    assert snapshot.detail.title == "provider_output: malformed"
+    assert '"_invalid_json": "{not json"' in snapshot.detail.body
+
+
 def test_admin_exposes_crystal_provenance_and_recall_reason(
     config: HieronymusConfig,
 ) -> None:
@@ -275,7 +401,73 @@ def test_admin_runs_manual_dreaming_and_reviews_outputs(
     assert audit["note"] == f"Manual dream run {run.cycle_id} with provider deterministic"
 
 
+def test_admin_manual_dreaming_runs_without_completed_pending_memory(
+    config: HieronymusConfig,
+) -> None:
+    admin = AdminStore(config)
+
+    run = admin.run_manual_dreaming()
+
+    with connect(config.database_path) as conn:
+        row = conn.execute("select * from dream_runs where id = ?", (run.id,)).fetchone()
+    assert row["status"] == "completed"
+    assert row["input_count"] == 0
+
+
+def test_admin_manual_dreaming_uses_ignore_minimum_when_pending_exists(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Manual dreaming should bypass the service minimum.",
+    )
+    workspace.complete_session(session.id)
+    calls: dict[str, object] = {}
+
+    class FakeDreamService:
+        def __init__(self, config: HieronymusConfig, provider: object) -> None:
+            calls["config"] = config
+            calls["provider"] = provider
+
+        def run_all(self, **kwargs: object) -> DreamRunRecord:
+            calls["run_all"] = kwargs
+            return DreamRunRecord(
+                id=123,
+                cycle_id=456,
+                status="completed",
+                provider="fake",
+                input_count=1,
+                created_crystal_count=0,
+                proposal_count=0,
+            )
+
+    monkeypatch.setattr("hieronymus.admin.DreamService", FakeDreamService)
+
+    run = AdminStore(config).run_manual_dreaming()
+
+    assert calls["config"] == config
+    assert calls["run_all"] == {"owner": "admin", "ignore_minimum": True}
+    assert run.id == 123
+
+
 def test_admin_manual_dreaming_uses_shared_cycle_guard(config: HieronymusConfig) -> None:
+    context = _context(config)
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="lesson",
+        text="Pending memory lets the lock guard run.",
+    )
+    workspace.complete_session(session.id)
+
     with dream_cycle_lock(config, owner="manual"):
         with pytest.raises(ValueError, match="dream cycle already running"):
             AdminStore(config).run_manual_dreaming()

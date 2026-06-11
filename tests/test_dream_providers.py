@@ -3,18 +3,22 @@ from __future__ import annotations
 import json
 import urllib.error
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import ProviderProfile, default_dream_config, save_dream_config
 from hieronymus.dream_providers import (
     ANTHROPIC_API_VERSION,
     HTTPResponse,
     ProviderCheckResult,
     ProviderRegistry,
     UrllibTransport,
+    resolve_profile_provider,
     resolve_provider,
 )
+from hieronymus.llm_cache import CachedModels, ModelCacheEntry, load_model_cache, save_model_cache
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.settings import (
     DreamingSettings,
@@ -231,6 +235,463 @@ def test_provider_check_uses_unsaved_in_memory_settings(config, monkeypatch):
     assert "draft-secret" not in repr(result.to_json_dict())
 
 
+def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> None:
+    class Transport:
+        def __init__(self):
+            self.requests = []
+
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            self.requests.append({"url": url, "headers": headers, "timeout": timeout})
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"gpt-4.1-mini"},{"id":"gpt-4.1"}]}',
+            )
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = Transport()
+
+    result = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["gpt-4.1", "gpt-4.1-mini"],
+        "source": "api",
+        "error": "",
+    }
+    assert transport.requests[0]["url"] == "https://api.openai.com/v1/models"
+    assert "secret-openai" not in repr(result.to_json_dict())
+
+
+def test_deterministic_model_suggestions_ignore_malformed_settings(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.settings_path.write_text("[dreaming\n", encoding="utf-8")
+
+    result = ProviderRegistry().list_model_suggestions(config, "deterministic")
+
+    assert result.to_json_dict() == {
+        "provider": "deterministic",
+        "models": [""],
+        "source": "defaults",
+        "error": "",
+    }
+    assert not config.llm_cache_path.exists()
+
+
+def test_anthropic_model_suggestions_ignore_malformed_settings_and_cache_defaults(
+    tmp_path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.settings_path.write_text("[dreaming\n", encoding="utf-8")
+
+    result = ProviderRegistry().list_model_suggestions(config, "anthropic")
+
+    assert result.to_json_dict() == {
+        "provider": "anthropic",
+        "models": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
+        "source": "defaults",
+        "error": "",
+    }
+    assert load_model_cache(config).providers["anthropic"].models == tuple(result.models)
+
+
+def test_model_suggestions_use_fresh_cache_without_network(tmp_path, monkeypatch) -> None:
+    class PrimingTransport:
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"cached-a"},{"id":"cached-b"}]}',
+            )
+
+    class CachedTransport:
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for cached suggestions")
+
+        def get_json(self, *args, **kwargs):
+            raise AssertionError("get_json should not be used for cached suggestions")
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+
+    ProviderRegistry(PrimingTransport()).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+
+    result = ProviderRegistry(CachedTransport()).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["cached-a", "cached-b"],
+        "source": "llmcache.tmp",
+        "error": "",
+    }
+
+
+def test_model_suggestions_refresh_after_cached_error_resolves(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class Transport:
+        def __init__(self):
+            self.requests = []
+
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            self.requests.append({"url": url, "headers": headers, "timeout": timeout})
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"fresh-after-error"}]}',
+            )
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    transport = Transport()
+
+    first = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    second = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+
+    assert first.error == "missing environment variable: OPENAI_API_KEY"
+    assert second.to_json_dict() == {
+        "provider": "openai",
+        "models": ["fresh-after-error"],
+        "source": "api",
+        "error": "",
+    }
+    assert transport.requests[0]["url"] == "https://api.openai.com/v1/models"
+    assert load_model_cache(config).providers["openai"].error == ""
+
+
+def test_model_suggestions_return_api_result_when_cache_save_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class Transport:
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"fresh-without-cache"}]}',
+            )
+
+    def fail_save(*args, **kwargs):
+        raise PermissionError("cache is not writable")
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = load_settings(config)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    monkeypatch.setattr("hieronymus.dream_providers.save_model_cache", fail_save)
+
+    result = ProviderRegistry(Transport()).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["fresh-without-cache"],
+        "source": "api",
+        "error": "",
+    }
+
+
+def test_model_suggestions_refresh_and_save_stale_cache(tmp_path, monkeypatch) -> None:
+    class Transport:
+        def __init__(self):
+            self.requests = []
+
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            self.requests.append({"url": url, "headers": headers, "timeout": timeout})
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"fresh-model"}]}',
+            )
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="openai",
+                models=("stale-model",),
+                fetched_at=(datetime.now(UTC) - timedelta(hours=24)).isoformat(),
+            )
+        ),
+    )
+    settings = load_settings(config)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = Transport()
+
+    result = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings,
+    )
+
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["fresh-model"],
+        "source": "api",
+        "error": "",
+    }
+    assert transport.requests[0]["url"] == "https://api.openai.com/v1/models"
+    assert load_model_cache(config).providers["openai"].models == ("fresh-model",)
+
+
+def test_model_suggestions_refresh_when_openai_base_url_changes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class Transport:
+        def __init__(self):
+            self.requests = []
+
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            self.requests.append({"url": url, "headers": headers, "timeout": timeout})
+            if url == "https://a.example.test/v1/models":
+                return HTTPResponse(
+                    status=200,
+                    body='{"data":[{"id":"model-from-a"}]}',
+                )
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"model-from-b"}]}',
+            )
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    saved = load_settings(config)
+    settings_a = saved.with_provider(
+        "openai",
+        replace(
+            saved.providers["openai"],
+            base_url="https://a.example.test/v1",
+        ),
+    )
+    settings_b = saved.with_provider(
+        "openai",
+        replace(
+            saved.providers["openai"],
+            base_url="https://b.example.test/v1",
+        ),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = Transport()
+
+    first = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings_a,
+    )
+    result = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings_b,
+    )
+
+    assert first.models == ["model-from-a"]
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["model-from-b"],
+        "source": "api",
+        "error": "",
+    }
+    assert [request["url"] for request in transport.requests] == [
+        "https://a.example.test/v1/models",
+        "https://b.example.test/v1/models",
+    ]
+
+
+def test_model_suggestions_refresh_when_openai_api_key_env_changes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class Transport:
+        def __init__(self):
+            self.requests = []
+
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            self.requests.append({"url": url, "headers": headers, "timeout": timeout})
+            if headers["Authorization"] == "Bearer secret-a":
+                return HTTPResponse(
+                    status=200,
+                    body='{"data":[{"id":"model-from-key-a"}]}',
+                )
+            return HTTPResponse(
+                status=200,
+                body='{"data":[{"id":"model-from-key-b"}]}',
+            )
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    saved = load_settings(config)
+    settings_a = saved.with_provider(
+        "openai",
+        replace(saved.providers["openai"], api_key_env="OPENAI_KEY_A"),
+    )
+    settings_b = saved.with_provider(
+        "openai",
+        replace(saved.providers["openai"], api_key_env="OPENAI_KEY_B"),
+    )
+    monkeypatch.setenv("OPENAI_KEY_A", "secret-a")
+    monkeypatch.setenv("OPENAI_KEY_B", "secret-b")
+    transport = Transport()
+
+    first = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings_a,
+    )
+    result = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "openai",
+        settings=settings_b,
+    )
+
+    assert first.models == ["model-from-key-a"]
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["model-from-key-b"],
+        "source": "api",
+        "error": "",
+    }
+    assert [request["headers"]["Authorization"] for request in transport.requests] == [
+        "Bearer secret-a",
+        "Bearer secret-b",
+    ]
+
+
+def test_model_suggestions_refresh_when_gemini_api_key_env_changes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class Transport:
+        def __init__(self):
+            self.requests = []
+
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("post_json should not be used for model suggestions")
+
+        def get_json(self, url, *, headers, timeout):
+            self.requests.append({"url": url, "headers": headers, "timeout": timeout})
+            if headers["x-goog-api-key"] == "secret-a":
+                return HTTPResponse(
+                    status=200,
+                    body='{"models":[{"name":"models/gemini-from-key-a"}]}',
+                )
+            return HTTPResponse(
+                status=200,
+                body='{"models":[{"name":"models/gemini-from-key-b"}]}',
+            )
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    saved = load_settings(config)
+    settings_a = saved.with_provider(
+        "gemini",
+        replace(saved.providers["gemini"], api_key_env="GEMINI_KEY_A"),
+    )
+    settings_b = saved.with_provider(
+        "gemini",
+        replace(saved.providers["gemini"], api_key_env="GEMINI_KEY_B"),
+    )
+    monkeypatch.setenv("GEMINI_KEY_A", "secret-a")
+    monkeypatch.setenv("GEMINI_KEY_B", "secret-b")
+    transport = Transport()
+
+    first = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "gemini",
+        settings=settings_a,
+    )
+    result = ProviderRegistry(transport).list_model_suggestions(
+        config,
+        "gemini",
+        settings=settings_b,
+    )
+
+    assert first.models == ["gemini-from-key-a"]
+    assert result.to_json_dict() == {
+        "provider": "gemini",
+        "models": ["gemini-from-key-b"],
+        "source": "api",
+        "error": "",
+    }
+    assert [request["headers"]["x-goog-api-key"] for request in transport.requests] == [
+        "secret-a",
+        "secret-b",
+    ]
+
+
+def test_anthropic_model_suggestions_cache_default_hints(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    result = ProviderRegistry().list_model_suggestions(config, "anthropic")
+
+    assert result.source == "defaults"
+    assert load_model_cache(config).providers["anthropic"].models == tuple(result.models)
+
+
+def test_anthropic_model_suggestions_return_defaults_when_cache_save_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    def fail_save(*args, **kwargs):
+        raise FileExistsError("cache temp path already exists")
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    monkeypatch.setattr("hieronymus.dream_providers.save_model_cache", fail_save)
+
+    result = ProviderRegistry().list_model_suggestions(config, "anthropic")
+
+    assert result.to_json_dict() == {
+        "provider": "anthropic",
+        "models": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
+        "source": "defaults",
+        "error": "",
+    }
+
+
 def test_deterministic_check_passes_without_network(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
@@ -318,6 +779,145 @@ def test_resolve_provider_rejects_disabled_provider(tmp_path) -> None:
         raise AssertionError("disabled provider should fail")
 
 
+def test_resolve_profile_provider_rejects_missing_profile(config: HieronymusConfig) -> None:
+    with pytest.raises(ValueError, match="referenced provider profile is missing: missing"):
+        resolve_profile_provider(config, "missing", model="model")
+
+
+def test_resolve_profile_provider_rejects_missing_model(config: HieronymusConfig) -> None:
+    with pytest.raises(
+        ValueError,
+        match="model must not be empty for provider profile: openai",
+    ):
+        resolve_profile_provider(config, "openai", model=" ")
+
+
+def test_resolve_profile_provider_requires_plaintext_api_key_for_non_ollama(
+    config: HieronymusConfig,
+) -> None:
+    with pytest.raises(ValueError, match="API key missing for provider profile: openai"):
+        resolve_profile_provider(config, "openai", model="gpt-4.1-mini")
+
+
+@pytest.mark.parametrize(
+    ("profile_name", "profile", "model", "response_body", "expected"),
+    [
+        (
+            "openai",
+            ProviderProfile(
+                type="openai",
+                endpoint="https://openai.example.test/v1",
+                api_key="plain-openai",
+                timeout_seconds=6.5,
+            ),
+            "gpt-profile",
+            lambda: json.dumps({"choices": [{"message": {"content": json.dumps(_llm_payload())}}]}),
+            {
+                "url": "https://openai.example.test/v1/chat/completions",
+                "header": "Authorization",
+                "value": "Bearer plain-openai",
+            },
+        ),
+        (
+            "anthropic",
+            ProviderProfile(
+                type="anthropic",
+                endpoint="https://anthropic.example.test",
+                api_key="plain-anthropic",
+                timeout_seconds=7.5,
+            ),
+            "claude-profile",
+            lambda: json.dumps({"content": [{"type": "text", "text": json.dumps(_llm_payload())}]}),
+            {
+                "url": "https://anthropic.example.test/v1/messages",
+                "header": "x-api-key",
+                "value": "plain-anthropic",
+            },
+        ),
+        (
+            "gemini",
+            ProviderProfile(
+                type="gemini",
+                endpoint="https://gemini.example.test",
+                api_key="plain-gemini",
+                timeout_seconds=8.5,
+            ),
+            "gemini-profile",
+            lambda: json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": json.dumps(_llm_payload())}]}}]}
+            ),
+            {
+                "url": "https://gemini.example.test/v1beta/models/gemini-profile:generateContent",
+                "header": "x-goog-api-key",
+                "value": "plain-gemini",
+            },
+        ),
+    ],
+)
+def test_resolve_profile_provider_uses_plaintext_api_key(
+    config: HieronymusConfig,
+    profile_name: str,
+    profile: ProviderProfile,
+    model: str,
+    response_body,
+    expected: dict[str, str],
+) -> None:
+    save_dream_config(config, default_dream_config().with_provider(profile_name, profile))
+    transport = FakeTransport(HTTPResponse(status=200, body=response_body()), [])
+
+    provider = resolve_profile_provider(
+        config,
+        profile_name,
+        model=model,
+        transport=transport,
+    )
+    output = provider.crystallize(_context(), [_memory()])
+
+    request = transport.requests[0]
+    assert output.crystals[0].title == "Compact UI Labels"
+    assert request["url"] == expected["url"]
+    assert request["headers"][expected["header"]] == expected["value"]
+    if "model" in request["payload"]:
+        assert request["payload"]["model"] == model
+    else:
+        assert model in request["url"]
+    assert request["timeout"] == profile.timeout_seconds
+
+
+def test_resolve_profile_provider_supports_native_ollama_without_api_key(
+    config: HieronymusConfig,
+) -> None:
+    save_dream_config(
+        config,
+        default_dream_config().with_provider(
+            "ollama",
+            ProviderProfile(
+                type="ollama",
+                endpoint="http://ollama.example.test",
+                timeout_seconds=4.5,
+            ),
+        ),
+    )
+    transport = FakeTransport(
+        HTTPResponse(
+            status=200,
+            body=json.dumps({"message": {"content": json.dumps(_llm_payload())}}),
+        ),
+        [],
+    )
+
+    provider = resolve_profile_provider(config, "ollama", model="gemma4-e3b", transport=transport)
+    output = provider.crystallize(_context(), [_memory()])
+
+    request = transport.requests[0]
+    assert output.concept_proposals[0].concept_text == "Sense"
+    assert request["url"] == "http://ollama.example.test/api/chat"
+    assert request["headers"] == {}
+    assert request["payload"]["model"] == "gemma4-e3b"
+    assert request["payload"]["stream"] is False
+    assert request["timeout"] == 4.5
+
+
 def _context() -> TranslationContext:
     return TranslationContext(
         series_slug="only-sense-online",
@@ -336,6 +936,39 @@ def _memory() -> ShortTermMemoryRecord:
         text="Use compact UI labels for inventory skill names.",
         source_ref="chapter 1",
         metadata={},
+    )
+
+
+def _typed_context() -> TranslationContext:
+    return TranslationContext(
+        series_slug="only-sense-online",
+        source_language="ja",
+        target_language="en",
+        task_type="translation",
+        volume="1",
+        chapter="2",
+        tags=("legacy-tag",),
+        language_tags=("ja", "en", "fr"),
+        story_scopes=("arc:academy",),
+        semantic_tags=("ui", "term"),
+    )
+
+
+def _typed_memory() -> ShortTermMemoryRecord:
+    return ShortTermMemoryRecord(
+        id=8,
+        session_id=3,
+        source_role="user",
+        kind="correction",
+        text="Use Sense as a game-system term.",
+        source_ref="chapter 2",
+        metadata={},
+        language_tags=("ja", "en"),
+        story_scopes=("arc:academy",),
+        semantic_tags=("term",),
+        source_credibility="user_rule",
+        rule_intent="terminology",
+        soft_origin="inline-correction",
     )
 
 
@@ -400,6 +1033,68 @@ def test_openai_provider_crystallizes_structured_response(tmp_path, monkeypatch)
     assert output.concept_proposals[0].source_form == "センス"
     assert transport.requests[0]["url"] == "https://api.openai.test/v1/chat/completions"
     assert transport.requests[0]["timeout"] == 12.5
+
+
+def test_openai_provider_prompt_includes_typed_context_and_memory_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    settings = (
+        load_settings(config)
+        .with_provider(
+            "openai",
+            ProviderSettings(
+                enabled=True,
+                model="gpt-4.1-mini",
+                api_key_env="OPENAI_API_KEY",
+                base_url="https://api.openai.test/v1",
+            ),
+        )
+        .with_dreaming(DreamingSettings(active_provider="openai"))
+    )
+    save_settings(config, settings)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    transport = FakeTransport(
+        HTTPResponse(
+            status=200,
+            body=json.dumps({"choices": [{"message": {"content": json.dumps(_llm_payload())}}]}),
+        ),
+        [],
+    )
+
+    provider = resolve_provider(config, transport=transport)
+    provider.crystallize(_typed_context(), [_typed_memory()])
+
+    request_payload = transport.requests[0]["payload"]
+    prompt = json.loads(request_payload["messages"][0]["content"])
+    assert prompt["context"] == {
+        "series_slug": "only-sense-online",
+        "source_language": "ja",
+        "target_language": "en",
+        "task_type": "translation",
+        "volume": "1",
+        "chapter": "2",
+        "tags": ["legacy-tag"],
+        "language_tags": ["ja", "en", "fr"],
+        "story_scopes": ["arc:academy"],
+        "semantic_tags": ["ui", "term"],
+    }
+    assert prompt["memories"] == [
+        {
+            "id": 8,
+            "source_role": "user",
+            "kind": "correction",
+            "text": "Use Sense as a game-system term.",
+            "source_ref": "chapter 2",
+            "language_tags": ["ja", "en"],
+            "story_scopes": ["arc:academy"],
+            "semantic_tags": ["term"],
+            "source_credibility": "user_rule",
+            "rule_intent": "terminology",
+            "soft_origin": "inline-correction",
+        }
+    ]
 
 
 def test_gemini_provider_crystallizes_structured_response(tmp_path, monkeypatch) -> None:
@@ -473,6 +1168,61 @@ def test_anthropic_provider_crystallizes_structured_response(
     assert output.crystals[0].confidence == 0.8
     assert transport.requests[0]["headers"]["x-api-key"] == "secret-anthropic"
     assert transport.requests[0]["headers"]["anthropic-version"] == ANTHROPIC_API_VERSION
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "settings", "response_body", "expected_url"),
+    [
+        (
+            "gemini",
+            ProviderSettings(
+                enabled=True,
+                model="gemini-2.5-flash",
+                api_key_env="GEMINI_API_KEY",
+                base_url="https://untrusted.example.test",
+            ),
+            json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": json.dumps(_llm_payload())}]}}]}
+            ),
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "gemini-2.5-flash:generateContent",
+        ),
+        (
+            "anthropic",
+            ProviderSettings(
+                enabled=True,
+                model="claude-3-5-haiku-latest",
+                api_key_env="ANTHROPIC_API_KEY",
+                base_url="https://untrusted.example.test",
+            ),
+            json.dumps({"content": [{"type": "text", "text": json.dumps(_llm_payload())}]}),
+            "https://api.anthropic.com/v1/messages",
+        ),
+    ],
+)
+def test_legacy_gemini_and_anthropic_ignore_configured_base_url(
+    tmp_path,
+    monkeypatch,
+    provider_name: str,
+    settings: ProviderSettings,
+    response_body: str,
+    expected_url: str,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    saved = (
+        load_settings(config)
+        .with_provider(provider_name, settings)
+        .with_dreaming(DreamingSettings(active_provider=provider_name))
+    )
+    save_settings(config, saved)
+    monkeypatch.setenv(settings.api_key_env, f"secret-{provider_name}")
+    transport = FakeTransport(HTTPResponse(status=200, body=response_body), [])
+
+    provider = resolve_provider(config, transport=transport)
+    provider.crystallize(_context(), [_memory()])
+
+    assert transport.requests[0]["url"] == expected_url
+    assert "untrusted.example.test" not in transport.requests[0]["url"]
 
 
 def test_llm_provider_rejects_invalid_json_response(tmp_path, monkeypatch) -> None:

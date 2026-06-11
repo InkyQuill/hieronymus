@@ -1,8 +1,11 @@
 import pytest
 
+from hieronymus.concepts import CONCEPT_ESTABLISHED, ConceptStore
+from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
+from hieronymus.rule_crystals import parse_rule_crystal
 from hieronymus.termbase import Termbase
 
 
@@ -45,19 +48,74 @@ def _propose_sense_name(termbase: Termbase) -> int:
     )
 
 
+def _assert_approval_rejected_atomically(termbase: Termbase, term_id: int) -> None:
+    with connect(termbase.config.database_path) as conn:
+        term = conn.execute("select status from strict_terms where id = ?", (term_id,)).fetchone()
+        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
+        audit_count = conn.execute("select count(*) from audit_log").fetchone()[0]
+
+    assert term["status"] == "pending"
+    assert crystal_count == 0
+    assert audit_count == 0
+
+
+def _add_rule_crystal(
+    termbase: Termbase,
+    text: str,
+    *,
+    semantic_tags: tuple[str, ...] = (),
+    status: str = "active",
+    link_concept: bool = True,
+) -> int:
+    concept_ids: tuple[int, ...] = ()
+    parsed = parse_rule_crystal(text)
+    if link_concept and parsed is not None:
+        concept = ConceptStore(termbase.config).create_concept(
+            parsed.source_text,
+            status=CONCEPT_ESTABLISHED,
+            confidence=0.95,
+            scope_type="series",
+            scope_key=termbase.context.scope_key,
+            semantic_tags=semantic_tags,
+        )
+        ConceptStore(termbase.config).add_facet(
+            concept.id,
+            parsed.source_text,
+            kind="name",
+            language_tags=(termbase.context.source_language,),
+            semantic_tags=semantic_tags,
+        )
+        concept_ids = (concept.id,)
+    return CrystalStore(termbase.config).add_crystal(
+        termbase.context,
+        crystal_type="rule",
+        text=text,
+        source_credibility="user_rule",
+        confidence=0.95,
+        strength=0.8,
+        semantic_tags=semantic_tags,
+        status=status,
+        concept_ids=concept_ids,
+    )
+
+
 def test_contract_returns_terms_found_in_raw_text(config):
     termbase = _create_termbase(config)
-    term_id = _propose_sense_name(termbase)
-    termbase.add_alias(term_id, kind="forbidden_variant", text="Attack Increase", language="en")
-    termbase.approve(term_id)
+    crystal_id = _add_rule_crystal(
+        termbase,
+        "攻撃力上昇 is translated as ATK Up, not Attack Increase.",
+        semantic_tags=("sense",),
+    )
 
     contract = termbase.contract("ユンは攻撃力上昇を取るべきだと言われた。")
 
+    assert contract[0].id == crystal_id
+    assert contract[0].category == "rule"
     assert contract[0].source_text == "攻撃力上昇"
     assert contract[0].canonical_translation == "ATK Up"
     assert "Attack Increase" in contract[0].forbidden_variants
     assert contract[0].tags == ["sense"]
-    assert contract[0].notes == "OSO Sense name."
+    assert contract[0].notes == "攻撃力上昇 is translated as ATK Up, not Attack Increase."
 
 
 def test_add_alias_rejects_unknown_kind(config):
@@ -129,26 +187,267 @@ def test_approve_rejects_unknown_term(config):
         termbase.approve(404)
 
 
-def test_contract_matches_case_insensitive_source_variant(config):
+def test_approve_same_strict_term_twice_creates_one_rule_crystal(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+
+    termbase.approve(term_id)
+    termbase.approve(term_id)
+
+    contract = termbase.contract("ユンは攻撃力上昇を取るべきだと言われた。")
+    with connect(termbase.config.database_path) as conn:
+        active_rule_count = conn.execute(
+            """
+            select count(*)
+            from crystals
+            where crystal_type = 'rule'
+              and status = 'active'
+              and text = '攻撃力上昇 is translated as ATK Up.'
+            """
+        ).fetchone()[0]
+
+    assert active_rule_count == 1
+    assert len(contract) == 1
+    assert contract[0].source_text == "攻撃力上昇"
+
+
+def test_approve_strict_term_links_generated_rule_to_concept(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+
+    termbase.approve(term_id)
+
+    with connect(termbase.config.database_path) as conn:
+        row = conn.execute(
+            """
+            select
+              c.id as concept_id,
+              c.canonical_name,
+              cc.link_type,
+              f.value as source_facet,
+              r.value as rendering_facet
+            from crystals crystal
+            join crystal_concepts cc on cc.crystal_id = crystal.id
+            join concepts c on c.id = cc.concept_id
+            join concept_facets f
+              on f.concept_id = c.id
+             and f.facet_type = 'name'
+             and f.value = '攻撃力上昇'
+            join concept_facets r
+              on r.concept_id = c.id
+             and r.facet_type = 'rendering'
+             and r.value = 'ATK Up'
+            where crystal.crystal_type = 'rule'
+              and crystal.text = '攻撃力上昇 is translated as ATK Up.'
+            """,
+        ).fetchone()
+
+    assert row is not None
+    assert row["canonical_name"] == "攻撃力上昇"
+    assert row["link_type"] == "defines"
+    assert row["source_facet"] == "攻撃力上昇"
+    assert row["rendering_facet"] == "ATK Up"
+
+
+def test_approve_strict_term_selects_duplicate_concept_by_matching_tag(config):
+    termbase = _create_termbase(config)
+    concepts = ConceptStore(config)
+    unrelated = concepts.create_concept(
+        "攻撃力上昇",
+        status=CONCEPT_ESTABLISHED,
+        confidence=0.95,
+        scope_type="series",
+        scope_key=termbase.context.scope_key,
+        semantic_tags=("role:unrelated",),
+    )
+    matched = concepts.create_concept(
+        "攻撃力上昇",
+        status=CONCEPT_ESTABLISHED,
+        confidence=0.95,
+        scope_type="series",
+        scope_key=termbase.context.scope_key,
+        semantic_tags=("sense",),
+    )
+    term_id = _propose_sense_name(termbase)
+
+    termbase.approve(term_id)
+
+    with connect(termbase.config.database_path) as conn:
+        row = conn.execute(
+            """
+            select cc.concept_id
+            from crystals crystal
+            join crystal_concepts cc on cc.crystal_id = crystal.id
+            where crystal.text = '攻撃力上昇 is translated as ATK Up.'
+            """,
+        ).fetchone()
+
+    assert row["concept_id"] == matched.id
+    assert row["concept_id"] != unrelated.id
+
+
+def test_approve_strict_term_creates_concept_when_duplicate_name_has_no_tag_match(config):
+    termbase = _create_termbase(config)
+    concepts = ConceptStore(config)
+    first = concepts.create_concept(
+        "攻撃力上昇",
+        status=CONCEPT_ESTABLISHED,
+        confidence=0.95,
+        scope_type="series",
+        scope_key=termbase.context.scope_key,
+        semantic_tags=("role:first",),
+    )
+    second = concepts.create_concept(
+        "攻撃力上昇",
+        status=CONCEPT_ESTABLISHED,
+        confidence=0.95,
+        scope_type="series",
+        scope_key=termbase.context.scope_key,
+        semantic_tags=("role:second",),
+    )
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+    )
+
+    termbase.approve(term_id)
+
+    with connect(termbase.config.database_path) as conn:
+        linked = conn.execute(
+            """
+            select cc.concept_id
+            from crystals crystal
+            join crystal_concepts cc on cc.crystal_id = crystal.id
+            where crystal.text = '攻撃力上昇 is translated as ATK Up.'
+            """,
+        ).fetchone()
+        concept_count = conn.execute(
+            """
+            select count(*) as concept_count
+            from concepts
+            where canonical_name = '攻撃力上昇'
+              and scope_key = ?
+            """,
+            (termbase.context.scope_key,),
+        ).fetchone()
+
+    assert linked["concept_id"] not in {first.id, second.id}
+    assert concept_count["concept_count"] == 3
+
+
+def test_add_alias_rejects_approved_term(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+    termbase.approve(term_id)
+
+    with pytest.raises(
+        ValueError, match="approved term aliases must be represented as rule crystals"
+    ):
+        termbase.add_alias(
+            term_id,
+            kind="forbidden_variant",
+            text="Attack Increase",
+            language="en",
+        )
+
+
+def test_approve_rejects_source_variant_alias_atomically(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+    termbase.add_alias(term_id, kind="source_variant", text="攻撃バフ", language="ja")
+
+    with pytest.raises(ValueError, match="source_variant aliases are unsupported by rule crystals"):
+        termbase.approve(term_id)
+
+    _assert_approval_rejected_atomically(termbase, term_id)
+
+
+def test_approve_rejects_search_alias_atomically(config):
+    termbase = _create_termbase(config)
+    term_id = _propose_sense_name(termbase)
+    termbase.add_alias(term_id, kind="search_alias", text="attack buff", language="en")
+
+    with pytest.raises(ValueError, match="search_alias aliases are unsupported by rule crystals"):
+        termbase.approve(term_id)
+
+    _assert_approval_rejected_atomically(termbase, term_id)
+
+
+def test_approve_rejects_case_insensitive_forbidden_alias_atomically(config):
     termbase = _create_termbase(config)
     term_id = _propose_sense_name(termbase)
     termbase.add_alias(
         term_id,
-        kind="source_variant",
-        text="atk boost",
+        kind="forbidden_variant",
+        text="Attack Increase",
         language="en",
         case_sensitive=False,
     )
-    termbase.approve(term_id)
+
+    with pytest.raises(
+        ValueError, match="case-insensitive aliases are unsupported by rule crystals"
+    ):
+        termbase.approve(term_id)
+
+    _assert_approval_rejected_atomically(termbase, term_id)
+
+
+def test_approve_rejects_canonical_with_rule_delimiter_atomically(config):
+    termbase = _create_termbase(config)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up, not Attack Increase",
+    )
+
+    with pytest.raises(ValueError, match="rule crystal text cannot round-trip parsed fields"):
+        termbase.approve(term_id)
+
+    _assert_approval_rejected_atomically(termbase, term_id)
+
+
+def test_approve_rejects_source_with_rule_delimiter_atomically(config):
+    termbase = _create_termbase(config)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="Attack Up is translated as Attack Increase",
+        canonical_translation="ATK Up",
+    )
+
+    with pytest.raises(ValueError, match="rule crystal text cannot round-trip parsed fields"):
+        termbase.approve(term_id)
+
+    _assert_approval_rejected_atomically(termbase, term_id)
+
+
+def test_contract_matches_case_insensitive_source_variant(config):
+    termbase = _create_termbase(config)
+    _add_rule_crystal(termbase, "atk boost is translated as ATK Up.")
 
     contract = termbase.contract("Yun should take ATK BOOST.")
 
     assert [term.canonical_translation for term in contract] == ["ATK Up"]
 
 
+def test_unlinked_rule_crystal_remains_out_of_contract(config):
+    termbase = _create_termbase(config)
+    _add_rule_crystal(
+        termbase,
+        "atk boost is translated as ATK Up.",
+        link_concept=False,
+    )
+
+    assert termbase.contract("Yun should take ATK BOOST.") == []
+
+
 def test_contract_excludes_pending_terms(config):
     termbase = _create_termbase(config)
-    _propose_sense_name(termbase)
+    _add_rule_crystal(
+        termbase,
+        "攻撃力上昇 is translated as ATK Up.",
+        status="candidate",
+    )
 
     assert termbase.contract("ユンは攻撃力上昇を取るべきだと言われた。") == []
 
@@ -178,21 +477,49 @@ def test_contract_isolated_by_target_language(config):
 
 def test_contract_matches_source_variant(config):
     termbase = _create_termbase(config)
-    term_id = _propose_sense_name(termbase)
-    termbase.add_alias(term_id, kind="source_variant", text="攻撃バフ", language="ja")
-    termbase.approve(term_id)
+    _add_rule_crystal(termbase, "攻撃バフ is translated as ATK Up.")
 
     contract = termbase.contract("ユンは攻撃バフを取るべきだと言われた。")
 
-    assert [term.source_text for term in contract] == ["攻撃力上昇"]
+    assert [term.source_text for term in contract] == ["攻撃バフ"]
 
 
 def test_contract_returns_empty_list_when_no_terms_match(config):
     termbase = _create_termbase(config)
-    term_id = _propose_sense_name(termbase)
-    termbase.approve(term_id)
+    _add_rule_crystal(termbase, "攻撃力上昇 is translated as ATK Up.")
 
     assert termbase.contract("ユンは防御力上昇を取るべきだと言われた。") == []
+
+
+def test_rule_crystal_contract_includes_parsed_active_rule(config):
+    termbase = _create_termbase(config, target_language="ru")
+    crystal_id = _add_rule_crystal(
+        termbase,
+        "Cooking Talent is translated as Готовка, not Кулинария.",
+        semantic_tags=("translation-rule", "cooking"),
+    )
+
+    contract = termbase.contract("Cooking Talent")
+
+    assert len(contract) == 1
+    assert contract[0].id == crystal_id
+    assert contract[0].category == "rule"
+    assert contract[0].source_text == "Cooking Talent"
+    assert contract[0].canonical_translation == "Готовка"
+    assert contract[0].forbidden_variants == ["Кулинария"]
+    assert contract[0].tags == ["cooking", "translation-rule"]
+    assert contract[0].notes == "Cooking Talent is translated as Готовка, not Кулинария."
+
+
+def test_unparseable_rule_crystal_remains_out_of_contract(config):
+    termbase = _create_termbase(config, target_language="ru")
+    _add_rule_crystal(
+        termbase,
+        "Cooking Talent should usually become Готовка.",
+        semantic_tags=("translation-rule", "cooking"),
+    )
+
+    assert termbase.contract("Cooking Talent") == []
 
 
 def test_propose_maintains_terms_fts_row(config):

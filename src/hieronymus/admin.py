@@ -8,19 +8,34 @@ from hieronymus.admin_models import (
     ActionResult,
     AdminCrystalEditPayload,
     AdminDetail,
+    AdminDreamStatus,
     AdminRow,
+    AdminShortTermStatus,
     AdminSnapshot,
     AdminStats,
     DreamReview,
     ProvenanceDetail,
 )
+from hieronymus.concepts import ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
+from hieronymus.dream_config import (
+    DreamConfig,
+    DreamConfigError,
+    default_dream_config,
+    load_dream_config,
+    redacted_dream_config_payload,
+)
+from hieronymus.dream_locks import read_dream_cycle_state
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamRunRecord, DreamService
+from hieronymus.llm_cache import dream_profile_cache_identity, load_model_cache
 from hieronymus.memory_models import TranslationContext
+from hieronymus.presentation import GREETING_ICON, TAGLINE, package_version
+from hieronymus.rule_crystals import parse_rule_crystal
 from hieronymus.service_manager import ServiceManager
+from hieronymus.workspace import WorkspaceStore
 
 ADMIN_VIEWS = (
     "Concepts",
@@ -30,13 +45,102 @@ ADMIN_VIEWS = (
     "Short-Term Sessions",
     "Dream Runs",
     "Proposals",
+    "Dream Audits",
     "Audit Log",
 )
+ADMIN_VIEW_KEYS = (
+    "concepts",
+    "renderings",
+    "crystals",
+    "lessons",
+    "short_term_sessions",
+    "dream_runs",
+    "proposals",
+    "dream_audits",
+    "audit_log",
+)
+ADMIN_VIEW_LABELS = dict(zip(ADMIN_VIEW_KEYS, ADMIN_VIEWS, strict=True))
+ADMIN_LABEL_VIEW_KEYS = {label: key for key, label in ADMIN_VIEW_LABELS.items()}
 _ADMIN_IMMEDIATE_EVENT_DELTAS = {
     "confirmed_by_user": (0.15, 0.20),
     "contradicted_by_user": (-0.20, -0.25),
     "deleted_by_user": (-0.50, -0.35),
 }
+
+
+def admin_view_key(view: str) -> str:
+    return ADMIN_LABEL_VIEW_KEYS.get(view, view)
+
+
+def admin_view_label(view: str) -> str:
+    return ADMIN_VIEW_LABELS.get(view, view)
+
+
+def admin_view_options() -> list[dict[str, str]]:
+    return [
+        {"key": key, "label": label}
+        for key, label in zip(ADMIN_VIEW_KEYS, ADMIN_VIEWS, strict=True)
+    ]
+
+
+def _safe_dream_config(config: HieronymusConfig) -> tuple[DreamConfig, str]:
+    try:
+        return load_dream_config(config), ""
+    except DreamConfigError as error:
+        return default_dream_config(), str(error)
+
+
+def _rule_crystal_text(
+    source_form: str,
+    canonical_rendering: str,
+    forbidden_variants: list[str],
+) -> str:
+    if forbidden_variants:
+        return f"{source_form} is translated as {canonical_rendering}, not {forbidden_variants[0]}."
+    return f"{source_form} is translated as {canonical_rendering}."
+
+
+def _validate_rule_crystal_shape(
+    *,
+    source_form: str,
+    canonical_rendering: str,
+    approved_variants: list[str],
+    forbidden_variants: list[str],
+) -> None:
+    if len(forbidden_variants) > 1:
+        raise ValueError("rule crystals support at most one forbidden variant")
+    if any(variant != canonical_rendering for variant in approved_variants):
+        raise ValueError("approved variants that differ from canonical rendering are unsupported")
+    text = _rule_crystal_text(source_form, canonical_rendering, forbidden_variants)
+    parsed = parse_rule_crystal(text)
+    if (
+        parsed is None
+        or parsed.source_text != source_form
+        or parsed.canonical_translation != canonical_rendering
+        or parsed.forbidden_variants != forbidden_variants
+    ):
+        raise ValueError("rule crystal text cannot round-trip parsed fields")
+
+
+def _proposal_match_tags(proposal: sqlite3.Row, semantic_tags: tuple[str, ...]) -> tuple[str, ...]:
+    values: list[str] = list(semantic_tags)
+    for token in str(proposal["rationale"]).replace(",", " ").replace(".", " ").split():
+        clean = token.strip().casefold()
+        if clean:
+            values.append(clean)
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value not in seen:
+            result.append(value)
+            seen.add(value)
+    return tuple(result)
+
+
+def _tag_score(candidate_tags: tuple[str, ...], wanted_tags: tuple[str, ...]) -> int:
+    return len(set(candidate_tags).intersection(wanted_tags))
+
+
 _ARCHIVE_STRENGTH_THRESHOLD = 0.05
 
 
@@ -49,9 +153,205 @@ class AdminStore:
     def status_payload(self) -> dict[str, object]:
         return {
             "tui": "available",
+            "header": self.header_status_payload(),
             "views": list(ADMIN_VIEWS),
+            "view_keys": list(ADMIN_VIEW_KEYS),
+            "view_labels": dict(ADMIN_VIEW_LABELS),
+            "view_options": admin_view_options(),
             "counts": self.stats().as_dict(),
             "service": ServiceManager(self.config).status(),
+            **self.dashboard_status_payload(),
+        }
+
+    def header_status_payload(self) -> dict[str, object]:
+        return {
+            "product": "Hieronymus",
+            "version": package_version(),
+            "tagline": TAGLINE,
+            "logo": {
+                "text": GREETING_ICON,
+                "name": "feather",
+                "alt": "Hieronymus feather logo",
+            },
+        }
+
+    def dashboard_status_payload(self) -> dict[str, object]:
+        dream_config, dream_config_error = _safe_dream_config(self.config)
+        pending_count = self.pending_completed_short_term_memory_count()
+        drain_progress = self._dream_drain_progress(pending_count)
+        dream_status = self._dream_status(dream_config).as_dict()
+        if dream_config_error:
+            dream_status["reason"] = dream_config_error
+        return {
+            "short_term_status": self._short_term_status(
+                dream_config,
+                pending_count,
+                drain_progress=drain_progress,
+            ).as_dict(),
+            "dream_status": dream_status,
+            "dream_config_error": dream_config_error,
+        }
+
+    def pending_completed_short_term_memory_count(self) -> int:
+        with connect(self.config.database_path) as conn:
+            row = conn.execute(
+                """
+                select count(*)
+                from short_term_memories
+                join task_sessions
+                  on task_sessions.id = short_term_memories.session_id
+                where task_sessions.status = 'completed'
+                  and short_term_memories.archived_at is null
+                """
+            ).fetchone()
+        return int(row[0])
+
+    def _short_term_status(
+        self,
+        dream_config: DreamConfig,
+        pending_count: int,
+        *,
+        drain_progress: dict[str, int | bool | float],
+    ) -> AdminShortTermStatus:
+        return AdminShortTermStatus(
+            pending_count=pending_count,
+            min_pending_short_term_memories=dream_config.min_pending_short_term_memories,
+            max_pending_short_term_memories=dream_config.max_pending_short_term_memories,
+            urgent=pending_count >= dream_config.max_pending_short_term_memories,
+            drain_in_progress=bool(drain_progress["in_progress"]),
+            drain_completed=int(drain_progress["completed"]),
+            drain_remaining=int(drain_progress["remaining"]),
+            drain_total=int(drain_progress["total"]),
+            drain_progress=float(drain_progress["progress"]),
+        )
+
+    def _dream_status(self, dream_config: DreamConfig) -> AdminDreamStatus:
+        active_cycle = read_dream_cycle_state(self.config)
+        with connect(self.config.database_path) as conn:
+            running_phase = conn.execute(
+                """
+                select
+                  p.*,
+                  r.id as dream_run_id,
+                  r.cycle_id as dream_cycle_id
+                from dream_phase_runs as p
+                join dream_runs as r
+                  on r.id = p.dream_run_id
+                where p.status = 'running'
+                order by p.id desc
+                limit 1
+                """
+            ).fetchone()
+            run = None
+            if running_phase is None:
+                run = conn.execute(
+                    """
+                    select *
+                    from dream_runs
+                    where status = 'running'
+                    order by id desc
+                    limit 1
+                    """
+                ).fetchone()
+            phase = running_phase
+            if run is not None:
+                phase = conn.execute(
+                    """
+                    select *
+                    from dream_phase_runs
+                    where dream_run_id = ?
+                    order by case status when 'running' then 0 else 1 end, id desc
+                    limit 1
+                    """,
+                    (run["id"],),
+                ).fetchone()
+
+        run_id = None
+        cycle_id = None
+        if running_phase is not None:
+            run_id = int(running_phase["dream_run_id"])
+            cycle_id = int(running_phase["dream_cycle_id"])
+        elif run is not None:
+            run_id = int(run["id"])
+            cycle_id = int(run["cycle_id"])
+
+        if active_cycle is None and run_id is None:
+            state = "IDLE" if dream_config.enabled else "DISABLED"
+            return AdminDreamStatus(state=state, current_phase="", progress=0.0)
+
+        current_phase = "starting" if phase is None else phase["phase"]
+        return AdminDreamStatus(
+            state="WORKING",
+            current_phase=current_phase,
+            progress=self._phase_progress(current_phase),
+            run_id=run_id,
+            cycle_id=cycle_id,
+            owner="" if active_cycle is None else active_cycle.owner,
+            started_at="" if active_cycle is None else active_cycle.started_at,
+        )
+
+    def _phase_progress(self, current_phase: str) -> float:
+        if current_phase == "starting":
+            return 0.0
+        if current_phase == "maintenance":
+            return 0.9
+        drain = self._dream_drain_progress(self.pending_completed_short_term_memory_count())
+        if int(drain["total"]) > 0:
+            return float(drain["progress"])
+        return 0.5
+
+    def _dream_drain_progress(self, pending_count: int) -> dict[str, int | bool | float]:
+        with connect(self.config.database_path) as conn:
+            running_phase = conn.execute(
+                """
+                select dream_run_id
+                from dream_phase_runs
+                where status = 'running'
+                order by id desc
+                limit 1
+                """
+            ).fetchone()
+            run_id = None
+            if running_phase is not None:
+                run_id = int(running_phase["dream_run_id"])
+            else:
+                run = conn.execute(
+                    """
+                    select id
+                    from dream_runs
+                    where status = 'running'
+                    order by id desc
+                    limit 1
+                    """
+                ).fetchone()
+                if run is not None:
+                    run_id = int(run["id"])
+            if run_id is None and read_dream_cycle_state(self.config) is None:
+                return {
+                    "in_progress": False,
+                    "completed": 0,
+                    "remaining": pending_count,
+                    "total": pending_count,
+                    "progress": 0.0,
+                }
+            completed_row = conn.execute(
+                """
+                select coalesce(sum(input_count), 0) as input_count
+                from dream_phase_runs
+                where dream_run_id = ?
+                  and status = 'completed'
+                """,
+                (-1 if run_id is None else run_id,),
+            ).fetchone()
+        completed = int(completed_row["input_count"]) if completed_row is not None else 0
+        total = completed + pending_count
+        progress = 1.0 if total == 0 else completed / total
+        return {
+            "in_progress": True,
+            "completed": completed,
+            "remaining": pending_count,
+            "total": total,
+            "progress": round(progress, 4),
         }
 
     def provenance_for_crystal(self, crystal_id: int) -> ProvenanceDetail:
@@ -144,8 +444,262 @@ class AdminStore:
         self._audit("add", "crystal", crystal_id, note="Added from admin TUI")
         return crystal_id
 
+    def list_concepts(self) -> list[dict[str, object]]:
+        return [
+            self._concept_payload(record) for record in ConceptStore(self.config).list_concepts()
+        ]
+
+    def concept_detail(self, concept_id: int) -> dict[str, object]:
+        concepts = ConceptStore(self.config)
+        concept = concepts.get(concept_id)
+        return {
+            **self._concept_payload(concept),
+            "facets": [self._facet_payload(facet) for facet in concepts.list_facets(concept_id)],
+        }
+
+    def add_concept(
+        self,
+        *,
+        canonical_name: str,
+        description: str = "",
+        status: str = "candidate",
+        confidence: float = 0.2,
+        scope_type: str = "global",
+        scope_key: str = "",
+        semantic_tags: tuple[str, ...] = (),
+    ) -> ActionResult:
+        record = ConceptStore(self.config).create_concept(
+            canonical_name,
+            description=description,
+            status=status,
+            confidence=confidence,
+            scope_type=scope_type,
+            scope_key=scope_key,
+            semantic_tags=semantic_tags,
+        )
+        self._audit("add", "concept", record.id, note="Added from admin contract")
+        return ActionResult("concept", record.id, "add", "Concept added")
+
+    def update_concept(
+        self,
+        concept_id: int,
+        *,
+        description: str | None = None,
+        status: str | None = None,
+        confidence: float | None = None,
+    ) -> ActionResult:
+        ConceptStore(self.config).update_concept(
+            concept_id,
+            description=description,
+            status=status,
+            confidence=confidence,
+        )
+        self._audit("edit", "concept", concept_id, note="Edited from admin contract")
+        return ActionResult("concept", concept_id, "edit", "Concept edited")
+
+    def reinforce_concept(self, concept_id: int, *, evidence: str) -> ActionResult:
+        concepts = ConceptStore(self.config)
+        record = concepts.get(concept_id)
+        concepts.update_concept(concept_id, confidence=_clamp_score(record.confidence + 0.15))
+        self._audit("reinforce", "concept", concept_id, note=evidence)
+        return ActionResult("concept", concept_id, "reinforce", "Concept reinforced")
+
+    def decay_concept(self, concept_id: int, *, evidence: str) -> ActionResult:
+        concepts = ConceptStore(self.config)
+        record = concepts.get(concept_id)
+        concepts.update_concept(concept_id, confidence=_clamp_score(record.confidence - 0.15))
+        self._audit("decay", "concept", concept_id, note=evidence)
+        return ActionResult("concept", concept_id, "decay", "Concept decayed")
+
+    def rename_concept(self, concept_id: int, *, canonical_name: str) -> ActionResult:
+        ConceptStore(self.config).rename_concept(concept_id, canonical_name)
+        self._audit("rename", "concept", concept_id, note="Renamed from admin contract")
+        return ActionResult("concept", concept_id, "rename", "Concept renamed")
+
+    def merge_concepts(
+        self,
+        source_concept_id: int,
+        target_concept_id: int,
+        *,
+        reason: str,
+    ) -> ActionResult:
+        ConceptStore(self.config).merge_concepts(source_concept_id, target_concept_id, reason)
+        self._audit("merge", "concept", source_concept_id, note=reason)
+        return ActionResult("concept", source_concept_id, "merge", "Concept merged")
+
+    def archive_concept(self, concept_id: int, *, reason: str) -> ActionResult:
+        ConceptStore(self.config).archive_concept(concept_id, reason)
+        self._audit("archive", "concept", concept_id, note=reason)
+        return ActionResult("concept", concept_id, "archive", "Concept archived")
+
+    def list_concept_facets(self, concept_id: int) -> list[dict[str, object]]:
+        return [
+            self._facet_payload(facet)
+            for facet in ConceptStore(self.config).list_facets(concept_id)
+        ]
+
+    def add_concept_facet(
+        self,
+        concept_id: int,
+        *,
+        value: str,
+        language: str = "",
+        language_tags: tuple[str, ...] = (),
+        kind: str | None = None,
+        facet_type: str | None = None,
+        confidence: float = 0.2,
+        source_crystal_id: int | None = None,
+        is_canonical: bool = False,
+        story_scopes: tuple[str, ...] = (),
+        semantic_tags: tuple[str, ...] = (),
+    ) -> ActionResult:
+        facet = ConceptStore(self.config).add_facet(
+            concept_id,
+            value,
+            language=language,
+            language_tags=language_tags,
+            kind=kind,
+            facet_type=facet_type,
+            confidence=confidence,
+            source_crystal_id=source_crystal_id,
+            is_canonical=is_canonical,
+            story_scopes=story_scopes,
+            semantic_tags=semantic_tags,
+        )
+        self._audit("add", "concept_facet", facet.id, note="Added from admin contract")
+        return ActionResult("concept_facet", facet.id, "add", "Concept facet added")
+
+    def update_concept_facet(
+        self,
+        facet_id: int,
+        *,
+        value: str | None = None,
+        language: str | None = None,
+        language_tags: tuple[str, ...] | None = None,
+        kind: str | None = None,
+        facet_type: str | None = None,
+        confidence: float | None = None,
+        source_crystal_id: int | None = None,
+        is_canonical: bool | None = None,
+        story_scopes: tuple[str, ...] | None = None,
+        semantic_tags: tuple[str, ...] | None = None,
+    ) -> ActionResult:
+        facet = ConceptStore(self.config).update_facet(
+            facet_id,
+            value=value,
+            language=language,
+            language_tags=language_tags,
+            kind=kind,
+            facet_type=facet_type,
+            confidence=confidence,
+            source_crystal_id=source_crystal_id,
+            is_canonical=is_canonical,
+            story_scopes=story_scopes,
+            semantic_tags=semantic_tags,
+        )
+        self._audit("edit", "concept_facet", facet.id, note="Edited from admin contract")
+        return ActionResult("concept_facet", facet.id, "edit", "Concept facet edited")
+
+    def set_canonical_concept_facet(self, concept_id: int, facet_id: int) -> ActionResult:
+        ConceptStore(self.config).set_canonical_facet(concept_id, facet_id)
+        self._audit("canonical", "concept_facet", facet_id, note="Set canonical from admin")
+        return ActionResult("concept_facet", facet_id, "canonical", "Canonical facet set")
+
+    def list_short_term_memories(self, *, limit: int = 200) -> list[dict[str, object]]:
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute(
+                """
+                select
+                  m.*,
+                  s.series_slug,
+                  s.source_language,
+                  s.target_language,
+                  s.status as session_status
+                from short_term_memories as m
+                join task_sessions as s
+                  on s.id = m.session_id
+                where m.archived_at is null
+                order by m.id desc
+                limit ?
+                """,
+                (max(limit, 1),),
+            ).fetchall()
+        return [
+            {
+                "id": int(row["id"]),
+                "session_id": int(row["session_id"]),
+                "source_role": row["source_role"],
+                "kind": row["kind"],
+                "text": row["text"],
+                "source_ref": row["source_ref"],
+                "series_slug": row["series_slug"],
+                "language_pair": _language_pair(row),
+                "session_status": row["session_status"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def remove_short_term_memory(self, memory_id: int, *, reason: str) -> ActionResult:
+        with connect(self.config.database_path) as conn:
+            cursor = conn.execute(
+                """
+                update short_term_memories
+                set archived_at = ?
+                where id = ?
+                  and archived_at is null
+                """,
+                (self._now(), memory_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"unknown active short-term memory: {memory_id}")
+            self._audit_with_connection(
+                conn,
+                "remove",
+                "short_term_memory",
+                memory_id,
+                note=reason,
+            )
+            conn.commit()
+        return ActionResult("short_term_memory", memory_id, "remove", "Short-term memory removed")
+
+    def add_user_correction(
+        self,
+        *,
+        session_id: int,
+        text: str,
+        source_ref: str = "admin:user-correction",
+        language_tags: tuple[str, ...] = (),
+        story_scopes: tuple[str, ...] = (),
+        semantic_tags: tuple[str, ...] = (),
+        rule_intent: str = "correction",
+    ) -> ActionResult:
+        memory_id = WorkspaceStore(self.config).add_short_term_memory(
+            session_id,
+            source_role="user",
+            kind="correction",
+            text=text,
+            source_ref=source_ref,
+            metadata={"admin_command": "user_correction"},
+            language_tags=language_tags,
+            story_scopes=story_scopes,
+            semantic_tags=semantic_tags,
+            source_credibility="user_rule",
+            rule_intent=rule_intent,
+        )
+        self._audit("add", "short_term_memory", memory_id, note="User correction from admin")
+        return ActionResult(
+            "short_term_memory",
+            memory_id,
+            "add_user_correction",
+            "User correction recorded",
+        )
+
     def run_manual_dreaming(self) -> DreamRunRecord:
-        run = DreamService(self.config, resolve_provider(self.config)).run_cycle(owner="admin")
+        run = DreamService(self.config, resolve_provider(self.config)).run_all(
+            owner="admin",
+            ignore_minimum=True,
+        )
         self._audit(
             "run",
             "dream",
@@ -238,6 +792,94 @@ class AdminStore:
             failed_outputs=failed_outputs,
             validation_errors=[],
         )
+
+    def config_editor_payload(self) -> dict[str, object]:
+        dream_config, dream_config_error = _safe_dream_config(self.config)
+        cache = load_model_cache(self.config)
+        warnings: list[dict[str, str]] = []
+        for workflow_name, workflow in dream_config.workflows.items():
+            provider = dream_config.providers.get(workflow.provider)
+            if provider is None:
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "provider_missing",
+                        "message": "workflow provider is not configured",
+                    }
+                )
+                continue
+            entry = cache.providers.get(workflow.provider)
+            expected_identity = dream_profile_cache_identity(workflow.provider, provider)
+            if entry is None:
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "model_cache_missing",
+                        "message": "model cache has not been fetched for provider",
+                    }
+                )
+                continue
+            if entry.identity and entry.identity != expected_identity:
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "model_cache_identity_mismatch",
+                        "message": "model cache was fetched for different provider settings",
+                    }
+                )
+            if entry.is_stale():
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "model_cache_stale",
+                        "message": "model cache is stale",
+                    }
+                )
+            if workflow.model and workflow.model not in entry.models:
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "workflow_model_not_cached",
+                        "message": "workflow model is not present in cached model list",
+                    }
+                )
+            if entry.error:
+                warnings.append(
+                    {
+                        "workflow": workflow_name,
+                        "provider": workflow.provider,
+                        "code": "model_cache_error",
+                        "message": entry.error,
+                    }
+                )
+        return {
+            "config": redacted_dream_config_payload(dream_config),
+            "config_error": dream_config_error,
+            "providers": redacted_dream_config_payload(dream_config)["providers"],
+            "workflows": redacted_dream_config_payload(dream_config)["workflows"],
+            "prompts": {"general": dream_config.general_prompt},
+            "thresholds": {
+                "min_pending_short_term_memories": (dream_config.min_pending_short_term_memories),
+                "max_pending_short_term_memories": (dream_config.max_pending_short_term_memories),
+                "max_short_term_memories_per_cycle": (
+                    dream_config.max_short_term_memories_per_cycle
+                ),
+                "not_enough_memories_cycle_threshold": (
+                    dream_config.not_enough_memories_cycle_threshold
+                ),
+                "max_changed_crystals_per_cycle": dream_config.max_changed_crystals_per_cycle,
+                "max_related_concepts_per_cycle": dream_config.max_related_concepts_per_cycle,
+                "max_related_crystals_per_concept": (dream_config.max_related_crystals_per_concept),
+                "max_total_affected_crystals": dream_config.max_total_affected_crystals,
+            },
+            "model_cache": cache.to_payload(),
+            "model_cache_warnings": warnings,
+        }
 
     def reinforce_crystal(self, crystal_id: int, *, evidence: str) -> ActionResult:
         with connect(self.config.database_path) as conn:
@@ -612,67 +1254,7 @@ class AdminStore:
             proposal = self._get_proposal(conn, proposal_id)
             if proposal["status"] != "pending":
                 raise ValueError("proposal must be pending")
-            cursor = conn.execute(
-                """
-                insert into strict_terms(
-                  series_slug,
-                  source_language,
-                  target_language,
-                  category,
-                  source_text,
-                  canonical_translation,
-                  status,
-                  notes,
-                  created_at,
-                  updated_at
-                )
-                values (?, ?, ?, 'strict_concept', ?, ?, 'approved', ?, ?, ?)
-                """,
-                (
-                    proposal["series_slug"],
-                    proposal["source_language"],
-                    proposal["target_language"],
-                    proposal["concept_text"],
-                    proposal["canonical_rendering"],
-                    proposal["rationale"],
-                    now,
-                    now,
-                ),
-            )
-            term_id = int(cursor.lastrowid)
-            conn.execute(
-                "insert into strict_terms_fts(rowid, source_text, canonical_translation, notes) "
-                "values (?, ?, ?, ?)",
-                (
-                    term_id,
-                    proposal["concept_text"],
-                    proposal["canonical_rendering"],
-                    proposal["rationale"],
-                ),
-            )
-            self._insert_alias(
-                conn,
-                term_id,
-                language=proposal["source_language"],
-                text=proposal["source_form"],
-                kind="source_variant",
-            )
-            for variant in json.loads(proposal["approved_variants_json"]):
-                self._insert_alias(
-                    conn,
-                    term_id,
-                    language=proposal["target_language"],
-                    text=variant,
-                    kind="approved_variant",
-                )
-            for variant in json.loads(proposal["forbidden_variants_json"]):
-                self._insert_alias(
-                    conn,
-                    term_id,
-                    language=proposal["target_language"],
-                    text=variant,
-                    kind="forbidden_variant",
-                )
+            crystal_id = self._insert_rule_crystal_for_proposal(conn, proposal, now=now)
             conn.execute(
                 """
                 update strict_concept_proposals
@@ -688,10 +1270,10 @@ class AdminStore:
                 "strict_concept_proposal",
                 proposal_id,
                 before_json=self._row_json(proposal),
-                after_json=json.dumps({"term_id": term_id}, sort_keys=True),
+                after_json=json.dumps({"crystal_id": crystal_id}, sort_keys=True),
             )
             conn.commit()
-        return term_id
+        return crystal_id
 
     def reject_proposal(self, proposal_id: int, *, evidence: str) -> ActionResult:
         with connect(self.config.database_path) as conn:
@@ -796,6 +1378,7 @@ class AdminStore:
         return admin_rows
 
     def snapshot(self, view: str, selected_id: int | str | None = None) -> AdminSnapshot:
+        view = admin_view_label(view)
         if view not in ADMIN_VIEWS:
             raise ValueError(f"unknown admin view: {view}")
 
@@ -812,7 +1395,7 @@ class AdminStore:
 
     def _rows_for_view(self, view: str) -> list[AdminRow]:
         if view == "Concepts":
-            return self._list_strict_terms(label_column="source_text")
+            return self._list_concept_rows()
         if view == "Renderings":
             return self._list_strict_terms(label_column="canonical_translation")
         if view == "Crystals":
@@ -823,11 +1406,28 @@ class AdminStore:
             return self._list_sessions()
         if view == "Dream Runs":
             return self._list_dream_runs()
+        if view == "Dream Audits":
+            return self._list_dream_audits()
         if view == "Proposals":
             return self._list_proposals()
         if view == "Audit Log":
             return self._list_audit_log()
         raise ValueError(f"unknown admin view: {view}")
+
+    def _list_concept_rows(self) -> list[AdminRow]:
+        return [
+            AdminRow(
+                id=record.id,
+                kind=record.scope_type,
+                label=record.canonical_name,
+                status=record.status,
+                scope=record.scope_key or record.scope_type,
+                language_pair="",
+                quality_label=f"{_percent(record.confidence)} conf",
+                tags=record.tags,
+            )
+            for record in ConceptStore(self.config).list_concepts()
+        ][:200]
 
     def _list_strict_terms(self, *, label_column: str) -> list[AdminRow]:
         with connect(self.config.database_path) as conn:
@@ -906,6 +1506,29 @@ class AdminStore:
                 quality_label=(
                     f"{row['created_crystal_count']} crystals / {row['proposal_count']} proposals"
                 ),
+            )
+            for row in rows
+        ]
+
+    def _list_dream_audits(self) -> list[AdminRow]:
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute(
+                """
+                select *
+                from dream_audit_entries
+                order by id desc
+                limit 200
+                """
+            ).fetchall()
+        return [
+            AdminRow(
+                id=int(row["id"]),
+                kind="dream audit",
+                label=f"{row['event_type']}: {row['summary']}",
+                status=row["severity"],
+                scope=f"dream:{row['dream_run_id']}",
+                language_pair="",
+                quality_label=row["created_at"],
             )
             for row in rows
         ]
@@ -992,6 +1615,35 @@ class AdminStore:
             tags=tags,
         )
 
+    def _concept_payload(self, record) -> dict[str, object]:
+        return {
+            "id": record.id,
+            "canonical_name": record.canonical_name,
+            "description": record.description,
+            "status": record.status,
+            "confidence": record.confidence,
+            "scope_type": record.scope_type,
+            "scope_key": record.scope_key,
+            "tags": list(record.tags),
+            "merged_into_concept_id": record.merged_into_concept_id,
+        }
+
+    def _facet_payload(self, record) -> dict[str, object]:
+        return {
+            "id": record.id,
+            "concept_id": record.concept_id,
+            "language": record.language,
+            "kind": record.kind,
+            "facet_type": record.facet_type,
+            "value": record.value,
+            "confidence": record.confidence,
+            "source_crystal_id": record.source_crystal_id,
+            "language_tags": list(record.language_tags),
+            "story_scopes": list(record.story_scopes),
+            "semantic_tags": list(record.semantic_tags),
+            "is_canonical": record.is_canonical,
+        }
+
     def _select_row(
         self,
         rows: list[AdminRow],
@@ -1009,12 +1661,16 @@ class AdminStore:
             return AdminDetail(title=view, subtitle="No rows", body="")
         if view in {"Crystals", "Lessons"}:
             return self._crystal_detail(int(selected.id))
-        if view in {"Concepts", "Renderings"}:
+        if view == "Concepts":
+            return self._concept_detail(int(selected.id))
+        if view == "Renderings":
             return self._strict_term_detail(int(selected.id))
         if view == "Short-Term Sessions":
             return self._session_detail(int(selected.id))
         if view == "Dream Runs":
             return self._dream_run_detail(int(selected.id))
+        if view == "Dream Audits":
+            return self._dream_audit_detail(int(selected.id))
         if view == "Proposals":
             return self._proposal_detail(int(selected.id))
         if view == "Audit Log":
@@ -1044,6 +1700,25 @@ class AdminStore:
                     "Quality",
                     f"{_percent(row['confidence'])} conf / {_percent(row['strength'])} str",
                 ),
+            ),
+        )
+
+    def _concept_detail(self, concept_id: int) -> AdminDetail:
+        detail = self.concept_detail(concept_id)
+        facets = detail["facets"]
+        facet_lines = [
+            f"{facet['kind']} [{','.join(facet['language_tags'])}]: {facet['value']}"
+            for facet in facets
+        ]
+        return AdminDetail(
+            title=str(detail["canonical_name"]),
+            subtitle=f"{detail['scope_type']} / {detail['status']}",
+            body="\n".join(facet_lines) or str(detail["description"]),
+            fields=(
+                ("Description", str(detail["description"])),
+                ("Scope", str(detail["scope_key"] or detail["scope_type"])),
+                ("Confidence", _percent(float(detail["confidence"]))),
+                ("Facets", str(len(facets))),
             ),
         )
 
@@ -1092,6 +1767,35 @@ class AdminStore:
                 ("Inputs", str(row["input_count"])),
                 ("Crystals", str(row["created_crystal_count"])),
                 ("Proposals", str(row["proposal_count"])),
+            ),
+        )
+
+    def _dream_audit_detail(self, audit_id: int) -> AdminDetail:
+        with connect(self.config.database_path) as conn:
+            row = conn.execute(
+                "select * from dream_audit_entries where id = ?",
+                (audit_id,),
+            ).fetchone()
+        if row is None:
+            return AdminDetail(title="Missing dream audit", subtitle="", body="")
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            payload = {"_invalid_json": row["payload_json"]}
+        except Exception as error:
+            payload = {
+                "_invalid_json": row["payload_json"],
+                "_error": str(error),
+            }
+        return AdminDetail(
+            title=f"{row['event_type']}: {row['summary']}",
+            subtitle=row["severity"],
+            body=json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            fields=(
+                ("Dream run", str(row["dream_run_id"])),
+                ("Phase run", "" if row["phase_run_id"] is None else str(row["phase_run_id"])),
+                ("Severity", row["severity"]),
+                ("Created", row["created_at"]),
             ),
         )
 
@@ -1338,6 +2042,315 @@ class AdminStore:
             "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
             (crystal_id, title, text),
         )
+
+    def _insert_rule_crystal_for_proposal(
+        self,
+        conn: sqlite3.Connection,
+        proposal: sqlite3.Row,
+        *,
+        now: str,
+    ) -> int:
+        approved_variants = [
+            variant.strip()
+            for variant in json.loads(proposal["approved_variants_json"])
+            if isinstance(variant, str) and variant.strip()
+        ]
+        forbidden_variants = [
+            variant.strip()
+            for variant in json.loads(proposal["forbidden_variants_json"])
+            if isinstance(variant, str) and variant.strip()
+        ]
+        source_form = proposal["source_form"].strip() or proposal["concept_text"]
+        _validate_rule_crystal_shape(
+            source_form=source_form,
+            canonical_rendering=proposal["canonical_rendering"],
+            approved_variants=approved_variants,
+            forbidden_variants=forbidden_variants,
+        )
+        text = _rule_crystal_text(source_form, proposal["canonical_rendering"], forbidden_variants)
+        semantic_tags = ("strict-concept", "translation-rule")
+        cursor = conn.execute(
+            """
+            insert into crystals(
+              crystal_type,
+              text,
+              title,
+              scope_type,
+              scope_key,
+              series_slug,
+              source_language,
+              target_language,
+              tags_json,
+              strength,
+              confidence,
+              source_credibility,
+              rule_intent,
+              malformed_penalty,
+              supersedes_crystal_id,
+              status,
+              created_at,
+              updated_at
+            )
+            values ('rule', ?, ?, 'series', ?, ?, ?, ?, ?, 0.8, 0.95,
+                    'user_rule', '', 0.0, null, 'active', ?, ?)
+            """,
+            (
+                text,
+                proposal["concept_text"],
+                f"series:{proposal['series_slug']}",
+                proposal["series_slug"],
+                proposal["source_language"],
+                proposal["target_language"],
+                json.dumps(semantic_tags, ensure_ascii=False, sort_keys=True),
+                now,
+                now,
+            ),
+        )
+        crystal_id = int(cursor.lastrowid)
+        conn.execute(
+            "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
+            (crystal_id, proposal["concept_text"], text),
+        )
+        for tag in semantic_tags:
+            conn.execute(
+                """
+                insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+                values (?, ?, 0.95, ?)
+                """,
+                (crystal_id, tag, now),
+            )
+        concept_id = self._ensure_concept_for_proposal(
+            conn,
+            proposal,
+            source_form=source_form,
+            semantic_tags=semantic_tags,
+            now=now,
+        )
+        conn.execute(
+            """
+            insert into crystal_concepts(
+              crystal_id,
+              concept_id,
+              link_type,
+              confidence,
+              created_at
+            )
+            values (?, ?, 'defines', 0.95, ?)
+            on conflict(crystal_id, concept_id, link_type) do update set
+              confidence = max(crystal_concepts.confidence, excluded.confidence)
+            """,
+            (crystal_id, concept_id, now),
+        )
+        return crystal_id
+
+    def _ensure_concept_for_proposal(
+        self,
+        conn: sqlite3.Connection,
+        proposal: sqlite3.Row,
+        *,
+        source_form: str,
+        semantic_tags: tuple[str, ...],
+        now: str,
+    ) -> int:
+        scope_key = f"series:{proposal['series_slug']}"
+        concept_id = self._matching_concept_id_for_proposal(
+            conn,
+            proposal,
+            semantic_tags=semantic_tags,
+            scope_key=scope_key,
+        )
+        if concept_id is None:
+            cursor = conn.execute(
+                """
+                insert into concepts(
+                  canonical_name,
+                  description,
+                  scope_type,
+                  scope_key,
+                  status,
+                  confidence,
+                  created_at,
+                  updated_at
+                )
+                values (?, ?, 'series', ?, 'established', 0.95, ?, ?)
+                """,
+                (
+                    proposal["concept_text"],
+                    proposal["rationale"],
+                    scope_key,
+                    now,
+                    now,
+                ),
+            )
+            concept_id = int(cursor.lastrowid)
+
+        for tag in semantic_tags:
+            conn.execute(
+                """
+                insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
+                values (?, ?, 0.95, ?)
+                on conflict(concept_id, tag) do update set
+                  confidence = max(concept_semantic_tags.confidence, excluded.confidence)
+                """,
+                (concept_id, tag, now),
+            )
+        self._ensure_concept_facet(
+            conn,
+            concept_id=concept_id,
+            value=source_form,
+            facet_type="name",
+            language_tag=proposal["source_language"],
+            is_canonical=True,
+            now=now,
+        )
+        self._ensure_concept_facet(
+            conn,
+            concept_id=concept_id,
+            value=proposal["canonical_rendering"],
+            facet_type="rendering",
+            language_tag=proposal["target_language"],
+            is_canonical=False,
+            now=now,
+        )
+        return concept_id
+
+    def _matching_concept_id_for_proposal(
+        self,
+        conn: sqlite3.Connection,
+        proposal: sqlite3.Row,
+        *,
+        semantic_tags: tuple[str, ...],
+        scope_key: str,
+    ) -> int | None:
+        candidate_rows = conn.execute(
+            """
+            select id
+            from concepts
+            where canonical_name = ?
+              and scope_type = 'series'
+              and scope_key = ?
+              and status not in ('archived', 'merged')
+            order by id
+            """,
+            (proposal["concept_text"], scope_key),
+        ).fetchall()
+        if not candidate_rows:
+            return None
+        if len(candidate_rows) == 1:
+            return int(candidate_rows[0]["id"])
+
+        wanted_tags = _proposal_match_tags(proposal, semantic_tags)
+        scored = [
+            (
+                _tag_score(
+                    self._concept_semantic_tags(conn, int(row["id"])),
+                    wanted_tags,
+                ),
+                int(row["id"]),
+            )
+            for row in candidate_rows
+        ]
+        best_score = max(score for score, _ in scored)
+        if best_score <= 0:
+            return None
+        best_ids = [concept_id for score, concept_id in scored if score == best_score]
+        if len(best_ids) != 1:
+            return None
+        return best_ids[0]
+
+    def _concept_semantic_tags(
+        self,
+        conn: sqlite3.Connection,
+        concept_id: int,
+    ) -> tuple[str, ...]:
+        rows = conn.execute(
+            """
+            select tag
+            from concept_semantic_tags
+            where concept_id = ?
+            order by tag
+            """,
+            (concept_id,),
+        ).fetchall()
+        return tuple(row["tag"] for row in rows)
+
+    def _ensure_concept_facet(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        concept_id: int,
+        value: str,
+        facet_type: str,
+        language_tag: str,
+        is_canonical: bool,
+        now: str,
+    ) -> None:
+        existing = conn.execute(
+            """
+            select id, is_canonical, confidence
+            from concept_facets
+            where concept_id = ?
+              and value = ?
+              and facet_type = ?
+              and superseded_at is null
+            order by id
+            limit 1
+            """,
+            (concept_id, value, facet_type),
+        ).fetchone()
+        if existing is None:
+            cursor = conn.execute(
+                """
+                insert into concept_facets(
+                  concept_id,
+                  language,
+                  facet_type,
+                  value,
+                  source_crystal_id,
+                  confidence,
+                  is_canonical,
+                  created_at,
+                  updated_at
+                )
+                values (?, ?, ?, ?, null, 0.95, ?, ?, ?)
+                """,
+                (
+                    concept_id,
+                    language_tag,
+                    facet_type,
+                    value,
+                    int(is_canonical),
+                    now,
+                    now,
+                ),
+            )
+            facet_id = int(cursor.lastrowid)
+        else:
+            facet_id = int(existing["id"])
+            current_is_canonical = bool(existing["is_canonical"])
+            current_confidence = float(existing["confidence"])
+            next_is_canonical = current_is_canonical or is_canonical
+            next_confidence = max(current_confidence, 0.95)
+            if next_is_canonical != current_is_canonical or next_confidence > current_confidence:
+                conn.execute(
+                    """
+                    update concept_facets
+                    set is_canonical = ?,
+                        confidence = ?,
+                        updated_at = ?
+                    where id = ?
+                    """,
+                    (int(next_is_canonical), next_confidence, now, facet_id),
+                )
+
+        if language_tag:
+            conn.execute(
+                """
+                insert or ignore into concept_facet_language_tags(facet_id, language_tag)
+                values (?, ?)
+                """,
+                (facet_id, language_tag.casefold()),
+            )
 
     def _insert_alias(
         self,

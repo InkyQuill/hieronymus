@@ -30,6 +30,11 @@ Open the local configuration TUI with:
 hiero config
 ```
 
+Textual remains the default TUI. The Ink/React preview is available with
+`HIERONYMUS_TUI=ink hiero config` and `HIERONYMUS_TUI=ink hiero admin`; see the
+[usage guide](docs/usage.md#ink-preview) for current source-checkout behavior,
+runtime requirements, and keys.
+
 For scripts and health checks, use machine-readable status:
 
 ```bash
@@ -50,6 +55,22 @@ Supported dream providers:
 Dreaming automation is controlled by `autostart_enabled`,
 `min_interval_minutes`, `new_short_term_memory_threshold`, and
 `max_cycles_per_autostart`.
+
+## Frontend Development
+
+The Ink/React frontend lives under `frontend/`. Use pnpm from the repository
+root:
+
+```bash
+pnpm --dir frontend install
+pnpm --dir frontend test
+pnpm --dir frontend build
+```
+
+After `pnpm --dir frontend build`, source checkouts can launch the Ink preview
+through the CLI fallback to `frontend/dist/main.js`. Installed packages should
+not be treated as shipping a self-contained Ink frontend until release tooling
+produces a bundled `hieronymus/frontend/dist/main.js` artifact.
 
 Command summary:
 

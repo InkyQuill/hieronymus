@@ -22,6 +22,14 @@ class HieronymusConfig:
         return self.config_root / "settings.toml"
 
     @property
+    def dream_config_path(self) -> Path:
+        return self.config_root / "dream.conf"
+
+    @property
+    def llm_cache_path(self) -> Path:
+        return self.config_root / "llmcache.tmp"
+
+    @property
     def backups_root(self) -> Path:
         return self.config_root / "backups"
 

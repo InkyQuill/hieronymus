@@ -1,5 +1,8 @@
+import sqlite3
+
 import pytest
 
+from hieronymus.concepts import ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
@@ -64,6 +67,185 @@ def test_scores_are_clamped_when_adding_crystal(config: HieronymusConfig) -> Non
     assert crystal.confidence == 0.0
 
 
+def test_crystal_scalar_metadata_defaults_hydrate_from_store(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    crystal_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Render inventory menu labels with concise Russian nouns.",
+    )
+
+    crystal = store.get(crystal_id)
+
+    assert crystal.source_credibility == "observation"
+    assert crystal.rule_intent == ""
+    assert crystal.malformed_penalty == 0.0
+    assert crystal.supersedes_crystal_id is None
+
+
+def test_crystal_scalar_metadata_round_trips_through_store(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    base_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use terse inventory labels.",
+    )
+    crystal_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Replace malformed UI label guidance.",
+        source_credibility="user_rule",
+        rule_intent="terminology_override",
+        malformed_penalty=0.35,
+        supersedes_crystal_id=base_id,
+    )
+
+    crystal = store.get(crystal_id)
+
+    assert crystal.source_credibility == "user_rule"
+    assert crystal.rule_intent == "terminology_override"
+    assert crystal.malformed_penalty == 0.35
+    assert crystal.supersedes_crystal_id == base_id
+
+
+def test_add_crystal_accepts_new_crystal_types(config: HieronymusConfig) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+
+    crystal_ids = [
+        store.add_crystal(
+            context,
+            crystal_type=crystal_type,
+            text=f"{crystal_type} text.",
+        )
+        for crystal_type in ("rule", "thought", "observation", "concept_note")
+    ]
+
+    assert [store.get(crystal_id).crystal_type for crystal_id in crystal_ids] == [
+        "rule",
+        "thought",
+        "observation",
+        "concept_note",
+    ]
+
+
+def test_add_crystal_stores_and_hydrates_side_table_fields(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config, tags=("legacy",))
+    concept_store = ConceptStore(config)
+    first_concept_id = concept_store.create_or_reinforce("Sense")
+    second_concept_id = concept_store.create_or_reinforce("Crafting")
+    store = CrystalStore(config)
+
+    crystal_id = store.add_crystal(
+        context,
+        crystal_type="rule",
+        text="Keep Sense and crafting terms stable.",
+        confidence=0.65,
+        story_scopes=(" volume:1 ", "", "chapter:2", "volume:1"),
+        semantic_tags=(" term:system ", "term:system", "", "style:ui"),
+        concept_ids=(second_concept_id, first_concept_id, second_concept_id),
+    )
+
+    crystal = store.get(crystal_id)
+
+    assert crystal.story_scopes == ("chapter:2", "volume:1")
+    assert crystal.semantic_tags == ("style:ui", "term:system")
+    assert crystal.concept_ids == (first_concept_id, second_concept_id)
+    with connect(config.database_path) as conn:
+        row = conn.execute(
+            "select tags_json from crystals where id = ?",
+            (crystal_id,),
+        ).fetchone()
+        concept_rows = conn.execute(
+            """
+            select concept_id, link_type, confidence
+            from crystal_concepts
+            where crystal_id = ?
+            order by concept_id
+            """,
+            (crystal_id,),
+        ).fetchall()
+
+    assert row["tags_json"] == '["style:ui", "term:system"]'
+    assert [(row["concept_id"], row["link_type"], row["confidence"]) for row in concept_rows] == [
+        (first_concept_id, "mentions", 0.65),
+        (second_concept_id, "mentions", 0.65),
+    ]
+
+
+def test_add_crystal_falls_back_to_context_tags_for_legacy_tags_json(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config, tags=("legacy", "memory"))
+    store = CrystalStore(config)
+
+    crystal_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Keep legacy context tags in tags_json.",
+    )
+
+    crystal = store.get(crystal_id)
+    with connect(config.database_path) as conn:
+        row = conn.execute(
+            "select tags_json from crystals where id = ?",
+            (crystal_id,),
+        ).fetchone()
+
+    assert row["tags_json"] == '["legacy", "memory"]'
+    assert crystal.semantic_tags == ()
+
+
+def test_add_crystal_missing_concept_id_raises_fk_error(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.add_crystal(
+            context,
+            crystal_type="lesson",
+            text="This references a missing concept.",
+            concept_ids=(999,),
+        )
+
+
+def test_superseded_crystal_reference_nulls_when_source_is_deleted(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    base_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Use terse inventory labels.",
+    )
+    replacement_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Replace malformed UI label guidance.",
+        supersedes_crystal_id=base_id,
+    )
+
+    with connect(config.database_path) as conn:
+        conn.execute("delete from crystals where id = ?", (base_id,))
+        row = conn.execute(
+            "select supersedes_crystal_id from crystals where id = ?",
+            (replacement_id,),
+        ).fetchone()
+
+    assert row["supersedes_crystal_id"] is None
+
+
 def test_search_prefers_higher_strength_when_text_relevance_matches(
     config: HieronymusConfig,
 ) -> None:
@@ -115,6 +297,50 @@ def test_search_scored_exposes_weighted_scores_without_changing_search_api(
     assert [result.id for result in plain_results[:2]] == [high_id, low_id]
     assert [crystal.id for crystal, _score in scored_results[:2]] == [high_id, low_id]
     assert scored_results[0][1] > scored_results[1][1]
+
+
+def test_low_confidence_first_orders_candidates_and_excludes_active_rules(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    active_rule_id = store.add_crystal(
+        context,
+        crystal_type="rule",
+        text="Cooking Talent is translated as Готовка.",
+        strength=0.4,
+        confidence=0.05,
+        status="active",
+    )
+    archived_rule_id = store.add_crystal(
+        context,
+        crystal_type="rule",
+        text="Archived rule can be audited.",
+        strength=0.4,
+        confidence=0.01,
+        status="archived",
+    )
+    middle_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Middle confidence candidate.",
+        strength=0.4,
+        confidence=0.3,
+    )
+    low_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        text="Low confidence candidate.",
+        strength=0.4,
+        confidence=0.2,
+    )
+
+    candidates = store.low_confidence_first(
+        (active_rule_id, archived_rule_id, middle_id, low_id),
+        limit=3,
+    )
+
+    assert candidates == (archived_rule_id, low_id, middle_id)
 
 
 def test_search_blends_quality_with_text_relevance(config: HieronymusConfig) -> None:

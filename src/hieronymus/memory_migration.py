@@ -1,0 +1,1806 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections import Counter
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Protocol
+
+from hieronymus.config import HieronymusConfig
+from hieronymus.db import apply_migration, connect
+from hieronymus.rule_crystals import parse_rule_crystal
+
+_UNSUPPORTED_RULE_ALIAS_KINDS = frozenset({"source_variant", "search_alias"})
+_REQUIRED_GENERATED_GRAPH_COLUMNS = {
+    "concepts": {
+        "id",
+        "canonical_name",
+        "description",
+        "scope_type",
+        "scope_key",
+        "status",
+        "confidence",
+        "created_at",
+        "updated_at",
+    },
+    "concept_semantic_tags": {"concept_id", "tag", "confidence", "created_at"},
+    "concept_facets": {
+        "id",
+        "concept_id",
+        "language",
+        "facet_type",
+        "value",
+        "source_crystal_id",
+        "confidence",
+        "is_canonical",
+        "superseded_at",
+        "created_at",
+        "updated_at",
+    },
+    "concept_facet_language_tags": {"facet_id", "language_tag"},
+    "crystals": {
+        "id",
+        "crystal_type",
+        "text",
+        "title",
+        "scope_type",
+        "scope_key",
+        "series_slug",
+        "source_language",
+        "target_language",
+        "tags_json",
+        "strength",
+        "confidence",
+        "source_credibility",
+        "rule_intent",
+        "malformed_penalty",
+        "supersedes_crystal_id",
+        "status",
+        "created_at",
+        "updated_at",
+    },
+    "crystals_fts": {"title", "text"},
+    "crystal_language_tags": {"crystal_id", "language_tag"},
+    "crystal_semantic_tags": {"crystal_id", "tag", "confidence", "created_at"},
+    "crystal_concepts": {"crystal_id", "concept_id", "link_type", "confidence", "created_at"},
+}
+
+
+class Database(Protocol):
+    database_path: Path
+
+
+@dataclass(frozen=True)
+class MemoryGraphMigrationReport:
+    created: Mapping[str, int] = field(default_factory=dict)
+    updated: Mapping[str, int] = field(default_factory=dict)
+    skipped: Mapping[str, int] = field(default_factory=dict)
+    pending: Mapping[str, int] = field(default_factory=dict)
+    dry_run: bool = False
+
+    def has_pending_work(self) -> bool:
+        return any(count > 0 for count in self.pending.values())
+
+
+def _now(conn: sqlite3.Connection) -> str:
+    return str(conn.execute("select datetime('now')").fetchone()[0])
+
+
+def _clean_tags(values: Iterable[str], *, lowercase: bool = False) -> tuple[str, ...]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value).strip()
+        if lowercase:
+            item = item.casefold()
+        if not item or item in seen:
+            continue
+        cleaned.append(item)
+        seen.add(item)
+    return tuple(cleaned)
+
+
+def _json_string_values(raw: str | None) -> tuple[str, ...]:
+    if not raw:
+        return ()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return _clean_tags(raw.split(","))
+    if not isinstance(payload, list):
+        return ()
+    return _clean_tags(value for value in payload if isinstance(value, str))
+
+
+def _rule_text(
+    source_text: str,
+    canonical_translation: str,
+    forbidden_variants: tuple[str, ...],
+) -> str:
+    if forbidden_variants:
+        return (
+            f"{source_text} is translated as {canonical_translation}, not {forbidden_variants[0]}."
+        )
+    return f"{source_text} is translated as {canonical_translation}."
+
+
+def _validate_rule_shape(
+    *,
+    source_text: str,
+    canonical_translation: str,
+    approved_variants: tuple[str, ...],
+    forbidden_variants: tuple[str, ...],
+) -> bool:
+    if len(forbidden_variants) > 1:
+        return False
+    if any(variant != canonical_translation for variant in approved_variants):
+        return False
+    parsed = parse_rule_crystal(_rule_text(source_text, canonical_translation, forbidden_variants))
+    return (
+        parsed is not None
+        and parsed.source_text == source_text
+        and parsed.canonical_translation == canonical_translation
+        and tuple(parsed.forbidden_variants) == forbidden_variants
+    )
+
+
+class MemoryGraphMigrator:
+    def __init__(self, db: Database) -> None:
+        self.database_path = _database_path(db)
+        with connect(self.database_path) as conn:
+            apply_migration(conn, "global.sql")
+
+    def run(self) -> MemoryGraphMigrationReport:
+        created: Counter[str] = Counter()
+        updated: Counter[str] = Counter()
+        skipped: Counter[str] = Counter()
+        with connect(self.database_path) as conn:
+            self._ensure_ledger(conn)
+            self._migrate_series_languages(conn, updated)
+            self._migrate_task_sessions(conn, updated)
+            self._migrate_crystal_metadata(conn, updated)
+            self._migrate_soft_origins(conn, updated)
+            self._migrate_legacy_concept_statuses(conn, updated)
+            self._migrate_strict_terms(conn, created, skipped)
+            self._migrate_strict_concept_proposals(conn, created, skipped)
+            conn.commit()
+
+        return MemoryGraphMigrationReport(
+            created=dict(created),
+            updated=dict(updated),
+            skipped=dict(skipped),
+        )
+
+    def dry_report(self) -> MemoryGraphMigrationReport:
+        return self._dry_report_for_path(self.database_path)
+
+    @classmethod
+    def inspect(cls, db: Database | HieronymusConfig | Path | str) -> MemoryGraphMigrationReport:
+        return cls._dry_report_for_path(_database_path(db))
+
+    @classmethod
+    def _dry_report_for_path(cls, database_path: Path) -> MemoryGraphMigrationReport:
+        pending: Counter[str] = Counter()
+        with sqlite3.connect(database_path) as conn:
+            conn.row_factory = sqlite3.Row
+            inspector = cls.__new__(cls)
+            inspector.database_path = database_path
+            inspector._count_pending_series_languages(conn, pending)
+            inspector._count_pending_task_sessions(conn, pending)
+            inspector._count_pending_crystal_metadata(conn, pending)
+            inspector._count_pending_soft_origins(conn, pending)
+            inspector._count_pending_legacy_concept_statuses(conn, pending)
+            inspector._count_pending_generated_graph(conn, pending)
+        return MemoryGraphMigrationReport(pending=dict(pending), dry_run=True)
+
+    def _migrate_series_languages(
+        self,
+        conn: sqlite3.Connection,
+        updated: Counter[str],
+    ) -> None:
+        if not (
+            _has_table(conn, "series")
+            and _has_table(conn, "series_language_tags")
+            and _has_columns(conn, "series_language_tags", {"series_id", "language_tag"})
+            and _has_columns(
+                conn,
+                "series",
+                {"id", "default_source_language", "default_target_language"},
+            )
+        ):
+            return
+        for row in conn.execute(
+            "select id, default_source_language, default_target_language from series"
+        ):
+            for language_tag in _clean_tags(
+                (row["default_source_language"], row["default_target_language"]),
+                lowercase=True,
+            ):
+                updated["series_language_tags"] += _insert_ignore(
+                    conn,
+                    """
+                    insert or ignore into series_language_tags(series_id, language_tag)
+                    values (?, ?)
+                    """,
+                    (row["id"], language_tag),
+                )
+
+    def _migrate_task_sessions(
+        self,
+        conn: sqlite3.Connection,
+        updated: Counter[str],
+    ) -> None:
+        if not _has_table(conn, "task_sessions"):
+            return
+
+        columns = _columns(conn, "task_sessions")
+        rows = conn.execute("select * from task_sessions order by id").fetchall()
+        for row in rows:
+            if (
+                _has_table(conn, "task_session_language_tags")
+                and _has_columns(
+                    conn,
+                    "task_session_language_tags",
+                    {"session_id", "language_tag"},
+                )
+                and {
+                    "id",
+                    "source_language",
+                    "target_language",
+                }
+                <= columns
+            ):
+                for language_tag in _clean_tags(
+                    (row["source_language"], row["target_language"]),
+                    lowercase=True,
+                ):
+                    updated["task_session_language_tags"] += _insert_ignore(
+                        conn,
+                        """
+                        insert or ignore into task_session_language_tags(session_id, language_tag)
+                        values (?, ?)
+                        """,
+                        (row["id"], language_tag),
+                    )
+
+            if (
+                _has_table(conn, "task_session_story_scopes")
+                and _has_columns(
+                    conn,
+                    "task_session_story_scopes",
+                    {"session_id", "story_scope"},
+                )
+                and "id" in columns
+            ):
+                story_scopes = []
+                if "volume" in columns and str(row["volume"]).strip():
+                    story_scopes.append(f"volume:{str(row['volume']).strip()}")
+                if "chapter" in columns and str(row["chapter"]).strip():
+                    story_scopes.append(f"chapter:{str(row['chapter']).strip()}")
+                for story_scope in _clean_tags(story_scopes):
+                    updated["task_session_story_scopes"] += _insert_ignore(
+                        conn,
+                        """
+                        insert or ignore into task_session_story_scopes(session_id, story_scope)
+                        values (?, ?)
+                        """,
+                        (row["id"], story_scope),
+                    )
+
+            if (
+                _has_table(conn, "task_session_semantic_tags")
+                and _has_columns(
+                    conn,
+                    "task_session_semantic_tags",
+                    {"session_id", "semantic_tag"},
+                )
+                and "id" in columns
+            ):
+                for semantic_tag in _legacy_session_tags(row, columns):
+                    updated["task_session_semantic_tags"] += _insert_ignore(
+                        conn,
+                        """
+                        insert or ignore into task_session_semantic_tags(session_id, semantic_tag)
+                        values (?, ?)
+                        """,
+                        (row["id"], semantic_tag),
+                    )
+
+    def _migrate_crystal_metadata(
+        self,
+        conn: sqlite3.Connection,
+        updated: Counter[str],
+    ) -> None:
+        if not _has_table(conn, "crystals"):
+            return
+        columns = _columns(conn, "crystals")
+        for row in conn.execute("select * from crystals order by id"):
+            if (
+                _has_table(conn, "crystal_language_tags")
+                and _has_columns(
+                    conn,
+                    "crystal_language_tags",
+                    {"crystal_id", "language_tag"},
+                )
+                and {
+                    "id",
+                    "source_language",
+                    "target_language",
+                }
+                <= columns
+            ):
+                for language_tag in _clean_tags(
+                    (row["source_language"], row["target_language"]),
+                    lowercase=True,
+                ):
+                    updated["crystal_language_tags"] += _insert_ignore(
+                        conn,
+                        """
+                        insert or ignore into crystal_language_tags(crystal_id, language_tag)
+                        values (?, ?)
+                        """,
+                        (row["id"], language_tag),
+                    )
+
+            if (
+                _has_table(conn, "crystal_semantic_tags")
+                and _has_columns(
+                    conn,
+                    "crystal_semantic_tags",
+                    {"crystal_id", "tag", "confidence", "created_at"},
+                )
+                and {"id", "tags_json"} <= columns
+            ):
+                for tag in _json_string_values(row["tags_json"]):
+                    updated["crystal_semantic_tags"] += _insert_ignore(
+                        conn,
+                        """
+                        insert or ignore into crystal_semantic_tags(
+                          crystal_id,
+                          tag,
+                          confidence,
+                          created_at
+                        )
+                        values (?, ?, ?, ?)
+                        """,
+                        (
+                            row["id"],
+                            tag,
+                            _row_value(row, columns, "confidence", 0.2),
+                            _row_value(row, columns, "created_at", _now(conn)),
+                        ),
+                    )
+
+    def _migrate_soft_origins(
+        self,
+        conn: sqlite3.Connection,
+        updated: Counter[str],
+    ) -> None:
+        if _has_table(conn, "short_term_memories") and _has_columns(
+            conn,
+            "short_term_memories",
+            {"source_ref", "soft_origin"},
+        ):
+            updated["short_term_memories.soft_origin"] += _execute_rowcount(
+                conn,
+                """
+                update short_term_memories
+                set soft_origin = source_ref
+                where source_ref != ''
+                  and (soft_origin is null or soft_origin = '')
+                """,
+            )
+
+        if _has_table(conn, "crystals") and _has_columns(
+            conn,
+            "crystals",
+            {"source_ref", "soft_origin"},
+        ):
+            updated["crystals.soft_origin"] += _execute_rowcount(
+                conn,
+                """
+                update crystals
+                set soft_origin = source_ref
+                where source_ref != ''
+                  and (soft_origin is null or soft_origin = '')
+                """,
+            )
+
+    def _migrate_legacy_concept_statuses(
+        self,
+        conn: sqlite3.Connection,
+        updated: Counter[str],
+    ) -> None:
+        if not _has_columns(conn, "concepts", {"status"}):
+            return
+        updated["concepts.status"] += _execute_rowcount(
+            conn,
+            "update concepts set status = 'candidate' where status = 'vague'",
+        )
+        updated["concepts.status"] += _execute_rowcount(
+            conn,
+            "update concepts set status = 'established' where status = 'solid'",
+        )
+
+    def _migrate_strict_terms(
+        self,
+        conn: sqlite3.Connection,
+        created: Counter[str],
+        skipped: Counter[str],
+    ) -> None:
+        if not (
+            _has_table(conn, "strict_terms")
+            and _has_columns(
+                conn,
+                "strict_terms",
+                {
+                    "id",
+                    "status",
+                    "source_text",
+                    "canonical_translation",
+                    "notes",
+                    "series_slug",
+                    "source_language",
+                    "target_language",
+                },
+            )
+        ):
+            return
+        if not _generated_graph_schema_is_complete(conn):
+            if _scalar_count(
+                conn,
+                "select count(*) from strict_terms where status in ('approved', 'active')",
+            ):
+                skipped["generated_graph.incomplete_schema"] += 1
+            return
+        rows = conn.execute(
+            """
+            select *
+            from strict_terms
+            where status in ('approved', 'active')
+            order by id
+            """
+        ).fetchall()
+        for term in rows:
+            tags = self._strict_term_tags(conn, int(term["id"]))
+            aliases = self._strict_term_rule_aliases(conn, int(term["id"]))
+            if aliases is None:
+                skipped["strict_terms.unsupported_alias"] += 1
+                continue
+            approved, forbidden = aliases
+            if not _validate_rule_shape(
+                source_text=term["source_text"],
+                canonical_translation=term["canonical_translation"],
+                approved_variants=approved,
+                forbidden_variants=forbidden,
+            ):
+                skipped["strict_terms.unsupported_rule_shape"] += 1
+                continue
+
+            concept_id = self._ensure_concept(
+                conn,
+                source_table="strict_terms",
+                source_id=str(term["id"]),
+                canonical_name=term["source_text"],
+                description=term["notes"],
+                scope_key=f"series:{term['series_slug']}",
+                status="established",
+                confidence=0.95,
+                semantic_tags=tags,
+                created=created,
+            )
+            self._ensure_facet(
+                conn,
+                source_table="strict_terms",
+                source_id=f"{term['id']}:source",
+                concept_id=concept_id,
+                value=term["source_text"],
+                facet_type="name",
+                language=term["source_language"],
+                confidence=0.95,
+                is_canonical=True,
+                created=created,
+            )
+            self._ensure_facet(
+                conn,
+                source_table="strict_terms",
+                source_id=f"{term['id']}:rendering",
+                concept_id=concept_id,
+                value=term["canonical_translation"],
+                facet_type="rendering",
+                language=term["target_language"],
+                confidence=0.95,
+                is_canonical=False,
+                created=created,
+            )
+            crystal_id = self._ensure_rule_crystal(
+                conn,
+                source_table="strict_terms",
+                source_id=str(term["id"]),
+                title="",
+                text=_rule_text(term["source_text"], term["canonical_translation"], forbidden),
+                series_slug=term["series_slug"],
+                source_language=term["source_language"],
+                target_language=term["target_language"],
+                status="active",
+                strength=0.8,
+                confidence=0.95,
+                semantic_tags=tags,
+                created=created,
+            )
+            self._ensure_crystal_concept_link(conn, crystal_id, concept_id, confidence=0.95)
+
+    def _migrate_strict_concept_proposals(
+        self,
+        conn: sqlite3.Connection,
+        created: Counter[str],
+        skipped: Counter[str],
+    ) -> None:
+        if not (
+            _has_table(conn, "strict_concept_proposals")
+            and _has_columns(
+                conn,
+                "strict_concept_proposals",
+                {
+                    "id",
+                    "status",
+                    "source_form",
+                    "concept_text",
+                    "canonical_rendering",
+                    "approved_variants_json",
+                    "forbidden_variants_json",
+                    "rationale",
+                    "series_slug",
+                    "source_language",
+                    "target_language",
+                },
+            )
+        ):
+            return
+        if not _generated_graph_schema_is_complete(conn):
+            if _scalar_count(
+                conn,
+                "select count(*) from strict_concept_proposals where status != 'rejected'",
+            ):
+                skipped["generated_graph.incomplete_schema"] += 1
+            return
+        for proposal in conn.execute("select * from strict_concept_proposals order by id"):
+            status = str(proposal["status"])
+            if status == "rejected":
+                skipped["strict_concept_proposals.rejected"] += 1
+                continue
+            source_form = str(proposal["source_form"]).strip() or proposal["concept_text"]
+            approved = _json_string_values(proposal["approved_variants_json"])
+            forbidden = _json_string_values(proposal["forbidden_variants_json"])
+            semantic_tags = ("strict-concept", "translation-rule")
+            concept_status = "established" if status == "approved" else "candidate"
+            rule_status = "active" if status == "approved" else "candidate"
+            confidence = 0.95 if status == "approved" else 0.45
+            if not _validate_rule_shape(
+                source_text=source_form,
+                canonical_translation=proposal["canonical_rendering"],
+                approved_variants=approved,
+                forbidden_variants=forbidden,
+            ):
+                skipped["strict_concept_proposals.unsupported_rule_shape"] += 1
+                continue
+
+            concept_id = self._ensure_concept(
+                conn,
+                source_table="strict_concept_proposals",
+                source_id=str(proposal["id"]),
+                canonical_name=proposal["concept_text"],
+                description=proposal["rationale"],
+                scope_key=f"series:{proposal['series_slug']}",
+                status=concept_status,
+                confidence=confidence,
+                semantic_tags=semantic_tags,
+                created=created,
+            )
+            self._ensure_facet(
+                conn,
+                source_table="strict_concept_proposals",
+                source_id=f"{proposal['id']}:source",
+                concept_id=concept_id,
+                value=source_form,
+                facet_type="name",
+                language=proposal["source_language"],
+                confidence=confidence,
+                is_canonical=True,
+                created=created,
+            )
+            self._ensure_facet(
+                conn,
+                source_table="strict_concept_proposals",
+                source_id=f"{proposal['id']}:rendering",
+                concept_id=concept_id,
+                value=proposal["canonical_rendering"],
+                facet_type="rendering",
+                language=proposal["target_language"],
+                confidence=confidence,
+                is_canonical=False,
+                created=created,
+            )
+            crystal_id = self._ensure_rule_crystal(
+                conn,
+                source_table="strict_concept_proposals",
+                source_id=str(proposal["id"]),
+                title=proposal["concept_text"],
+                text=_rule_text(source_form, proposal["canonical_rendering"], forbidden),
+                series_slug=proposal["series_slug"],
+                source_language=proposal["source_language"],
+                target_language=proposal["target_language"],
+                status=rule_status,
+                strength=confidence,
+                confidence=confidence,
+                semantic_tags=semantic_tags,
+                created=created,
+            )
+            self._ensure_crystal_concept_link(conn, crystal_id, concept_id, confidence=confidence)
+
+    def _ensure_concept(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_table: str,
+        source_id: str,
+        canonical_name: str,
+        description: str,
+        scope_key: str,
+        status: str,
+        confidence: float,
+        semantic_tags: tuple[str, ...],
+        created: Counter[str],
+    ) -> int:
+        existing = self._ledger_target(conn, source_table, source_id, "concepts")
+        if existing is not None and _row_exists(conn, "concepts", existing):
+            concept_id = existing
+            self._reconcile_concept(
+                conn,
+                concept_id,
+                canonical_name=canonical_name,
+                description=description,
+                scope_key=scope_key,
+                status=status,
+                confidence=confidence,
+            )
+        else:
+            natural = self._matching_concept(conn, canonical_name, scope_key, semantic_tags)
+            if natural is None:
+                now = _now(conn)
+                cursor = conn.execute(
+                    """
+                    insert into concepts(
+                      canonical_name,
+                      description,
+                      scope_type,
+                      scope_key,
+                      status,
+                      confidence,
+                      created_at,
+                      updated_at
+                    )
+                    values (?, ?, 'series', ?, ?, ?, ?, ?)
+                    """,
+                    (canonical_name, description, scope_key, status, confidence, now, now),
+                )
+                concept_id = int(cursor.lastrowid)
+                created["concepts"] += 1
+            else:
+                concept_id = natural
+                self._reconcile_concept(
+                    conn,
+                    concept_id,
+                    canonical_name=canonical_name,
+                    description=description,
+                    scope_key=scope_key,
+                    status=status,
+                    confidence=confidence,
+                )
+            self._record_ledger(conn, source_table, source_id, "concepts", concept_id)
+
+        for tag in semantic_tags:
+            conn.execute(
+                """
+                insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
+                values (?, ?, ?, ?)
+                on conflict(concept_id, tag) do update set
+                  confidence = max(concept_semantic_tags.confidence, excluded.confidence)
+                """,
+                (concept_id, tag, confidence, _now(conn)),
+            )
+        return concept_id
+
+    def _reconcile_concept(
+        self,
+        conn: sqlite3.Connection,
+        concept_id: int,
+        *,
+        canonical_name: str,
+        description: str,
+        scope_key: str,
+        status: str,
+        confidence: float,
+    ) -> None:
+        existing = conn.execute(
+            "select status, confidence from concepts where id = ?",
+            (concept_id,),
+        ).fetchone()
+        if existing is None:
+            return
+        existing_confidence = float(existing["confidence"])
+        if confidence < existing_confidence:
+            return
+        next_confidence = max(existing_confidence, confidence)
+        conn.execute(
+            """
+            update concepts
+            set canonical_name = ?,
+                description = ?,
+                scope_type = 'series',
+                scope_key = ?,
+                status = ?,
+                confidence = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (
+                canonical_name,
+                description,
+                scope_key,
+                status,
+                next_confidence,
+                _now(conn),
+                concept_id,
+            ),
+        )
+
+    def _ensure_facet(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_table: str,
+        source_id: str,
+        concept_id: int,
+        value: str,
+        facet_type: str,
+        language: str,
+        confidence: float,
+        is_canonical: bool,
+        created: Counter[str],
+    ) -> int:
+        existing = self._ledger_target(conn, source_table, source_id, "concept_facets")
+        if (
+            existing is not None
+            and _row_exists(conn, "concept_facets", existing)
+            and _facet_belongs_to_concept(conn, existing, concept_id)
+        ):
+            facet_id = existing
+            self._reconcile_facet(
+                conn,
+                facet_id,
+                confidence=confidence,
+                is_canonical=is_canonical,
+            )
+        else:
+            row = conn.execute(
+                """
+                select id, confidence, is_canonical
+                from concept_facets
+                where concept_id = ?
+                  and value = ?
+                  and facet_type = ?
+                  and superseded_at is null
+                order by id
+                limit 1
+                """,
+                (concept_id, value, facet_type),
+            ).fetchone()
+            if row is None:
+                now = _now(conn)
+                cursor = conn.execute(
+                    """
+                    insert into concept_facets(
+                      concept_id,
+                      language,
+                      facet_type,
+                      value,
+                      source_crystal_id,
+                      confidence,
+                      is_canonical,
+                      created_at,
+                      updated_at
+                    )
+                    values (?, ?, ?, ?, null, ?, ?, ?, ?)
+                    """,
+                    (
+                        concept_id,
+                        language,
+                        facet_type,
+                        value,
+                        confidence,
+                        int(is_canonical),
+                        now,
+                        now,
+                    ),
+                )
+                facet_id = int(cursor.lastrowid)
+                created["concept_facets"] += 1
+            else:
+                facet_id = int(row["id"])
+                self._reconcile_facet(
+                    conn,
+                    facet_id,
+                    confidence=confidence,
+                    is_canonical=is_canonical,
+                    row=row,
+                )
+            self._record_ledger(conn, source_table, source_id, "concept_facets", facet_id)
+
+        for language_tag in _clean_tags((language,), lowercase=True):
+            conn.execute(
+                """
+                insert or ignore into concept_facet_language_tags(facet_id, language_tag)
+                values (?, ?)
+                """,
+                (facet_id, language_tag),
+            )
+        return facet_id
+
+    def _reconcile_facet(
+        self,
+        conn: sqlite3.Connection,
+        facet_id: int,
+        *,
+        confidence: float,
+        is_canonical: bool,
+        row: sqlite3.Row | None = None,
+    ) -> None:
+        existing = (
+            row
+            or conn.execute(
+                "select confidence, is_canonical from concept_facets where id = ?",
+                (facet_id,),
+            ).fetchone()
+        )
+        if existing is None:
+            return
+        next_confidence = max(float(existing["confidence"]), confidence)
+        next_is_canonical = bool(existing["is_canonical"]) or is_canonical
+        if next_confidence == float(existing["confidence"]) and next_is_canonical == bool(
+            existing["is_canonical"]
+        ):
+            return
+        conn.execute(
+            """
+            update concept_facets
+            set confidence = ?,
+                is_canonical = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (next_confidence, int(next_is_canonical), _now(conn), facet_id),
+        )
+
+    def _ensure_rule_crystal(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_table: str,
+        source_id: str,
+        title: str,
+        text: str,
+        series_slug: str,
+        source_language: str,
+        target_language: str,
+        status: str,
+        strength: float,
+        confidence: float,
+        semantic_tags: tuple[str, ...],
+        created: Counter[str],
+    ) -> int:
+        existing = self._ledger_target(conn, source_table, source_id, "crystals")
+        if existing is not None and _row_exists(conn, "crystals", existing):
+            crystal_id = existing
+            self._reconcile_rule_crystal(
+                conn,
+                crystal_id,
+                title=title,
+                text=text,
+                series_slug=series_slug,
+                source_language=source_language,
+                target_language=target_language,
+                status=status,
+                strength=strength,
+                confidence=confidence,
+                semantic_tags=semantic_tags,
+            )
+        else:
+            scope_key = f"series:{series_slug}"
+            row = conn.execute(
+                """
+                select id
+                from crystals
+                where crystal_type = 'rule'
+                  and text = ?
+                  and scope_type = 'series'
+                  and scope_key = ?
+                  and series_slug = ?
+                  and source_language = ?
+                  and target_language = ?
+                  and status = ?
+                order by id
+                limit 1
+                """,
+                (text, scope_key, series_slug, source_language, target_language, status),
+            ).fetchone()
+            if row is None:
+                now = _now(conn)
+                cursor = conn.execute(
+                    """
+                    insert into crystals(
+                      crystal_type,
+                      text,
+                      title,
+                      scope_type,
+                      scope_key,
+                      series_slug,
+                      source_language,
+                      target_language,
+                      tags_json,
+                      strength,
+                      confidence,
+                      source_credibility,
+                      rule_intent,
+                      malformed_penalty,
+                      supersedes_crystal_id,
+                      status,
+                      created_at,
+                      updated_at
+                    )
+                    values ('rule', ?, ?, 'series', ?, ?, ?, ?, ?, ?, ?, 'user_rule',
+                            '', 0.0, null, ?, ?, ?)
+                    """,
+                    (
+                        text,
+                        title,
+                        scope_key,
+                        series_slug,
+                        source_language,
+                        target_language,
+                        json.dumps(semantic_tags, ensure_ascii=False, sort_keys=True),
+                        strength,
+                        confidence,
+                        status,
+                        now,
+                        now,
+                    ),
+                )
+                crystal_id = int(cursor.lastrowid)
+                conn.execute(
+                    "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
+                    (crystal_id, title, text),
+                )
+                created["crystals"] += 1
+            else:
+                crystal_id = int(row["id"])
+                self._reconcile_rule_crystal(
+                    conn,
+                    crystal_id,
+                    title=title,
+                    text=text,
+                    series_slug=series_slug,
+                    source_language=source_language,
+                    target_language=target_language,
+                    status=status,
+                    strength=strength,
+                    confidence=confidence,
+                    semantic_tags=semantic_tags,
+                )
+            self._record_ledger(conn, source_table, source_id, "crystals", crystal_id)
+
+        for language_tag in _clean_tags((source_language, target_language), lowercase=True):
+            conn.execute(
+                """
+                insert or ignore into crystal_language_tags(crystal_id, language_tag)
+                values (?, ?)
+                """,
+                (crystal_id, language_tag),
+            )
+        for tag in semantic_tags:
+            conn.execute(
+                """
+                insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+                values (?, ?, ?, ?)
+                on conflict(crystal_id, tag) do update set
+                  confidence = max(crystal_semantic_tags.confidence, excluded.confidence)
+                """,
+                (crystal_id, tag, confidence, _now(conn)),
+            )
+        return crystal_id
+
+    def _reconcile_rule_crystal(
+        self,
+        conn: sqlite3.Connection,
+        crystal_id: int,
+        *,
+        title: str,
+        text: str,
+        series_slug: str,
+        source_language: str,
+        target_language: str,
+        status: str,
+        strength: float,
+        confidence: float,
+        semantic_tags: tuple[str, ...],
+    ) -> None:
+        scope_key = f"series:{series_slug}"
+        conn.execute(
+            """
+            update crystals
+            set text = ?,
+                title = ?,
+                scope_type = 'series',
+                scope_key = ?,
+                series_slug = ?,
+                source_language = ?,
+                target_language = ?,
+                tags_json = ?,
+                strength = max(strength, ?),
+                confidence = max(confidence, ?),
+                source_credibility = 'user_rule',
+                status = ?,
+                updated_at = ?
+            where id = ?
+            """,
+            (
+                text,
+                title,
+                scope_key,
+                series_slug,
+                source_language,
+                target_language,
+                json.dumps(semantic_tags, ensure_ascii=False, sort_keys=True),
+                strength,
+                confidence,
+                status,
+                _now(conn),
+                crystal_id,
+            ),
+        )
+        conn.execute(
+            """
+            insert or replace into crystals_fts(rowid, title, text)
+            values (?, ?, ?)
+            """,
+            (crystal_id, title, text),
+        )
+
+    def _ensure_crystal_concept_link(
+        self,
+        conn: sqlite3.Connection,
+        crystal_id: int,
+        concept_id: int,
+        *,
+        confidence: float,
+    ) -> None:
+        conn.execute(
+            """
+            insert into crystal_concepts(
+              crystal_id,
+              concept_id,
+              link_type,
+              confidence,
+              created_at
+            )
+            values (?, ?, 'defines', ?, ?)
+            on conflict(crystal_id, concept_id, link_type) do update set
+              confidence = max(crystal_concepts.confidence, excluded.confidence)
+            """,
+            (crystal_id, concept_id, confidence, _now(conn)),
+        )
+
+    def _strict_term_tags(self, conn: sqlite3.Connection, term_id: int) -> tuple[str, ...]:
+        if not _has_table(conn, "strict_term_tags"):
+            return ()
+        if not _has_columns(conn, "strict_term_tags", {"term_id", "tag"}):
+            return ()
+        return tuple(
+            row["tag"]
+            for row in conn.execute(
+                """
+                select tag
+                from strict_term_tags
+                where term_id = ?
+                order by tag
+                """,
+                (term_id,),
+            )
+        )
+
+    def _strict_term_rule_aliases(
+        self,
+        conn: sqlite3.Connection,
+        term_id: int,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+        if not _has_table(conn, "strict_term_aliases"):
+            return ((), ())
+        columns = _columns(conn, "strict_term_aliases")
+        if not {"term_id", "text", "kind"} <= columns:
+            return None
+        case_sensitive_sql = "case_sensitive" if "case_sensitive" in columns else "1"
+        order_column = "id" if "id" in columns else "rowid"
+        rows = conn.execute(
+            f"""
+            select text, kind, {case_sensitive_sql} as case_sensitive
+            from strict_term_aliases
+            where term_id = ?
+            order by {order_column}
+            """,
+            (term_id,),
+        ).fetchall()
+        for row in rows:
+            if row["kind"] in _UNSUPPORTED_RULE_ALIAS_KINDS:
+                return None
+            if not bool(row["case_sensitive"]):
+                return None
+        approved = tuple(
+            row["text"].strip()
+            for row in rows
+            if row["kind"] == "approved_variant" and row["text"].strip()
+        )
+        forbidden = tuple(
+            row["text"].strip()
+            for row in rows
+            if row["kind"] == "forbidden_variant" and row["text"].strip()
+        )
+        return (approved, forbidden)
+
+    def _matching_concept(
+        self,
+        conn: sqlite3.Connection,
+        canonical_name: str,
+        scope_key: str,
+        semantic_tags: tuple[str, ...],
+    ) -> int | None:
+        rows = conn.execute(
+            """
+            select id
+            from concepts
+            where canonical_name = ?
+              and scope_type = 'series'
+              and scope_key = ?
+              and status not in ('archived', 'merged')
+            order by id
+            """,
+            (canonical_name, scope_key),
+        ).fetchall()
+        if len(rows) == 1:
+            return int(rows[0]["id"])
+        if not rows or not semantic_tags:
+            return None
+        wanted = set(semantic_tags)
+        scored = [
+            (
+                len(wanted.intersection(_concept_semantic_tags(conn, int(row["id"])))),
+                int(row["id"]),
+            )
+            for row in rows
+        ]
+        best = max(score for score, _ in scored)
+        if best <= 0:
+            return None
+        best_ids = [concept_id for score, concept_id in scored if score == best]
+        return best_ids[0] if len(best_ids) == 1 else None
+
+    def _ledger_target(
+        self,
+        conn: sqlite3.Connection,
+        source_table: str,
+        source_id: str,
+        target_table: str,
+    ) -> int | None:
+        self._ensure_ledger(conn)
+        row = conn.execute(
+            """
+            select target_id
+            from memory_graph_migration_ledger
+            where source_table = ?
+              and source_id = ?
+              and target_table = ?
+            """,
+            (source_table, source_id, target_table),
+        ).fetchone()
+        return None if row is None else int(row["target_id"])
+
+    def _record_ledger(
+        self,
+        conn: sqlite3.Connection,
+        source_table: str,
+        source_id: str,
+        target_table: str,
+        target_id: int,
+    ) -> None:
+        self._ensure_ledger(conn)
+        conn.execute(
+            """
+            insert into memory_graph_migration_ledger(
+              source_table,
+              source_id,
+              target_table,
+              target_id
+            )
+            values (?, ?, ?, ?)
+            on conflict(source_table, source_id, target_table) do update set
+              target_id = excluded.target_id
+            """,
+            (source_table, source_id, target_table, target_id),
+        )
+
+    def _ensure_ledger(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            create table if not exists memory_graph_migration_ledger (
+              source_table text not null,
+              source_id text not null,
+              target_table text not null,
+              target_id integer not null,
+              created_at text not null default (datetime('now')),
+              primary key (source_table, source_id, target_table)
+            )
+            """
+        )
+
+    def _count_pending_series_languages(
+        self,
+        conn: sqlite3.Connection,
+        pending: Counter[str],
+    ) -> None:
+        if (
+            _has_table(conn, "series")
+            and _has_table(conn, "series_language_tags")
+            and _has_columns(conn, "series_language_tags", {"series_id", "language_tag"})
+            and _has_columns(
+                conn,
+                "series",
+                {"id", "default_source_language", "default_target_language"},
+            )
+        ):
+            pending["series_language_tags"] = _pending_default_language_tags(conn, "series")
+
+    def _count_pending_task_sessions(
+        self,
+        conn: sqlite3.Connection,
+        pending: Counter[str],
+    ) -> None:
+        if not _has_table(conn, "task_sessions"):
+            return
+        columns = _columns(conn, "task_sessions")
+        if (
+            _has_table(conn, "task_session_language_tags")
+            and _has_columns(
+                conn,
+                "task_session_language_tags",
+                {"session_id", "language_tag"},
+            )
+            and {
+                "id",
+                "source_language",
+                "target_language",
+            }
+            <= columns
+        ):
+            pending["task_session_language_tags"] += _pending_owner_values(
+                conn,
+                "task_session_language_tags",
+                "session_id",
+                "language_tag",
+                """
+                select id as owner_id, lower(trim(source_language)) as value
+                from task_sessions
+                where trim(source_language) != ''
+                union
+                select id as owner_id, lower(trim(target_language)) as value
+                from task_sessions
+                where trim(target_language) != ''
+                """,
+            )
+
+        story_selects: list[str] = []
+        if (
+            _has_table(conn, "task_session_story_scopes")
+            and _has_columns(
+                conn,
+                "task_session_story_scopes",
+                {"session_id", "story_scope"},
+            )
+            and "id" in columns
+        ):
+            if "volume" in columns:
+                story_selects.append(
+                    """
+                    select id as owner_id, 'volume:' || trim(volume) as value
+                    from task_sessions
+                    where trim(volume) != ''
+                    """
+                )
+            if "chapter" in columns:
+                story_selects.append(
+                    """
+                    select id as owner_id, 'chapter:' || trim(chapter) as value
+                    from task_sessions
+                    where trim(chapter) != ''
+                    """
+                )
+        if story_selects:
+            pending["task_session_story_scopes"] += _pending_owner_values(
+                conn,
+                "task_session_story_scopes",
+                "session_id",
+                "story_scope",
+                "\nunion\n".join(story_selects),
+            )
+        if (
+            _has_table(conn, "task_session_semantic_tags")
+            and _has_columns(
+                conn,
+                "task_session_semantic_tags",
+                {"session_id", "semantic_tag"},
+            )
+            and "id" in columns
+        ):
+            pending["task_session_semantic_tags"] += _pending_owner_rows_with_legacy_values(
+                conn=conn,
+                owner_table="task_sessions",
+                target_table="task_session_semantic_tags",
+                owner_column="session_id",
+                value_column="semantic_tag",
+                value_source_columns=("tags_json", "semantic_tags_json", "tags"),
+            )
+
+    def _count_pending_crystal_metadata(
+        self,
+        conn: sqlite3.Connection,
+        pending: Counter[str],
+    ) -> None:
+        if not _has_table(conn, "crystals"):
+            return
+        columns = _columns(conn, "crystals")
+        if (
+            _has_table(conn, "crystal_language_tags")
+            and _has_columns(
+                conn,
+                "crystal_language_tags",
+                {"crystal_id", "language_tag"},
+            )
+            and {
+                "id",
+                "source_language",
+                "target_language",
+            }
+            <= columns
+        ):
+            pending["crystal_language_tags"] += _pending_owner_values(
+                conn,
+                "crystal_language_tags",
+                "crystal_id",
+                "language_tag",
+                """
+                select id as owner_id, lower(trim(source_language)) as value
+                from crystals
+                where trim(source_language) != ''
+                union
+                select id as owner_id, lower(trim(target_language)) as value
+                from crystals
+                where trim(target_language) != ''
+                """,
+            )
+        if (
+            _has_table(conn, "crystal_semantic_tags")
+            and _has_columns(
+                conn,
+                "crystal_semantic_tags",
+                {"crystal_id", "tag", "confidence", "created_at"},
+            )
+            and {"id", "tags_json"} <= columns
+        ):
+            pending["crystal_semantic_tags"] += _pending_owner_rows_with_legacy_values(
+                conn=conn,
+                owner_table="crystals",
+                target_table="crystal_semantic_tags",
+                owner_column="crystal_id",
+                value_column="tag",
+                value_source_columns=("tags_json",),
+            )
+
+    def _count_pending_soft_origins(
+        self,
+        conn: sqlite3.Connection,
+        pending: Counter[str],
+    ) -> None:
+        if _has_table(conn, "short_term_memories") and _has_columns(
+            conn,
+            "short_term_memories",
+            {"source_ref", "soft_origin"},
+        ):
+            pending["short_term_memories.soft_origin"] = _scalar_count(
+                conn,
+                """
+                select count(*)
+                from short_term_memories
+                where source_ref != ''
+                  and (soft_origin is null or soft_origin = '')
+                """,
+            )
+        if _has_table(conn, "crystals") and _has_columns(
+            conn,
+            "crystals",
+            {"source_ref", "soft_origin"},
+        ):
+            pending["crystals.soft_origin"] = _scalar_count(
+                conn,
+                """
+                select count(*)
+                from crystals
+                where source_ref != ''
+                  and (soft_origin is null or soft_origin = '')
+                """,
+            )
+
+    def _count_pending_legacy_concept_statuses(
+        self,
+        conn: sqlite3.Connection,
+        pending: Counter[str],
+    ) -> None:
+        if _has_columns(conn, "concepts", {"status"}):
+            pending["concepts.status"] = _scalar_count(
+                conn,
+                "select count(*) from concepts where status in ('vague', 'solid')",
+            )
+
+    def _count_pending_generated_graph(
+        self,
+        conn: sqlite3.Connection,
+        pending: Counter[str],
+    ) -> None:
+        if _has_table(conn, "strict_terms") and _has_columns(
+            conn,
+            "strict_terms",
+            {
+                "id",
+                "status",
+                "source_text",
+                "canonical_translation",
+                "notes",
+                "series_slug",
+                "source_language",
+                "target_language",
+            },
+        ):
+            if _generated_graph_schema_is_complete(conn):
+                pending["strict_terms"] = self._count_migratable_strict_terms(conn)
+        if _has_table(conn, "strict_concept_proposals") and _has_columns(
+            conn,
+            "strict_concept_proposals",
+            {
+                "id",
+                "status",
+                "source_form",
+                "concept_text",
+                "canonical_rendering",
+                "approved_variants_json",
+                "forbidden_variants_json",
+                "rationale",
+                "series_slug",
+                "source_language",
+                "target_language",
+            },
+        ):
+            if _generated_graph_schema_is_complete(conn):
+                pending["strict_concept_proposals"] = self._count_migratable_proposals(conn)
+
+    def _count_migratable_strict_terms(self, conn: sqlite3.Connection) -> int:
+        rows = conn.execute(
+            """
+            select *
+            from strict_terms
+            where status in ('approved', 'active')
+            order by id
+            """
+        ).fetchall()
+
+        count = 0
+        for term in rows:
+            if _generated_rule_artifacts_exist(conn, "strict_terms", str(term["id"])):
+                continue
+            aliases = self._strict_term_rule_aliases(conn, int(term["id"]))
+            if aliases is None:
+                continue
+            approved, forbidden = aliases
+            if _validate_rule_shape(
+                source_text=term["source_text"],
+                canonical_translation=term["canonical_translation"],
+                approved_variants=approved,
+                forbidden_variants=forbidden,
+            ):
+                count += 1
+        return count
+
+    def _count_migratable_proposals(self, conn: sqlite3.Connection) -> int:
+        rows = conn.execute(
+            """
+            select *
+            from strict_concept_proposals
+            where status != 'rejected'
+            order by id
+            """
+        ).fetchall()
+
+        count = 0
+        for proposal in rows:
+            if _generated_rule_artifacts_exist(
+                conn,
+                "strict_concept_proposals",
+                str(proposal["id"]),
+            ):
+                continue
+            source_form = str(proposal["source_form"]).strip() or proposal["concept_text"]
+            if _validate_rule_shape(
+                source_text=source_form,
+                canonical_translation=proposal["canonical_rendering"],
+                approved_variants=_json_string_values(proposal["approved_variants_json"]),
+                forbidden_variants=_json_string_values(proposal["forbidden_variants_json"]),
+            ):
+                count += 1
+        return count
+
+
+def _database_path(db: Database | HieronymusConfig | Path | str) -> Path:
+    if isinstance(db, str):
+        return Path(db)
+    if isinstance(db, Path):
+        return db
+    return Path(db.database_path)
+
+
+def _has_table(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "select 1 from sqlite_master where type = 'table' and name = ?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    if not _has_table(conn, table):
+        return set()
+    return {row["name"] for row in conn.execute(f"pragma table_info({table})")}
+
+
+def _has_columns(conn: sqlite3.Connection, table: str, columns: set[str]) -> bool:
+    return columns <= _columns(conn, table)
+
+
+def _generated_graph_schema_is_complete(conn: sqlite3.Connection) -> bool:
+    return all(
+        _has_table(conn, table) and _has_columns(conn, table, columns)
+        for table, columns in _REQUIRED_GENERATED_GRAPH_COLUMNS.items()
+    )
+
+
+def _row_exists(conn: sqlite3.Connection, table: str, row_id: int) -> bool:
+    row = conn.execute(f"select 1 from {table} where id = ?", (row_id,)).fetchone()
+    return row is not None
+
+
+def _concept_semantic_tags(conn: sqlite3.Connection, concept_id: int) -> tuple[str, ...]:
+    return tuple(
+        row["tag"]
+        for row in conn.execute(
+            "select tag from concept_semantic_tags where concept_id = ? order by tag",
+            (concept_id,),
+        )
+    )
+
+
+def _insert_ignore(conn: sqlite3.Connection, sql: str, params: tuple[object, ...]) -> int:
+    cursor = conn.execute(sql, params)
+    return max(cursor.rowcount, 0)
+
+
+def _execute_rowcount(
+    conn: sqlite3.Connection,
+    sql: str,
+    params: tuple[object, ...] = (),
+) -> int:
+    cursor = conn.execute(sql, params)
+    return max(cursor.rowcount, 0)
+
+
+def _legacy_session_tags(row: sqlite3.Row, columns: set[str]) -> tuple[str, ...]:
+    for column in ("tags_json", "semantic_tags_json", "tags"):
+        if column in columns:
+            return _json_string_values(row[column])
+    return ()
+
+
+def _row_value(
+    row: sqlite3.Row,
+    columns: set[str],
+    column: str,
+    default: object,
+) -> object:
+    if column not in columns:
+        return default
+    value = row[column]
+    return default if value is None else value
+
+
+def _pending_owner_values(
+    conn: sqlite3.Connection,
+    target_table: str,
+    owner_column: str,
+    value_column: str,
+    wanted_sql: str,
+) -> int:
+    if not _has_columns(conn, target_table, {owner_column, value_column}):
+        return 0
+    return _scalar_count(
+        conn,
+        f"""
+        select count(*)
+        from ({wanted_sql}) wanted
+        where wanted.value != ''
+          and not exists (
+            select 1
+            from {target_table} target
+            where target.{owner_column} = wanted.owner_id
+              and target.{value_column} = wanted.value
+          )
+        """,
+    )
+
+
+def _pending_owner_rows_with_legacy_values(
+    *,
+    conn: sqlite3.Connection,
+    owner_table: str,
+    target_table: str,
+    owner_column: str,
+    value_column: str,
+    value_source_columns: tuple[str, ...],
+) -> int:
+    owner_columns = _columns(conn, owner_table)
+    if not (
+        _has_table(conn, target_table)
+        and _has_columns(conn, target_table, {owner_column, value_column})
+        and "id" in owner_columns
+    ):
+        return 0
+    present_source_columns = [column for column in value_source_columns if column in owner_columns]
+    if not present_source_columns:
+        return 0
+
+    owner_select_columns = ", ".join(["id", *present_source_columns])
+    wanted: set[tuple[int, str]] = set()
+    for row in conn.execute(f"select {owner_select_columns} from {owner_table}"):
+        source_column = present_source_columns[0]
+        for value in _json_string_values(row[source_column]):
+            wanted.add((int(row["id"]), value))
+    if not wanted:
+        return 0
+
+    existing = {
+        (int(row[owner_column]), row[value_column])
+        for row in conn.execute(
+            f"""
+            select {owner_column}, {value_column}
+            from {target_table}
+            """
+        )
+    }
+    return len(wanted - existing)
+
+
+def _generated_rule_artifacts_exist(
+    conn: sqlite3.Connection,
+    source_table: str,
+    source_id: str,
+) -> bool:
+    concept_id = _valid_ledger_target(conn, source_table, source_id, "concepts")
+    source_facet_id = _valid_ledger_target(
+        conn,
+        source_table,
+        f"{source_id}:source",
+        "concept_facets",
+    )
+    rendering_facet_id = _valid_ledger_target(
+        conn,
+        source_table,
+        f"{source_id}:rendering",
+        "concept_facets",
+    )
+    crystal_id = _valid_ledger_target(conn, source_table, source_id, "crystals")
+    if None in {concept_id, source_facet_id, rendering_facet_id, crystal_id}:
+        return False
+    if not (
+        _facet_belongs_to_concept(conn, source_facet_id, concept_id)
+        and _facet_belongs_to_concept(conn, rendering_facet_id, concept_id)
+    ):
+        return False
+    row = conn.execute(
+        """
+        select 1
+        from crystal_concepts
+        where crystal_id = ?
+          and concept_id = ?
+          and link_type = 'defines'
+        """,
+        (crystal_id, concept_id),
+    ).fetchone()
+    return row is not None
+
+
+def _valid_ledger_target(
+    conn: sqlite3.Connection,
+    source_table: str,
+    source_id: str,
+    target_table: str,
+) -> int | None:
+    if not _has_table(conn, "memory_graph_migration_ledger"):
+        return None
+    row = conn.execute(
+        """
+        select ledger.target_id
+        from memory_graph_migration_ledger ledger
+        where ledger.source_table = ?
+          and ledger.source_id = ?
+          and ledger.target_table = ?
+        """,
+        (source_table, source_id, target_table),
+    ).fetchone()
+    if row is None:
+        return None
+    target_id = int(row["target_id"])
+    return target_id if _row_exists(conn, target_table, target_id) else None
+
+
+def _facet_belongs_to_concept(
+    conn: sqlite3.Connection,
+    facet_id: int,
+    concept_id: int,
+) -> bool:
+    row = conn.execute(
+        """
+        select 1
+        from concept_facets
+        where id = ?
+          and concept_id = ?
+        """,
+        (facet_id, concept_id),
+    )
+    return row.fetchone() is not None
+
+
+def _pending_default_language_tags(conn: sqlite3.Connection, table: str) -> int:
+    return _pending_owner_values(
+        conn,
+        "series_language_tags",
+        "series_id",
+        "language_tag",
+        f"""
+        select id as owner_id, lower(trim(default_source_language)) as value
+        from {table}
+        where trim(default_source_language) != ''
+        union
+        select id as owner_id, lower(trim(default_target_language)) as value
+        from {table}
+        where trim(default_target_language) != ''
+        """,
+    )
+
+
+def _scalar_count(conn: sqlite3.Connection, sql: str) -> int:
+    return int(conn.execute(sql).fetchone()[0])

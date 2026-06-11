@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import asdict
+from pathlib import Path
 
 import click
 
@@ -16,7 +18,7 @@ from hieronymus.dream_providers import ProviderRegistry, resolve_provider
 from hieronymus.dreaming import DreamService
 from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
-from hieronymus.memory_models import TranslationContext
+from hieronymus.memory_models import CrystalRecord, ShortTermMemoryRecord, TranslationContext
 from hieronymus.presentation import GUIDE_ICON, render_greeting, render_json
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
@@ -57,6 +59,37 @@ def _context(
         volume=volume,
         chapter=chapter,
     )
+
+
+def _crystal_payload(crystal: CrystalRecord | None) -> dict[str, object] | None:
+    if crystal is None:
+        return None
+    return {
+        "id": crystal.id,
+        "crystal_type": crystal.crystal_type,
+        "text": crystal.text,
+        "title": crystal.title,
+        "confidence": crystal.confidence,
+        "strength": crystal.strength,
+        "status": crystal.status,
+        "source_credibility": crystal.source_credibility,
+        "rule_intent": crystal.rule_intent,
+        "story_scopes": list(crystal.story_scopes),
+        "semantic_tags": list(crystal.semantic_tags),
+        "concept_ids": list(crystal.concept_ids),
+    }
+
+
+def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str, object] | None:
+    if memory is None:
+        return None
+    return {
+        "id": memory.id,
+        "source_role": memory.source_role,
+        "kind": memory.kind,
+        "text": memory.text,
+        "metadata": memory.metadata,
+    }
 
 
 def _validate_provided_match(
@@ -111,6 +144,38 @@ def _subprocess_error_message(error: subprocess.CalledProcessError) -> str:
     return f"Update command failed: {command} exited with code {error.returncode}"
 
 
+def _tui_mode() -> str:
+    value = os.environ.get("HIERONYMUS_TUI", "textual").strip().lower()
+    if value not in {"textual", "ink"}:
+        raise click.ClickException("HIERONYMUS_TUI must be textual or ink")
+    return value
+
+
+def _frontend_entrypoint() -> str:
+    candidate = Path(__file__).resolve().parent / "frontend" / "dist" / "main.js"
+    searched = [candidate]
+    if candidate.exists():
+        return str(candidate)
+    for ancestor in Path(__file__).resolve().parents[:5]:
+        repo_candidate = ancestor / "frontend" / "dist" / "main.js"
+        searched.append(repo_candidate)
+        if repo_candidate.exists():
+            return str(repo_candidate)
+    searched_paths = ", ".join(str(path) for path in searched)
+    raise FileNotFoundError(f"Ink frontend bundle not found; looked for: {searched_paths}")
+
+
+def _launch_ink(mode: str, *, data_root: Path) -> None:
+    command = ["node", _frontend_entrypoint(), mode, "--bridge-command", "hiero"]
+    env = {**os.environ, "HIERONYMUS_DATA_ROOT": str(data_root)}
+    try:
+        subprocess.run(command, check=True, env=env)
+    except FileNotFoundError as error:
+        raise click.ClickException("Ink TUI launch failed: node executable not found") from error
+    except subprocess.CalledProcessError as error:
+        raise click.ClickException(f"Ink TUI exited with code {error.returncode}") from error
+
+
 @click.group(invoke_without_command=True)
 @click.option("--data-root", type=click.Path(file_okay=False, dir_okay=True), default=None)
 @click.pass_context
@@ -125,6 +190,14 @@ def main(ctx: click.Context, data_root: str | None) -> None:
         click.echo(render_greeting())
         click.echo()
         _echo_status_lines(status)
+
+
+@main.command("tui-bridge", hidden=True)
+@click.pass_context
+def tui_bridge_command(ctx: click.Context) -> None:
+    from hieronymus.tui_bridge.server import run_stdio
+
+    run_stdio(ctx.obj["config"])
 
 
 @main.command("status")
@@ -175,6 +248,9 @@ def restart(ctx: click.Context, json_output: bool) -> None:
 def config_command(ctx: click.Context, json_output: bool) -> None:
     config = ctx.obj["config"]
     if not json_output:
+        if _tui_mode() == "ink":
+            _launch_ink("config", data_root=config.data_root)
+            return
         HieronymusConfigApp(config).run()
         return
 
@@ -301,6 +377,9 @@ def admin(ctx: click.Context, json_output: bool) -> None:
         click.echo(render_json(payload))
         return
 
+    if _tui_mode() == "ink":
+        _launch_ink("admin", data_root=config.data_root)
+        return
     HieronymusAdminApp(config).run()
 
 
@@ -589,11 +668,12 @@ def recall(
         json.dumps(
             [
                 {
-                    "crystal_id": result.crystal.id,
-                    "text": result.crystal.text,
+                    "source": result.source,
                     "rank": result.rank,
                     "score": result.score,
                     "reason": result.reason,
+                    "crystal": _crystal_payload(result.crystal),
+                    "short_term_memory": _short_term_memory_payload(result.short_term_memory),
                 }
                 for result in results
             ],
@@ -646,7 +726,7 @@ def dream(
         run = DreamService(
             ctx.obj["config"],
             dream_provider,
-        ).run_cycle(wait=wait, owner="manual")
+        ).run_all(wait=wait, owner="cli", ignore_minimum=True)
     except (KeyError, ValueError, SettingsError, DreamCycleAlreadyRunning) as error:
         _raise_click_error(error)
     payload = {
@@ -661,4 +741,4 @@ def dream(
     if json_output:
         click.echo(render_json(payload))
         return
-    click.echo(render_json(payload))
+    click.echo(f"Dream run {run.cycle_id}: {run.status}")

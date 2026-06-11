@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 
@@ -329,7 +330,7 @@ def test_dream_outputs_completed_cycle_after_completed_session_with_memory(tmp_p
 
     result = runner.invoke(
         main,
-        ["--data-root", str(data_root), "dream", "--provider", "deterministic"],
+        ["--data-root", str(data_root), "dream", "--provider", "deterministic", "--json"],
     )
 
     assert result.exit_code == 0
@@ -342,6 +343,52 @@ def test_dream_outputs_completed_cycle_after_completed_session_with_memory(tmp_p
         "created_crystal_count": 1,
         "proposal_count": 0,
         "error": "",
+    }
+
+
+def test_dream_runs_true_drain_with_cli_owner(monkeypatch, tmp_path):
+    data_root = tmp_path / "hieronymus"
+    runner = CliRunner()
+    calls: dict[str, object] = {}
+    provider = SimpleNamespace(name="deterministic")
+
+    def fake_resolve_provider(config, provider_name):
+        calls["provider_name"] = provider_name
+        return provider
+
+    class FakeDreamService:
+        def __init__(self, config, dream_provider):
+            calls["config"] = config
+            calls["dream_provider"] = dream_provider
+
+        def run_all(self, **kwargs):
+            calls["run_all"] = kwargs
+            return SimpleNamespace(
+                cycle_id=7,
+                status="completed",
+                provider="deterministic",
+                input_count=0,
+                created_crystal_count=0,
+                proposal_count=0,
+                error="",
+            )
+
+    monkeypatch.setattr("hieronymus.cli.resolve_provider", fake_resolve_provider)
+    monkeypatch.setattr("hieronymus.cli.DreamService", FakeDreamService)
+
+    result = runner.invoke(
+        main,
+        ["--data-root", str(data_root), "dream", "--provider", "deterministic"],
+    )
+
+    assert result.exit_code == 0
+    assert result.output == "Dream run 7: completed\n"
+    assert calls["provider_name"] == "deterministic"
+    assert calls["dream_provider"] is provider
+    assert calls["run_all"] == {
+        "wait": False,
+        "owner": "cli",
+        "ignore_minimum": True,
     }
 
 
@@ -406,10 +453,74 @@ def test_recall_outputs_ranked_crystal_results(tmp_path):
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload[0]["crystal_id"] == crystal_id
+    assert payload[0]["source"] == "long_term"
     assert payload[0]["rank"] == 1
     assert payload[0]["score"] > 0
     assert payload[0]["reason"] == "weighted search match"
+    assert payload[0]["crystal"]["id"] == crystal_id
+    assert payload[0]["crystal"]["text"] == "Use Sense as a technical UI term."
+    assert payload[0]["short_term_memory"] is None
+
+
+def test_recall_outputs_short_term_results(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    _create_series(data_root)
+    runner = CliRunner()
+    session_id = _start_session(runner, data_root)
+    memory_id = WorkspaceStore(HieronymusConfig(data_root=data_root)).add_short_term_memory(
+        session_id,
+        source_role="mentor",
+        kind="note",
+        text="Keep Sense as Sense in menu labels.",
+        metadata={"source": "review"},
+    )
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "recall",
+            str(session_id),
+            "--series",
+            "only-sense-online",
+            "--query",
+            "Sense labels",
+            "--source-language",
+            "ja",
+            "--target-language",
+            "en",
+            "--task-type",
+            "translation",
+            "--volume",
+            "01",
+            "--chapter",
+            "002",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload[0]["score"] > 0
+    assert payload == [
+        {
+            "source": "short_term",
+            "rank": 1,
+            "score": payload[0]["score"],
+            "reason": "active session short-term memory match",
+            "crystal": None,
+            "short_term_memory": {
+                "id": memory_id,
+                "source_role": "mentor",
+                "kind": "note",
+                "text": "Keep Sense as Sense in menu labels.",
+                "metadata": {
+                    "sentence_count": 1,
+                    "source": "review",
+                },
+            },
+        }
+    ]
 
 
 def test_recall_rejects_series_mismatch_without_writing_trace(tmp_path):

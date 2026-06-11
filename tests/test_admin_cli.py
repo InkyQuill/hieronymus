@@ -38,8 +38,26 @@ def test_admin_json_reports_available_tui_and_counts(tmp_path: Path) -> None:
         "Short-Term Sessions",
         "Dream Runs",
         "Proposals",
+        "Dream Audits",
         "Audit Log",
     ]
+
+
+def test_admin_json_survives_malformed_dream_config(tmp_path: Path) -> None:
+    data_root = tmp_path / "hieronymus"
+    _seed_series(data_root)
+    data_root.mkdir(parents=True, exist_ok=True)
+    (data_root / "dream.conf").write_text("[dreaming\n", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["--data-root", str(data_root), "admin", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["tui"] == "available"
+    assert payload["dream_status"]["state"] == "DISABLED"
+    assert "dream.conf is not valid TOML" in payload["dream_status"]["reason"]
+    assert "dream.conf is not valid TOML" in payload["dream_config_error"]
 
 
 def test_admin_launch_invokes_textual_app(monkeypatch, tmp_path: Path) -> None:

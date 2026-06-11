@@ -1,6 +1,6 @@
 import pytest
 
-from hieronymus.concepts import ConceptProposalStore
+from hieronymus.concepts import ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import connect
 
@@ -69,6 +69,116 @@ def test_list_pending_returns_only_pending_ordered_by_id(config: HieronymusConfi
 
     assert [proposal.id for proposal in pending] == [first_id, third_id]
     assert [proposal.status for proposal in pending] == ["pending", "pending"]
+
+
+def test_list_pending_includes_candidate_concepts_with_facet_suggestions(
+    config: HieronymusConfig,
+) -> None:
+    concept_id = ConceptStore(config).create_or_reinforce(
+        "Sense",
+        description="A game-like aptitude category.",
+        confidence_delta=0.2,
+        scope_type="project",
+        scope_key="only-sense-online",
+    )
+    with connect(config.database_path) as conn:
+        conn.execute(
+            """
+            insert into concept_facets(
+              concept_id,
+              language,
+              facet_type,
+              value,
+              confidence,
+              created_at,
+              updated_at
+            )
+            values (?, 'ja', 'alias', 'センス', 0.9, ?, ?)
+            """,
+            (
+                concept_id,
+                "2026-06-09T00:00:00+00:00",
+                "2026-06-09T00:00:00+00:00",
+            ),
+        )
+        conn.execute(
+            """
+            insert into concept_facets(
+              concept_id,
+              language,
+              facet_type,
+              value,
+              confidence,
+              created_at,
+              updated_at
+            )
+            values (?, 'ru', 'rendering', 'Сенс', 0.4, ?, ?)
+            """,
+            (
+                concept_id,
+                "2026-06-09T00:00:00+00:00",
+                "2026-06-09T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    pending = ConceptProposalStore(config).list_pending()
+
+    assert len(pending) == 1
+    assert pending[0].id == -concept_id
+    assert pending[0].series_slug == "only-sense-online"
+    assert pending[0].concept_text == "Sense"
+    assert pending[0].source_form == "Sense"
+    assert pending[0].canonical_rendering == "Сенс"
+    assert pending[0].approved_variants == ["センス", "Сенс"]
+    assert pending[0].forbidden_variants == []
+    assert pending[0].rationale == "A game-like aptitude category."
+    assert pending[0].status == "candidate"
+
+
+def test_list_pending_uses_non_overlapping_ids_for_strict_and_candidate_proposals(
+    config: HieronymusConfig,
+) -> None:
+    strict_id = ConceptProposalStore(config).create(**_valid_proposal())
+    concept_id = ConceptStore(config).create_or_reinforce(
+        "Sense",
+        description="A candidate duplicate concept.",
+        confidence_delta=0.2,
+        scope_type="project",
+        scope_key="only-sense-online",
+    )
+    assert strict_id == concept_id
+
+    pending = ConceptProposalStore(config).list_pending()
+
+    assert [(proposal.id, proposal.status) for proposal in pending] == [
+        (strict_id, "pending"),
+        (-concept_id, "candidate"),
+    ]
+    store = ConceptProposalStore(config)
+    with pytest.raises(KeyError, match="unknown concept proposal"):
+        store.get(-concept_id)
+    with pytest.raises(KeyError, match="unknown concept proposal"):
+        store.approve(-concept_id)
+    with pytest.raises(KeyError, match="unknown concept proposal"):
+        store.reject(-concept_id)
+
+
+def test_list_pending_includes_candidate_semantic_tags_in_rationale(
+    config: HieronymusConfig,
+) -> None:
+    ConceptStore(config).create_or_reinforce(
+        "Sense",
+        description="A candidate duplicate concept.",
+        tags=("subskill", "talent"),
+        confidence_delta=0.2,
+        scope_type="project",
+        scope_key="only-sense-online",
+    )
+
+    pending = ConceptProposalStore(config).list_pending()
+
+    assert pending[0].rationale == "A candidate duplicate concept.\nSemantic tags: subskill, talent"
 
 
 def test_approve_and_reject_only_change_status(config: HieronymusConfig) -> None:

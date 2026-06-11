@@ -6,9 +6,11 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import ProviderProfile, load_dream_config
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
     DreamConceptProposal,
@@ -16,11 +18,21 @@ from hieronymus.dreaming import (
     DreamOutput,
     DreamProvider,
 )
+from hieronymus.llm_cache import (
+    CachedModels,
+    ModelCacheEntry,
+    dream_profile_cache_identity,
+    load_model_cache,
+    model_cache_identity,
+    save_model_cache,
+)
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.secrets import env_value_exists
 from hieronymus.settings import HieronymusSettings, ProviderSettings, load_settings
 
 ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_API_BASE_URL = "https://api.anthropic.com"
+GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com"
 
 
 @dataclass(frozen=True)
@@ -36,6 +48,14 @@ class HTTPTransport(Protocol):
         *,
         headers: dict[str, str],
         payload: dict[str, object],
+        timeout: float,
+    ) -> HTTPResponse: ...
+
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
         timeout: float,
     ) -> HTTPResponse: ...
 
@@ -55,6 +75,28 @@ class UrllibTransport:
             data=data,
             headers={**headers, "Content-Type": "application/json"},
             method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                body = response.read().decode("utf-8", errors="replace")
+                return HTTPResponse(status=response.status, body=body)
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            return HTTPResponse(status=error.code, body=body)
+        except urllib.error.URLError:
+            return HTTPResponse(status=0, body="network error")
+
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        timeout: float,
+    ) -> HTTPResponse:
+        request = urllib.request.Request(
+            url,
+            headers={**headers, "Accept": "application/json"},
+            method="GET",
         )
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -90,6 +132,22 @@ class ProviderCheckResult:
             "model": self.model,
             "error": self.error,
             "latency_ms": self.latency_ms,
+        }
+
+
+@dataclass(frozen=True)
+class ModelSuggestionResult:
+    provider: str
+    models: list[str]
+    source: str
+    error: str = ""
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "provider": self.provider,
+            "models": self.models,
+            "source": self.source,
+            "error": self.error,
         }
 
 
@@ -159,6 +217,203 @@ class ProviderRegistry:
             )
         return statuses
 
+    def list_model_suggestions(
+        self,
+        config: HieronymusConfig,
+        name: str,
+        *,
+        settings: HieronymusSettings | None = None,
+    ) -> ModelSuggestionResult:
+        self.metadata(name)
+        if name == "deterministic":
+            return ModelSuggestionResult(
+                provider=name,
+                models=_default_model_suggestions(name),
+                source="defaults",
+            )
+
+        if name == "anthropic":
+            return self._list_static_cached_model_suggestions(config, name)
+
+        active_settings = settings or load_settings(config)
+        provider = active_settings.providers.get(name, ProviderSettings())
+        identity = model_cache_identity(name, provider)
+        cache = load_model_cache(config)
+        entry = cache.providers.get(name)
+        if (
+            entry is not None
+            and not entry.error
+            and entry.identity == identity
+            and not entry.is_stale()
+        ):
+            return ModelSuggestionResult(
+                provider=name,
+                models=list(entry.models),
+                source=config.llm_cache_path.name,
+                error=entry.error,
+            )
+
+        result = self._list_uncached_model_suggestions(
+            config,
+            name,
+            settings=active_settings,
+        )
+        _save_model_cache_best_effort(
+            config,
+            cache.with_entry(
+                ModelCacheEntry(
+                    provider=name,
+                    models=tuple(result.models),
+                    fetched_at=datetime.now(UTC).isoformat(),
+                    error=result.error,
+                    identity=identity,
+                )
+            ),
+        )
+        return result
+
+    def list_profile_model_suggestions(
+        self,
+        config: HieronymusConfig,
+        profile_name: str,
+        profile: ProviderProfile,
+    ) -> ModelSuggestionResult:
+        identity = dream_profile_cache_identity(profile_name, profile)
+        cache = load_model_cache(config)
+        entry = cache.providers.get(profile_name)
+        if (
+            entry is not None
+            and not entry.error
+            and entry.identity == identity
+            and not entry.is_stale()
+        ):
+            return ModelSuggestionResult(
+                provider=profile_name,
+                models=list(entry.models),
+                source=config.llm_cache_path.name,
+                error=entry.error,
+            )
+
+        result = self._list_uncached_profile_model_suggestions(profile_name, profile)
+        _save_model_cache_best_effort(
+            config,
+            cache.with_entry(
+                ModelCacheEntry(
+                    provider=profile_name,
+                    models=tuple(result.models),
+                    fetched_at=datetime.now(UTC).isoformat(),
+                    error=result.error,
+                    identity=identity,
+                )
+            ),
+        )
+        return result
+
+    def _list_static_cached_model_suggestions(
+        self,
+        config: HieronymusConfig,
+        name: str,
+    ) -> ModelSuggestionResult:
+        cache = load_model_cache(config)
+        entry = cache.providers.get(name)
+        if entry is not None and not entry.error and not entry.is_stale():
+            return ModelSuggestionResult(
+                provider=name,
+                models=list(entry.models),
+                source=config.llm_cache_path.name,
+                error=entry.error,
+            )
+
+        result = ModelSuggestionResult(
+            provider=name,
+            models=_default_model_suggestions(name),
+            source="defaults",
+        )
+        _save_model_cache_best_effort(
+            config,
+            cache.with_entry(
+                ModelCacheEntry(
+                    provider=name,
+                    models=tuple(result.models),
+                    fetched_at=datetime.now(UTC).isoformat(),
+                    error=result.error,
+                    identity=model_cache_identity(name),
+                )
+            ),
+        )
+        return result
+
+    def _list_uncached_model_suggestions(
+        self,
+        config: HieronymusConfig,
+        name: str,
+        *,
+        settings: HieronymusSettings | None = None,
+    ) -> ModelSuggestionResult:
+        defaults = _default_model_suggestions(name)
+        if name in {"anthropic", "deterministic"}:
+            return ModelSuggestionResult(provider=name, models=defaults, source="defaults")
+
+        active_settings = settings or load_settings(config)
+        provider = active_settings.providers.get(name, ProviderSettings())
+        api_key = os.environ.get(provider.api_key_env)
+        if not api_key:
+            return ModelSuggestionResult(
+                provider=name,
+                models=defaults,
+                source="defaults",
+                error=f"missing environment variable: {provider.api_key_env}",
+            )
+
+        try:
+            response = self._list_remote_models(name, provider, api_key)
+            if not 200 <= response.status < 300:
+                raise ValueError("model suggestions request failed")
+            models = _parse_model_suggestions(name, response.body)
+            if not models:
+                raise ValueError("empty model suggestions")
+        except Exception:
+            return ModelSuggestionResult(
+                provider=name,
+                models=defaults,
+                source="defaults",
+                error="model suggestions unavailable",
+            )
+        return ModelSuggestionResult(provider=name, models=models, source="api")
+
+    def _list_uncached_profile_model_suggestions(
+        self,
+        profile_name: str,
+        profile: ProviderProfile,
+    ) -> ModelSuggestionResult:
+        defaults = _default_model_suggestions(profile.type)
+        if profile.type in {"anthropic", "ollama"}:
+            return ModelSuggestionResult(provider=profile_name, models=defaults, source="defaults")
+        if not profile.api_key.strip():
+            return ModelSuggestionResult(
+                provider=profile_name,
+                models=defaults,
+                source="defaults",
+                error="API key missing for provider profile",
+            )
+
+        settings = _profile_provider_settings(profile, model=defaults[0])
+        try:
+            response = self._list_remote_models(profile.type, settings, profile.api_key)
+            if not 200 <= response.status < 300:
+                raise ValueError("model suggestions request failed")
+            models = _parse_model_suggestions(profile.type, response.body)
+            if not models:
+                raise ValueError("empty model suggestions")
+        except Exception:
+            return ModelSuggestionResult(
+                provider=profile_name,
+                models=defaults,
+                source="defaults",
+                error="model suggestions unavailable",
+            )
+        return ModelSuggestionResult(provider=profile_name, models=models, source="api")
+
     def check(
         self,
         config: HieronymusConfig,
@@ -209,6 +464,115 @@ class ProviderRegistry:
             error=f"provider returned HTTP {response.status}",
             latency_ms=latency_ms,
         )
+
+    def check_profile(
+        self,
+        config: HieronymusConfig,
+        profile_name: str,
+        profile: ProviderProfile,
+        *,
+        model: str,
+    ) -> ProviderCheckResult:
+        resolved_model = model.strip()
+        if not resolved_model:
+            result = ProviderCheckResult(
+                name=profile_name,
+                ok=False,
+                model="",
+                error=f"model must not be empty for provider profile: {profile_name}",
+            )
+            self._cache_profile_check_failure(config, profile_name, profile, result)
+            return result
+        if profile.type != "ollama" and not profile.api_key.strip():
+            result = ProviderCheckResult(
+                name=profile_name,
+                ok=False,
+                model=resolved_model,
+                error=f"API key missing for provider profile: {profile_name}",
+            )
+            self._cache_profile_check_failure(config, profile_name, profile, result)
+            return result
+
+        settings = _profile_provider_settings(profile, resolved_model)
+        started = time.perf_counter()
+        try:
+            response = self._check_profile_remote(profile, settings)
+        except Exception:
+            latency_ms = round((time.perf_counter() - started) * 1000)
+            result = ProviderCheckResult(
+                name=profile_name,
+                ok=False,
+                model=resolved_model,
+                error="provider check failed",
+                latency_ms=latency_ms,
+            )
+            self._cache_profile_check_failure(config, profile_name, profile, result)
+            return result
+
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        if 200 <= response.status < 300:
+            return ProviderCheckResult(
+                name=profile_name,
+                ok=True,
+                model=resolved_model,
+                latency_ms=latency_ms,
+            )
+
+        result = ProviderCheckResult(
+            name=profile_name,
+            ok=False,
+            model=resolved_model,
+            error=f"provider returned HTTP {response.status}",
+            latency_ms=latency_ms,
+        )
+        self._cache_profile_check_failure(config, profile_name, profile, result)
+        return result
+
+    def _cache_profile_check_failure(
+        self,
+        config: HieronymusConfig,
+        profile_name: str,
+        profile: ProviderProfile,
+        result: ProviderCheckResult,
+    ) -> None:
+        if result.ok:
+            return
+        cache = load_model_cache(config)
+        _save_model_cache_best_effort(
+            config,
+            cache.with_entry(
+                ModelCacheEntry(
+                    provider=profile_name,
+                    models=(),
+                    fetched_at=datetime.now(UTC).isoformat(),
+                    error=result.error,
+                    identity=dream_profile_cache_identity(profile_name, profile),
+                )
+            ),
+        )
+
+    def _check_profile_remote(
+        self,
+        profile: ProviderProfile,
+        provider: ProviderSettings,
+    ) -> HTTPResponse:
+        if profile.type in {"openai", "gemini", "anthropic"}:
+            return self._check_remote(profile.type, provider, profile.api_key)
+        if profile.type == "ollama":
+            if _is_openai_compatible_ollama_endpoint(profile.endpoint):
+                return self._check_remote("openai", provider, profile.api_key or "ollama")
+            base_url = (provider.base_url or "http://localhost:11434").rstrip("/")
+            return self._transport.post_json(
+                f"{base_url}/api/chat",
+                headers={},
+                payload={
+                    "model": provider.model,
+                    "messages": [{"role": "user", "content": "Reply with ok."}],
+                    "stream": False,
+                },
+                timeout=provider.timeout_seconds,
+            )
+        raise ValueError(f"unsupported provider type: {profile.type}")
 
     def _check_remote(
         self,
@@ -261,6 +625,27 @@ class ProviderRegistry:
             )
         raise ValueError(f"unsupported dream provider: {name}")
 
+    def _list_remote_models(
+        self,
+        name: str,
+        provider: ProviderSettings,
+        api_key: str,
+    ) -> HTTPResponse:
+        if name == "openai":
+            base_url = (provider.base_url or "https://api.openai.com/v1").rstrip("/")
+            return self._transport.get_json(
+                f"{base_url}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=provider.timeout_seconds,
+            )
+        if name == "gemini":
+            return self._transport.get_json(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                headers={"x-goog-api-key": api_key},
+                timeout=provider.timeout_seconds,
+            )
+        raise ValueError(f"unsupported dream provider: {name}")
+
 
 def _dream_prompt(
     context: TranslationContext,
@@ -273,6 +658,12 @@ def _dream_prompt(
             "kind": memory.kind,
             "text": memory.text,
             "source_ref": memory.source_ref,
+            "language_tags": list(memory.language_tags),
+            "story_scopes": list(memory.story_scopes),
+            "semantic_tags": list(memory.semantic_tags),
+            "source_credibility": memory.source_credibility,
+            "rule_intent": memory.rule_intent,
+            "soft_origin": memory.soft_origin,
         }
         for memory in memories
     ]
@@ -280,7 +671,11 @@ def _dream_prompt(
         {
             "instruction": (
                 "Return only JSON with keys crystals and concept_proposals. "
-                "Use only provided source memory ids. Do not add markdown."
+                "Use English memory prose by default; Japanese, Russian, or other "
+                "languages may appear only as terms, names, renderings, quotes, or "
+                "metadata. Long-term crystals must be 1-2 sentences. Short-term "
+                "memories must be 1-6 sentences. Use only provided source memory ids. "
+                "Do not add markdown."
             ),
             "context": {
                 "series_slug": context.series_slug,
@@ -290,6 +685,9 @@ def _dream_prompt(
                 "volume": context.volume,
                 "chapter": context.chapter,
                 "tags": list(context.tags),
+                "language_tags": list(context.language_tags),
+                "story_scopes": list(context.story_scopes),
+                "semantic_tags": list(context.semantic_tags),
             },
             "memories": memory_payload,
             "schema": {
@@ -320,6 +718,47 @@ def _dream_prompt(
         },
         ensure_ascii=False,
     )
+
+
+def _default_model_suggestions(name: str) -> list[str]:
+    defaults = {
+        "openai": ["gpt-4.1-mini", "gpt-4.1", "o4-mini"],
+        "gemini": ["gemini-2.5-flash", "gemini-2.5-pro"],
+        "anthropic": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
+        "deterministic": [""],
+        "ollama": ["gemma4-e3b"],
+    }
+    return list(defaults[name])
+
+
+def _parse_model_suggestions(name: str, body: str) -> list[str]:
+    payload = json.loads(body)
+    if type(payload) is not dict:
+        return []
+    if name == "openai":
+        data = payload.get("data")
+        if type(data) is not list:
+            return []
+        return sorted(
+            item["id"] for item in data if type(item) is dict and type(item.get("id")) is str
+        )
+    if name == "gemini":
+        data = payload.get("models")
+        if type(data) is not list:
+            return []
+        return sorted(
+            item["name"].removeprefix("models/")
+            for item in data
+            if type(item) is dict and type(item.get("name")) is str
+        )
+    return []
+
+
+def _save_model_cache_best_effort(config: HieronymusConfig, cache: CachedModels) -> None:
+    try:
+        save_model_cache(config, cache)
+    except OSError:
+        return
 
 
 def _parse_dream_json(provider_name: str, raw_text: str) -> DreamOutput:
@@ -386,6 +825,16 @@ def _anthropic_envelope_text(body: str) -> str:
         raise _provider_envelope_error("anthropic") from error
     if type(text) is not str:
         raise _provider_envelope_error("anthropic")
+    return text
+
+
+def _ollama_envelope_text(body: str) -> str:
+    try:
+        text = _provider_envelope_payload("ollama", body)["message"]["content"]
+    except (KeyError, TypeError) as error:
+        raise _provider_envelope_error("ollama") from error
+    if type(text) is not str:
+        raise _provider_envelope_error("ollama")
     return text
 
 
@@ -468,7 +917,10 @@ class OpenAIDreamProvider:
         settings: ProviderSettings,
         api_key: str,
         transport: HTTPTransport,
+        *,
+        name: str = "openai",
     ) -> None:
+        self.name = name
         self.settings = settings
         self.api_key = api_key
         self.transport = transport
@@ -503,10 +955,13 @@ class GeminiDreamProvider:
         settings: ProviderSettings,
         api_key: str,
         transport: HTTPTransport,
+        *,
+        base_url: str | None = None,
     ) -> None:
         self.settings = settings
         self.api_key = api_key
         self.transport = transport
+        self.base_url = (base_url or GEMINI_API_BASE_URL).rstrip("/")
 
     def crystallize(
         self,
@@ -514,10 +969,7 @@ class GeminiDreamProvider:
         memories: list[ShortTermMemoryRecord],
     ) -> DreamOutput:
         response = self.transport.post_json(
-            (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{self.settings.model}:generateContent"
-            ),
+            f"{self.base_url}/v1beta/models/{self.settings.model}:generateContent",
             headers={"x-goog-api-key": self.api_key},
             payload={
                 "contents": [
@@ -546,10 +998,13 @@ class AnthropicDreamProvider:
         settings: ProviderSettings,
         api_key: str,
         transport: HTTPTransport,
+        *,
+        base_url: str | None = None,
     ) -> None:
         self.settings = settings
         self.api_key = api_key
         self.transport = transport
+        self.base_url = (base_url or ANTHROPIC_API_BASE_URL).rstrip("/")
 
     def crystallize(
         self,
@@ -557,7 +1012,7 @@ class AnthropicDreamProvider:
         memories: list[ShortTermMemoryRecord],
     ) -> DreamOutput:
         response = self.transport.post_json(
-            "https://api.anthropic.com/v1/messages",
+            f"{self.base_url}/v1/messages",
             headers={
                 "x-api-key": self.api_key,
                 "anthropic-version": ANTHROPIC_API_VERSION,
@@ -573,6 +1028,126 @@ class AnthropicDreamProvider:
         if not 200 <= response.status < 300:
             raise ValueError(f"anthropic returned HTTP {response.status}")
         return _parse_dream_json("anthropic", _anthropic_envelope_text(response.body))
+
+
+class OllamaDreamProvider:
+    name = "ollama"
+
+    def __init__(
+        self,
+        settings: ProviderSettings,
+        transport: HTTPTransport,
+    ) -> None:
+        self.settings = settings
+        self.transport = transport
+
+    def crystallize(
+        self,
+        context: TranslationContext,
+        memories: list[ShortTermMemoryRecord],
+    ) -> DreamOutput:
+        base_url = (self.settings.base_url or "http://localhost:11434").rstrip("/")
+        response = self.transport.post_json(
+            f"{base_url}/api/chat",
+            headers={},
+            payload={
+                "model": self.settings.model,
+                "messages": [{"role": "user", "content": _dream_prompt(context, memories)}],
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.1},
+            },
+            timeout=self.settings.timeout_seconds,
+        )
+        if not 200 <= response.status < 300:
+            raise ValueError(f"ollama returned HTTP {response.status}")
+        return _parse_dream_json("ollama", _ollama_envelope_text(response.body))
+
+
+def resolve_profile_provider(
+    config: HieronymusConfig,
+    profile_name: str,
+    *,
+    model: str,
+    transport: HTTPTransport | None = None,
+) -> DreamProvider:
+    dream_config = load_dream_config(config)
+    profile = dream_config.providers.get(profile_name)
+    if profile is None:
+        raise ValueError(f"referenced provider profile is missing: {profile_name}")
+    return _provider_from_profile(
+        profile_name,
+        profile,
+        model=model,
+        transport=transport,
+    )
+
+
+def _provider_from_profile(
+    profile_name: str,
+    profile: ProviderProfile,
+    *,
+    model: str,
+    transport: HTTPTransport | None = None,
+) -> DreamProvider:
+    resolved_model = model.strip()
+    if not resolved_model:
+        raise ValueError(f"model must not be empty for provider profile: {profile_name}")
+    if profile.type != "ollama" and not profile.api_key.strip():
+        raise ValueError(f"API key missing for provider profile: {profile_name}")
+
+    active_transport = transport or UrllibTransport()
+    settings = _profile_provider_settings(profile, resolved_model)
+    if profile.type == "openai":
+        return OpenAIDreamProvider(settings, profile.api_key, active_transport)
+    if profile.type == "gemini":
+        return GeminiDreamProvider(
+            settings,
+            profile.api_key,
+            active_transport,
+            base_url=settings.base_url,
+        )
+    if profile.type == "anthropic":
+        return AnthropicDreamProvider(
+            settings,
+            profile.api_key,
+            active_transport,
+            base_url=settings.base_url,
+        )
+    if profile.type == "ollama":
+        if _is_openai_compatible_ollama_endpoint(profile.endpoint):
+            return OpenAIDreamProvider(
+                settings, profile.api_key or "ollama", active_transport, name="ollama"
+            )
+        return OllamaDreamProvider(settings, active_transport)
+    raise ValueError(f"unsupported provider type for {profile_name}: {profile.type}")
+
+
+def _profile_provider_settings(profile: ProviderProfile, model: str) -> ProviderSettings:
+    endpoint = profile.endpoint.strip() or _default_profile_endpoint(profile.type)
+    return ProviderSettings(
+        enabled=True,
+        model=model,
+        api_key_env="",
+        base_url=endpoint,
+        timeout_seconds=profile.timeout_seconds,
+    )
+
+
+def _default_profile_endpoint(provider_type: str) -> str:
+    if provider_type == "openai":
+        return "https://api.openai.com/v1"
+    if provider_type == "gemini":
+        return "https://generativelanguage.googleapis.com"
+    if provider_type == "anthropic":
+        return "https://api.anthropic.com"
+    if provider_type == "ollama":
+        return "http://localhost:11434"
+    return ""
+
+
+def _is_openai_compatible_ollama_endpoint(endpoint: str) -> bool:
+    return endpoint.strip().rstrip("/").endswith("/v1")
 
 
 def resolve_provider(

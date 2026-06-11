@@ -5,7 +5,7 @@ from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
-from hieronymus.scoring import FeedbackStore
+from hieronymus.scoring import FeedbackStore, apply_score_delta
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -200,6 +200,25 @@ def test_scores_are_clamped_to_zero_and_one(config: HieronymusConfig) -> None:
     assert high.confidence == 1.0
     assert low.strength == 0.0
     assert low.confidence == 0.0
+
+
+def test_apply_score_delta_archives_zero_confidence_non_rule_but_not_active_rule() -> None:
+    assert apply_score_delta(
+        strength=0.02,
+        confidence=0.01,
+        status="active",
+        crystal_type="lesson",
+        strength_delta=-0.5,
+        confidence_delta=-0.5,
+    ) == (0.0, 0.0, "archived")
+    assert apply_score_delta(
+        strength=0.02,
+        confidence=0.01,
+        status="active",
+        crystal_type="rule",
+        strength_delta=-0.5,
+        confidence_delta=-0.5,
+    ) == (0.0, 0.0, "active")
 
 
 def test_unknown_event_type_and_role_raise_value_error(config: HieronymusConfig) -> None:

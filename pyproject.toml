@@ -29,6 +29,17 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+only-include = ["src/hieronymus", "frontend/dist/main.js"]
+artifacts = ["frontend/dist/main.js"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
+"frontend/dist" = "hieronymus/frontend/dist"
+
+[tool.hatch.build.targets.sdist]
+artifacts = ["frontend/dist/main.js"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

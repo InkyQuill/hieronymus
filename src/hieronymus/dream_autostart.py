@@ -8,6 +8,7 @@ from typing import Any
 from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
+from hieronymus.dream_config import load_dream_config
 from hieronymus.dream_locks import read_dream_cycle_state
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamService
@@ -20,6 +21,7 @@ class AutostartState:
     last_error: str = ""
     last_skipped_at: datetime | None = None
     last_skip_reason: str = ""
+    not_enough_memories_skipped_count: int = 0
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -31,6 +33,7 @@ class AutostartState:
             if self.last_skipped_at is not None
             else None,
             "last_skip_reason": self.last_skip_reason,
+            "not_enough_memories_skipped_count": self.not_enough_memories_skipped_count,
         }
 
 
@@ -48,6 +51,10 @@ def load_autostart_state(config: HieronymusConfig) -> AutostartState:
         last_error=str(payload.get("last_error", "")),
         last_skipped_at=_parse_datetime(payload.get("last_skipped_at"), "last_skipped_at"),
         last_skip_reason=str(payload.get("last_skip_reason", "")),
+        not_enough_memories_skipped_count=_parse_non_negative_int(
+            payload.get("not_enough_memories_skipped_count", 0),
+            "not_enough_memories_skipped_count",
+        ),
     )
 
 
@@ -64,6 +71,7 @@ class DreamAutostart:
 
     def status(self) -> dict[str, object]:
         settings = load_settings(self.config)
+        dream_config = load_dream_config(self.config)
         state = load_autostart_state(self.config)
         pending_completed_sessions, pending_short_term_memories = self._pending_counts()
         active_cycle = read_dream_cycle_state(self.config)
@@ -78,17 +86,23 @@ class DreamAutostart:
         )
         state_payload = state.to_json_dict()
         return {
-            "enabled": settings.dreaming.autostart_enabled,
+            "enabled": dream_config.enabled,
             "active_provider": settings.dreaming.active_provider,
-            "min_interval_minutes": settings.dreaming.min_interval_minutes,
-            "new_short_term_memory_threshold": settings.dreaming.new_short_term_memory_threshold,
-            "max_cycles_per_autostart": settings.dreaming.max_cycles_per_autostart,
+            "schedule_interval_minutes": dream_config.schedule_interval_minutes,
+            "min_pending_short_term_memories": dream_config.min_pending_short_term_memories,
+            "max_pending_short_term_memories": dream_config.max_pending_short_term_memories,
+            "max_short_term_memories_per_cycle": dream_config.max_short_term_memories_per_cycle,
+            "not_enough_memories_cycle_threshold": (
+                dream_config.not_enough_memories_cycle_threshold
+            ),
             "pending_completed_sessions": pending_completed_sessions,
             "pending_short_term_memories": pending_short_term_memories,
             "last_started_at": state_payload["last_started_at"],
             "last_error": state.last_error,
             "last_skipped_at": state_payload["last_skipped_at"],
             "last_skip_reason": state.last_skip_reason,
+            "not_enough_memories_skipped_count": state.not_enough_memories_skipped_count,
+            "skipped_count": state.not_enough_memories_skipped_count,
             "cycle_active": active_cycle is not None,
             "active_cycle": active_cycle_payload,
         }
@@ -98,49 +112,85 @@ class DreamAutostart:
         state_for_error = AutostartState()
         attempted_run = False
         try:
-            settings = load_settings(self.config)
-            if not settings.dreaming.autostart_enabled:
+            dream_config = load_dream_config(self.config)
+            if not dream_config.enabled:
                 return {"ran": False, "reason": "disabled", "cycles": 0}
-
-            _pending_completed_sessions, pending_short_term_memories = self._pending_counts()
-            if pending_short_term_memories == 0:
-                return {"ran": False, "reason": "no-pending-memory", "cycles": 0}
 
             state = load_autostart_state(self.config)
             state_for_error = state
-            if pending_short_term_memories >= settings.dreaming.new_short_term_memory_threshold:
-                reason = "threshold"
-            elif self._interval_elapsed(
-                now,
-                state.last_started_at,
-                settings.dreaming.min_interval_minutes,
-            ):
-                reason = "interval"
-            else:
-                return {"ran": False, "reason": "not-due", "cycles": 0}
-
-            cycles = 0
-            service = DreamService(self.config, resolve_provider(self.config))
-            for _ in range(settings.dreaming.max_cycles_per_autostart):
-                _pending_completed_sessions, pending_short_term_memories = self._pending_counts()
-                if pending_short_term_memories == 0:
-                    break
-                run = service.run_cycle(owner="autostart", skip_when_locked=True)
-                if run.status == "skipped":
+            _pending_completed_sessions, pending_short_term_memories = self._pending_counts()
+            if pending_short_term_memories == 0:
+                if (
+                    state.not_enough_memories_skipped_count != 0
+                    or state.last_skip_reason == "not_enough_memories"
+                ):
                     save_autostart_state(
                         self.config,
                         AutostartState(
                             last_started_at=state.last_started_at,
+                            last_error=state.last_error,
                             last_skipped_at=now,
-                            last_skip_reason="cycle-active",
+                            last_skip_reason="no-pending-memory",
                         ),
                     )
-                    return {"ran": False, "reason": "cycle-active", "cycles": cycles}
-                attempted_run = True
-                cycles += 1
-            if cycles > 0:
-                save_autostart_state(self.config, AutostartState(last_started_at=now))
-            return {"ran": cycles > 0, "reason": reason, "cycles": cycles}
+                return {"ran": False, "reason": "no-pending-memory", "cycles": 0}
+
+            ignore_minimum = False
+            if pending_short_term_memories >= dream_config.max_pending_short_term_memories:
+                reason = "urgent"
+                ignore_minimum = True
+            elif self._interval_elapsed(
+                now,
+                self._interval_anchor(state),
+                dream_config.schedule_interval_minutes,
+            ):
+                if pending_short_term_memories >= dream_config.min_pending_short_term_memories:
+                    reason = "scheduled"
+                else:
+                    skipped_count = state.not_enough_memories_skipped_count + 1
+                    if skipped_count <= dream_config.not_enough_memories_cycle_threshold:
+                        save_autostart_state(
+                            self.config,
+                            AutostartState(
+                                last_started_at=state.last_started_at,
+                                last_error=state.last_error,
+                                last_skipped_at=now,
+                                last_skip_reason="not_enough_memories",
+                                not_enough_memories_skipped_count=skipped_count,
+                            ),
+                        )
+                        return {
+                            "ran": False,
+                            "reason": "not_enough_memories",
+                            "cycles": 0,
+                        }
+                    reason = "backlog_escape"
+                    ignore_minimum = True
+            else:
+                return {"ran": False, "reason": "not-due", "cycles": 0}
+
+            service = DreamService(self.config, resolve_provider(self.config))
+            run = service.run_all(
+                owner="autostart",
+                skip_when_locked=True,
+                ignore_minimum=ignore_minimum,
+                trigger_type=reason,
+            )
+            if run.status == "skipped":
+                save_autostart_state(
+                    self.config,
+                    AutostartState(
+                        last_started_at=state.last_started_at,
+                        last_error=state.last_error,
+                        last_skipped_at=now,
+                        last_skip_reason="cycle-active",
+                        not_enough_memories_skipped_count=(state.not_enough_memories_skipped_count),
+                    ),
+                )
+                return {"ran": False, "reason": "cycle-active", "cycles": 0}
+            attempted_run = True
+            save_autostart_state(self.config, AutostartState(last_started_at=now))
+            return {"ran": True, "reason": reason, "cycles": 1}
         except Exception as exc:
             save_autostart_state(
                 self.config,
@@ -149,6 +199,9 @@ class DreamAutostart:
                     last_error=str(exc),
                     last_skipped_at=state_for_error.last_skipped_at,
                     last_skip_reason=state_for_error.last_skip_reason,
+                    not_enough_memories_skipped_count=(
+                        state_for_error.not_enough_memories_skipped_count
+                    ),
                 ),
             )
             raise
@@ -174,12 +227,19 @@ class DreamAutostart:
     def _interval_elapsed(
         self,
         now: datetime,
-        last_started_at: datetime | None,
+        last_decision_at: datetime | None,
         min_interval_minutes: int,
     ) -> bool:
-        if last_started_at is None:
+        if last_decision_at is None:
             return True
-        return (now - last_started_at).total_seconds() / 60 >= min_interval_minutes
+        return (now - last_decision_at).total_seconds() / 60 >= min_interval_minutes
+
+    def _interval_anchor(self, state: AutostartState) -> datetime | None:
+        if state.last_skip_reason == "not_enough_memories" and state.last_skipped_at is not None:
+            return state.last_skipped_at
+        if state.last_started_at is None:
+            return state.last_skipped_at
+        return state.last_started_at
 
 
 def _parse_datetime(value: Any, field_name: str) -> datetime | None:
@@ -188,3 +248,11 @@ def _parse_datetime(value: Any, field_name: str) -> datetime | None:
     if not isinstance(value, str):
         raise ValueError(f"{field_name} must be a string or null")
     return datetime.fromisoformat(value)
+
+
+def _parse_non_negative_int(value: Any, field_name: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    if value < 0:
+        raise ValueError(f"{field_name} must be non-negative")
+    return value

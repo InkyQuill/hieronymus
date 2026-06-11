@@ -92,6 +92,7 @@ def test_learn_writes_short_term_memories(tmp_path: Path) -> None:
         "ingestion_mode": "learn",
         "block_index": 1,
         "block_count": 2,
+        "sentence_count": 1,
     }
     assert memories[1].metadata["block_index"] == 2
 
@@ -155,4 +156,5 @@ def test_read_can_store_deliberate_observation_when_requested(tmp_path: Path) ->
     assert memory.metadata == {
         "ingestion_mode": "read",
         "candidate_terms": ["Gantz"],
+        "sentence_count": 1,
     }

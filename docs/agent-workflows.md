@@ -1,9 +1,9 @@
 # Hieronymus Agent Workflows
 
 Hieronymus agent integrations package skills, MCP configuration, and host-specific plugin manifests
-for local coding agents. The generated assets teach agents to recall memory, distinguish strict terms
-from advisory memory, write short-term observations, learn material deliberately, and read material
-casually.
+for local coding agents. The generated assets teach agents to recall memory, distinguish active rule
+crystals from advisory memory, write short-term observations, learn material deliberately, and read
+material casually.
 
 Installers write the asset bundle under the global Hieronymus config root, patch host config files
 with backups, and report installed status only when both assets and host config entries are present.
@@ -31,23 +31,42 @@ installer wiring and is not referenced from the Codex plugin manifest.
 
 ## Learn vs Read
 
-`learn` is deliberate ingestion. It stores source blocks as short-term memories with provenance so
-later dreaming can distill crystals, lessons, erudition, and terminology proposals.
+`learn` is deliberate ingestion. The agent splits source material into observed facts or compact
+blocks, records source credibility, language tags, story scopes, and semantic tags, then stores the
+result as short-term memories. Later dreaming can distill crystals, lessons, erudition, and
+legacy compatibility proposals.
 
-`read` is temporary inspection. It extracts useful concepts and terms for the current task without
-committing the whole source by default. Agents should use `read` for casual lookup, summaries, and
-one-off context unless the user asks Hieronymus to learn the material.
+Legacy `remember` and memory-add integrations are compatibility wrappers around the same short-term
+queue. They preserve the old searchable entry shape for callers, but the stored memory remains
+short-term until dreaming converts, supersedes, or discards it.
 
-## Strict vs Advisory
+Legacy memory search keeps raw short-term IDs when they are unambiguous. If a long-term crystal and
+short-term memory would otherwise share the same legacy `id`, the crystal is returned with a negative
+compatibility ID. Vague concept suggestions in proposal lists also use negative compatibility IDs;
+only positive proposal IDs are actionable legacy compatibility proposals.
 
-Strict concept contracts are mandatory. Approved termbase entries and strict validation findings take
-priority over fuzzy recall and stylistic memory.
+`read` is temporary inspection. The agent summarizes source text into small short-term extracts only
+when an extract is useful for the current task. Agents should use `read` for casual lookup,
+summaries, and one-off context unless the user asks Hieronymus to learn the material.
+
+Read, Learn, and Remember are agent judgment workflows. MCP tools are storage and retrieval
+primitives, not judgment engines. Read and Learn are no longer exposed as judgment-heavy MCP tools;
+agents should use the skill workflows plus `hieronymus_short_term_add`.
+
+`remember` records corrections as short-term memory. For high-credibility user rules, phrase the
+memory as "User told me to ...", use user-rule credibility, and let dreaming crystallize it later.
+
+## Rule Crystals vs Advisory
+
+Active rule crystals are mandatory. Legacy termbase contract and validation wrappers source their
+requirements from active rule crystals, and those rules take priority over fuzzy recall and stylistic
+memory.
 
 Crystals and lessons are advisory. They can influence translation and review choices, but they must
-not silently override an approved concept contract.
+not silently override an active rule crystal.
 
-Agents must not approve terminology proposals themselves. They may record proposals, uncertainty,
-conflicts, and supporting evidence, then leave approval to the human workflow.
+Agents must not approve legacy terminology proposals themselves. They may record proposals,
+uncertainty, conflicts, and supporting evidence, then leave approval to the human workflow.
 
 ## Installing Agent Integrations
 

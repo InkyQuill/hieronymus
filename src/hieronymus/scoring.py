@@ -30,6 +30,23 @@ def _clamp_score(value: float) -> float:
     return min(max(value, 0.0), 1.0)
 
 
+def apply_score_delta(
+    *,
+    strength: float,
+    confidence: float,
+    status: str,
+    crystal_type: str,
+    strength_delta: float,
+    confidence_delta: float,
+) -> tuple[float, float, str]:
+    updated_strength = _clamp_score(strength + strength_delta)
+    updated_confidence = _clamp_score(confidence + confidence_delta)
+    updated_status = status
+    if updated_confidence == 0.0 and not (crystal_type == "rule" and status == "active"):
+        updated_status = "archived"
+    return (updated_strength, updated_confidence, updated_status)
+
+
 class FeedbackStore:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
@@ -53,7 +70,7 @@ class FeedbackStore:
             crystal = conn.execute(
                 """
                 select series_slug, source_language, target_language,
-                       strength, confidence, status
+                       crystal_type, strength, confidence, status
                 from crystals
                 where id = ?
                 """,
@@ -105,9 +122,14 @@ class FeedbackStore:
             event_id = int(cursor.lastrowid)
 
             if is_immediate:
-                strength = _clamp_score(float(crystal["strength"]) + strength_delta)
-                confidence = _clamp_score(float(crystal["confidence"]) + confidence_delta)
-                status = crystal["status"]
+                strength, confidence, status = apply_score_delta(
+                    strength=float(crystal["strength"]),
+                    confidence=float(crystal["confidence"]),
+                    status=crystal["status"],
+                    crystal_type=crystal["crystal_type"],
+                    strength_delta=strength_delta,
+                    confidence_delta=confidence_delta,
+                )
                 if event_type == "deleted_by_user" and strength < _ARCHIVE_STRENGTH_THRESHOLD:
                     status = "archived"
                 conn.execute(
