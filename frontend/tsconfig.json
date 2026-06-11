@@ -1,15 +1,16 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "rootDir": "src",
     "outDir": "dist",
-    "types": ["node", "vitest"]
+    "types": ["bun-types"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]
 }
