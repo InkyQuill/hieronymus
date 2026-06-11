@@ -1,5 +1,7 @@
 # Hieronymus
 
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/InkyQuill/hieronymus?utm_source=oss&utm_medium=github&utm_campaign=InkyQuill%2Fiview&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+
 Hieronymus is a local-first translation memory MCP for long-form book translation.
 
 It keeps strict terminology stable per series while also giving translator agents a searchable fuzzy memory for decisions, plot facts, voice notes, unresolved questions, and future memory-crystal consolidation.
