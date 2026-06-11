@@ -1,27 +1,82 @@
 import React from "react";
+import { act } from "react";
 import { describe, expect, it } from "vitest";
-import { render } from "ink-testing-library";
+import { testRender } from "@opentui/react/test-utils";
 import { App } from "./App.js";
 import type { RpcClient } from "../rpc/client.js";
 
+async function setupTest() {
+  let node: React.ReactNode = null;
+  let setup: Awaited<ReturnType<typeof testRender>> | null = null;
+  const ensureSetup = async () => {
+    setup ??= await testRender(node, { width: 160, height: 60 });
+    return setup;
+  };
+  const flush = async () => {
+    const current = await ensureSetup();
+    await act(async () => {
+      await current.flush();
+    });
+  };
+  return {
+    root: {
+      render: (next: React.ReactNode) => {
+        node = next;
+      },
+    },
+    mockInput: {},
+    flush,
+    captureCharFrame: () => setup?.captureCharFrame() ?? "",
+    waitFor: async (predicate: () => boolean | Promise<boolean>) => {
+      const current = await ensureSetup();
+      for (let index = 0; index < 25; index += 1) {
+        await act(async () => {
+          await Promise.resolve();
+          await current.renderOnce();
+        });
+        if (await predicate()) {
+          return;
+        }
+      }
+      throw new Error("Timed out waiting for predicate");
+    },
+  };
+}
+
 describe("App", () => {
   it("bootstraps and renders the admin screen", async () => {
-    const app = render(<App mode="admin" client={fakeClient()} />);
+    const { root, flush, captureCharFrame, waitFor } = await setupTest();
 
-    await waitFor(() => expect(app.lastFrame()).toContain("Hieronymus Admin"));
+    root.render(<App mode="admin" client={fakeClient()} />);
+    await flush();
 
-    expect(app.lastFrame()).toContain("Crystals");
-    expect(app.lastFrame()).toContain("series 1");
-    expect(app.lastFrame()).toContain("Guild Ledger");
-    expect(app.lastFrame()).toContain("Guild ledger detail marker.");
+    await waitFor(async () => {
+      const frame = captureCharFrame();
+      return frame.includes("Hieronymus Admin");
+    });
+
+    const output = captureCharFrame();
+    expect(output).toContain("Crystals");
+    expect(output).toContain("series 1");
+    expect(output).toContain("Guild Ledger");
+    expect(output).toContain("Guild ledger detail marker.");
   });
 
   it("renders non-error bootstrap rejections", async () => {
-    const app = render(
-      <App mode="admin" client={fakeClient(() => Promise.reject("offline"))} />,
-    );
+    const { root, flush, captureCharFrame, waitFor } = await setupTest();
 
-    await waitFor(() => expect(app.lastFrame()).toContain("offline"));
+    root.render(
+      <App
+        mode="admin"
+        client={fakeClient(() => Promise.reject("offline"))}
+      />,
+    );
+    await flush();
+
+    await waitFor(async () => {
+      const frame = captureCharFrame();
+      return frame.includes("offline");
+    });
   });
 });
 
@@ -156,18 +211,4 @@ function fakeClient(
     },
     close: () => {},
   };
-}
-
-async function waitFor(assertion: () => void) {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    try {
-      assertion();
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  throw lastError;
 }

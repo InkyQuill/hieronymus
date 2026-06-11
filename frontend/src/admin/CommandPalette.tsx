@@ -1,5 +1,4 @@
 import React from "react";
-import { Box, Text } from "ink";
 
 const COMMANDS: Record<string, string[]> = {
   Crystals: [
@@ -40,11 +39,13 @@ export function commandsForView(view: string): string[] {
 
 export function CommandPalette({ view }: { view: string }) {
   return (
-    <Box flexDirection="column">
-      <Text bold>Commands</Text>
+    <box flexDirection="column">
+      <text>
+        Commands
+      </text>
       {commandsForView(view).map((command) => (
-        <Text key={command}>{command}</Text>
+        <text key={command}>{command}</text>
       ))}
-    </Box>
+    </box>
   );
 }

@@ -114,8 +114,11 @@ export class JsonRpcClient implements RpcClient {
   }
 }
 
-export function createBridgeClient(command: string): JsonRpcClient {
-  const proc = spawn(command, ["tui-bridge"], {
+export function createBridgeClient(
+  command: string,
+  args: string[] = [],
+): JsonRpcClient {
+  const proc = spawn(command, [...args, "tui-bridge"], {
     stdio: ["pipe", "pipe", "pipe"],
   });
   return new JsonRpcClient(proc);

@@ -76,7 +76,7 @@ Open the local configuration TUI:
 hiero config
 ```
 
-The TUI uses a TypeScript React/Ink terminal UI. This requires Node.js >=22 installed:
+The TUI uses a TypeScript React/OpenTUI terminal UI. This requires Bun >=1.3 installed:
 
 ```bash
 hiero config
@@ -107,7 +107,7 @@ Supported dream provider profile types:
 - `anthropic`: Anthropic Messages API.
 - `ollama`: local Ollama chat/model endpoints.
 
-In the Ink config TUI, the remote provider selector offers `openai`, `gemini`,
+In the OpenTUI config TUI, the remote provider selector offers `openai`, `gemini`,
 `anthropic`, and local-compatible profiles as the implementation supports them.
 
 Model suggestions appear when the selected provider API supports listing models
@@ -302,7 +302,7 @@ Open the local admin interface with:
 hiero admin
 ```
 
-The admin interface uses a TypeScript React/Ink terminal UI. This requires Node.js >=22 installed:
+The admin interface uses a TypeScript React/OpenTUI terminal UI. This requires Bun >=1.3 installed:
 
 ```bash
 hiero admin
@@ -347,7 +347,7 @@ interactive app.
 
 ## TUI Requirements and Keys
 
-The React/Ink TUI requires Node.js >=22 to run. `hiero doctor` reports Node.js runtime availability.
+The React/OpenTUI TUI requires Bun >=1.3 to run. `hiero doctor` reports Bun runtime availability.
 
 ### Config TUI Keys
 
@@ -370,11 +370,11 @@ The React/Ink TUI requires Node.js >=22 to run. `hiero doctor` reports Node.js r
 
 ### Frontend Development
 
-Frontend development and source-checkout builds require Node.js >=22 and pnpm:
+Frontend development and source-checkout builds require Bun >=1.3:
 
 ```bash
-pnpm --dir frontend install
-pnpm --dir frontend build
+bun --cwd frontend install --frozen-lockfile
+bun --cwd frontend run build
 ```
 
 After that build, the CLI uses the fallback to `frontend/dist/main.js` from the current working directory.

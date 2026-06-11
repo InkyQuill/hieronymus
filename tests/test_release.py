@@ -71,6 +71,7 @@ def test_package_version_falls_back_to_module_version(monkeypatch: pytest.Monkey
     monkeypatch.setattr("hieronymus.release.version", missing_version)
 
     from hieronymus import __version__
+
     assert package_version() == __version__
 
 
@@ -200,6 +201,8 @@ def test_run_update_fetches_checks_out_and_reinstalls_managed_install(
             checkout,
         ),
         (["git", "checkout", "--detach", "FETCH_HEAD"], checkout),
+        (["bun", "install", "--frozen-lockfile"], checkout / "frontend"),
+        (["bun", "run", "build"], checkout / "frontend"),
         (["uv", "tool", "install", "--force", str(checkout)], None),
     ]
 
@@ -225,6 +228,8 @@ def test_run_update_fetches_origin_main_before_checkout(
     assert commands == [
         (["git", "fetch", release.GITHUB_REPO_URL, "main"], checkout),
         (["git", "checkout", "--detach", "FETCH_HEAD"], checkout),
+        (["bun", "install", "--frozen-lockfile"], checkout / "frontend"),
+        (["bun", "run", "build"], checkout / "frontend"),
         (["uv", "tool", "install", "--force", str(checkout)], None),
     ]
 

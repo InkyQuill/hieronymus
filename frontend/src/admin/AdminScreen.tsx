@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useInput, useStdin } from "ink";
+import { useKeyboard, useRenderer } from "@opentui/react";
 import { z } from "zod";
 import {
   AdminConfigEditorSchema,
@@ -20,6 +20,7 @@ import { FocusableList } from "../ui/FocusableList.js";
 import { AdminTable } from "./AdminTable.js";
 import { DetailPane } from "./DetailPane.js";
 import { CommandPalette } from "./CommandPalette.js";
+import { Spinner } from "../ui/Spinner.js";
 import {
   type DialogState,
   closedDialog,
@@ -49,8 +50,7 @@ const AdminOperationResponseSchema = z
   .passthrough();
 
 export function AdminScreen({ initial, client, showCommands = false }: Props) {
-  const { exit } = useApp();
-  const { stdin, isRawModeSupported } = useStdin();
+  const renderer = useRenderer();
   const [snapshot, setSnapshot] = useState(initial.snapshot);
   const [stats, setStats] = useState(initial.stats);
   const [shortTermStatus, setShortTermStatus] = useState(
@@ -68,11 +68,6 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     error: false,
   });
   const operationInFlight = useRef(false);
-  const canUseInkInput = Boolean(
-    isRawModeSupported &&
-      typeof stdin.ref === "function" &&
-      typeof stdin.unref === "function",
-  );
 
   const selectedViewIndex = Math.max(initial.views.indexOf(snapshot.view), 0);
   const viewKeyLimit = Math.min(initial.views.length, 9);
@@ -99,8 +94,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
   const handleInput = (input: string, ctrl = false) => {
     if (input === "q") {
       client?.close?.();
-      exit();
-      return;
+      renderer.destroy();
     }
 
     if (ctrl && input === "p") {
@@ -275,142 +269,127 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     }
   };
 
-  useInput(
-    (input, key) => {
-      // 1. Focus Cycling
-      if (key.tab) {
-        setActivePanel((current) => {
-          if (key.shift) {
-            if (current === "views") return "detail";
-            if (current === "table") return "views";
-            return "table";
-          } else {
-            if (current === "views") return "table";
-            if (current === "table") return "detail";
-            return "views";
-          }
-        });
-        return;
-      }
-
-      // 2. Panel Navigation
-      if (activePanel === "views") {
-        if (key.upArrow) {
-          const nextIndex = Math.max(0, selectedViewIndex - 1);
-          const view = initial.views[nextIndex];
-          if (view && view !== snapshot.view) {
-            loadView(view);
-          }
-          return;
-        }
-        if (key.downArrow) {
-          const nextIndex = Math.min(
-            initial.views.length - 1,
-            selectedViewIndex + 1,
-          );
-          const view = initial.views[nextIndex];
-          if (view && view !== snapshot.view) {
-            loadView(view);
-          }
-          return;
-        }
-      }
-
-      if (activePanel === "table") {
-        if (key.upArrow) {
-          if (operationInFlight.current) {
-            return;
-          }
-          const currentIndex = snapshot.rows.findIndex(
-            (r) => r.id === snapshot.selected?.id,
-          );
-          if (currentIndex > 0) {
-            const prevRow = snapshot.rows[currentIndex - 1];
-            if (prevRow) {
-              void runSnapshotOperation({
-                client,
-                method: "admin.snapshot",
-                params: {
-                  view: snapshot.view,
-                  selected_id: prevRow.id,
-                  filters: snapshot.filters,
-                },
-                successMessage: `Selected ${prevRow.label}`,
-                setSnapshot,
-                setStats,
-                setShortTermStatus,
-                setDreamStatus,
-                setConfigEditor,
-                setStatus,
-                operationInFlight,
-              });
-            }
-          }
-          return;
-        }
-        if (key.downArrow) {
-          if (operationInFlight.current) {
-            return;
-          }
-          const currentIndex = snapshot.rows.findIndex(
-            (r) => r.id === snapshot.selected?.id,
-          );
-          if (currentIndex >= 0 && currentIndex < snapshot.rows.length - 1) {
-            const nextRow = snapshot.rows[currentIndex + 1];
-            if (nextRow) {
-              void runSnapshotOperation({
-                client,
-                method: "admin.snapshot",
-                params: {
-                  view: snapshot.view,
-                  selected_id: nextRow.id,
-                  filters: snapshot.filters,
-                },
-                successMessage: `Selected ${nextRow.label}`,
-                setSnapshot,
-                setStats,
-                setShortTermStatus,
-                setDreamStatus,
-                setConfigEditor,
-                setStatus,
-                operationInFlight,
-              });
-            }
-          }
-          return;
-        }
-      }
-
-      // 3. Fallback to hotkeys
-      handleInput(input, key.ctrl);
-    },
-    { isActive: canUseInkInput && dialog.kind === "none" },
-  );
-
-  useEffect(() => {
-    if (canUseInkInput) {
-      return undefined;
+  useKeyboard((key) => {
+    // Only handle keyboard shortcuts if dialog is NOT open
+    if (dialog.kind !== "none") {
+      return;
     }
 
-    const onData = (chunk: Buffer | string) => {
-      if (dialog.kind !== "none" && canUseInkInput) {
+    const ctrl = key.ctrl;
+    const tab = key.name === "tab";
+    const shift = key.shift;
+    const upArrow = key.name === "up";
+    const downArrow = key.name === "down";
+
+    // 1. Focus Cycling
+    if (tab) {
+      setActivePanel((current) => {
+        if (shift) {
+          if (current === "views") return "detail";
+          if (current === "table") return "views";
+          return "table";
+        } else {
+          if (current === "views") return "table";
+          if (current === "table") return "detail";
+          return "views";
+        }
+      });
+      return;
+    }
+
+    // 2. Panel Navigation
+    if (activePanel === "views") {
+      if (upArrow) {
+        const nextIndex = Math.max(0, selectedViewIndex - 1);
+        const view = initial.views[nextIndex];
+        if (view && view !== snapshot.view) {
+          loadView(view);
+        }
         return;
       }
-      const text = String(chunk);
-      if (text === "\u0010") {
-        handleInput("p", true);
+      if (downArrow) {
+        const nextIndex = Math.min(
+          initial.views.length - 1,
+          selectedViewIndex + 1,
+        );
+        const view = initial.views[nextIndex];
+        if (view && view !== snapshot.view) {
+          loadView(view);
+        }
         return;
       }
-      handleInput(text[0] ?? "");
-    };
+    }
 
-    stdin.on("data", onData);
-    return () => {
-      stdin.off("data", onData);
-    };
-  }, [canUseInkInput, handleInput, stdin, dialog.kind]);
+    if (activePanel === "table") {
+      if (upArrow) {
+        if (operationInFlight.current) {
+          return;
+        }
+        const currentIndex = snapshot.rows.findIndex(
+          (r) => r.id === snapshot.selected?.id,
+        );
+        if (currentIndex > 0) {
+          const prevRow = snapshot.rows[currentIndex - 1];
+          if (prevRow) {
+            void runSnapshotOperation({
+              client,
+              method: "admin.snapshot",
+              params: {
+                view: snapshot.view,
+                selected_id: prevRow.id,
+                filters: snapshot.filters,
+              },
+              successMessage: `Selected ${prevRow.label}`,
+              setSnapshot,
+              setStats,
+              setShortTermStatus,
+              setDreamStatus,
+              setConfigEditor,
+              setStatus,
+              operationInFlight,
+            });
+          }
+        }
+        return;
+      }
+      if (downArrow) {
+        if (operationInFlight.current) {
+          return;
+        }
+        const currentIndex = snapshot.rows.findIndex(
+          (r) => r.id === snapshot.selected?.id,
+        );
+        if (currentIndex >= 0 && currentIndex < snapshot.rows.length - 1) {
+          const nextRow = snapshot.rows[currentIndex + 1];
+          if (nextRow) {
+            void runSnapshotOperation({
+              client,
+              method: "admin.snapshot",
+              params: {
+                view: snapshot.view,
+                selected_id: nextRow.id,
+                filters: snapshot.filters,
+              },
+              successMessage: `Selected ${nextRow.label}`,
+              setSnapshot,
+              setStats,
+              setShortTermStatus,
+              setDreamStatus,
+              setConfigEditor,
+              setStatus,
+              operationInFlight,
+            });
+          }
+        }
+        return;
+      }
+    }
 
-  const handleDialogSubmit = async (params: Record<string, any>) => {
+    // 3. Fallback to hotkeys/input handling
+    handleInput(key.name, ctrl);
+  });
+
+  async function handleDialogSubmit(params: Record<string, any>) {
     if (!client || operationInFlight.current) {
       return;
     }
@@ -484,90 +463,91 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     } finally {
       operationInFlight.current = false;
     }
-  };
+  }
 
   if (dialog.kind !== "none") {
     return (
-      <Box flexDirection="column" width={136} height={20} alignItems="center" justifyContent="center">
+      <box flexDirection="column" width={136} height={20} alignItems="center" justifyContent="center">
         <DialogOverlay
           state={dialog}
           onClose={() => setDialog(closedDialog)}
           onSubmit={handleDialogSubmit}
         />
-      </Box>
+      </box>
     );
   }
 
   return (
-    <Box flexDirection="column" width={136}>
-      <Box
+    <box flexDirection="column" width={136}>
+      <box
         flexDirection="column"
-        borderStyle="round"
+        borderStyle="rounded"
         borderColor="gray"
         paddingX={1}
+        paddingY={1}
       >
         <Header header={initial.header} />
-        <Text>{formatStats(stats)}</Text>
+        <text>{formatStats(stats)}</text>
         <StatusPanels
           shortTermStatus={shortTermStatus}
           dreamStatus={dreamStatus}
         />
         <ConfigSummary configEditor={configEditor} />
-      </Box>
+      </box>
 
-      <Box flexDirection="row" marginTop={1}>
+      <box flexDirection="row" marginTop={1} height={24}>
         {/* Left pane: Views */}
-        <Box
+        <box
           flexDirection="column"
           width={28}
-          borderStyle="round"
+          borderStyle="rounded"
           borderColor={activePanel === "views" ? "cyan" : "gray"}
           paddingX={1}
         >
-          <Text bold color={activePanel === "views" ? "cyan" : undefined}>
+          <text fg={activePanel === "views" ? "cyan" : undefined}>
             Views
-          </Text>
+          </text>
           <FocusableList
             items={initial.views}
             selectedIndex={selectedViewIndex}
             label={(view) => view}
             focused={activePanel === "views"}
           />
-        </Box>
+        </box>
 
         {/* Middle pane: Data Table */}
-        <Box
+        <box
           flexDirection="column"
           width={50}
-          borderStyle="round"
+          borderStyle="rounded"
           borderColor={activePanel === "table" ? "cyan" : "gray"}
           paddingX={1}
         >
-          <Text bold color={activePanel === "table" ? "cyan" : undefined}>
+          <text fg={activePanel === "table" ? "cyan" : undefined}>
             {snapshot.view}
-          </Text>
+          </text>
           <AdminTable
             rows={snapshot.rows}
             selectedId={snapshot.selected?.id ?? null}
             focused={activePanel === "table"}
           />
-        </Box>
+        </box>
 
         {/* Right pane: Detail Inspector */}
-        <Box
+        <box
           flexDirection="column"
           width={58}
-          borderStyle="round"
+          borderStyle="rounded"
           borderColor={activePanel === "detail" ? "cyan" : "gray"}
           paddingX={1}
         >
-          <Text bold color={activePanel === "detail" ? "cyan" : undefined}>
+          <text fg={activePanel === "detail" ? "cyan" : undefined}>
             Detail Inspector
-          </Text>
+          </text>
           <DetailPane detail={snapshot.detail} />
           {commandsOpen ? <CommandPalette view={snapshot.view} /> : null}
-        </Box>
-      </Box>
+        </box>
+      </box>
 
       <StatusLine message={status.message} error={status.error} />
       <KeyHelp
@@ -584,7 +564,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           "q quit",
         ]}
       />
-    </Box>
+    </box>
   );
 }
 
@@ -653,12 +633,12 @@ async function runSnapshotOperation({
 
 function Header({ header }: { header: AdminHeader }) {
   return (
-    <Box flexDirection="column">
-      <Text bold>
+    <>
+      <text>
         {header.logo.text} {header.product} Admin {header.version}
-      </Text>
-      <Text dimColor>{header.tagline}</Text>
-    </Box>
+      </text>
+      <text fg="gray">{header.tagline}</text>
+    </>
   );
 }
 
@@ -687,16 +667,30 @@ function StatusPanels({
     .join("  ");
 
   return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text>
-        Short-term pending {shortTermStatus.pending_count} / min{" "}
-        {shortTermStatus.min_pending_short_term_memories} / max{" "}
-        {shortTermStatus.max_pending_short_term_memories}
-        {shortTermStatus.urgent ? " urgent" : ""}
-        {drain}
-      </Text>
-      <Text>{dream}</Text>
-    </Box>
+    <box flexDirection="column" marginTop={1}>
+      <box flexDirection="row">
+        {shortTermStatus.drain_in_progress && (
+          <box marginRight={1}>
+            <Spinner />
+          </box>
+        )}
+        <text>
+          Short-term pending {shortTermStatus.pending_count} / min{" "}
+          {shortTermStatus.min_pending_short_term_memories} / max{" "}
+          {shortTermStatus.max_pending_short_term_memories}
+          {shortTermStatus.urgent ? " urgent" : ""}
+          {drain}
+        </text>
+      </box>
+      <box flexDirection="row" marginTop={0}>
+        {dreamStatus.state !== "idle" && dreamStatus.state !== "DISABLED" && (
+          <box marginRight={1}>
+            <Spinner />
+          </box>
+        )}
+        <text>{dream}</text>
+      </box>
+    </box>
   );
 }
 
@@ -710,18 +704,18 @@ function ConfigSummary({ configEditor }: { configEditor: AdminConfigEditor }) {
   const warnings = configEditor.model_cache_warnings;
 
   return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text>
+    <box flexDirection="column" marginTop={1}>
+      <text>
         Config providers {providerNames.join(", ") || "none"} workflows{" "}
         {workflowNames.join(", ") || "none"}
-      </Text>
-      <Text>
+      </text>
+      <text>
         Prompts {promptNames.join(", ") || "none"} thresholds{" "}
         {thresholdNames.length}
         {"  "}model cache warnings {warnings.length}
-      </Text>
-      {warnings[0] ? <Text color="yellow">{warnings[0].message}</Text> : null}
-    </Box>
+      </text>
+      {warnings[0] ? <text fg="yellow">{warnings[0].message}</text> : null}
+    </box>
   );
 }
 

@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "build": "bun build src/main.tsx --outfile=dist/main.js --target=bun",
+    "build": "bun build src/main.tsx --outfile=dist/main.js --target=bun --external @opentui/core",
     "dev": "bun --watch src/main.tsx",
     "test": "bun test",
     "format": "prettier --check src",
@@ -19,6 +19,7 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@types/bun": "^1.3.0",
     "@types/react": "^19",
     "prettier": "^3.3.0",
     "typescript": "^5.5.0"

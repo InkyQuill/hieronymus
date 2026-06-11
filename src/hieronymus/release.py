@@ -178,6 +178,12 @@ def _checkout_update_target(target: str, latest_tag: str, checkout: Path) -> Non
     _run(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
 
 
+def _build_frontend(checkout: Path) -> None:
+    frontend = checkout / "frontend"
+    _run(["bun", "install", "--frozen-lockfile"], cwd=frontend)
+    _run(["bun", "run", "build"], cwd=frontend)
+
+
 def run_update(*, target: str = "latest") -> UpdateStatus:
     _validate_target(target)
     checkout = managed_app_path()
@@ -191,5 +197,6 @@ def run_update(*, target: str = "latest") -> UpdateStatus:
         return status
 
     _checkout_update_target(target, status.latest_tag, checkout)
+    _build_frontend(checkout)
     _run(["uv", "tool", "install", "--force", str(checkout)])
     return check_update(target=target)

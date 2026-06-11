@@ -30,7 +30,7 @@ Open the local configuration TUI with:
 hiero config
 ```
 
-The TUI uses a TypeScript React/Ink terminal UI. See the
+The TUI uses a TypeScript React/OpenTUI terminal UI. See the
 [usage guide](docs/usage.md) for details, runtime requirements, and keys.
 
 For scripts and health checks, use machine-readable status:
@@ -56,16 +56,16 @@ Dreaming automation is controlled by `autostart_enabled`,
 
 ## Frontend Development
 
-The Ink/React frontend lives under `frontend/`. Use pnpm from the repository
+The React/OpenTUI frontend lives under `frontend/`. Use Bun >=1.3 from the repository
 root:
 
 ```bash
-pnpm --dir frontend install
-pnpm --dir frontend test
-pnpm --dir frontend build
+bun --cwd frontend install --frozen-lockfile
+bun --cwd frontend test
+bun --cwd frontend run build
 ```
 
-After `pnpm --dir frontend build`, source checkouts can launch the TUI
+After `bun --cwd frontend run build`, source checkouts can launch the TUI
 through the CLI fallback to `frontend/dist/main.js`. Installed packages
 bundle the `hieronymus/frontend/dist/main.js` artifact automatically.
 

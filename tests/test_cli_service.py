@@ -170,6 +170,12 @@ def test_docs_describe_real_config_tui_and_llm_providers() -> None:
     assert "ANTHROPIC_API_KEY" in combined
     assert "API key values are not stored" in combined
     assert "new_short_term_memory_threshold" in combined
+    assert "TypeScript React/OpenTUI terminal UI" in combined
+    assert "Bun >=1.3" in combined
+    assert "bun --cwd frontend install --frozen-lockfile" in combined
+    assert "React/Ink" not in combined
+    assert "Node.js >=22" not in combined
+    assert "pnpm --dir frontend" not in combined
 
 
 def test_status_json_returns_manager_payload(tmp_path: Path) -> None:

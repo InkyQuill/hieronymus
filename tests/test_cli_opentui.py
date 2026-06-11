@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -179,7 +180,11 @@ def test_cli_opentui_config_launches_frontend_with_data_root(tmp_path, monkeypat
     assert command[2:] == [
         "config",
         "--bridge-command",
-        "hiero",
+        sys.executable,
+        "--bridge-arg",
+        "-m",
+        "--bridge-arg",
+        "hieronymus",
     ]
     assert env["HIERONYMUS_DATA_ROOT"] == str(data_root)
 
@@ -204,7 +209,11 @@ def test_cli_opentui_admin_launches_frontend_when_requested(tmp_path, monkeypatc
     assert command[2:] == [
         "admin",
         "--bridge-command",
-        "hiero",
+        sys.executable,
+        "--bridge-arg",
+        "-m",
+        "--bridge-arg",
+        "hieronymus",
     ]
     assert env["HIERONYMUS_DATA_ROOT"] == str(data_root)
 

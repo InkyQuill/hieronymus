@@ -1,5 +1,4 @@
 import React from "react";
-import { Box, Text } from "ink";
 
 type Props<T> = {
   items: T[];
@@ -15,17 +14,17 @@ export function FocusableList<T>({
   focused = true,
 }: Props<T>) {
   return (
-    <Box flexDirection="column">
+    <box flexDirection="column">
       {items.map((item, index) => (
-        <Text
+        <text
           key={`${index}-${label(item)}`}
-          color={
+          fg={
             index === selectedIndex ? (focused ? "cyan" : "white") : undefined
           }
         >
           {index === selectedIndex ? ">" : " "} {label(item)}
-        </Text>
+        </text>
       ))}
-    </Box>
+    </box>
   );
 }

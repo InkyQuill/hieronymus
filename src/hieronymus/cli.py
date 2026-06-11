@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -157,7 +158,17 @@ def _frontend_entrypoint() -> str:
 
 
 def _launch_opentui(mode: str, *, data_root: Path) -> None:
-    command = ["bun", _frontend_entrypoint(), mode, "--bridge-command", "hiero"]
+    command = [
+        "bun",
+        _frontend_entrypoint(),
+        mode,
+        "--bridge-command",
+        sys.executable,
+        "--bridge-arg",
+        "-m",
+        "--bridge-arg",
+        "hieronymus",
+    ]
     env = {**os.environ, "HIERONYMUS_DATA_ROOT": str(data_root)}
     try:
         subprocess.run(command, check=True, env=env)

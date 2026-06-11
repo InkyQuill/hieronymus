@@ -6,7 +6,6 @@ import sqlite3
 import subprocess
 import tomllib
 from dataclasses import asdict, dataclass
-from pathlib import Path
 
 from hieronymus.agent_plugins import available_plugins
 from hieronymus.config import HieronymusConfig
