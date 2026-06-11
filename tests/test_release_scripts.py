@@ -23,6 +23,7 @@ def script_env(tmp_path: Path, *, home: Path | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["HOME"] = str(home or tmp_path / "home")
     env["PATH"] = f"{fake_bin}:{os.environ['PATH']}"
+    env["MISE_DISABLE"] = "1"
     return env
 
 
@@ -202,6 +203,30 @@ def test_install_refuses_existing_checkout_with_wrong_origin_before_fetch(
         fake_bin / "uv",
         """
         #!/bin/sh
+        exit 0
+        """,
+    )
+    write_executable(
+        fake_bin / "python3",
+        """
+        #!/bin/sh
+        if [ "$1" = "-c" ]; then
+            if echo "$2" | grep -q "print"; then
+                echo "3.12.0"
+            fi
+            exit 0
+        fi
+        exit 0
+        """,
+    )
+    write_executable(
+        fake_bin / "bun",
+        """
+        #!/bin/sh
+        if [ "$1" = "-e" ]; then
+            exit 0
+        fi
+        echo "1.3.14"
         exit 0
         """,
     )

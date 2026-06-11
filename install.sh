@@ -13,6 +13,33 @@ require_command() {
 
 require_command git
 
+# Verify Python version >= 3.12
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "warning: python3 is not installed. Python >= 3.12 is required to run Hieronymus." >&2
+    echo "         Please install Python 3.12 or newer using your system's package manager." >&2
+else
+    if ! python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" >/dev/null 2>&1; then
+        PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
+        echo "warning: Python version is ${PY_VER}. Python >= 3.12 is required to run Hieronymus." >&2
+        echo "         Please upgrade Python to 3.12 or newer." >&2
+    fi
+fi
+
+# Verify Bun version >= 1.3
+if ! command -v bun >/dev/null 2>&1; then
+    echo "warning: bun is not installed. Bun >= 1.3 is required to run the Hieronymus terminal user interface (TUI)." >&2
+    echo "         Please install Bun: curl -fsSL https://bun.sh/install | bash" >&2
+else
+    BUN_VER=$(bun --version)
+    if ! bun -e "
+      const ver = (process.versions.bun || process.version).replace(/^v/, '').split('.').map(Number);
+      process.exit((ver[0] > 1 || (ver[0] === 1 && ver[1] >= 3)) ? 0 : 1);
+    " >/dev/null 2>&1; then
+        echo "warning: Bun version is ${BUN_VER}. Bun >= 1.3 is required to run the Hieronymus TUI." >&2
+        echo "         Please upgrade Bun: bun upgrade" >&2
+    fi
+fi
+
 if ! command -v uv >/dev/null 2>&1; then
     require_command curl
     require_command mktemp

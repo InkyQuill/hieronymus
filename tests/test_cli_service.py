@@ -249,15 +249,15 @@ def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     assert payload["providers"][0]["name"] == "deterministic"
 
 
-def test_config_launch_invokes_ink_tui(tmp_path: Path, monkeypatch) -> None:
+def test_config_launch_invokes_opentui(tmp_path: Path, monkeypatch) -> None:
     data_root = tmp_path / "hieronymus"
     launched = {}
 
-    def fake_launch_ink(mode, *, data_root):
+    def fake_launch_opentui(mode, *, data_root):
         launched["mode"] = mode
         launched["data_root"] = data_root
 
-    monkeypatch.setattr("hieronymus.cli._launch_ink", fake_launch_ink)
+    monkeypatch.setattr("hieronymus.cli._launch_opentui", fake_launch_opentui)
 
     result = CliRunner().invoke(main, ["--data-root", str(data_root), "config"])
 
