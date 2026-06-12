@@ -64,8 +64,9 @@ only as a local client.
 
 Acceptance:
 
-- Admin mutations continue to go through `AdminStore`, existing domain stores,
-  migrations, and audited Python methods.
+- TUI admin and config mutations continue to go through the `AdminBridge` and
+  `ConfigBridge` RPC handlers, existing domain stores, migrations, and audited
+  Python methods.
 - The frontend does not write SQLite directly, parse human CLI output, or
   duplicate migration/domain mutation logic.
 - Command-palette entries stay aligned with implemented bridge methods, with
