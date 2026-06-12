@@ -28,7 +28,9 @@ export function ConfigScreen({ initial, client }: Props) {
   const operationInFlight = useRef(false);
 
   // Focus and local form state
-  const [activePanel, setActivePanel] = useState<"provider" | "form">("provider");
+  const [activePanel, setActivePanel] = useState<"provider" | "form">(
+    "provider",
+  );
   const [focusedFieldIndex, setFocusedFieldIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
 
@@ -181,7 +183,9 @@ export function ConfigScreen({ initial, client }: Props) {
       if (isEditing) {
         submitField();
       }
-      setActivePanel((current) => (current === "provider" ? "form" : "provider"));
+      setActivePanel((current) =>
+        current === "provider" ? "form" : "provider",
+      );
       return;
     }
 
@@ -202,9 +206,17 @@ export function ConfigScreen({ initial, client }: Props) {
       );
       if (focusedFieldIndex === autostartIndex) {
         // Autostart toggle key logic (Left/Right arrow or Space)
-        if (leftArrow || rightArrow || key.name === "space" || key.name === " ") {
+        if (
+          leftArrow ||
+          rightArrow ||
+          key.name === "space" ||
+          key.name === " "
+        ) {
           const currentVal = localFormValues.dreaming.autostart_enabled || "no";
-          handleFieldChange("dreaming.autostart_enabled", currentVal === "yes" ? "no" : "yes");
+          handleFieldChange(
+            "dreaming.autostart_enabled",
+            currentVal === "yes" ? "no" : "yes",
+          );
         } else if (enter) {
           submitField();
         }
@@ -222,7 +234,10 @@ export function ConfigScreen({ initial, client }: Props) {
         return;
       }
       if (downArrow) {
-        const nextIndex = Math.min(providerChoices.length - 1, currentProviderIndex + 1);
+        const nextIndex = Math.min(
+          providerChoices.length - 1,
+          currentProviderIndex + 1,
+        );
         if (nextIndex !== currentProviderIndex) {
           selectProviderByIndex(nextIndex);
         }
@@ -236,7 +251,9 @@ export function ConfigScreen({ initial, client }: Props) {
         return;
       }
       if (downArrow) {
-        setFocusedFieldIndex((prev) => Math.min(fieldDefinitions.length - 1, prev + 1));
+        setFocusedFieldIndex((prev) =>
+          Math.min(fieldDefinitions.length - 1, prev + 1),
+        );
         return;
       }
       if (enter) {
@@ -267,7 +284,10 @@ export function ConfigScreen({ initial, client }: Props) {
     }
 
     // Numeric provider selection shortcuts
-    const providerIndex = providerIndexForInput(key.name, providerChoices.length);
+    const providerIndex = providerIndexForInput(
+      key.name,
+      providerChoices.length,
+    );
     if (providerIndex >= 0) {
       selectProviderByIndex(providerIndex);
     }
@@ -275,9 +295,7 @@ export function ConfigScreen({ initial, client }: Props) {
 
   return (
     <box flexDirection="column" width={100}>
-      <text>
-        Hieronymus Config
-      </text>
+      <text>Hieronymus Config</text>
       <text fg="gray">{payload.config_paths.settings_path}</text>
 
       <box flexDirection="row" marginTop={1}>
@@ -335,11 +353,7 @@ export function ConfigScreen({ initial, client }: Props) {
         ))}
       </box>
 
-      <StatusLine
-        message={status.message}
-        error={status.error}
-        busy={busy}
-      />
+      <StatusLine message={status.message} error={status.error} busy={busy} />
       <KeyHelp
         keys={[
           "Tab focus",

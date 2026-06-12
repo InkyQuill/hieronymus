@@ -196,9 +196,7 @@ describe("AdminScreen", () => {
       "workflows crystallization:claude-sonnet-4-20250514",
     );
     expect(output).toContain("model cache warnings 1");
-    expect(output).toContain(
-      "model cache has not been fetched for provider",
-    );
+    expect(output).toContain("model cache has not been fetched for provider");
     expect(output).toContain("Guild Ledger");
     expect(output).toContain("Guild ledger detail marker.");
   });

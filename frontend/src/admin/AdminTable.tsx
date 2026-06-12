@@ -15,9 +15,7 @@ export function AdminTable({
       {rows.map((row) => (
         <text
           key={String(row.id)}
-          fg={
-            row.id === selectedId ? (focused ? "cyan" : "white") : undefined
-          }
+          fg={row.id === selectedId ? (focused ? "cyan" : "white") : undefined}
         >
           {row.id === selectedId ? ">" : " "} {row.label} [{row.status}]{" "}
           {row.quality_label}

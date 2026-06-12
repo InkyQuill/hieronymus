@@ -103,16 +103,18 @@ export function ConfigForm({
 
   return (
     <box flexDirection="column" width={68}>
-      <text>
-        Dreaming settings
-      </text>
+      <text>Dreaming settings</text>
       <box flexDirection="column" marginTop={1}>
         {fields.map((field, index) => {
           const isFieldFocused = focused && focusedFieldIndex === index;
           const labelColor = isFieldFocused ? "cyan" : "gray";
 
           return (
-            <box key={field.key} flexDirection="row" marginTop={index === autostartIndex ? 1 : 0}>
+            <box
+              key={field.key}
+              flexDirection="row"
+              marginTop={index === autostartIndex ? 1 : 0}
+            >
               <text fg={labelColor}>
                 {isFieldFocused ? "> " : "  "}
                 {field.label}:{" "}
@@ -135,20 +137,18 @@ export function ConfigForm({
                     </text>
                   )}
                 </box>
+              ) : isFieldFocused && isEditing ? (
+                <input
+                  value={field.value}
+                  onChange={(val) => onFieldChange(field.key, val)}
+                  onSubmit={onSubmitField}
+                  focused={true}
+                  placeholder={field.placeholder}
+                />
               ) : (
-                isFieldFocused && isEditing ? (
-                  <input
-                    value={field.value}
-                    onChange={(val) => onFieldChange(field.key, val)}
-                    onSubmit={onSubmitField}
-                    focused={true}
-                    placeholder={field.placeholder}
-                  />
-                ) : (
-                  <text fg={isFieldFocused ? "cyan" : undefined}>
-                    {field.value || field.placeholder || " "}
-                  </text>
-                )
+                <text fg={isFieldFocused ? "cyan" : undefined}>
+                  {field.value || field.placeholder || " "}
+                </text>
               )}
             </box>
           );
