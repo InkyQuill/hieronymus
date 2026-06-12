@@ -2,7 +2,9 @@
 
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/InkyQuill/hieronymus?utm_source=oss&utm_medium=github&utm_campaign=InkyQuill%2Fiview&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 
-Hieronymus is a local-first translation memory MCP for long-form book translation.
+Hieronymus is alpha local-first translation memory software for long-form book
+translation. It can be used today, but it is still changing quickly and should
+be used at your own risk.
 
 It keeps strict terminology stable per series while also giving translator agents a searchable fuzzy memory for decisions, plot facts, voice notes, unresolved questions, and future memory-crystal consolidation.
 
@@ -39,9 +41,9 @@ For scripts and health checks, use machine-readable status:
 hiero config --json
 ```
 
-Non-secret settings are stored in `~/.config/hieronymus/settings.toml`.
-API key values are not stored. Provider entries store environment variable names,
-and runtime provider calls read the secret value from the environment.
+Dreaming configuration is stored in plaintext local config under the configured
+Hieronymus data root. API key values may be stored locally and are redacted from
+doctor output, JSON bridge responses, logs, provider checks, and audit records.
 
 Supported dream providers:
 
@@ -60,12 +62,12 @@ The React/OpenTUI frontend lives under `frontend/`. Use Bun >=1.3 from the repos
 root:
 
 ```bash
-bun --cwd frontend install --frozen-lockfile
+bun install --cwd frontend --frozen-lockfile
 bun --cwd frontend test
-bun --cwd frontend run build
+bun run --cwd frontend build
 ```
 
-After `bun --cwd frontend run build`, source checkouts can launch the TUI
+After `bun run --cwd frontend build`, source checkouts can launch the TUI
 through the CLI fallback to `frontend/dist/main.js`. Installed packages
 bundle the `hieronymus/frontend/dist/main.js` artifact automatically.
 
@@ -110,7 +112,9 @@ Repository: <https://github.com/InkyQuill/hieronymus>
 
 ## Status
 
-MVP implementation exists for local series setup, strict termbase validation, memory import/search, and MCP/CLI workflows.
+Alpha implementation exists for local series setup, rule-crystal validation,
+memory import/search, MCP/CLI workflows, dreaming, and the React/OpenTUI
+management app. No 1.x release is approved yet.
 
 ## Documents
 
@@ -118,3 +122,4 @@ MVP implementation exists for local series setup, strict termbase validation, me
 - [Management TUI usage](docs/usage.md#management-tui)
 - [Agent workflows](docs/agent-workflows.md)
 - [Service toolkit](docs/service-toolkit.md)
+- [Roadmap](docs/roadmap.md)
