@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import fields, is_dataclass
-from typing import TYPE_CHECKING, Any, NamedTuple
-
-if TYPE_CHECKING:
-    from hieronymus.settings import HieronymusSettings
+from typing import Any, NamedTuple
 
 
 class RpcRequest(NamedTuple):
@@ -64,12 +62,12 @@ def error_response(
     request_id: str | None,
     error: RpcError,
     *,
-    settings: HieronymusSettings | None = None,
+    redact: Callable[[str], str] | None = None,
 ) -> dict[str, object]:
     from hieronymus.tui_bridge.errors import error_payload
 
     return {
         "id": request_id,
         "ok": False,
-        "error": error_payload(error, settings=settings),
+        "error": error_payload(error, redact=redact),
     }

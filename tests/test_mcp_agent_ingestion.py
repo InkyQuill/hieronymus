@@ -52,6 +52,7 @@ def test_mcp_short_term_add_stores_agent_learn_block(monkeypatch, tmp_path: Path
     assert memory.metadata == {
         "block_index": 1,
         "sentence_count": 1,
+        "symbol_count": 4,
         "workflow": "learn",
     }
 
@@ -73,4 +74,8 @@ def test_mcp_short_term_add_stores_agent_read_extract(monkeypatch, tmp_path: Pat
     memory = WorkspaceStore(config).list_short_term_memories(session_id)[0]
     assert memory.text == "Gantz uses speed."
     assert memory.kind == "read_extract"
-    assert memory.metadata == {"sentence_count": 1, "workflow": "read"}
+    assert memory.metadata == {
+        "sentence_count": 1,
+        "symbol_count": 17,
+        "workflow": "read",
+    }

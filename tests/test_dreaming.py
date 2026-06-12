@@ -3,7 +3,14 @@ import pytest
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_config import (
+    DreamConfigError,
+    ProviderProfile,
+    default_dream_config,
+    save_dream_config,
+)
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
+from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
     DreamConceptProposal,
@@ -16,7 +23,6 @@ from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
-from hieronymus.settings import ProviderSettings, load_settings, save_settings
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -499,43 +505,55 @@ def test_dreaming_does_not_skip_provider_lock_error_after_acquiring_lock(
     assert "dream cycle already running" in run["error"]
 
 
-def test_dreaming_records_failed_run_when_settings_are_invalid(
+def test_dreaming_rejects_invalid_dream_config(
     config: HieronymusConfig,
 ) -> None:
-    class FailingProvider:
-        name = "failing"
-
-        def crystallize(self, context, memories):
-            raise RuntimeError("provider failed")
-
-    context = _context(config)
-    _completed_session(config, context)
     config.config_root.mkdir(parents=True, exist_ok=True)
-    config.settings_path.write_text("not valid toml = [", encoding="utf-8")
+    config.dream_config_path.write_text("not valid toml = [", encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="provider failed"):
-        DreamService(config, FailingProvider()).run_cycle()
+    with pytest.raises(DreamConfigError, match="dream.conf is not valid TOML"):
+        DreamService(config, DeterministicDreamProvider())
 
-    with connect(config.database_path) as conn:
-        run = conn.execute("select status, error from dream_runs").fetchone()
-    assert run["status"] == "failed"
-    assert run["error"] == "provider failed"
+
+def test_dreaming_rejects_missing_workflow_provider_without_deterministic_fallback(
+    config: HieronymusConfig,
+) -> None:
+    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.dream_config_path.write_text(
+        """
+[dreaming]
+enabled = true
+schedule_interval_minutes = 30
+min_pending_short_term_memories = 1
+max_pending_short_term_memories = 10
+max_short_term_memories_per_cycle = 1
+not_enough_memories_cycle_threshold = 5
+max_changed_crystals_per_cycle = 200
+max_related_concepts_per_cycle = 80
+max_related_crystals_per_concept = 20
+max_total_affected_crystals = 500
+general_prompt = "Use English as the primary searchable memory language."
+
+[workflows.crystallization]
+provider = "missing"
+model = "model"
+enabled = true
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DreamConfigError, match="referenced provider profile is missing"):
+        resolve_provider(config)
 
 
 def test_dream_error_records_redact_configured_api_key_value(
     config: HieronymusConfig,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HIERONYMUS_PROVIDER_KEY", "raw-secret-value")
-    save_settings(
+    save_dream_config(
         config,
-        load_settings(config).with_provider(
+        default_dream_config().with_provider(
             "openai",
-            ProviderSettings(
-                enabled=True,
-                model="gpt-4.1-mini",
-                api_key_env="HIERONYMUS_PROVIDER_KEY",
-            ),
+            ProviderProfile(type="openai", api_key="raw-secret-value"),
         ),
     )
 

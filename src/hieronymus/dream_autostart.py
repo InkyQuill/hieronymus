@@ -8,11 +8,10 @@ from typing import Any
 from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
-from hieronymus.dream_config import load_dream_config
+from hieronymus.dream_config import DreamConfig, load_dream_config
 from hieronymus.dream_locks import read_dream_cycle_state
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamService
-from hieronymus.settings import load_settings
 
 
 @dataclass(frozen=True)
@@ -70,7 +69,6 @@ class DreamAutostart:
         self.config = config
 
     def status(self) -> dict[str, object]:
-        settings = load_settings(self.config)
         dream_config = load_dream_config(self.config)
         state = load_autostart_state(self.config)
         pending_completed_sessions, pending_short_term_memories = self._pending_counts()
@@ -87,7 +85,7 @@ class DreamAutostart:
         state_payload = state.to_json_dict()
         return {
             "enabled": dream_config.enabled,
-            "active_provider": settings.dreaming.active_provider,
+            "active_provider": _active_provider(dream_config),
             "schedule_interval_minutes": dream_config.schedule_interval_minutes,
             "min_pending_short_term_memories": dream_config.min_pending_short_term_memories,
             "max_pending_short_term_memories": dream_config.max_pending_short_term_memories,
@@ -240,6 +238,18 @@ class DreamAutostart:
         if state.last_started_at is None:
             return state.last_skipped_at
         return state.last_started_at
+
+
+def _active_provider(dream_config: DreamConfig) -> str:
+    if not dream_config.enabled:
+        return "deterministic"
+    workflow = dream_config.workflows.get("crystallization")
+    if workflow is not None and workflow.enabled:
+        return workflow.provider
+    for workflow in dream_config.workflows.values():
+        if workflow.enabled:
+            return workflow.provider
+    return "deterministic"
 
 
 def _parse_datetime(value: Any, field_name: str) -> datetime | None:

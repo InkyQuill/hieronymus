@@ -9,15 +9,18 @@ import pytest
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.doctor import Doctor, DoctorFinding, report_to_json
-from hieronymus.dream_config import ProviderProfile
+from hieronymus.dream_config import (
+    ProviderProfile,
+    WorkflowProfile,
+    default_dream_config,
+    save_dream_config,
+)
 from hieronymus.llm_cache import (
     CachedModels,
     ModelCacheEntry,
     dream_profile_cache_identity,
-    model_cache_identity,
     save_model_cache,
 )
-from hieronymus.settings import DreamingSettings, ProviderSettings, load_settings, save_settings
 
 
 def write_dream_config(config: HieronymusConfig, raw_config: str) -> None:
@@ -388,18 +391,18 @@ def test_doctor_reports_database_file_when_present(tmp_path: Path) -> None:
     assert report["errors"][0].code == "database-unreadable"
 
 
-def test_doctor_reports_missing_active_provider_env(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_doctor_reports_missing_active_provider_api_key(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    monkeypatch.delenv("MISSING_OPENAI_KEY", raising=False)
-    settings = load_settings(config)
-    openai = replace(settings.providers["openai"], enabled=True, api_key_env="MISSING_OPENAI_KEY")
-    save_settings(
+    save_dream_config(
         config,
-        settings.with_provider("openai", openai).with_dreaming(
-            replace(settings.dreaming, active_provider="openai")
+        replace(
+            default_dream_config()
+            .with_provider("openai", ProviderProfile(type="openai", api_key=""))
+            .with_workflow(
+                "crystallization",
+                WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+            ),
+            enabled=True,
         ),
     )
 
@@ -410,8 +413,8 @@ def test_doctor_reports_missing_active_provider_env(
         }
         report = Doctor(config).run(autofix=False)
 
-    finding = next(error for error in report["errors"] if error.code == "provider-env-missing")
-    assert "MISSING_OPENAI_KEY" in finding.message
+    finding = next(error for error in report["errors"] if error.code == "dream_api_key_missing")
+    assert finding.message == "API key missing for provider profile"
 
 
 def test_doctor_warns_when_llm_model_cache_refresh_failed(tmp_path: Path) -> None:
@@ -469,28 +472,26 @@ def test_doctor_ignores_stale_llm_model_cache_refresh_failure(tmp_path: Path) ->
     assert all(warning.code != "llm-model-cache-refresh-failed" for warning in report["warnings"])
 
 
-def test_doctor_ignores_llm_model_cache_error_for_obsolete_settings(
+def test_doctor_ignores_llm_model_cache_error_for_obsolete_provider_profile(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    saved = load_settings(config)
-    settings_a = saved.with_provider(
-        "openai",
-        replace(
-            saved.providers["openai"],
-            api_key_env="OPENAI_KEY_A",
-            base_url="https://a.example.test/v1",
+    old_profile = ProviderProfile(
+        type="openai",
+        endpoint="https://a.example.test/v1",
+        api_key="secret-a",
+    )
+    save_dream_config(
+        config,
+        default_dream_config().with_provider(
+            "openai",
+            ProviderProfile(
+                type="openai",
+                endpoint="https://b.example.test/v1",
+                api_key="secret-b",
+            ),
         ),
     )
-    settings_b = saved.with_provider(
-        "openai",
-        replace(
-            saved.providers["openai"],
-            api_key_env="OPENAI_KEY_B",
-            base_url="https://b.example.test/v1",
-        ),
-    )
-    save_settings(config, settings_b)
     save_model_cache(
         config,
         CachedModels().with_entry(
@@ -498,8 +499,8 @@ def test_doctor_ignores_llm_model_cache_error_for_obsolete_settings(
                 provider="openai",
                 models=("gpt-4.1-mini",),
                 fetched_at=datetime.now(UTC).isoformat(),
-                error="missing environment variable: OPENAI_KEY_A",
-                identity=model_cache_identity("openai", settings_a.providers["openai"]),
+                error="model suggestions unavailable",
+                identity=dream_profile_cache_identity("openai", old_profile),
             )
         ),
     )
@@ -529,21 +530,19 @@ def test_doctor_ignores_malformed_llm_model_cache(tmp_path: Path) -> None:
     assert all(warning.code != "llm-model-cache-refresh-failed" for warning in report["warnings"])
 
 
-def test_doctor_json_does_not_include_raw_api_key_value(config, monkeypatch):
-    monkeypatch.setenv("HIERONYMUS_OPENAI_KEY", "raw-secret-value")
-    settings = (
-        load_settings(config)
+def test_doctor_json_does_not_include_raw_api_key_value(config):
+    save_dream_config(
+        config,
+        default_dream_config()
         .with_provider(
             "openai",
-            ProviderSettings(
-                enabled=True,
-                model="gpt-4.1-mini",
-                api_key_env="HIERONYMUS_OPENAI_KEY",
-            ),
+            ProviderProfile(type="openai", api_key="raw-secret-value"),
         )
-        .with_dreaming(DreamingSettings(active_provider="openai"))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        ),
     )
-    save_settings(config, settings)
 
     with patch("hieronymus.doctor.ServiceManager") as manager_class:
         manager_class.return_value.status.return_value = {
@@ -552,5 +551,5 @@ def test_doctor_json_does_not_include_raw_api_key_value(config, monkeypatch):
         }
         payload = report_to_json(Doctor(config).run())
 
-    assert "provider-configured" in repr(payload)
+    assert "dream-conf-loaded" in repr(payload)
     assert "raw-secret-value" not in repr(payload)

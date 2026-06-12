@@ -6,6 +6,7 @@ import pytest
 
 from hieronymus.agent_ingestion import IngestionService, split_learning_blocks
 from hieronymus.config import HieronymusConfig
+from hieronymus.ingest_config import IngestConfig, LearnLimits, save_ingest_config
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.workspace import WorkspaceStore
@@ -93,8 +94,30 @@ def test_learn_writes_short_term_memories(tmp_path: Path) -> None:
         "block_index": 1,
         "block_count": 2,
         "sentence_count": 1,
+        "symbol_count": 25,
     }
     assert memories[1].metadata["block_index"] == 2
+
+
+def test_learn_uses_configured_block_character_limit(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_ingest_config(
+        config,
+        IngestConfig(learn=LearnLimits(max_block_chars=40)),
+    )
+    session_id = _session(config)
+
+    result = IngestionService(config).learn(
+        session_id=session_id,
+        text="First sentence is short. Second sentence is also short. Third sentence ends it.",
+        source_role="mentor",
+        source_ref="audit:chapter-1",
+    )
+
+    assert result.block_count == 3
+    memories = WorkspaceStore(config).list_short_term_memories(session_id)
+    assert len(memories) == 3
+    assert all(len(memory.text) <= 40 for memory in memories)
 
 
 def test_read_extracts_candidates_without_writing_by_default(tmp_path: Path) -> None:
@@ -157,4 +180,5 @@ def test_read_can_store_deliberate_observation_when_requested(tmp_path: Path) ->
         "ingestion_mode": "read",
         "candidate_terms": ["Gantz"],
         "sentence_count": 1,
+        "symbol_count": 20,
     }

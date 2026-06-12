@@ -3,7 +3,8 @@ from dataclasses import dataclass
 import pytest
 
 import hieronymus.tui_bridge as tui_bridge
-from hieronymus.settings import default_settings
+from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import ProviderProfile, default_dream_config, save_dream_config
 from hieronymus.tui_bridge.errors import error_payload
 from hieronymus.tui_bridge.protocol import (
     RpcError,
@@ -13,6 +14,7 @@ from hieronymus.tui_bridge.protocol import (
     parse_request,
     success_response,
 )
+from hieronymus.tui_bridge.server import dispatch
 
 
 @dataclass(frozen=True)
@@ -96,13 +98,15 @@ def test_dataclass_to_json_recurses_without_private_state() -> None:
     }
 
 
-def test_error_payload_redacts_configured_secret_values(monkeypatch) -> None:
-    settings = default_settings()
-    monkeypatch.setenv("OPENAI_API_KEY", "raw-secret-value")
+def test_error_payload_redacts_configured_secret_values() -> None:
+    dream_config = default_dream_config().with_provider(
+        "openai",
+        ProviderProfile(type="openai", api_key="raw-secret-value"),
+    )
 
     payload = error_payload(
         ValueError("provider rejected raw-secret-value"),
-        settings=settings,
+        dream_config=dream_config,
     )
 
     assert payload == {
@@ -111,14 +115,11 @@ def test_error_payload_redacts_configured_secret_values(monkeypatch) -> None:
     }
 
 
-def test_error_response_can_redact_configured_secret_values(monkeypatch) -> None:
-    settings = default_settings()
-    monkeypatch.setenv("OPENAI_API_KEY", "raw-secret-value")
-
+def test_error_response_can_redact_configured_secret_values() -> None:
     response = error_response(
         "1",
         RpcError("invalid_request", "provider rejected raw-secret-value"),
-        settings=settings,
+        redact=lambda text: text.replace("raw-secret-value", "[redacted]"),
     )
 
     assert response == {
@@ -129,6 +130,26 @@ def test_error_response_can_redact_configured_secret_values(monkeypatch) -> None
             "message": "provider rejected [redacted]",
         },
     }
+
+
+def test_dispatch_error_redacts_secret_from_dream_config(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_dream_config(
+        config,
+        default_dream_config().with_provider(
+            "openai",
+            ProviderProfile(type="openai", api_key="raw-secret-value"),
+        ),
+    )
+
+    response = dispatch(
+        config,
+        {"id": "1", "method": "provider rejected raw-secret-value", "params": {}},
+    )
+
+    assert response["ok"] is False
+    assert "raw-secret-value" not in repr(response)
+    assert "[redacted]" in repr(response)
 
 
 def test_tui_bridge_does_not_export_missing_server_entrypoint() -> None:

@@ -134,9 +134,17 @@ export const AdminBootstrapSchema = z.object({
   config_editor: AdminConfigEditorSchema,
 });
 
+export const ConfigPathsSchema = z
+  .object({
+    dream_config_path: z.string(),
+    ingest_config_path: z.string(),
+    release_config_path: z.string(),
+  })
+  .passthrough();
+
 export const ConfigBootstrapSchema = z
   .object({
-    config_paths: z.record(z.string()),
+    config_paths: ConfigPathsSchema,
     provider_choices: z.array(
       z
         .object({
@@ -149,13 +157,28 @@ export const ConfigBootstrapSchema = z
     ),
     selected_provider: ProviderNameSchema,
     draft: z.object({
+      dream: z
+        .object({
+          dreaming: z.record(z.unknown()),
+          providers: z.record(z.record(z.unknown())),
+          workflows: z.record(z.record(z.unknown())),
+        })
+        .passthrough(),
+      ingest: z
+        .object({
+          short_memory: z.record(z.number()),
+          learn: z.record(z.number()),
+        })
+        .passthrough(),
       dreaming: z.record(z.unknown()),
       providers: z.record(z.record(z.unknown())),
-      release: z.record(z.unknown()).default({}),
+      workflows: z.record(z.record(z.unknown())).default({}),
+      release: z.record(z.unknown()),
     }),
     form_values: z.object({
       provider: z.record(z.string()),
       dreaming: z.record(z.string()),
+      ingest: z.record(z.string()).default({}),
       release: z.record(z.string()).default({}),
     }),
     release: z
@@ -165,6 +188,13 @@ export const ConfigBootstrapSchema = z
       })
       .passthrough()
       .default({ update_channel: "stable", update_target: "latest" }),
+    ingest: z
+      .object({
+        short_memory: z.record(z.number()),
+        learn: z.record(z.number()),
+      })
+      .passthrough()
+      .default({ short_memory: {}, learn: {} }),
     validation: z.object({
       ok: z.boolean(),
       errors: z.array(z.string()),

@@ -6,6 +6,37 @@ import {
   RpcResponseSchema,
 } from "./schema.js";
 
+function configDraft(provider: string = "openai") {
+  return {
+    dream: {
+      dreaming: {},
+      providers: {},
+      workflows: {
+        crystallization: {
+          provider,
+          model: provider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
+          enabled: true,
+        },
+      },
+    },
+    ingest: { short_memory: {}, learn: {} },
+    release: { update_channel: "stable" },
+    dreaming: { active_provider: provider },
+    providers: {},
+    workflows: {},
+  };
+}
+
+function configPaths() {
+  return {
+    data_root: "/tmp/hieronymus",
+    config_root: "/tmp/hieronymus/config",
+    dream_config_path: "/tmp/hieronymus/config/dream.conf",
+    ingest_config_path: "/tmp/hieronymus/config/ingest.conf",
+    release_config_path: "/tmp/hieronymus/config/release.conf",
+  };
+}
+
 describe("runtime schemas", () => {
   it.each([
     ["openai", "OpenAI compatible"],
@@ -15,11 +46,7 @@ describe("runtime schemas", () => {
     "parses config bootstrap payload for %s provider selector",
     (provider, displayName) => {
       const payload = ConfigBootstrapSchema.parse({
-        config_paths: {
-          config_root: "/tmp/h",
-          settings_path: "/tmp/h/settings.toml",
-          database_path: "/tmp/h/hieronymus.sqlite3",
-        },
+        config_paths: configPaths(),
         provider_choices: [
           {
             name: provider,
@@ -29,7 +56,7 @@ describe("runtime schemas", () => {
           },
         ],
         selected_provider: provider,
-        draft: { dreaming: { active_provider: provider }, providers: {} },
+        draft: configDraft(provider),
         form_values: { provider: { model: "gpt-4.1-mini" }, dreaming: {} },
         validation: { ok: true, errors: [] },
         suggestions: {
@@ -54,7 +81,9 @@ describe("runtime schemas", () => {
       config_paths: {
         data_root: "/tmp/hieronymus",
         config_root: "/tmp/hieronymus/config",
-        settings_path: "/tmp/hieronymus/config/settings.toml",
+        dream_config_path: "/tmp/hieronymus/config/dream.conf",
+        ingest_config_path: "/tmp/hieronymus/config/ingest.conf",
+        release_config_path: "/tmp/hieronymus/config/release.conf",
       },
       provider_choices: [
         {
@@ -77,7 +106,7 @@ describe("runtime schemas", () => {
         },
       ],
       selected_provider: "openai",
-      draft: { dreaming: { active_provider: "openai" }, providers: {} },
+      draft: configDraft(),
       form_values: { provider: {}, dreaming: {} },
       validation: { ok: true, errors: [] },
       check_result: {},
@@ -92,9 +121,7 @@ describe("runtime schemas", () => {
 
   it("accepts an empty config detail payload", () => {
     const payload = ConfigBootstrapSchema.parse({
-      config_paths: {
-        settings_path: "/tmp/hieronymus/config/settings.toml",
-      },
+      config_paths: configPaths(),
       provider_choices: [
         {
           display_name: "OpenAI compatible",
@@ -104,7 +131,7 @@ describe("runtime schemas", () => {
         },
       ],
       selected_provider: "openai",
-      draft: { dreaming: { active_provider: "openai" }, providers: {} },
+      draft: configDraft(),
       form_values: { provider: {}, dreaming: {} },
       validation: { ok: true, errors: [] },
       suggestions: {},
@@ -116,9 +143,7 @@ describe("runtime schemas", () => {
 
   it("defaults missing model suggestions to an empty payload", () => {
     const payload = ConfigBootstrapSchema.parse({
-      config_paths: {
-        settings_path: "/tmp/hieronymus/config/settings.toml",
-      },
+      config_paths: configPaths(),
       provider_choices: [
         {
           display_name: "OpenAI compatible",
@@ -128,7 +153,7 @@ describe("runtime schemas", () => {
         },
       ],
       selected_provider: "openai",
-      draft: { dreaming: { active_provider: "openai" }, providers: {} },
+      draft: configDraft(),
       form_values: { provider: {}, dreaming: {} },
       validation: { ok: true, errors: [] },
       detail: {},
@@ -139,14 +164,67 @@ describe("runtime schemas", () => {
       update_channel: "stable",
       update_target: "latest",
     });
-    expect(payload.draft.release).toEqual({});
+    expect(payload.ingest).toEqual({ short_memory: {}, learn: {} });
+    expect(payload.draft.release).toEqual({ update_channel: "stable" });
     expect(payload.form_values.release).toEqual({});
+  });
+
+  it("requires real config draft sections", () => {
+    expect(() =>
+      ConfigBootstrapSchema.parse({
+        config_paths: configPaths(),
+        provider_choices: [
+          {
+            display_name: "OpenAI compatible",
+            name: "openai",
+            requires_api_key: true,
+            supports_api_path: true,
+          },
+        ],
+        selected_provider: "openai",
+        draft: { dreaming: { active_provider: "openai" }, providers: {} },
+        form_values: { provider: {}, dreaming: {} },
+        validation: { ok: true, errors: [] },
+        detail: {},
+      }),
+    ).toThrow();
+  });
+
+  it("parses present ingest config payloads with numeric passthrough fields", () => {
+    const payload = ConfigBootstrapSchema.parse({
+      config_paths: configPaths(),
+      provider_choices: [
+        {
+          display_name: "OpenAI compatible",
+          name: "openai",
+          requires_api_key: true,
+          supports_api_path: true,
+        },
+      ],
+      selected_provider: "openai",
+      draft: configDraft(),
+      form_values: { provider: {}, dreaming: {} },
+      ingest: {
+        short_memory: {
+          warning_sentence_count: 6,
+          rejection_sentence_count: 30,
+        },
+        learn: { max_block_chars: 1200 },
+        source: "defaults",
+      },
+      validation: { ok: true, errors: [] },
+      detail: {},
+    });
+
+    expect(payload.ingest.short_memory.warning_sentence_count).toBe(6);
+    expect(payload.ingest.learn.max_block_chars).toBe(1200);
+    expect(payload.ingest.source).toBe("defaults");
   });
 
   it("rejects config provider choices outside supported families", () => {
     expect(() =>
       ConfigBootstrapSchema.parse({
-        config_paths: {},
+        config_paths: configPaths(),
         provider_choices: [
           {
             name: "deterministic",
@@ -156,7 +234,7 @@ describe("runtime schemas", () => {
           },
         ],
         selected_provider: "deterministic",
-        draft: { dreaming: {}, providers: {} },
+        draft: configDraft("deterministic"),
         form_values: { provider: {}, dreaming: {} },
         validation: { ok: true, errors: [] },
         suggestions: {

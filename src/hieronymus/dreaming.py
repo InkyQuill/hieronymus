@@ -16,7 +16,6 @@ from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.scoring import PASSIVE_EVENT_DELTAS, apply_score_delta
 from hieronymus.secrets import redact_configured_secret_values
-from hieronymus.settings import SettingsError, load_settings
 from hieronymus.workspace import WorkspaceStore, short_memory_from_row
 
 _ALLOWED_CRYSTAL_TYPES = frozenset(
@@ -798,11 +797,7 @@ class DreamService:
 
     def _redacted_error_message(self, error: Exception) -> str:
         message = str(error)
-        try:
-            settings = load_settings(self.config)
-        except SettingsError:
-            return message
-        return redact_configured_secret_values(message, settings)
+        return redact_configured_secret_values(message, self.dream_config)
 
     def _apply_score_maintenance(
         self,

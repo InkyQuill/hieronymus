@@ -2,6 +2,7 @@ import pytest
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import connect
+from hieronymus.ingest_config import IngestConfig, ShortMemoryLimits, save_ingest_config
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.workspace import WorkspaceStore
@@ -48,6 +49,7 @@ def test_workspace_records_short_term_memory(config: HieronymusConfig) -> None:
     assert memories[0].metadata == {
         "importance": 4,
         "sentence_count": 1,
+        "symbol_count": 36,
         "tags": ["term"],
     }
 
@@ -88,8 +90,43 @@ def test_short_term_memory_metadata_includes_validation_warning(
     memories = store.list_short_term_memories(session.id)
     assert memories[0].metadata == {
         "sentence_count": 7,
+        "symbol_count": 40,
         "tags": ["large"],
         "validation_warning": "short-term memory is large; prefer 1-6 sentences",
+    }
+
+
+def test_short_term_memory_uses_configured_symbol_warning_limit(
+    config: HieronymusConfig,
+) -> None:
+    save_ingest_config(
+        config,
+        IngestConfig(
+            short_memory=ShortMemoryLimits(warning_symbol_count=12),
+        ),
+    )
+
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    store.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="note",
+        text="x" * 13,
+        metadata={
+            "symbol_count": 999,
+            "validation_warning": "caller warning",
+            "tags": ["tiny"],
+        },
+    )
+
+    memories = store.list_short_term_memories(session.id)
+    assert memories[0].metadata == {
+        "sentence_count": 1,
+        "symbol_count": 13,
+        "tags": ["tiny"],
+        "validation_warning": "short-term memory is large; prefer <= 12 symbols",
     }
 
 
@@ -115,6 +152,34 @@ def test_short_term_memory_strips_caller_validation_metadata_without_warning(
     assert memories[0].metadata == {
         "sentence_count": 1,
         "tags": ["small"],
+        "symbol_count": 15,
+    }
+
+
+def test_short_term_memory_strips_caller_symbol_count_metadata(
+    config: HieronymusConfig,
+) -> None:
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    store.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="note",
+        text="A small memory.",
+        metadata={
+            "sentence_count": 999,
+            "symbol_count": 777,
+            "validation_warning": "caller warning",
+            "tags": ["small"],
+        },
+    )
+
+    memories = store.list_short_term_memories(session.id)
+    assert memories[0].metadata == {
+        "sentence_count": 1,
+        "tags": ["small"],
+        "symbol_count": 15,
     }
 
 

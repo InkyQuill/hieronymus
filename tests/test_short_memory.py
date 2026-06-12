@@ -1,5 +1,6 @@
 import pytest
 
+from hieronymus.ingest_config import ShortMemoryLimits
 from hieronymus.short_memory import validate_short_memory_text
 
 
@@ -19,11 +20,30 @@ def test_short_memory_warns_above_preferred_sentence_count() -> None:
     assert validation.sentence_count == 7
 
 
+def test_short_memory_warns_above_configured_symbol_count() -> None:
+    validation = validate_short_memory_text(
+        "x" * 13,
+        limits=ShortMemoryLimits(warning_symbol_count=12),
+    )
+
+    assert validation.ok is True
+    assert validation.warning == "short-term memory is large; prefer <= 12 symbols"
+    assert validation.symbol_count == 13
+
+
 def test_short_memory_rejects_above_hard_sentence_count() -> None:
     text = " ".join(f"Sentence {index}." for index in range(31))
 
     with pytest.raises(ValueError, match="short-term memory is too large"):
         validate_short_memory_text(text)
+
+
+def test_short_memory_rejects_above_configured_symbol_count() -> None:
+    with pytest.raises(ValueError, match="short-term memory exceeds 12 symbols"):
+        validate_short_memory_text(
+            "x" * 13,
+            limits=ShortMemoryLimits(rejection_symbol_count=12),
+        )
 
 
 def test_short_memory_rejects_empty_text() -> None:

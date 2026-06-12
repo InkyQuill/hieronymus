@@ -18,12 +18,12 @@ class HieronymusConfig:
         return self.data_root
 
     @property
-    def settings_path(self) -> Path:
-        return self.config_root / "settings.toml"
-
-    @property
     def dream_config_path(self) -> Path:
         return self.config_root / "dream.conf"
+
+    @property
+    def ingest_config_path(self) -> Path:
+        return self.config_root / "ingest.conf"
 
     @property
     def release_config_path(self) -> Path:

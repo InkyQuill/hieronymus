@@ -5,6 +5,7 @@ type ConfigFormProps = {
   formValues: {
     provider: Record<string, string>;
     dreaming: Record<string, string>;
+    ingest: Record<string, string>;
     release: Record<string, string>;
   };
   focusedFieldIndex: number;
@@ -30,9 +31,9 @@ export const fieldDefinitions: FieldDefinition[] = [
     type: "text",
   },
   {
-    label: "API Key Env",
-    key: "provider.api_key_env",
-    placeholder: "e.g. OPENAI_API_KEY",
+    label: "API Key",
+    key: "provider.api_key",
+    placeholder: "stored in dream.conf",
     type: "text",
   },
   {
@@ -71,9 +72,21 @@ export const fieldDefinitions: FieldDefinition[] = [
     type: "text",
   },
   {
-    label: "Max Cycles Per Autostart",
-    key: "dreaming.max_cycles_per_autostart",
-    placeholder: "e.g. 1",
+    label: "Memory Warn Sentences",
+    key: "ingest.warning_sentence_count",
+    placeholder: "e.g. 6",
+    type: "text",
+  },
+  {
+    label: "Memory Reject Sentences",
+    key: "ingest.rejection_sentence_count",
+    placeholder: "e.g. 30",
+    type: "text",
+  },
+  {
+    label: "Learn Block Characters",
+    key: "ingest.max_block_chars",
+    placeholder: "e.g. 1200",
     type: "text",
   },
 ];
@@ -88,6 +101,7 @@ export function ConfigForm({
 }: ConfigFormProps) {
   const provider = formValues.provider;
   const dreaming = formValues.dreaming;
+  const ingest = formValues.ingest;
   const release = formValues.release;
 
   const fields = fieldDefinitions.map((field) => {
@@ -96,6 +110,8 @@ export function ConfigForm({
       value = provider[field.key.slice(9)] || "";
     } else if (field.key.startsWith("dreaming.")) {
       value = dreaming[field.key.slice(9)] || "";
+    } else if (field.key.startsWith("ingest.")) {
+      value = ingest[field.key.slice(7)] || "";
     } else if (field.key.startsWith("release.")) {
       value = release[field.key.slice(8)] || "";
     }

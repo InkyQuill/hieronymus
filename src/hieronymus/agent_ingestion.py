@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.ingest_config import load_ingest_config
 from hieronymus.workspace import WorkspaceStore
 
 TERM_PATTERN = re.compile(r"\b[A-Z][A-Za-z0-9'_-]{2,}\b")
@@ -129,7 +130,8 @@ class IngestionService:
         kind: str = "learned_block",
     ) -> LearnResult:
         workspace = WorkspaceStore(self.config)
-        blocks = split_learning_blocks(text)
+        learn_limits = load_ingest_config(self.config).learn
+        blocks = split_learning_blocks(text, max_chars=learn_limits.max_block_chars)
         memory_ids: list[int] = []
 
         for block in blocks:

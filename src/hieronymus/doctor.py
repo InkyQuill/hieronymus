@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shutil
 import sqlite3
 import subprocess
@@ -22,9 +21,7 @@ from hieronymus.llm_cache import (
     model_cache_identity,
 )
 from hieronymus.memory_migration import MemoryGraphMigrator
-from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_manager import ServiceManager
-from hieronymus.settings import SettingsError, load_settings
 
 
 @dataclass(frozen=True)
@@ -53,7 +50,7 @@ class Doctor:
         self._check_memory_graph_migration(report)
         self._check_daemon(report)
         self._check_bun_runtime(report)
-        self._check_settings_and_providers(report)
+        self._check_dream_config_file(report)
         self._check_dream_config_readiness(report)
         self._check_llm_model_cache(report)
         self._check_agent_plugins(report)
@@ -212,57 +209,25 @@ class Doctor:
                 )
             )
 
-    def _check_settings_and_providers(self, report: DoctorReport) -> None:
+    def _check_dream_config_file(self, report: DoctorReport) -> None:
         try:
-            settings = load_settings(self.config)
-        except SettingsError as error:
-            report["errors"].append(
-                DoctorFinding(
-                    level="error",
-                    code="settings-invalid",
-                    message=str(error),
-                )
-            )
-            return
-
-        active_name = settings.dreaming.active_provider
-        active = settings.providers[active_name]
-
-        def safe(message: str) -> str:
-            return redact_configured_secret_values(message, settings)
-
-        if not active.enabled:
-            report["errors"].append(
-                DoctorFinding(
-                    level="error",
-                    code="active-provider-disabled",
-                    message=safe(f"Active dream provider is disabled: {active_name}"),
-                )
-            )
-            return
-
-        if (
-            active_name != "deterministic"
-            and active.api_key_env
-            and not os.environ.get(active.api_key_env)
-        ):
-            report["errors"].append(
-                DoctorFinding(
-                    level="error",
-                    code="provider-env-missing",
-                    message=safe(
-                        "Missing environment variable for active dream provider: "
-                        f"{active.api_key_env}"
-                    ),
-                )
-            )
+            load_dream_config(self.config)
+        except DreamConfigError:
             return
 
         report["autofixed"].append(
             DoctorFinding(
                 level="info",
-                code="provider-configured",
-                message=safe(f"Active dream provider is configured: {active_name}"),
+                code=(
+                    "dream-conf-loaded"
+                    if self.config.dream_config_path.exists()
+                    else "dream-conf-defaults"
+                ),
+                message=(
+                    "dream.conf loaded"
+                    if self.config.dream_config_path.exists()
+                    else "dream.conf is missing; using built-in defaults"
+                ),
             )
         )
 
@@ -415,15 +380,15 @@ class Doctor:
     def _current_llm_model_cache_identities(self) -> dict[str, tuple[str, ...]]:
         identities = {"anthropic": ("", model_cache_identity("anthropic"))}
         try:
-            settings = load_settings(self.config)
-        except SettingsError:
+            dream_config = load_dream_config(self.config)
+        except DreamConfigError:
             return identities
 
-        for provider_name in ("openai", "gemini"):
-            provider = settings.providers.get(provider_name)
-            if provider is None:
-                continue
-            identities[provider_name] = (model_cache_identity(provider_name, provider),)
+        for provider_name, provider in dream_config.providers.items():
+            identities[provider_name] = (
+                *identities.get(provider_name, ()),
+                dream_profile_cache_identity(provider_name, provider),
+            )
         return identities
 
 

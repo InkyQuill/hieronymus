@@ -13,27 +13,29 @@ locked implementation plan.
 Dreaming is the path from short-term observations to durable memory. It remains
 bounded, auditable, and local-first.
 
+Current baseline:
+
+- `dream.conf` is the canonical configuration file for dreaming providers,
+  workflows, prompts, thresholds, caps, and plaintext local API keys.
+- The old provider settings file has been removed without migration because the
+  project is pre-release.
+- `ingest.conf` is the global data-root configuration file for ingestion policy,
+  including direct short-term memory warning/rejection thresholds and
+  Learn-style block splitting limits.
+- Short-term memory ingestion supports separate sentence and symbol warning and
+  rejection thresholds, with symbol thresholds disabled by default.
+- Invalid configured provider workflows are rejected instead of silently falling
+  back to deterministic dreaming.
+- Provider-backed crystallization audit coverage verifies provider request and
+  response summaries, parse warnings, selected memory IDs, and affected memory
+  set payloads.
+
 Remaining work:
 
-- Keep `dream.conf` as the canonical configuration file for dreaming providers,
-  workflows, prompts, thresholds, caps, and plaintext local API keys.
-- Remove the older `settings.toml` provider model instead of migrating it. The
-  project is pre-release, so compatibility migrations are unnecessary.
-- Add `ingest.conf` as a global data-root configuration file for ingestion
-  policy. It should cover direct short-term memory warning/rejection thresholds
-  and Learn-style block splitting limits.
-- Preserve today's hardcoded default behavior unless deliberately changed:
-  direct short-term memory warns above 6 sentences, rejects above 30 sentences,
-  and Learn-style block splitting targets 1200 characters.
-- Add explicit symbol/character thresholds for short-term memory entries with
-  separate warning and rejection stages.
-- Keep deterministic fallback explicit. It must not silently replace invalid
-  configured provider workflows in scheduled, urgent, or admin-triggered
-  dreaming.
 - Add provider-backed dreaming smoke coverage that exercises multi-phase
   provider payloads through crystallization and maintenance paths.
-- Verify dream audit records include provider request and response payloads,
-  affected memory set summaries, parse warnings, and maintenance decisions.
+- Extend dream audit coverage to maintenance decisions and multi-phase provider
+  runs.
 
 ### MCP And Agent Integrations
 
@@ -72,8 +74,8 @@ completeness, not another framework migration.
 
 Remaining work:
 
-- Make `hiero config` a general local configuration editor for `dream.conf`,
-  `ingest.conf`, and future configuration files.
+- Extend `hiero config` beyond the current `dream.conf`, `ingest.conf`, and
+  `release.conf` editor as future configuration files are added.
 - Move config field labels, hints, grouping, defaults, field types, redaction
   behavior, and validation errors into Python-owned config schema payloads. The
   frontend should render those contracts rather than duplicating config
