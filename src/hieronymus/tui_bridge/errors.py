@@ -4,14 +4,13 @@ from collections.abc import Callable
 
 from hieronymus.dream_config import DreamConfig
 from hieronymus.secrets import redact_configured_secret_values
-from hieronymus.settings import SettingsError
 from hieronymus.tui_bridge.protocol import RpcError
 
 
 def error_code(error: Exception) -> str:
     if isinstance(error, RpcError):
         return error.code
-    if isinstance(error, SettingsError | ValueError | KeyError):
+    if isinstance(error, ValueError | KeyError):
         return "validation_error"
     return "internal_error"
 
@@ -26,7 +25,7 @@ def display_message(
         message = error.message
     elif isinstance(error, KeyError) and error.args:
         message = str(error.args[0])
-    elif isinstance(error, SettingsError | ValueError):
+    elif isinstance(error, ValueError):
         message = str(error)
     else:
         message = "Unexpected backend error"

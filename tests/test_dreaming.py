@@ -3,7 +3,12 @@ import pytest
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
-from hieronymus.dream_config import ProviderProfile, default_dream_config, save_dream_config
+from hieronymus.dream_config import (
+    DreamConfigError,
+    ProviderProfile,
+    default_dream_config,
+    save_dream_config,
+)
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
@@ -499,27 +504,14 @@ def test_dreaming_does_not_skip_provider_lock_error_after_acquiring_lock(
     assert "dream cycle already running" in run["error"]
 
 
-def test_dreaming_records_failed_run_when_settings_are_invalid(
+def test_dreaming_rejects_invalid_dream_config(
     config: HieronymusConfig,
 ) -> None:
-    class FailingProvider:
-        name = "failing"
-
-        def crystallize(self, context, memories):
-            raise RuntimeError("provider failed")
-
-    context = _context(config)
-    _completed_session(config, context)
     config.config_root.mkdir(parents=True, exist_ok=True)
-    config.settings_path.write_text("not valid toml = [", encoding="utf-8")
+    config.dream_config_path.write_text("not valid toml = [", encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="provider failed"):
-        DreamService(config, FailingProvider()).run_cycle()
-
-    with connect(config.database_path) as conn:
-        run = conn.execute("select status, error from dream_runs").fetchone()
-    assert run["status"] == "failed"
-    assert run["error"] == "provider failed"
+    with pytest.raises(DreamConfigError, match="dream.conf is not valid TOML"):
+        DreamService(config, DeterministicDreamProvider())
 
 
 def test_dream_error_records_redact_configured_api_key_value(

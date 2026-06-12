@@ -343,7 +343,6 @@ def test_config_save_persists_dream_and_ingest_config_without_settings(
     assert ingest_config.short_memory.warning_sentence_count == 7
     assert ingest_config.short_memory.rejection_sentence_count == 31
     assert ingest_config.learn.max_block_chars == 1300
-    assert not config.settings_path.exists()
 
 
 def test_config_save_persists_release_update_channel(tmp_path: Path) -> None:

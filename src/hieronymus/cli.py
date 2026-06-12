@@ -14,6 +14,11 @@ from hieronymus.agent_plugins import resolve_plugin
 from hieronymus.config import load_config
 from hieronymus.doctor import Doctor, report_to_json
 from hieronymus.dream_autostart import DreamAutostart
+from hieronymus.dream_config import (
+    DreamConfigError,
+    load_dream_config,
+    redacted_dream_config_payload,
+)
 from hieronymus.dream_locks import DreamCycleAlreadyRunning
 from hieronymus.dream_providers import ProviderRegistry, resolve_provider
 from hieronymus.dreaming import DreamService
@@ -28,18 +33,17 @@ from hieronymus.release import check_update, run_update
 from hieronymus.release_config import ReleaseConfigError, load_release_config
 from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
-from hieronymus.settings import SettingsError, load_settings
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
 
-def _error_message(error: KeyError | ValueError | SettingsError) -> str:
+def _error_message(error: KeyError | ValueError) -> str:
     if isinstance(error, KeyError) and error.args:
         return str(error.args[0])
     return str(error)
 
 
-def _raise_click_error(error: KeyError | ValueError | SettingsError) -> None:
+def _raise_click_error(error: KeyError | ValueError) -> None:
     raise click.ClickException(_error_message(error)) from error
 
 
@@ -270,17 +274,17 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
         return
 
     try:
-        settings = load_settings(config)
+        dream_config = load_dream_config(config)
         release_config = load_release_config(config)
         ingest_config = load_ingest_config(config)
         payload = {
             "config_root": str(config.config_root),
             "database_path": str(config.database_path),
-            "settings_path": str(config.settings_path),
+            "dream_config_path": str(config.dream_config_path),
             "ingest_config_path": str(config.ingest_config_path),
             "release_config_path": str(config.release_config_path),
             "tui": "available",
-            "settings": settings.to_json_dict(),
+            "dream": redacted_dream_config_payload(dream_config),
             "ingest": ingest_config.to_payload(),
             "release": {
                 "update_channel": release_config.update_channel,
@@ -289,7 +293,7 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
             "providers": ProviderRegistry().status_payload(config),
             "dreaming": DreamAutostart(config).status(),
         }
-    except (SettingsError, IngestConfigError, ReleaseConfigError) as error:
+    except (DreamConfigError, IngestConfigError, ReleaseConfigError) as error:
         raise click.ClickException(str(error)) from error
 
     click.echo(render_json(payload))
@@ -768,7 +772,7 @@ def dream(
             ctx.obj["config"],
             dream_provider,
         ).run_all(wait=wait, owner="cli", ignore_minimum=True)
-    except (KeyError, ValueError, SettingsError, DreamCycleAlreadyRunning) as error:
+    except (KeyError, ValueError, DreamCycleAlreadyRunning) as error:
         _raise_click_error(error)
     payload = {
         "cycle_id": run.cycle_id,

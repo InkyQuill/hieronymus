@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import urllib.error
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_config import (
+    DreamConfigError,
     ProviderProfile,
     WorkflowProfile,
     default_dream_config,
@@ -25,7 +26,6 @@ from hieronymus.dream_providers import (
 )
 from hieronymus.llm_cache import CachedModels, ModelCacheEntry, load_model_cache, save_model_cache
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
-from hieronymus.settings import load_settings
 
 
 @dataclass
@@ -100,7 +100,6 @@ def test_provider_status_uses_dream_config_profiles(tmp_path) -> None:
     assert openai["error"] == "API key missing for provider profile"
     assert openai["base_url"] == "https://llm.example.test/v1"
     assert openai["timeout_seconds"] == 12.5
-    assert "api_key_env" not in openai
 
 
 def test_provider_status_rejects_whitespace_model(tmp_path) -> None:
@@ -185,18 +184,7 @@ def test_provider_status_reports_key_presence_without_key_value(config):
     assert "sk-live-secret-value" not in repr(payload)
 
 
-def test_provider_status_ignores_unsaved_in_memory_settings(config):
-    saved = load_settings(config)
-    draft = saved.with_provider(
-        "openai",
-        replace(
-            saved.providers["openai"],
-            enabled=True,
-            api_key_env="DRAFT_OPENAI_KEY",
-            model="draft-model",
-            base_url="https://draft.example.test/v1",
-        ),
-    )
+def test_provider_status_uses_saved_dream_config_profile(config):
     save_dream_config(
         config,
         default_dream_config()
@@ -214,12 +202,11 @@ def test_provider_status_ignores_unsaved_in_memory_settings(config):
         ),
     )
 
-    payload = ProviderRegistry().status_payload(config, settings=draft)
+    payload = ProviderRegistry().status_payload(config)
     openai = next(row for row in payload if row["name"] == "openai")
 
     assert openai["model"] == "dream-model"
     assert openai["api_key_present"] is True
-    assert load_settings(config).providers["openai"].model == "gpt-4.1-mini"
 
 
 def test_urllib_transport_converts_url_error(monkeypatch) -> None:
@@ -292,7 +279,6 @@ def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> 
             )
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = load_settings(config)
     _save_provider_profile(
         config,
         "openai",
@@ -307,7 +293,6 @@ def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> 
     result = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
-        settings=settings,
     )
 
     assert result.to_json_dict() == {
@@ -320,10 +305,10 @@ def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> 
     assert "secret-openai" not in repr(result.to_json_dict())
 
 
-def test_deterministic_model_suggestions_ignore_malformed_settings(tmp_path) -> None:
+def test_deterministic_model_suggestions_ignore_malformed_dream_config(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     config.config_root.mkdir(parents=True)
-    config.settings_path.write_text("[dreaming\n", encoding="utf-8")
+    config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
 
     result = ProviderRegistry().list_model_suggestions(config, "deterministic")
 
@@ -336,22 +321,15 @@ def test_deterministic_model_suggestions_ignore_malformed_settings(tmp_path) -> 
     assert not config.llm_cache_path.exists()
 
 
-def test_anthropic_model_suggestions_ignore_malformed_settings_and_cache_defaults(
+def test_anthropic_model_suggestions_reject_malformed_dream_config(
     tmp_path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     config.config_root.mkdir(parents=True)
-    config.settings_path.write_text("[dreaming\n", encoding="utf-8")
+    config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
 
-    result = ProviderRegistry().list_model_suggestions(config, "anthropic")
-
-    assert result.to_json_dict() == {
-        "provider": "anthropic",
-        "models": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
-        "source": "defaults",
-        "error": "",
-    }
-    assert load_model_cache(config).providers["anthropic"].models == tuple(result.models)
+    with pytest.raises(DreamConfigError, match="dream.conf is not valid TOML"):
+        ProviderRegistry().list_model_suggestions(config, "anthropic")
 
 
 def test_model_suggestions_use_fresh_cache_without_network(tmp_path, monkeypatch) -> None:
@@ -373,7 +351,6 @@ def test_model_suggestions_use_fresh_cache_without_network(tmp_path, monkeypatch
             raise AssertionError("get_json should not be used for cached suggestions")
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = load_settings(config)
     _save_provider_profile(
         config,
         "openai",
@@ -387,13 +364,11 @@ def test_model_suggestions_use_fresh_cache_without_network(tmp_path, monkeypatch
     ProviderRegistry(PrimingTransport()).list_model_suggestions(
         config,
         "openai",
-        settings=settings,
     )
 
     result = ProviderRegistry(CachedTransport()).list_model_suggestions(
         config,
         "openai",
-        settings=settings,
     )
 
     assert result.to_json_dict() == {
@@ -423,7 +398,6 @@ def test_model_suggestions_refresh_after_cached_error_resolves(
             )
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = load_settings(config)
     _save_provider_profile(
         config,
         "openai",
@@ -434,7 +408,6 @@ def test_model_suggestions_refresh_after_cached_error_resolves(
     first = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
-        settings=settings,
     )
     _save_provider_profile(
         config,
@@ -448,7 +421,6 @@ def test_model_suggestions_refresh_after_cached_error_resolves(
     second = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
-        settings=settings,
     )
 
     assert first.error == "API key missing for provider profile"
@@ -480,7 +452,6 @@ def test_model_suggestions_return_api_result_when_cache_save_fails(
         raise PermissionError("cache is not writable")
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = load_settings(config)
     _save_provider_profile(
         config,
         "openai",
@@ -495,7 +466,6 @@ def test_model_suggestions_return_api_result_when_cache_save_fails(
     result = ProviderRegistry(Transport()).list_model_suggestions(
         config,
         "openai",
-        settings=settings,
     )
 
     assert result.to_json_dict() == {
@@ -532,7 +502,6 @@ def test_model_suggestions_refresh_and_save_stale_cache(tmp_path, monkeypatch) -
             )
         ),
     )
-    settings = load_settings(config)
     _save_provider_profile(
         config,
         "openai",
@@ -547,7 +516,6 @@ def test_model_suggestions_refresh_and_save_stale_cache(tmp_path, monkeypatch) -
     result = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
-        settings=settings,
     )
 
     assert result.to_json_dict() == {
@@ -584,21 +552,6 @@ def test_model_suggestions_refresh_when_openai_base_url_changes(
             )
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    saved = load_settings(config)
-    settings_a = saved.with_provider(
-        "openai",
-        replace(
-            saved.providers["openai"],
-            base_url="https://a.example.test/v1",
-        ),
-    )
-    settings_b = saved.with_provider(
-        "openai",
-        replace(
-            saved.providers["openai"],
-            base_url="https://b.example.test/v1",
-        ),
-    )
     transport = Transport()
     _save_provider_profile(
         config,
@@ -613,7 +566,6 @@ def test_model_suggestions_refresh_when_openai_base_url_changes(
     first = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
-        settings=settings_a,
     )
     _save_provider_profile(
         config,
@@ -627,7 +579,6 @@ def test_model_suggestions_refresh_when_openai_base_url_changes(
     result = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
-        settings=settings_b,
     )
 
     assert first.models == ["model-from-a"]
@@ -643,7 +594,7 @@ def test_model_suggestions_refresh_when_openai_base_url_changes(
     ]
 
 
-def test_model_suggestions_refresh_when_openai_api_key_env_changes(
+def test_model_suggestions_refresh_when_openai_api_key_changes(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -667,15 +618,6 @@ def test_model_suggestions_refresh_when_openai_api_key_env_changes(
             )
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    saved = load_settings(config)
-    settings_a = saved.with_provider(
-        "openai",
-        replace(saved.providers["openai"], api_key_env="OPENAI_KEY_A"),
-    )
-    settings_b = saved.with_provider(
-        "openai",
-        replace(saved.providers["openai"], api_key_env="OPENAI_KEY_B"),
-    )
     transport = Transport()
     _save_provider_profile(
         config,
@@ -690,7 +632,6 @@ def test_model_suggestions_refresh_when_openai_api_key_env_changes(
     first = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
-        settings=settings_a,
     )
     _save_provider_profile(
         config,
@@ -704,7 +645,6 @@ def test_model_suggestions_refresh_when_openai_api_key_env_changes(
     result = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
-        settings=settings_b,
     )
 
     assert first.models == ["model-from-key-a"]
@@ -720,7 +660,7 @@ def test_model_suggestions_refresh_when_openai_api_key_env_changes(
     ]
 
 
-def test_model_suggestions_refresh_when_gemini_api_key_env_changes(
+def test_model_suggestions_refresh_when_gemini_api_key_changes(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -744,15 +684,6 @@ def test_model_suggestions_refresh_when_gemini_api_key_env_changes(
             )
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    saved = load_settings(config)
-    settings_a = saved.with_provider(
-        "gemini",
-        replace(saved.providers["gemini"], api_key_env="GEMINI_KEY_A"),
-    )
-    settings_b = saved.with_provider(
-        "gemini",
-        replace(saved.providers["gemini"], api_key_env="GEMINI_KEY_B"),
-    )
     transport = Transport()
     _save_provider_profile(
         config,
@@ -767,7 +698,6 @@ def test_model_suggestions_refresh_when_gemini_api_key_env_changes(
     first = ProviderRegistry(transport).list_model_suggestions(
         config,
         "gemini",
-        settings=settings_a,
     )
     _save_provider_profile(
         config,
@@ -781,7 +711,6 @@ def test_model_suggestions_refresh_when_gemini_api_key_env_changes(
     result = ProviderRegistry(transport).list_model_suggestions(
         config,
         "gemini",
-        settings=settings_b,
     )
 
     assert first.models == ["gemini-from-key-a"]

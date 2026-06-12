@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 import urllib.error
 import urllib.request
@@ -33,7 +32,6 @@ from hieronymus.llm_cache import (
     save_model_cache,
 )
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
-from hieronymus.settings import HieronymusSettings, ProviderSettings, load_settings
 
 ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_API_BASE_URL = "https://api.anthropic.com"
@@ -141,6 +139,13 @@ class ProviderCheckResult:
 
 
 @dataclass(frozen=True)
+class ProviderRuntimeSettings:
+    model: str
+    base_url: str
+    timeout_seconds: float
+
+
+@dataclass(frozen=True)
 class ModelSuggestionResult:
     provider: str
     models: list[str]
@@ -195,13 +200,7 @@ class ProviderRegistry:
                 return provider
         raise ValueError(f"unsupported dream provider: {name}")
 
-    def status_payload(
-        self,
-        config: HieronymusConfig,
-        *,
-        settings: HieronymusSettings | None = None,
-    ) -> list[dict[str, object]]:
-        del settings
+    def status_payload(self, config: HieronymusConfig) -> list[dict[str, object]]:
         dream_config = load_dream_config(config)
         statuses = []
         profile_names = [metadata.name for metadata in self._providers]
@@ -256,10 +255,7 @@ class ProviderRegistry:
         self,
         config: HieronymusConfig,
         name: str,
-        *,
-        settings: HieronymusSettings | None = None,
     ) -> ModelSuggestionResult:
-        del settings
         if name == "deterministic":
             return ModelSuggestionResult(
                 provider=name,
@@ -350,44 +346,6 @@ class ProviderRegistry:
         )
         return result
 
-    def _list_uncached_model_suggestions(
-        self,
-        config: HieronymusConfig,
-        name: str,
-        *,
-        settings: HieronymusSettings | None = None,
-    ) -> ModelSuggestionResult:
-        defaults = _default_model_suggestions(name)
-        if name in {"anthropic", "deterministic"}:
-            return ModelSuggestionResult(provider=name, models=defaults, source="defaults")
-
-        active_settings = settings or load_settings(config)
-        provider = active_settings.providers.get(name, ProviderSettings())
-        api_key = os.environ.get(provider.api_key_env)
-        if not api_key:
-            return ModelSuggestionResult(
-                provider=name,
-                models=defaults,
-                source="defaults",
-                error=f"missing environment variable: {provider.api_key_env}",
-            )
-
-        try:
-            response = self._list_remote_models(name, provider, api_key)
-            if not 200 <= response.status < 300:
-                raise ValueError("model suggestions request failed")
-            models = _parse_model_suggestions(name, response.body)
-            if not models:
-                raise ValueError("empty model suggestions")
-        except Exception:
-            return ModelSuggestionResult(
-                provider=name,
-                models=defaults,
-                source="defaults",
-                error="model suggestions unavailable",
-            )
-        return ModelSuggestionResult(provider=name, models=models, source="api")
-
     def _list_uncached_profile_model_suggestions(
         self,
         profile_name: str,
@@ -426,11 +384,7 @@ class ProviderRegistry:
         self,
         config: HieronymusConfig,
         name: str,
-        temporary_api_key: str | None = None,
-        *,
-        settings: HieronymusSettings | None = None,
     ) -> ProviderCheckResult:
-        del temporary_api_key, settings
         if name == "deterministic":
             return ProviderCheckResult(name="deterministic", ok=True, model="")
 
@@ -548,7 +502,7 @@ class ProviderRegistry:
     def _check_profile_remote(
         self,
         profile: ProviderProfile,
-        provider: ProviderSettings,
+        provider: ProviderRuntimeSettings,
         *,
         api_key: str,
     ) -> HTTPResponse:
@@ -573,7 +527,7 @@ class ProviderRegistry:
     def _check_remote(
         self,
         name: str,
-        provider: ProviderSettings,
+        provider: ProviderRuntimeSettings,
         api_key: str,
     ) -> HTTPResponse:
         if name == "openai":
@@ -624,7 +578,7 @@ class ProviderRegistry:
     def _list_remote_models(
         self,
         name: str,
-        provider: ProviderSettings,
+        provider: ProviderRuntimeSettings,
         api_key: str,
     ) -> HTTPResponse:
         if name == "openai":
@@ -910,7 +864,7 @@ class OpenAIDreamProvider:
 
     def __init__(
         self,
-        settings: ProviderSettings,
+        settings: ProviderRuntimeSettings,
         api_key: str,
         transport: HTTPTransport,
         *,
@@ -948,7 +902,7 @@ class GeminiDreamProvider:
 
     def __init__(
         self,
-        settings: ProviderSettings,
+        settings: ProviderRuntimeSettings,
         api_key: str,
         transport: HTTPTransport,
         *,
@@ -991,7 +945,7 @@ class AnthropicDreamProvider:
 
     def __init__(
         self,
-        settings: ProviderSettings,
+        settings: ProviderRuntimeSettings,
         api_key: str,
         transport: HTTPTransport,
         *,
@@ -1031,7 +985,7 @@ class OllamaDreamProvider:
 
     def __init__(
         self,
-        settings: ProviderSettings,
+        settings: ProviderRuntimeSettings,
         transport: HTTPTransport,
     ) -> None:
         self.settings = settings
@@ -1120,12 +1074,10 @@ def _provider_from_profile(
     raise ValueError(f"unsupported provider type for {profile_name}: {profile.type}")
 
 
-def _profile_provider_settings(profile: ProviderProfile, model: str) -> ProviderSettings:
+def _profile_provider_settings(profile: ProviderProfile, model: str) -> ProviderRuntimeSettings:
     endpoint = profile.endpoint.strip() or _default_profile_endpoint(profile.type)
-    return ProviderSettings(
-        enabled=True,
+    return ProviderRuntimeSettings(
         model=model,
-        api_key_env="",
         base_url=endpoint,
         timeout_seconds=profile.timeout_seconds,
     )

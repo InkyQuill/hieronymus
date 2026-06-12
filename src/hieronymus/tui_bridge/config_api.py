@@ -33,7 +33,6 @@ from hieronymus.release_config import (
     validate_release_config,
 )
 from hieronymus.secrets import redact_configured_secret_values
-from hieronymus.settings import SettingsError
 from hieronymus.tui_bridge.config_state import (
     field_value,
     parse_bool,
@@ -118,7 +117,7 @@ class ConfigBridge:
             dream_config = self._select_provider(dream_config, selected)
             validate_dream_config(dream_config)
             validate_ingest_config(ingest_config)
-        except (DreamConfigError, IngestConfigError, SettingsError, ReleaseConfigError) as error:
+        except (DreamConfigError, IngestConfigError, ValueError, ReleaseConfigError) as error:
             return self._payload(
                 dream_config,
                 ingest_config,
@@ -289,7 +288,6 @@ class ConfigBridge:
             "config_paths": {
                 "data_root": str(self.config.data_root),
                 "config_root": str(self.config.config_root),
-                "settings_path": str(self.config.settings_path),
                 "dream_config_path": str(self.config.dream_config_path),
                 "ingest_config_path": str(self.config.ingest_config_path),
                 "release_config_path": str(self.config.release_config_path),
@@ -383,7 +381,7 @@ class ConfigBridge:
                     selected,
                     self._provider_form(raw_provider, dream_config, selected),
                 )
-            except (DreamConfigError, SettingsError) as error:
+            except (DreamConfigError, ValueError) as error:
                 return dream_config, str(error)
 
         raw_dreaming = params.get("dreaming")
@@ -393,7 +391,7 @@ class ConfigBridge:
                     dream_config,
                     self._dreaming_form(raw_dreaming, dream_config),
                 )
-            except (DreamConfigError, SettingsError) as error:
+            except (DreamConfigError, ValueError) as error:
                 return dream_config, str(error)
 
         return dream_config, load_error

@@ -267,10 +267,10 @@ def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert payload["config_root"] == str(data_root)
     assert payload["database_path"] == str(data_root / "hieronymus.sqlite")
-    assert payload["settings_path"] == str(data_root / "settings.toml")
+    assert payload["dream_config_path"] == str(data_root / "dream.conf")
     assert payload["release_config_path"] == str(data_root / "release.conf")
     assert payload["tui"] == "available"
-    assert payload["settings"]["dreaming"]["active_provider"] == "deterministic"
+    assert payload["dream"]["workflows"]["crystallization"]["provider"] == "anthropic"
     assert payload["release"] == {"update_channel": "stable", "update_target": "latest"}
     assert payload["providers"][0]["name"] == "deterministic"
 

@@ -10,10 +10,15 @@ from hieronymus.cli import main
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_config import (
+    ProviderProfile,
+    WorkflowProfile,
+    default_dream_config,
+    save_dream_config,
+)
 from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
-from hieronymus.settings import ProviderSettings, load_settings, save_settings
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -395,22 +400,27 @@ def test_dream_runs_true_drain_with_cli_owner(monkeypatch, tmp_path):
 def test_config_json_does_not_include_raw_api_key_value(tmp_path, monkeypatch):
     data_root = tmp_path / "hieronymus"
     config = HieronymusConfig(data_root=data_root)
-    monkeypatch.setenv("HIERONYMUS_OPENAI_KEY", "raw-secret-value")
-    settings = load_settings(config).with_provider(
-        "openai",
-        ProviderSettings(
-            enabled=True,
-            model="gpt-4.1-mini",
-            api_key_env="HIERONYMUS_OPENAI_KEY",
-            base_url="https://api.example.test/v1",
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider(
+            "openai",
+            ProviderProfile(
+                type="openai",
+                endpoint="https://api.example.test/v1",
+                api_key="raw-secret-value",
+            ),
+        )
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )
-    save_settings(config, settings)
 
     result = CliRunner().invoke(main, ["--data-root", str(data_root), "config", "--json"])
 
     assert result.exit_code == 0
-    assert "HIERONYMUS_OPENAI_KEY" in result.output
+    assert '"api_key": "***"' in result.output
     assert "raw-secret-value" not in result.output
 
 

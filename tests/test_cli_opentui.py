@@ -264,4 +264,4 @@ def test_cli_json_config_bypasses_opentui_launcher(tmp_path, monkeypatch) -> Non
     )
 
     assert result.exit_code == 0
-    assert '"settings_path"' in result.output
+    assert '"dream_config_path"' in result.output
