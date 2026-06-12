@@ -4,7 +4,7 @@
 
 **Goal:** Prevent GitHub Actions and release tooling from publishing a `1.x` Hieronymus release while the product is still alpha.
 
-**Architecture:** Keep package metadata and tags SemVer-compatible as `0.x`, while human-facing CLI/TUI text displays an alpha marker. Add an explicit Python release guard and call it before and after `semantic-release version` so a computed `1.0.0` cannot reach `semantic-release publish`.
+**Architecture:** Keep package metadata and tags SemVer-compatible as `0.x`, while human-facing CLI/TUI text displays an alpha marker. Add an explicit Python release guard, check the computed next semantic-release version before any side-effectful release command, then re-check metadata before publish.
 
 **Tech Stack:** Python 3.12, Click, python-semantic-release, GitHub Actions, pytest, Ruff.
 
@@ -20,13 +20,13 @@
 
 - Modify `pyproject.toml`: set package version to `0.2.0`; keep `tag_format = "v{version}"`; keep stable SemVer tags.
 - Modify `src/hieronymus/__init__.py`: set `__version__ = "0.2.0"`.
-- Create `src/hieronymus/release_guard.py`: validate project metadata before release publish.
-- Modify `.github/workflows/release.yml`: run the guard before and after `semantic-release version`.
+- Create `src/hieronymus/release_guard.py`: validate project metadata and computed release versions before publish.
+- Modify `.github/workflows/release.yml`: run the metadata guard, check the computed next version with `semantic-release version --print`, then run normal release and re-check metadata before publish.
 - Modify `src/hieronymus/presentation.py`: add display-version helpers that append `α` for `0.x`.
 - Modify `src/hieronymus/admin.py`: send display version in the admin header.
 - Modify `src/hieronymus/cli.py`: use display versions in human update output while keeping JSON raw.
 - Modify `tests/test_release_workflow.py`: assert release metadata is `0.2.0`, semantic-release is guarded, and workflow order blocks publish.
-- Create `tests/test_release_guard.py`: unit-test the guard.
+- Create `tests/test_release_guard.py`: unit-test metadata and computed-version guards.
 - Modify `tests/test_cli_service.py`: assert human-facing CLI output includes `α`.
 - Modify `tests/test_admin_store.py`: assert admin header includes the alpha display version.
 
@@ -258,10 +258,24 @@ git commit -m "test: guard alpha release metadata"
 **Files:**
 - Modify: `.github/workflows/release.yml`
 - Modify: `tests/test_release_workflow.py`
+- Modify: `src/hieronymus/release_guard.py`
+- Modify: `tests/test_release_guard.py`
 
 - [ ] **Step 1: Write failing workflow tests**
 
-Add this test to `tests/test_release_workflow.py`:
+Add release guard tests for computed versions to `tests/test_release_guard.py`:
+
+```python
+def test_validate_alpha_version_accepts_version_tag() -> None:
+    assert validate_alpha_version("v0.3.0") == "0.3.0"
+
+
+def test_validate_alpha_version_rejects_one_major_version() -> None:
+    with pytest.raises(ReleaseGuardError, match="alpha releases must stay on 0.x"):
+        validate_alpha_version("1.0.0")
+```
+
+Add this workflow test to `tests/test_release_workflow.py`:
 
 ```python
 def test_release_workflow_guards_alpha_version_before_publish() -> None:
@@ -269,16 +283,22 @@ def test_release_workflow_guards_alpha_version_before_publish() -> None:
     release = _block_after(lines, _find_line(lines, "  release:"))
 
     guard_command = "      - run: uv run python -m hieronymus.release_guard"
+    computed_guard_name = "      - name: Check next release version"
     version_command = "      - run: uv run semantic-release version"
     publish_command = "      - run: uv run semantic-release publish"
 
     guard_indexes = [index for index, line in enumerate(release) if line == guard_command]
+    computed_guard_index = release.index(computed_guard_name)
     version_index = release.index(version_command)
     publish_index = release.index(publish_command)
 
     assert len(guard_indexes) == 2
-    assert guard_indexes[0] < version_index
+    assert guard_indexes[0] < computed_guard_index < version_index
     assert version_index < guard_indexes[1] < publish_index
+
+    computed_guard = _step_block(release, computed_guard_name)
+    assert 'NEXT_VERSION="$(uv run semantic-release version --print)"' in computed_guard
+    assert 'uv run python -m hieronymus.release_guard --version "$NEXT_VERSION"' in computed_guard
 ```
 
 - [ ] **Step 2: Run the focused test to verify it fails**
@@ -289,9 +309,26 @@ Run:
 uv run pytest tests/test_release_workflow.py::test_release_workflow_guards_alpha_version_before_publish -q
 ```
 
-Expected: FAIL because the workflow does not call `hieronymus.release_guard`.
+Expected: FAIL because the guard cannot validate computed versions and the workflow does not check `semantic-release version --print`.
 
-- [ ] **Step 3: Add guard steps to the release workflow**
+- [ ] **Step 3: Add computed-version validation**
+
+Extend `src/hieronymus/release_guard.py`:
+
+```python
+def validate_alpha_version(version_text: str) -> str:
+    normalized = version_text.strip().removeprefix("v")
+    if not normalized.startswith("0."):
+        raise ReleaseGuardError(
+            f"alpha releases must stay on 0.x until a stable release is approved; "
+            f"found {normalized}"
+        )
+    return normalized
+```
+
+Add `--version VERSION` to `main()`. When supplied, validate that version instead of project metadata and print `release guard passed: v{normalized_version}`.
+
+- [ ] **Step 4: Add guard steps to the release workflow**
 
 Change the release job in `.github/workflows/release.yml` so the end of the job is:
 
@@ -299,6 +336,13 @@ Change the release job in `.github/workflows/release.yml` so the end of the job 
       - run: uv sync --dev
 
       - run: uv run python -m hieronymus.release_guard
+
+      - name: Check next release version
+        run: |
+          NEXT_VERSION="$(uv run semantic-release version --print)"
+          uv run python -m hieronymus.release_guard --version "$NEXT_VERSION"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: uv run semantic-release version
         env:
@@ -311,23 +355,23 @@ Change the release job in `.github/workflows/release.yml` so the end of the job 
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-- [ ] **Step 4: Run workflow tests**
+- [ ] **Step 5: Run focused release tests**
 
 Run:
 
 ```bash
-uv run pytest tests/test_release_workflow.py -q
+uv run pytest tests/test_release_guard.py tests/test_release_workflow.py -q
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 Run:
 
 ```bash
-git add .github/workflows/release.yml tests/test_release_workflow.py
-git commit -m "ci: block non-alpha release publishing"
+git add .github/workflows/release.yml src/hieronymus/release_guard.py tests/test_release_guard.py tests/test_release_workflow.py
+git commit -m "ci: guard computed release version before publishing"
 ```
 
 ---
@@ -352,6 +396,17 @@ def test_render_greeting_contains_identity_tagline_and_alpha_marker() -> None:
     assert rendered == f"{GREETING_ICON} Hieronymus v0.2.0α\nRemembers things for you."
 ```
 
+Add direct display-version coverage:
+
+```python
+def test_display_version_marks_alpha_versions() -> None:
+    assert display_version("0.2.0") == "v0.2.0α"
+
+
+def test_display_version_leaves_stable_versions_unmarked() -> None:
+    assert display_version("1.0.0") == "v1.0.0"
+```
+
 Change the human update assertions in `tests/test_cli_service.py`:
 
 ```python
@@ -363,11 +418,11 @@ assert "Updated Hieronymus: v0.1.0α -> v0.2.0α" in result.output
 
 - [ ] **Step 2: Write failing admin header test**
 
-In `tests/test_admin_store.py`, update the header assertion in `test_status_payload_includes_dashboard_contract` or the nearest existing header payload test to assert:
+In `tests/test_admin_store.py`, update the header assertion in `test_status_payload_includes_dashboard_contract` or the nearest existing header payload test to prove the admin header uses the display-version provider without depending on the currently installed package version:
 
 ```python
-assert payload["header"]["version"].endswith("α")
-assert payload["header"]["version"].startswith("v0.")
+monkeypatch.setattr("hieronymus.admin.package_display_version", lambda: "v0.2.0α")
+assert payload["header"]["version"] == "v0.2.0α"
 ```
 
 - [ ] **Step 3: Run focused tests to verify they fail**
