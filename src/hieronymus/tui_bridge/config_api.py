@@ -741,9 +741,6 @@ def _draft_container_errors(params: dict[str, object]) -> list[str]:
         for name, raw_provider in raw_providers.items():
             if type(name) is str and type(raw_provider) is not dict:
                 errors.append(f"providers.{name} must be a table")
-            elif type(name) is str and type(raw_provider) is dict:
-                if "api_key_env" in raw_provider and type(raw_provider["api_key_env"]) is not str:
-                    errors.append(f"providers.{name}.api_key_env must be a string")
     raw_ingest = draft.get("ingest")
     if "ingest" in draft and type(raw_ingest) is not dict:
         errors.append("ingest must be a table")
@@ -877,7 +874,6 @@ def _compat_provider_draft(
             "enabled": name == selected,
             "model": _model_for_profile(dream_config, name),
             "api_key": profile.api_key,
-            "api_key_env": "",
             "base_url": profile.endpoint,
             "timeout_seconds": profile.timeout_seconds,
         }

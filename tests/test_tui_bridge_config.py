@@ -141,7 +141,7 @@ def test_config_update_draft_uses_api_path_alias_for_base_url(tmp_path: Path) ->
             "selected_provider": "openai",
             "provider": {
                 "model": "gpt-4.1",
-                "api_key_env": "HIERONYMUS_OPENAI_KEY",
+                "api_key": "plain-secret",
                 "api_path": "https://llm.example.test/v1",
                 "timeout_seconds": "12.5",
             },
@@ -167,7 +167,7 @@ def test_config_save_persists_valid_selected_provider(tmp_path: Path) -> None:
             "selected_provider": "gemini",
             "provider": {
                 "model": "gemini-2.5-flash",
-                "api_key_env": "GEMINI_API_KEY",
+                "api_key": "plain-secret",
                 "api_path": "",
                 "timeout_seconds": "30",
             },
@@ -241,7 +241,7 @@ def test_config_save_persists_release_update_channel(tmp_path: Path) -> None:
             "selected_provider": "openai",
             "provider": {
                 "model": "gpt-4.1-mini",
-                "api_key_env": "OPENAI_API_KEY",
+                "api_key": "plain-secret",
                 "api_path": "https://api.openai.com/v1",
                 "timeout_seconds": "30",
             },
@@ -299,7 +299,7 @@ def test_config_save_applies_selected_provider_to_valid_draft(tmp_path: Path) ->
             "selected_provider": "openai",
             "provider": {
                 "model": "gpt-4.1-mini",
-                "api_key_env": "OPENAI_API_KEY",
+                "api_key": "plain-secret",
                 "api_path": "https://api.openai.com/v1",
                 "timeout_seconds": "30",
             },
@@ -506,29 +506,6 @@ def test_config_check_dream_profile_failure_updates_cache_consumed_by_doctor(
         )
         in report["errors"]
     )
-
-
-def test_config_check_provider_returns_validation_for_malformed_api_key_env(
-    tmp_path: Path,
-) -> None:
-    class Registry:
-        def check(self, *args, **kwargs):
-            raise AssertionError("invalid draft should not reach provider check")
-
-    bridge = ConfigBridge(_config(tmp_path), registry=Registry())
-
-    payload = bridge.check_provider(
-        {
-            "selected_provider": "openai",
-            "draft": {"providers": {"openai": {"api_key_env": 123}}},
-        }
-    )
-
-    assert payload["validation"] == {
-        "ok": False,
-        "errors": ["providers.openai.api_key_env must be a string"],
-    }
-    assert payload["check_result"] == {}
 
 
 def test_config_check_provider_returns_validation_for_malformed_providers_container(

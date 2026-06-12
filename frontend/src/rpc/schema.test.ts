@@ -6,6 +6,27 @@ import {
   RpcResponseSchema,
 } from "./schema.js";
 
+function configDraft(provider: string = "openai") {
+  return {
+    dream: {
+      dreaming: {},
+      providers: {},
+      workflows: {
+        crystallization: {
+          provider,
+          model: provider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
+          enabled: true,
+        },
+      },
+    },
+    ingest: { short_memory: {}, learn: {} },
+    release: { update_channel: "stable" },
+    dreaming: { active_provider: provider },
+    providers: {},
+    workflows: {},
+  };
+}
+
 describe("runtime schemas", () => {
   it.each([
     ["openai", "OpenAI compatible"],
@@ -29,7 +50,7 @@ describe("runtime schemas", () => {
           },
         ],
         selected_provider: provider,
-        draft: { dreaming: { active_provider: provider }, providers: {} },
+        draft: configDraft(provider),
         form_values: { provider: { model: "gpt-4.1-mini" }, dreaming: {} },
         validation: { ok: true, errors: [] },
         suggestions: {
@@ -77,7 +98,7 @@ describe("runtime schemas", () => {
         },
       ],
       selected_provider: "openai",
-      draft: { dreaming: { active_provider: "openai" }, providers: {} },
+      draft: configDraft(),
       form_values: { provider: {}, dreaming: {} },
       validation: { ok: true, errors: [] },
       check_result: {},
@@ -104,7 +125,7 @@ describe("runtime schemas", () => {
         },
       ],
       selected_provider: "openai",
-      draft: { dreaming: { active_provider: "openai" }, providers: {} },
+      draft: configDraft(),
       form_values: { provider: {}, dreaming: {} },
       validation: { ok: true, errors: [] },
       suggestions: {},
@@ -128,7 +149,7 @@ describe("runtime schemas", () => {
         },
       ],
       selected_provider: "openai",
-      draft: { dreaming: { active_provider: "openai" }, providers: {} },
+      draft: configDraft(),
       form_values: { provider: {}, dreaming: {} },
       validation: { ok: true, errors: [] },
       detail: {},
@@ -140,8 +161,31 @@ describe("runtime schemas", () => {
       update_target: "latest",
     });
     expect(payload.ingest).toEqual({ short_memory: {}, learn: {} });
-    expect(payload.draft.release).toEqual({});
+    expect(payload.draft.release).toEqual({ update_channel: "stable" });
     expect(payload.form_values.release).toEqual({});
+  });
+
+  it("requires real config draft sections", () => {
+    expect(() =>
+      ConfigBootstrapSchema.parse({
+        config_paths: {
+          settings_path: "/tmp/hieronymus/config/settings.toml",
+        },
+        provider_choices: [
+          {
+            display_name: "OpenAI compatible",
+            name: "openai",
+            requires_api_key: true,
+            supports_api_path: true,
+          },
+        ],
+        selected_provider: "openai",
+        draft: { dreaming: { active_provider: "openai" }, providers: {} },
+        form_values: { provider: {}, dreaming: {} },
+        validation: { ok: true, errors: [] },
+        detail: {},
+      }),
+    ).toThrow();
   });
 
   it("parses present ingest config payloads with numeric passthrough fields", () => {
@@ -158,7 +202,7 @@ describe("runtime schemas", () => {
         },
       ],
       selected_provider: "openai",
-      draft: { dreaming: { active_provider: "openai" }, providers: {} },
+      draft: configDraft(),
       form_values: { provider: {}, dreaming: {} },
       ingest: {
         short_memory: {
@@ -190,7 +234,7 @@ describe("runtime schemas", () => {
           },
         ],
         selected_provider: "deterministic",
-        draft: { dreaming: {}, providers: {} },
+        draft: configDraft("deterministic"),
         form_values: { provider: {}, dreaming: {} },
         validation: { ok: true, errors: [] },
         suggestions: {

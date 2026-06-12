@@ -155,19 +155,17 @@ export const ConfigBootstrapSchema = z
           providers: z.record(z.record(z.unknown())),
           workflows: z.record(z.record(z.unknown())),
         })
-        .passthrough()
-        .optional(),
+        .passthrough(),
       ingest: z
         .object({
-          short_memory: z.record(z.number()).default({}),
-          learn: z.record(z.number()).default({}),
+          short_memory: z.record(z.number()),
+          learn: z.record(z.number()),
         })
-        .passthrough()
-        .default({ short_memory: {}, learn: {} }),
+        .passthrough(),
       dreaming: z.record(z.unknown()),
       providers: z.record(z.record(z.unknown())),
       workflows: z.record(z.record(z.unknown())).default({}),
-      release: z.record(z.unknown()).default({}),
+      release: z.record(z.unknown()),
     }),
     form_values: z.object({
       provider: z.record(z.string()),
