@@ -142,6 +142,23 @@ def test_release_workflow_release_job_publishes_after_verification() -> None:
     assert _step_value(bun_step, "bun-version") == f'"{EXPECTED_RELEASE_BUN_VERSION}"'
 
 
+def test_release_workflow_guards_alpha_version_before_publish() -> None:
+    lines = _workflow_lines()
+    release = _block_after(lines, _find_line(lines, "  release:"))
+
+    guard_command = "      - run: uv run python -m hieronymus.release_guard"
+    version_command = "      - run: uv run semantic-release version"
+    publish_command = "      - run: uv run semantic-release publish"
+
+    guard_indexes = [index for index, line in enumerate(release) if line == guard_command]
+    version_index = release.index(version_command)
+    publish_index = release.index(publish_command)
+
+    assert len(guard_indexes) == 2
+    assert guard_indexes[0] < version_index
+    assert version_index < guard_indexes[1] < publish_index
+
+
 def test_pyproject_configures_semantic_release() -> None:
     pyproject_text = (ROOT / "pyproject.toml").read_text()
     pyproject = tomllib.loads(pyproject_text)
