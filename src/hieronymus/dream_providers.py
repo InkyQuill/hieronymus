@@ -181,13 +181,13 @@ class ProviderRegistry:
                 name="gemini",
                 display_name="Gemini",
                 requires_api_key=True,
-                supports_base_url=False,
+                supports_base_url=True,
             ),
             ProviderMetadata(
                 name="anthropic",
                 display_name="Anthropic",
                 requires_api_key=True,
-                supports_base_url=False,
+                supports_base_url=True,
             ),
         )
 

@@ -375,7 +375,7 @@ class ConfigBridge:
 
         raw_dream = draft.get("dream")
         if type(raw_dream) is dict:
-            self._clear_pending_api_keys_from_draft(raw_dream)
+            self._clear_pending_api_keys_from_draft(dream_config, raw_dream)
             dream_config = _dream_config_from_draft(dream_config, raw_dream)
             dream_config = self._apply_pending_api_keys(dream_config)
 
@@ -576,16 +576,27 @@ class ConfigBridge:
                 next_config = next_config.with_provider(name, replace(provider, api_key=api_key))
         return next_config
 
-    def _clear_pending_api_keys_from_draft(self, draft: dict[object, object]) -> None:
+    def _clear_pending_api_keys_from_draft(
+        self,
+        dream_config: DreamConfig,
+        draft: dict[object, object],
+    ) -> None:
         providers = draft.get("providers")
         if type(providers) is not dict:
             return
         for name, raw_provider in providers.items():
+            raw_api_key = raw_provider.get("api_key") if type(raw_provider) is dict else None
             if (
-                type(name) is str
-                and type(raw_provider) is dict
-                and raw_provider.get("api_key") == ""
+                type(name) is not str
+                or type(raw_provider) is not dict
+                or type(raw_api_key) is not str
             ):
+                continue
+            if raw_api_key == "":
+                self._pending_api_keys.pop(name, None)
+                continue
+            profile = dream_config.providers.get(name)
+            if raw_api_key.strip("*") == "" and profile is not None and profile.api_key:
                 self._pending_api_keys.pop(name, None)
 
     def _apply_dreaming_form(

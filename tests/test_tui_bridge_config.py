@@ -45,6 +45,9 @@ def test_config_bootstrap_returns_one_remote_provider_selector(tmp_path: Path) -
     openai = payload["provider_choices"][0]
     assert openai["supports_api_path"] is True
     assert "supports_base_url" not in openai
+    choices = {choice["name"]: choice for choice in payload["provider_choices"]}
+    assert choices["gemini"]["supports_api_path"] is True
+    assert choices["anthropic"]["supports_api_path"] is True
 
 
 def test_config_bootstrap_exposes_ingest_config_defaults(tmp_path: Path) -> None:
@@ -161,6 +164,39 @@ def test_config_clears_pending_api_key_when_form_is_emptied(tmp_path: Path) -> N
 
     assert save_payload["validation"]["ok"] is True
     assert load_dream_config(config).providers["openai"].api_key == ""
+
+
+def test_config_redacted_draft_does_not_reinject_stale_pending_api_key(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider("openai", ProviderProfile(type="openai", api_key="old-secret"))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        ),
+    )
+    bridge = ConfigBridge(config)
+
+    bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "new-secret",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "12",
+            },
+        }
+    )
+    redacted_draft = bridge.bootstrap({})["draft"]
+    payload = bridge.save({"draft": redacted_draft})
+
+    assert payload["validation"]["ok"] is True
+    assert load_dream_config(config).providers["openai"].api_key == "old-secret"
 
 
 def test_config_save_accepts_unchanged_bootstrap_draft(tmp_path: Path) -> None:

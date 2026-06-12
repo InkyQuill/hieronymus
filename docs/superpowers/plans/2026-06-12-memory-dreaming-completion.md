@@ -10,7 +10,11 @@
 
 ---
 
-## Current Code Map
+## Target Code Map
+
+This is the target state for this plan. Early tasks introduce the planned
+`ingest.conf` pieces; later tasks remove the legacy settings surface and switch
+runtime/config callers to `DreamConfig`.
 
 - `src/hieronymus/config.py`: path registry for data-root files. It now exposes
   `dream_config_path`, `ingest_config_path`, and `release_config_path`; the
@@ -840,7 +844,7 @@ def test_config_save_persists_provider_profile_to_dream_conf(tmp_path: Path) -> 
     assert dream_config.providers["openai"].api_key == "plain-secret"
     assert dream_config.providers["openai"].endpoint == "https://llm.example.test/v1"
     assert dream_config.workflows["crystallization"].provider == "openai"
-    assert not config.settings_path.exists()
+    assert not (config.config_root / "settings.toml").exists()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
