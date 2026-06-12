@@ -270,6 +270,21 @@ def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     assert payload["providers"][0]["name"] == "deterministic"
 
 
+def test_config_json_returns_ingest_config_path_and_defaults(tmp_path: Path) -> None:
+    data_root = tmp_path / "hieronymus"
+
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "config", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ingest_config_path"] == str(data_root / "ingest.conf")
+    assert payload["ingest"]["short_memory"]["warning_sentence_count"] == 6
+    assert payload["ingest"]["learn"]["max_block_chars"] == 1200
+
+
 def test_config_launch_invokes_opentui(tmp_path: Path, monkeypatch) -> None:
     data_root = tmp_path / "hieronymus"
     launched = {}

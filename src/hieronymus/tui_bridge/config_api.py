@@ -12,6 +12,7 @@ from hieronymus.dream_config import (
     redacted_dream_config_payload,
 )
 from hieronymus.dream_providers import ProviderRegistry
+from hieronymus.ingest_config import load_ingest_config
 from hieronymus.llm_cache import load_model_cache
 from hieronymus.release_config import (
     ReleaseConfig,
@@ -222,16 +223,19 @@ class ConfigBridge:
         if dream_error:
             errors = [*errors, dream_error]
             detail = detail or dream_error
+        ingest_config = load_ingest_config(self.config)
         return {
             "config_paths": {
                 "data_root": str(self.config.data_root),
                 "config_root": str(self.config.config_root),
                 "settings_path": str(self.config.settings_path),
+                "ingest_config_path": str(self.config.ingest_config_path),
                 "release_config_path": str(self.config.release_config_path),
             },
             "dreaming": dream_config["dreaming"],
             "providers": dream_config["providers"],
             "workflows": dream_config["workflows"],
+            "ingest": ingest_config.to_payload(),
             "release": _release_payload(release_config),
             "model_cache": load_model_cache(self.config).to_payload(),
             "provider_choices": self._provider_choices(),

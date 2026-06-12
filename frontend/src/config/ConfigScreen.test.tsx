@@ -34,6 +34,7 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
     ],
     selected_provider: selectedProvider,
     release: { update_channel: "stable", update_target: "latest" },
+    ingest: { short_memory: {}, learn: {} },
     draft: {
       dreaming: { active_provider: selectedProvider },
       providers: {},

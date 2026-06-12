@@ -139,6 +139,7 @@ describe("runtime schemas", () => {
       update_channel: "stable",
       update_target: "latest",
     });
+    expect(payload.ingest).toEqual({ short_memory: {}, learn: {} });
     expect(payload.draft.release).toEqual({});
     expect(payload.form_values.release).toEqual({});
   });

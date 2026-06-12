@@ -165,6 +165,13 @@ export const ConfigBootstrapSchema = z
       })
       .passthrough()
       .default({ update_channel: "stable", update_target: "latest" }),
+    ingest: z
+      .object({
+        short_memory: z.record(z.number()),
+        learn: z.record(z.number()),
+      })
+      .passthrough()
+      .default({ short_memory: {}, learn: {} }),
     validation: z.object({
       ok: z.boolean(),
       errors: z.array(z.string()),

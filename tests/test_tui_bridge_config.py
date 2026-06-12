@@ -45,6 +45,15 @@ def test_config_bootstrap_returns_one_remote_provider_selector(tmp_path: Path) -
     assert "supports_base_url" not in openai
 
 
+def test_config_bootstrap_exposes_ingest_config_defaults(tmp_path: Path) -> None:
+    payload = ConfigBridge(_config(tmp_path)).bootstrap({})
+
+    assert payload["config_paths"]["ingest_config_path"].endswith("ingest.conf")
+    assert payload["ingest"]["short_memory"]["warning_sentence_count"] == 6
+    assert payload["ingest"]["short_memory"]["rejection_sentence_count"] == 30
+    assert payload["ingest"]["learn"]["max_block_chars"] == 1200
+
+
 def test_config_bootstrap_exposes_redacted_dream_config_and_model_cache(
     tmp_path: Path,
 ) -> None:

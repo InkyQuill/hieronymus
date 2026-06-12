@@ -17,6 +17,7 @@ from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_locks import DreamCycleAlreadyRunning
 from hieronymus.dream_providers import ProviderRegistry, resolve_provider
 from hieronymus.dreaming import DreamService
+from hieronymus.ingest_config import load_ingest_config
 from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import CrystalRecord, ShortTermMemoryRecord, TranslationContext
@@ -271,13 +272,16 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
     try:
         settings = load_settings(config)
         release_config = load_release_config(config)
+        ingest_config = load_ingest_config(config)
         payload = {
             "config_root": str(config.config_root),
             "database_path": str(config.database_path),
             "settings_path": str(config.settings_path),
+            "ingest_config_path": str(config.ingest_config_path),
             "release_config_path": str(config.release_config_path),
             "tui": "available",
             "settings": settings.to_json_dict(),
+            "ingest": ingest_config.to_payload(),
             "release": {
                 "update_channel": release_config.update_channel,
                 "update_target": release_config.update_target,
