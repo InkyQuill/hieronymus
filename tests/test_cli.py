@@ -517,6 +517,7 @@ def test_recall_outputs_short_term_results(tmp_path):
                 "metadata": {
                     "sentence_count": 1,
                     "source": "review",
+                    "symbol_count": 35,
                 },
             },
         }

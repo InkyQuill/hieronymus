@@ -87,6 +87,7 @@ def test_learn_skill_path_uses_short_term_add_without_crystals(
         "language_tags": ["ja", "en"],
         "semantic_tags": ["combat"],
         "sentence_count": 1,
+        "symbol_count": 25,
         "source_credibility": "observed_source",
         "story_scopes": ["chapter:1"],
         "workflow": "learn",
@@ -144,5 +145,6 @@ def test_read_skill_path_accepts_warning_sized_extract(
     assert memory.metadata == {
         "sentence_count": 7,
         "validation_warning": "short-term memory is large; prefer 1-6 sentences",
+        "symbol_count": 83,
         "workflow": "read",
     }
