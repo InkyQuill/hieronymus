@@ -55,7 +55,14 @@ jobs:
 
       - run: uv run python -m hieronymus.release_guard
 
-      - run: uv run semantic-release version --no-push --no-vcs-release
+      - name: Check next release version
+        run: |
+          NEXT_VERSION="$(uv run semantic-release version --print)"
+          uv run python -m hieronymus.release_guard --version "$NEXT_VERSION"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: uv run semantic-release version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -110,14 +110,14 @@ def test_release_workflow_release_job_publishes_after_verification() -> None:
 
     expected_runs = [
         "      - run: uv sync --dev",
-        "      - run: uv run semantic-release version --no-push --no-vcs-release",
+        "      - run: uv run semantic-release version",
         "      - run: uv run semantic-release publish",
     ]
     for command in expected_runs:
         assert command in release
 
     for command in [
-        "      - run: uv run semantic-release version --no-push --no-vcs-release",
+        "      - run: uv run semantic-release version",
         "      - run: uv run semantic-release publish",
     ]:
         step = _step_block(release, command)
@@ -147,16 +147,27 @@ def test_release_workflow_guards_alpha_version_before_publish() -> None:
     release = _block_after(lines, _find_line(lines, "  release:"))
 
     guard_command = "      - run: uv run python -m hieronymus.release_guard"
-    version_command = "      - run: uv run semantic-release version --no-push --no-vcs-release"
+    computed_guard_name = "      - name: Check next release version"
+    version_command = "      - run: uv run semantic-release version"
     publish_command = "      - run: uv run semantic-release publish"
 
     guard_indexes = [index for index, line in enumerate(release) if line == guard_command]
-    version_index = release.index(version_command)
+    version_indexes = [index for index, line in enumerate(release) if line == version_command]
+    computed_guard_index = release.index(computed_guard_name)
     publish_index = release.index(publish_command)
+    computed_guard = _step_block(release, computed_guard_name)
 
-    assert "      - run: uv run semantic-release version" not in release
+    assert '          NEXT_VERSION="$(uv run semantic-release version --print)"' in computed_guard
+    assert (
+        '          uv run python -m hieronymus.release_guard --version "$NEXT_VERSION"'
+        in computed_guard
+    )
+    assert "        env:" in computed_guard
+    assert "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in computed_guard
     assert len(guard_indexes) == 2
-    assert guard_indexes[0] < version_index
+    assert len(version_indexes) == 1
+    version_index = version_indexes[0]
+    assert guard_indexes[0] < computed_guard_index < version_index
     assert version_index < guard_indexes[1] < publish_index
 
 

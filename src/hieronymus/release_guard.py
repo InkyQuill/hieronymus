@@ -21,6 +21,15 @@ def _module_version(root: Path) -> str:
     return match.group(1)
 
 
+def validate_alpha_version(version_text: str) -> str:
+    version = version_text.strip().removeprefix("v")
+    if not version.startswith("0."):
+        raise ReleaseGuardError(
+            f"alpha releases must stay on 0.x until a stable release is approved; found {version}"
+        )
+    return version
+
+
 def validate_alpha_release_metadata(root: Path) -> str:
     pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     project_version = str(pyproject["project"]["version"])
@@ -31,21 +40,21 @@ def validate_alpha_release_metadata(root: Path) -> str:
             f"version mismatch: pyproject.toml has {project_version}, "
             f"src/hieronymus/__init__.py has {module_version}"
         )
-    if not project_version.startswith("0."):
-        raise ReleaseGuardError(
-            f"alpha releases must stay on 0.x until a stable release is approved; "
-            f"found {project_version}"
-        )
-    return project_version
+    return validate_alpha_version(project_version)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path.cwd())
+    parser.add_argument("--version")
     args = parser.parse_args(argv)
 
     try:
-        version = validate_alpha_release_metadata(args.root)
+        version = (
+            validate_alpha_version(args.version)
+            if args.version is not None
+            else validate_alpha_release_metadata(args.root)
+        )
     except ReleaseGuardError as error:
         print(f"release guard failed: {error}", file=sys.stderr)
         return 1

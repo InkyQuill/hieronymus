@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from hieronymus.release_guard import ReleaseGuardError, validate_alpha_release_metadata
+from hieronymus.release_guard import (
+    ReleaseGuardError,
+    main,
+    validate_alpha_release_metadata,
+    validate_alpha_version,
+)
 
 
 def write_project(root: Path, *, pyproject_version: str, module_version: str) -> None:
@@ -37,3 +42,19 @@ def test_validate_alpha_release_metadata_rejects_mismatched_versions(tmp_path: P
 
     with pytest.raises(ReleaseGuardError, match="version mismatch"):
         validate_alpha_release_metadata(tmp_path)
+
+
+def test_validate_alpha_version_accepts_leading_v_zero_major_version() -> None:
+    assert validate_alpha_version("v0.3.0") == "0.3.0"
+
+
+def test_validate_alpha_version_rejects_one_major_version() -> None:
+    with pytest.raises(ReleaseGuardError, match="alpha releases must stay on 0.x"):
+        validate_alpha_version("1.0.0")
+
+
+def test_main_validates_supplied_version(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--version", "v0.3.0"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == "release guard passed: v0.3.0\n"
