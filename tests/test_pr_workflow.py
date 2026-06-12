@@ -61,9 +61,13 @@ def _step_value(step: list[str], key: str) -> str | None:
 
 
 def _uses_lines(lines: list[str]) -> list[str]:
-    return [
-        line for step in _step_blocks(lines) for line in step if line.strip().startswith("- uses:")
-    ]
+    uses: list[str] = []
+    for step in _step_blocks(lines):
+        if any(line.strip().startswith("- uses:") for line in step):
+            value = _step_value(step, "uses")
+            if value is not None:
+                uses.append(value)
+    return uses
 
 
 def test_pr_workflow_runs_on_pull_requests_to_main() -> None:
@@ -89,9 +93,9 @@ def test_pr_workflow_backend_job_runs_python_checks() -> None:
     assert "      contents: read" in backend
 
     assert _uses_lines(backend) == [
-        f"      - uses: actions/checkout@{CHECKOUT_SHA}",
-        f"      - uses: astral-sh/setup-uv@{SETUP_UV_SHA}",
-        f"      - uses: actions/setup-python@{SETUP_PYTHON_SHA}",
+        f"actions/checkout@{CHECKOUT_SHA}",
+        f"astral-sh/setup-uv@{SETUP_UV_SHA}",
+        f"actions/setup-python@{SETUP_PYTHON_SHA}",
     ]
     assert "          persist-credentials: false" in backend
 
@@ -112,8 +116,8 @@ def test_pr_workflow_frontend_job_runs_bun_tests_and_build() -> None:
     assert "    permissions:" in frontend
     assert "      contents: read" in frontend
     assert _uses_lines(frontend) == [
-        f"      - uses: actions/checkout@{CHECKOUT_SHA}",
-        f"      - uses: oven-sh/setup-bun@{SETUP_BUN_SHA}",
+        f"actions/checkout@{CHECKOUT_SHA}",
+        f"oven-sh/setup-bun@{SETUP_BUN_SHA}",
     ]
     assert "          persist-credentials: false" in frontend
 
@@ -122,16 +126,11 @@ def test_pr_workflow_frontend_job_runs_bun_tests_and_build() -> None:
         (
             step
             for step in steps
-            if "setup-bun" in (_step_value(step, "uses") or "").lower()
-            or "setup-bun" in (_step_value(step, "name") or "").lower()
+            if _step_value(step, "uses") == f"oven-sh/setup-bun@{SETUP_BUN_SHA}"
         ),
         None,
     )
     assert bun_step is not None
-    bun_uses = _step_value(bun_step, "uses")
-    assert bun_uses is not None
-    assert bun_uses.startswith("oven-sh/setup-bun@")
-    assert len(bun_uses.rsplit("@", maxsplit=1)[1]) == 40
     assert _step_value(bun_step, "bun-version") == f'"{EXPECTED_FRONTEND_BUN_VERSION}"'
 
     assert "      - run: bun install --cwd frontend --frozen-lockfile" in frontend
