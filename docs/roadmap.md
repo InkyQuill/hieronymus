@@ -110,7 +110,7 @@ Remaining work:
 Managed installs and releases must not imply that Hieronymus has reached a
 stable 1.x product line.
 
-Remaining work:
+Completed:
 
 - Remap the current version line from premature `1.x` to alpha `0.x`:
   `1.0.0` becomes `0.1.0`, `1.1.0` becomes `0.2.0`, and future development
@@ -123,6 +123,9 @@ Remaining work:
   anchors.
 - Update README and install/update wording so users understand the project is
   alpha software that can be used at their own risk.
+
+Remaining work:
+
 - Keep managed install, update, and release builds installing frontend
   dependencies and rebuilding `frontend/dist/main.js` before packaging or
   reinstalling.
