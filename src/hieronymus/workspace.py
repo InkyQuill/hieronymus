@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import search_expression
 from hieronymus.db import apply_migration, connect
+from hieronymus.ingest_config import load_ingest_config
 from hieronymus.memory_models import (
     ShortTermMemoryRecord,
     TaskSessionRecord,
@@ -275,7 +276,8 @@ class WorkspaceStore:
         self._validate_source_role(source_role)
         _require_non_empty(kind, "kind")
         text = text.strip()
-        validation = validate_short_memory_text(text)
+        short_memory_limits = load_ingest_config(self.config).short_memory
+        validation = validate_short_memory_text(text, limits=short_memory_limits)
         normalized_language_tags = normalize_string_tuple(language_tags, lowercase=True)
         normalized_story_scopes = normalize_string_tuple(story_scopes)
         normalized_semantic_tags = normalize_string_tuple(semantic_tags)
@@ -285,7 +287,7 @@ class WorkspaceStore:
         memory_metadata = {
             key: value
             for key, value in (metadata or {}).items()
-            if key not in {"sentence_count", "validation_warning"}
+            if key not in {"sentence_count", "symbol_count", "validation_warning"}
         }
         if normalized_language_tags:
             memory_metadata["language_tags"] = list(normalized_language_tags)
@@ -300,6 +302,7 @@ class WorkspaceStore:
         if soft_origin:
             memory_metadata["soft_origin"] = soft_origin
         memory_metadata["sentence_count"] = validation.sentence_count
+        memory_metadata["symbol_count"] = validation.symbol_count
         if validation.warning:
             memory_metadata["validation_warning"] = validation.warning
 

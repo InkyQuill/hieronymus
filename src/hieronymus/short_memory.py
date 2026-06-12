@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from hieronymus.ingest_config import ShortMemoryLimits, default_ingest_config
+
 _SENTENCE_TERMINATOR_RE = re.compile(r"[.!?。！？]+")
-_PREFERRED_MAX_SENTENCES = 6
-_HARD_MAX_SENTENCES = 30
 _LARGE_MEMORY_WARNING = "short-term memory is large; prefer 1-6 sentences"
 
 
@@ -14,22 +14,43 @@ class ShortMemoryValidation:
     ok: bool
     warning: str
     sentence_count: int
+    symbol_count: int
 
 
-def validate_short_memory_text(text: str) -> ShortMemoryValidation:
+def validate_short_memory_text(
+    text: str,
+    *,
+    limits: ShortMemoryLimits | None = None,
+) -> ShortMemoryValidation:
+    limits = limits or default_ingest_config().short_memory
     stripped = text.strip()
     if not stripped:
         raise ValueError("short-term memory text must not be empty")
 
     sentence_count = _count_sentences(stripped)
-    if sentence_count > _HARD_MAX_SENTENCES:
+    symbol_count = len(stripped)
+    if sentence_count > limits.rejection_sentence_count:
         raise ValueError("short-term memory is too large")
+    if limits.rejection_symbol_count and symbol_count > limits.rejection_symbol_count:
+        raise ValueError(f"short-term memory exceeds {limits.rejection_symbol_count} symbols")
 
     warning = ""
-    if sentence_count > _PREFERRED_MAX_SENTENCES:
-        warning = _LARGE_MEMORY_WARNING
+    warnings: list[str] = []
+    if sentence_count > limits.warning_sentence_count:
+        warnings.append(_LARGE_MEMORY_WARNING)
+    if limits.warning_symbol_count and symbol_count > limits.warning_symbol_count:
+        warnings.append(
+            f"short-term memory is large; prefer <= {limits.warning_symbol_count} symbols",
+        )
+    if warnings:
+        warning = "; ".join(warnings)
 
-    return ShortMemoryValidation(ok=True, warning=warning, sentence_count=sentence_count)
+    return ShortMemoryValidation(
+        ok=True,
+        warning=warning,
+        sentence_count=sentence_count,
+        symbol_count=symbol_count,
+    )
 
 
 def _count_sentences(text: str) -> int:
