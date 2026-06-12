@@ -314,7 +314,15 @@ export function ConfigScreen({ initial, client }: Props) {
   return (
     <box flexDirection="column" width={100}>
       <text>Hieronymus Config</text>
-      <text fg="gray">{payload.config_paths.settings_path}</text>
+      <text fg="gray">
+        {[
+          payload.config_paths.dream_config_path,
+          payload.config_paths.ingest_config_path,
+          payload.config_paths.release_config_path,
+        ]
+          .filter(Boolean)
+          .join(" | ")}
+      </text>
 
       <box flexDirection="row" marginTop={1}>
         {/* Left Column: Provider Selector */}

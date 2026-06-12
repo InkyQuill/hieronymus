@@ -53,6 +53,7 @@ class ConfigBridge:
     ) -> None:
         self.config = config
         self.registry = registry or ProviderRegistry()
+        self._pending_api_keys: dict[str, str] = {}
 
     def bootstrap(self, params: dict[str, object]) -> dict[str, object]:
         dream_config, dream_error = self._dream_from_params(params)
@@ -133,7 +134,9 @@ class ConfigBridge:
         selected = self._selected_provider(params, dream_config)
         if "selected_provider" in params or "provider" in params:
             dream_config = self._select_provider(dream_config, selected)
-        errors = self._validation_errors(params, dream_config, ingest_config, release_config)
+        errors = _canonical_draft_errors(params)
+        if not errors:
+            errors = self._validation_errors(params, dream_config, ingest_config, release_config)
         errors = [*errors, *_load_errors(dream_error, ingest_error, release_error)]
         if errors:
             return self._payload(
@@ -344,7 +347,9 @@ class ConfigBridge:
             load_error = ""
 
         draft = params.get("draft")
-        if draft is None and any(key in params for key in ("dream", "dreaming", "providers")):
+        if draft is None and any(
+            key in params for key in ("dream", "dreaming", "providers", "provider")
+        ):
             draft = params
         if type(draft) is not dict or not draft:
             return dream_config, load_error
@@ -352,13 +357,10 @@ class ConfigBridge:
         raw_dream = draft.get("dream")
         if type(raw_dream) is dict:
             dream_config = _dream_config_from_draft(dream_config, raw_dream)
+            dream_config = self._apply_pending_api_keys(dream_config)
 
-        raw_provider = draft.get("provider")
+        raw_provider = params.get("provider")
         selected = self._selected_provider(params, dream_config)
-        if type(raw_provider) is not dict:
-            raw_providers = draft.get("providers")
-            if type(raw_providers) is dict and type(raw_providers.get(selected)) is dict:
-                raw_provider = raw_providers[selected]
         if type(raw_provider) is dict:
             try:
                 dream_config = self._apply_provider_form(
@@ -369,7 +371,7 @@ class ConfigBridge:
             except (DreamConfigError, SettingsError) as error:
                 return dream_config, str(error)
 
-        raw_dreaming = draft.get("dreaming")
+        raw_dreaming = params.get("dreaming")
         if type(raw_dreaming) is dict:
             try:
                 dream_config = self._apply_dreaming_form(
@@ -458,6 +460,9 @@ class ConfigBridge:
         explicit = params.get("selected_provider", params.get("provider"))
         if explicit is not None:
             return self._require_remote_provider(explicit)
+        crystallization = dream_config.workflows.get("crystallization")
+        if crystallization is not None and crystallization.provider in REMOTE_PROVIDERS:
+            return crystallization.provider
         draft = params.get("draft")
         if type(draft) is dict:
             raw_dreaming = draft.get("dreaming")
@@ -514,6 +519,8 @@ class ConfigBridge:
         api_key = values["api_key"].strip()
         if api_key == "***":
             api_key = provider.api_key
+        elif api_key:
+            self._pending_api_keys[selected] = api_key
         updated_provider = replace(
             provider,
             type=selected,
@@ -538,6 +545,14 @@ class ConfigBridge:
             "crystallization",
             updated_workflow,
         )
+
+    def _apply_pending_api_keys(self, dream_config: DreamConfig) -> DreamConfig:
+        next_config = dream_config
+        for name, api_key in self._pending_api_keys.items():
+            provider = next_config.providers.get(name)
+            if provider is not None:
+                next_config = next_config.with_provider(name, replace(provider, api_key=api_key))
+        return next_config
 
     def _apply_dreaming_form(
         self,
@@ -672,7 +687,7 @@ class ConfigBridge:
         return {
             "provider": {
                 "model": field_value(_model_for_profile(dream_config, selected)),
-                "api_key": field_value(provider.api_key),
+                "api_key": _redacted_api_key(provider),
                 "api_path": field_value(provider.endpoint),
                 "timeout_seconds": field_value(provider.timeout_seconds),
             },
@@ -683,7 +698,6 @@ class ConfigBridge:
                 "new_short_term_memory_threshold": field_value(
                     dream_config.min_pending_short_term_memories
                 ),
-                "max_cycles_per_autostart": "1",
             },
             "ingest": {
                 "warning_sentence_count": field_value(
@@ -748,6 +762,16 @@ def _draft_container_errors(params: dict[str, object]) -> list[str]:
     if "release" in draft and type(raw_release) is not dict:
         errors.append("release must be a table")
     return errors
+
+
+def _canonical_draft_errors(params: dict[str, object]) -> list[str]:
+    draft = params.get("draft")
+    if type(draft) is not dict or not draft:
+        return []
+    missing = [key for key in ("dream", "ingest", "release") if key not in draft]
+    if missing:
+        return ["draft must include dream, ingest, and release"]
+    return []
 
 
 def _dream_config_from_draft(
@@ -859,7 +883,6 @@ def _compat_dreaming_draft(dream_config: DreamConfig, selected: str) -> dict[str
         "autostart_enabled": dream_config.enabled,
         "min_interval_minutes": dream_config.schedule_interval_minutes,
         "new_short_term_memory_threshold": dream_config.min_pending_short_term_memories,
-        "max_cycles_per_autostart": 1,
     }
 
 
@@ -873,7 +896,7 @@ def _compat_provider_draft(
         payload[name] = {
             "enabled": name == selected,
             "model": _model_for_profile(dream_config, name),
-            "api_key": profile.api_key,
+            "api_key": _redacted_api_key(profile),
             "base_url": profile.endpoint,
             "timeout_seconds": profile.timeout_seconds,
         }
@@ -882,6 +905,10 @@ def _compat_provider_draft(
 
 def _load_errors(*errors: str) -> list[str]:
     return [error for error in errors if error]
+
+
+def _redacted_api_key(provider: ProviderProfile) -> str:
+    return "***" if provider.api_key else ""
 
 
 def _release_payload(release_config: ReleaseConfig) -> dict[str, object]:

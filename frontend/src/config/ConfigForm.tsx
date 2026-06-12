@@ -72,12 +72,6 @@ export const fieldDefinitions: FieldDefinition[] = [
     type: "text",
   },
   {
-    label: "Max Cycles Per Autostart",
-    key: "dreaming.max_cycles_per_autostart",
-    placeholder: "e.g. 1",
-    type: "text",
-  },
-  {
     label: "Memory Warn Sentences",
     key: "ingest.warning_sentence_count",
     placeholder: "e.g. 6",

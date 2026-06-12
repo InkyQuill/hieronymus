@@ -60,7 +60,6 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
         autostart_enabled: "no",
         min_interval_minutes: "30",
         new_short_term_memory_threshold: "25",
-        max_cycles_per_autostart: "1",
       },
       ingest: {
         warning_sentence_count: "6",
