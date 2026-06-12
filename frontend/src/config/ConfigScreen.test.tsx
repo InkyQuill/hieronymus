@@ -8,7 +8,10 @@ import type { ConfigBootstrap, ProviderName } from "../rpc/schema.js";
 
 function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
   return {
-    config_paths: { settings_path: "/tmp/settings.toml" },
+    config_paths: {
+      settings_path: "/tmp/settings.toml",
+      release_config_path: "/tmp/release.conf",
+    },
     provider_choices: [
       {
         name: "openai" as const,
@@ -30,7 +33,12 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
       },
     ],
     selected_provider: selectedProvider,
-    draft: { dreaming: { active_provider: selectedProvider }, providers: {} },
+    release: { update_channel: "stable", update_target: "latest" },
+    draft: {
+      dreaming: { active_provider: selectedProvider },
+      providers: {},
+      release: { update_channel: "stable" },
+    },
     form_values: {
       provider: {
         model:
@@ -46,6 +54,9 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
         min_interval_minutes: "30",
         new_short_term_memory_threshold: "25",
         max_cycles_per_autostart: "1",
+      },
+      release: {
+        update_channel: "stable",
       },
     },
     validation: { ok: true, errors: [] },

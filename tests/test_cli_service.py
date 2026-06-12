@@ -11,6 +11,7 @@ from click.testing import CliRunner
 from hieronymus.cli import main
 from hieronymus.config import load_config
 from hieronymus.presentation import GREETING_ICON, display_version, render_greeting
+from hieronymus.release_config import ReleaseConfig, save_release_config
 from hieronymus.settings import DreamingSettings, load_settings, save_settings
 
 
@@ -262,8 +263,10 @@ def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     assert payload["config_root"] == str(data_root)
     assert payload["database_path"] == str(data_root / "hieronymus.sqlite")
     assert payload["settings_path"] == str(data_root / "settings.toml")
+    assert payload["release_config_path"] == str(data_root / "release.conf")
     assert payload["tui"] == "available"
     assert payload["settings"]["dreaming"]["active_provider"] == "deterministic"
+    assert payload["release"] == {"update_channel": "stable", "update_target": "latest"}
     assert payload["providers"][0]["name"] == "deterministic"
 
 
@@ -447,6 +450,30 @@ def test_update_check_human_prints_main_revision_with_dev_flag(tmp_path: Path) -
     check_update.assert_called_once_with(target="main", allow_dev=True)
     assert "Update available: abc1234 -> def5678" in result.output
     assert "vmain" not in result.output
+
+
+def test_update_uses_configured_dev_channel_by_default(tmp_path: Path) -> None:
+    data_root = tmp_path / "hieronymus"
+    save_release_config(load_config(data_root), ReleaseConfig(update_channel="dev"))
+    status = CliUpdateStatus(
+        current_version="0.2.0",
+        latest_version=None,
+        latest_tag="main",
+        current_revision="abc1234",
+        latest_revision="def5678",
+        update_available=True,
+        target="main",
+    )
+
+    with patch("hieronymus.cli.check_update", return_value=status) as check_update:
+        result = CliRunner().invoke(
+            main,
+            ["--data-root", str(data_root), "update", "--check"],
+        )
+
+    assert result.exit_code == 0
+    check_update.assert_called_once_with(target="main", allow_dev=True)
+    assert "Update available: abc1234 -> def5678" in result.output
 
 
 def test_update_human_runs_update_and_prints_up_to_date(tmp_path: Path) -> None:

@@ -224,11 +224,17 @@ def check_update(*, target: str = "latest", allow_dev: bool = False) -> UpdateSt
         latest_revision = _short_revision(fetch_remote_head(target))
 
     latest_version = _tag_version(latest_tag)
+    if target == "main":
+        if managed_install and current_revision is None:
+            raise RuntimeError("Cannot determine current managed checkout revision.")
+        if latest_revision is None:
+            raise RuntimeError("Cannot determine latest main revision.")
+
     update_available = False
     if latest_version is not None:
         update_available = _version_tuple(latest_version) > _version_tuple(current_version)
     elif latest_tag == "main":
-        update_available = latest_revision is not None and latest_revision != current_revision
+        update_available = latest_revision != current_revision
 
     return UpdateStatus(
         current_version=current_version,

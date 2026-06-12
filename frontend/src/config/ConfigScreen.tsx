@@ -38,6 +38,7 @@ export function ConfigScreen({ initial, client }: Props) {
   const [localFormValues, setLocalFormValues] = useState({
     provider: { ...payload.form_values.provider },
     dreaming: { ...payload.form_values.dreaming },
+    release: { ...payload.form_values.release },
   });
 
   // Keep local values in sync when payload changes
@@ -45,6 +46,7 @@ export function ConfigScreen({ initial, client }: Props) {
     setLocalFormValues({
       provider: { ...payload.form_values.provider },
       dreaming: { ...payload.form_values.dreaming },
+      release: { ...payload.form_values.release },
     });
   }, [payload.form_values]);
 
@@ -83,14 +85,21 @@ export function ConfigScreen({ initial, client }: Props) {
     setLocalFormValues((prev) => {
       const providerDraft = { ...prev.provider };
       const dreamingDraft = { ...prev.dreaming };
+      const releaseDraft = { ...prev.release };
 
       if (key.startsWith("provider.")) {
         providerDraft[key.slice(9)] = value;
       } else if (key.startsWith("dreaming.")) {
         dreamingDraft[key.slice(9)] = value;
+      } else if (key.startsWith("release.")) {
+        releaseDraft[key.slice(8)] = value;
       }
 
-      return { provider: providerDraft, dreaming: dreamingDraft };
+      return {
+        provider: providerDraft,
+        dreaming: dreamingDraft,
+        release: releaseDraft,
+      };
     });
   };
 
@@ -107,6 +116,7 @@ export function ConfigScreen({ initial, client }: Props) {
         selected_provider: payload.selected_provider,
         provider: localFormValues.provider,
         dreaming: localFormValues.dreaming,
+        release: localFormValues.release,
       },
       pendingMessage: "Updating draft settings",
       successMessage: "Draft settings updated",
@@ -196,26 +206,26 @@ export function ConfigScreen({ initial, client }: Props) {
         setLocalFormValues({
           provider: { ...payload.form_values.provider },
           dreaming: { ...payload.form_values.dreaming },
+          release: { ...payload.form_values.release },
         });
         setIsEditing(false);
         return;
       }
 
-      const autostartIndex = fieldDefinitions.findIndex(
-        (f) => f.key === "dreaming.autostart_enabled",
-      );
-      if (focusedFieldIndex === autostartIndex) {
-        // Autostart toggle key logic (Left/Right arrow or Space)
+      const focusedField = fieldDefinitions[focusedFieldIndex];
+      if (focusedField?.type === "toggle" || focusedField?.type === "choice") {
         if (
           leftArrow ||
           rightArrow ||
           key.name === "space" ||
           key.name === " "
         ) {
-          const currentVal = localFormValues.dreaming.autostart_enabled || "no";
+          const choices = focusedField.choices || ["yes", "no"];
+          const currentVal = valueForField(localFormValues, focusedField.key);
+          const currentIndex = Math.max(choices.indexOf(currentVal), 0);
           handleFieldChange(
-            "dreaming.autostart_enabled",
-            currentVal === "yes" ? "no" : "yes",
+            focusedField.key,
+            choices[(currentIndex + 1) % choices.length],
           );
         } else if (enter) {
           submitField();
@@ -451,6 +461,26 @@ function providerKeyRange(
     return keys[0];
   }
   return `${keys[0]}-${keys[keys.length - 1]}`;
+}
+
+function valueForField(
+  values: {
+    provider: Record<string, string>;
+    dreaming: Record<string, string>;
+    release: Record<string, string>;
+  },
+  key: string,
+): string {
+  if (key.startsWith("provider.")) {
+    return values.provider[key.slice(9)] || "";
+  }
+  if (key.startsWith("dreaming.")) {
+    return values.dreaming[key.slice(9)] || "";
+  }
+  if (key.startsWith("release.")) {
+    return values.release[key.slice(8)] || "";
+  }
+  return "";
 }
 
 function providerIndexForInput(input: string, providerCount: number) {

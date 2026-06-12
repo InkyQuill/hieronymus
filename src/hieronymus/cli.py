@@ -24,6 +24,7 @@ from hieronymus.presentation import GUIDE_ICON, display_version, render_greeting
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.release import check_update, run_update
+from hieronymus.release_config import ReleaseConfigError, load_release_config
 from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
 from hieronymus.settings import SettingsError, load_settings
@@ -269,16 +270,22 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
 
     try:
         settings = load_settings(config)
+        release_config = load_release_config(config)
         payload = {
             "config_root": str(config.config_root),
             "database_path": str(config.database_path),
             "settings_path": str(config.settings_path),
+            "release_config_path": str(config.release_config_path),
             "tui": "available",
             "settings": settings.to_json_dict(),
+            "release": {
+                "update_channel": release_config.update_channel,
+                "update_target": release_config.update_target,
+            },
             "providers": ProviderRegistry().status_payload(config),
             "dreaming": DreamAutostart(config).status(),
         }
-    except SettingsError as error:
+    except (SettingsError, ReleaseConfigError) as error:
         raise click.ClickException(str(error)) from error
 
     click.echo(render_json(payload))
@@ -346,21 +353,32 @@ def install_command(
 @click.option(
     "--target",
     type=click.Choice(["latest", "main"]),
-    default="latest",
+    default=None,
+    help="Override the configured update channel for this run.",
 )
-def update_command(check_only: bool, allow_dev: bool, as_json: bool, target: str) -> None:
+@click.pass_context
+def update_command(
+    ctx: click.Context,
+    check_only: bool,
+    allow_dev: bool,
+    as_json: bool,
+    target: str | None,
+) -> None:
     before_status = None
     try:
+        release_config = load_release_config(ctx.obj["config"])
+        update_target = target or release_config.update_target
+        update_allows_dev = allow_dev or (target is None and release_config.allows_dev_updates)
         if check_only:
-            status = check_update(target=target, allow_dev=allow_dev)
+            status = check_update(target=update_target, allow_dev=update_allows_dev)
         else:
-            before_status = check_update(target=target, allow_dev=allow_dev)
+            before_status = check_update(target=update_target, allow_dev=update_allows_dev)
             status = (
-                run_update(target=target, allow_dev=allow_dev)
+                run_update(target=update_target, allow_dev=update_allows_dev)
                 if before_status.update_available
                 else before_status
             )
-    except (RuntimeError, ValueError) as error:
+    except (RuntimeError, ValueError, ReleaseConfigError) as error:
         raise click.ClickException(str(error)) from error
     except subprocess.CalledProcessError as error:
         raise click.ClickException(_subprocess_error_message(error)) from error

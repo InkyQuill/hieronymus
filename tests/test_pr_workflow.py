@@ -6,6 +6,7 @@ EXPECTED_FRONTEND_BUN_VERSION = "1.3.14"
 CHECKOUT_SHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
 SETUP_UV_SHA = "d0d8abe699bfb85fec6de9f7adb5ae17292296ff"
 SETUP_PYTHON_SHA = "a309ff8b426b58ec0e2a45f0f869d46889d02405"
+SETUP_BUN_SHA = "0c5077e51419868618aeaa5fe8019c62421857d6"
 
 
 def _workflow_lines() -> list[str]:
@@ -59,6 +60,12 @@ def _step_value(step: list[str], key: str) -> str | None:
     return None
 
 
+def _uses_lines(lines: list[str]) -> list[str]:
+    return [
+        line for step in _step_blocks(lines) for line in step if line.strip().startswith("- uses:")
+    ]
+
+
 def test_pr_workflow_runs_on_pull_requests_to_main() -> None:
     lines = _workflow_lines()
 
@@ -81,14 +88,12 @@ def test_pr_workflow_backend_job_runs_python_checks() -> None:
     assert "    permissions:" in backend
     assert "      contents: read" in backend
 
-    checkout = [line for step in _step_blocks(backend) for line in step if "checkout@" in line]
-    assert checkout == [f"      - uses: actions/checkout@{CHECKOUT_SHA}"]
+    assert _uses_lines(backend) == [
+        f"      - uses: actions/checkout@{CHECKOUT_SHA}",
+        f"      - uses: astral-sh/setup-uv@{SETUP_UV_SHA}",
+        f"      - uses: actions/setup-python@{SETUP_PYTHON_SHA}",
+    ]
     assert "          persist-credentials: false" in backend
-    assert f"      - uses: astral-sh/setup-uv@{SETUP_UV_SHA}" in backend
-    assert f"      - uses: actions/setup-python@{SETUP_PYTHON_SHA}" in backend
-    assert "      - uses: actions/checkout@v4" not in backend
-    assert "      - uses: astral-sh/setup-uv@v6" not in backend
-    assert "      - uses: actions/setup-python@v6" not in backend
 
     for command in [
         "      - run: uv sync --dev",
@@ -106,8 +111,10 @@ def test_pr_workflow_frontend_job_runs_bun_tests_and_build() -> None:
     assert "    runs-on: ubuntu-latest" in frontend
     assert "    permissions:" in frontend
     assert "      contents: read" in frontend
-    assert f"      - uses: actions/checkout@{CHECKOUT_SHA}" in frontend
-    assert "      - uses: actions/checkout@v4" not in frontend
+    assert _uses_lines(frontend) == [
+        f"      - uses: actions/checkout@{CHECKOUT_SHA}",
+        f"      - uses: oven-sh/setup-bun@{SETUP_BUN_SHA}",
+    ]
     assert "          persist-credentials: false" in frontend
 
     steps = _step_blocks(frontend)

@@ -135,6 +135,12 @@ describe("runtime schemas", () => {
     });
 
     expect(payload.suggestions).toEqual({});
+    expect(payload.release).toEqual({
+      update_channel: "stable",
+      update_target: "latest",
+    });
+    expect(payload.draft.release).toEqual({});
+    expect(payload.form_values.release).toEqual({});
   });
 
   it("rejects config provider choices outside supported families", () => {

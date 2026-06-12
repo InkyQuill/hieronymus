@@ -5,6 +5,7 @@ type ConfigFormProps = {
   formValues: {
     provider: Record<string, string>;
     dreaming: Record<string, string>;
+    release: Record<string, string>;
   };
   focusedFieldIndex: number;
   isEditing: boolean;
@@ -17,7 +18,8 @@ export type FieldDefinition = {
   label: string;
   key: string;
   placeholder?: string;
-  type: "text" | "toggle";
+  type: "text" | "toggle" | "choice";
+  choices?: string[];
 };
 
 export const fieldDefinitions: FieldDefinition[] = [
@@ -51,6 +53,12 @@ export const fieldDefinitions: FieldDefinition[] = [
     type: "toggle",
   },
   {
+    label: "Update Channel",
+    key: "release.update_channel",
+    type: "choice",
+    choices: ["stable", "dev"],
+  },
+  {
     label: "Min Interval (minutes)",
     key: "dreaming.min_interval_minutes",
     placeholder: "e.g. 30",
@@ -80,6 +88,7 @@ export function ConfigForm({
 }: ConfigFormProps) {
   const provider = formValues.provider;
   const dreaming = formValues.dreaming;
+  const release = formValues.release;
 
   const fields = fieldDefinitions.map((field) => {
     let value = "";
@@ -87,6 +96,8 @@ export function ConfigForm({
       value = provider[field.key.slice(9)] || "";
     } else if (field.key.startsWith("dreaming.")) {
       value = dreaming[field.key.slice(9)] || "";
+    } else if (field.key.startsWith("release.")) {
+      value = release[field.key.slice(8)] || "";
     }
     if (field.key === "dreaming.autostart_enabled" && !value) {
       value = "no";
@@ -120,16 +131,18 @@ export function ConfigForm({
                 {field.label}:{" "}
               </text>
 
-              {field.type === "toggle" ? (
+              {field.type === "toggle" || field.type === "choice" ? (
                 <box flexDirection="row">
                   {isFieldFocused && isEditing ? (
                     <box flexDirection="row">
-                      <text fg={field.value === "yes" ? "cyan" : "gray"}>
-                        [Yes]{" "}
-                      </text>
-                      <text fg={field.value === "no" ? "cyan" : "gray"}>
-                        [No]
-                      </text>
+                      {(field.choices || ["yes", "no"]).map((choice) => (
+                        <text
+                          key={choice}
+                          fg={field.value === choice ? "cyan" : "gray"}
+                        >
+                          [{choice}]{" "}
+                        </text>
+                      ))}
                     </box>
                   ) : (
                     <text fg={isFieldFocused ? "cyan" : undefined}>

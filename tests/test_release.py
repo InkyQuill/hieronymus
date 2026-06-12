@@ -162,6 +162,30 @@ def test_check_update_reports_main_revision_with_dev_flag(monkeypatch: pytest.Mo
     assert status.target == "main"
 
 
+def test_check_update_fails_closed_when_current_main_revision_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(release, "package_version", lambda: "0.2.0")
+    monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: True)
+    monkeypatch.setattr(release, "_checkout_revision", lambda _: None)
+    monkeypatch.setattr(release, "fetch_remote_head", lambda branch="main": "1234567890abcdef")
+
+    with pytest.raises(RuntimeError, match="current managed checkout revision"):
+        check_update(target="main", allow_dev=True)
+
+
+def test_check_update_fails_closed_when_remote_main_revision_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(release, "package_version", lambda: "0.2.0")
+    monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: True)
+    monkeypatch.setattr(release, "_checkout_revision", lambda _: "abc1234")
+    monkeypatch.setattr(release, "fetch_remote_head", lambda branch="main": None)
+
+    with pytest.raises(RuntimeError, match="latest main revision"):
+        check_update(target="main", allow_dev=True)
+
+
 def test_run_update_rejects_unmanaged_installs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: False)
 
