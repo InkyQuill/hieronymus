@@ -141,10 +141,16 @@ class ConfigBridge:
         selected = self._selected_provider(params, dream_config)
         if "selected_provider" in params or "provider" in params:
             dream_config = self._select_provider(dream_config, selected)
-        errors = _canonical_draft_errors(params)
-        if not errors:
-            errors = self._validation_errors(params, dream_config, ingest_config, release_config)
-        errors = [*errors, *_load_errors(dream_error, ingest_error, release_error)]
+        canonical_errors = _canonical_draft_errors(params)
+        validation_errors = (
+            []
+            if canonical_errors
+            else self._validation_errors(params, dream_config, ingest_config, release_config)
+        )
+        load_errors = _load_errors(dream_error, ingest_error, release_error)
+        errors = [*canonical_errors, *validation_errors]
+        if canonical_errors or validation_errors or not _has_complete_draft(params):
+            errors = [*errors, *load_errors]
         if errors:
             return self._payload(
                 dream_config,
@@ -181,7 +187,7 @@ class ConfigBridge:
             profile, model = profile_context
             result = self.registry.check_profile(self.config, selected, profile, model=model)
             check_result = _result_to_json_dict(result)
-            _redact_error(check_result, self.config)
+            _redact_error(check_result, dream_config)
             suggestions = None
             if check_result.get("ok") is True:
                 suggestion_result = self.registry.list_profile_model_suggestions(
@@ -190,7 +196,7 @@ class ConfigBridge:
                     profile,
                 )
                 suggestions = _result_to_json_dict(suggestion_result)
-                _redact_error(suggestions, self.config)
+                _redact_error(suggestions, dream_config)
             return self._payload(
                 dream_config,
                 ingest_config,
@@ -202,12 +208,12 @@ class ConfigBridge:
             )
         result = self.registry.check(self.config, selected)
         check_result = _result_to_json_dict(result)
-        _redact_error(check_result, self.config)
+        _redact_error(check_result, dream_config)
         suggestions = None
         if check_result.get("ok") is True and hasattr(self.registry, "list_model_suggestions"):
             suggestion_result = self.registry.list_model_suggestions(self.config, selected)
             suggestions = _result_to_json_dict(suggestion_result)
-            _redact_error(suggestions, self.config)
+            _redact_error(suggestions, dream_config)
         return self._payload(
             dream_config,
             ingest_config,
@@ -244,7 +250,7 @@ class ConfigBridge:
             profile, _ = profile_context
             result = self.registry.list_profile_model_suggestions(self.config, selected, profile)
             suggestions = _result_to_json_dict(result)
-            _redact_error(suggestions, self.config)
+            _redact_error(suggestions, dream_config)
             return self._payload(
                 dream_config,
                 ingest_config,
@@ -255,7 +261,7 @@ class ConfigBridge:
             )
         result = self.registry.list_model_suggestions(self.config, selected)
         suggestions = _result_to_json_dict(result)
-        _redact_error(suggestions, self.config)
+        _redact_error(suggestions, dream_config)
         return self._payload(
             dream_config,
             ingest_config,
@@ -369,6 +375,7 @@ class ConfigBridge:
 
         raw_dream = draft.get("dream")
         if type(raw_dream) is dict:
+            self._clear_pending_api_keys_from_draft(raw_dream)
             dream_config = _dream_config_from_draft(dream_config, raw_dream)
             dream_config = self._apply_pending_api_keys(dream_config)
 
@@ -534,6 +541,8 @@ class ConfigBridge:
             api_key = provider.api_key
         elif api_key:
             self._pending_api_keys[selected] = api_key
+        else:
+            self._pending_api_keys.pop(selected, None)
         updated_provider = replace(
             provider,
             type=selected,
@@ -566,6 +575,18 @@ class ConfigBridge:
             if provider is not None:
                 next_config = next_config.with_provider(name, replace(provider, api_key=api_key))
         return next_config
+
+    def _clear_pending_api_keys_from_draft(self, draft: dict[object, object]) -> None:
+        providers = draft.get("providers")
+        if type(providers) is not dict:
+            return
+        for name, raw_provider in providers.items():
+            if (
+                type(name) is str
+                and type(raw_provider) is dict
+                and raw_provider.get("api_key") == ""
+            ):
+                self._pending_api_keys.pop(name, None)
 
     def _apply_dreaming_form(
         self,
@@ -787,6 +808,11 @@ def _canonical_draft_errors(params: dict[str, object]) -> list[str]:
     return []
 
 
+def _has_complete_draft(params: dict[str, object]) -> bool:
+    draft = params.get("draft")
+    return type(draft) is dict and all(key in draft for key in ("dream", "ingest", "release"))
+
+
 def _dream_config_from_draft(
     base: DreamConfig,
     draft: dict[object, object],
@@ -935,11 +961,7 @@ def _release_draft(release_config: ReleaseConfig) -> dict[str, object]:
     return {"update_channel": release_config.update_channel}
 
 
-def _redact_error(payload: dict[str, object], config: HieronymusConfig) -> None:
+def _redact_error(payload: dict[str, object], dream_config: DreamConfig) -> None:
     error = payload.get("error")
     if type(error) is str and error:
-        try:
-            dream_config = load_dream_config(config)
-        except (DreamConfigError, OSError):
-            return
         payload["error"] = redact_configured_secret_values(error, dream_config)

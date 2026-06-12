@@ -690,7 +690,7 @@ def test_model_suggestions_refresh_when_gemini_api_key_changes(
         "gemini",
         ProviderProfile(
             type="gemini",
-            endpoint="https://generativelanguage.googleapis.com",
+            endpoint="https://gateway.example.test/gemini",
             api_key="secret-a",
         ),
     )
@@ -704,7 +704,7 @@ def test_model_suggestions_refresh_when_gemini_api_key_changes(
         "gemini",
         ProviderProfile(
             type="gemini",
-            endpoint="https://generativelanguage.googleapis.com",
+            endpoint="https://gateway.example.test/gemini",
             api_key="secret-b",
         ),
     )
@@ -723,6 +723,10 @@ def test_model_suggestions_refresh_when_gemini_api_key_changes(
     assert [request["headers"]["x-goog-api-key"] for request in transport.requests] == [
         "secret-a",
         "secret-b",
+    ]
+    assert [request["url"] for request in transport.requests] == [
+        "https://gateway.example.test/gemini/v1beta/models",
+        "https://gateway.example.test/gemini/v1beta/models",
     ]
 
 
@@ -843,7 +847,7 @@ def test_gemini_check_uses_api_key_header_without_url_secret(tmp_path) -> None:
         "gemini",
         ProviderProfile(
             type="gemini",
-            endpoint="https://generativelanguage.googleapis.com",
+            endpoint="https://gateway.example.test/gemini",
             api_key="secret-gemini",
         ),
         model="gemini-2.5-flash",
@@ -857,11 +861,35 @@ def test_gemini_check_uses_api_key_header_without_url_secret(tmp_path) -> None:
 
     assert result.ok is True
     assert (
-        transport.requests[0]["url"] == "https://generativelanguage.googleapis.com/v1beta/models/"
+        transport.requests[0]["url"] == "https://gateway.example.test/gemini/v1beta/models/"
         "gemini-2.5-flash:generateContent"
     )
     assert "secret-gemini" not in transport.requests[0]["url"]
     assert transport.requests[0]["headers"]["x-goog-api-key"] == "secret-gemini"
+
+
+def test_anthropic_check_uses_configured_endpoint(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    _save_provider_profile(
+        config,
+        "anthropic",
+        ProviderProfile(
+            type="anthropic",
+            endpoint="https://gateway.example.test/anthropic",
+            api_key="secret-anthropic",
+        ),
+        model="claude-3-5-haiku-latest",
+    )
+    transport = FakeTransport(
+        HTTPResponse(status=200, body=json.dumps({"id": "ok"})),
+        [],
+    )
+
+    result = ProviderRegistry(transport=transport).check(config, "anthropic")
+
+    assert result.ok is True
+    assert transport.requests[0]["url"] == "https://gateway.example.test/anthropic/v1/messages"
+    assert transport.requests[0]["headers"]["x-api-key"] == "secret-anthropic"
 
 
 def test_resolve_provider_requires_dream_profile_key(tmp_path) -> None:

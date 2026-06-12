@@ -9,7 +9,7 @@ def configured_secret_values(dream_config: DreamConfig) -> set[str]:
     return {
         value
         for provider in dream_config.providers.values()
-        if len(value := getattr(provider, "api_key", "").strip()) >= 4
+        if (value := getattr(provider, "api_key", "").strip())
     }
 
 

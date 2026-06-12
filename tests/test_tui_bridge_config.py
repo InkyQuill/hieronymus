@@ -131,6 +131,38 @@ def test_config_payload_redacts_api_key_and_preserves_existing_secret_on_save(
     assert load_dream_config(config).providers["openai"].api_key == "raw-secret-value"
 
 
+def test_config_clears_pending_api_key_when_form_is_emptied(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bridge = ConfigBridge(config)
+
+    bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "new-secret",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "12",
+            },
+        }
+    )
+    cleared = bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "12",
+            },
+        }
+    )
+    save_payload = bridge.save({"draft": cleared["draft"]})
+
+    assert save_payload["validation"]["ok"] is True
+    assert load_dream_config(config).providers["openai"].api_key == ""
+
+
 def test_config_save_accepts_unchanged_bootstrap_draft(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bridge = ConfigBridge(config)
@@ -448,6 +480,18 @@ def test_config_save_rejects_invalid_dreaming_threshold(tmp_path: Path) -> None:
     }
 
 
+def test_config_save_valid_draft_ignores_stale_file_load_error(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bridge = ConfigBridge(config)
+    draft = bridge.bootstrap({})["draft"]
+    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
+
+    payload = bridge.save({"draft": draft})
+
+    assert payload["validation"]["ok"] is True
+
+
 def test_config_check_provider_redacts_error(tmp_path: Path) -> None:
     class Registry:
         def list_model_suggestions(self, *args, **kwargs):
@@ -479,6 +523,41 @@ def test_config_check_provider_redacts_error(tmp_path: Path) -> None:
     bridge = ConfigBridge(config, registry=Registry())
 
     payload = bridge.check_provider({"selected_provider": "openai", "draft": {}})
+
+    assert payload["check_result"]["error"] == "provider returned [redacted]"
+
+
+def test_config_check_provider_redacts_unsaved_draft_api_key(tmp_path: Path) -> None:
+    class Registry:
+        def list_model_suggestions(self, *args, **kwargs):
+            return {"provider": "openai", "models": [], "source": "unavailable", "error": ""}
+
+        def check_profile(self, *args, **kwargs):
+            class Result:
+                def to_json_dict(self):
+                    return {
+                        "name": "openai",
+                        "ok": False,
+                        "model": "gpt-4.1-mini",
+                        "error": "provider returned draft-secret",
+                        "latency_ms": 10,
+                    }
+
+            return Result()
+
+    bridge = ConfigBridge(_config(tmp_path), registry=Registry())
+
+    payload = bridge.check_provider(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "draft-secret",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "12",
+            },
+        }
+    )
 
     assert payload["check_result"]["error"] == "provider returned [redacted]"
 

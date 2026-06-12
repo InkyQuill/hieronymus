@@ -22,3 +22,14 @@ def test_redact_configured_secret_values_replaces_longer_prefix_first():
 
     assert redacted == "provider returned [redacted] and [redacted]"
     assert "suffix" not in redacted
+
+
+def test_redact_configured_secret_values_replaces_short_api_keys():
+    dream_config = default_dream_config().with_provider(
+        "openai",
+        ProviderProfile(type="openai", api_key="abc"),
+    )
+
+    redacted = redact_configured_secret_values("provider returned abc", dream_config)
+
+    assert redacted == "provider returned [redacted]"

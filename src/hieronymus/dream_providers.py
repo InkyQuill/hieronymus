@@ -543,11 +543,11 @@ class ProviderRegistry:
                 timeout=provider.timeout_seconds,
             )
         if name == "gemini":
+            base_url = (provider.base_url or "https://generativelanguage.googleapis.com").rstrip(
+                "/"
+            )
             return self._transport.post_json(
-                (
-                    "https://generativelanguage.googleapis.com/v1beta/models/"
-                    f"{provider.model}:generateContent"
-                ),
+                f"{base_url}/v1beta/models/{provider.model}:generateContent",
                 headers={"x-goog-api-key": api_key},
                 payload={
                     "contents": [
@@ -560,8 +560,9 @@ class ProviderRegistry:
                 timeout=provider.timeout_seconds,
             )
         if name == "anthropic":
+            base_url = (provider.base_url or "https://api.anthropic.com").rstrip("/")
             return self._transport.post_json(
-                "https://api.anthropic.com/v1/messages",
+                f"{base_url}/v1/messages",
                 headers={
                     "x-api-key": api_key,
                     "anthropic-version": ANTHROPIC_API_VERSION,
@@ -589,8 +590,11 @@ class ProviderRegistry:
                 timeout=provider.timeout_seconds,
             )
         if name == "gemini":
+            base_url = (provider.base_url or "https://generativelanguage.googleapis.com").rstrip(
+                "/"
+            )
             return self._transport.get_json(
-                "https://generativelanguage.googleapis.com/v1beta/models",
+                f"{base_url}/v1beta/models",
                 headers={"x-goog-api-key": api_key},
                 timeout=provider.timeout_seconds,
             )

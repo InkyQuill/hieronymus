@@ -12,19 +12,39 @@
 
 ## Current Code Map
 
-- `src/hieronymus/config.py`: path registry for data-root files. Add `ingest_config_path`; remove `settings_path` after all callers move away.
-- `src/hieronymus/ingest_config.py`: create this file. It should mirror `dream_config.py` and `release_config.py` style.
-- `src/hieronymus/short_memory.py`: direct short-term memory validation currently hardcodes 6 warning sentences and 30 rejection sentences.
-- `src/hieronymus/workspace.py`: `WorkspaceStore.add_short_term_memory()` calls `validate_short_memory_text(text)` and stores validation metadata.
-- `src/hieronymus/agent_ingestion.py`: `split_learning_blocks()` currently defaults `max_chars=1200`; `IngestionService.learn()` uses it without config.
-- `src/hieronymus/dream_config.py`: canonical `dream.conf` model. Extend only if workflow/provider selection needs explicit active profile data.
-- `src/hieronymus/settings.py`: legacy `settings.toml` model. Delete after callers move to `dream.conf`.
-- `src/hieronymus/dream_providers.py`: provider status/check/model suggestions still partly read `settings.toml`; profile-based helpers already exist and should become primary.
-- `src/hieronymus/secrets.py`: redaction currently depends on `HieronymusSettings`; change to redact secret values from `dream.conf` provider profiles.
-- `src/hieronymus/tui_bridge/config_api.py`: config TUI bridge currently mixes old settings draft with `dream.conf` payload. Move provider/dreaming editing to `dream.conf`, and include `ingest.conf`.
-- `src/hieronymus/tui_bridge/server.py` and `src/hieronymus/tui_bridge/protocol.py`: error redaction currently uses settings; switch to dream config redaction context.
-- `src/hieronymus/dreaming.py`: `_redacted_error_message()` still loads settings. Switch to dream config redaction. Existing audit helpers already record provider request/response, parse warnings, affected memory sets, and maintenance phase summaries.
-- Tests to update/add: `tests/test_ingest_config.py`, `tests/test_short_memory.py`, `tests/test_workspace.py`, `tests/test_agent_ingestion.py`, `tests/test_dream_providers.py`, `tests/test_tui_bridge_config.py`, `tests/test_cli_service.py`, `tests/test_tui_bridge_protocol.py`, `tests/test_dreaming.py`, `tests/test_dream_bounded_audit.py`, `tests/test_settings.py`.
+- `src/hieronymus/config.py`: path registry for data-root files. It now exposes
+  `dream_config_path`, `ingest_config_path`, and `release_config_path`; the
+  legacy `settings_path` has been removed.
+- `src/hieronymus/ingest_config.py`: `ingest.conf` model for short-memory
+  warning/rejection thresholds and Learn block splitting limits.
+- `src/hieronymus/short_memory.py`: validates sentence and symbol limits through
+  `ShortMemoryLimits`.
+- `src/hieronymus/workspace.py`: `WorkspaceStore.add_short_term_memory()` loads
+  `ingest.conf` short-memory limits and stores validation metadata.
+- `src/hieronymus/agent_ingestion.py`: `IngestionService.learn()` loads
+  `ingest.conf` Learn limits for block splitting.
+- `src/hieronymus/dream_config.py`: canonical `dream.conf` model for provider
+  profiles, workflows, prompts, thresholds, and plaintext local API keys.
+- `src/hieronymus/dream_providers.py`: provider runtime, status, checks, and
+  model suggestions resolve through `dream.conf` profiles.
+- `src/hieronymus/secrets.py`: redacts configured provider API keys from
+  `DreamConfig`.
+- `src/hieronymus/tui_bridge/config_api.py`: config TUI bridge edits
+  `dream.conf`, `ingest.conf`, and `release.conf` drafts, redacting provider
+  API keys in payloads.
+- `src/hieronymus/tui_bridge/server.py` and `src/hieronymus/tui_bridge/protocol.py`:
+  error redaction uses a `DreamConfig` redaction context.
+- `src/hieronymus/dreaming.py`: dream run errors are redacted with the
+  service's loaded `DreamConfig`; audit helpers record provider
+  request/response, parse warnings, affected memory sets, and maintenance phase
+  summaries.
+- Tests updated/added: `tests/test_ingest_config.py`,
+  `tests/test_short_memory.py`, `tests/test_workspace.py`,
+  `tests/test_agent_ingestion.py`, `tests/test_dream_providers.py`,
+  `tests/test_tui_bridge_config.py`, `tests/test_cli_service.py`,
+  `tests/test_tui_bridge_protocol.py`, `tests/test_dreaming.py`, and
+  `tests/test_dream_bounded_audit.py`. The legacy `tests/test_settings.py` was
+  removed with `src/hieronymus/settings.py`.
 
 ---
 

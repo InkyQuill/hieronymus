@@ -123,9 +123,21 @@ def test_status_reports_enabled_workflow_when_crystallization_is_disabled(
 ) -> None:
     save_dream_config(
         config,
-        replace(default_dream_config(), enabled=True).with_workflow(
-            "crystallization",
-            WorkflowProfile(provider="anthropic", model="claude-sonnet-4-6", enabled=False),
+        replace(
+            default_dream_config(),
+            enabled=True,
+            workflows={
+                "crystallization": WorkflowProfile(
+                    provider="anthropic",
+                    model="claude-sonnet-4-6",
+                    enabled=False,
+                ),
+                "reinforcement_compaction": WorkflowProfile(
+                    provider="ollama",
+                    model="gemma4-e3b",
+                    enabled=True,
+                ),
+            },
         ),
     )
 

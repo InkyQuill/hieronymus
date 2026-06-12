@@ -218,12 +218,16 @@ class Doctor:
         report["autofixed"].append(
             DoctorFinding(
                 level="info",
-                code="dream-conf-loaded"
-                if self.config.dream_config_path.exists()
-                else "dream-conf-defaults",
-                message="dream.conf loaded"
-                if self.config.dream_config_path.exists()
-                else "dream.conf is missing; using built-in defaults",
+                code=(
+                    "dream-conf-loaded"
+                    if self.config.dream_config_path.exists()
+                    else "dream-conf-defaults"
+                ),
+                message=(
+                    "dream.conf loaded"
+                    if self.config.dream_config_path.exists()
+                    else "dream.conf is missing; using built-in defaults"
+                ),
             )
         )
 
