@@ -10,9 +10,14 @@ from hieronymus.concepts import ConceptProposalStore, ConceptStore
 from hieronymus.config import load_config
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_config import (
+    ProviderProfile,
+    WorkflowProfile,
+    default_dream_config,
+    save_dream_config,
+)
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
-from hieronymus.settings import DreamingSettings, load_settings, save_settings
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
@@ -1088,17 +1093,22 @@ def test_mcp_dream_rejects_active_cycle(monkeypatch, tmp_path):
             mcp_server.hieronymus_dream()
 
 
-def test_mcp_dream_uses_configured_provider(monkeypatch, tmp_path):
+def test_mcp_dream_uses_dream_config_provider_profile(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     config = load_config()
-    save_settings(
+    save_dream_config(
         config,
-        load_settings(config).with_dreaming(DreamingSettings(active_provider="deterministic")),
+        default_dream_config()
+        .with_provider("openai", ProviderProfile(type="openai", api_key="secret-openai"))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        ),
     )
 
     from hieronymus import mcp_server
 
     dreamed = mcp_server.hieronymus_dream()
 
-    assert dreamed["provider"] == "deterministic"
+    assert dreamed["provider"] == "openai"
     assert dreamed["status"] == "completed"

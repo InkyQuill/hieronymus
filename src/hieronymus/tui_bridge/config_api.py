@@ -129,10 +129,10 @@ class ConfigBridge:
         release_config, release_error = self._release_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
+        if errors := self._validation_errors(params, settings, release_config):
+            return self._payload(settings, selected, release_config, validation_errors=errors)
         profile_context = self._dream_profile_context(selected)
         if profile_context is not None:
-            if errors := _draft_container_errors(params):
-                return self._payload(settings, selected, release_config, validation_errors=errors)
             profile, model = profile_context
             result = self.registry.check_profile(self.config, selected, profile, model=model)
             check_result = _result_to_json_dict(result)
@@ -155,8 +155,6 @@ class ConfigBridge:
                 validation_errors=[release_error] if release_error else None,
                 detail=release_error,
             )
-        if errors := self._validation_errors(params, settings, release_config):
-            return self._payload(settings, selected, release_config, validation_errors=errors)
         result = self.registry.check(self.config, selected, settings=settings)
         check_result = _result_to_json_dict(result)
         _redact_error(check_result, self.config)
@@ -184,10 +182,10 @@ class ConfigBridge:
         release_config, release_error = self._release_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
+        if errors := self._validation_errors(params, settings, release_config):
+            return self._payload(settings, selected, release_config, validation_errors=errors)
         profile_context = self._dream_profile_context(selected)
         if profile_context is not None:
-            if errors := _draft_container_errors(params):
-                return self._payload(settings, selected, release_config, validation_errors=errors)
             profile, _ = profile_context
             result = self.registry.list_profile_model_suggestions(self.config, selected, profile)
             suggestions = _result_to_json_dict(result)
@@ -200,8 +198,6 @@ class ConfigBridge:
                 validation_errors=[release_error] if release_error else None,
                 detail=release_error,
             )
-        if errors := self._validation_errors(params, settings, release_config):
-            return self._payload(settings, selected, release_config, validation_errors=errors)
         result = self.registry.list_model_suggestions(self.config, selected, settings=settings)
         suggestions = _result_to_json_dict(result)
         _redact_error(suggestions, self.config)
@@ -380,8 +376,6 @@ class ConfigBridge:
         return value
 
     def _dream_profile_context(self, selected: str) -> tuple[ProviderProfile, str] | None:
-        if not self.config.dream_config_path.exists():
-            return None
         try:
             dream_config = load_dream_config(self.config)
         except DreamConfigError:

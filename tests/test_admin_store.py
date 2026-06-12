@@ -5,6 +5,12 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_audit import DreamAuditStore
+from hieronymus.dream_config import (
+    ProviderProfile,
+    WorkflowProfile,
+    default_dream_config,
+    save_dream_config,
+)
 from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.dreaming import DreamRunRecord
 from hieronymus.memory_models import TranslationContext
@@ -416,6 +422,25 @@ def test_admin_manual_dreaming_runs_without_completed_pending_memory(
         row = conn.execute("select * from dream_runs where id = ?", (run.id,)).fetchone()
     assert row["status"] == "completed"
     assert row["input_count"] == 0
+
+
+def test_admin_manual_dreaming_uses_dream_config_provider_profile(
+    config: HieronymusConfig,
+) -> None:
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider("openai", ProviderProfile(type="openai", api_key="secret-openai"))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        ),
+    )
+
+    run = AdminStore(config).run_manual_dreaming()
+
+    assert run.status == "completed"
+    assert run.provider == "openai"
 
 
 def test_admin_manual_dreaming_uses_ignore_minimum_when_pending_exists(

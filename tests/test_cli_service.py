@@ -10,9 +10,14 @@ from click.testing import CliRunner
 
 from hieronymus.cli import main
 from hieronymus.config import load_config
+from hieronymus.dream_config import (
+    ProviderProfile,
+    WorkflowProfile,
+    default_dream_config,
+    save_dream_config,
+)
 from hieronymus.presentation import GREETING_ICON, display_version, render_greeting
 from hieronymus.release_config import ReleaseConfig, save_release_config
-from hieronymus.settings import DreamingSettings, load_settings, save_settings
 
 
 @dataclass(frozen=True)
@@ -318,12 +323,17 @@ def test_config_launch_invokes_opentui(tmp_path: Path, monkeypatch) -> None:
     }
 
 
-def test_dream_json_uses_configured_active_provider(tmp_path: Path) -> None:
+def test_dream_json_uses_dream_config_provider_profile(tmp_path: Path) -> None:
     data_root = tmp_path / "hieronymus"
     config = load_config(str(data_root))
-    save_settings(
+    save_dream_config(
         config,
-        load_settings(config).with_dreaming(DreamingSettings(active_provider="deterministic")),
+        default_dream_config()
+        .with_provider("openai", ProviderProfile(type="openai", api_key="secret-openai"))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        ),
     )
 
     result = CliRunner().invoke(
@@ -335,7 +345,7 @@ def test_dream_json_uses_configured_active_provider(tmp_path: Path) -> None:
     assert json.loads(result.output) == {
         "cycle_id": 1,
         "status": "completed",
-        "provider": "deterministic",
+        "provider": "openai",
         "input_count": 0,
         "created_crystal_count": 0,
         "proposal_count": 0,
@@ -352,7 +362,7 @@ def test_dream_rejects_disabled_provider(tmp_path: Path) -> None:
     )
 
     assert result.exit_code != 0
-    assert "dream provider is disabled: openai" in result.output
+    assert "model must not be empty for provider profile: openai" in result.output
 
 
 def test_admin_json_returns_available_tui_status(tmp_path: Path) -> None:

@@ -10,7 +10,13 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import DreamConfig, ProviderProfile, load_dream_config
+from hieronymus.dream_config import (
+    DreamConfig,
+    ProviderProfile,
+    WorkflowProfile,
+    load_dream_config,
+)
+from hieronymus.dream_workflows import CRYSTALLIZATION_PHASE
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
     DreamConceptProposal,
@@ -1147,27 +1153,30 @@ def resolve_provider(
     *,
     transport: HTTPTransport | None = None,
 ) -> DreamProvider:
-    settings = load_settings(config)
-    provider_name = name or settings.dreaming.active_provider
-    ProviderRegistry(transport=transport).metadata(provider_name)
-    provider_settings = settings.providers.get(provider_name, ProviderSettings())
-    if not provider_settings.enabled:
-        raise ValueError(f"dream provider is disabled: {provider_name}")
-    if provider_name == "deterministic":
+    dream_config = load_dream_config(config)
+    if name == "deterministic":
         return DeterministicDreamProvider()
-    api_key = os.environ.get(provider_settings.api_key_env, "")
-    if not api_key:
-        raise ValueError(
-            f"missing environment variable for {provider_name}: {provider_settings.api_key_env}"
-        )
-    active_transport = transport or UrllibTransport()
-    if provider_name == "openai":
-        return OpenAIDreamProvider(provider_settings, api_key, active_transport)
-    if provider_name == "gemini":
-        return GeminiDreamProvider(provider_settings, api_key, active_transport)
-    if provider_name == "anthropic":
-        return AnthropicDreamProvider(provider_settings, api_key, active_transport)
-    raise ValueError(f"unsupported dream provider: {provider_name}")
+    if name is not None:
+        if name not in dream_config.providers:
+            ProviderRegistry(transport=transport).metadata(name)
+        workflow = _workflow_for_profile(dream_config, name)
+        model = workflow.model if workflow is not None else _model_for_profile(dream_config, name)
+        return resolve_profile_provider(config, name, model=model, transport=transport)
+
+    workflow = _runtime_workflow(dream_config)
+    if workflow is None:
+        return DeterministicDreamProvider()
+    profile = dream_config.providers.get(workflow.provider)
+    if profile is None:
+        raise ValueError(f"referenced provider profile is missing: {workflow.provider}")
+    if not _profile_runtime_configured(profile, workflow.model):
+        return DeterministicDreamProvider()
+    return _provider_from_profile(
+        workflow.provider,
+        profile,
+        model=workflow.model,
+        transport=transport,
+    )
 
 
 def _configured_profile_status(profile: ProviderProfile, model: str) -> tuple[bool, str]:
@@ -1186,3 +1195,32 @@ def _model_for_profile(dream_config: DreamConfig, profile_name: str) -> str:
         if workflow.provider == profile_name and workflow.model.strip():
             return workflow.model
     return ""
+
+
+def _runtime_workflow(dream_config: DreamConfig) -> WorkflowProfile | None:
+    workflow = dream_config.workflows.get(CRYSTALLIZATION_PHASE)
+    if workflow is not None and workflow.enabled:
+        return workflow
+    for workflow in dream_config.workflows.values():
+        if workflow.enabled:
+            return workflow
+    return None
+
+
+def _workflow_for_profile(
+    dream_config: DreamConfig,
+    profile_name: str,
+) -> WorkflowProfile | None:
+    for workflow in dream_config.workflows.values():
+        if workflow.enabled and workflow.provider == profile_name and workflow.model.strip():
+            return workflow
+    for workflow in dream_config.workflows.values():
+        if workflow.provider == profile_name and workflow.model.strip():
+            return workflow
+    return None
+
+
+def _profile_runtime_configured(profile: ProviderProfile, model: str) -> bool:
+    if not model.strip():
+        return False
+    return profile.type == "ollama" or bool(profile.api_key.strip())

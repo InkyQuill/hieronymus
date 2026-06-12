@@ -11,7 +11,7 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import apply_migration, connect
 from hieronymus.dream_audit import DreamAuditStore
-from hieronymus.dream_config import DreamConfigError, load_dream_config
+from hieronymus.dream_config import load_dream_config
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.scoring import PASSIVE_EVENT_DELTAS, apply_score_delta
@@ -797,11 +797,7 @@ class DreamService:
 
     def _redacted_error_message(self, error: Exception) -> str:
         message = str(error)
-        try:
-            dream_config = load_dream_config(self.config)
-        except (DreamConfigError, OSError):
-            return message
-        return redact_configured_secret_values(message, dream_config)
+        return redact_configured_secret_values(message, self.dream_config)
 
     def _apply_score_maintenance(
         self,
