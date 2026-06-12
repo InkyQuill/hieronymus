@@ -17,7 +17,7 @@ from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_locks import DreamCycleAlreadyRunning
 from hieronymus.dream_providers import ProviderRegistry, resolve_provider
 from hieronymus.dreaming import DreamService
-from hieronymus.ingest_config import load_ingest_config
+from hieronymus.ingest_config import IngestConfigError, load_ingest_config
 from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import CrystalRecord, ShortTermMemoryRecord, TranslationContext
@@ -289,7 +289,7 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
             "providers": ProviderRegistry().status_payload(config),
             "dreaming": DreamAutostart(config).status(),
         }
-    except (SettingsError, ReleaseConfigError) as error:
+    except (SettingsError, IngestConfigError, ReleaseConfigError) as error:
         raise click.ClickException(str(error)) from error
 
     click.echo(render_json(payload))

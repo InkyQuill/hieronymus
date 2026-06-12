@@ -102,6 +102,23 @@ def test_config_bootstrap_survives_malformed_dream_config(tmp_path: Path) -> Non
     assert "dream.conf is not valid TOML" in payload["detail"]
 
 
+def test_config_bootstrap_survives_malformed_ingest_config(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config.config_root.mkdir(parents=True)
+    config.ingest_config_path.write_text("[short_memory\n", encoding="utf-8")
+
+    payload = ConfigBridge(config).bootstrap({})
+
+    assert payload["ingest"]["short_memory"]["warning_sentence_count"] == 6
+    assert payload["ingest"]["short_memory"]["rejection_sentence_count"] == 30
+    assert payload["ingest"]["learn"]["max_block_chars"] == 1200
+    assert payload["validation"]["ok"] is False
+    assert any(
+        "ingest.conf is not valid TOML" in error for error in payload["validation"]["errors"]
+    )
+    assert "ingest.conf is not valid TOML" in payload["detail"]
+
+
 def test_config_select_provider_enables_only_selected_remote_provider(tmp_path: Path) -> None:
     bridge = ConfigBridge(_config(tmp_path))
 

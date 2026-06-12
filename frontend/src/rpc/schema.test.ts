@@ -144,6 +144,39 @@ describe("runtime schemas", () => {
     expect(payload.form_values.release).toEqual({});
   });
 
+  it("parses present ingest config payloads with numeric passthrough fields", () => {
+    const payload = ConfigBootstrapSchema.parse({
+      config_paths: {
+        settings_path: "/tmp/hieronymus/config/settings.toml",
+      },
+      provider_choices: [
+        {
+          display_name: "OpenAI compatible",
+          name: "openai",
+          requires_api_key: true,
+          supports_api_path: true,
+        },
+      ],
+      selected_provider: "openai",
+      draft: { dreaming: { active_provider: "openai" }, providers: {} },
+      form_values: { provider: {}, dreaming: {} },
+      ingest: {
+        short_memory: {
+          warning_sentence_count: 6,
+          rejection_sentence_count: 30,
+        },
+        learn: { max_block_chars: 1200 },
+        source: "defaults",
+      },
+      validation: { ok: true, errors: [] },
+      detail: {},
+    });
+
+    expect(payload.ingest.short_memory.warning_sentence_count).toBe(6);
+    expect(payload.ingest.learn.max_block_chars).toBe(1200);
+    expect(payload.ingest.source).toBe("defaults");
+  });
+
   it("rejects config provider choices outside supported families", () => {
     expect(() =>
       ConfigBootstrapSchema.parse({

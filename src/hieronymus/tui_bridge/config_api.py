@@ -12,7 +12,11 @@ from hieronymus.dream_config import (
     redacted_dream_config_payload,
 )
 from hieronymus.dream_providers import ProviderRegistry
-from hieronymus.ingest_config import load_ingest_config
+from hieronymus.ingest_config import (
+    IngestConfigError,
+    default_ingest_config,
+    load_ingest_config,
+)
 from hieronymus.llm_cache import load_model_cache
 from hieronymus.release_config import (
     ReleaseConfig,
@@ -223,7 +227,10 @@ class ConfigBridge:
         if dream_error:
             errors = [*errors, dream_error]
             detail = detail or dream_error
-        ingest_config = load_ingest_config(self.config)
+        ingest_config, ingest_error = _safe_ingest_config_payload(self.config)
+        if ingest_error:
+            errors = [*errors, ingest_error]
+            detail = detail or ingest_error
         return {
             "config_paths": {
                 "data_root": str(self.config.data_root),
@@ -235,7 +242,7 @@ class ConfigBridge:
             "dreaming": dream_config["dreaming"],
             "providers": dream_config["providers"],
             "workflows": dream_config["workflows"],
-            "ingest": ingest_config.to_payload(),
+            "ingest": ingest_config,
             "release": _release_payload(release_config),
             "model_cache": load_model_cache(self.config).to_payload(),
             "provider_choices": self._provider_choices(),
@@ -479,6 +486,13 @@ def _safe_dream_config_payload(config: HieronymusConfig) -> tuple[dict[str, obje
         return redacted_dream_config_payload(load_dream_config(config)), ""
     except DreamConfigError as error:
         return redacted_dream_config_payload(default_dream_config()), str(error)
+
+
+def _safe_ingest_config_payload(config: HieronymusConfig) -> tuple[dict[str, object], str]:
+    try:
+        return load_ingest_config(config).to_payload(), ""
+    except IngestConfigError as error:
+        return default_ingest_config().to_payload(), str(error)
 
 
 def _model_for_profile(dream_config: DreamConfig, profile_name: str) -> str:

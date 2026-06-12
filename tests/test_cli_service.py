@@ -285,6 +285,20 @@ def test_config_json_returns_ingest_config_path_and_defaults(tmp_path: Path) -> 
     assert payload["ingest"]["learn"]["max_block_chars"] == 1200
 
 
+def test_config_json_reports_invalid_ingest_config(tmp_path: Path) -> None:
+    data_root = tmp_path / "hieronymus"
+    data_root.mkdir()
+    (data_root / "ingest.conf").write_text("[short_memory\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "config", "--json"],
+    )
+
+    assert result.exit_code != 0
+    assert "ingest.conf is not valid TOML" in result.output
+
+
 def test_config_launch_invokes_opentui(tmp_path: Path, monkeypatch) -> None:
     data_root = tmp_path / "hieronymus"
     launched = {}
