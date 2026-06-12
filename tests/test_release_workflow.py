@@ -205,12 +205,15 @@ def test_project_metadata_stays_on_alpha_version_line() -> None:
         for package in lockfile["package"]
         if package["name"] == "hieronymus" and package.get("source") == {"editable": "."}
     )
+    project_version = pyproject["project"]["version"]
 
-    assert pyproject["project"]["version"] == "0.2.0"
-    assert '__version__ = "0.2.0"' in init_text
+    assert project_version.startswith("0.")
+    assert f'__version__ = "{project_version}"' in init_text
     assert hieronymus_package["source"] == {"editable": "."}
-    assert hieronymus_package["version"] == "0.2.0"
-    assert not pyproject["project"]["version"].startswith("1.")
+    assert hieronymus_package["version"] == project_version
+    assert "α" not in project_version
+    assert "α" not in init_text
+    assert "α" not in hieronymus_package["version"]
     assert '"1.0.0"' not in init_text
     assert '"1.1.0"' not in init_text
     assert hieronymus_package["version"] not in {"1.0.0", "1.1.0"}

@@ -53,6 +53,11 @@ def test_validate_alpha_version_rejects_one_major_version() -> None:
         validate_alpha_version("1.0.0")
 
 
+def test_validate_alpha_version_rejects_malformed_zero_major_version() -> None:
+    with pytest.raises(ReleaseGuardError, match="semantic version"):
+        validate_alpha_version("0.not-semver")
+
+
 def test_main_validates_supplied_version(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--version", "v0.3.0"]) == 0
 

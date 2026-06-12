@@ -7,6 +7,7 @@ import tomllib
 from pathlib import Path
 
 _MODULE_VERSION_RE = re.compile(r'^__version__ = "([^"]+)"$', re.MULTILINE)
+_ALPHA_VERSION_RE = re.compile(r"0\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 
 
 class ReleaseGuardError(RuntimeError):
@@ -23,9 +24,10 @@ def _module_version(root: Path) -> str:
 
 def validate_alpha_version(version_text: str) -> str:
     version = version_text.strip().removeprefix("v")
-    if not version.startswith("0."):
+    if _ALPHA_VERSION_RE.fullmatch(version) is None:
         raise ReleaseGuardError(
-            f"alpha releases must stay on 0.x until a stable release is approved; found {version}"
+            f"alpha releases must stay on 0.x semantic versions until a stable release is "
+            f"approved; found {version}"
         )
     return version
 
