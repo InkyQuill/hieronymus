@@ -49,6 +49,7 @@ def test_workspace_records_short_term_memory(config: HieronymusConfig) -> None:
     assert memories[0].metadata == {
         "importance": 4,
         "sentence_count": 1,
+        "symbol_count": 36,
         "tags": ["term"],
     }
 
@@ -89,6 +90,7 @@ def test_short_term_memory_metadata_includes_validation_warning(
     memories = store.list_short_term_memories(session.id)
     assert memories[0].metadata == {
         "sentence_count": 7,
+        "symbol_count": 40,
         "tags": ["large"],
         "validation_warning": "short-term memory is large; prefer 1-6 sentences",
     }
@@ -150,6 +152,7 @@ def test_short_term_memory_strips_caller_validation_metadata_without_warning(
     assert memories[0].metadata == {
         "sentence_count": 1,
         "tags": ["small"],
+        "symbol_count": 15,
     }
 
 
@@ -176,6 +179,7 @@ def test_short_term_memory_strips_caller_symbol_count_metadata(
     assert memories[0].metadata == {
         "sentence_count": 1,
         "tags": ["small"],
+        "symbol_count": 15,
     }
 
 
