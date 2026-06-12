@@ -55,7 +55,27 @@ Acceptance:
 - Smoke tests are skipped cleanly when the environment cannot provide a PTY or
   Bun runtime.
 
-### 3. Daemon-Backed Command Path
+### 3. Management Interface Follow-Through
+
+The old Textual management TUI plan has been superseded by the React/OpenTUI
+admin interface and Python JSON-RPC bridge. Do not revive Textual snippets from
+that plan. Keep the admin backend as the source of truth and use the frontend
+only as a local client.
+
+Acceptance:
+
+- Admin mutations continue to go through `AdminStore`, existing domain stores,
+  migrations, and audited Python methods.
+- The frontend does not write SQLite directly, parse human CLI output, or
+  duplicate migration/domain mutation logic.
+- Command-palette entries stay aligned with implemented bridge methods, with
+  tests covering commands that mutate concepts, renderings, crystals,
+  short-term memories, dreaming runs, and config.
+- Detail panes remain useful for dense inspection: fields, readable prose,
+  JSON, diffs, provenance, recall reasons, and dream/audit output should render
+  without requiring the user to leave the admin interface.
+
+### 4. Daemon-Backed Command Path
 
 The service toolkit still notes that some commands access storage directly.
 Move agent-facing command/adaptor paths toward service discovery where that
@@ -68,7 +88,7 @@ Acceptance:
   client with clear fallback behavior when the daemon is unavailable.
 - Preserve local-first operation and existing `--data-root` behavior.
 
-### 4. Deferred Agent Integrations
+### 5. Deferred Agent Integrations
 
 Several agent integration targets remain reserved or stubbed.
 
@@ -79,7 +99,7 @@ Acceptance:
 - Keep reserved targets explicit when no host protocol is implemented.
 - Add install/update tests for every integration that writes host configuration.
 
-### 5. Provider-Backed Dreaming Smoke
+### 6. Provider-Backed Dreaming Smoke
 
 The deterministic and parser paths are well covered. Remote/provider-backed
 phase behavior still needs targeted smoke coverage before enabling more

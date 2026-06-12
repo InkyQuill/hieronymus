@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+EXPECTED_RELEASE_BUN_VERSION = "1.3.14"
 
 
 def _workflow_lines() -> list[str]:
@@ -34,6 +35,25 @@ def _block_after(lines: list[str], start: int) -> list[str]:
 def _step_block(lines: list[str], uses_or_run_line: str) -> list[str]:
     step_start = _find_line(lines, uses_or_run_line)
     return [lines[step_start], *_block_after(lines, step_start)]
+
+
+def _step_blocks(lines: list[str]) -> list[list[str]]:
+    return [
+        [line, *_block_after(lines, index)]
+        for index, line in enumerate(lines)
+        if line.startswith("      - ")
+    ]
+
+
+def _step_value(step: list[str], key: str) -> str | None:
+    prefix = f"{key}: "
+    for line in step:
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped.removeprefix(prefix)
+        if stripped.startswith(f"- {prefix}"):
+            return stripped.removeprefix(f"- {prefix}")
+    return None
 
 
 def test_release_workflow_serializes_main_releases() -> None:
@@ -104,8 +124,22 @@ def test_release_workflow_release_job_publishes_after_verification() -> None:
         assert "        env:" in step
         assert "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in step
 
-    assert "      # oven-sh/setup-bun v2" in release
-    assert "      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6" in release
+    steps = _step_blocks(release)
+    bun_step = next(
+        (
+            step
+            for step in steps
+            if "setup-bun" in (_step_value(step, "uses") or "").lower()
+            or "setup-bun" in (_step_value(step, "name") or "").lower()
+        ),
+        None,
+    )
+    assert bun_step is not None
+    bun_uses = _step_value(bun_step, "uses")
+    assert bun_uses is not None
+    assert bun_uses.startswith("oven-sh/setup-bun@")
+    assert len(bun_uses.rsplit("@", maxsplit=1)[1]) == 40
+    assert _step_value(bun_step, "bun-version") == f'"{EXPECTED_RELEASE_BUN_VERSION}"'
 
 
 def test_pyproject_configures_semantic_release() -> None:
