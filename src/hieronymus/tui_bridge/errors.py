@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from hieronymus.secrets import redact_configured_secret_values
-from hieronymus.settings import HieronymusSettings, SettingsError
+from hieronymus.dream_config import DreamConfig
+from hieronymus.settings import SettingsError
 from hieronymus.tui_bridge.protocol import RpcError
 
 
@@ -16,7 +19,8 @@ def error_code(error: Exception) -> str:
 def display_message(
     error: Exception,
     *,
-    settings: HieronymusSettings | None = None,
+    dream_config: DreamConfig | None = None,
+    redact: Callable[[str], str] | None = None,
 ) -> str:
     if isinstance(error, RpcError):
         message = error.message
@@ -26,17 +30,20 @@ def display_message(
         message = str(error)
     else:
         message = "Unexpected backend error"
-    if settings is not None:
-        return redact_configured_secret_values(message, settings)
+    if redact is not None:
+        return redact(message)
+    if dream_config is not None:
+        return redact_configured_secret_values(message, dream_config)
     return message
 
 
 def error_payload(
     error: Exception,
     *,
-    settings: HieronymusSettings | None = None,
+    dream_config: DreamConfig | None = None,
+    redact: Callable[[str], str] | None = None,
 ) -> dict[str, str]:
     return {
         "code": error_code(error),
-        "message": display_message(error, settings=settings),
+        "message": display_message(error, dream_config=dream_config, redact=redact),
     }

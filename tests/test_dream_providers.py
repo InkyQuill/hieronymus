@@ -8,7 +8,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import ProviderProfile, default_dream_config, save_dream_config
+from hieronymus.dream_config import (
+    ProviderProfile,
+    WorkflowProfile,
+    default_dream_config,
+    save_dream_config,
+)
 from hieronymus.dream_providers import (
     ANTHROPIC_API_VERSION,
     HTTPResponse,
@@ -47,6 +52,24 @@ class FakeTransport:
         return self.response
 
 
+def _save_provider_profile(
+    config: HieronymusConfig,
+    name: str,
+    profile: ProviderProfile,
+    *,
+    model: str = "model",
+) -> None:
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider(name, profile)
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider=name, model=model, enabled=True),
+        ),
+    )
+
+
 def test_registry_lists_real_providers() -> None:
     registry = ProviderRegistry()
 
@@ -60,112 +83,114 @@ def test_registry_lists_real_providers() -> None:
     assert openai.display_name == "OpenAI compatible"
 
 
-def test_provider_status_marks_missing_env_for_enabled_provider(tmp_path, monkeypatch) -> None:
+def test_provider_status_uses_dream_config_profiles(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = load_settings(config).with_provider(
-        "openai",
-        ProviderSettings(
-            enabled=True,
-            model="gpt-4.1-mini",
-            api_key_env="MISSING_OPENAI_KEY",
-            base_url="https://api.openai.com/v1",
+    save_dream_config(
+        config,
+        default_dream_config().with_provider(
+            "openai",
+            ProviderProfile(
+                type="openai",
+                endpoint="https://llm.example.test/v1",
+                api_key="",
+                timeout_seconds=12.5,
+            ),
         ),
     )
-    save_settings(config, settings)
-    monkeypatch.delenv("MISSING_OPENAI_KEY", raising=False)
 
     statuses = ProviderRegistry().status_payload(config)
 
     openai = next(item for item in statuses if item["name"] == "openai")
-    assert openai["enabled"] is True
     assert openai["configured"] is False
-    assert openai["error"] == "missing environment variable: MISSING_OPENAI_KEY"
+    assert openai["error"] == "API key missing for provider profile"
+    assert openai["base_url"] == "https://llm.example.test/v1"
+    assert openai["timeout_seconds"] == 12.5
+    assert "api_key_env" not in openai
 
 
 def test_provider_status_rejects_whitespace_model(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = load_settings(config).with_provider(
-        "openai",
-        ProviderSettings(
-            enabled=False,
-            model="   ",
-            api_key_env="OPENAI_API_KEY",
-            base_url="https://api.openai.com/v1",
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider("openai", ProviderProfile(type="openai", api_key="secret-openai"))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="   ", enabled=True),
         ),
     )
-    save_settings(config, settings)
 
     statuses = ProviderRegistry().status_payload(config)
 
     openai = next(item for item in statuses if item["name"] == "openai")
     assert openai["configured"] is False
-    assert openai["error"] == "model is empty"
+    assert openai["error"] == "model is empty for provider profile"
 
 
-def test_provider_status_rejects_whitespace_api_key_env(tmp_path) -> None:
+def test_provider_status_rejects_whitespace_api_key(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = load_settings(config).with_provider(
-        "openai",
-        ProviderSettings(
-            enabled=False,
-            model="gpt-4.1-mini",
-            api_key_env="   ",
-            base_url="https://api.openai.com/v1",
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider("openai", ProviderProfile(type="openai", api_key="   "))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )
-    save_settings(config, settings)
 
     statuses = ProviderRegistry().status_payload(config)
 
     openai = next(item for item in statuses if item["name"] == "openai")
     assert openai["configured"] is False
-    assert openai["error"] == "api_key_env is empty"
+    assert openai["error"] == "API key missing for provider profile"
 
 
-def test_provider_status_marks_empty_env_value_missing(tmp_path, monkeypatch) -> None:
+def test_provider_status_marks_empty_profile_key_missing(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = load_settings(config).with_provider(
-        "openai",
-        ProviderSettings(
-            enabled=True,
-            model="gpt-4.1-mini",
-            api_key_env="OPENAI_API_KEY",
-            base_url="https://api.openai.com/v1",
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider("openai", ProviderProfile(type="openai", api_key=""))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )
-    save_settings(config, settings)
-    monkeypatch.setenv("OPENAI_API_KEY", "")
 
     statuses = ProviderRegistry().status_payload(config)
 
     openai = next(item for item in statuses if item["name"] == "openai")
     assert openai["configured"] is False
-    assert openai["error"] == "missing environment variable: OPENAI_API_KEY"
+    assert openai["error"] == "API key missing for provider profile"
 
 
-def test_provider_status_reports_key_presence_without_key_value(config, monkeypatch):
-    monkeypatch.setenv("HIERONYMUS_OPENAI_TEST_KEY", "sk-live-secret-value")
-    settings = load_settings(config).with_provider(
-        "openai",
-        ProviderSettings(
-            enabled=True,
-            model="gpt-4.1-mini",
-            api_key_env="HIERONYMUS_OPENAI_TEST_KEY",
-            base_url="https://api.example.test/v1",
+def test_provider_status_reports_key_presence_without_key_value(config):
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider(
+            "openai",
+            ProviderProfile(
+                type="openai",
+                endpoint="https://api.example.test/v1",
+                api_key="sk-live-secret-value",
+            ),
+        )
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )
-    save_settings(config, settings)
 
     payload = ProviderRegistry().status_payload(config)
     openai = next(row for row in payload if row["name"] == "openai")
 
-    assert openai["api_key_env"] == "HIERONYMUS_OPENAI_TEST_KEY"
     assert openai["api_key_present"] is True
     assert "sk-live-secret-value" not in repr(payload)
 
 
-def test_provider_status_can_use_unsaved_in_memory_settings(config, monkeypatch):
-    monkeypatch.setenv("DRAFT_OPENAI_KEY", "draft-secret")
+def test_provider_status_ignores_unsaved_in_memory_settings(config):
     saved = load_settings(config)
     draft = saved.with_provider(
         "openai",
@@ -177,11 +202,27 @@ def test_provider_status_can_use_unsaved_in_memory_settings(config, monkeypatch)
             base_url="https://draft.example.test/v1",
         ),
     )
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider(
+            "openai",
+            ProviderProfile(
+                type="openai",
+                endpoint="https://dream.example.test/v1",
+                api_key="dream-secret",
+            ),
+        )
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="dream-model", enabled=True),
+        ),
+    )
 
     payload = ProviderRegistry().status_payload(config, settings=draft)
     openai = next(row for row in payload if row["name"] == "openai")
 
-    assert openai["model"] == "draft-model"
+    assert openai["model"] == "dream-model"
     assert openai["api_key_present"] is True
     assert load_settings(config).providers["openai"].model == "gpt-4.1-mini"
 
@@ -202,7 +243,7 @@ def test_urllib_transport_converts_url_error(monkeypatch) -> None:
     assert response == HTTPResponse(status=0, body="network error")
 
 
-def test_provider_check_uses_unsaved_in_memory_settings(config, monkeypatch):
+def test_provider_check_uses_plaintext_profile_key(config):
     class Transport:
         def __init__(self):
             self.calls = []
@@ -211,28 +252,33 @@ def test_provider_check_uses_unsaved_in_memory_settings(config, monkeypatch):
             self.calls.append((url, headers, payload, timeout))
             return type("Response", (), {"status": 200, "body": "{}"})()
 
-    monkeypatch.setenv("DRAFT_OPENAI_KEY", "draft-secret")
-    saved = load_settings(config)
-    draft = saved.with_provider(
-        "openai",
-        replace(
-            saved.providers["openai"],
-            enabled=True,
-            api_key_env="DRAFT_OPENAI_KEY",
-            model="draft-model",
-            base_url="https://draft.example.test/v1",
-            timeout_seconds=7.5,
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider(
+            "openai",
+            ProviderProfile(
+                type="openai",
+                endpoint="https://llm.example.test/v1",
+                api_key="secret-test-key",
+                timeout_seconds=12.5,
+            ),
+        )
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-profile", enabled=True),
         ),
     )
     transport = Transport()
 
-    result = ProviderRegistry(transport=transport).check(config, "openai", settings=draft)
+    result = ProviderRegistry(transport=transport).check(config, "openai")
 
     assert result.ok is True
-    assert result.model == "draft-model"
-    assert transport.calls[0][0] == "https://draft.example.test/v1/chat/completions"
-    assert transport.calls[0][3] == 7.5
-    assert "draft-secret" not in repr(result.to_json_dict())
+    assert result.model == "gpt-profile"
+    assert transport.calls[0][0] == "https://llm.example.test/v1/chat/completions"
+    assert transport.calls[0][1]["Authorization"] == "Bearer secret-test-key"
+    assert transport.calls[0][3] == 12.5
+    assert "secret-test-key" not in repr(result.to_json_dict())
 
 
 def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> None:
@@ -252,7 +298,15 @@ def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> 
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     settings = load_settings(config)
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key="secret-openai",
+        ),
+    )
     transport = Transport()
 
     result = ProviderRegistry(transport).list_model_suggestions(
@@ -325,7 +379,15 @@ def test_model_suggestions_use_fresh_cache_without_network(tmp_path, monkeypatch
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     settings = load_settings(config)
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key="secret-openai",
+        ),
+    )
 
     ProviderRegistry(PrimingTransport()).list_model_suggestions(
         config,
@@ -367,7 +429,11 @@ def test_model_suggestions_refresh_after_cached_error_resolves(
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     settings = load_settings(config)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(type="openai", endpoint="https://api.openai.com/v1", api_key=""),
+    )
     transport = Transport()
 
     first = ProviderRegistry(transport).list_model_suggestions(
@@ -375,14 +441,22 @@ def test_model_suggestions_refresh_after_cached_error_resolves(
         "openai",
         settings=settings,
     )
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key="secret-openai",
+        ),
+    )
     second = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
         settings=settings,
     )
 
-    assert first.error == "missing environment variable: OPENAI_API_KEY"
+    assert first.error == "API key missing for provider profile"
     assert second.to_json_dict() == {
         "provider": "openai",
         "models": ["fresh-after-error"],
@@ -412,7 +486,15 @@ def test_model_suggestions_return_api_result_when_cache_save_fails(
 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     settings = load_settings(config)
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key="secret-openai",
+        ),
+    )
     monkeypatch.setattr("hieronymus.dream_providers.save_model_cache", fail_save)
 
     result = ProviderRegistry(Transport()).list_model_suggestions(
@@ -456,7 +538,15 @@ def test_model_suggestions_refresh_and_save_stale_cache(tmp_path, monkeypatch) -
         ),
     )
     settings = load_settings(config)
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key="secret-openai",
+        ),
+    )
     transport = Transport()
 
     result = ProviderRegistry(transport).list_model_suggestions(
@@ -514,13 +604,30 @@ def test_model_suggestions_refresh_when_openai_base_url_changes(
             base_url="https://b.example.test/v1",
         ),
     )
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
     transport = Transport()
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://a.example.test/v1",
+            api_key="secret-openai",
+        ),
+    )
 
     first = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
         settings=settings_a,
+    )
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://b.example.test/v1",
+            api_key="secret-openai",
+        ),
     )
     result = ProviderRegistry(transport).list_model_suggestions(
         config,
@@ -574,14 +681,30 @@ def test_model_suggestions_refresh_when_openai_api_key_env_changes(
         "openai",
         replace(saved.providers["openai"], api_key_env="OPENAI_KEY_B"),
     )
-    monkeypatch.setenv("OPENAI_KEY_A", "secret-a")
-    monkeypatch.setenv("OPENAI_KEY_B", "secret-b")
     transport = Transport()
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key="secret-a",
+        ),
+    )
 
     first = ProviderRegistry(transport).list_model_suggestions(
         config,
         "openai",
         settings=settings_a,
+    )
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key="secret-b",
+        ),
     )
     result = ProviderRegistry(transport).list_model_suggestions(
         config,
@@ -635,14 +758,30 @@ def test_model_suggestions_refresh_when_gemini_api_key_env_changes(
         "gemini",
         replace(saved.providers["gemini"], api_key_env="GEMINI_KEY_B"),
     )
-    monkeypatch.setenv("GEMINI_KEY_A", "secret-a")
-    monkeypatch.setenv("GEMINI_KEY_B", "secret-b")
     transport = Transport()
+    _save_provider_profile(
+        config,
+        "gemini",
+        ProviderProfile(
+            type="gemini",
+            endpoint="https://generativelanguage.googleapis.com",
+            api_key="secret-a",
+        ),
+    )
 
     first = ProviderRegistry(transport).list_model_suggestions(
         config,
         "gemini",
         settings=settings_a,
+    )
+    _save_provider_profile(
+        config,
+        "gemini",
+        ProviderProfile(
+            type="gemini",
+            endpoint="https://generativelanguage.googleapis.com",
+            api_key="secret-b",
+        ),
     )
     result = ProviderRegistry(transport).list_model_suggestions(
         config,
@@ -706,58 +845,50 @@ def test_deterministic_check_passes_without_network(tmp_path) -> None:
     )
 
 
-def test_openai_check_uses_temporary_key_without_saving_secret(tmp_path) -> None:
+def test_openai_check_uses_plaintext_profile_key(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = load_settings(config).with_provider(
+    _save_provider_profile(
+        config,
         "openai",
-        ProviderSettings(
-            enabled=True,
-            model="gpt-4.1-mini",
-            api_key_env="OPENAI_API_KEY",
-            base_url="https://llm.example.test/v1",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://llm.example.test/v1",
+            api_key="secret-test-key",
             timeout_seconds=12.5,
         ),
+        model="gpt-4.1-mini",
     )
-    save_settings(config, settings)
     transport = FakeTransport(
         HTTPResponse(status=200, body=json.dumps({"id": "ok"})),
         [],
     )
 
-    result = ProviderRegistry(transport=transport).check(
-        config,
-        "openai",
-        temporary_api_key="secret-test-key",
-    )
+    result = ProviderRegistry(transport=transport).check(config, "openai")
 
     assert result.ok is True
     assert transport.requests[0]["url"] == "https://llm.example.test/v1/chat/completions"
     assert transport.requests[0]["headers"]["Authorization"] == "Bearer secret-test-key"
     assert transport.requests[0]["timeout"] == 12.5
-    assert "secret-test-key" not in config.settings_path.read_text(encoding="utf-8")
 
 
 def test_gemini_check_uses_api_key_header_without_url_secret(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = load_settings(config).with_provider(
+    _save_provider_profile(
+        config,
         "gemini",
-        ProviderSettings(
-            enabled=True,
-            model="gemini-2.5-flash",
-            api_key_env="GEMINI_API_KEY",
+        ProviderProfile(
+            type="gemini",
+            endpoint="https://generativelanguage.googleapis.com",
+            api_key="secret-gemini",
         ),
+        model="gemini-2.5-flash",
     )
-    save_settings(config, settings)
     transport = FakeTransport(
         HTTPResponse(status=200, body=json.dumps({"id": "ok"})),
         [],
     )
 
-    result = ProviderRegistry(transport=transport).check(
-        config,
-        "gemini",
-        temporary_api_key="secret-gemini",
-    )
+    result = ProviderRegistry(transport=transport).check(config, "gemini")
 
     assert result.ok is True
     assert (

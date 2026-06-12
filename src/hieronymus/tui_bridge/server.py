@@ -5,7 +5,8 @@ import sys
 from collections.abc import Callable
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.settings import HieronymusSettings, load_settings
+from hieronymus.dream_config import DreamConfigError, load_dream_config
+from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.tui_bridge.config_api import ConfigBridge
 from hieronymus.tui_bridge.errors import error_payload
@@ -26,12 +27,12 @@ def dispatch(config: HieronymusConfig, raw: dict[str, object]) -> dict[str, obje
         request = parse_request(json.dumps(normalized, ensure_ascii=False))
         return _dispatch_request(config, request)
     except RpcError as error:
-        return error_response(_request_id(normalized), error, settings=_settings_or_none(config))
+        return error_response(_request_id(normalized), error, redact=_redactor_or_none(config))
     except Exception as error:
         return {
             "id": _request_id(normalized),
             "ok": False,
-            "error": error_payload(error, settings=_settings_or_none(config)),
+            "error": error_payload(error, redact=_redactor_or_none(config)),
         }
 
 
@@ -101,13 +102,13 @@ def _dispatch_line(config: HieronymusConfig, line: str) -> dict[str, object]:
         return error_response(
             _request_id_from_line(line),
             error,
-            settings=_settings_or_none(config),
+            redact=_redactor_or_none(config),
         )
     except Exception as error:
         return {
             "id": _request_id_from_line(line),
             "ok": False,
-            "error": error_payload(error, settings=_settings_or_none(config)),
+            "error": error_payload(error, redact=_redactor_or_none(config)),
         }
 
 
@@ -115,14 +116,14 @@ def _dispatch_request(config: HieronymusConfig, request: RpcRequest) -> dict[str
     handler = _handlers(config).get(request.method)
     if handler is None:
         error = RpcError("method_not_found", f"unknown method: {request.method}")
-        return error_response(request.id, error, settings=_settings_or_none(config))
+        return error_response(request.id, error, redact=_redactor_or_none(config))
     try:
         return success_response(request.id, handler(request.params))
     except Exception as error:
         return {
             "id": request.id,
             "ok": False,
-            "error": error_payload(error, settings=_settings_or_none(config)),
+            "error": error_payload(error, redact=_redactor_or_none(config)),
         }
 
 
@@ -149,8 +150,9 @@ def _request_id_from_line(line: str) -> str | None:
     return _request_id(raw)
 
 
-def _settings_or_none(config: HieronymusConfig) -> HieronymusSettings | None:
+def _redactor_or_none(config: HieronymusConfig) -> Callable[[str], str] | None:
     try:
-        return load_settings(config)
-    except Exception:
+        dream_config = load_dream_config(config)
+    except (DreamConfigError, OSError):
         return None
+    return lambda text: redact_configured_secret_values(text, dream_config)

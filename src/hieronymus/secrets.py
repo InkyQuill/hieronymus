@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import os
 
-from hieronymus.settings import HieronymusSettings
+from hieronymus.dream_config import DreamConfig
 
 
-def configured_key_env_names(settings: HieronymusSettings) -> set[str]:
+def configured_secret_values(dream_config: DreamConfig) -> set[str]:
     return {
-        provider.api_key_env
-        for provider in settings.providers.values()
-        if provider.api_key_env.strip()
+        value
+        for provider in dream_config.providers.values()
+        if len(value := getattr(provider, "api_key", "").strip()) >= 4
     }
 
 
@@ -17,17 +17,8 @@ def env_value_exists(env_name: str) -> bool:
     return bool(env_name and os.environ.get(env_name))
 
 
-def redact_configured_secret_values(text: str, settings: HieronymusSettings) -> str:
+def redact_configured_secret_values(text: str, dream_config: DreamConfig) -> str:
     redacted = text
-    values = sorted(
-        (
-            value
-            for env_name in configured_key_env_names(settings)
-            if (value := os.environ.get(env_name)) and len(value) >= 4
-        ),
-        key=len,
-        reverse=True,
-    )
-    for value in values:
+    for value in sorted(configured_secret_values(dream_config), key=len, reverse=True):
         redacted = redacted.replace(value, "[redacted]")
     return redacted

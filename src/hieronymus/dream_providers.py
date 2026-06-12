@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import ProviderProfile, load_dream_config
+from hieronymus.dream_config import DreamConfig, ProviderProfile, load_dream_config
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
     DreamConceptProposal,
@@ -27,7 +27,6 @@ from hieronymus.llm_cache import (
     save_model_cache,
 )
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
-from hieronymus.secrets import env_value_exists
 from hieronymus.settings import HieronymusSettings, ProviderSettings, load_settings
 
 ANTHROPIC_API_VERSION = "2023-06-01"
@@ -196,22 +195,47 @@ class ProviderRegistry:
         *,
         settings: HieronymusSettings | None = None,
     ) -> list[dict[str, object]]:
-        active_settings = settings or load_settings(config)
+        del settings
+        dream_config = load_dream_config(config)
         statuses = []
         for metadata in self._providers:
-            provider = active_settings.providers.get(metadata.name, ProviderSettings())
-            configured, error = _configured_status(metadata.name, provider)
+            if metadata.name == "deterministic":
+                statuses.append(
+                    {
+                        "name": metadata.name,
+                        "display_name": metadata.display_name,
+                        "configured": True,
+                        "model": "",
+                        "api_key_present": False,
+                        "base_url": "",
+                        "timeout_seconds": 0.0,
+                        "error": "",
+                    }
+                )
+                continue
+            profile = dream_config.providers.get(metadata.name)
+            if profile is None:
+                configured = False
+                error = "provider profile missing"
+                model = ""
+                api_key_present = False
+                base_url = ""
+                timeout_seconds = 0.0
+            else:
+                model = _model_for_profile(dream_config, metadata.name)
+                api_key_present = bool(profile.api_key.strip())
+                configured, error = _configured_profile_status(metadata, profile, model)
+                base_url = profile.endpoint
+                timeout_seconds = profile.timeout_seconds
             statuses.append(
                 {
                     "name": metadata.name,
                     "display_name": metadata.display_name,
-                    "enabled": provider.enabled,
                     "configured": configured,
-                    "model": provider.model,
-                    "api_key_env": provider.api_key_env,
-                    "api_key_present": env_value_exists(provider.api_key_env),
-                    "base_url": provider.base_url,
-                    "timeout_seconds": provider.timeout_seconds,
+                    "model": model,
+                    "api_key_present": api_key_present,
+                    "base_url": base_url,
+                    "timeout_seconds": timeout_seconds,
                     "error": error,
                 }
             )
@@ -224,6 +248,7 @@ class ProviderRegistry:
         *,
         settings: HieronymusSettings | None = None,
     ) -> ModelSuggestionResult:
+        del settings
         self.metadata(name)
         if name == "deterministic":
             return ModelSuggestionResult(
@@ -232,45 +257,16 @@ class ProviderRegistry:
                 source="defaults",
             )
 
-        if name == "anthropic":
-            return self._list_static_cached_model_suggestions(config, name)
-
-        active_settings = settings or load_settings(config)
-        provider = active_settings.providers.get(name, ProviderSettings())
-        identity = model_cache_identity(name, provider)
-        cache = load_model_cache(config)
-        entry = cache.providers.get(name)
-        if (
-            entry is not None
-            and not entry.error
-            and entry.identity == identity
-            and not entry.is_stale()
-        ):
+        dream_config = load_dream_config(config)
+        profile = dream_config.providers.get(name)
+        if profile is None:
             return ModelSuggestionResult(
                 provider=name,
-                models=list(entry.models),
-                source=config.llm_cache_path.name,
-                error=entry.error,
+                models=_default_model_suggestions(name),
+                source="defaults",
+                error="provider profile missing",
             )
-
-        result = self._list_uncached_model_suggestions(
-            config,
-            name,
-            settings=active_settings,
-        )
-        _save_model_cache_best_effort(
-            config,
-            cache.with_entry(
-                ModelCacheEntry(
-                    provider=name,
-                    models=tuple(result.models),
-                    fetched_at=datetime.now(UTC).isoformat(),
-                    error=result.error,
-                    identity=identity,
-                )
-            ),
-        )
-        return result
+        return self.list_profile_model_suggestions(config, name, profile)
 
     def list_profile_model_suggestions(
         self,
@@ -389,7 +385,8 @@ class ProviderRegistry:
         defaults = _default_model_suggestions(profile.type)
         if profile.type in {"anthropic", "ollama"}:
             return ModelSuggestionResult(provider=profile_name, models=defaults, source="defaults")
-        if not profile.api_key.strip():
+        api_key = profile.api_key.strip()
+        if not api_key:
             return ModelSuggestionResult(
                 provider=profile_name,
                 models=defaults,
@@ -399,7 +396,7 @@ class ProviderRegistry:
 
         settings = _profile_provider_settings(profile, model=defaults[0])
         try:
-            response = self._list_remote_models(profile.type, settings, profile.api_key)
+            response = self._list_remote_models(profile.type, settings, api_key)
             if not 200 <= response.status < 300:
                 raise ValueError("model suggestions request failed")
             models = _parse_model_suggestions(profile.type, response.body)
@@ -422,48 +419,22 @@ class ProviderRegistry:
         *,
         settings: HieronymusSettings | None = None,
     ) -> ProviderCheckResult:
+        del temporary_api_key, settings
         self.metadata(name)
         if name == "deterministic":
             return ProviderCheckResult(name="deterministic", ok=True, model="")
 
-        active_settings = settings or load_settings(config)
-        provider = active_settings.providers.get(name, ProviderSettings())
-        key = temporary_api_key or os.environ.get(provider.api_key_env)
-        if not key:
+        dream_config = load_dream_config(config)
+        profile = dream_config.providers.get(name)
+        model = _model_for_profile(dream_config, name)
+        if profile is None:
             return ProviderCheckResult(
                 name=name,
                 ok=False,
-                model=provider.model,
-                error=f"missing environment variable: {provider.api_key_env}",
+                model=model,
+                error="provider profile missing",
             )
-
-        started = time.perf_counter()
-        try:
-            response = self._check_remote(name, provider, key)
-        except Exception:
-            latency_ms = round((time.perf_counter() - started) * 1000)
-            return ProviderCheckResult(
-                name=name,
-                ok=False,
-                model=provider.model,
-                error="provider check failed",
-                latency_ms=latency_ms,
-            )
-        latency_ms = round((time.perf_counter() - started) * 1000)
-        if 200 <= response.status < 300:
-            return ProviderCheckResult(
-                name=name,
-                ok=True,
-                model=provider.model,
-                latency_ms=latency_ms,
-            )
-        return ProviderCheckResult(
-            name=name,
-            ok=False,
-            model=provider.model,
-            error=f"provider returned HTTP {response.status}",
-            latency_ms=latency_ms,
-        )
+        return self.check_profile(config, name, profile, model=model)
 
     def check_profile(
         self,
@@ -483,7 +454,8 @@ class ProviderRegistry:
             )
             self._cache_profile_check_failure(config, profile_name, profile, result)
             return result
-        if profile.type != "ollama" and not profile.api_key.strip():
+        api_key = profile.api_key.strip()
+        if profile.type != "ollama" and not api_key:
             result = ProviderCheckResult(
                 name=profile_name,
                 ok=False,
@@ -496,7 +468,7 @@ class ProviderRegistry:
         settings = _profile_provider_settings(profile, resolved_model)
         started = time.perf_counter()
         try:
-            response = self._check_profile_remote(profile, settings)
+            response = self._check_profile_remote(profile, settings, api_key=api_key)
         except Exception:
             latency_ms = round((time.perf_counter() - started) * 1000)
             result = ProviderCheckResult(
@@ -555,12 +527,14 @@ class ProviderRegistry:
         self,
         profile: ProviderProfile,
         provider: ProviderSettings,
+        *,
+        api_key: str,
     ) -> HTTPResponse:
         if profile.type in {"openai", "gemini", "anthropic"}:
-            return self._check_remote(profile.type, provider, profile.api_key)
+            return self._check_remote(profile.type, provider, api_key)
         if profile.type == "ollama":
             if _is_openai_compatible_ollama_endpoint(profile.endpoint):
-                return self._check_remote("openai", provider, profile.api_key or "ollama")
+                return self._check_remote("openai", provider, api_key or "ollama")
             base_url = (provider.base_url or "http://localhost:11434").rstrip("/")
             return self._transport.post_json(
                 f"{base_url}/api/chat",
@@ -1091,33 +1065,34 @@ def _provider_from_profile(
     transport: HTTPTransport | None = None,
 ) -> DreamProvider:
     resolved_model = model.strip()
+    api_key = profile.api_key.strip()
     if not resolved_model:
         raise ValueError(f"model must not be empty for provider profile: {profile_name}")
-    if profile.type != "ollama" and not profile.api_key.strip():
+    if profile.type != "ollama" and not api_key:
         raise ValueError(f"API key missing for provider profile: {profile_name}")
 
     active_transport = transport or UrllibTransport()
     settings = _profile_provider_settings(profile, resolved_model)
     if profile.type == "openai":
-        return OpenAIDreamProvider(settings, profile.api_key, active_transport)
+        return OpenAIDreamProvider(settings, api_key, active_transport)
     if profile.type == "gemini":
         return GeminiDreamProvider(
             settings,
-            profile.api_key,
+            api_key,
             active_transport,
             base_url=settings.base_url,
         )
     if profile.type == "anthropic":
         return AnthropicDreamProvider(
             settings,
-            profile.api_key,
+            api_key,
             active_transport,
             base_url=settings.base_url,
         )
     if profile.type == "ollama":
         if _is_openai_compatible_ollama_endpoint(profile.endpoint):
             return OpenAIDreamProvider(
-                settings, profile.api_key or "ollama", active_transport, name="ollama"
+                settings, api_key or "ollama", active_transport, name="ollama"
             )
         return OllamaDreamProvider(settings, active_transport)
     raise ValueError(f"unsupported provider type for {profile_name}: {profile.type}")
@@ -1179,13 +1154,23 @@ def resolve_provider(
     raise ValueError(f"unsupported dream provider: {provider_name}")
 
 
-def _configured_status(name: str, provider: ProviderSettings) -> tuple[bool, str]:
-    if name == "deterministic":
-        return True, ""
-    if not provider.model.strip():
-        return False, "model is empty"
-    if not provider.api_key_env.strip():
-        return False, "api_key_env is empty"
-    if provider.enabled and not env_value_exists(provider.api_key_env):
-        return False, f"missing environment variable: {provider.api_key_env}"
+def _configured_profile_status(
+    metadata: ProviderMetadata,
+    profile: ProviderProfile,
+    model: str,
+) -> tuple[bool, str]:
+    if metadata.requires_api_key and not profile.api_key.strip():
+        return False, "API key missing for provider profile"
+    if not model.strip():
+        return False, "model is empty for provider profile"
     return True, ""
+
+
+def _model_for_profile(dream_config: DreamConfig, profile_name: str) -> str:
+    for workflow in dream_config.workflows.values():
+        if workflow.enabled and workflow.provider == profile_name and workflow.model.strip():
+            return workflow.model
+    for workflow in dream_config.workflows.values():
+        if workflow.provider == profile_name and workflow.model.strip():
+            return workflow.model
+    return ""
