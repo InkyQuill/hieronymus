@@ -92,6 +92,14 @@ class ConfigBridge:
         release_config, release_error = self._release_from_params(params)
         selected = self._selected_provider(params, dream_config)
         dream_config = self._select_provider(dream_config, selected)
+        if errors := _canonical_draft_errors(params):
+            return self._payload(
+                dream_config,
+                ingest_config,
+                selected,
+                release_config,
+                validation_errors=errors,
+            )
         try:
             dream_config = self._apply_provider_form(
                 dream_config,
@@ -157,7 +165,9 @@ class ConfigBridge:
         release_config, release_error = self._release_from_params(params)
         selected = self._selected_provider(params, dream_config)
         dream_config = self._select_provider(dream_config, selected)
-        errors = self._validation_errors(params, dream_config, ingest_config, release_config)
+        errors = _canonical_draft_errors(params)
+        if not errors:
+            errors = self._validation_errors(params, dream_config, ingest_config, release_config)
         errors = [*errors, *_load_errors(dream_error, ingest_error, release_error)]
         if errors:
             return self._payload(
@@ -215,7 +225,9 @@ class ConfigBridge:
         release_config, release_error = self._release_from_params(params)
         selected = self._selected_provider(params, dream_config)
         dream_config = self._select_provider(dream_config, selected)
-        errors = self._validation_errors(params, dream_config, ingest_config, release_config)
+        errors = _canonical_draft_errors(params)
+        if not errors:
+            errors = self._validation_errors(params, dream_config, ingest_config, release_config)
         errors = [*errors, *_load_errors(dream_error, ingest_error, release_error)]
         if errors:
             return self._payload(

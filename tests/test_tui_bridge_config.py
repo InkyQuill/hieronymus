@@ -155,6 +155,49 @@ def test_config_save_rejects_legacy_partial_draft(tmp_path: Path) -> None:
     }
 
 
+def test_config_update_draft_rejects_legacy_partial_draft(tmp_path: Path) -> None:
+    payload = ConfigBridge(_config(tmp_path)).update_draft(
+        {"draft": {"dreaming": {"active_provider": "openai"}, "providers": {}}}
+    )
+
+    assert payload["validation"] == {
+        "ok": False,
+        "errors": ["draft must include dream, ingest, and release"],
+    }
+
+
+def test_config_check_provider_rejects_legacy_partial_draft(tmp_path: Path) -> None:
+    class Registry:
+        def check_profile(self, *args, **kwargs):
+            raise AssertionError("invalid draft should not reach provider check")
+
+    payload = ConfigBridge(_config(tmp_path), registry=Registry()).check_provider(
+        {"draft": {"dreaming": {"active_provider": "openai"}, "providers": {}}}
+    )
+
+    assert payload["validation"] == {
+        "ok": False,
+        "errors": ["draft must include dream, ingest, and release"],
+    }
+    assert payload["check_result"] == {}
+
+
+def test_config_model_suggestions_rejects_legacy_partial_draft(tmp_path: Path) -> None:
+    class Registry:
+        def list_profile_model_suggestions(self, *args, **kwargs):
+            raise AssertionError("invalid draft should not reach model suggestions")
+
+    payload = ConfigBridge(_config(tmp_path), registry=Registry()).model_suggestions(
+        {"draft": {"dreaming": {"active_provider": "openai"}, "providers": {}}}
+    )
+
+    assert payload["validation"] == {
+        "ok": False,
+        "errors": ["draft must include dream, ingest, and release"],
+    }
+    assert payload["suggestions"] == {}
+
+
 def test_config_bootstrap_survives_malformed_dream_config(tmp_path: Path) -> None:
     config = _config(tmp_path)
     config.config_root.mkdir(parents=True)
@@ -591,7 +634,7 @@ def test_config_check_provider_returns_validation_for_malformed_providers_contai
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["providers must be a table"],
+        "errors": ["draft must include dream, ingest, and release"],
     }
     assert payload["check_result"] == {}
 
@@ -637,7 +680,7 @@ def test_config_model_suggestions_returns_validation_for_malformed_dreaming_cont
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["dreaming must be a table"],
+        "errors": ["draft must include dream, ingest, and release"],
     }
     assert payload["suggestions"] == {}
 
