@@ -8,7 +8,7 @@ from typing import Any
 from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
-from hieronymus.dream_config import load_dream_config
+from hieronymus.dream_config import DreamConfig, load_dream_config
 from hieronymus.dream_locks import read_dream_cycle_state
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamService
@@ -240,11 +240,11 @@ class DreamAutostart:
         return state.last_started_at
 
 
-def _active_provider(dream_config) -> str:
+def _active_provider(dream_config: DreamConfig) -> str:
     if not dream_config.enabled:
         return "deterministic"
     workflow = dream_config.workflows.get("crystallization")
-    if workflow is not None:
+    if workflow is not None and workflow.enabled:
         return workflow.provider
     for workflow in dream_config.workflows.values():
         if workflow.enabled:

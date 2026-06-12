@@ -134,9 +134,17 @@ export const AdminBootstrapSchema = z.object({
   config_editor: AdminConfigEditorSchema,
 });
 
+export const ConfigPathsSchema = z
+  .object({
+    dream_config_path: z.string(),
+    ingest_config_path: z.string(),
+    release_config_path: z.string(),
+  })
+  .passthrough();
+
 export const ConfigBootstrapSchema = z
   .object({
-    config_paths: z.record(z.string()),
+    config_paths: ConfigPathsSchema,
     provider_choices: z.array(
       z
         .object({

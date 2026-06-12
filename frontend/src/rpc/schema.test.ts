@@ -27,6 +27,16 @@ function configDraft(provider: string = "openai") {
   };
 }
 
+function configPaths() {
+  return {
+    data_root: "/tmp/hieronymus",
+    config_root: "/tmp/hieronymus/config",
+    dream_config_path: "/tmp/hieronymus/config/dream.conf",
+    ingest_config_path: "/tmp/hieronymus/config/ingest.conf",
+    release_config_path: "/tmp/hieronymus/config/release.conf",
+  };
+}
+
 describe("runtime schemas", () => {
   it.each([
     ["openai", "OpenAI compatible"],
@@ -36,11 +46,7 @@ describe("runtime schemas", () => {
     "parses config bootstrap payload for %s provider selector",
     (provider, displayName) => {
       const payload = ConfigBootstrapSchema.parse({
-        config_paths: {
-          config_root: "/tmp/h",
-          settings_path: "/tmp/h/settings.toml",
-          database_path: "/tmp/h/hieronymus.sqlite3",
-        },
+        config_paths: configPaths(),
         provider_choices: [
           {
             name: provider,
@@ -75,7 +81,9 @@ describe("runtime schemas", () => {
       config_paths: {
         data_root: "/tmp/hieronymus",
         config_root: "/tmp/hieronymus/config",
-        settings_path: "/tmp/hieronymus/config/settings.toml",
+        dream_config_path: "/tmp/hieronymus/config/dream.conf",
+        ingest_config_path: "/tmp/hieronymus/config/ingest.conf",
+        release_config_path: "/tmp/hieronymus/config/release.conf",
       },
       provider_choices: [
         {
@@ -113,9 +121,7 @@ describe("runtime schemas", () => {
 
   it("accepts an empty config detail payload", () => {
     const payload = ConfigBootstrapSchema.parse({
-      config_paths: {
-        settings_path: "/tmp/hieronymus/config/settings.toml",
-      },
+      config_paths: configPaths(),
       provider_choices: [
         {
           display_name: "OpenAI compatible",
@@ -137,9 +143,7 @@ describe("runtime schemas", () => {
 
   it("defaults missing model suggestions to an empty payload", () => {
     const payload = ConfigBootstrapSchema.parse({
-      config_paths: {
-        settings_path: "/tmp/hieronymus/config/settings.toml",
-      },
+      config_paths: configPaths(),
       provider_choices: [
         {
           display_name: "OpenAI compatible",
@@ -168,9 +172,7 @@ describe("runtime schemas", () => {
   it("requires real config draft sections", () => {
     expect(() =>
       ConfigBootstrapSchema.parse({
-        config_paths: {
-          settings_path: "/tmp/hieronymus/config/settings.toml",
-        },
+        config_paths: configPaths(),
         provider_choices: [
           {
             display_name: "OpenAI compatible",
@@ -190,9 +192,7 @@ describe("runtime schemas", () => {
 
   it("parses present ingest config payloads with numeric passthrough fields", () => {
     const payload = ConfigBootstrapSchema.parse({
-      config_paths: {
-        settings_path: "/tmp/hieronymus/config/settings.toml",
-      },
+      config_paths: configPaths(),
       provider_choices: [
         {
           display_name: "OpenAI compatible",
@@ -224,7 +224,7 @@ describe("runtime schemas", () => {
   it("rejects config provider choices outside supported families", () => {
     expect(() =>
       ConfigBootstrapSchema.parse({
-        config_paths: {},
+        config_paths: configPaths(),
         provider_choices: [
           {
             name: "deterministic",

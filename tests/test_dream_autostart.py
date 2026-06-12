@@ -14,7 +14,7 @@ from hieronymus.dream_autostart import (
     load_autostart_state,
     save_autostart_state,
 )
-from hieronymus.dream_config import default_dream_config, save_dream_config
+from hieronymus.dream_config import WorkflowProfile, default_dream_config, save_dream_config
 from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
@@ -116,6 +116,22 @@ def test_status_counts_pending_short_term_memories_and_completed_sessions(
     assert status["not_enough_memories_cycle_threshold"] == 5
     assert status["pending_completed_sessions"] == 1
     assert status["pending_short_term_memories"] == 2
+
+
+def test_status_reports_enabled_workflow_when_crystallization_is_disabled(
+    config: HieronymusConfig,
+) -> None:
+    save_dream_config(
+        config,
+        replace(default_dream_config(), enabled=True).with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="anthropic", model="claude-sonnet-4-6", enabled=False),
+        ),
+    )
+
+    status = DreamAutostart(config).status()
+
+    assert status["active_provider"] == "ollama"
 
 
 def test_urgent_trigger_runs_when_max_pending_is_reached(config: HieronymusConfig) -> None:

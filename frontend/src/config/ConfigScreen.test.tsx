@@ -9,7 +9,8 @@ import type { ConfigBootstrap, ProviderName } from "../rpc/schema.js";
 function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
   return {
     config_paths: {
-      settings_path: "/tmp/settings.toml",
+      dream_config_path: "/tmp/dream.conf",
+      ingest_config_path: "/tmp/ingest.conf",
       release_config_path: "/tmp/release.conf",
     },
     provider_choices: [
