@@ -314,7 +314,7 @@ wheels = [
 
 [[package]]
 name = "hieronymus"
-version = "1.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
