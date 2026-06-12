@@ -74,6 +74,8 @@ def test_status_payload_reports_admin_counts(config: HieronymusConfig) -> None:
     assert payload["counts"]["short_term_memories"] == 1
     assert payload["counts"]["sessions"] == 1
     assert payload["counts"]["pending_proposals"] == 0
+    assert payload["header"]["version"].endswith("α")
+    assert payload["header"]["version"].startswith("v0.")
     assert payload["service"]["running"] is False
     assert payload["short_term_status"]["pending_count"] == 0
     assert payload["short_term_status"]["urgent"] is False

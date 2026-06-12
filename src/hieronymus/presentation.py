@@ -17,9 +17,19 @@ def package_version() -> str:
         return "0.1.0"
 
 
+def display_version(raw_version: str) -> str:
+    if raw_version.startswith("0."):
+        return f"v{raw_version}α"
+    return f"v{raw_version}"
+
+
+def package_display_version() -> str:
+    return display_version(package_version())
+
+
 def render_greeting(app_version: str | None = None) -> str:
     resolved_version = app_version if app_version is not None else package_version()
-    return f"{GREETING_ICON} Hieronymus v{resolved_version}\n{TAGLINE}"
+    return f"{GREETING_ICON} Hieronymus {display_version(resolved_version)}\n{TAGLINE}"
 
 
 def render_json(payload: dict[str, Any] | list[Any]) -> str:

@@ -20,7 +20,7 @@ from hieronymus.dreaming import DreamService
 from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import CrystalRecord, ShortTermMemoryRecord, TranslationContext
-from hieronymus.presentation import GUIDE_ICON, render_greeting, render_json
+from hieronymus.presentation import GUIDE_ICON, display_version, render_greeting, render_json
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.release import check_update, run_update
@@ -354,15 +354,25 @@ def update_command(check_only: bool, as_json: bool, target: str) -> None:
     click.echo()
     if before_status is not None and before_status.update_available and not status.update_available:
         click.echo(
-            f"Updated Hieronymus: {before_status.current_version} -> {status.current_version}"
+            "Updated Hieronymus: "
+            f"{display_version(before_status.current_version)} -> "
+            f"{display_version(status.current_version)}"
         )
     elif status.update_available:
         update_target = status.latest_version or status.latest_tag or "unknown"
-        click.echo(f"Update available: {status.current_version} -> {update_target}")
+        display_update_target = (
+            display_version(status.latest_version)
+            if status.latest_version is not None
+            else update_target
+        )
+        click.echo(
+            f"Update available: {display_version(status.current_version)} -> "
+            f"{display_update_target}"
+        )
     elif check_only:
-        click.echo(f"No update available: {status.current_version}")
+        click.echo(f"No update available: {display_version(status.current_version)}")
     else:
-        click.echo(f"Hieronymus is up to date: {status.current_version}")
+        click.echo(f"Hieronymus is up to date: {display_version(status.current_version)}")
     click.echo(f"managed checkout: {status.managed_checkout}")
 
 

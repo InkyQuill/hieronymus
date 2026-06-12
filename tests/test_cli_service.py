@@ -36,10 +36,10 @@ class CliUpdateStatus:
         }
 
 
-def test_render_greeting_contains_identity_and_tagline() -> None:
-    rendered = render_greeting("0.1.0")
+def test_render_greeting_formats_prerelease_identity_for_humans() -> None:
+    rendered = render_greeting("0.2.0")
 
-    assert rendered == f"{GREETING_ICON} Hieronymus v0.1.0\nRemembers things for you."
+    assert rendered == f"{GREETING_ICON} Hieronymus v0.2.0α\nRemembers things for you."
 
 
 def test_hiero_console_alias_runs_existing_command(tmp_path: Path) -> None:
@@ -410,7 +410,7 @@ def test_update_human_runs_update_and_prints_up_to_date(tmp_path: Path) -> None:
     assert result.exit_code == 0
     check_update.assert_called_once_with(target="latest")
     run_update.assert_not_called()
-    assert "Hieronymus is up to date: 0.2.0" in result.output
+    assert "Hieronymus is up to date: v0.2.0α" in result.output
     assert "managed checkout: /tmp/hieronymus-managed" in result.output
 
 
@@ -424,7 +424,7 @@ def test_update_check_human_prints_no_update_available(tmp_path: Path) -> None:
         )
 
     assert result.exit_code == 0
-    assert "No update available: 0.2.0" in result.output
+    assert "No update available: v0.2.0α" in result.output
     assert "Hieronymus is up to date" not in result.output
 
 
@@ -438,7 +438,7 @@ def test_update_check_human_prints_update_available(tmp_path: Path) -> None:
         )
 
     assert result.exit_code == 0
-    assert "Update available: 0.1.0 -> 0.2.0" in result.output
+    assert "Update available: v0.1.0α -> v0.2.0α" in result.output
     assert "Updated Hieronymus" not in result.output
 
 
@@ -463,7 +463,7 @@ def test_update_human_prints_updated_after_applied_update(tmp_path: Path) -> Non
     assert result.exit_code == 0
     check_update.assert_called_once_with(target="latest")
     run_update.assert_called_once_with(target="latest")
-    assert "Updated Hieronymus: 0.1.0 -> 0.2.0" in result.output
+    assert "Updated Hieronymus: v0.1.0α -> v0.2.0α" in result.output
     assert "Update available" not in result.output
 
 
@@ -491,7 +491,7 @@ def test_update_human_prints_available_if_update_remains_available(tmp_path: Pat
         )
 
     assert result.exit_code == 0
-    assert "Update available: 0.1.0 -> 0.2.0" in result.output
+    assert "Update available: v0.1.0α -> v0.2.0α" in result.output
     assert "Updated Hieronymus" not in result.output
 
 
