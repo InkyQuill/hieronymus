@@ -88,16 +88,14 @@ For machine-readable status, use:
 hiero config --json
 ```
 
-The config interface is the local configuration editor. Today it exposes the
-primary dreaming config from `dream.conf`: schedule/minimum/urgent thresholds,
-named provider profiles, workflow-to-provider/model assignments, cached model
-suggestions from `llmcache.tmp`, and dreaming prompts. Provider profiles store
-their endpoint, model hints, and API key directly in `dream.conf`; the file is
-plain text local configuration. Future configuration files, beginning with
-`ingest.conf`, should be edited from the same surface.
+The config interface edits local plaintext config files: `dream.conf` for
+dreaming providers, workflows, prompts, thresholds, caps, and API keys;
+`ingest.conf` for memory ingestion limits; and `release.conf` for update
+channel selection. JSON output, logs, provider checks, doctor output, and dream
+audit payloads redact configured provider API keys.
 
-Edits stay in memory until saved. Reload discards unsaved edits and reads
-`dream.conf` again. Provider checks use the edited profile, refresh model
+Edits stay in memory until saved. Reload discards unsaved edits and reads the
+local config files again. Provider checks use the edited profile, refresh model
 suggestions where the provider supports model listing, and update
 `llmcache.tmp`.
 

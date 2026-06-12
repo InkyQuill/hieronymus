@@ -73,7 +73,8 @@ bundle the `hieronymus/frontend/dist/main.js` artifact automatically.
 
 Command summary:
 
-- `hiero config` edits dream provider and autostart settings in a local TUI.
+- `hiero config` edits local `dream.conf`, `ingest.conf`, and `release.conf`
+  settings in a local TUI.
 - `hiero config --json` prints secret-safe provider and dreaming status for
   automation.
 - `hiero dream --wait` waits for an active dream cycle instead of failing fast.

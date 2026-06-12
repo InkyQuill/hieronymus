@@ -22,18 +22,20 @@ Current baseline:
 - `ingest.conf` is the global data-root configuration file for ingestion policy,
   including direct short-term memory warning/rejection thresholds and
   Learn-style block splitting limits.
+- Short-term memory ingestion supports separate sentence and symbol warning and
+  rejection thresholds, with symbol thresholds disabled by default.
+- Invalid configured provider workflows are rejected instead of silently falling
+  back to deterministic dreaming.
+- Provider-backed crystallization audit coverage verifies provider request and
+  response summaries, parse warnings, selected memory IDs, and affected memory
+  set payloads.
 
 Remaining work:
 
-- Add explicit symbol/character thresholds for short-term memory entries with
-  separate warning and rejection stages.
-- Keep deterministic fallback explicit. It must not silently replace invalid
-  configured provider workflows in scheduled, urgent, or admin-triggered
-  dreaming.
 - Add provider-backed dreaming smoke coverage that exercises multi-phase
   provider payloads through crystallization and maintenance paths.
-- Verify dream audit records include provider request and response payloads,
-  affected memory set summaries, parse warnings, and maintenance decisions.
+- Extend dream audit coverage to maintenance decisions and multi-phase provider
+  runs.
 
 ### MCP And Agent Integrations
 
@@ -72,8 +74,8 @@ completeness, not another framework migration.
 
 Remaining work:
 
-- Make `hiero config` a general local configuration editor for `dream.conf`,
-  `ingest.conf`, and future configuration files.
+- Extend `hiero config` beyond the current `dream.conf`, `ingest.conf`, and
+  `release.conf` editor as future configuration files are added.
 - Move config field labels, hints, grouping, defaults, field types, redaction
   behavior, and validation errors into Python-owned config schema payloads. The
   frontend should render those contracts rather than duplicating config
