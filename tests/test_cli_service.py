@@ -10,7 +10,7 @@ from click.testing import CliRunner
 
 from hieronymus.cli import main
 from hieronymus.config import load_config
-from hieronymus.presentation import GREETING_ICON, render_greeting
+from hieronymus.presentation import GREETING_ICON, display_version, render_greeting
 from hieronymus.settings import DreamingSettings, load_settings, save_settings
 
 
@@ -40,6 +40,14 @@ def test_render_greeting_formats_prerelease_identity_for_humans() -> None:
     rendered = render_greeting("0.2.0")
 
     assert rendered == f"{GREETING_ICON} Hieronymus v0.2.0α\nRemembers things for you."
+
+
+def test_display_version_marks_zero_major_versions_as_alpha() -> None:
+    assert display_version("0.2.0") == "v0.2.0α"
+
+
+def test_display_version_leaves_stable_versions_without_alpha() -> None:
+    assert display_version("1.0.0") == "v1.0.0"
 
 
 def test_hiero_console_alias_runs_existing_command(tmp_path: Path) -> None:
