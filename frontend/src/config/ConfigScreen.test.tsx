@@ -51,7 +51,8 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
       provider: {
         model:
           selectedProvider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
-        api_key: selectedProvider === "gemini" ? "gemini-secret" : "openai-secret",
+        api_key:
+          selectedProvider === "gemini" ? "gemini-secret" : "openai-secret",
         api_path:
           selectedProvider === "openai" ? "https://api.openai.com/v1" : "",
         timeout_seconds: "30",

@@ -238,7 +238,10 @@ class ConfigBridge:
                 validation_errors=errors,
             )
         profile_context = self._dream_profile_context(dream_config, selected)
-        if profile_context is not None:
+        if profile_context is not None and hasattr(
+            self.registry,
+            "list_profile_model_suggestions",
+        ):
             profile, _ = profile_context
             result = self.registry.list_profile_model_suggestions(self.config, selected, profile)
             suggestions = _result_to_json_dict(result)

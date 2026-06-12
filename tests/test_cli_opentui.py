@@ -21,7 +21,7 @@ def test_bridge_dispatch_config_bootstrap(tmp_path) -> None:
 
     assert response["id"] == "1"
     assert response["ok"] is True
-    assert response["result"]["selected_provider"] == "openai"
+    assert response["result"]["selected_provider"] == "anthropic"
 
 
 def test_bridge_dispatch_normalizes_numeric_id(tmp_path) -> None:
@@ -34,7 +34,7 @@ def test_bridge_dispatch_normalizes_numeric_id(tmp_path) -> None:
 
     assert response["id"] == "1"
     assert response["ok"] is True
-    assert response["result"]["selected_provider"] == "openai"
+    assert response["result"]["selected_provider"] == "anthropic"
 
 
 def test_bridge_dispatch_unknown_method_returns_error(tmp_path) -> None:
