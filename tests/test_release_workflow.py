@@ -164,3 +164,15 @@ def test_pyproject_configures_semantic_release() -> None:
         "prerelease": False,
     }
     assert semantic_release["changelog"]["default_templates"]["changelog_file"] == "CHANGELOG.md"
+
+
+def test_project_metadata_stays_on_alpha_version_line() -> None:
+    pyproject_text = (ROOT / "pyproject.toml").read_text()
+    pyproject = tomllib.loads(pyproject_text)
+    init_text = (ROOT / "src" / "hieronymus" / "__init__.py").read_text()
+
+    assert pyproject["project"]["version"] == "0.2.0"
+    assert '__version__ = "0.2.0"' in init_text
+    assert not pyproject["project"]["version"].startswith("1.")
+    assert '"1.0.0"' not in init_text
+    assert '"1.1.0"' not in init_text
