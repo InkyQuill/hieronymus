@@ -1,6 +1,6 @@
 import React from "react";
 import { act } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { App } from "./App.js";
 import type { RpcClient } from "../rpc/client.js";

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { Readable, Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { JsonRpcClient } from "./client.js";
 
 class FakeProcess extends EventEmitter {

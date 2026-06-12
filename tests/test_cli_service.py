@@ -19,6 +19,8 @@ class CliUpdateStatus:
     current_version: str = "0.1.0"
     latest_version: str | None = "0.1.0"
     latest_tag: str | None = "v0.1.0"
+    current_revision: str | None = None
+    latest_revision: str | None = None
     update_available: bool = False
     managed_checkout: Path = Path("/tmp/hieronymus-managed")
     managed_install: bool = True
@@ -29,6 +31,8 @@ class CliUpdateStatus:
             "current_version": self.current_version,
             "latest_version": self.latest_version,
             "latest_tag": self.latest_tag,
+            "current_revision": self.current_revision,
+            "latest_revision": self.latest_revision,
             "update_available": self.update_available,
             "managed_checkout": str(self.managed_checkout),
             "managed_install": self.managed_install,
@@ -399,8 +403,50 @@ def test_update_check_json_returns_status_from_release(tmp_path: Path) -> None:
         )
 
     assert result.exit_code == 0
-    check_update.assert_called_once_with(target="latest")
+    check_update.assert_called_once_with(target="latest", allow_dev=False)
     assert json.loads(result.output) == status.as_dict()
+
+
+def test_update_rejects_main_without_dev_flag(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(tmp_path / "hieronymus"), "update", "--check", "--target", "main"],
+    )
+
+    assert result.exit_code == 1
+    assert "--dev" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_update_check_human_prints_main_revision_with_dev_flag(tmp_path: Path) -> None:
+    status = CliUpdateStatus(
+        current_version="0.2.0",
+        latest_version=None,
+        latest_tag="main",
+        current_revision="abc1234",
+        latest_revision="def5678",
+        update_available=True,
+        target="main",
+    )
+
+    with patch("hieronymus.cli.check_update", return_value=status) as check_update:
+        result = CliRunner().invoke(
+            main,
+            [
+                "--data-root",
+                str(tmp_path / "hieronymus"),
+                "update",
+                "--check",
+                "--target",
+                "main",
+                "--dev",
+            ],
+        )
+
+    assert result.exit_code == 0
+    check_update.assert_called_once_with(target="main", allow_dev=True)
+    assert "Update available: abc1234 -> def5678" in result.output
+    assert "vmain" not in result.output
 
 
 def test_update_human_runs_update_and_prints_up_to_date(tmp_path: Path) -> None:
@@ -416,7 +462,7 @@ def test_update_human_runs_update_and_prints_up_to_date(tmp_path: Path) -> None:
         )
 
     assert result.exit_code == 0
-    check_update.assert_called_once_with(target="latest")
+    check_update.assert_called_once_with(target="latest", allow_dev=False)
     run_update.assert_not_called()
     assert "Hieronymus is up to date: v0.2.0α" in result.output
     assert "managed checkout: /tmp/hieronymus-managed" in result.output
@@ -469,8 +515,8 @@ def test_update_human_prints_updated_after_applied_update(tmp_path: Path) -> Non
         )
 
     assert result.exit_code == 0
-    check_update.assert_called_once_with(target="latest")
-    run_update.assert_called_once_with(target="latest")
+    check_update.assert_called_once_with(target="latest", allow_dev=False)
+    run_update.assert_called_once_with(target="latest", allow_dev=False)
     assert "Updated Hieronymus: v0.1.0α -> v0.2.0α" in result.output
     assert "Update available" not in result.output
 

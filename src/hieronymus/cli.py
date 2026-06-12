@@ -143,6 +143,20 @@ def _subprocess_error_message(error: subprocess.CalledProcessError) -> str:
     return f"Update command failed: {command} exited with code {error.returncode}"
 
 
+def _update_status_current_display(status) -> str:
+    if status.target == "main" and status.current_revision:
+        return str(status.current_revision)
+    return display_version(str(status.current_version))
+
+
+def _update_status_target_display(status) -> str:
+    if status.latest_version is not None:
+        return display_version(str(status.latest_version))
+    if status.target == "main" and status.latest_revision:
+        return str(status.latest_revision)
+    return str(status.latest_tag or "unknown")
+
+
 def _frontend_entrypoint() -> str:
     candidate = Path(__file__).resolve().parent / "frontend" / "dist" / "main.js"
     searched = [candidate]
@@ -327,21 +341,26 @@ def install_command(
 
 @main.command("update")
 @click.option("--check", "check_only", is_flag=True)
+@click.option("--dev", "allow_dev", is_flag=True, help="Allow updating to the latest main commit.")
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
     "--target",
     type=click.Choice(["latest", "main"]),
     default="latest",
 )
-def update_command(check_only: bool, as_json: bool, target: str) -> None:
+def update_command(check_only: bool, allow_dev: bool, as_json: bool, target: str) -> None:
     before_status = None
     try:
         if check_only:
-            status = check_update(target=target)
+            status = check_update(target=target, allow_dev=allow_dev)
         else:
-            before_status = check_update(target=target)
-            status = run_update(target=target) if before_status.update_available else before_status
-    except RuntimeError as error:
+            before_status = check_update(target=target, allow_dev=allow_dev)
+            status = (
+                run_update(target=target, allow_dev=allow_dev)
+                if before_status.update_available
+                else before_status
+            )
+    except (RuntimeError, ValueError) as error:
         raise click.ClickException(str(error)) from error
     except subprocess.CalledProcessError as error:
         raise click.ClickException(_subprocess_error_message(error)) from error
@@ -352,27 +371,21 @@ def update_command(check_only: bool, as_json: bool, target: str) -> None:
 
     click.echo(render_greeting())
     click.echo()
+    current_display = _update_status_current_display(status)
     if before_status is not None and before_status.update_available and not status.update_available:
         click.echo(
             "Updated Hieronymus: "
-            f"{display_version(before_status.current_version)} -> "
-            f"{display_version(status.current_version)}"
+            f"{_update_status_current_display(before_status)} -> "
+            f"{current_display}"
         )
     elif status.update_available:
-        update_target = status.latest_version or status.latest_tag or "unknown"
-        display_update_target = (
-            display_version(status.latest_version)
-            if status.latest_version is not None
-            else update_target
-        )
         click.echo(
-            f"Update available: {display_version(status.current_version)} -> "
-            f"{display_update_target}"
+            f"Update available: {current_display} -> {_update_status_target_display(status)}"
         )
     elif check_only:
-        click.echo(f"No update available: {display_version(status.current_version)}")
+        click.echo(f"No update available: {current_display}")
     else:
-        click.echo(f"Hieronymus is up to date: {display_version(status.current_version)}")
+        click.echo(f"Hieronymus is up to date: {current_display}")
     click.echo(f"managed checkout: {status.managed_checkout}")
 
 

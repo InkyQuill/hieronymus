@@ -3,6 +3,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "pr.yml"
 EXPECTED_FRONTEND_BUN_VERSION = "1.3.14"
+CHECKOUT_SHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
+SETUP_UV_SHA = "d0d8abe699bfb85fec6de9f7adb5ae17292296ff"
+SETUP_PYTHON_SHA = "a309ff8b426b58ec0e2a45f0f869d46889d02405"
 
 
 def _workflow_lines() -> list[str]:
@@ -14,7 +17,14 @@ def _indent(line: str) -> int:
 
 
 def _find_line(lines: list[str], expected: str) -> int:
-    return next(index for index, line in enumerate(lines) if line == expected)
+    index = next((index for index, line in enumerate(lines) if line == expected), None)
+    if index is None:
+        preview = "\n".join(lines[:10])
+        raise AssertionError(
+            f"Expected workflow line not found: {expected!r}. "
+            f"Scanned {len(lines)} lines. First lines:\n{preview}"
+        )
+    return index
 
 
 def _block_after(lines: list[str], start: int) -> list[str]:
@@ -71,9 +81,14 @@ def test_pr_workflow_backend_job_runs_python_checks() -> None:
     assert "    permissions:" in backend
     assert "      contents: read" in backend
 
-    checkout = [line for step in _step_blocks(backend) for line in step if "checkout@v4" in line]
-    assert checkout == ["      - uses: actions/checkout@v4"]
+    checkout = [line for step in _step_blocks(backend) for line in step if "checkout@" in line]
+    assert checkout == [f"      - uses: actions/checkout@{CHECKOUT_SHA}"]
     assert "          persist-credentials: false" in backend
+    assert f"      - uses: astral-sh/setup-uv@{SETUP_UV_SHA}" in backend
+    assert f"      - uses: actions/setup-python@{SETUP_PYTHON_SHA}" in backend
+    assert "      - uses: actions/checkout@v4" not in backend
+    assert "      - uses: astral-sh/setup-uv@v6" not in backend
+    assert "      - uses: actions/setup-python@v6" not in backend
 
     for command in [
         "      - run: uv sync --dev",
@@ -91,6 +106,8 @@ def test_pr_workflow_frontend_job_runs_bun_tests_and_build() -> None:
     assert "    runs-on: ubuntu-latest" in frontend
     assert "    permissions:" in frontend
     assert "      contents: read" in frontend
+    assert f"      - uses: actions/checkout@{CHECKOUT_SHA}" in frontend
+    assert "      - uses: actions/checkout@v4" not in frontend
     assert "          persist-credentials: false" in frontend
 
     steps = _step_blocks(frontend)
