@@ -10,6 +10,7 @@ from hieronymus.dream_config import (
     save_dream_config,
 )
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
+from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
     DreamConceptProposal,
@@ -512,6 +513,37 @@ def test_dreaming_rejects_invalid_dream_config(
 
     with pytest.raises(DreamConfigError, match="dream.conf is not valid TOML"):
         DreamService(config, DeterministicDreamProvider())
+
+
+def test_dreaming_rejects_missing_workflow_provider_without_deterministic_fallback(
+    config: HieronymusConfig,
+) -> None:
+    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.dream_config_path.write_text(
+        """
+[dreaming]
+enabled = true
+schedule_interval_minutes = 30
+min_pending_short_term_memories = 1
+max_pending_short_term_memories = 10
+max_short_term_memories_per_cycle = 1
+not_enough_memories_cycle_threshold = 5
+max_changed_crystals_per_cycle = 200
+max_related_concepts_per_cycle = 80
+max_related_crystals_per_concept = 20
+max_total_affected_crystals = 500
+general_prompt = "Use English as the primary searchable memory language."
+
+[workflows.crystallization]
+provider = "missing"
+model = "model"
+enabled = true
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DreamConfigError, match="referenced provider profile is missing"):
+        resolve_provider(config)
 
 
 def test_dream_error_records_redact_configured_api_key_value(

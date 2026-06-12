@@ -265,6 +265,17 @@ def test_affected_set_and_phase_audit_payloads_are_bounded_and_complete(
         "provider_response",
         "phase_completed",
     ]
+    payload_by_event = {entry.event_type: entry.payload for entry in entries}
+    provider_request_payload = payload_by_event["provider_request"]
+    provider_response_payload = payload_by_event["provider_response"]
+    parse_warnings_payload = payload_by_event["parse_warnings"]
+    phase_completed_payload = payload_by_event["phase_completed"]
+    assert provider_request_payload["selected_short_term_memory_ids"] == memory_ids
+    assert provider_request_payload["request_summary"]["memory_count"] == 2
+    assert provider_response_payload["response_summary"]["parse_warning_count"] >= 1
+    assert provider_response_payload["parse_warnings"]
+    assert parse_warnings_payload["warnings"]
+    assert "affected_memory_set" in phase_completed_payload
     phase_payload = entries[-1].payload
     expected_keys = {
         "trigger_type",
