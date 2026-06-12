@@ -172,11 +172,14 @@ def test_project_metadata_stays_on_alpha_version_line() -> None:
     init_text = (ROOT / "src" / "hieronymus" / "__init__.py").read_text()
     lockfile = tomllib.loads((ROOT / "uv.lock").read_text())
     hieronymus_package = next(
-        package for package in lockfile["package"] if package["name"] == "hieronymus"
+        package
+        for package in lockfile["package"]
+        if package["name"] == "hieronymus" and package.get("source") == {"editable": "."}
     )
 
     assert pyproject["project"]["version"] == "0.2.0"
     assert '__version__ = "0.2.0"' in init_text
+    assert hieronymus_package["source"] == {"editable": "."}
     assert hieronymus_package["version"] == "0.2.0"
     assert not pyproject["project"]["version"].startswith("1.")
     assert '"1.0.0"' not in init_text
