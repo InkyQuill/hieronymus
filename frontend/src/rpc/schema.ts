@@ -151,11 +151,20 @@ export const ConfigBootstrapSchema = z
     draft: z.object({
       dreaming: z.record(z.unknown()),
       providers: z.record(z.record(z.unknown())),
+      release: z.record(z.unknown()).default({}),
     }),
     form_values: z.object({
       provider: z.record(z.string()),
       dreaming: z.record(z.string()),
+      release: z.record(z.string()).default({}),
     }),
+    release: z
+      .object({
+        update_channel: z.string(),
+        update_target: z.string(),
+      })
+      .passthrough()
+      .default({ update_channel: "stable", update_target: "latest" }),
     validation: z.object({
       ok: z.boolean(),
       errors: z.array(z.string()),

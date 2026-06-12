@@ -46,3 +46,6 @@ temp/
 
 # Project-local worktrees
 .worktrees/
+
+# Temporary brainstorming companion state
+.superpowers/

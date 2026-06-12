@@ -23,7 +23,8 @@ export function Spinner({ name = "braille", label = "", fg }: Props) {
 
   return (
     <text fg={fg}>
-      {s.frames[frame]}{label ? ` ${label}` : ""}
+      {s.frames[frame]}
+      {label ? ` ${label}` : ""}
     </text>
   );
 }

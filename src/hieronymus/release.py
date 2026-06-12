@@ -27,6 +27,8 @@ class UpdateStatus:
     current_version: str
     latest_version: str | None
     latest_tag: str | None
+    current_revision: str | None
+    latest_revision: str | None
     update_available: bool
     managed_checkout: Path
     managed_install: bool
@@ -37,6 +39,8 @@ class UpdateStatus:
             "current_version": self.current_version,
             "latest_version": self.latest_version,
             "latest_tag": self.latest_tag,
+            "current_revision": self.current_revision,
+            "latest_revision": self.latest_revision,
             "update_available": self.update_available,
             "managed_checkout": str(self.managed_checkout),
             "managed_install": self.managed_install,
@@ -120,10 +124,34 @@ def fetch_remote_tags(repo_url: str = GITHUB_REPO_URL) -> list[str]:
     ]
 
 
+def fetch_remote_head(branch: str = "main", repo_url: str = GITHUB_REPO_URL) -> str | None:
+    result = subprocess.run(
+        ["git", "ls-remote", repo_url, branch],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    first_line = result.stdout.splitlines()[0] if result.stdout.splitlines() else ""
+    if not first_line:
+        return None
+    return _short_revision(first_line.split(maxsplit=1)[0])
+
+
+def _short_revision(revision: str | None) -> str | None:
+    if revision is None:
+        return None
+    return revision[:7]
+
+
 def _validate_target(target: str) -> None:
     if target not in _VALID_TARGETS:
         valid_targets = ", ".join(sorted(_VALID_TARGETS))
         raise ValueError(f"Unsupported update target {target!r}; expected one of: {valid_targets}.")
+
+
+def _validate_dev_target(target: str, *, allow_dev: bool) -> None:
+    if target == "main" and not allow_dev:
+        raise ValueError("Updating from main is a development action; pass --dev to allow it.")
 
 
 def is_managed_install(checkout: Path | None = None) -> bool:
@@ -138,6 +166,13 @@ def is_managed_install(checkout: Path | None = None) -> bool:
 
 def _checkout_origin_url(checkout: Path) -> str:
     return _output(["git", "remote", "get-url", "origin"], cwd=checkout)
+
+
+def _checkout_revision(checkout: Path) -> str | None:
+    try:
+        return _output(["git", "rev-parse", "--short", "HEAD"], cwd=checkout)
+    except subprocess.CalledProcessError:
+        return None
 
 
 def _bun_version_tuple(version_text: str) -> tuple[int, int]:
@@ -171,28 +206,42 @@ def ensure_bun_available_or_raise(
         )
 
 
-def check_update(*, target: str = "latest") -> UpdateStatus:
+def check_update(*, target: str = "latest", allow_dev: bool = False) -> UpdateStatus:
     _validate_target(target)
+    _validate_dev_target(target, allow_dev=allow_dev)
     current_version = package_version()
     checkout = managed_app_path()
     managed_install = is_managed_install(checkout)
+    current_revision = (
+        _checkout_revision(checkout) if target == "main" and managed_install else None
+    )
 
     if target == "latest":
         latest_tag = latest_stable_tag(fetch_remote_tags())
+        latest_revision = None
     else:
         latest_tag = target
+        latest_revision = _short_revision(fetch_remote_head(target))
 
     latest_version = _tag_version(latest_tag)
+    if target == "main":
+        if managed_install and current_revision is None:
+            raise RuntimeError("Cannot determine current managed checkout revision.")
+        if latest_revision is None:
+            raise RuntimeError("Cannot determine latest main revision.")
+
     update_available = False
     if latest_version is not None:
         update_available = _version_tuple(latest_version) > _version_tuple(current_version)
     elif latest_tag == "main":
-        update_available = True
+        update_available = latest_revision != current_revision
 
     return UpdateStatus(
         current_version=current_version,
         latest_version=latest_version,
         latest_tag=latest_tag,
+        current_revision=current_revision,
+        latest_revision=latest_revision,
         update_available=update_available,
         managed_checkout=checkout,
         managed_install=managed_install,
@@ -216,13 +265,14 @@ def _build_frontend(checkout: Path) -> None:
     _run(["bun", "run", "build"], cwd=frontend)
 
 
-def run_update(*, target: str = "latest") -> UpdateStatus:
+def run_update(*, target: str = "latest", allow_dev: bool = False) -> UpdateStatus:
     _validate_target(target)
+    _validate_dev_target(target, allow_dev=allow_dev)
     checkout = managed_app_path()
     if not is_managed_install(checkout):
         raise RuntimeError("Updates require installation through the managed installer.")
 
-    status = check_update(target=target)
+    status = check_update(target=target, allow_dev=allow_dev)
     if status.latest_tag is None:
         return status
     if target == "latest" and not status.update_available:
@@ -232,4 +282,4 @@ def run_update(*, target: str = "latest") -> UpdateStatus:
     _checkout_update_target(target, status.latest_tag, checkout)
     _build_frontend(checkout)
     _run(["uv", "tool", "install", "--force", str(checkout)])
-    return check_update(target=target)
+    return check_update(target=target, allow_dev=allow_dev)

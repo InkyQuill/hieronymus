@@ -1,10 +1,19 @@
-# Store Dreaming Secrets In Plaintext Dream Config
+# Store Local Configuration In Plaintext Config Files
 
-Hieronymus stores dreaming workflow provider configuration in
-`~/.config/hieronymus/dream.conf`, scoped to dreaming provider, trigger, prompt,
-and workflow-cap settings. API keys are stored as plaintext in that file because
-the project is local-first and we do not want to add an encryption/key-management
-layer yet. Discovered provider model lists are refreshable cache data and live
-separately in `~/.config/hieronymus/llmcache.tmp`. The admin UI, JSON bridge,
-logs, provider checks, and audit records must still redact API key values and
-expose only secret presence/status.
+Hieronymus is local-first alpha software, so user-editable configuration should
+live in plaintext files under the configured data root rather than in
+environment-only provider settings or an encryption/key-management layer. The
+canonical dreaming configuration is `dream.conf`, which owns dreaming provider
+profiles, workflow assignments, prompts, trigger settings, caps, and plaintext
+local API keys. Future configuration files should follow the same model when
+they are needed; `ingest.conf` will own global ingestion limits such as
+short-term memory warning/rejection thresholds and Learn-style split limits.
+
+Plaintext configuration is a deliberate UX choice: it is easier for a local user
+to inspect, edit, back up, and reason about than hidden environment variable
+state. Secret values may be stored in local config files, but the admin UI, JSON
+bridge, logs, provider checks, doctor output, and audit records must redact
+secret values and expose only safe status or presence information.
+
+Refreshable cache data is not authoritative configuration. Provider model lists
+remain cache data and live separately in `llmcache.tmp`.

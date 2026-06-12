@@ -142,6 +142,35 @@ def test_release_workflow_release_job_publishes_after_verification() -> None:
     assert _step_value(bun_step, "bun-version") == f'"{EXPECTED_RELEASE_BUN_VERSION}"'
 
 
+def test_release_workflow_guards_alpha_version_before_publish() -> None:
+    lines = _workflow_lines()
+    release = _block_after(lines, _find_line(lines, "  release:"))
+
+    guard_command = "      - run: uv run python -m hieronymus.release_guard"
+    computed_guard_name = "      - name: Check next release version"
+    version_command = "      - run: uv run semantic-release version"
+    publish_command = "      - run: uv run semantic-release publish"
+
+    guard_indexes = [index for index, line in enumerate(release) if line == guard_command]
+    version_indexes = [index for index, line in enumerate(release) if line == version_command]
+    computed_guard_index = release.index(computed_guard_name)
+    publish_index = release.index(publish_command)
+    computed_guard = _step_block(release, computed_guard_name)
+
+    assert '          NEXT_VERSION="$(uv run semantic-release version --print)"' in computed_guard
+    assert (
+        '          uv run python -m hieronymus.release_guard --version "$NEXT_VERSION"'
+        in computed_guard
+    )
+    assert "        env:" in computed_guard
+    assert "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in computed_guard
+    assert len(guard_indexes) == 2
+    assert len(version_indexes) == 1
+    version_index = version_indexes[0]
+    assert guard_indexes[0] < computed_guard_index < version_index
+    assert version_index < guard_indexes[1] < publish_index
+
+
 def test_pyproject_configures_semantic_release() -> None:
     pyproject_text = (ROOT / "pyproject.toml").read_text()
     pyproject = tomllib.loads(pyproject_text)
@@ -164,3 +193,27 @@ def test_pyproject_configures_semantic_release() -> None:
         "prerelease": False,
     }
     assert semantic_release["changelog"]["default_templates"]["changelog_file"] == "CHANGELOG.md"
+
+
+def test_project_metadata_stays_on_alpha_version_line() -> None:
+    pyproject_text = (ROOT / "pyproject.toml").read_text()
+    pyproject = tomllib.loads(pyproject_text)
+    init_text = (ROOT / "src" / "hieronymus" / "__init__.py").read_text()
+    lockfile = tomllib.loads((ROOT / "uv.lock").read_text())
+    hieronymus_package = next(
+        package
+        for package in lockfile["package"]
+        if package["name"] == "hieronymus" and package.get("source") == {"editable": "."}
+    )
+    project_version = pyproject["project"]["version"]
+
+    assert project_version.startswith("0.")
+    assert f'__version__ = "{project_version}"' in init_text
+    assert hieronymus_package["source"] == {"editable": "."}
+    assert hieronymus_package["version"] == project_version
+    assert "α" not in project_version
+    assert "α" not in init_text
+    assert "α" not in hieronymus_package["version"]
+    assert '"1.0.0"' not in init_text
+    assert '"1.1.0"' not in init_text
+    assert hieronymus_package["version"] not in {"1.0.0", "1.1.0"}

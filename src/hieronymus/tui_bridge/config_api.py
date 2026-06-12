@@ -13,6 +13,14 @@ from hieronymus.dream_config import (
 )
 from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.llm_cache import load_model_cache
+from hieronymus.release_config import (
+    ReleaseConfig,
+    ReleaseConfigError,
+    default_release_config,
+    load_release_config,
+    save_release_config,
+    validate_release_config,
+)
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.settings import (
     DreamingSettings,
@@ -44,19 +52,34 @@ class ConfigBridge:
 
     def bootstrap(self, params: dict[str, object]) -> dict[str, object]:
         settings = self._settings_from_params(params)
+        release_config, release_error = self._release_from_params(params)
         selected = self._selected_provider(params, settings)
-        return self._payload(self._select_provider(settings, selected), selected)
+        return self._payload(
+            self._select_provider(settings, selected),
+            selected,
+            release_config,
+            validation_errors=[release_error] if release_error else None,
+            detail=release_error,
+        )
 
     def reload(self, params: dict[str, object]) -> dict[str, object]:
         return self.bootstrap(params)
 
     def select_provider(self, params: dict[str, object]) -> dict[str, object]:
         settings = self._settings_from_params(params)
+        release_config, release_error = self._release_from_params(params)
         selected = self._require_remote_provider(params.get("provider"))
-        return self._payload(self._select_provider(settings, selected), selected)
+        return self._payload(
+            self._select_provider(settings, selected),
+            selected,
+            release_config,
+            validation_errors=[release_error] if release_error else None,
+            detail=release_error,
+        )
 
     def update_draft(self, params: dict[str, object]) -> dict[str, object]:
         settings = self._settings_from_params(params)
+        release_config, release_error = self._release_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
         try:
@@ -69,30 +92,42 @@ class ConfigBridge:
                 settings,
                 self._dreaming_form(params.get("dreaming"), settings.dreaming, selected),
             )
+            release_config = self._release_form(params.get("release"), release_config)
             settings = self._select_provider(settings, selected)
-        except SettingsError as error:
-            return self._payload(settings, selected, validation_errors=[str(error)])
-        return self._payload(settings, selected)
+        except (SettingsError, ReleaseConfigError) as error:
+            return self._payload(settings, selected, release_config, validation_errors=[str(error)])
+        return self._payload(
+            settings,
+            selected,
+            release_config,
+            validation_errors=[release_error] if release_error else None,
+            detail=release_error,
+        )
 
     def save(self, params: dict[str, object]) -> dict[str, object]:
         settings = self._settings_from_params(params)
+        release_config, release_error = self._release_from_params(params)
         selected = self._selected_provider(params, settings)
         if "selected_provider" in params or "provider" in params:
             settings = self._select_provider(settings, selected)
-        errors = self._validation_errors(params, settings)
+        errors = self._validation_errors(params, settings, release_config)
+        if release_error:
+            errors = [*errors, release_error]
         if errors:
-            return self._payload(settings, selected, validation_errors=errors)
+            return self._payload(settings, selected, release_config, validation_errors=errors)
         save_settings(self.config, settings)
-        return self._payload(settings, selected)
+        save_release_config(self.config, release_config)
+        return self._payload(settings, selected, release_config)
 
     def check_provider(self, params: dict[str, object]) -> dict[str, object]:
         settings = self._settings_from_params(params)
+        release_config, release_error = self._release_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
         profile_context = self._dream_profile_context(selected)
         if profile_context is not None:
             if errors := _draft_container_errors(params):
-                return self._payload(settings, selected, validation_errors=errors)
+                return self._payload(settings, selected, release_config, validation_errors=errors)
             profile, model = profile_context
             result = self.registry.check_profile(self.config, selected, profile, model=model)
             check_result = _result_to_json_dict(result)
@@ -107,11 +142,14 @@ class ConfigBridge:
             return self._payload(
                 settings,
                 selected,
+                release_config,
                 check_result=check_result,
                 suggestions=suggestions,
+                validation_errors=[release_error] if release_error else None,
+                detail=release_error,
             )
-        if errors := self._validation_errors(params, settings):
-            return self._payload(settings, selected, validation_errors=errors)
+        if errors := self._validation_errors(params, settings, release_config):
+            return self._payload(settings, selected, release_config, validation_errors=errors)
         result = self.registry.check(self.config, selected, settings=settings)
         check_result = _result_to_json_dict(result)
         _redact_error(check_result, settings)
@@ -124,31 +162,55 @@ class ConfigBridge:
             )
             suggestions = _result_to_json_dict(suggestion_result)
             _redact_error(suggestions, settings)
-        return self._payload(settings, selected, check_result=check_result, suggestions=suggestions)
+        return self._payload(
+            settings,
+            selected,
+            release_config,
+            check_result=check_result,
+            suggestions=suggestions,
+            validation_errors=[release_error] if release_error else None,
+            detail=release_error,
+        )
 
     def model_suggestions(self, params: dict[str, object]) -> dict[str, object]:
         settings = self._settings_from_params(params)
+        release_config, release_error = self._release_from_params(params)
         selected = self._selected_provider(params, settings)
         settings = self._select_provider(settings, selected)
         profile_context = self._dream_profile_context(selected)
         if profile_context is not None:
             if errors := _draft_container_errors(params):
-                return self._payload(settings, selected, validation_errors=errors)
+                return self._payload(settings, selected, release_config, validation_errors=errors)
             profile, _ = profile_context
             result = self.registry.list_profile_model_suggestions(self.config, selected, profile)
             suggestions = _result_to_json_dict(result)
-            return self._payload(settings, selected, suggestions=suggestions)
-        if errors := self._validation_errors(params, settings):
-            return self._payload(settings, selected, validation_errors=errors)
+            return self._payload(
+                settings,
+                selected,
+                release_config,
+                suggestions=suggestions,
+                validation_errors=[release_error] if release_error else None,
+                detail=release_error,
+            )
+        if errors := self._validation_errors(params, settings, release_config):
+            return self._payload(settings, selected, release_config, validation_errors=errors)
         result = self.registry.list_model_suggestions(self.config, selected, settings=settings)
         suggestions = _result_to_json_dict(result)
         _redact_error(suggestions, settings)
-        return self._payload(settings, selected, suggestions=suggestions)
+        return self._payload(
+            settings,
+            selected,
+            release_config,
+            suggestions=suggestions,
+            validation_errors=[release_error] if release_error else None,
+            detail=release_error,
+        )
 
     def _payload(
         self,
         settings: HieronymusSettings,
         selected: str,
+        release_config: ReleaseConfig,
         *,
         validation_errors: list[str] | None = None,
         check_result: dict[str, object] | None = None,
@@ -165,15 +227,17 @@ class ConfigBridge:
                 "data_root": str(self.config.data_root),
                 "config_root": str(self.config.config_root),
                 "settings_path": str(self.config.settings_path),
+                "release_config_path": str(self.config.release_config_path),
             },
             "dreaming": dream_config["dreaming"],
             "providers": dream_config["providers"],
             "workflows": dream_config["workflows"],
+            "release": _release_payload(release_config),
             "model_cache": load_model_cache(self.config).to_payload(),
             "provider_choices": self._provider_choices(),
             "selected_provider": selected,
-            "draft": settings.to_json_dict(),
-            "form_values": self._form_values(settings, selected),
+            "draft": {**settings.to_json_dict(), "release": _release_draft(release_config)},
+            "form_values": self._form_values(settings, selected, release_config),
             "validation": {"ok": not errors, "errors": errors},
             "check_result": check_result or {},
             "suggestions": suggestions or {},
@@ -244,12 +308,45 @@ class ConfigBridge:
             )
         return HieronymusSettings(dreaming=dreaming, providers=providers)
 
+    def _release_from_params(
+        self,
+        params: dict[str, object],
+    ) -> tuple[ReleaseConfig, str]:
+        try:
+            release_config = load_release_config(self.config)
+        except ReleaseConfigError as error:
+            release_config = default_release_config()
+            load_error = str(error)
+        else:
+            load_error = ""
+
+        draft = params.get("draft")
+        if draft is None and "release" in params:
+            draft = params
+        if type(draft) is not dict:
+            return release_config, load_error
+
+        raw_release = draft.get("release")
+        if type(raw_release) is not dict:
+            return release_config, load_error
+        if "update_channel" in raw_release:
+            release_config = release_config.with_update_channel(raw_release["update_channel"])
+        return release_config, load_error
+
     def _validation_errors(
         self,
         params: dict[str, object],
         settings: HieronymusSettings,
+        release_config: ReleaseConfig,
     ) -> list[str]:
-        return _draft_container_errors(params) or validate_draft(settings)
+        errors = _draft_container_errors(params)
+        if errors:
+            return errors
+        try:
+            validate_release_config(release_config)
+        except ReleaseConfigError as error:
+            return [str(error)]
+        return validate_draft(settings)
 
     def _selected_provider(
         self,
@@ -335,10 +432,19 @@ class ConfigBridge:
             ),
         }
 
+    def _release_form(self, raw: object, release_config: ReleaseConfig) -> ReleaseConfig:
+        values = raw if type(raw) is dict else {}
+        return validate_release_config(
+            release_config.with_update_channel(
+                str(values.get("update_channel", release_config.update_channel))
+            )
+        )
+
     def _form_values(
         self,
         settings: HieronymusSettings,
         selected: str,
+        release_config: ReleaseConfig,
     ) -> dict[str, object]:
         provider = settings.providers[selected]
         return {
@@ -357,6 +463,9 @@ class ConfigBridge:
                     settings.dreaming.new_short_term_memory_threshold
                 ),
                 "max_cycles_per_autostart": field_value(settings.dreaming.max_cycles_per_autostart),
+            },
+            "release": {
+                "update_channel": release_config.update_channel,
             },
         }
 
@@ -386,7 +495,7 @@ def _result_to_json_dict(result: object) -> dict[str, object]:
 
 def _draft_container_errors(params: dict[str, object]) -> list[str]:
     draft = params.get("draft")
-    if draft is None and any(key in params for key in ("dreaming", "providers")):
+    if draft is None and any(key in params for key in ("dreaming", "providers", "release")):
         draft = params
     if type(draft) is not dict:
         return []
@@ -403,7 +512,21 @@ def _draft_container_errors(params: dict[str, object]) -> list[str]:
         for name, raw_provider in raw_providers.items():
             if type(name) is str and type(raw_provider) is not dict:
                 errors.append(f"providers.{name} must be a table")
+    raw_release = draft.get("release")
+    if "release" in draft and type(raw_release) is not dict:
+        errors.append("release must be a table")
     return errors
+
+
+def _release_payload(release_config: ReleaseConfig) -> dict[str, object]:
+    return {
+        "update_channel": release_config.update_channel,
+        "update_target": release_config.update_target,
+    }
+
+
+def _release_draft(release_config: ReleaseConfig) -> dict[str, object]:
+    return {"update_channel": release_config.update_channel}
 
 
 def _redact_error(payload: dict[str, object], settings: HieronymusSettings) -> None:

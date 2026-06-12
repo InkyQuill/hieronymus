@@ -21,11 +21,7 @@ import { AdminTable } from "./AdminTable.js";
 import { DetailPane } from "./DetailPane.js";
 import { CommandPalette } from "./CommandPalette.js";
 import { Spinner } from "../ui/Spinner.js";
-import {
-  type DialogState,
-  closedDialog,
-  DialogOverlay,
-} from "./dialogs.js";
+import { type DialogState, closedDialog, DialogOverlay } from "./dialogs.js";
 
 type Props = {
   initial: AdminBootstrap;
@@ -186,7 +182,10 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           entityType: "crystal",
         });
       } else {
-        setStatus({ message: "Split only supported for crystals/lessons", error: true });
+        setStatus({
+          message: "Split only supported for crystals/lessons",
+          error: true,
+        });
       }
       return;
     }
@@ -467,7 +466,13 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
 
   if (dialog.kind !== "none") {
     return (
-      <box flexDirection="column" width={136} height={20} alignItems="center" justifyContent="center">
+      <box
+        flexDirection="column"
+        width={136}
+        height={20}
+        alignItems="center"
+        justifyContent="center"
+      >
         <DialogOverlay
           state={dialog}
           onClose={() => setDialog(closedDialog)}
@@ -504,9 +509,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           borderColor={activePanel === "views" ? "cyan" : "gray"}
           paddingX={1}
         >
-          <text fg={activePanel === "views" ? "cyan" : undefined}>
-            Views
-          </text>
+          <text fg={activePanel === "views" ? "cyan" : undefined}>Views</text>
           <FocusableList
             items={initial.views}
             selectedIndex={selectedViewIndex}

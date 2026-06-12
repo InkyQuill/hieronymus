@@ -88,12 +88,13 @@ For machine-readable status, use:
 hiero config --json
 ```
 
-The config interface exposes the primary dreaming config from
-`~/.config/hieronymus/dream.conf`: schedule/minimum/urgent thresholds, named
-provider profiles, workflow-to-provider/model assignments, cached model
+The config interface is the local configuration editor. Today it exposes the
+primary dreaming config from `dream.conf`: schedule/minimum/urgent thresholds,
+named provider profiles, workflow-to-provider/model assignments, cached model
 suggestions from `llmcache.tmp`, and dreaming prompts. Provider profiles store
 their endpoint, model hints, and API key directly in `dream.conf`; the file is
-plain text local configuration.
+plain text local configuration. Future configuration files, beginning with
+`ingest.conf`, should be edited from the same surface.
 
 Edits stay in memory until saved. Reload discards unsaved edits and reads
 `dream.conf` again. Provider checks use the edited profile, refresh model
@@ -373,8 +374,8 @@ The React/OpenTUI TUI requires Bun >=1.3 to run. `hiero doctor` reports Bun runt
 Frontend development and source-checkout builds require Bun >=1.3:
 
 ```bash
-bun --cwd frontend install --frozen-lockfile
-bun --cwd frontend run build
+bun install --cwd frontend --frozen-lockfile
+bun run --cwd frontend build
 ```
 
 After that build, the CLI uses the fallback to `frontend/dist/main.js` from the current working directory.

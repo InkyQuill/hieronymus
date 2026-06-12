@@ -20,10 +20,11 @@ from hieronymus.dreaming import DreamService
 from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import CrystalRecord, ShortTermMemoryRecord, TranslationContext
-from hieronymus.presentation import GUIDE_ICON, render_greeting, render_json
+from hieronymus.presentation import GUIDE_ICON, display_version, render_greeting, render_json
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.release import check_update, run_update
+from hieronymus.release_config import ReleaseConfigError, load_release_config
 from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
 from hieronymus.settings import SettingsError, load_settings
@@ -143,6 +144,20 @@ def _subprocess_error_message(error: subprocess.CalledProcessError) -> str:
     return f"Update command failed: {command} exited with code {error.returncode}"
 
 
+def _update_status_current_display(status) -> str:
+    if status.target == "main" and status.current_revision:
+        return str(status.current_revision)
+    return display_version(str(status.current_version))
+
+
+def _update_status_target_display(status) -> str:
+    if status.latest_version is not None:
+        return display_version(str(status.latest_version))
+    if status.target == "main" and status.latest_revision:
+        return str(status.latest_revision)
+    return str(status.latest_tag or "unknown")
+
+
 def _frontend_entrypoint() -> str:
     candidate = Path(__file__).resolve().parent / "frontend" / "dist" / "main.js"
     searched = [candidate]
@@ -255,16 +270,22 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
 
     try:
         settings = load_settings(config)
+        release_config = load_release_config(config)
         payload = {
             "config_root": str(config.config_root),
             "database_path": str(config.database_path),
             "settings_path": str(config.settings_path),
+            "release_config_path": str(config.release_config_path),
             "tui": "available",
             "settings": settings.to_json_dict(),
+            "release": {
+                "update_channel": release_config.update_channel,
+                "update_target": release_config.update_target,
+            },
             "providers": ProviderRegistry().status_payload(config),
             "dreaming": DreamAutostart(config).status(),
         }
-    except SettingsError as error:
+    except (SettingsError, ReleaseConfigError) as error:
         raise click.ClickException(str(error)) from error
 
     click.echo(render_json(payload))
@@ -327,21 +348,37 @@ def install_command(
 
 @main.command("update")
 @click.option("--check", "check_only", is_flag=True)
+@click.option("--dev", "allow_dev", is_flag=True, help="Allow updating to the latest main commit.")
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
     "--target",
     type=click.Choice(["latest", "main"]),
-    default="latest",
+    default=None,
+    help="Override the configured update channel for this run.",
 )
-def update_command(check_only: bool, as_json: bool, target: str) -> None:
+@click.pass_context
+def update_command(
+    ctx: click.Context,
+    check_only: bool,
+    allow_dev: bool,
+    as_json: bool,
+    target: str | None,
+) -> None:
     before_status = None
     try:
+        release_config = load_release_config(ctx.obj["config"])
+        update_target = target or release_config.update_target
+        update_allows_dev = allow_dev or (target is None and release_config.allows_dev_updates)
         if check_only:
-            status = check_update(target=target)
+            status = check_update(target=update_target, allow_dev=update_allows_dev)
         else:
-            before_status = check_update(target=target)
-            status = run_update(target=target) if before_status.update_available else before_status
-    except RuntimeError as error:
+            before_status = check_update(target=update_target, allow_dev=update_allows_dev)
+            status = (
+                run_update(target=update_target, allow_dev=update_allows_dev)
+                if before_status.update_available
+                else before_status
+            )
+    except (RuntimeError, ValueError, ReleaseConfigError) as error:
         raise click.ClickException(str(error)) from error
     except subprocess.CalledProcessError as error:
         raise click.ClickException(_subprocess_error_message(error)) from error
@@ -352,17 +389,21 @@ def update_command(check_only: bool, as_json: bool, target: str) -> None:
 
     click.echo(render_greeting())
     click.echo()
+    current_display = _update_status_current_display(status)
     if before_status is not None and before_status.update_available and not status.update_available:
         click.echo(
-            f"Updated Hieronymus: {before_status.current_version} -> {status.current_version}"
+            "Updated Hieronymus: "
+            f"{_update_status_current_display(before_status)} -> "
+            f"{current_display}"
         )
     elif status.update_available:
-        update_target = status.latest_version or status.latest_tag or "unknown"
-        click.echo(f"Update available: {status.current_version} -> {update_target}")
+        click.echo(
+            f"Update available: {current_display} -> {_update_status_target_display(status)}"
+        )
     elif check_only:
-        click.echo(f"No update available: {status.current_version}")
+        click.echo(f"No update available: {current_display}")
     else:
-        click.echo(f"Hieronymus is up to date: {status.current_version}")
+        click.echo(f"Hieronymus is up to date: {current_display}")
     click.echo(f"managed checkout: {status.managed_checkout}")
 
 

@@ -32,7 +32,7 @@ from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamRunRecord, DreamService
 from hieronymus.llm_cache import dream_profile_cache_identity, load_model_cache
 from hieronymus.memory_models import TranslationContext
-from hieronymus.presentation import GREETING_ICON, TAGLINE, package_version
+from hieronymus.presentation import GREETING_ICON, TAGLINE, package_display_version
 from hieronymus.rule_crystals import parse_rule_crystal
 from hieronymus.service_manager import ServiceManager
 from hieronymus.workspace import WorkspaceStore
@@ -166,7 +166,7 @@ class AdminStore:
     def header_status_payload(self) -> dict[str, object]:
         return {
             "product": "Hieronymus",
-            "version": package_version(),
+            "version": package_display_version(),
             "tagline": TAGLINE,
             "logo": {
                 "text": GREETING_ICON,

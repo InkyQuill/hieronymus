@@ -26,6 +26,10 @@ class HieronymusConfig:
         return self.config_root / "dream.conf"
 
     @property
+    def release_config_path(self) -> Path:
+        return self.config_root / "release.conf"
+
+    @property
     def llm_cache_path(self) -> Path:
         return self.config_root / "llmcache.tmp"
 

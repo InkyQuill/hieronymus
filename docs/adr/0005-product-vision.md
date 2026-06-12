@@ -399,7 +399,7 @@ be direction-first.
   vision. Old execution specs/plans can be removed after their implemented and
   remaining parts are reflected here and in the continuation spec.
 - Future work should update this ADR only when the product model changes. Task
-  tracking belongs in `docs/continuation-spec.md` or issue/PR workflows.
+  tracking belongs in `docs/roadmap.md` or issue/PR workflows.
 - Tests should protect these boundaries: local-first storage, primitive MCP
   surface, rule-crystal precedence, combined recall, bounded dreaming, audit
   completeness, OpenTUI launch behavior, install/update build ordering, and

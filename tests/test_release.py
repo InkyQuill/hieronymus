@@ -80,6 +80,8 @@ def test_update_status_as_dict_serializes_cli_payload(tmp_path: Path) -> None:
         current_version="0.1.0",
         latest_version="0.2.0",
         latest_tag="v0.2.0",
+        current_revision=None,
+        latest_revision=None,
         update_available=True,
         managed_checkout=tmp_path / "app",
         managed_install=True,
@@ -90,6 +92,8 @@ def test_update_status_as_dict_serializes_cli_payload(tmp_path: Path) -> None:
         "current_version": "0.1.0",
         "latest_version": "0.2.0",
         "latest_tag": "v0.2.0",
+        "current_revision": None,
+        "latest_revision": None,
         "update_available": True,
         "managed_checkout": str(tmp_path / "app"),
         "managed_install": True,
@@ -134,6 +138,54 @@ def test_check_update_rejects_unknown_targets(monkeypatch: pytest.MonkeyPatch) -
         check_update(target="v0.2.0")
 
 
+def test_check_update_rejects_main_without_dev_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(release, "fetch_remote_head", pytest.fail)
+
+    with pytest.raises(ValueError, match="--dev"):
+        check_update(target="main")
+
+
+def test_check_update_reports_main_revision_with_dev_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(release, "package_version", lambda: "0.2.0")
+    monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: True)
+    monkeypatch.setattr(release, "_checkout_revision", lambda _: "abc1234")
+    monkeypatch.setattr(release, "fetch_remote_head", lambda branch="main": "1234567890abcdef")
+
+    status = check_update(target="main", allow_dev=True)
+
+    assert status.current_version == "0.2.0"
+    assert status.latest_version is None
+    assert status.latest_tag == "main"
+    assert status.current_revision == "abc1234"
+    assert status.latest_revision == "1234567"
+    assert status.update_available is True
+    assert status.target == "main"
+
+
+def test_check_update_fails_closed_when_current_main_revision_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(release, "package_version", lambda: "0.2.0")
+    monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: True)
+    monkeypatch.setattr(release, "_checkout_revision", lambda _: None)
+    monkeypatch.setattr(release, "fetch_remote_head", lambda branch="main": "1234567890abcdef")
+
+    with pytest.raises(RuntimeError, match="current managed checkout revision"):
+        check_update(target="main", allow_dev=True)
+
+
+def test_check_update_fails_closed_when_remote_main_revision_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(release, "package_version", lambda: "0.2.0")
+    monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: True)
+    monkeypatch.setattr(release, "_checkout_revision", lambda _: "abc1234")
+    monkeypatch.setattr(release, "fetch_remote_head", lambda branch="main": None)
+
+    with pytest.raises(RuntimeError, match="latest main revision"):
+        check_update(target="main", allow_dev=True)
+
+
 def test_run_update_rejects_unmanaged_installs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: False)
 
@@ -149,6 +201,16 @@ def test_run_update_rejects_unknown_targets_before_git(
 
     with pytest.raises(ValueError, match="target"):
         run_update(target="v0.2.0")
+
+
+def test_run_update_rejects_main_without_dev_flag_before_git(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: True)
+    monkeypatch.setattr(release, "_run", pytest.fail)
+
+    with pytest.raises(ValueError, match="--dev"):
+        run_update(target="main")
 
 
 def test_run_update_skips_current_latest_tag_install(
@@ -232,12 +294,16 @@ def test_run_update_fetches_origin_main_before_checkout(
     monkeypatch.setattr(release, "managed_app_path", lambda: checkout)
     monkeypatch.setattr(release, "is_managed_install", lambda checkout=None: True)
     monkeypatch.setattr(release, "package_version", lambda: "0.1.0")
+    monkeypatch.setattr(release, "fetch_remote_head", lambda branch="main": "abcdef1234567890")
+    monkeypatch.setattr(release, "_checkout_revision", lambda _: "abcdef1")
     monkeypatch.setattr(release, "_run", record_run)
     monkeypatch.setattr(release, "_output", record_output)
 
-    status = run_update(target="main")
+    status = run_update(target="main", allow_dev=True)
 
     assert status.target == "main"
+    assert status.latest_revision == "abcdef1"
+    assert status.current_revision == "abcdef1"
     assert outputs == [(["bun", "--version"], None)]
     assert commands == [
         (["git", "fetch", release.GITHUB_REPO_URL, "main"], checkout),

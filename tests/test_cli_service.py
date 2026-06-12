@@ -10,7 +10,8 @@ from click.testing import CliRunner
 
 from hieronymus.cli import main
 from hieronymus.config import load_config
-from hieronymus.presentation import GREETING_ICON, render_greeting
+from hieronymus.presentation import GREETING_ICON, display_version, render_greeting
+from hieronymus.release_config import ReleaseConfig, save_release_config
 from hieronymus.settings import DreamingSettings, load_settings, save_settings
 
 
@@ -19,6 +20,8 @@ class CliUpdateStatus:
     current_version: str = "0.1.0"
     latest_version: str | None = "0.1.0"
     latest_tag: str | None = "v0.1.0"
+    current_revision: str | None = None
+    latest_revision: str | None = None
     update_available: bool = False
     managed_checkout: Path = Path("/tmp/hieronymus-managed")
     managed_install: bool = True
@@ -29,6 +32,8 @@ class CliUpdateStatus:
             "current_version": self.current_version,
             "latest_version": self.latest_version,
             "latest_tag": self.latest_tag,
+            "current_revision": self.current_revision,
+            "latest_revision": self.latest_revision,
             "update_available": self.update_available,
             "managed_checkout": str(self.managed_checkout),
             "managed_install": self.managed_install,
@@ -36,10 +41,18 @@ class CliUpdateStatus:
         }
 
 
-def test_render_greeting_contains_identity_and_tagline() -> None:
-    rendered = render_greeting("0.1.0")
+def test_render_greeting_formats_prerelease_identity_for_humans() -> None:
+    rendered = render_greeting("0.2.0")
 
-    assert rendered == f"{GREETING_ICON} Hieronymus v0.1.0\nRemembers things for you."
+    assert rendered == f"{GREETING_ICON} Hieronymus v0.2.0α\nRemembers things for you."
+
+
+def test_display_version_marks_zero_major_versions_as_alpha() -> None:
+    assert display_version("0.2.0") == "v0.2.0α"
+
+
+def test_display_version_leaves_stable_versions_without_alpha() -> None:
+    assert display_version("1.0.0") == "v1.0.0"
 
 
 def test_hiero_console_alias_runs_existing_command(tmp_path: Path) -> None:
@@ -168,11 +181,11 @@ def test_docs_describe_real_config_tui_and_llm_providers() -> None:
     assert "OPENAI_API_KEY" in combined
     assert "GEMINI_API_KEY" in combined
     assert "ANTHROPIC_API_KEY" in combined
-    assert "API key values are not stored" in combined
+    assert "API key values may be stored locally" in combined
     assert "new_short_term_memory_threshold" in combined
     assert "TypeScript React/OpenTUI terminal UI" in combined
     assert "Bun >=1.3" in combined
-    assert "bun --cwd frontend install --frozen-lockfile" in combined
+    assert "bun install --cwd frontend --frozen-lockfile" in combined
     assert "React/Ink" not in combined
     assert "Node.js >=22" not in combined
     assert "pnpm --dir frontend" not in combined
@@ -250,8 +263,10 @@ def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     assert payload["config_root"] == str(data_root)
     assert payload["database_path"] == str(data_root / "hieronymus.sqlite")
     assert payload["settings_path"] == str(data_root / "settings.toml")
+    assert payload["release_config_path"] == str(data_root / "release.conf")
     assert payload["tui"] == "available"
     assert payload["settings"]["dreaming"]["active_provider"] == "deterministic"
+    assert payload["release"] == {"update_channel": "stable", "update_target": "latest"}
     assert payload["providers"][0]["name"] == "deterministic"
 
 
@@ -391,8 +406,74 @@ def test_update_check_json_returns_status_from_release(tmp_path: Path) -> None:
         )
 
     assert result.exit_code == 0
-    check_update.assert_called_once_with(target="latest")
+    check_update.assert_called_once_with(target="latest", allow_dev=False)
     assert json.loads(result.output) == status.as_dict()
+
+
+def test_update_rejects_main_without_dev_flag(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(tmp_path / "hieronymus"), "update", "--check", "--target", "main"],
+    )
+
+    assert result.exit_code == 1
+    assert "--dev" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_update_check_human_prints_main_revision_with_dev_flag(tmp_path: Path) -> None:
+    status = CliUpdateStatus(
+        current_version="0.2.0",
+        latest_version=None,
+        latest_tag="main",
+        current_revision="abc1234",
+        latest_revision="def5678",
+        update_available=True,
+        target="main",
+    )
+
+    with patch("hieronymus.cli.check_update", return_value=status) as check_update:
+        result = CliRunner().invoke(
+            main,
+            [
+                "--data-root",
+                str(tmp_path / "hieronymus"),
+                "update",
+                "--check",
+                "--target",
+                "main",
+                "--dev",
+            ],
+        )
+
+    assert result.exit_code == 0
+    check_update.assert_called_once_with(target="main", allow_dev=True)
+    assert "Update available: abc1234 -> def5678" in result.output
+    assert "vmain" not in result.output
+
+
+def test_update_uses_configured_dev_channel_by_default(tmp_path: Path) -> None:
+    data_root = tmp_path / "hieronymus"
+    save_release_config(load_config(data_root), ReleaseConfig(update_channel="dev"))
+    status = CliUpdateStatus(
+        current_version="0.2.0",
+        latest_version=None,
+        latest_tag="main",
+        current_revision="abc1234",
+        latest_revision="def5678",
+        update_available=True,
+        target="main",
+    )
+
+    with patch("hieronymus.cli.check_update", return_value=status) as check_update:
+        result = CliRunner().invoke(
+            main,
+            ["--data-root", str(data_root), "update", "--check"],
+        )
+
+    assert result.exit_code == 0
+    check_update.assert_called_once_with(target="main", allow_dev=True)
+    assert "Update available: abc1234 -> def5678" in result.output
 
 
 def test_update_human_runs_update_and_prints_up_to_date(tmp_path: Path) -> None:
@@ -408,9 +489,9 @@ def test_update_human_runs_update_and_prints_up_to_date(tmp_path: Path) -> None:
         )
 
     assert result.exit_code == 0
-    check_update.assert_called_once_with(target="latest")
+    check_update.assert_called_once_with(target="latest", allow_dev=False)
     run_update.assert_not_called()
-    assert "Hieronymus is up to date: 0.2.0" in result.output
+    assert "Hieronymus is up to date: v0.2.0α" in result.output
     assert "managed checkout: /tmp/hieronymus-managed" in result.output
 
 
@@ -424,7 +505,7 @@ def test_update_check_human_prints_no_update_available(tmp_path: Path) -> None:
         )
 
     assert result.exit_code == 0
-    assert "No update available: 0.2.0" in result.output
+    assert "No update available: v0.2.0α" in result.output
     assert "Hieronymus is up to date" not in result.output
 
 
@@ -438,7 +519,7 @@ def test_update_check_human_prints_update_available(tmp_path: Path) -> None:
         )
 
     assert result.exit_code == 0
-    assert "Update available: 0.1.0 -> 0.2.0" in result.output
+    assert "Update available: v0.1.0α -> v0.2.0α" in result.output
     assert "Updated Hieronymus" not in result.output
 
 
@@ -461,9 +542,9 @@ def test_update_human_prints_updated_after_applied_update(tmp_path: Path) -> Non
         )
 
     assert result.exit_code == 0
-    check_update.assert_called_once_with(target="latest")
-    run_update.assert_called_once_with(target="latest")
-    assert "Updated Hieronymus: 0.1.0 -> 0.2.0" in result.output
+    check_update.assert_called_once_with(target="latest", allow_dev=False)
+    run_update.assert_called_once_with(target="latest", allow_dev=False)
+    assert "Updated Hieronymus: v0.1.0α -> v0.2.0α" in result.output
     assert "Update available" not in result.output
 
 
@@ -491,7 +572,7 @@ def test_update_human_prints_available_if_update_remains_available(tmp_path: Pat
         )
 
     assert result.exit_code == 0
-    assert "Update available: 0.1.0 -> 0.2.0" in result.output
+    assert "Update available: v0.1.0α -> v0.2.0α" in result.output
     assert "Updated Hieronymus" not in result.output
 
 

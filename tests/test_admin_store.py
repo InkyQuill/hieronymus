@@ -31,7 +31,10 @@ def _context(config: HieronymusConfig) -> TranslationContext:
     )
 
 
-def test_status_payload_reports_admin_counts(config: HieronymusConfig) -> None:
+def test_status_payload_reports_admin_counts(
+    config: HieronymusConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("hieronymus.admin.package_display_version", lambda: "v9.9.9-ui")
     context = _context(config)
     CrystalStore(config).add_crystal(
         context,
@@ -74,6 +77,7 @@ def test_status_payload_reports_admin_counts(config: HieronymusConfig) -> None:
     assert payload["counts"]["short_term_memories"] == 1
     assert payload["counts"]["sessions"] == 1
     assert payload["counts"]["pending_proposals"] == 0
+    assert payload["header"]["version"] == "v9.9.9-ui"
     assert payload["service"]["running"] is False
     assert payload["short_term_status"]["pending_count"] == 0
     assert payload["short_term_status"]["urgent"] is False

@@ -40,9 +40,7 @@ export function commandsForView(view: string): string[] {
 export function CommandPalette({ view }: { view: string }) {
   return (
     <box flexDirection="column">
-      <text>
-        Commands
-      </text>
+      <text>Commands</text>
       {commandsForView(view).map((command) => (
         <text key={command}>{command}</text>
       ))}
