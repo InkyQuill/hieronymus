@@ -72,6 +72,20 @@ def test_load_ingest_config_rejects_invalid_sentence_threshold_order(
         load_ingest_config(config)
 
 
+def test_load_ingest_config_rejects_invalid_symbol_threshold_order(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.ingest_config_path.write_text(
+        "[short_memory]\nwarning_symbol_count = 100\nrejection_symbol_count = 50\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IngestConfigError, match="rejection_symbol_count"):
+        load_ingest_config(config)
+
+
 @pytest.mark.parametrize(
     ("raw_config", "error"),
     [

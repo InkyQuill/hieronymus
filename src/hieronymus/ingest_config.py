@@ -116,6 +116,7 @@ def validate_ingest_config(ingest_config: IngestConfig) -> IngestConfig:
         and ingest_config.short_memory.rejection_symbol_count
         < ingest_config.short_memory.warning_symbol_count
     ):
+        # A zero symbol threshold is treated as disabled, so compare only active limits.
         raise IngestConfigError(
             "short_memory.rejection_symbol_count must be greater than or equal to "
             "short_memory.warning_symbol_count",
