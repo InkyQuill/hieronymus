@@ -97,3 +97,10 @@ def field_value(value: Any) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def parse_positive_int(field_name: str, raw: str) -> int:
+    value = parse_int(field_name, raw)
+    if value < 1:
+        raise SettingsError(f"{field_name} must be at least 1")
+    return value

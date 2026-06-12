@@ -38,6 +38,7 @@ export function ConfigScreen({ initial, client }: Props) {
   const [localFormValues, setLocalFormValues] = useState({
     provider: { ...payload.form_values.provider },
     dreaming: { ...payload.form_values.dreaming },
+    ingest: { ...payload.form_values.ingest },
     release: { ...payload.form_values.release },
   });
 
@@ -46,6 +47,7 @@ export function ConfigScreen({ initial, client }: Props) {
     setLocalFormValues({
       provider: { ...payload.form_values.provider },
       dreaming: { ...payload.form_values.dreaming },
+      ingest: { ...payload.form_values.ingest },
       release: { ...payload.form_values.release },
     });
   }, [payload.form_values]);
@@ -85,12 +87,15 @@ export function ConfigScreen({ initial, client }: Props) {
     setLocalFormValues((prev) => {
       const providerDraft = { ...prev.provider };
       const dreamingDraft = { ...prev.dreaming };
+      const ingestDraft = { ...prev.ingest };
       const releaseDraft = { ...prev.release };
 
       if (key.startsWith("provider.")) {
         providerDraft[key.slice(9)] = value;
       } else if (key.startsWith("dreaming.")) {
         dreamingDraft[key.slice(9)] = value;
+      } else if (key.startsWith("ingest.")) {
+        ingestDraft[key.slice(7)] = value;
       } else if (key.startsWith("release.")) {
         releaseDraft[key.slice(8)] = value;
       }
@@ -98,6 +103,7 @@ export function ConfigScreen({ initial, client }: Props) {
       return {
         provider: providerDraft,
         dreaming: dreamingDraft,
+        ingest: ingestDraft,
         release: releaseDraft,
       };
     });
@@ -116,6 +122,7 @@ export function ConfigScreen({ initial, client }: Props) {
         selected_provider: payload.selected_provider,
         provider: localFormValues.provider,
         dreaming: localFormValues.dreaming,
+        ingest: localFormValues.ingest,
         release: localFormValues.release,
       },
       pendingMessage: "Updating draft settings",
@@ -206,6 +213,7 @@ export function ConfigScreen({ initial, client }: Props) {
         setLocalFormValues({
           provider: { ...payload.form_values.provider },
           dreaming: { ...payload.form_values.dreaming },
+          ingest: { ...payload.form_values.ingest },
           release: { ...payload.form_values.release },
         });
         setIsEditing(false);
@@ -467,6 +475,7 @@ function valueForField(
   values: {
     provider: Record<string, string>;
     dreaming: Record<string, string>;
+    ingest: Record<string, string>;
     release: Record<string, string>;
   },
   key: string,
@@ -476,6 +485,9 @@ function valueForField(
   }
   if (key.startsWith("dreaming.")) {
     return values.dreaming[key.slice(9)] || "";
+  }
+  if (key.startsWith("ingest.")) {
+    return values.ingest[key.slice(7)] || "";
   }
   if (key.startsWith("release.")) {
     return values.release[key.slice(8)] || "";

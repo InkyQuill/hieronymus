@@ -149,13 +149,30 @@ export const ConfigBootstrapSchema = z
     ),
     selected_provider: ProviderNameSchema,
     draft: z.object({
+      dream: z
+        .object({
+          dreaming: z.record(z.unknown()),
+          providers: z.record(z.record(z.unknown())),
+          workflows: z.record(z.record(z.unknown())),
+        })
+        .passthrough()
+        .optional(),
+      ingest: z
+        .object({
+          short_memory: z.record(z.number()).default({}),
+          learn: z.record(z.number()).default({}),
+        })
+        .passthrough()
+        .default({ short_memory: {}, learn: {} }),
       dreaming: z.record(z.unknown()),
       providers: z.record(z.record(z.unknown())),
+      workflows: z.record(z.record(z.unknown())).default({}),
       release: z.record(z.unknown()).default({}),
     }),
     form_values: z.object({
       provider: z.record(z.string()),
       dreaming: z.record(z.string()),
+      ingest: z.record(z.string()).default({}),
       release: z.record(z.string()).default({}),
     }),
     release: z

@@ -36,16 +36,22 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
     release: { update_channel: "stable", update_target: "latest" },
     ingest: { short_memory: {}, learn: {} },
     draft: {
+      dream: {
+        dreaming: {},
+        providers: {},
+        workflows: {},
+      },
+      ingest: { short_memory: {}, learn: {} },
       dreaming: { active_provider: selectedProvider },
       providers: {},
+      workflows: {},
       release: { update_channel: "stable" },
     },
     form_values: {
       provider: {
         model:
           selectedProvider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
-        api_key_env:
-          selectedProvider === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY",
+        api_key: selectedProvider === "gemini" ? "gemini-secret" : "openai-secret",
         api_path:
           selectedProvider === "openai" ? "https://api.openai.com/v1" : "",
         timeout_seconds: "30",
@@ -55,6 +61,11 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
         min_interval_minutes: "30",
         new_short_term_memory_threshold: "25",
         max_cycles_per_autostart: "1",
+      },
+      ingest: {
+        warning_sentence_count: "6",
+        rejection_sentence_count: "30",
+        max_block_chars: "1200",
       },
       release: {
         update_channel: "stable",
@@ -74,8 +85,8 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
       title: `${selectedProvider} dreaming provider`,
       fields: [
         [
-          "api_key_env",
-          selectedProvider === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY",
+          "api_key",
+          selectedProvider === "gemini" ? "gemini-secret" : "openai-secret",
         ],
       ],
       errors: [],
