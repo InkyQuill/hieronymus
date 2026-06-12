@@ -104,7 +104,8 @@ def test_release_workflow_release_job_publishes_after_verification() -> None:
         assert "        env:" in step
         assert "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in step
 
-    assert any("setup-bun" in line for line in release)
+    assert "      # oven-sh/setup-bun v2" in release
+    assert "      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6" in release
 
 
 def test_pyproject_configures_semantic_release() -> None:

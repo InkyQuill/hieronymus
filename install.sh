@@ -71,8 +71,9 @@ ensure_bun() {
     fi
 
     BUN_VER=$(bun --version)
-    BUN_MAJOR=${BUN_VER%%.*}
-    BUN_REST=${BUN_VER#*.}
+    BUN_VER_BASE=${BUN_VER%%-*}
+    BUN_MAJOR=${BUN_VER_BASE%%.*}
+    BUN_REST=${BUN_VER_BASE#*.}
     BUN_MINOR=${BUN_REST%%.*}
     case "$BUN_MAJOR" in ""|*[!0-9]*) BUN_MAJOR=0; BUN_MINOR=0 ;; esac
     case "$BUN_MINOR" in ""|*[!0-9]*) BUN_MAJOR=0; BUN_MINOR=0 ;; esac
@@ -83,8 +84,9 @@ ensure_bun() {
         fi
         bun upgrade
         BUN_VER=$(bun --version)
-        BUN_MAJOR=${BUN_VER%%.*}
-        BUN_REST=${BUN_VER#*.}
+        BUN_VER_BASE=${BUN_VER%%-*}
+        BUN_MAJOR=${BUN_VER_BASE%%.*}
+        BUN_REST=${BUN_VER_BASE#*.}
         BUN_MINOR=${BUN_REST%%.*}
         case "$BUN_MAJOR" in ""|*[!0-9]*) BUN_MAJOR=0; BUN_MINOR=0 ;; esac
         case "$BUN_MINOR" in ""|*[!0-9]*) BUN_MAJOR=0; BUN_MINOR=0 ;; esac
