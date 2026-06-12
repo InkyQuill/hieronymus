@@ -3,6 +3,7 @@ import pytest
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
+from hieronymus.dream_config import ProviderProfile, default_dream_config, save_dream_config
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
@@ -16,7 +17,6 @@ from hieronymus.memory_models import TranslationContext
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
-from hieronymus.settings import ProviderSettings, load_settings, save_settings
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -524,18 +524,12 @@ def test_dreaming_records_failed_run_when_settings_are_invalid(
 
 def test_dream_error_records_redact_configured_api_key_value(
     config: HieronymusConfig,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HIERONYMUS_PROVIDER_KEY", "raw-secret-value")
-    save_settings(
+    save_dream_config(
         config,
-        load_settings(config).with_provider(
+        default_dream_config().with_provider(
             "openai",
-            ProviderSettings(
-                enabled=True,
-                model="gpt-4.1-mini",
-                api_key_env="HIERONYMUS_PROVIDER_KEY",
-            ),
+            ProviderProfile(type="openai", api_key="raw-secret-value"),
         ),
     )
 

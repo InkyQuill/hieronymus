@@ -305,12 +305,12 @@ def test_config_save_rejects_invalid_dreaming_threshold(tmp_path: Path) -> None:
     }
 
 
-def test_config_check_provider_redacts_error(tmp_path: Path, monkeypatch) -> None:
+def test_config_check_provider_redacts_error(tmp_path: Path) -> None:
     class Registry:
         def list_model_suggestions(self, *args, **kwargs):
             return {"provider": "openai", "models": [], "source": "unavailable", "error": ""}
 
-        def check(self, *args, **kwargs):
+        def check_profile(self, *args, **kwargs):
             class Result:
                 def to_json_dict(self):
                     return {
@@ -324,7 +324,15 @@ def test_config_check_provider_redacts_error(tmp_path: Path, monkeypatch) -> Non
             return Result()
 
     config = _config(tmp_path)
-    monkeypatch.setenv("OPENAI_API_KEY", "raw-secret-value")
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider("openai", ProviderProfile(type="openai", api_key="raw-secret-value"))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        ),
+    )
     bridge = ConfigBridge(config, registry=Registry())
 
     payload = bridge.check_provider({"selected_provider": "openai", "draft": {}})
@@ -335,7 +343,6 @@ def test_config_check_provider_redacts_error(tmp_path: Path, monkeypatch) -> Non
 
 def test_config_check_provider_success_updates_model_cache(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     class Transport:
         def post_json(self, *args, **kwargs):
@@ -348,7 +355,15 @@ def test_config_check_provider_success_updates_model_cache(
             )
 
     config = _config(tmp_path)
-    monkeypatch.setenv("OPENAI_API_KEY", "raw-secret-value")
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider("openai", ProviderProfile(type="openai", api_key="raw-secret-value"))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        ),
+    )
     bridge = ConfigBridge(config, registry=ProviderRegistry(Transport()))
 
     payload = bridge.check_provider({"selected_provider": "openai", "draft": {}})

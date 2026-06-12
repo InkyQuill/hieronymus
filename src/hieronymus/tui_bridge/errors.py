@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.dream_config import DreamConfig
+from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.settings import SettingsError
 from hieronymus.tui_bridge.protocol import RpcError
 

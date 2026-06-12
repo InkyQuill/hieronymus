@@ -1,27 +1,23 @@
-from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import ProviderProfile, default_dream_config
 from hieronymus.secrets import redact_configured_secret_values
-from hieronymus.settings import ProviderSettings, load_settings
 
 
-def test_redact_configured_secret_values_replaces_longer_prefix_first(tmp_path, monkeypatch):
-    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    settings = (
-        load_settings(config)
+def test_redact_configured_secret_values_replaces_longer_prefix_first():
+    dream_config = (
+        default_dream_config()
         .with_provider(
             "openai",
-            ProviderSettings(api_key_env="SHORT_SECRET"),
+            ProviderProfile(type="openai", api_key="secret"),
         )
         .with_provider(
             "gemini",
-            ProviderSettings(api_key_env="LONG_SECRET"),
+            ProviderProfile(type="gemini", api_key="secret-suffix"),
         )
     )
-    monkeypatch.setenv("SHORT_SECRET", "secret")
-    monkeypatch.setenv("LONG_SECRET", "secret-suffix")
 
     redacted = redact_configured_secret_values(
         "provider returned secret-suffix and secret",
-        settings,
+        dream_config,
     )
 
     assert redacted == "provider returned [redacted] and [redacted]"

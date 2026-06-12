@@ -845,6 +845,47 @@ def test_deterministic_check_passes_without_network(tmp_path) -> None:
     )
 
 
+def test_status_payload_includes_default_ollama_profile(config: HieronymusConfig) -> None:
+    payload = ProviderRegistry().status_payload(config)
+
+    ollama = next(row for row in payload if row["name"] == "ollama")
+    assert ollama["configured"] is True
+    assert ollama["api_key_present"] is False
+    assert ollama["base_url"] == "http://localhost:11434"
+    assert ollama["model"] == "gemma4-e3b"
+
+
+def test_ollama_profile_check_uses_dream_config_without_api_key(
+    config: HieronymusConfig,
+) -> None:
+    transport = FakeTransport(HTTPResponse(status=200, body=json.dumps({"id": "ok"})), [])
+
+    result = ProviderRegistry(transport=transport).check(config, "ollama")
+
+    assert result.ok is True
+    assert transport.requests[0]["url"] == "http://localhost:11434/api/chat"
+    assert transport.requests[0]["headers"] == {}
+    assert transport.requests[0]["payload"]["model"] == "gemma4-e3b"
+
+
+def test_non_ollama_profile_type_requires_api_key(config: HieronymusConfig) -> None:
+    save_dream_config(
+        config,
+        default_dream_config()
+        .with_provider("local_openai", ProviderProfile(type="openai", api_key=""))
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="local_openai", model="gpt-local", enabled=True),
+        ),
+    )
+
+    payload = ProviderRegistry().status_payload(config)
+    local_openai = next(row for row in payload if row["name"] == "local_openai")
+
+    assert local_openai["configured"] is False
+    assert local_openai["error"] == "API key missing for provider profile"
+
+
 def test_openai_check_uses_plaintext_profile_key(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     _save_provider_profile(

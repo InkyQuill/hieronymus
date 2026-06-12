@@ -198,11 +198,16 @@ class ProviderRegistry:
         del settings
         dream_config = load_dream_config(config)
         statuses = []
-        for metadata in self._providers:
-            if metadata.name == "deterministic":
+        profile_names = [metadata.name for metadata in self._providers]
+        profile_names.extend(
+            name for name in dream_config.providers if name not in set(profile_names)
+        )
+        for name in profile_names:
+            metadata = self._metadata_or_profile_default(name)
+            if name == "deterministic":
                 statuses.append(
                     {
-                        "name": metadata.name,
+                        "name": name,
                         "display_name": metadata.display_name,
                         "configured": True,
                         "model": "",
@@ -213,7 +218,7 @@ class ProviderRegistry:
                     }
                 )
                 continue
-            profile = dream_config.providers.get(metadata.name)
+            profile = dream_config.providers.get(name)
             if profile is None:
                 configured = False
                 error = "provider profile missing"
@@ -222,14 +227,14 @@ class ProviderRegistry:
                 base_url = ""
                 timeout_seconds = 0.0
             else:
-                model = _model_for_profile(dream_config, metadata.name)
+                model = _model_for_profile(dream_config, name)
                 api_key_present = bool(profile.api_key.strip())
-                configured, error = _configured_profile_status(metadata, profile, model)
+                configured, error = _configured_profile_status(profile, model)
                 base_url = profile.endpoint
                 timeout_seconds = profile.timeout_seconds
             statuses.append(
                 {
-                    "name": metadata.name,
+                    "name": name,
                     "display_name": metadata.display_name,
                     "configured": configured,
                     "model": model,
@@ -249,7 +254,6 @@ class ProviderRegistry:
         settings: HieronymusSettings | None = None,
     ) -> ModelSuggestionResult:
         del settings
-        self.metadata(name)
         if name == "deterministic":
             return ModelSuggestionResult(
                 provider=name,
@@ -260,6 +264,7 @@ class ProviderRegistry:
         dream_config = load_dream_config(config)
         profile = dream_config.providers.get(name)
         if profile is None:
+            self.metadata(name)
             return ModelSuggestionResult(
                 provider=name,
                 models=_default_model_suggestions(name),
@@ -420,7 +425,6 @@ class ProviderRegistry:
         settings: HieronymusSettings | None = None,
     ) -> ProviderCheckResult:
         del temporary_api_key, settings
-        self.metadata(name)
         if name == "deterministic":
             return ProviderCheckResult(name="deterministic", ok=True, model="")
 
@@ -428,6 +432,7 @@ class ProviderRegistry:
         profile = dream_config.providers.get(name)
         model = _model_for_profile(dream_config, name)
         if profile is None:
+            self.metadata(name)
             return ProviderCheckResult(
                 name=name,
                 ok=False,
@@ -435,6 +440,17 @@ class ProviderRegistry:
                 error="provider profile missing",
             )
         return self.check_profile(config, name, profile, model=model)
+
+    def _metadata_or_profile_default(self, name: str) -> ProviderMetadata:
+        for provider in self._providers:
+            if provider.name == name:
+                return provider
+        return ProviderMetadata(
+            name=name,
+            display_name=name.replace("_", " ").title(),
+            requires_api_key=True,
+            supports_base_url=True,
+        )
 
     def check_profile(
         self,
@@ -1154,12 +1170,8 @@ def resolve_provider(
     raise ValueError(f"unsupported dream provider: {provider_name}")
 
 
-def _configured_profile_status(
-    metadata: ProviderMetadata,
-    profile: ProviderProfile,
-    model: str,
-) -> tuple[bool, str]:
-    if metadata.requires_api_key and not profile.api_key.strip():
+def _configured_profile_status(profile: ProviderProfile, model: str) -> tuple[bool, str]:
+    if profile.type != "ollama" and not profile.api_key.strip():
         return False, "API key missing for provider profile"
     if not model.strip():
         return False, "model is empty for provider profile"

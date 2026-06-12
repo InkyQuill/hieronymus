@@ -136,6 +136,7 @@ class ConfigBridge:
             profile, model = profile_context
             result = self.registry.check_profile(self.config, selected, profile, model=model)
             check_result = _result_to_json_dict(result)
+            _redact_error(check_result, self.config)
             suggestions = None
             if check_result.get("ok") is True:
                 suggestion_result = self.registry.list_profile_model_suggestions(
@@ -144,6 +145,7 @@ class ConfigBridge:
                     profile,
                 )
                 suggestions = _result_to_json_dict(suggestion_result)
+                _redact_error(suggestions, self.config)
             return self._payload(
                 settings,
                 selected,
@@ -157,7 +159,7 @@ class ConfigBridge:
             return self._payload(settings, selected, release_config, validation_errors=errors)
         result = self.registry.check(self.config, selected, settings=settings)
         check_result = _result_to_json_dict(result)
-        _redact_error(check_result, settings)
+        _redact_error(check_result, self.config)
         suggestions = None
         if check_result.get("ok") is True and hasattr(self.registry, "list_model_suggestions"):
             suggestion_result = self.registry.list_model_suggestions(
@@ -166,7 +168,7 @@ class ConfigBridge:
                 settings=settings,
             )
             suggestions = _result_to_json_dict(suggestion_result)
-            _redact_error(suggestions, settings)
+            _redact_error(suggestions, self.config)
         return self._payload(
             settings,
             selected,
@@ -189,6 +191,7 @@ class ConfigBridge:
             profile, _ = profile_context
             result = self.registry.list_profile_model_suggestions(self.config, selected, profile)
             suggestions = _result_to_json_dict(result)
+            _redact_error(suggestions, self.config)
             return self._payload(
                 settings,
                 selected,
@@ -201,7 +204,7 @@ class ConfigBridge:
             return self._payload(settings, selected, release_config, validation_errors=errors)
         result = self.registry.list_model_suggestions(self.config, selected, settings=settings)
         suggestions = _result_to_json_dict(result)
-        _redact_error(suggestions, settings)
+        _redact_error(suggestions, self.config)
         return self._payload(
             settings,
             selected,
@@ -547,7 +550,11 @@ def _release_draft(release_config: ReleaseConfig) -> dict[str, object]:
     return {"update_channel": release_config.update_channel}
 
 
-def _redact_error(payload: dict[str, object], settings: HieronymusSettings) -> None:
+def _redact_error(payload: dict[str, object], config: HieronymusConfig) -> None:
     error = payload.get("error")
     if type(error) is str and error:
-        payload["error"] = redact_configured_secret_values(error, settings)
+        try:
+            dream_config = load_dream_config(config)
+        except (DreamConfigError, OSError):
+            return
+        payload["error"] = redact_configured_secret_values(error, dream_config)
