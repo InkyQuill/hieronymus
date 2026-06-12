@@ -1,29 +1,27 @@
 {
-  "name": "hieronymus-ink-tui",
+  "name": "hieronymus-opentui",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.5.2",
-  "engines": {
-    "node": ">=22"
-  },
+  "packageManager": "bun@1.3.14",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "build": "bun build src/main.tsx --outfile=dist/main.js --target=bun --external @opentui/core",
+    "dev": "bun --watch src/main.tsx",
+    "test": "bun test",
     "format": "prettier --check src",
     "format:write": "prettier --write src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "ink": "^5.0.1",
-    "react": "^18.3.1",
+    "@opentui/core": "0.4.0",
+    "@opentui/react": "0.4.0",
+    "react": "^19",
+    "unicode-animations": "^1.0.3",
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@types/react": "^18.3.0",
-    "ink-testing-library": "^3.0.0",
+    "@types/bun": "^1.3.0",
+    "@types/react": "^19",
     "prettier": "^3.3.0",
-    "typescript": "^5.5.0",
-    "vitest": "^2.0.0"
+    "typescript": "^5.5.0"
   }
 }

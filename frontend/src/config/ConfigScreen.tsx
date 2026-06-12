@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useStdin, useInput } from "ink";
+import { useKeyboard, useRenderer } from "@opentui/react";
 import { ConfigBootstrapSchema, type ConfigBootstrap } from "../rpc/schema.js";
 import type { RpcClient } from "../rpc/client.js";
 import { ConfigForm, fieldDefinitions } from "./ConfigForm.js";
@@ -18,8 +18,7 @@ type Status = {
 };
 
 export function ConfigScreen({ initial, client }: Props) {
-  const { exit } = useApp();
-  const { stdin, isRawModeSupported } = useStdin();
+  const renderer = useRenderer();
   const [payload, setPayload] = useState(initial);
   const [status, setStatus] = useState<Status>({
     message: "Ready",
@@ -46,12 +45,6 @@ export function ConfigScreen({ initial, client }: Props) {
       dreaming: { ...payload.form_values.dreaming },
     });
   }, [payload.form_values]);
-
-  const canUseInkInput = Boolean(
-    isRawModeSupported &&
-      typeof stdin.ref === "function" &&
-      typeof stdin.unref === "function",
-  );
 
   const providerChoices = payload.provider_choices;
   const selectedProvider = payload.selected_provider;
@@ -172,16 +165,16 @@ export function ConfigScreen({ initial, client }: Props) {
     });
   };
 
-  const handleInput = (input: string, key?: any) => {
-    const ctrl = key ? key.ctrl : false;
-    const tab = key ? key.tab : (input === "\t");
-    const shift = key ? key.shift : false;
-    const upArrow = key ? key.upArrow : false;
-    const downArrow = key ? key.downArrow : false;
-    const leftArrow = key ? key.leftArrow : false;
-    const rightArrow = key ? key.rightArrow : false;
-    const enter = key ? key.return : (input === "\r" || input === "\n");
-    const escape = key ? key.escape : false;
+  useKeyboard((key) => {
+    const ctrl = key.ctrl;
+    const tab = key.name === "tab";
+    const shift = key.shift;
+    const upArrow = key.name === "up";
+    const downArrow = key.name === "down";
+    const leftArrow = key.name === "left";
+    const rightArrow = key.name === "right";
+    const enter = key.name === "enter";
+    const escape = key.name === "escape";
 
     // 1. Focus Cycling
     if (tab) {
@@ -209,7 +202,7 @@ export function ConfigScreen({ initial, client }: Props) {
       );
       if (focusedFieldIndex === autostartIndex) {
         // Autostart toggle key logic (Left/Right arrow or Space)
-        if (leftArrow || rightArrow || input === " ") {
+        if (leftArrow || rightArrow || key.name === "space" || key.name === " ") {
           const currentVal = localFormValues.dreaming.autostart_enabled || "no";
           handleFieldChange("dreaming.autostart_enabled", currentVal === "yes" ? "no" : "yes");
         } else if (enter) {
@@ -253,86 +246,65 @@ export function ConfigScreen({ initial, client }: Props) {
     }
 
     // 4. Global hotkeys
-    if (input === "q") {
+    if (key.name === "q") {
       client?.close();
-      exit();
-      return;
+      renderer.destroy();
     }
 
-    if (input === "s") {
+    if (key.name === "s") {
       handleSave();
       return;
     }
 
-    if (input === "r") {
+    if (key.name === "r") {
       handleReload();
       return;
     }
 
-    if (input === "c") {
+    if (key.name === "c") {
       handleCheck();
       return;
     }
 
     // Numeric provider selection shortcuts
-    const providerIndex = providerIndexForInput(input, providerChoices.length);
+    const providerIndex = providerIndexForInput(key.name, providerChoices.length);
     if (providerIndex >= 0) {
       selectProviderByIndex(providerIndex);
     }
-  };
-
-  useInput(
-    (input, key) => {
-      handleInput(input, key);
-    },
-    { isActive: canUseInkInput },
-  );
-
-  useEffect(() => {
-    if (canUseInkInput) {
-      return undefined;
-    }
-
-    const onData = (chunk: Buffer | string) => {
-      const text = String(chunk);
-      handleInput(text[0] ?? "");
-    };
-
-    stdin.on("data", onData);
-    return () => {
-      stdin.off("data", onData);
-    };
-  }, [canUseInkInput, stdin, activePanel, isEditing, focusedFieldIndex, localFormValues, payload]);
+  });
 
   return (
-    <Box flexDirection="column" width={100}>
-      <Text bold>Hieronymus Config</Text>
-      <Text dimColor>{payload.config_paths.settings_path}</Text>
+    <box flexDirection="column" width={100}>
+      <text>
+        Hieronymus Config
+      </text>
+      <text fg="gray">{payload.config_paths.settings_path}</text>
 
-      <Box flexDirection="row" marginTop={1}>
+      <box flexDirection="row" marginTop={1}>
         {/* Left Column: Provider Selector */}
-        <Box
+        <box
           flexDirection="column"
           width={28}
-          borderStyle="round"
+          borderStyle="rounded"
           borderColor={activePanel === "provider" ? "cyan" : "gray"}
           paddingX={1}
         >
-          <Text bold color={activePanel === "provider" ? "cyan" : undefined}>
+          <text fg={activePanel === "provider" ? "cyan" : undefined}>
             Providers
-          </Text>
+          </text>
           <ProviderSelector
             choices={providerChoices}
             selected={selectedProvider}
             focused={activePanel === "provider"}
+            onSelect={selectProviderByIndex}
           />
-        </Box>
+        </box>
 
         {/* Right Column: Configuration Form */}
-        <Box
+        <box
           flexDirection="column"
           width={70}
-          borderStyle="round"
+          borderStyle="rounded"
           borderColor={activePanel === "form" ? "cyan" : "gray"}
           paddingX={1}
         >
@@ -344,28 +316,29 @@ export function ConfigScreen({ initial, client }: Props) {
             onFieldChange={handleFieldChange}
             onSubmitField={submitField}
           />
-        </Box>
-      </Box>
+        </box>
+      </box>
 
-      <Box marginTop={1} flexDirection="column">
-        <Text>
+      <box marginTop={1} flexDirection="column">
+        <text>
           Models: {suggestions.length > 0 ? suggestions.join(", ") : "-"}
-        </Text>
+        </text>
         {payload.validation.errors.map((error) => (
-          <Text key={error} color="red">
+          <text key={error} fg="red">
             {error}
-          </Text>
+          </text>
         ))}
         {detailErrors.map((error) => (
-          <Text key={error} color="red">
+          <text key={error} fg="red">
             {error}
-          </Text>
+          </text>
         ))}
-      </Box>
+      </box>
 
       <StatusLine
-        message={busy ? `Working: ${status.message}` : status.message}
+        message={status.message}
         error={status.error}
+        busy={busy}
       />
       <KeyHelp
         keys={[
@@ -377,7 +350,7 @@ export function ConfigScreen({ initial, client }: Props) {
           "q quit",
         ]}
       />
-    </Box>
+    </box>
   );
 }
 

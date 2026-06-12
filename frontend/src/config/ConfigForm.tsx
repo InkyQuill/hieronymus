@@ -1,6 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
-import { TextInput } from "../ui/TextInput.js";
+import type { ConfigBootstrap } from "../rpc/schema.js";
 
 type ConfigFormProps = {
   formValues: {
@@ -103,57 +102,58 @@ export function ConfigForm({
   );
 
   return (
-    <Box flexDirection="column" width={68}>
-      <Text bold color={focused ? "cyan" : undefined}>
+    <box flexDirection="column" width={68}>
+      <text>
         Dreaming settings
-      </Text>
-      <Box flexDirection="column" marginTop={1}>
+      </text>
+      <box flexDirection="column" marginTop={1}>
         {fields.map((field, index) => {
           const isFieldFocused = focused && focusedFieldIndex === index;
           const labelColor = isFieldFocused ? "cyan" : "gray";
 
           return (
-            <Box key={field.key} flexDirection="row" marginTop={index === autostartIndex ? 1 : 0}>
-              <Text color={labelColor} bold={isFieldFocused}>
-                {isFieldFocused ? ">" : " "} {field.label}:{" "}
-              </Text>
+            <box key={field.key} flexDirection="row" marginTop={index === autostartIndex ? 1 : 0}>
+              <text fg={labelColor}>
+                {isFieldFocused ? "> " : "  "}
+                {field.label}:{" "}
+              </text>
 
               {field.type === "toggle" ? (
-                <Box flexDirection="row">
+                <box flexDirection="row">
                   {isFieldFocused && isEditing ? (
-                    <Box flexDirection="row">
-                      <Text
-                        color={field.value === "yes" ? "cyan" : "gray"}
-                        bold={field.value === "yes"}
-                      >
+                    <box flexDirection="row">
+                      <text fg={field.value === "yes" ? "cyan" : "gray"}>
                         [Yes]{" "}
-                      </Text>
-                      <Text
-                        color={field.value === "no" ? "cyan" : "gray"}
-                        bold={field.value === "no"}
-                      >
+                      </text>
+                      <text fg={field.value === "no" ? "cyan" : "gray"}>
                         [No]
-                      </Text>
-                    </Box>
+                      </text>
+                    </box>
                   ) : (
-                    <Text color={isFieldFocused ? "cyan" : undefined}>
+                    <text fg={isFieldFocused ? "cyan" : undefined}>
                       {field.value}
-                    </Text>
+                    </text>
                   )}
-                </Box>
+                </box>
               ) : (
-                <TextInput
-                  value={field.value}
-                  onChange={(val) => onFieldChange(field.key, val)}
-                  focus={isFieldFocused && isEditing}
-                  placeholder={field.placeholder}
-                  onSubmit={onSubmitField}
-                />
+                isFieldFocused && isEditing ? (
+                  <input
+                    value={field.value}
+                    onChange={(val) => onFieldChange(field.key, val)}
+                    onSubmit={onSubmitField}
+                    focused={true}
+                    placeholder={field.placeholder}
+                  />
+                ) : (
+                  <text fg={isFieldFocused ? "cyan" : undefined}>
+                    {field.value || field.placeholder || " "}
+                  </text>
+                )
               )}
-            </Box>
+            </box>
           );
         })}
-      </Box>
-    </Box>
+      </box>
+    </box>
   );
 }

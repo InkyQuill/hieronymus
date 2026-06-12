@@ -1,5 +1,5 @@
-import React from "react";
-import { Text, useInput, useStdin } from "ink";
+import React, { useRef } from "react";
+import type { TextareaRenderable } from "@opentui/core";
 
 type TextInputProps = {
   value: string;
@@ -16,47 +16,50 @@ export function TextInput({
   placeholder = "",
   focus = true,
 }: TextInputProps) {
-  const { stdin, isRawModeSupported } = useStdin();
-  const canUseInkInput = Boolean(
-    isRawModeSupported &&
-      typeof stdin.ref === "function" &&
-      typeof stdin.unref === "function",
+  return (
+    <input
+      value={value}
+      onChange={onChange}
+      onSubmit={onSubmit}
+      placeholder={placeholder}
+      focused={focus}
+    />
   );
+}
 
-  useInput(
-    (input, key) => {
-      if (!focus) {
-        return;
-      }
-      if (key.return) {
-        onSubmit?.();
-        return;
-      }
-      if (key.backspace || key.delete) {
-        onChange(value.slice(0, -1));
-        return;
-      }
-      // Capture standard printable characters, excluding control and meta combos
-      if (input && input.length === 1 && !key.ctrl && !key.meta && input !== "\t") {
-        onChange(value + input);
-      }
-    },
-    { isActive: focus && canUseInkInput },
-  );
+type TextAreaInputProps = TextInputProps & {
+  width?: number;
+  height?: number;
+};
 
-  if (!value && placeholder) {
-    return (
-      <Text dimColor>
-        {placeholder}
-        {focus ? <Text>█</Text> : null}
-      </Text>
-    );
-  }
+export function TextAreaInput({
+  value,
+  onChange,
+  onSubmit,
+  placeholder = "",
+  focus = true,
+  width = 46,
+  height = 6,
+}: TextAreaInputProps) {
+  const textareaRef = useRef<TextareaRenderable>(null);
 
   return (
-    <Text color={focus ? "cyan" : undefined}>
-      {value}
-      {focus ? <Text>█</Text> : null}
-    </Text>
+    <textarea
+      ref={textareaRef}
+      initialValue={value}
+      onContentChange={() => {
+        onChange(textareaRef.current?.plainText ?? value);
+      }}
+      onSubmit={onSubmit}
+      placeholder={placeholder}
+      focused={focus}
+      width={width}
+      height={height}
+      wrapMode="word"
+      scrollMargin={2}
+      cursorColor="cyan"
+      focusedTextColor="white"
+      focusedBackgroundColor="transparent"
+    />
   );
 }

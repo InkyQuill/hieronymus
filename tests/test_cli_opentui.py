@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -115,18 +116,18 @@ def test_frontend_entrypoint_fails_when_bundle_is_missing(
     module_file.write_text("", encoding="utf-8")
     monkeypatch.setattr(cli, "__file__", str(module_file))
 
-    with pytest.raises(FileNotFoundError, match="Ink frontend bundle not found; looked for:"):
+    with pytest.raises(FileNotFoundError, match="OpenTUI frontend bundle not found; looked for:"):
         cli._frontend_entrypoint()
 
 
-def test_cli_config_launches_ink_when_tui_env_unset(tmp_path, monkeypatch) -> None:
+def test_cli_config_launches_opentui_when_tui_env_unset(tmp_path, monkeypatch) -> None:
     calls = []
 
-    def fake_launch_ink(mode, *, data_root):
+    def fake_launch_opentui(mode, *, data_root):
         calls.append((mode, data_root))
 
     monkeypatch.delenv("HIERONYMUS_TUI", raising=False)
-    monkeypatch.setattr("hieronymus.cli._launch_ink", fake_launch_ink)
+    monkeypatch.setattr("hieronymus.cli._launch_opentui", fake_launch_opentui)
 
     data_root = tmp_path / "hieronymus"
     result = CliRunner().invoke(
@@ -138,14 +139,14 @@ def test_cli_config_launches_ink_when_tui_env_unset(tmp_path, monkeypatch) -> No
     assert calls == [("config", data_root)]
 
 
-def test_cli_admin_launches_ink_when_tui_env_unset(tmp_path, monkeypatch) -> None:
+def test_cli_admin_launches_opentui_when_tui_env_unset(tmp_path, monkeypatch) -> None:
     calls = []
 
-    def fake_launch_ink(mode, *, data_root):
+    def fake_launch_opentui(mode, *, data_root):
         calls.append((mode, data_root))
 
     monkeypatch.delenv("HIERONYMUS_TUI", raising=False)
-    monkeypatch.setattr("hieronymus.cli._launch_ink", fake_launch_ink)
+    monkeypatch.setattr("hieronymus.cli._launch_opentui", fake_launch_opentui)
 
     data_root = tmp_path / "hieronymus"
     result = CliRunner().invoke(
@@ -157,7 +158,7 @@ def test_cli_admin_launches_ink_when_tui_env_unset(tmp_path, monkeypatch) -> Non
     assert calls == [("admin", data_root)]
 
 
-def test_cli_ink_config_launches_frontend_with_data_root(tmp_path, monkeypatch) -> None:
+def test_cli_opentui_config_launches_frontend_with_data_root(tmp_path, monkeypatch) -> None:
     calls = []
     data_root = tmp_path / "hieronymus"
 
@@ -165,7 +166,7 @@ def test_cli_ink_config_launches_frontend_with_data_root(tmp_path, monkeypatch) 
         calls.append((command, env))
 
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fake_run)
-    monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-ink.js")
+    monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-opentui.js")
 
     result = CliRunner().invoke(
         main,
@@ -174,17 +175,21 @@ def test_cli_ink_config_launches_frontend_with_data_root(tmp_path, monkeypatch) 
 
     assert result.exit_code == 0
     command, env = calls[0]
-    assert command[0] == "node"
-    assert command[1] == "/tmp/hiero-ink.js"
+    assert command[0] == "bun"
+    assert command[1] == "/tmp/hiero-opentui.js"
     assert command[2:] == [
         "config",
         "--bridge-command",
-        "hiero",
+        sys.executable,
+        "--bridge-arg",
+        "-m",
+        "--bridge-arg",
+        "hieronymus",
     ]
     assert env["HIERONYMUS_DATA_ROOT"] == str(data_root)
 
 
-def test_cli_ink_admin_launches_frontend_when_requested(tmp_path, monkeypatch) -> None:
+def test_cli_opentui_admin_launches_frontend_when_requested(tmp_path, monkeypatch) -> None:
     calls = []
     data_root = tmp_path / "hieronymus"
 
@@ -192,7 +197,7 @@ def test_cli_ink_admin_launches_frontend_when_requested(tmp_path, monkeypatch) -
         calls.append((command, env))
 
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fake_run)
-    monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-ink.js")
+    monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-opentui.js")
 
     result = CliRunner().invoke(
         main,
@@ -204,17 +209,21 @@ def test_cli_ink_admin_launches_frontend_when_requested(tmp_path, monkeypatch) -
     assert command[2:] == [
         "admin",
         "--bridge-command",
-        "hiero",
+        sys.executable,
+        "--bridge-arg",
+        "-m",
+        "--bridge-arg",
+        "hieronymus",
     ]
     assert env["HIERONYMUS_DATA_ROOT"] == str(data_root)
 
 
-def test_cli_ink_launch_failure_returns_clean_error(tmp_path, monkeypatch) -> None:
+def test_cli_opentui_launch_failure_returns_clean_error(tmp_path, monkeypatch) -> None:
     def fail_run(command, check, env):
         raise FileNotFoundError(command[0])
 
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fail_run)
-    monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-ink.js")
+    monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-opentui.js")
 
     result = CliRunner().invoke(
         main,
@@ -222,16 +231,16 @@ def test_cli_ink_launch_failure_returns_clean_error(tmp_path, monkeypatch) -> No
     )
 
     assert result.exit_code == 1
-    assert "Error: Ink TUI launch failed: node executable not found" in result.output
+    assert "Error: OpenTUI launch failed: bun executable not found" in result.output
     assert "Traceback" not in result.output
 
 
-def test_cli_ink_nonzero_exit_returns_clean_error(tmp_path, monkeypatch) -> None:
+def test_cli_opentui_nonzero_exit_returns_clean_error(tmp_path, monkeypatch) -> None:
     def fail_run(command, check, env):
         raise subprocess.CalledProcessError(7, command)
 
     monkeypatch.setattr("hieronymus.cli.subprocess.run", fail_run)
-    monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-ink.js")
+    monkeypatch.setattr("hieronymus.cli._frontend_entrypoint", lambda: "/tmp/hiero-opentui.js")
 
     result = CliRunner().invoke(
         main,
@@ -239,11 +248,11 @@ def test_cli_ink_nonzero_exit_returns_clean_error(tmp_path, monkeypatch) -> None
     )
 
     assert result.exit_code == 1
-    assert "Error: Ink TUI exited with code 7" in result.output
+    assert "Error: OpenTUI exited with code 7" in result.output
     assert "Traceback" not in result.output
 
 
-def test_cli_json_config_bypasses_ink_launcher(tmp_path, monkeypatch) -> None:
+def test_cli_json_config_bypasses_opentui_launcher(tmp_path, monkeypatch) -> None:
     def fail_run(*args, **kwargs):
         raise AssertionError("JSON output must not launch frontend")
 

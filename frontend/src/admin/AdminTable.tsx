@@ -1,5 +1,4 @@
 import React from "react";
-import { Box, Text } from "ink";
 import type { AdminRow } from "../rpc/schema.js";
 
 export function AdminTable({
@@ -12,18 +11,18 @@ export function AdminTable({
   focused?: boolean;
 }) {
   return (
-    <Box flexDirection="column" width={48}>
+    <scrollbox flexDirection="column" width={48} height={18}>
       {rows.map((row) => (
-        <Text
+        <text
           key={String(row.id)}
-          color={
+          fg={
             row.id === selectedId ? (focused ? "cyan" : "white") : undefined
           }
         >
           {row.id === selectedId ? ">" : " "} {row.label} [{row.status}]{" "}
           {row.quality_label}
-        </Text>
+        </text>
       ))}
-    </Box>
+    </scrollbox>
   );
 }

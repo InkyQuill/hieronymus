@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -153,18 +154,28 @@ def _frontend_entrypoint() -> str:
         if repo_candidate.exists():
             return str(repo_candidate)
     searched_paths = ", ".join(str(path) for path in searched)
-    raise FileNotFoundError(f"Ink frontend bundle not found; looked for: {searched_paths}")
+    raise FileNotFoundError(f"OpenTUI frontend bundle not found; looked for: {searched_paths}")
 
 
-def _launch_ink(mode: str, *, data_root: Path) -> None:
-    command = ["node", _frontend_entrypoint(), mode, "--bridge-command", "hiero"]
+def _launch_opentui(mode: str, *, data_root: Path) -> None:
+    command = [
+        "bun",
+        _frontend_entrypoint(),
+        mode,
+        "--bridge-command",
+        sys.executable,
+        "--bridge-arg",
+        "-m",
+        "--bridge-arg",
+        "hieronymus",
+    ]
     env = {**os.environ, "HIERONYMUS_DATA_ROOT": str(data_root)}
     try:
         subprocess.run(command, check=True, env=env)
     except FileNotFoundError as error:
-        raise click.ClickException("Ink TUI launch failed: node executable not found") from error
+        raise click.ClickException("OpenTUI launch failed: bun executable not found") from error
     except subprocess.CalledProcessError as error:
-        raise click.ClickException(f"Ink TUI exited with code {error.returncode}") from error
+        raise click.ClickException(f"OpenTUI exited with code {error.returncode}") from error
 
 
 @click.group(invoke_without_command=True)
@@ -239,7 +250,7 @@ def restart(ctx: click.Context, json_output: bool) -> None:
 def config_command(ctx: click.Context, json_output: bool) -> None:
     config = ctx.obj["config"]
     if not json_output:
-        _launch_ink("config", data_root=config.data_root)
+        _launch_opentui("config", data_root=config.data_root)
         return
 
     try:
@@ -365,7 +376,7 @@ def admin(ctx: click.Context, json_output: bool) -> None:
         click.echo(render_json(payload))
         return
 
-    _launch_ink("admin", data_root=config.data_root)
+    _launch_opentui("admin", data_root=config.data_root)
 
 
 @main.command("doctor")

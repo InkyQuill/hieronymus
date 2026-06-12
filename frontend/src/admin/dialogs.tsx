@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { Box, Text, useInput, useStdin } from "ink";
-import { TextInput } from "../ui/TextInput.js";
+import { useKeyboard } from "@opentui/react";
+import { TextAreaInput, TextInput } from "../ui/TextInput.js";
 
 export type DialogKind =
   | "add"
@@ -29,13 +29,6 @@ type DialogProps = {
 };
 
 export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
-  const { stdin, isRawModeSupported } = useStdin();
-  const canUseInkInput = Boolean(
-    isRawModeSupported &&
-      typeof stdin.ref === "function" &&
-      typeof stdin.unref === "function",
-  );
-
   if (state.kind === "none") {
     return null;
   }
@@ -43,10 +36,13 @@ export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
   // Common styles
   const overlayStyle: any = {
     position: "absolute",
+    top: 0,
+    left: 0,
     width: "100%",
     height: "100%",
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#000000",
   };
 
   const modalStyle: any = {
@@ -55,6 +51,7 @@ export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
     flexDirection: "column",
     padding: 1,
     minWidth: 60,
+    backgroundColor: "#141414",
   };
 
   if (state.kind === "delete") {
@@ -65,7 +62,6 @@ export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
         onSubmit={onSubmit}
         overlayStyle={overlayStyle}
         modalStyle={modalStyle}
-        canUseInkInput={canUseInkInput}
       />
     );
   }
@@ -77,7 +73,6 @@ export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
         onSubmit={onSubmit}
         overlayStyle={overlayStyle}
         modalStyle={modalStyle}
-        canUseInkInput={canUseInkInput}
       />
     );
   }
@@ -90,7 +85,6 @@ export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
         onSubmit={onSubmit}
         overlayStyle={overlayStyle}
         modalStyle={modalStyle}
-        canUseInkInput={canUseInkInput}
       />
     );
   }
@@ -103,7 +97,6 @@ export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
         onSubmit={onSubmit}
         overlayStyle={overlayStyle}
         modalStyle={modalStyle}
-        canUseInkInput={canUseInkInput}
       />
     );
   }
@@ -116,7 +109,6 @@ export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
         onSubmit={onSubmit}
         overlayStyle={overlayStyle}
         modalStyle={modalStyle}
-        canUseInkInput={canUseInkInput}
       />
     );
   }
@@ -129,7 +121,6 @@ export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
         onSubmit={onSubmit}
         overlayStyle={overlayStyle}
         modalStyle={modalStyle}
-        canUseInkInput={canUseInkInput}
       />
     );
   }
@@ -144,58 +135,51 @@ function DeleteDialog({
   onSubmit,
   overlayStyle,
   modalStyle,
-  canUseInkInput,
 }: {
   state: DialogState;
   onClose: () => void;
   onSubmit: (params: Record<string, any>) => void;
   overlayStyle: any;
   modalStyle: any;
-  canUseInkInput: boolean;
 }) {
-  useInput(
-    (_input, key) => {
-      if (key.escape || _input === "n" || _input === "N") {
-        onClose();
-      } else if (key.return || _input === "y" || _input === "Y") {
-        if (state.entityType === "concept") {
-          onSubmit({ concept_id: state.entityId, confirmed: true });
-        } else if (state.entityType === "memory") {
-          onSubmit({ memory_id: state.entityId, confirmed: true });
-        } else {
-          onSubmit({ id: state.entityId, confirmed: true });
-        }
+  useKeyboard((key) => {
+    if (key.name === "escape" || key.name === "n" || key.name === "N") {
+      onClose();
+    } else if (key.name === "enter" || key.name === "y" || key.name === "Y") {
+      if (state.entityType === "concept") {
+        onSubmit({ concept_id: state.entityId, confirmed: true });
+      } else if (state.entityType === "memory") {
+        onSubmit({ memory_id: state.entityId, confirmed: true });
+      } else {
+        onSubmit({ id: state.entityId, confirmed: true });
       }
-    },
-    { isActive: canUseInkInput },
-  );
+    }
+  });
 
   return (
-    <Box {...overlayStyle}>
-      <Box {...modalStyle} borderColor="red">
-        <Text bold color="red">
-          Confirm Deletion
-        </Text>
-        <Box marginTop={1}>
-          <Text>
+    <box {...overlayStyle}>
+      <box {...modalStyle} borderColor="red">
+        <text fg="red">Confirm Deletion</text>
+        <box marginTop={1}>
+          <text>
             Are you sure you want to delete this {state.entityType || "item"}?
-          </Text>
-        </Box>
-        <Box marginTop={1} flexDirection="row">
-          <Text color="gray">ID: </Text>
-          <Text>{state.entityId}</Text>
-        </Box>
+          </text>
+        </box>
+        <box marginTop={1} flexDirection="row">
+          <text fg="gray">ID: </text>
+          <text>{state.entityId}</text>
+        </box>
         {state.error ? (
-          <Box marginTop={1}>
-            <Text color="red">{state.error}</Text>
-          </Box>
+          <box marginTop={1}>
+            <text fg="red">{state.error}</text>
+          </box>
         ) : null}
-        <Box marginTop={1} justifyContent="space-between">
-          <Text dimColor>[Y] Yes, Delete</Text>
-          <Text dimColor>[Esc/N] Cancel</Text>
-        </Box>
-      </Box>
-    </Box>
+        <box marginTop={1} justifyContent="space-between">
+          <text fg="gray">[Y] Yes, Delete</text>
+          <text fg="gray">[Esc/N] Cancel</text>
+        </box>
+      </box>
+    </box>
   );
 }
 
@@ -205,42 +189,19 @@ function AddDialog({
   onSubmit,
   overlayStyle,
   modalStyle,
-  canUseInkInput,
 }: {
   onClose: () => void;
   onSubmit: (params: Record<string, any>) => void;
   overlayStyle: any;
   modalStyle: any;
-  canUseInkInput: boolean;
 }) {
-  const [type, setType] = useState<"crystal" | "lesson" | "rule" | string>("crystal");
+  const [type, setType] = useState<"crystal" | "lesson" | "rule" | string>(
+    "crystal",
+  );
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [tags, setTags] = useState("");
   const [focusedIndex, setFocusedIndex] = useState(0); // 0 = type, 1 = title, 2 = text, 3 = tags
-
-  useInput(
-    (input, key) => {
-      if (key.escape) {
-        onClose();
-        return;
-      }
-      if (key.upArrow) {
-        setFocusedIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setFocusedIndex((prev) => Math.min(3, prev + 1));
-      } else if (focusedIndex === 0) {
-        if (key.leftArrow || key.rightArrow || input === " ") {
-          setType((prev) => {
-            if (prev === "crystal") return "lesson";
-            if (prev === "lesson") return "rule";
-            return "crystal";
-          });
-        }
-      }
-    },
-    { isActive: canUseInkInput },
-  );
 
   const handleSubmit = () => {
     onSubmit({
@@ -257,54 +218,100 @@ function AddDialog({
     });
   };
 
-  return (
-    <Box {...overlayStyle}>
-      <Box {...modalStyle}>
-        <Text bold color="cyan">
-          Add New Crystal / Lesson / Rule
-        </Text>
-        <Box marginTop={1} flexDirection="column">
-          <Box flexDirection="row">
-            <Text color={focusedIndex === 0 ? "cyan" : "gray"}>Type: </Text>
-            <Text
-              color={type === "crystal" ? "cyan" : undefined}
-              bold={type === "crystal"}
-            >
-              [Crystal]{" "}
-            </Text>
-            <Text
-              color={type === "lesson" ? "cyan" : undefined}
-              bold={type === "lesson"}
-            >
-              [Lesson]{" "}
-            </Text>
-            <Text color={type === "rule" ? "cyan" : undefined} bold={type === "rule"}>
-              [Rule]
-            </Text>
-          </Box>
+  useKeyboard((key) => {
+    if (key.name === "escape") {
+      onClose();
+      return;
+    }
+    if (key.name === "enter") {
+      handleSubmit();
+      return;
+    }
+    if (key.name === "up") {
+      setFocusedIndex((prev) => Math.max(0, prev - 1));
+    } else if (key.name === "down") {
+      setFocusedIndex((prev) => Math.min(3, prev + 1));
+    } else if (focusedIndex === 0) {
+      if (
+        key.name === "left" ||
+        key.name === "right" ||
+        key.name === "space" ||
+        key.name === " "
+      ) {
+        setType((prev) => {
+          if (prev === "crystal") return "lesson";
+          if (prev === "lesson") return "rule";
+          return "crystal";
+        });
+      }
+    }
+  });
 
-          <Box flexDirection="row" marginTop={1}>
-            <Text color={focusedIndex === 1 ? "cyan" : "gray"}>Title: </Text>
+  return (
+    <box {...overlayStyle}>
+      <box {...modalStyle}>
+        <text fg="cyan">Add New Crystal / Lesson / Rule</text>
+        <box marginTop={1} flexDirection="column">
+          <box flexDirection="row">
+            <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Type: </text>
+            <select
+              width={18}
+              height={3}
+              focused={focusedIndex === 0}
+              selectedIndex={["crystal", "lesson", "rule"].indexOf(type)}
+              showDescription={false}
+              selectedTextColor="cyan"
+              selectedBackgroundColor="transparent"
+              focusedBackgroundColor="transparent"
+              options={[
+                {
+                  name: "Crystal",
+                  description: "Long-term memory",
+                  value: "crystal",
+                },
+                {
+                  name: "Lesson",
+                  description: "Learned lesson",
+                  value: "lesson",
+                },
+                { name: "Rule", description: "Strict rule", value: "rule" },
+              ]}
+              onChange={(_index, option) => {
+                if (option?.value) {
+                  setType(String(option.value));
+                }
+              }}
+              onSelect={(_index, option) => {
+                if (option?.value) {
+                  setType(String(option.value));
+                }
+              }}
+            />
+          </box>
+
+          <box flexDirection="row" marginTop={1}>
+            <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Title: </text>
             <TextInput
               value={title}
               onChange={setTitle}
               focus={focusedIndex === 1}
               placeholder="Enter title..."
             />
-          </Box>
+          </box>
 
-          <Box flexDirection="row" marginTop={1}>
-            <Text color={focusedIndex === 2 ? "cyan" : "gray"}>Text: </Text>
-            <TextInput
+          <box flexDirection="row" marginTop={1}>
+            <text fg={focusedIndex === 2 ? "cyan" : "gray"}>Text: </text>
+            <TextAreaInput
               value={text}
               onChange={setText}
               focus={focusedIndex === 2}
               placeholder="Enter content/observation..."
+              onSubmit={handleSubmit}
             />
-          </Box>
+          </box>
 
-          <Box flexDirection="row" marginTop={1}>
-            <Text color={focusedIndex === 3 ? "cyan" : "gray"}>Tags: </Text>
+          <box flexDirection="row" marginTop={1}>
+            <text fg={focusedIndex === 3 ? "cyan" : "gray"}>Tags: </text>
             <TextInput
               value={tags}
               onChange={setTags}
@@ -312,14 +319,14 @@ function AddDialog({
               placeholder="tag1, tag2..."
               onSubmit={handleSubmit}
             />
-          </Box>
-        </Box>
-        <Box marginTop={1} justifyContent="space-between">
-          <Text dimColor>[Enter] Submit</Text>
-          <Text dimColor>[Esc] Cancel</Text>
-        </Box>
-      </Box>
-    </Box>
+          </box>
+        </box>
+        <box marginTop={1} justifyContent="space-between">
+          <text fg="gray">[Enter] Submit</text>
+          <text fg="gray">[Esc] Cancel</text>
+        </box>
+      </box>
+    </box>
   );
 }
 
@@ -330,33 +337,16 @@ function EditDialog({
   onSubmit,
   overlayStyle,
   modalStyle,
-  canUseInkInput,
 }: {
   state: DialogState;
   onClose: () => void;
   onSubmit: (params: Record<string, any>) => void;
   overlayStyle: any;
   modalStyle: any;
-  canUseInkInput: boolean;
 }) {
   const [title, setTitle] = useState(state.initialTitle || "");
   const [text, setText] = useState(state.initialText || "");
   const [focusedIndex, setFocusedIndex] = useState(0); // 0 = title, 1 = text
-
-  useInput(
-    (_input, key) => {
-      if (key.escape) {
-        onClose();
-        return;
-      }
-      if (key.upArrow) {
-        setFocusedIndex(0);
-      } else if (key.downArrow) {
-        setFocusedIndex(1);
-      }
-    },
-    { isActive: canUseInkInput },
-  );
 
   const handleSubmit = () => {
     onSubmit({
@@ -366,45 +356,59 @@ function EditDialog({
     });
   };
 
+  useKeyboard((key) => {
+    if (key.name === "escape") {
+      onClose();
+      return;
+    }
+    if (key.name === "enter") {
+      handleSubmit();
+      return;
+    }
+    if (key.name === "up") {
+      setFocusedIndex(0);
+    } else if (key.name === "down") {
+      setFocusedIndex(1);
+    }
+  });
+
   return (
-    <Box {...overlayStyle}>
-      <Box {...modalStyle}>
-        <Text bold color="cyan">
-          Edit Memory
-        </Text>
-        <Box marginTop={1} flexDirection="column">
-          <Box flexDirection="row">
-            <Text color={focusedIndex === 0 ? "cyan" : "gray"}>Title: </Text>
+    <box {...overlayStyle}>
+      <box {...modalStyle}>
+        <text fg="cyan">Edit Memory</text>
+        <box marginTop={1} flexDirection="column">
+          <box flexDirection="row">
+            <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Title: </text>
             <TextInput
               value={title}
               onChange={setTitle}
               focus={focusedIndex === 0}
               placeholder="Enter title..."
             />
-          </Box>
+          </box>
 
-          <Box flexDirection="row" marginTop={1}>
-            <Text color={focusedIndex === 1 ? "cyan" : "gray"}>Text: </Text>
-            <TextInput
+          <box flexDirection="row" marginTop={1}>
+            <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Text: </text>
+            <TextAreaInput
               value={text}
               onChange={setText}
               focus={focusedIndex === 1}
               placeholder="Enter content..."
               onSubmit={handleSubmit}
             />
-          </Box>
-        </Box>
+          </box>
+        </box>
         {state.error ? (
-          <Box marginTop={1}>
-            <Text color="red">{state.error}</Text>
-          </Box>
+          <box marginTop={1}>
+            <text fg="red">{state.error}</text>
+          </box>
         ) : null}
-        <Box marginTop={1} justifyContent="space-between">
-          <Text dimColor>[Enter] Submit</Text>
-          <Text dimColor>[Esc] Cancel</Text>
-        </Box>
-      </Box>
-    </Box>
+        <box marginTop={1} justifyContent="space-between">
+          <text fg="gray">[Enter] Submit</text>
+          <text fg="gray">[Esc] Cancel</text>
+        </box>
+      </box>
+    </box>
   );
 }
 
@@ -415,25 +419,20 @@ function RenameDialog({
   onSubmit,
   overlayStyle,
   modalStyle,
-  canUseInkInput,
 }: {
   state: DialogState;
   onClose: () => void;
   onSubmit: (params: Record<string, any>) => void;
   overlayStyle: any;
   modalStyle: any;
-  canUseInkInput: boolean;
 }) {
   const [name, setName] = useState(state.initialTitle || "");
 
-  useInput(
-    (_input, key) => {
-      if (key.escape) {
-        onClose();
-      }
-    },
-    { isActive: canUseInkInput },
-  );
+  useKeyboard((key) => {
+    if (key.name === "escape") {
+      onClose();
+    }
+  });
 
   const handleSubmit = () => {
     onSubmit({
@@ -443,13 +442,11 @@ function RenameDialog({
   };
 
   return (
-    <Box {...overlayStyle}>
-      <Box {...modalStyle}>
-        <Text bold color="cyan">
-          Rename Concept
-        </Text>
-        <Box marginTop={1} flexDirection="row">
-          <Text color="cyan">Name: </Text>
+    <box {...overlayStyle}>
+      <box {...modalStyle}>
+        <text fg="cyan">Rename Concept</text>
+        <box marginTop={1} flexDirection="row">
+          <text fg="cyan">Name: </text>
           <TextInput
             value={name}
             onChange={setName}
@@ -457,18 +454,18 @@ function RenameDialog({
             placeholder="Enter canonical name..."
             onSubmit={handleSubmit}
           />
-        </Box>
+        </box>
         {state.error ? (
-          <Box marginTop={1}>
-            <Text color="red">{state.error}</Text>
-          </Box>
+          <box marginTop={1}>
+            <text fg="red">{state.error}</text>
+          </box>
         ) : null}
-        <Box marginTop={1} justifyContent="space-between">
-          <Text dimColor>[Enter] Submit</Text>
-          <Text dimColor>[Esc] Cancel</Text>
-        </Box>
-      </Box>
-    </Box>
+        <box marginTop={1} justifyContent="space-between">
+          <text fg="gray">[Enter] Submit</text>
+          <text fg="gray">[Esc] Cancel</text>
+        </box>
+      </box>
+    </box>
   );
 }
 
@@ -479,14 +476,12 @@ function MergeDialog({
   onSubmit,
   overlayStyle,
   modalStyle,
-  canUseInkInput,
 }: {
   state: DialogState;
   onClose: () => void;
   onSubmit: (params: Record<string, any>) => void;
   overlayStyle: any;
   modalStyle: any;
-  canUseInkInput: boolean;
 }) {
   const isConcept = state.entityType === "concept";
   const [targetId, setTargetId] = useState("");
@@ -497,21 +492,6 @@ function MergeDialog({
   const [localError, setLocalError] = useState("");
 
   const maxIndex = isConcept ? 1 : 2; // concept: 0=targetId, 1=evidence. crystal: 0=targetId, 1=title, 2=text.
-
-  useInput(
-    (_input, key) => {
-      if (key.escape) {
-        onClose();
-        return;
-      }
-      if (key.upArrow) {
-        setFocusedIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setFocusedIndex((prev) => Math.min(maxIndex, prev + 1));
-      }
-    },
-    { isActive: canUseInkInput },
-  );
 
   const handleSubmit = () => {
     const parsedTarget = parseInt(targetId, 10);
@@ -536,30 +516,44 @@ function MergeDialog({
     }
   };
 
+  useKeyboard((key) => {
+    if (key.name === "escape") {
+      onClose();
+      return;
+    }
+    if (key.name === "enter") {
+      handleSubmit();
+      return;
+    }
+    if (key.name === "up") {
+      setFocusedIndex((prev) => Math.max(0, prev - 1));
+    } else if (key.name === "down") {
+      setFocusedIndex((prev) => Math.min(maxIndex, prev + 1));
+    }
+  });
+
   return (
-    <Box {...overlayStyle}>
-      <Box {...modalStyle}>
-        <Text bold color="cyan">
-          Merge {isConcept ? "Concepts" : "Crystals"}
-        </Text>
-        <Box marginTop={1} flexDirection="column">
-          <Text>
+    <box {...overlayStyle}>
+      <box {...modalStyle}>
+        <text fg="cyan">Merge {isConcept ? "Concepts" : "Crystals"}</text>
+        <box marginTop={1} flexDirection="column">
+          <text>
             Merging source {isConcept ? "Concept" : "Crystal"} ID:{" "}
             {state.entityId}
-          </Text>
-          <Box flexDirection="row" marginTop={1}>
-            <Text color={focusedIndex === 0 ? "cyan" : "gray"}>Target ID: </Text>
+          </text>
+          <box flexDirection="row" marginTop={1}>
+            <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Target ID: </text>
             <TextInput
               value={targetId}
               onChange={setTargetId}
               focus={focusedIndex === 0}
               placeholder="Enter target ID..."
             />
-          </Box>
+          </box>
 
           {isConcept ? (
-            <Box flexDirection="row" marginTop={1}>
-              <Text color={focusedIndex === 1 ? "cyan" : "gray"}>Reason: </Text>
+            <box flexDirection="row" marginTop={1}>
+              <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Reason: </text>
               <TextInput
                 value={evidence}
                 onChange={setEvidence}
@@ -567,42 +561,42 @@ function MergeDialog({
                 placeholder="Merge evidence/reason..."
                 onSubmit={handleSubmit}
               />
-            </Box>
+            </box>
           ) : (
             <>
-              <Box flexDirection="row" marginTop={1}>
-                <Text color={focusedIndex === 1 ? "cyan" : "gray"}>Title: </Text>
+              <box flexDirection="row" marginTop={1}>
+                <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Title: </text>
                 <TextInput
                   value={title}
                   onChange={setTitle}
                   focus={focusedIndex === 1}
                   placeholder="Merged title..."
                 />
-              </Box>
-              <Box flexDirection="row" marginTop={1}>
-                <Text color={focusedIndex === 2 ? "cyan" : "gray"}>Text: </Text>
-                <TextInput
+              </box>
+              <box flexDirection="row" marginTop={1}>
+                <text fg={focusedIndex === 2 ? "cyan" : "gray"}>Text: </text>
+                <TextAreaInput
                   value={text}
                   onChange={setText}
                   focus={focusedIndex === 2}
                   placeholder="Merged content..."
                   onSubmit={handleSubmit}
                 />
-              </Box>
+              </box>
             </>
           )}
-        </Box>
+        </box>
         {localError || state.error ? (
-          <Box marginTop={1}>
-            <Text color="red">{localError || state.error}</Text>
-          </Box>
+          <box marginTop={1}>
+            <text fg="red">{localError || state.error}</text>
+          </box>
         ) : null}
-        <Box marginTop={1} justifyContent="space-between">
-          <Text dimColor>[Enter] Submit</Text>
-          <Text dimColor>[Esc] Cancel</Text>
-        </Box>
-      </Box>
-    </Box>
+        <box marginTop={1} justifyContent="space-between">
+          <text fg="gray">[Enter] Submit</text>
+          <text fg="gray">[Esc] Cancel</text>
+        </box>
+      </box>
+    </box>
   );
 }
 
@@ -613,35 +607,18 @@ function SplitDialog({
   onSubmit,
   overlayStyle,
   modalStyle,
-  canUseInkInput,
 }: {
   state: DialogState;
   onClose: () => void;
   onSubmit: (params: Record<string, any>) => void;
   overlayStyle: any;
   modalStyle: any;
-  canUseInkInput: boolean;
 }) {
   const [partOneTitle, setPartOneTitle] = useState("");
   const [partOneText, setPartOneText] = useState("");
   const [partTwoTitle, setPartTwoTitle] = useState("");
   const [partTwoText, setPartTwoText] = useState("");
   const [focusedIndex, setFocusedIndex] = useState(0); // 0=p1 title, 1=p1 text, 2=p2 title, 3=p2 text
-
-  useInput(
-    (_input, key) => {
-      if (key.escape) {
-        onClose();
-        return;
-      }
-      if (key.upArrow) {
-        setFocusedIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setFocusedIndex((prev) => Math.min(3, prev + 1));
-      }
-    },
-    { isActive: canUseInkInput },
-  );
 
   const handleSubmit = () => {
     onSubmit({
@@ -653,73 +630,84 @@ function SplitDialog({
     });
   };
 
+  useKeyboard((key) => {
+    if (key.name === "escape") {
+      onClose();
+      return;
+    }
+    if (key.name === "enter") {
+      handleSubmit();
+      return;
+    }
+    if (key.name === "up") {
+      setFocusedIndex((prev) => Math.max(0, prev - 1));
+    } else if (key.name === "down") {
+      setFocusedIndex((prev) => Math.min(3, prev + 1));
+    }
+  });
+
   return (
-    <Box {...overlayStyle}>
-      <Box {...modalStyle}>
-        <Text bold color="cyan">
-          Split Crystal
-        </Text>
-        <Box marginTop={1} flexDirection="column">
-          <Text>Splitting Crystal ID: {state.entityId}</Text>
-          <Box marginTop={1}>
-            <Text bold>
-              Part 1
-            </Text>
-          </Box>
-          <Box flexDirection="row">
-            <Text color={focusedIndex === 0 ? "cyan" : "gray"}>Title: </Text>
+    <box {...overlayStyle}>
+      <box {...modalStyle}>
+        <text fg="cyan">Split Crystal</text>
+        <box marginTop={1} flexDirection="column">
+          <text>Splitting Crystal ID: {state.entityId}</text>
+          <box marginTop={1}>
+            <text>Part 1</text>
+          </box>
+          <box flexDirection="row">
+            <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Title: </text>
             <TextInput
               value={partOneTitle}
               onChange={setPartOneTitle}
               focus={focusedIndex === 0}
               placeholder="Part 1 title..."
             />
-          </Box>
-          <Box flexDirection="row" marginTop={1}>
-            <Text color={focusedIndex === 1 ? "cyan" : "gray"}>Text: </Text>
-            <TextInput
+          </box>
+          <box flexDirection="row" marginTop={1}>
+            <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Text: </text>
+            <TextAreaInput
               value={partOneText}
               onChange={setPartOneText}
               focus={focusedIndex === 1}
               placeholder="Part 1 content..."
+              onSubmit={handleSubmit}
             />
-          </Box>
+          </box>
 
-          <Box marginTop={1}>
-            <Text bold>
-              Part 2
-            </Text>
-          </Box>
-          <Box flexDirection="row">
-            <Text color={focusedIndex === 2 ? "cyan" : "gray"}>Title: </Text>
+          <box marginTop={1}>
+            <text>Part 2</text>
+          </box>
+          <box flexDirection="row">
+            <text fg={focusedIndex === 2 ? "cyan" : "gray"}>Title: </text>
             <TextInput
               value={partTwoTitle}
               onChange={setPartTwoTitle}
               focus={focusedIndex === 2}
               placeholder="Part 2 title..."
             />
-          </Box>
-          <Box flexDirection="row" marginTop={1}>
-            <Text color={focusedIndex === 3 ? "cyan" : "gray"}>Text: </Text>
-            <TextInput
+          </box>
+          <box flexDirection="row" marginTop={1}>
+            <text fg={focusedIndex === 3 ? "cyan" : "gray"}>Text: </text>
+            <TextAreaInput
               value={partTwoText}
               onChange={setPartTwoText}
               focus={focusedIndex === 3}
               placeholder="Part 2 content..."
               onSubmit={handleSubmit}
             />
-          </Box>
-        </Box>
+          </box>
+        </box>
         {state.error ? (
-          <Box marginTop={1}>
-            <Text color="red">{state.error}</Text>
-          </Box>
+          <box marginTop={1}>
+            <text fg="red">{state.error}</text>
+          </box>
         ) : null}
-        <Box marginTop={1} justifyContent="space-between">
-          <Text dimColor>[Enter] Submit</Text>
-          <Text dimColor>[Esc] Cancel</Text>
-        </Box>
-      </Box>
-    </Box>
+        <box marginTop={1} justifyContent="space-between">
+          <text fg="gray">[Enter] Submit</text>
+          <text fg="gray">[Esc] Cancel</text>
+        </box>
+      </box>
+    </box>
   );
 }

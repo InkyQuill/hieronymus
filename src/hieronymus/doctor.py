@@ -6,7 +6,6 @@ import sqlite3
 import subprocess
 import tomllib
 from dataclasses import asdict, dataclass
-from pathlib import Path
 
 from hieronymus.agent_plugins import available_plugins
 from hieronymus.config import HieronymusConfig
@@ -53,7 +52,7 @@ class Doctor:
         self._check_database(report)
         self._check_memory_graph_migration(report)
         self._check_daemon(report)
-        self._check_ink_runtime(report)
+        self._check_bun_runtime(report)
         self._check_settings_and_providers(report)
         self._check_dream_config_readiness(report)
         self._check_llm_model_cache(report)
@@ -152,36 +151,36 @@ class Doctor:
             )
         )
 
-    def _check_ink_runtime(self, report: DoctorReport) -> None:
-        node_path = shutil.which("node")
-        if not node_path:
+    def _check_bun_runtime(self, report: DoctorReport) -> None:
+        bun_path = shutil.which("bun")
+        if not bun_path:
             report["warnings"].append(
                 DoctorFinding(
                     level="warning",
-                    code="node-runtime-missing",
+                    code="bun-runtime-missing",
                     message=(
-                        "Node.js is not available; install Node.js >=22 "
+                        "Bun is not available; install Bun >=1.3 "
                         "to run the Hieronymus terminal user interface (TUI)."
                     ),
                 )
             )
         else:
-            node_major = _node_major_version(node_path)
-            if node_major is not None and node_major >= 22:
+            version = _bun_version(bun_path)
+            if version is not None and version >= (1, 3):
                 report["autofixed"].append(
                     DoctorFinding(
                         level="info",
-                        code="node-runtime-available",
-                        message="Node.js runtime is available for the Hieronymus TUI.",
+                        code="bun-runtime-available",
+                        message="Bun runtime is available for the Hieronymus TUI.",
                     )
                 )
-            elif node_major is None:
+            elif version is None:
                 report["warnings"].append(
                     DoctorFinding(
                         level="warning",
-                        code="node-runtime-unusable",
+                        code="bun-runtime-unusable",
                         message=(
-                            "Node.js version could not be checked; install Node.js >=22 "
+                            "Bun version could not be checked; install Bun >=1.3 "
                             "to run the Hieronymus TUI."
                         ),
                     )
@@ -190,42 +189,13 @@ class Doctor:
                 report["warnings"].append(
                     DoctorFinding(
                         level="warning",
-                        code="node-runtime-too-old",
+                        code="bun-runtime-too-old",
                         message=(
-                            "Node.js >=22 is required for the Hieronymus TUI; install or activate "
-                            "a supported Node.js runtime."
+                            "Bun >=1.3 is required for the Hieronymus TUI; install or activate "
+                            "a supported Bun runtime."
                         ),
                     )
                 )
-
-        if shutil.which("pnpm"):
-            report["autofixed"].append(
-                DoctorFinding(
-                    level="info",
-                    code="pnpm-available",
-                    message="pnpm is available for frontend development and builds.",
-                )
-            )
-        elif _needs_pnpm_for_frontend_dev():
-            report["warnings"].append(
-                DoctorFinding(
-                    level="warning",
-                    code="pnpm-missing",
-                    message=(
-                        "pnpm is not available; install pnpm to develop or build the Ink frontend."
-                    ),
-                )
-            )
-        else:
-            report["autofixed"].append(
-                DoctorFinding(
-                    level="info",
-                    code="pnpm-missing",
-                    message=(
-                        "pnpm is not installed; it is only needed for frontend development/builds."
-                    ),
-                )
-            )
 
     def _check_agent_plugins(self, report: DoctorReport) -> None:
         for plugin in available_plugins():
@@ -457,10 +427,10 @@ class Doctor:
         return identities
 
 
-def _node_major_version(node_path: str) -> int | None:
+def _bun_version(bun_path: str) -> tuple[int, int] | None:
     try:
         result = subprocess.run(
-            [node_path, "--version"],
+            [bun_path, "--version"],
             capture_output=True,
             text=True,
             check=False,
@@ -473,20 +443,13 @@ def _node_major_version(node_path: str) -> int | None:
         return None
 
     version = result.stdout.strip()
-    if version.startswith("v"):
-        version = version[1:]
-    major, _, _ = version.partition(".")
+    parts = version.split("-")[0].split(".")
     try:
-        return int(major)
+        if len(parts) >= 2:
+            return int(parts[0]), int(parts[1])
     except ValueError:
         return None
-
-
-def _needs_pnpm_for_frontend_dev() -> bool:
-    package_root = Path(__file__).resolve().parent
-    bundled_entrypoint = package_root / "frontend" / "dist" / "main.js"
-    source_frontend_manifest = package_root.parents[1] / "frontend" / "package.json"
-    return source_frontend_manifest.exists() and not bundled_entrypoint.exists()
+    return None
 
 
 def _load_dream_config_for_readiness(

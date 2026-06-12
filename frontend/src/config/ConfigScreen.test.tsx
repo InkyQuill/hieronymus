@@ -1,6 +1,7 @@
 import React from "react";
+import { act } from "react";
 import { describe, expect, it } from "vitest";
-import { render } from "ink-testing-library";
+import { testRender } from "@opentui/react/test-utils";
 import { ConfigScreen } from "./ConfigScreen.js";
 import type { RpcClient } from "../rpc/client.js";
 import type { ConfigBootstrap, ProviderName } from "../rpc/schema.js";
@@ -70,35 +71,96 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
   };
 }
 
+async function setupTest() {
+  let node: React.ReactNode = null;
+  let setup: Awaited<ReturnType<typeof testRender>> | null = null;
+  const ensureSetup = async () => {
+    setup ??= await testRender(node, { width: 120, height: 36 });
+    return setup;
+  };
+  const flush = async () => {
+    const current = await ensureSetup();
+    await act(async () => {
+      await current.flush();
+    });
+  };
+  const input = {
+    type: async (value: string) => {
+      const current = await ensureSetup();
+      for (const key of value) {
+        act(() => {
+          current.mockInput.pressKey(key);
+        });
+      }
+      await flush();
+    },
+  };
+  return {
+    root: {
+      render: (next: React.ReactNode) => {
+        node = next;
+      },
+    },
+    mockInput: input,
+    flush,
+    captureCharFrame: () => setup?.captureCharFrame() ?? "",
+    waitFor: async (predicate: () => boolean | Promise<boolean>) => {
+      const current = await ensureSetup();
+      for (let index = 0; index < 25; index += 1) {
+        await act(async () => {
+          await Promise.resolve();
+          await current.renderOnce();
+        });
+        if (await predicate()) {
+          return;
+        }
+      }
+      throw new Error("Timed out waiting for predicate");
+    },
+  };
+}
+
 describe("ConfigScreen", () => {
-  it("renders one provider family selector instead of provider rows", () => {
-    const app = render(<ConfigScreen initial={payload()} client={undefined} />);
+  it("renders one provider family selector instead of provider rows", async () => {
+    const { root, flush, captureCharFrame } = await setupTest();
 
-    expect(app.lastFrame()).toContain("OpenAI compatible");
-    expect(app.lastFrame()).toContain("Gemini");
-    expect(app.lastFrame()).toContain("Anthropic");
-    expect(app.lastFrame()).not.toContain("Deterministic");
+    root.render(<ConfigScreen initial={payload()} client={undefined} />);
+    await flush();
+
+    const output = captureCharFrame();
+    expect(output).toContain("OpenAI compatible");
+    expect(output).toContain("Gemini");
+    expect(output).toContain("Anthropic");
+    expect(output).not.toContain("Deterministic");
   });
 
-  it("renders model suggestions when present", () => {
-    const app = render(<ConfigScreen initial={payload()} client={undefined} />);
+  it("renders model suggestions when present", async () => {
+    const { root, flush, captureCharFrame } = await setupTest();
 
-    expect(app.lastFrame()).toContain("gpt-4.1-mini");
+    root.render(<ConfigScreen initial={payload()} client={undefined} />);
+    await flush();
+
+    expect(captureCharFrame()).toContain("gpt-4.1-mini");
   });
 
-  it("renders a placeholder when model suggestions are absent", () => {
-    const app = render(
+  it("renders a placeholder when model suggestions are absent", async () => {
+    const { root, flush, captureCharFrame } = await setupTest();
+
+    root.render(
       <ConfigScreen
         initial={{ ...payload(), suggestions: {} }}
         client={undefined}
       />,
     );
+    await flush();
 
-    expect(app.lastFrame()).toContain("Models: -");
+    expect(captureCharFrame()).toContain("Models: -");
   });
 
-  it("renders provider shortcut help from provider choices", () => {
-    const app = render(
+  it("renders provider shortcut help from provider choices", async () => {
+    const { root, flush, captureCharFrame } = await setupTest();
+
+    root.render(
       <ConfigScreen
         initial={{
           ...payload(),
@@ -107,9 +169,11 @@ describe("ConfigScreen", () => {
         client={undefined}
       />,
     );
+    await flush();
 
-    expect(app.lastFrame()).toContain("1-2 provider");
-    expect(app.lastFrame()).not.toContain("1/2/3 provider");
+    const output = captureCharFrame();
+    expect(output).toContain("1-2] provider");
+    expect(output).not.toContain("1/2/3 provider");
   });
 
   it("selects a provider through the configured RPC", async () => {
@@ -119,11 +183,18 @@ describe("ConfigScreen", () => {
       calls.push({ method, params });
       return Promise.resolve(payload("gemini"));
     });
-    const app = render(<ConfigScreen initial={payload()} client={client} />);
+    const { root, mockInput, flush, captureCharFrame, waitFor } =
+      await setupTest();
 
-    await nextTick();
-    app.stdin.write("2");
-    await waitFor(() => expect(app.lastFrame()).toContain("Selected gemini"));
+    root.render(<ConfigScreen initial={payload()} client={client} />);
+    await flush();
+
+    await mockInput.type("2");
+
+    await waitFor(async () => {
+      const frame = captureCharFrame();
+      return frame.includes("Selected gemini");
+    });
 
     expect(calls).toEqual([
       {
@@ -134,8 +205,10 @@ describe("ConfigScreen", () => {
         },
       },
     ]);
-    expect(app.lastFrame()).toContain("> Gemini");
-    expect(app.lastFrame()).toContain("gemini-2.5-flash");
+
+    const output = captureCharFrame();
+    expect(output).toContain("▶ Gemini");
+    expect(output).toContain("gemini-2.5-flash");
   });
 
   it("ignores further action keys while an operation is in flight", async () => {
@@ -146,12 +219,16 @@ describe("ConfigScreen", () => {
       calls.push({ method, params });
       return deferred.promise;
     });
-    const app = render(<ConfigScreen initial={payload()} client={client} />);
+    const { root, mockInput, flush, captureCharFrame, waitFor } =
+      await setupTest();
 
-    await nextTick();
-    app.stdin.write("2");
-    app.stdin.write("3");
-    await waitFor(() => expect(calls).toHaveLength(1));
+    root.render(<ConfigScreen initial={payload()} client={client} />);
+    await flush();
+
+    await mockInput.type("2");
+    await mockInput.type("3");
+
+    await waitFor(async () => calls.length >= 1);
 
     expect(calls[0]).toMatchObject({
       method: "config.select_provider",
@@ -159,7 +236,11 @@ describe("ConfigScreen", () => {
     });
 
     deferred.resolve(payload("gemini"));
-    await waitFor(() => expect(app.lastFrame()).toContain("Selected gemini"));
+
+    await waitFor(async () => {
+      const frame = captureCharFrame();
+      return frame.includes("Selected gemini");
+    });
     expect(calls).toHaveLength(1);
   });
 
@@ -171,11 +252,14 @@ describe("ConfigScreen", () => {
         closeCalls += 1;
       },
     );
-    const app = render(<ConfigScreen initial={payload()} client={client} />);
+    const { root, mockInput, flush, waitFor } = await setupTest();
 
-    await nextTick();
-    app.stdin.write("q");
-    await waitFor(() => expect(closeCalls).toBe(1));
+    root.render(<ConfigScreen initial={payload()} client={client} />);
+    await flush();
+
+    await mockInput.type("q");
+
+    await waitFor(async () => closeCalls >= 1);
   });
 });
 
@@ -199,22 +283,4 @@ function deferredPayload() {
     },
   );
   return { promise, resolve, reject };
-}
-
-async function nextTick() {
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-async function waitFor(assertion: () => void) {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    try {
-      assertion();
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  throw lastError;
 }

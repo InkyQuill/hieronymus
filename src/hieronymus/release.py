@@ -13,6 +13,7 @@ _TAG_RE = re.compile(
     r"(v(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*))$"
 )
 _VALID_TARGETS = frozenset({"latest", "main"})
+_MIN_BUN_VERSION = (1, 3)
 
 
 @dataclass(frozen=True, order=True)
@@ -139,6 +140,37 @@ def _checkout_origin_url(checkout: Path) -> str:
     return _output(["git", "remote", "get-url", "origin"], cwd=checkout)
 
 
+def _bun_version_tuple(version_text: str) -> tuple[int, int]:
+    major_text, minor_text, *_ = version_text.strip().split("-", maxsplit=1)[0].split(".")
+    return int(major_text), int(minor_text)
+
+
+def ensure_bun_available_or_raise(
+    min_version: tuple[int, int] = _MIN_BUN_VERSION,
+) -> None:
+    required = ".".join(str(part) for part in min_version)
+    remediation = f"Install or update Bun to >= {required} from https://bun.sh before updating."
+    try:
+        raw_version = _output(["bun", "--version"])
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            f"Bun >= {required} is required to build the Hieronymus TUI. {remediation}"
+        ) from error
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(f"Unable to check Bun version. {remediation}") from error
+
+    try:
+        version_tuple = _bun_version_tuple(raw_version)
+    except (ValueError, IndexError) as error:
+        raise RuntimeError(f"Unable to parse Bun version {raw_version!r}. {remediation}") from error
+
+    if version_tuple < min_version:
+        raise RuntimeError(
+            f"Bun >= {required} is required to build the Hieronymus TUI; found {raw_version}. "
+            f"{remediation}"
+        )
+
+
 def check_update(*, target: str = "latest") -> UpdateStatus:
     _validate_target(target)
     current_version = package_version()
@@ -178,6 +210,12 @@ def _checkout_update_target(target: str, latest_tag: str, checkout: Path) -> Non
     _run(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
 
 
+def _build_frontend(checkout: Path) -> None:
+    frontend = checkout / "frontend"
+    _run(["bun", "install", "--frozen-lockfile"], cwd=frontend)
+    _run(["bun", "run", "build"], cwd=frontend)
+
+
 def run_update(*, target: str = "latest") -> UpdateStatus:
     _validate_target(target)
     checkout = managed_app_path()
@@ -190,6 +228,8 @@ def run_update(*, target: str = "latest") -> UpdateStatus:
     if target == "latest" and not status.update_available:
         return status
 
+    ensure_bun_available_or_raise()
     _checkout_update_target(target, status.latest_tag, checkout)
+    _build_frontend(checkout)
     _run(["uv", "tool", "install", "--force", str(checkout)])
     return check_update(target=target)

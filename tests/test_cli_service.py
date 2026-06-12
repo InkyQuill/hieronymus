@@ -170,6 +170,12 @@ def test_docs_describe_real_config_tui_and_llm_providers() -> None:
     assert "ANTHROPIC_API_KEY" in combined
     assert "API key values are not stored" in combined
     assert "new_short_term_memory_threshold" in combined
+    assert "TypeScript React/OpenTUI terminal UI" in combined
+    assert "Bun >=1.3" in combined
+    assert "bun --cwd frontend install --frozen-lockfile" in combined
+    assert "React/Ink" not in combined
+    assert "Node.js >=22" not in combined
+    assert "pnpm --dir frontend" not in combined
 
 
 def test_status_json_returns_manager_payload(tmp_path: Path) -> None:
@@ -249,15 +255,15 @@ def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     assert payload["providers"][0]["name"] == "deterministic"
 
 
-def test_config_launch_invokes_ink_tui(tmp_path: Path, monkeypatch) -> None:
+def test_config_launch_invokes_opentui(tmp_path: Path, monkeypatch) -> None:
     data_root = tmp_path / "hieronymus"
     launched = {}
 
-    def fake_launch_ink(mode, *, data_root):
+    def fake_launch_opentui(mode, *, data_root):
         launched["mode"] = mode
         launched["data_root"] = data_root
 
-    monkeypatch.setattr("hieronymus.cli._launch_ink", fake_launch_ink)
+    monkeypatch.setattr("hieronymus.cli._launch_opentui", fake_launch_opentui)
 
     result = CliRunner().invoke(main, ["--data-root", str(data_root), "config"])
 
