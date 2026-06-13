@@ -96,16 +96,37 @@ def test_pr_workflow_backend_job_runs_python_checks() -> None:
         f"actions/checkout@{CHECKOUT_SHA}",
         f"astral-sh/setup-uv@{SETUP_UV_SHA}",
         f"actions/setup-python@{SETUP_PYTHON_SHA}",
+        f"oven-sh/setup-bun@{SETUP_BUN_SHA}",
     ]
     assert "          persist-credentials: false" in backend
 
-    for command in [
+    steps = _step_blocks(backend)
+    bun_step = next(
+        (
+            step
+            for step in steps
+            if _step_value(step, "uses") == f"oven-sh/setup-bun@{SETUP_BUN_SHA}"
+        ),
+        None,
+    )
+    assert bun_step is not None
+    assert _step_value(bun_step, "bun-version") == f'"{EXPECTED_FRONTEND_BUN_VERSION}"'
+
+    backend_runs = [line for line in backend if line.startswith("      - run: ")]
+    assert backend_runs == [
         "      - run: uv sync --dev",
+        "      - run: bun install --cwd frontend --frozen-lockfile",
+        "      - run: bun run --cwd frontend build",
         "      - run: uv run pytest",
         "      - run: uv run ruff check .",
         "      - run: uv run ruff format --check .",
-    ]:
-        assert command in backend
+    ]
+    assert backend_runs.index("      - run: bun install --cwd frontend --frozen-lockfile") < (
+        backend_runs.index("      - run: uv run pytest")
+    )
+    assert backend_runs.index("      - run: bun run --cwd frontend build") < backend_runs.index(
+        "      - run: uv run pytest"
+    )
 
 
 def test_pr_workflow_frontend_job_runs_bun_tests_and_build() -> None:
