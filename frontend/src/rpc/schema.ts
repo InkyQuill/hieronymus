@@ -173,10 +173,12 @@ const ConfigFormFieldSchema = z
   })
   .passthrough();
 
-const ConfigFormSchemaSchema = z.object({
-  groups: z.array(ConfigFormGroupSchema),
-  fields: z.array(ConfigFormFieldSchema),
-});
+const ConfigFormSchemaSchema = z
+  .object({
+    groups: z.array(ConfigFormGroupSchema),
+    fields: z.array(ConfigFormFieldSchema),
+  })
+  .passthrough();
 
 export const ConfigBootstrapSchema = z
   .object({

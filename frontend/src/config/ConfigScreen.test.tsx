@@ -515,6 +515,54 @@ describe("ConfigScreen", () => {
     ]);
   });
 
+  it("submits schema-effective choice defaults from the form panel", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const initial = {
+      ...payload(),
+      form_values: {
+        ...payload().form_values,
+        release: {},
+      },
+      form_schema: formSchema([
+        {
+          key: "release.update_channel",
+          group: "release",
+          label: "Update channel",
+          hint: "Release update channel.",
+          placeholder: "",
+          type: "choice" as const,
+          choices: ["stable", "beta", "dev"],
+          default: "stable",
+          redacted: false,
+        },
+      ]),
+    };
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve(initial);
+    });
+    const { root, mockInput, flush, waitFor } = await setupTest();
+
+    root.render(<ConfigScreen initial={initial} client={client} />);
+    await flush();
+
+    await mockInput.press("tab");
+    await mockInput.press("enter");
+    await mockInput.press("enter");
+
+    await waitFor(async () => calls.length >= 1);
+
+    await mockInput.press("enter");
+    await mockInput.press("right");
+    await mockInput.press("enter");
+
+    await waitFor(async () => calls.length >= 2);
+
+    expect(calls[0]?.params.release).toEqual({ update_channel: "stable" });
+    expect(calls[1]?.params.release).toEqual({ update_channel: "beta" });
+  });
+
   it("ignores form edit keys when the backend returns an empty schema", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];

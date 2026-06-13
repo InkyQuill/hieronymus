@@ -212,10 +212,10 @@ describe("runtime schemas", () => {
       configPayload("openai", {
         validation: {
           ok: false,
-          errors: ["providers.openai.timeout_seconds must be at least 1"],
+          errors: ["providers.openai.timeout_seconds must be greater than 0"],
           field_errors: {
             "provider.timeout_seconds": [
-              "providers.openai.timeout_seconds must be at least 1",
+              "providers.openai.timeout_seconds must be greater than 0",
             ],
           },
         },
@@ -223,7 +223,7 @@ describe("runtime schemas", () => {
     );
 
     expect(payload.validation.field_errors["provider.timeout_seconds"]).toEqual(
-      ["providers.openai.timeout_seconds must be at least 1"],
+      ["providers.openai.timeout_seconds must be greater than 0"],
     );
   });
 
@@ -256,6 +256,28 @@ describe("runtime schemas", () => {
       placeholder: "",
       redacted: false,
     });
+    expect(payload.form_schema.fields[0].minimum).toBeUndefined();
+  });
+
+  it("parses Python-owned config form field minimum values", () => {
+    const payload = ConfigBootstrapSchema.parse(
+      configPayload("openai", {
+        form_schema: {
+          groups: [{ id: "provider", label: "Provider" }],
+          fields: [
+            {
+              key: "provider.timeout_seconds",
+              group: "provider",
+              label: "Timeout",
+              type: "number",
+              minimum: 1,
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(payload.form_schema.fields[0].minimum).toBe(1);
   });
 
   it("rejects invalid config form field types", () => {
