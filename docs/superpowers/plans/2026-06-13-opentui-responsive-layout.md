@@ -682,7 +682,7 @@ git commit -m "feat: add compact admin opentui layout"
 - Modify: `frontend/src/admin/AdminScreen.tsx`
 - Test: `frontend/src/admin/AdminScreen.test.tsx`
 
-- [ ] **Step 1: Write compact overlay tests**
+- [x] **Step 1: Write compact overlay tests**
 
 Add these tests to `frontend/src/admin/AdminScreen.test.tsx`:
 
@@ -716,7 +716,7 @@ it("renders help in compact admin layout", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests**
+- [x] **Step 2: Run the tests**
 
 Run:
 
@@ -726,7 +726,7 @@ bun test --cwd frontend src/admin/AdminScreen.test.tsx
 
 Expected: FAIL if overlays exceed compact width or cannot be reached in compact mode.
 
-- [ ] **Step 3: Add optional width props to overlays**
+- [x] **Step 3: Add optional width props to overlays**
 
 Modify `frontend/src/admin/CommandPalette.tsx` props:
 
@@ -779,7 +779,7 @@ export function HelpOverlay({
 }
 ```
 
-- [ ] **Step 4: Pass compact widths from admin**
+- [x] **Step 4: Pass compact widths from admin**
 
 In compact branches of `frontend/src/admin/AdminScreen.tsx`, pass `width={contentWidth}` to `HelpOverlay` and `CommandPalette`.
 
@@ -801,7 +801,7 @@ In compact branches of `frontend/src/admin/AdminScreen.tsx`, pass `width={conten
 
 Keep wide mode behavior unchanged.
 
-- [ ] **Step 5: Run admin tests**
+- [x] **Step 5: Run admin tests**
 
 Run:
 
@@ -811,7 +811,7 @@ bun test --cwd frontend src/admin/AdminScreen.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/admin/CommandPalette.tsx frontend/src/admin/HelpOverlay.tsx frontend/src/admin/AdminScreen.tsx frontend/src/admin/AdminScreen.test.tsx

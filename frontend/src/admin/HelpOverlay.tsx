@@ -4,9 +4,11 @@ import type { AdminCommand } from "../rpc/schema.js";
 export function HelpOverlay({
   commands,
   view,
+  width = 58,
 }: {
   commands: AdminCommand[];
   view: string;
+  width?: number;
 }) {
   const visibleCommands = commands.filter((command) =>
     command.views.includes(view),
@@ -18,7 +20,7 @@ export function HelpOverlay({
       borderColor="cyan"
       paddingX={1}
       paddingY={1}
-      width={58}
+      width={width}
     >
       <text fg="cyan">Help</text>
       <text>Navigation</text>

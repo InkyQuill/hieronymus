@@ -746,6 +746,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
               <HelpOverlay
                 commands={initial.command_options}
                 view={snapshot.view}
+                width={contentWidth}
               />
             </>
           ) : commandsOpen ? (
@@ -754,6 +755,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
               <CommandPalette
                 commands={paletteCommands}
                 selectedIndex={clampCommandIndex(selectedCommandIndex)}
+                width={contentWidth}
               />
             </>
           ) : activePanel === "views" ? (

@@ -5,6 +5,8 @@ import {
   createOpenTuiHarness,
 } from "../test/opentuiHarness.js";
 import { AdminScreen } from "./AdminScreen.js";
+import { CommandPalette, commandsForView } from "./CommandPalette.js";
+import { HelpOverlay } from "./HelpOverlay.js";
 
 function bootstrap() {
   return {
@@ -220,6 +222,10 @@ function setupSizedTest(width: number, height: number) {
   return createOpenTuiHarness({ width, height });
 }
 
+function longestFrameLine(output: string) {
+  return Math.max(...output.split("\n").map((line) => line.trimEnd().length));
+}
+
 afterEach(async () => {
   await cleanupOpenTuiHarnesses();
 });
@@ -258,23 +264,10 @@ describe("AdminScreen", () => {
     expect(detailOutput).toContain("Guild ledger detail marker.");
   });
 
-  it("opens compact help from the initial views pane", async () => {
+  it("renders command palette in compact admin layout", async () => {
     const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
 
     await render(<AdminScreen initial={bootstrap()} client={undefined} />);
-
-    await mockInput.type("?");
-
-    const output = await waitForFrame((frame) => frame.includes("Help"));
-    expect(output).toContain("Help");
-    expect(output).toContain("Esc/? close");
-  });
-
-  it("opens compact command palette from the initial views pane", async () => {
-    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
-
-    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
-
     await mockInput.press("p", { ctrl: true });
 
     const output = await waitForFrame((frame) =>
@@ -282,6 +275,94 @@ describe("AdminScreen", () => {
     );
     expect(output).toContain("Command Palette");
     expect(output).toContain("Enter run Esc close");
+  });
+
+  it("renders help in compact admin layout", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.type("?");
+
+    const output = await waitForFrame((frame) => frame.includes("Help"));
+    expect(output).toContain("Help");
+    expect(output).toContain("Esc/? close");
+  });
+
+  it("keeps command palette inside the narrow admin viewport", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(50, 20);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.press("p", { ctrl: true });
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Command Palette"),
+    );
+    expect(output).toContain("Command Palette");
+    expect(output).toContain("Enter run Esc close");
+    expect(output).not.toContain("Terminal too small");
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(50);
+  });
+
+  it("keeps help inside the narrow admin viewport", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(50, 20);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.type("?");
+
+    const output = await waitForFrame((frame) => frame.includes("Help"));
+    expect(output).toContain("Help");
+    expect(output).toContain("Esc/? close");
+    expect(output).not.toContain("Terminal too small");
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(50);
+  });
+
+  it("honors compact command palette width", async () => {
+    const data = bootstrap();
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(
+      <CommandPalette
+        commands={commandsForView(
+          data.command_options,
+          data.snapshot.view,
+          Boolean(data.snapshot.selected),
+        )}
+        selectedIndex={0}
+        width={46}
+      />,
+    );
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Command Palette"),
+    );
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(46);
+  });
+
+  it("honors compact help overlay width", async () => {
+    const data = bootstrap();
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(
+      <HelpOverlay
+        commands={data.command_options}
+        view={data.snapshot.view}
+        width={46}
+      />,
+    );
+
+    const output = await waitForFrame((frame) => frame.includes("Help"));
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(46);
+  });
+
+  it("renders normal admin content at the minimum terminal size", async () => {
+    const { render, waitForFrame } = setupSizedTest(50, 20);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+
+    const output = await waitForFrame((frame) => frame.includes("Views"));
+    expect(output).toContain("Views");
+    expect(output).toContain("Crystals");
+    expect(output).not.toContain("Terminal too small");
   });
 
   it("renders a too-small admin message below the minimum width", async () => {
