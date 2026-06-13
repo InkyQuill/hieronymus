@@ -72,6 +72,7 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
         update_channel: "stable",
       },
     },
+    form_schema: { groups: [], fields: [] },
     validation: { ok: true, errors: [] },
     check_result: {},
     suggestions: {

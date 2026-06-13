@@ -37,6 +37,42 @@ function configPaths() {
   };
 }
 
+function configPayload(
+  provider: "openai" | "gemini" | "anthropic" = "openai",
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    config_paths: configPaths(),
+    provider_choices: [
+      {
+        name: provider,
+        display_name:
+          provider === "openai"
+            ? "OpenAI compatible"
+            : provider === "gemini"
+              ? "Gemini"
+              : "Anthropic",
+        requires_api_key: true,
+        supports_api_path: provider === "openai",
+      },
+    ],
+    selected_provider: provider,
+    draft: configDraft(provider),
+    form_values: {
+      provider: {
+        model: provider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
+      },
+      dreaming: {},
+      ingest: {},
+      release: {},
+    },
+    validation: { ok: true, errors: [] },
+    suggestions: {},
+    detail: {},
+    ...overrides,
+  };
+}
+
 describe("runtime schemas", () => {
   it.each([
     ["openai", "OpenAI compatible"],
@@ -117,6 +153,119 @@ describe("runtime schemas", () => {
     expect(payload.suggestions).toEqual({});
     expect(payload.detail).toBe("");
     expect(payload.provider_choices[0].requires_api_key).toBe(true);
+  });
+
+  it("parses Python-owned config form schema", () => {
+    const payload = ConfigBootstrapSchema.parse(
+      configPayload("openai", {
+        form_schema: {
+          groups: [
+            {
+              id: "provider",
+              label: "Provider",
+              description:
+                "Connection settings for the selected dream provider.",
+            },
+          ],
+          fields: [
+            {
+              key: "provider.api_key",
+              group: "provider",
+              label: "API Key",
+              hint: "Stored as plaintext in dream.conf and redacted in UI payloads.",
+              placeholder: "stored in dream.conf",
+              type: "secret",
+              redacted: true,
+            },
+            {
+              key: "release.update_channel",
+              group: "release",
+              label: "Update Channel",
+              hint: "Managed install update channel.",
+              placeholder: "",
+              type: "choice",
+              choices: ["stable", "dev"],
+              default: "stable",
+              redacted: false,
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(payload.form_schema).toBeDefined();
+    if (!payload.form_schema) {
+      throw new Error("form_schema should be defaulted");
+    }
+    expect(payload.form_schema.fields[0].type).toBe("secret");
+    expect(payload.form_schema.fields[1].choices).toEqual(["stable", "dev"]);
+  });
+
+  it("defaults missing config form schema to empty groups and fields", () => {
+    const payload = ConfigBootstrapSchema.parse(configPayload());
+
+    expect(payload.form_schema).toEqual({ groups: [], fields: [] });
+  });
+
+  it("applies Python-owned config form field defaults", () => {
+    const payload = ConfigBootstrapSchema.parse(
+      configPayload("openai", {
+        form_schema: {
+          groups: [{ id: "provider", label: "Provider" }],
+          fields: [
+            {
+              key: "provider.model",
+              group: "provider",
+              label: "Model",
+              type: "text",
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(payload.form_schema).toBeDefined();
+    if (!payload.form_schema) {
+      throw new Error("form_schema should be defaulted");
+    }
+    expect(payload.form_schema.groups[0].description).toBe("");
+    expect(payload.form_schema.fields[0]).toMatchObject({
+      choices: [],
+      default: "",
+      hint: "",
+      placeholder: "",
+      redacted: false,
+    });
+  });
+
+  it("rejects invalid config form field types", () => {
+    expect(() =>
+      ConfigBootstrapSchema.parse(
+        configPayload("openai", {
+          form_schema: {
+            groups: [{ id: "provider", label: "Provider" }],
+            fields: [
+              {
+                key: "provider.api_key",
+                group: "provider",
+                label: "API Key",
+                type: "password",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it("rejects null config form schema payloads", () => {
+    expect(() =>
+      ConfigBootstrapSchema.parse(
+        configPayload("openai", {
+          form_schema: null,
+        }),
+      ),
+    ).toThrow();
   });
 
   it("accepts an empty config detail payload", () => {
