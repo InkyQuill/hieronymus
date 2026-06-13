@@ -166,7 +166,10 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     if (!command) {
       return;
     }
-    if (command.disabled || (command.requires_selection && !snapshot.selected)) {
+    if (
+      command.disabled ||
+      (command.requires_selection && !snapshot.selected)
+    ) {
       setStatus({
         message: `${command.label} needs a selected row`,
         error: true,
@@ -211,7 +214,11 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       return;
     }
     if (command.id === "run_manual_dreaming") {
-      runSnapshotCommand("admin.run_manual_dreaming", {}, "Ran manual dreaming");
+      runSnapshotCommand(
+        "admin.run_manual_dreaming",
+        {},
+        "Ran manual dreaming",
+      );
       return;
     }
     if (command.id === "review_dream_output") {
@@ -459,7 +466,8 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         return;
       }
       if (key.name === "enter" || key.name === "return") {
-        const command = paletteCommands[clampCommandIndex(selectedCommandIndex)];
+        const command =
+          paletteCommands[clampCommandIndex(selectedCommandIndex)];
         executeCommand(command);
         return;
       }

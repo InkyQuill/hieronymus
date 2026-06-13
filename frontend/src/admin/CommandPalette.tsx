@@ -62,7 +62,7 @@ export function CommandPalette({
         </box>
       ) : null}
       <box height={1}>
-        <text fg="gray">Enter run  Esc close  ↑/↓ or j/k move</text>
+        <text fg="gray">Enter run Esc close ↑/↓ or j/k move</text>
       </box>
     </box>
   );
