@@ -1,9 +1,9 @@
-import React from "react";
-import { act } from "react";
-import type { ParsedKey } from "@opentui/core";
-import { describe, expect, it } from "bun:test";
-import { testRender } from "@opentui/react/test-utils";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { RpcClient } from "../rpc/client.js";
+import {
+  cleanupOpenTuiHarnesses,
+  createOpenTuiHarness,
+} from "../test/opentuiHarness.js";
 import { AdminScreen } from "./AdminScreen.js";
 
 function bootstrap() {
@@ -212,100 +212,21 @@ function bootstrap() {
   };
 }
 
-async function setupTest() {
-  let node: React.ReactNode = null;
-  let setup: Awaited<ReturnType<typeof testRender>> | null = null;
-  const ensureSetup = async () => {
-    setup ??= await testRender(node, { width: 160, height: 60 });
-    return setup;
-  };
-  const flush = async () => {
-    const current = await ensureSetup();
-    await act(async () => {
-      await current.flush();
-    });
-  };
-  const input = {
-    type: async (value: string) => {
-      const current = await ensureSetup();
-      for (const key of value) {
-        act(() => {
-          current.mockInput.pressKey(key);
-        });
-      }
-      await flush();
-    },
-    press: async (
-      name: string,
-      options: { ctrl?: boolean; shift?: boolean } = {},
-    ) => {
-      const current = await ensureSetup();
-      act(() => {
-        if (name === "enter") {
-          current.mockInput.pressEnter(options);
-        } else if (name === "tab") {
-          current.mockInput.pressTab(options);
-        } else if (name === "escape") {
-          const escapeKey: ParsedKey = {
-            name: "escape",
-            ctrl: options.ctrl ?? false,
-            meta: false,
-            shift: options.shift ?? false,
-            option: false,
-            sequence: "\x1B",
-            number: false,
-            raw: "\x1B",
-            eventType: "press",
-            source: "raw",
-          };
-          current.renderer.keyInput.processParsedKey(escapeKey);
-        } else if (
-          name === "up" ||
-          name === "down" ||
-          name === "left" ||
-          name === "right"
-        ) {
-          current.mockInput.pressArrow(name, options);
-        } else {
-          current.mockInput.pressKey(name, options);
-        }
-      });
-      await flush();
-    },
-  };
-  return {
-    root: {
-      render: (next: React.ReactNode) => {
-        node = next;
-      },
-    },
-    mockInput: input,
-    flush,
-    captureCharFrame: () => setup?.captureCharFrame() ?? "",
-    waitFor: async (predicate: () => boolean | Promise<boolean>) => {
-      const current = await ensureSetup();
-      for (let index = 0; index < 25; index += 1) {
-        await act(async () => {
-          await Promise.resolve();
-          await current.renderOnce();
-        });
-        if (await predicate()) {
-          return;
-        }
-      }
-      throw new Error("Timed out waiting for predicate");
-    },
-  };
+function setupTest() {
+  return createOpenTuiHarness({ width: 160, height: 60 });
 }
+
+afterEach(async () => {
+  await cleanupOpenTuiHarnesses();
+});
 
 describe("AdminScreen", () => {
   it("renders views, stats, table row, and detail", async () => {
-    const { root, flush, captureCharFrame } = await setupTest();
+    const { render, waitForFrame } = setupTest();
 
-    root.render(<AdminScreen initial={bootstrap()} client={undefined} />);
-    await flush();
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
 
-    const output = captureCharFrame();
+    const output = await waitForFrame((frame) => frame.includes("Crystals"));
     expect(output).toContain("Crystals");
     expect(output).toContain("H Hieronymus Admin 0.1.0");
     expect(output).toContain("Local translation memory.");
@@ -323,14 +244,15 @@ describe("AdminScreen", () => {
   });
 
   it("opens a keyboard command palette with context commands", async () => {
-    const { root, flush, captureCharFrame } = await setupTest();
+    const { render, waitForFrame } = setupTest();
 
-    root.render(
+    await render(
       <AdminScreen initial={bootstrap()} client={undefined} showCommands />,
     );
-    await flush();
 
-    const output = captureCharFrame();
+    const output = await waitForFrame((frame) =>
+      frame.includes("Command Palette"),
+    );
     expect(output).toContain("Command Palette");
     expect(output).toContain("> Add Memory [a]");
     expect(output).toContain("Reinforce Crystal [+]");
@@ -340,16 +262,13 @@ describe("AdminScreen", () => {
   });
 
   it("opens contextual help with question mark and closes with escape", async () => {
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, waitForFrame } = setupTest();
 
-    root.render(<AdminScreen initial={bootstrap()} client={undefined} />);
-    await flush();
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
 
     await mockInput.type("?");
-    await waitFor(async () => captureCharFrame().includes("Help"));
 
-    let output = captureCharFrame();
+    let output = await waitForFrame((frame) => frame.includes("Help"));
     expect(output).toContain("Esc/? close");
     expect(output).toContain("Ctrl+P commands");
     expect(output).not.toContain("q quit");
@@ -357,7 +276,8 @@ describe("AdminScreen", () => {
     expect(output).not.toContain("Approve Proposal");
 
     await mockInput.press("escape");
-    await waitFor(async () => !captureCharFrame().includes("Help"));
+    output = await waitForFrame((frame) => !frame.includes("Help"));
+    expect(output).not.toContain("Help");
   });
 
   it("runs selected command palette actions through existing RPC handlers", async () => {
@@ -376,21 +296,18 @@ describe("AdminScreen", () => {
         },
       });
     });
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, waitForFrame } = setupTest();
 
-    root.render(<AdminScreen initial={bootstrap()} client={client} />);
-    await flush();
+    await render(<AdminScreen initial={bootstrap()} client={client} />);
 
     await mockInput.press("p", { ctrl: true });
     await mockInput.press("j");
     await mockInput.press("j");
     await mockInput.press("enter");
 
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Palette reinforcement marker.");
-    });
+    await waitForFrame((frame) =>
+      frame.includes("Palette reinforcement marker."),
+    );
 
     expect(calls).toEqual([
       {
@@ -407,10 +324,9 @@ describe("AdminScreen", () => {
       calls.push({ method, params });
       return Promise.reject(new Error("unexpected request"));
     });
-    const { root, mockInput, flush, captureCharFrame } = await setupTest();
+    const { render, mockInput, captureCharFrame } = setupTest();
 
-    root.render(<AdminScreen initial={bootstrap()} client={client} />);
-    await flush();
+    await render(<AdminScreen initial={bootstrap()} client={client} />);
 
     await mockInput.press("p", { ctrl: true });
     await mockInput.press("1");
@@ -437,9 +353,9 @@ describe("AdminScreen", () => {
         snapshot: snapshotForView("Dream Runs"),
       });
     });
-    const { root, mockInput, flush, waitFor } = await setupTest();
+    const { render, mockInput, waitFor } = setupTest();
 
-    root.render(
+    await render(
       <AdminScreen
         initial={{
           ...bootstrap(),
@@ -448,7 +364,6 @@ describe("AdminScreen", () => {
         client={client}
       />,
     );
-    await flush();
 
     await mockInput.press("p", { ctrl: true });
     await mockInput.press("enter");
@@ -489,9 +404,9 @@ describe("AdminScreen", () => {
         },
       });
     });
-    const { root, mockInput, flush, waitFor } = await setupTest();
+    const { render, mockInput, waitFor } = setupTest();
 
-    root.render(
+    await render(
       <AdminScreen
         initial={{
           ...bootstrap(),
@@ -500,7 +415,6 @@ describe("AdminScreen", () => {
         client={client}
       />,
     );
-    await flush();
 
     await mockInput.press("tab");
     await mockInput.press("down");
@@ -532,18 +446,17 @@ describe("AdminScreen", () => {
           },
         },
         review: {
-          run_id: 1,
-          consumed_memories: ["Review payload memory marker."],
+          consumed_memories: "Review payload memory marker.",
           created_crystals: ["Review payload crystal marker."],
+          run_id: 1,
           failed_outputs: [],
           validation_errors: [],
         },
       });
     });
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, waitForFrame } = setupTest();
 
-    root.render(
+    await render(
       <AdminScreen
         initial={{
           ...bootstrap(),
@@ -552,19 +465,19 @@ describe("AdminScreen", () => {
         client={client}
       />,
     );
-    await flush();
 
     await mockInput.press("p", { ctrl: true });
     await mockInput.press("j");
     await mockInput.press("enter");
 
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Review payload memory marker.");
-    });
+    const output = await waitForFrame(
+      (frame) =>
+        frame.includes("Review payload memory marker.") &&
+        frame.includes("Review payload crystal marker."),
+    );
 
-    const output = captureCharFrame();
     expect(output).toContain("admin.dream_review");
+    expect(output).toContain("Review payload memory marker.");
     expect(output).toContain("Review payload crystal marker.");
     expect(output).not.toContain("Stale refreshed dream detail.");
     expect(calls).toEqual([
@@ -579,28 +492,22 @@ describe("AdminScreen", () => {
     const client = fakeClient(() =>
       Promise.reject(new Error("unexpected request")),
     );
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, waitForFrame } = setupTest();
 
-    root.render(<AdminScreen initial={bootstrap()} client={client} />);
-    await flush();
+    await render(<AdminScreen initial={bootstrap()} client={client} />);
 
-    const output = captureCharFrame();
+    const output = await waitForFrame((frame) =>
+      frame.includes("[Ctrl+P] commands"),
+    );
     expect(output).toContain("[Ctrl+P] commands");
     expect(output).toContain("[?] help");
     expect(output).toContain("[1-9] view");
 
     await mockInput.type("f");
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Filter command selected");
-    });
+    await waitForFrame((frame) => frame.includes("Filter command selected"));
 
     await mockInput.type("e");
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Edit Memory");
-    });
+    await waitForFrame((frame) => frame.includes("Edit Memory"));
   });
 
   it("reinforces the selected crystal and refreshes from nested snapshot", async () => {
@@ -656,18 +563,15 @@ describe("AdminScreen", () => {
         },
       });
     });
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, waitForFrame } = setupTest();
 
-    root.render(<AdminScreen initial={bootstrap()} client={client} />);
-    await flush();
+    await render(<AdminScreen initial={bootstrap()} client={client} />);
 
     await mockInput.type("+");
 
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Reinforced detail marker.");
-    });
+    const output = await waitForFrame((frame) =>
+      frame.includes("Reinforced detail marker."),
+    );
 
     expect(calls).toEqual([
       {
@@ -676,7 +580,6 @@ describe("AdminScreen", () => {
       },
     ]);
 
-    const output = captureCharFrame();
     expect(output).toContain("series 2");
     expect(output).toContain("reinforced");
     expect(output).toContain("Short-term pending 3");
@@ -693,9 +596,9 @@ describe("AdminScreen", () => {
       calls.push({ method, params });
       return Promise.reject(new Error("unexpected mutation"));
     });
-    const { root, mockInput, flush } = await setupTest();
+    const { render, mockInput } = setupTest();
 
-    root.render(
+    await render(
       <AdminScreen
         initial={{
           ...bootstrap(),
@@ -704,11 +607,9 @@ describe("AdminScreen", () => {
         client={client}
       />,
     );
-    await flush();
 
     await mockInput.type("d");
     await mockInput.type("+");
-    await flush();
 
     expect(calls).toEqual([]);
   });
@@ -720,10 +621,9 @@ describe("AdminScreen", () => {
       calls.push({ method, params });
       return Promise.reject(new Error("unexpected request"));
     });
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, waitForFrame } = setupTest();
 
-    root.render(
+    await render(
       <AdminScreen
         initial={{
           ...bootstrap(),
@@ -732,15 +632,13 @@ describe("AdminScreen", () => {
         client={client}
       />,
     );
-    await flush();
 
     await mockInput.type("d");
 
-    await waitFor(async () =>
-      captureCharFrame().includes("Delete not supported for this view"),
+    const frame = await waitForFrame((output) =>
+      output.includes("Delete not supported for this view"),
     );
 
-    const frame = captureCharFrame();
     expect(frame).not.toContain("Confirm");
     expect(calls).toEqual([]);
   });
@@ -761,10 +659,9 @@ describe("AdminScreen", () => {
         },
       });
     });
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, waitForFrame } = setupTest();
 
-    root.render(
+    await render(
       <AdminScreen
         initial={{
           ...bootstrap(),
@@ -773,14 +670,12 @@ describe("AdminScreen", () => {
         client={client}
       />,
     );
-    await flush();
 
     await mockInput.type("+");
 
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Lesson reinforcement marker.");
-    });
+    const output = await waitForFrame((frame) =>
+      frame.includes("Lesson reinforcement marker."),
+    );
 
     expect(calls).toEqual([
       {
@@ -789,7 +684,7 @@ describe("AdminScreen", () => {
       },
     ]);
 
-    expect(captureCharFrame()).toContain("> Lessons");
+    expect(output).toContain("> Lessons");
   });
 
   it("navigates to eighth and ninth backend views", async () => {
@@ -802,25 +697,19 @@ describe("AdminScreen", () => {
         snapshot: snapshotForView(String(params.view)),
       });
     });
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, waitForFrame } = setupTest();
 
-    root.render(<AdminScreen initial={bootstrap()} client={client} />);
-    await flush();
+    await render(<AdminScreen initial={bootstrap()} client={client} />);
 
     await mockInput.type("8");
 
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Loaded Dream Audits");
-    });
+    await waitForFrame((frame) => frame.includes("Loaded Dream Audits"));
 
     await mockInput.type("9");
 
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Loaded Audit Log");
-    });
+    const output = await waitForFrame((frame) =>
+      frame.includes("Loaded Audit Log"),
+    );
 
     expect(calls).toEqual([
       {
@@ -833,7 +722,7 @@ describe("AdminScreen", () => {
       },
     ]);
 
-    expect(captureCharFrame()).toContain("> Audit Log");
+    expect(output).toContain("> Audit Log");
   });
 
   it("ignores view and action keys while an operation is in flight", async () => {
@@ -844,11 +733,9 @@ describe("AdminScreen", () => {
       calls.push({ method, params });
       return deferred.promise;
     });
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, waitFor, waitForFrame } = setupTest();
 
-    root.render(<AdminScreen initial={bootstrap()} client={client} />);
-    await flush();
+    await render(<AdminScreen initial={bootstrap()} client={client} />);
 
     await mockInput.type("1");
     await mockInput.type("2");
@@ -868,10 +755,7 @@ describe("AdminScreen", () => {
       snapshot: snapshotForView("Concepts"),
     });
 
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Loaded Concepts");
-    });
+    await waitForFrame((frame) => frame.includes("Loaded Concepts"));
   });
 });
 

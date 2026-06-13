@@ -1,7 +1,4 @@
-import React from "react";
-import { act } from "react";
-import { describe, expect, it } from "bun:test";
-import { testRender } from "@opentui/react/test-utils";
+import { afterEach, describe, expect, it } from "bun:test";
 import { ConfigScreen } from "./ConfigScreen.js";
 import type { RpcClient } from "../rpc/client.js";
 import type {
@@ -9,6 +6,10 @@ import type {
   ConfigFormField,
   ProviderName,
 } from "../rpc/schema.js";
+import {
+  cleanupOpenTuiHarnesses,
+  createOpenTuiHarness,
+} from "../test/opentuiHarness.js";
 
 function formSchema(
   fields: ConfigFormField[] = [
@@ -138,85 +139,23 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
   };
 }
 
-async function setupTest() {
-  let node: React.ReactNode = null;
-  let setup: Awaited<ReturnType<typeof testRender>> | null = null;
-  const ensureSetup = async () => {
-    setup ??= await testRender(node, { width: 120, height: 36 });
-    return setup;
-  };
-  const flush = async () => {
-    const current = await ensureSetup();
-    await act(async () => {
-      await current.flush();
-    });
-  };
-  const input = {
-    press: async (key: string) => {
-      const current = await ensureSetup();
-      act(() => {
-        if (key === "tab") {
-          current.mockInput.pressTab();
-        } else if (key === "backspace") {
-          current.mockInput.pressBackspace();
-        } else if (
-          key === "up" ||
-          key === "down" ||
-          key === "left" ||
-          key === "right"
-        ) {
-          current.mockInput.pressArrow(key);
-        } else if (key === "enter") {
-          current.mockInput.pressEnter();
-        } else {
-          current.mockInput.pressKey(key);
-        }
-      });
-      await flush();
-    },
-    type: async (value: string) => {
-      const current = await ensureSetup();
-      for (const key of value) {
-        act(() => {
-          current.mockInput.pressKey(key);
-        });
-      }
-      await flush();
-    },
-  };
-  return {
-    root: {
-      render: (next: React.ReactNode) => {
-        node = next;
-      },
-    },
-    mockInput: input,
-    flush,
-    captureCharFrame: () => setup?.captureCharFrame() ?? "",
-    waitFor: async (predicate: () => boolean | Promise<boolean>) => {
-      const current = await ensureSetup();
-      for (let index = 0; index < 25; index += 1) {
-        await act(async () => {
-          await Promise.resolve();
-          await current.renderOnce();
-        });
-        if (await predicate()) {
-          return;
-        }
-      }
-      throw new Error("Timed out waiting for predicate");
-    },
-  };
+function setupTest() {
+  return createOpenTuiHarness({ width: 120, height: 36 });
 }
+
+afterEach(async () => {
+  await cleanupOpenTuiHarnesses();
+});
 
 describe("ConfigScreen", () => {
   it("renders one provider family selector instead of provider rows", async () => {
-    const { root, flush, captureCharFrame } = await setupTest();
+    const { render, waitForFrame } = setupTest();
 
-    root.render(<ConfigScreen initial={payload()} client={undefined} />);
-    await flush();
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
 
-    const output = captureCharFrame();
+    const output = await waitForFrame((frame) =>
+      frame.includes("OpenAI compatible"),
+    );
     expect(output).toContain("OpenAI compatible");
     expect(output).toContain("Gemini");
     expect(output).toContain("Anthropic");
@@ -224,18 +163,20 @@ describe("ConfigScreen", () => {
   });
 
   it("renders model suggestions when present", async () => {
-    const { root, flush, captureCharFrame } = await setupTest();
+    const { render, waitForFrame } = setupTest();
 
-    root.render(<ConfigScreen initial={payload()} client={undefined} />);
-    await flush();
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
 
-    expect(captureCharFrame()).toContain("gpt-4.1-mini");
+    const output = await waitForFrame((frame) =>
+      frame.includes("gpt-4.1-mini"),
+    );
+    expect(output).toContain("gpt-4.1-mini");
   });
 
   it("renders config fields from backend schema", async () => {
-    const { root, flush, captureCharFrame } = await setupTest();
+    const { render, waitForFrame } = setupTest();
 
-    root.render(
+    await render(
       <ConfigScreen
         initial={{
           ...payload(),
@@ -256,29 +197,31 @@ describe("ConfigScreen", () => {
         client={undefined}
       />,
     );
-    await flush();
 
-    expect(captureCharFrame()).toContain("Backend Model Label");
+    const output = await waitForFrame((frame) =>
+      frame.includes("Backend Model Label"),
+    );
+    expect(output).toContain("Backend Model Label");
   });
 
   it("renders a placeholder when model suggestions are absent", async () => {
-    const { root, flush, captureCharFrame } = await setupTest();
+    const { render, waitForFrame } = setupTest();
 
-    root.render(
+    await render(
       <ConfigScreen
         initial={{ ...payload(), suggestions: {} }}
         client={undefined}
       />,
     );
-    await flush();
 
-    expect(captureCharFrame()).toContain("Models: -");
+    const output = await waitForFrame((frame) => frame.includes("Models: -"));
+    expect(output).toContain("Models: -");
   });
 
   it("renders provider shortcut help from provider choices", async () => {
-    const { root, flush, captureCharFrame } = await setupTest();
+    const { render, waitForFrame } = setupTest();
 
-    root.render(
+    await render(
       <ConfigScreen
         initial={{
           ...payload(),
@@ -287,9 +230,10 @@ describe("ConfigScreen", () => {
         client={undefined}
       />,
     );
-    await flush();
 
-    const output = captureCharFrame();
+    const output = await waitForFrame((frame) =>
+      frame.includes("1-2] provider"),
+    );
     expect(output).toContain("1-2] provider");
     expect(output).not.toContain("1/2/3 provider");
   });
@@ -301,18 +245,13 @@ describe("ConfigScreen", () => {
       calls.push({ method, params });
       return Promise.resolve(payload("gemini"));
     });
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, captureCharFrame, waitForFrame } = setupTest();
 
-    root.render(<ConfigScreen initial={payload()} client={client} />);
-    await flush();
+    await render(<ConfigScreen initial={payload()} client={client} />);
 
     await mockInput.type("2");
 
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Selected gemini");
-    });
+    await waitForFrame((frame) => frame.includes("Selected gemini"));
 
     expect(calls).toEqual([
       {
@@ -337,11 +276,9 @@ describe("ConfigScreen", () => {
       calls.push({ method, params });
       return deferred.promise;
     });
-    const { root, mockInput, flush, captureCharFrame, waitFor } =
-      await setupTest();
+    const { render, mockInput, waitFor, waitForFrame } = setupTest();
 
-    root.render(<ConfigScreen initial={payload()} client={client} />);
-    await flush();
+    await render(<ConfigScreen initial={payload()} client={client} />);
 
     await mockInput.type("2");
     await mockInput.type("3");
@@ -355,10 +292,7 @@ describe("ConfigScreen", () => {
 
     deferred.resolve(payload("gemini"));
 
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Selected gemini");
-    });
+    await waitForFrame((frame) => frame.includes("Selected gemini"));
     expect(calls).toHaveLength(1);
   });
 
@@ -408,10 +342,9 @@ describe("ConfigScreen", () => {
       calls.push({ method, params });
       return Promise.resolve(initial);
     });
-    const { root, mockInput, flush, waitFor } = await setupTest();
+    const { render, mockInput, waitFor } = setupTest();
 
-    root.render(<ConfigScreen initial={initial} client={client} />);
-    await flush();
+    await render(<ConfigScreen initial={initial} client={client} />);
 
     await mockInput.press("tab");
     await mockInput.press("enter");
@@ -542,10 +475,9 @@ describe("ConfigScreen", () => {
       calls.push({ method, params });
       return Promise.resolve(initial);
     });
-    const { root, mockInput, flush, waitFor } = await setupTest();
+    const { render, mockInput, waitFor } = setupTest();
 
-    root.render(<ConfigScreen initial={initial} client={client} />);
-    await flush();
+    await render(<ConfigScreen initial={initial} client={client} />);
 
     await mockInput.press("tab");
     await mockInput.press("enter");
@@ -570,9 +502,9 @@ describe("ConfigScreen", () => {
       calls.push({ method, params });
       return Promise.resolve(payload());
     });
-    const { root, mockInput, flush } = await setupTest();
+    const { render, mockInput } = setupTest();
 
-    root.render(
+    await render(
       <ConfigScreen
         initial={{
           ...payload(),
@@ -581,7 +513,6 @@ describe("ConfigScreen", () => {
         client={client}
       />,
     );
-    await flush();
 
     await mockInput.press("tab");
     await mockInput.press("down");
@@ -598,10 +529,9 @@ describe("ConfigScreen", () => {
         closeCalls += 1;
       },
     );
-    const { root, mockInput, flush, waitFor } = await setupTest();
+    const { render, mockInput, waitFor } = setupTest();
 
-    root.render(<ConfigScreen initial={payload()} client={client} />);
-    await flush();
+    await render(<ConfigScreen initial={payload()} client={client} />);
 
     await mockInput.type("q");
 
