@@ -142,6 +142,44 @@ export const ConfigPathsSchema = z
   })
   .passthrough();
 
+const ConfigFieldTypeSchema = z.enum([
+  "text",
+  "secret",
+  "number",
+  "toggle",
+  "choice",
+]);
+
+const ConfigFormGroupSchema = z
+  .object({
+    id: z.string(),
+    label: z.string(),
+    description: z.string().default(""),
+  })
+  .passthrough();
+
+const ConfigFormFieldSchema = z
+  .object({
+    key: z.string(),
+    group: z.string(),
+    label: z.string(),
+    hint: z.string().default(""),
+    placeholder: z.string().default(""),
+    type: ConfigFieldTypeSchema,
+    choices: z.array(z.string()).default([]),
+    default: z.string().default(""),
+    minimum: z.number().optional(),
+    redacted: z.boolean().default(false),
+  })
+  .passthrough();
+
+const ConfigFormSchemaSchema = z
+  .object({
+    groups: z.array(ConfigFormGroupSchema),
+    fields: z.array(ConfigFormFieldSchema),
+  })
+  .passthrough();
+
 export const ConfigBootstrapSchema = z
   .object({
     config_paths: ConfigPathsSchema,
@@ -198,10 +236,12 @@ export const ConfigBootstrapSchema = z
     validation: z.object({
       ok: z.boolean(),
       errors: z.array(z.string()),
+      field_errors: z.record(z.array(z.string())).default({}),
     }),
     check_result: z.record(z.unknown()).default({}),
     suggestions: ModelSuggestionsSchema.default({}),
     detail: ConfigDetailSchema,
+    form_schema: ConfigFormSchemaSchema.default({ groups: [], fields: [] }),
   })
   .passthrough();
 
@@ -209,6 +249,8 @@ export type ProviderName = z.infer<typeof ProviderNameSchema>;
 export type RpcResponse = z.infer<typeof RpcResponseSchema>;
 export type ModelSuggestions = z.infer<typeof ModelSuggestionsSchema>;
 export type ConfigDetail = z.infer<typeof ConfigDetailSchema>;
+export type ConfigFormField = z.infer<typeof ConfigFormFieldSchema>;
+export type ConfigFormGroup = z.infer<typeof ConfigFormGroupSchema>;
 export type AdminRow = z.infer<typeof AdminRowSchema>;
 export type AdminDetail = z.infer<typeof AdminDetailSchema>;
 export type AdminSnapshot = z.infer<typeof AdminSnapshotSchema>;

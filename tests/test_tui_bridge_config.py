@@ -59,6 +59,45 @@ def test_config_bootstrap_exposes_ingest_config_defaults(tmp_path: Path) -> None
     assert payload["ingest"]["learn"]["max_block_chars"] == 1200
 
 
+def test_config_bootstrap_exposes_python_owned_form_schema(tmp_path: Path) -> None:
+    payload = ConfigBridge(_config(tmp_path)).bootstrap({})
+
+    schema = payload["form_schema"]
+    assert [group["id"] for group in schema["groups"]] == [
+        "provider",
+        "dreaming",
+        "release",
+        "ingest",
+    ]
+    assert schema["groups"][0] == {
+        "id": "provider",
+        "label": "Provider",
+        "description": "Connection settings for the selected dream provider.",
+    }
+    fields = {field["key"]: field for field in schema["fields"]}
+    assert fields["provider.model"] == {
+        "key": "provider.model",
+        "group": "provider",
+        "label": "Model",
+        "hint": "Workflow model used by the selected provider.",
+        "placeholder": "e.g. gpt-4.1-mini",
+        "type": "text",
+        "redacted": False,
+    }
+    assert fields["provider.api_key"] == {
+        "key": "provider.api_key",
+        "group": "provider",
+        "label": "API Key",
+        "hint": "Stored as plaintext in dream.conf and redacted in UI payloads.",
+        "placeholder": "stored in dream.conf",
+        "type": "secret",
+        "redacted": True,
+    }
+    assert fields["release.update_channel"]["type"] == "choice"
+    assert fields["release.update_channel"]["choices"] == ["stable", "dev"]
+    assert fields["ingest.max_block_chars"]["default"] == "1200"
+
+
 def test_config_bootstrap_exposes_redacted_dream_config_and_model_cache(
     tmp_path: Path,
 ) -> None:
@@ -220,6 +259,7 @@ def test_config_save_rejects_legacy_partial_draft(tmp_path: Path) -> None:
     assert payload["validation"] == {
         "ok": False,
         "errors": ["draft must include dream, ingest, and release"],
+        "field_errors": {},
     }
 
 
@@ -231,6 +271,129 @@ def test_config_update_draft_rejects_legacy_partial_draft(tmp_path: Path) -> Non
     assert payload["validation"] == {
         "ok": False,
         "errors": ["draft must include dream, ingest, and release"],
+        "field_errors": {},
+    }
+
+
+def test_config_validation_includes_field_error_metadata(tmp_path: Path) -> None:
+    bridge = ConfigBridge(_config(tmp_path))
+    payload = bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "0",
+            },
+        }
+    )
+
+    assert payload["validation"]["ok"] is False
+    assert payload["validation"]["field_errors"] == {
+        "provider.timeout_seconds": ["providers.openai.timeout_seconds must be greater than 0"]
+    }
+
+
+def test_config_validation_maps_selected_provider_workflow_model_error(
+    tmp_path: Path,
+) -> None:
+    bridge = ConfigBridge(_config(tmp_path))
+    payload = bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "",
+                "api_key": "",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "30",
+            },
+        }
+    )
+
+    assert payload["validation"]["ok"] is False
+    assert payload["validation"]["field_errors"] == {
+        "provider.model": ["enabled workflow must have a model: crystallization"]
+    }
+
+
+def test_config_validation_maps_dreaming_min_interval_form_error(tmp_path: Path) -> None:
+    bridge = ConfigBridge(_config(tmp_path))
+    payload = bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "30",
+            },
+            "dreaming": {
+                "autostart_enabled": "no",
+                "min_interval_minutes": "0",
+                "new_short_term_memory_threshold": "25",
+                "max_cycles_per_autostart": "1",
+            },
+        }
+    )
+
+    assert payload["validation"]["ok"] is False
+    assert payload["validation"]["field_errors"] == {
+        "dreaming.min_interval_minutes": ["min_interval_minutes must be at least 1"]
+    }
+
+
+def test_config_validation_maps_dreaming_autostart_form_error(tmp_path: Path) -> None:
+    bridge = ConfigBridge(_config(tmp_path))
+    payload = bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "30",
+            },
+            "dreaming": {
+                "autostart_enabled": "maybe",
+                "min_interval_minutes": "30",
+                "new_short_term_memory_threshold": "25",
+                "max_cycles_per_autostart": "1",
+            },
+        }
+    )
+
+    assert payload["validation"]["ok"] is False
+    assert payload["validation"]["field_errors"] == {
+        "dreaming.autostart_enabled": ["autostart_enabled must be yes or no"]
+    }
+
+
+def test_config_validation_maps_dreaming_threshold_form_error(tmp_path: Path) -> None:
+    bridge = ConfigBridge(_config(tmp_path))
+    payload = bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "30",
+            },
+            "dreaming": {
+                "autostart_enabled": "no",
+                "min_interval_minutes": "30",
+                "new_short_term_memory_threshold": "0",
+                "max_cycles_per_autostart": "1",
+            },
+        }
+    )
+
+    assert payload["validation"]["ok"] is False
+    assert payload["validation"]["field_errors"] == {
+        "dreaming.new_short_term_memory_threshold": [
+            "new_short_term_memory_threshold must be at least 1"
+        ]
     }
 
 
@@ -246,6 +409,7 @@ def test_config_check_provider_rejects_legacy_partial_draft(tmp_path: Path) -> N
     assert payload["validation"] == {
         "ok": False,
         "errors": ["draft must include dream, ingest, and release"],
+        "field_errors": {},
     }
     assert payload["check_result"] == {}
 
@@ -262,6 +426,7 @@ def test_config_model_suggestions_rejects_legacy_partial_draft(tmp_path: Path) -
     assert payload["validation"] == {
         "ok": False,
         "errors": ["draft must include dream, ingest, and release"],
+        "field_errors": {},
     }
     assert payload["suggestions"] == {}
 
@@ -455,6 +620,7 @@ def test_config_save_rejects_invalid_release_update_channel(tmp_path: Path) -> N
     assert payload["validation"] == {
         "ok": False,
         "errors": ["updates.channel must be one of: dev, stable"],
+        "field_errors": {"release.update_channel": ["updates.channel must be one of: dev, stable"]},
     }
 
 
@@ -513,6 +679,9 @@ def test_config_save_rejects_invalid_dreaming_threshold(tmp_path: Path) -> None:
     assert payload["validation"] == {
         "ok": False,
         "errors": ["schedule_interval_minutes must be at least 1"],
+        "field_errors": {
+            "dreaming.min_interval_minutes": ["schedule_interval_minutes must be at least 1"]
+        },
     }
 
 
@@ -749,6 +918,7 @@ def test_config_check_provider_returns_validation_for_malformed_providers_contai
     assert payload["validation"] == {
         "ok": False,
         "errors": ["draft must include dream, ingest, and release"],
+        "field_errors": {},
     }
     assert payload["check_result"] == {}
 
@@ -772,6 +942,9 @@ def test_config_model_suggestions_returns_validation_for_malformed_timeout(
     assert payload["validation"] == {
         "ok": False,
         "errors": ["providers.openai.timeout_seconds must be a number"],
+        "field_errors": {
+            "provider.timeout_seconds": ["providers.openai.timeout_seconds must be a number"]
+        },
     }
     assert payload["suggestions"] == {}
 
@@ -795,6 +968,7 @@ def test_config_model_suggestions_returns_validation_for_malformed_dreaming_cont
     assert payload["validation"] == {
         "ok": False,
         "errors": ["draft must include dream, ingest, and release"],
+        "field_errors": {},
     }
     assert payload["suggestions"] == {}
 

@@ -43,6 +43,168 @@ from hieronymus.tui_bridge.config_state import (
 REMOTE_PROVIDERS = ("openai", "gemini", "anthropic")
 
 
+def _form_schema() -> dict[str, object]:
+    return {
+        "groups": [
+            {
+                "id": "provider",
+                "label": "Provider",
+                "description": "Connection settings for the selected dream provider.",
+            },
+            {
+                "id": "dreaming",
+                "label": "Dreaming",
+                "description": (
+                    "Autostart thresholds for turning short-term memory into durable memory."
+                ),
+            },
+            {
+                "id": "release",
+                "label": "Updates",
+                "description": "Managed install update channel.",
+            },
+            {
+                "id": "ingest",
+                "label": "Ingestion",
+                "description": "Limits for short-term memory and Learn ingestion.",
+            },
+        ],
+        "fields": [
+            _field(
+                "provider.model",
+                "provider",
+                "Model",
+                "text",
+                hint="Workflow model used by the selected provider.",
+                placeholder="e.g. gpt-4.1-mini",
+            ),
+            _field(
+                "provider.api_key",
+                "provider",
+                "API Key",
+                "secret",
+                hint="Stored as plaintext in dream.conf and redacted in UI payloads.",
+                placeholder="stored in dream.conf",
+                redacted=True,
+            ),
+            _field(
+                "provider.api_path",
+                "provider",
+                "API Path",
+                "text",
+                hint="Base URL for OpenAI-compatible, Gemini, or Anthropic gateways.",
+                placeholder="e.g. https://api.openai.com/v1",
+            ),
+            _field(
+                "provider.timeout_seconds",
+                "provider",
+                "Timeout (seconds)",
+                "number",
+                hint="Provider check and model-list timeout.",
+                placeholder="e.g. 30",
+                minimum=1,
+            ),
+            _field(
+                "dreaming.autostart_enabled",
+                "dreaming",
+                "Autostart Enabled",
+                "toggle",
+                hint="Whether scheduled dreaming can run automatically.",
+                choices=["yes", "no"],
+                default="no",
+            ),
+            _field(
+                "dreaming.min_interval_minutes",
+                "dreaming",
+                "Min Interval (minutes)",
+                "number",
+                hint="Minimum minutes between scheduled dream cycles.",
+                placeholder="e.g. 30",
+                minimum=1,
+            ),
+            _field(
+                "dreaming.new_short_term_memory_threshold",
+                "dreaming",
+                "New Memory Threshold",
+                "number",
+                hint="Pending short-term memories required before scheduled dreaming runs.",
+                placeholder="e.g. 25",
+                minimum=1,
+            ),
+            _field(
+                "release.update_channel",
+                "release",
+                "Update Channel",
+                "choice",
+                hint="Stable uses release tags; dev tracks the configured development target.",
+                choices=["stable", "dev"],
+                default="stable",
+            ),
+            _field(
+                "ingest.warning_sentence_count",
+                "ingest",
+                "Memory Warn Sentences",
+                "number",
+                hint="Warn when direct short-term memory exceeds this sentence count.",
+                placeholder="e.g. 6",
+                default="6",
+                minimum=1,
+            ),
+            _field(
+                "ingest.rejection_sentence_count",
+                "ingest",
+                "Memory Reject Sentences",
+                "number",
+                hint="Reject direct short-term memory above this sentence count.",
+                placeholder="e.g. 30",
+                default="30",
+                minimum=1,
+            ),
+            _field(
+                "ingest.max_block_chars",
+                "ingest",
+                "Learn Block Characters",
+                "number",
+                hint="Maximum Learn block size before splitting.",
+                placeholder="e.g. 1200",
+                default="1200",
+                minimum=1,
+            ),
+        ],
+    }
+
+
+def _field(
+    key: str,
+    group: str,
+    label: str,
+    field_type: str,
+    *,
+    hint: str,
+    placeholder: str = "",
+    choices: list[str] | None = None,
+    default: str = "",
+    minimum: int | None = None,
+    redacted: bool = False,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "key": key,
+        "group": group,
+        "label": label,
+        "hint": hint,
+        "placeholder": placeholder,
+        "type": field_type,
+        "redacted": redacted,
+    }
+    if choices is not None:
+        payload["choices"] = choices
+    if default:
+        payload["default"] = default
+    if minimum is not None:
+        payload["minimum"] = minimum
+    return payload
+
+
 class ConfigBridge:
     def __init__(
         self,
@@ -313,7 +475,12 @@ class ConfigBridge:
                 selected,
                 release_config,
             ),
-            "validation": {"ok": not errors, "errors": errors},
+            "form_schema": _form_schema(),
+            "validation": {
+                "ok": not errors,
+                "errors": errors,
+                "field_errors": _field_errors(errors, selected),
+            },
             "check_result": check_result or {},
             "suggestions": suggestions or {},
             "detail": detail,
@@ -955,6 +1122,44 @@ def _compat_provider_draft(
 
 def _load_errors(*errors: str) -> list[str]:
     return [error for error in errors if error]
+
+
+def _field_errors(errors: list[str], selected: str) -> dict[str, list[str]]:
+    mapping: dict[str, list[str]] = {}
+    for error in errors:
+        field = _field_for_error(error, selected)
+        if field:
+            mapping.setdefault(field, []).append(error)
+    return mapping
+
+
+def _field_for_error(error: str, selected: str) -> str:
+    selected_provider_prefix = f"providers.{selected}."
+    if error.startswith(selected_provider_prefix):
+        provider_field = error.removeprefix(selected_provider_prefix).split(" ", 1)[0]
+        return {
+            "model": "provider.model",
+            "endpoint": "provider.api_path",
+            "timeout_seconds": "provider.timeout_seconds",
+            "api_key": "provider.api_key",
+        }.get(provider_field, "")
+    if error == "enabled workflow must have a model: crystallization":
+        return "provider.model"
+    if error.startswith("autostart_enabled "):
+        return "dreaming.autostart_enabled"
+    if error.startswith(("schedule_interval_minutes ", "min_interval_minutes ")):
+        return "dreaming.min_interval_minutes"
+    if error.startswith(("min_pending_short_term_memories ", "new_short_term_memory_threshold ")):
+        return "dreaming.new_short_term_memory_threshold"
+    if error.startswith("short_memory.warning_sentence_count "):
+        return "ingest.warning_sentence_count"
+    if error.startswith("short_memory.rejection_sentence_count "):
+        return "ingest.rejection_sentence_count"
+    if error.startswith("learn.max_block_chars "):
+        return "ingest.max_block_chars"
+    if error.startswith("updates.channel "):
+        return "release.update_channel"
+    return ""
 
 
 def _redacted_api_key(provider: ProviderProfile) -> str:

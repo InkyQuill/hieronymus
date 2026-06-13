@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useKeyboard, useRenderer } from "@opentui/react";
-import { ConfigBootstrapSchema, type ConfigBootstrap } from "../rpc/schema.js";
+import {
+  ConfigBootstrapSchema,
+  type ConfigBootstrap,
+  type ConfigFormField,
+} from "../rpc/schema.js";
 import type { RpcClient } from "../rpc/client.js";
-import { ConfigForm, fieldDefinitions } from "./ConfigForm.js";
+import { ConfigForm } from "./ConfigForm.js";
 import { ProviderSelector } from "./ProviderSelector.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
@@ -15,6 +19,13 @@ type Props = {
 type Status = {
   message: string;
   error: boolean;
+};
+
+type ConfigFormValues = {
+  provider: Record<string, string>;
+  dreaming: Record<string, string>;
+  ingest: Record<string, string>;
+  release: Record<string, string>;
 };
 
 export function ConfigScreen({ initial, client }: Props) {
@@ -54,6 +65,7 @@ export function ConfigScreen({ initial, client }: Props) {
 
   const providerChoices = payload.provider_choices;
   const selectedProvider = payload.selected_provider;
+  const formFields = payload.form_schema.fields;
 
   const currentProviderIndex = Math.max(
     providerChoices.findIndex((p) => p.name === selectedProvider),
@@ -62,6 +74,12 @@ export function ConfigScreen({ initial, client }: Props) {
 
   const suggestions = modelSuggestions(payload);
   const detailErrors = getDetailErrors(payload);
+
+  useEffect(() => {
+    setFocusedFieldIndex((index) =>
+      Math.min(index, Math.max(formFields.length - 1, 0)),
+    );
+  }, [formFields.length]);
 
   const selectProviderByIndex = (index: number) => {
     const provider = providerChoices[index]?.name;
@@ -84,32 +102,10 @@ export function ConfigScreen({ initial, client }: Props) {
   };
 
   const handleFieldChange = (key: string, value: string) => {
-    setLocalFormValues((prev) => {
-      const providerDraft = { ...prev.provider };
-      const dreamingDraft = { ...prev.dreaming };
-      const ingestDraft = { ...prev.ingest };
-      const releaseDraft = { ...prev.release };
-
-      if (key.startsWith("provider.")) {
-        providerDraft[key.slice(9)] = value;
-      } else if (key.startsWith("dreaming.")) {
-        dreamingDraft[key.slice(9)] = value;
-      } else if (key.startsWith("ingest.")) {
-        ingestDraft[key.slice(7)] = value;
-      } else if (key.startsWith("release.")) {
-        releaseDraft[key.slice(8)] = value;
-      }
-
-      return {
-        provider: providerDraft,
-        dreaming: dreamingDraft,
-        ingest: ingestDraft,
-        release: releaseDraft,
-      };
-    });
+    setLocalFormValues((prev) => withFieldValue(prev, key, value));
   };
 
-  const submitField = () => {
+  const submitField = (formValues: ConfigFormValues = localFormValues) => {
     setIsEditing(false);
     if (!client || busy || operationInFlight.current) {
       return;
@@ -120,10 +116,10 @@ export function ConfigScreen({ initial, client }: Props) {
       method: "config.update_draft",
       params: {
         selected_provider: payload.selected_provider,
-        provider: localFormValues.provider,
-        dreaming: localFormValues.dreaming,
-        ingest: localFormValues.ingest,
-        release: localFormValues.release,
+        provider: formValues.provider,
+        dreaming: formValues.dreaming,
+        ingest: formValues.ingest,
+        release: formValues.release,
       },
       pendingMessage: "Updating draft settings",
       successMessage: "Draft settings updated",
@@ -192,7 +188,7 @@ export function ConfigScreen({ initial, client }: Props) {
     const downArrow = key.name === "down";
     const leftArrow = key.name === "left";
     const rightArrow = key.name === "right";
-    const enter = key.name === "enter";
+    const enter = key.name === "enter" || key.name === "return";
     const escape = key.name === "escape";
 
     // 1. Focus Cycling
@@ -220,7 +216,7 @@ export function ConfigScreen({ initial, client }: Props) {
         return;
       }
 
-      const focusedField = fieldDefinitions[focusedFieldIndex];
+      const focusedField = formFields[focusedFieldIndex];
       if (focusedField?.type === "toggle" || focusedField?.type === "choice") {
         if (
           leftArrow ||
@@ -228,15 +224,26 @@ export function ConfigScreen({ initial, client }: Props) {
           key.name === "space" ||
           key.name === " "
         ) {
-          const choices = focusedField.choices || ["yes", "no"];
-          const currentVal = valueForField(localFormValues, focusedField.key);
+          const choices = focusedField.choices.length
+            ? focusedField.choices
+            : ["yes", "no"];
+          const currentVal = effectiveValueForField(
+            localFormValues,
+            focusedField,
+          );
           const currentIndex = Math.max(choices.indexOf(currentVal), 0);
           handleFieldChange(
             focusedField.key,
             choices[(currentIndex + 1) % choices.length],
           );
         } else if (enter) {
-          submitField();
+          const currentVal = effectiveValueForField(
+            localFormValues,
+            focusedField,
+          );
+          submitField(
+            withFieldValue(localFormValues, focusedField.key, currentVal),
+          );
         }
       }
       return;
@@ -270,11 +277,11 @@ export function ConfigScreen({ initial, client }: Props) {
       }
       if (downArrow) {
         setFocusedFieldIndex((prev) =>
-          Math.min(fieldDefinitions.length - 1, prev + 1),
+          Math.min(Math.max(formFields.length - 1, 0), prev + 1),
         );
         return;
       }
-      if (enter) {
+      if (enter && formFields.length > 0) {
         setIsEditing(true);
         return;
       }
@@ -353,6 +360,7 @@ export function ConfigScreen({ initial, client }: Props) {
           paddingX={1}
         >
           <ConfigForm
+            fields={formFields}
             formValues={localFormValues}
             focusedFieldIndex={focusedFieldIndex}
             isEditing={isEditing}
@@ -479,15 +487,7 @@ function providerKeyRange(
   return `${keys[0]}-${keys[keys.length - 1]}`;
 }
 
-function valueForField(
-  values: {
-    provider: Record<string, string>;
-    dreaming: Record<string, string>;
-    ingest: Record<string, string>;
-    release: Record<string, string>;
-  },
-  key: string,
-): string {
+function valueForField(values: ConfigFormValues, key: string): string {
   if (key.startsWith("provider.")) {
     return values.provider[key.slice(9)] || "";
   }
@@ -501,6 +501,45 @@ function valueForField(
     return values.release[key.slice(8)] || "";
   }
   return "";
+}
+
+function effectiveValueForField(
+  values: ConfigFormValues,
+  field: ConfigFormField,
+): string {
+  const value = valueForField(values, field.key);
+  if ((field.type === "toggle" || field.type === "choice") && !value) {
+    return field.default || field.choices[0] || "";
+  }
+  return value;
+}
+
+function withFieldValue(
+  values: ConfigFormValues,
+  key: string,
+  value: string,
+): ConfigFormValues {
+  const providerDraft = { ...values.provider };
+  const dreamingDraft = { ...values.dreaming };
+  const ingestDraft = { ...values.ingest };
+  const releaseDraft = { ...values.release };
+
+  if (key.startsWith("provider.")) {
+    providerDraft[key.slice(9)] = value;
+  } else if (key.startsWith("dreaming.")) {
+    dreamingDraft[key.slice(9)] = value;
+  } else if (key.startsWith("ingest.")) {
+    ingestDraft[key.slice(7)] = value;
+  } else if (key.startsWith("release.")) {
+    releaseDraft[key.slice(8)] = value;
+  }
+
+  return {
+    provider: providerDraft,
+    dreaming: dreamingDraft,
+    ingest: ingestDraft,
+    release: releaseDraft,
+  };
 }
 
 function providerIndexForInput(input: string, providerCount: number) {

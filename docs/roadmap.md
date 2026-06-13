@@ -72,14 +72,16 @@ The React/OpenTUI app on Bun is the first-class local configuration and memory
 administration surface. It is real but early; remaining work is polish and
 completeness, not another framework migration.
 
+Completed baseline:
+
+- `hiero config` receives Python-owned field schema payloads for labels, hints,
+  groups, input types, choices, redaction behavior, defaults, and field-level
+  validation metadata.
+
 Remaining work:
 
 - Extend `hiero config` beyond the current `dream.conf`, `ingest.conf`, and
   `release.conf` editor as future configuration files are added.
-- Move config field labels, hints, grouping, defaults, field types, redaction
-  behavior, and validation errors into Python-owned config schema payloads. The
-  frontend should render those contracts rather than duplicating config
-  semantics.
 - Keep TUI admin and config mutations behind `AdminBridge` and `ConfigBridge`
   RPC handlers, existing domain stores, migrations, and audited Python methods.
 - Ensure the frontend does not write SQLite, parse human CLI output, or
@@ -104,8 +106,6 @@ Remaining work:
   listener warnings in `bun test` without globally muting stderr.
 - Add real-process smoke checks for packaged `config` and `admin` startup using
   `frontend/dist/main.js`, skipped cleanly when Bun or a PTY is unavailable.
-- Restore frontend typechecking by declaring all required test/runtime
-  dependencies and keeping `bun run --cwd frontend typecheck` green.
 
 ### Install, Release, And Quality
 
