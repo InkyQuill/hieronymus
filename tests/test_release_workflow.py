@@ -129,25 +129,14 @@ def test_release_workflow_verify_job_uses_read_only_credentials() -> None:
     assert _step_value(bun_step, "bun-version") == f'"{EXPECTED_RELEASE_BUN_VERSION}"'
 
     verify_runs = [line for line in verify if line.startswith("      - run: ")]
-    for command in [
+    assert verify_runs == [
         "      - run: uv sync --dev",
         "      - run: bun install --cwd frontend --frozen-lockfile",
         "      - run: bun run --cwd frontend build",
         "      - run: uv run pytest",
         "      - run: uv run ruff check .",
         "      - run: uv run ruff format --check .",
-    ]:
-        assert command in verify_runs
-
-    assert verify_runs.index("      - run: uv sync --dev") < verify_runs.index(
-        "      - run: bun install --cwd frontend --frozen-lockfile"
-    )
-    assert verify_runs.index(
-        "      - run: bun install --cwd frontend --frozen-lockfile"
-    ) < verify_runs.index("      - run: bun run --cwd frontend build")
-    assert verify_runs.index("      - run: bun run --cwd frontend build") < verify_runs.index(
-        "      - run: uv run pytest"
-    )
+    ]
 
 
 def test_release_workflow_release_job_publishes_after_verification() -> None:
