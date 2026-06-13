@@ -377,6 +377,19 @@ describe("AdminScreen", () => {
     expect(output).toContain("minimum 60x20");
   });
 
+  it("does not open hidden dialogs below the minimum terminal size", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(59, 20);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.type("a");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Terminal too small"),
+    );
+    expect(output).toContain("Terminal too small");
+    expect(output).not.toContain("Add New Crystal / Lesson / Rule");
+  });
+
   it("renders views, stats, table row, and detail", async () => {
     const { render, waitForFrame } = setupTest();
 

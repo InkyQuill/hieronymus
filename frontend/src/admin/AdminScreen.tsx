@@ -82,6 +82,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
   });
   const operationInFlight = useRef(false);
 
+  useEffect(() => {
+    if (layout.kind === "too-small" && dialog.kind !== "none") {
+      setDialog(closedDialog);
+    }
+  }, [dialog.kind, layout.kind]);
+
   const selectedViewIndex = Math.max(initial.views.indexOf(snapshot.view), 0);
   const viewKeyLimit = Math.min(initial.views.length, 9);
   const paletteCommands = commandsForView(
@@ -446,6 +452,14 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       return;
     }
 
+    if (layout.kind === "too-small") {
+      if (key.name === "q") {
+        client?.close?.();
+        renderer.destroy();
+      }
+      return;
+    }
+
     const ctrl = key.ctrl;
     const tab = key.name === "tab";
     const shift = key.shift;
@@ -679,6 +693,19 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     }
   }
 
+  if (layout.kind === "too-small") {
+    return (
+      <box flexDirection="column" width={dimensions.width}>
+        <text>Terminal too small</text>
+        <text fg="gray">
+          {dimensions.width}x{dimensions.height}; minimum {MIN_TERMINAL_WIDTH}x
+          {MIN_TERMINAL_HEIGHT}
+        </text>
+        <text fg="gray">Resize terminal to use Hieronymus admin.</text>
+      </box>
+    );
+  }
+
   if (dialog.kind !== "none") {
     return (
       <box
@@ -693,19 +720,6 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           onClose={() => setDialog(closedDialog)}
           onSubmit={handleDialogSubmit}
         />
-      </box>
-    );
-  }
-
-  if (layout.kind === "too-small") {
-    return (
-      <box flexDirection="column" width={dimensions.width}>
-        <text>Terminal too small</text>
-        <text fg="gray">
-          {dimensions.width}x{dimensions.height}; minimum {MIN_TERMINAL_WIDTH}x
-          {MIN_TERMINAL_HEIGHT}
-        </text>
-        <text fg="gray">Resize terminal to use Hieronymus admin.</text>
       </box>
     );
   }
