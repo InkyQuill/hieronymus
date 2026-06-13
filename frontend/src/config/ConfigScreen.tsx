@@ -16,6 +16,8 @@ import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
 import {
   classifyTerminalLayout,
+  MIN_TERMINAL_HEIGHT,
+  MIN_TERMINAL_WIDTH,
   panelHeight,
   panelWidth,
 } from "../ui/responsive.js";
@@ -335,7 +337,8 @@ export function ConfigScreen({ initial, client }: Props) {
       <box flexDirection="column" width={dimensions.width}>
         <text>Terminal too small</text>
         <text fg="gray">
-          {dimensions.width}x{dimensions.height}; minimum 50x20
+          {dimensions.width}x{dimensions.height}; minimum {MIN_TERMINAL_WIDTH}x
+          {MIN_TERMINAL_HEIGHT}
         </text>
         <text fg="gray">Resize terminal to edit Hieronymus config.</text>
       </box>
@@ -343,7 +346,11 @@ export function ConfigScreen({ initial, client }: Props) {
   }
 
   if (layout.kind !== "wide") {
-    const compactHeight = panelHeight(layout, 10);
+    const compactHeight = panelHeight(layout, 12);
+    const compactErrors = [...payload.validation.errors, ...detailErrors].slice(
+      0,
+      2,
+    );
 
     return (
       <box flexDirection="column" width={dimensions.width}>
@@ -372,19 +379,16 @@ export function ConfigScreen({ initial, client }: Props) {
               />
             </>
           ) : (
-            <>
-              <text fg="cyan">Dreaming settings</text>
-              <ConfigForm
-                fields={formFields}
-                formValues={localFormValues}
-                focusedFieldIndex={focusedFieldIndex}
-                isEditing={isEditing}
-                focused
-                width={contentWidth}
-                onFieldChange={handleFieldChange}
-                onSubmitField={submitField}
-              />
-            </>
+            <ConfigForm
+              fields={formFields}
+              formValues={localFormValues}
+              focusedFieldIndex={focusedFieldIndex}
+              isEditing={isEditing}
+              focused
+              width={contentWidth}
+              onFieldChange={handleFieldChange}
+              onSubmitField={submitField}
+            />
           )}
         </box>
 
@@ -392,12 +396,7 @@ export function ConfigScreen({ initial, client }: Props) {
           <text>
             Models: {suggestions.length > 0 ? suggestions.join(", ") : "-"}
           </text>
-          {payload.validation.errors.slice(0, 2).map((error) => (
-            <text key={error} fg="red">
-              {error}
-            </text>
-          ))}
-          {detailErrors.slice(0, 2).map((error) => (
+          {compactErrors.map((error) => (
             <text key={error} fg="red">
               {error}
             </text>

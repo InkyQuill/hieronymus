@@ -168,6 +168,50 @@ describe("ConfigScreen", () => {
     );
   });
 
+  it("keeps compact footer visible with validation and detail errors", async () => {
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(
+      <ConfigScreen
+        initial={{
+          ...payload(),
+          validation: {
+            ok: false,
+            errors: [
+              "validation error one",
+              "validation error two",
+              "validation error three",
+              "validation error four",
+            ],
+            field_errors: {},
+          },
+          detail: {
+            title: "Provider check",
+            fields: [],
+            errors: [
+              "detail error one",
+              "detail error two",
+              "detail error three",
+              "detail error four",
+            ],
+          },
+          suggestions: {
+            provider: "openai",
+            models: ["gpt-4.1-mini", "gpt-4.1", "o4-mini"],
+            source: "defaults",
+            error: "",
+          },
+        }}
+        client={undefined}
+      />,
+    );
+
+    const output = await waitForFrame(
+      (frame) => frame.includes("q quit") || frame.includes("Ready"),
+    );
+    expect(output).toContain("q quit");
+  });
+
   it("renders a too-small config message below the minimum width", async () => {
     const { render, waitForFrame } = setupSizedTest(49, 20);
 
