@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -143,6 +144,8 @@ def _require_opentui_smoke_runtime() -> Path:
         pytest.skip("OpenTUI smoke tests require Bun")
     bundle = _built_frontend_bundle()
     if not bundle.exists():
+        if os.environ.get("CI"):
+            pytest.fail("OpenTUI smoke tests require frontend/dist/main.js in CI")
         pytest.skip("OpenTUI smoke tests require frontend/dist/main.js")
     return bundle
 
@@ -151,10 +154,12 @@ def _strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text)
 
 
-def _read_pty_until(fd: int, expected: str, *, timeout: float = 8.0) -> str:
+def _read_pty_until(fd: int, expected: str | Iterable[str], *, timeout: float = 8.0) -> str:
     deadline = time.monotonic() + timeout
     chunks: list[bytes] = []
-    expected_compact = "".join(expected.split())
+    expected_markers = [expected] if isinstance(expected, str) else list(expected)
+    expected_compact = {marker: "".join(marker.split()) for marker in expected_markers}
+    seen: set[str] = set()
     while time.monotonic() < deadline:
         readable, _, _ = select.select([fd], [], [], 0.1)
         if not readable:
@@ -167,10 +172,17 @@ def _read_pty_until(fd: int, expected: str, *, timeout: float = 8.0) -> str:
             break
         chunks.append(chunk)
         text = _strip_ansi(b"".join(chunks).decode(errors="replace"))
-        if expected in text or expected_compact in "".join(text.split()):
+        compact_text = "".join(text.split())
+        seen.update(
+            marker
+            for marker in expected_markers
+            if marker in text or expected_compact[marker] in compact_text
+        )
+        if seen == set(expected_markers):
             return text
     text = _strip_ansi(b"".join(chunks).decode(errors="replace"))
-    raise AssertionError(f"did not see {expected!r} in OpenTUI output:\n{text}")
+    missing = [marker for marker in expected_markers if marker not in seen]
+    raise AssertionError(f"did not see {missing!r} in OpenTUI output:\n{text}")
 
 
 def _set_pty_size(fd: int, *, rows: int, columns: int) -> None:
@@ -182,7 +194,11 @@ def _set_pty_size(fd: int, *, rows: int, columns: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, size)
 
 
-def _smoke_opentui_bundle(mode: str, expected_title: str, tmp_path: Path) -> str:
+def _smoke_opentui_bundle(
+    mode: str,
+    expected_markers: str | Iterable[str],
+    tmp_path: Path,
+) -> str:
     bundle = _require_opentui_smoke_runtime()
     import pty
 
@@ -224,7 +240,7 @@ def _smoke_opentui_bundle(mode: str, expected_title: str, tmp_path: Path) -> str
     )
     os.close(slave_fd)
     try:
-        output = _read_pty_until(master_fd, expected_title)
+        output = _read_pty_until(master_fd, expected_markers)
         os.write(master_fd, b"q")
         try:
             process.wait(timeout=5)
@@ -242,14 +258,22 @@ def _smoke_opentui_bundle(mode: str, expected_title: str, tmp_path: Path) -> str
 
 
 def test_packaged_opentui_config_starts_from_built_bundle(tmp_path: Path) -> None:
-    output = _smoke_opentui_bundle("config", "Hieronymus Config", tmp_path)
+    output = _smoke_opentui_bundle(
+        "config",
+        ["Hieronymus Config", "Providers", "dream.conf"],
+        tmp_path,
+    )
 
     assert "Providers" in output
     assert "dream.conf" in output
 
 
 def test_packaged_opentui_admin_starts_from_built_bundle(tmp_path: Path) -> None:
-    output = _smoke_opentui_bundle("admin", "Hieronymus Admin", tmp_path)
+    output = _smoke_opentui_bundle(
+        "admin",
+        ["Hieronymus Admin", "crystals0", "DreamDISABLED"],
+        tmp_path,
+    )
 
     assert "crystals0" in output
     assert "DreamDISABLED" in output

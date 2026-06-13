@@ -4,7 +4,7 @@
 
 **Goal:** Add real-process smoke checks proving the built OpenTUI bundle can start `hiero config` and `hiero admin` through the packaged `frontend/dist/main.js` path.
 
-**Architecture:** Keep existing mocked CLI launcher tests as fast unit coverage. Add narrowly scoped Python smoke tests that spawn Bun with the built frontend bundle under a real PTY, bridge back into the current Python environment with `python -m hieronymus tui-bridge`, wait for each screen title, send `q`, and assert clean exit. Tests skip cleanly when Bun, PTY support, or the built bundle is unavailable; local verification rebuilds `frontend/dist/main.js` before running the smoke tests so it exercises the current source.
+**Architecture:** Keep existing mocked CLI launcher tests as fast unit coverage. Add narrowly scoped Python smoke tests that spawn Bun with the built frontend bundle under a real PTY, pass `python -m hieronymus` as the bridge command, let the frontend append `tui-bridge` when it spawns the JSON-RPC bridge, wait for each screen title, send `q`, and assert clean exit. Tests skip cleanly when Bun, PTY support, or the built bundle is unavailable; local verification rebuilds `frontend/dist/main.js` before running the smoke tests so it exercises the current source.
 
 **Tech Stack:** Python 3.12, pytest, standard-library `pty`/`select`/`subprocess`, Bun, built OpenTUI bundle at `frontend/dist/main.js`.
 
@@ -208,7 +208,7 @@ if (key.name === "q") {
 }
 ```
 
-Do not add sleeps except through `_read_pty_until()` polling. Do not add a fake bridge server; this smoke exists specifically to exercise `python -m hieronymus tui-bridge`.
+Do not add sleeps except through `_read_pty_until()` polling. Do not add a fake bridge server; this smoke exists specifically to exercise the frontend spawning `python -m hieronymus tui-bridge` from the `python -m hieronymus` bridge command passed by the CLI launcher.
 
 If a platform raises from `fcntl.ioctl(..., termios.TIOCSWINSZ, ...)`, treat that as an environment limitation and skip the smoke test with a clear reason rather than leaving an unhandled startup failure.
 
