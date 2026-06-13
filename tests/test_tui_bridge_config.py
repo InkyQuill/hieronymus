@@ -59,6 +59,45 @@ def test_config_bootstrap_exposes_ingest_config_defaults(tmp_path: Path) -> None
     assert payload["ingest"]["learn"]["max_block_chars"] == 1200
 
 
+def test_config_bootstrap_exposes_python_owned_form_schema(tmp_path: Path) -> None:
+    payload = ConfigBridge(_config(tmp_path)).bootstrap({})
+
+    schema = payload["form_schema"]
+    assert [group["id"] for group in schema["groups"]] == [
+        "provider",
+        "dreaming",
+        "release",
+        "ingest",
+    ]
+    assert schema["groups"][0] == {
+        "id": "provider",
+        "label": "Provider",
+        "description": "Connection settings for the selected dream provider.",
+    }
+    fields = {field["key"]: field for field in schema["fields"]}
+    assert fields["provider.model"] == {
+        "key": "provider.model",
+        "group": "provider",
+        "label": "Model",
+        "hint": "Workflow model used by the selected provider.",
+        "placeholder": "e.g. gpt-4.1-mini",
+        "type": "text",
+        "redacted": False,
+    }
+    assert fields["provider.api_key"] == {
+        "key": "provider.api_key",
+        "group": "provider",
+        "label": "API Key",
+        "hint": "Stored as plaintext in dream.conf and redacted in UI payloads.",
+        "placeholder": "stored in dream.conf",
+        "type": "secret",
+        "redacted": True,
+    }
+    assert fields["release.update_channel"]["type"] == "choice"
+    assert fields["release.update_channel"]["choices"] == ["stable", "dev"]
+    assert fields["ingest.max_block_chars"]["default"] == "1200"
+
+
 def test_config_bootstrap_exposes_redacted_dream_config_and_model_cache(
     tmp_path: Path,
 ) -> None:
