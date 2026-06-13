@@ -21,6 +21,7 @@ import { FocusableList } from "../ui/FocusableList.js";
 import { AdminTable } from "./AdminTable.js";
 import { DetailPane } from "./DetailPane.js";
 import { CommandPalette, commandsForView } from "./CommandPalette.js";
+import { HelpOverlay } from "./HelpOverlay.js";
 import { Spinner } from "../ui/Spinner.js";
 import { type DialogState, closedDialog, DialogOverlay } from "./dialogs.js";
 
@@ -56,6 +57,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
   const [dreamStatus, setDreamStatus] = useState(initial.dream_status);
   const [configEditor, setConfigEditor] = useState(initial.config_editor);
   const [commandsOpen, setCommandsOpen] = useState(showCommands);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<"views" | "table" | "detail">(
     "views",
   );
@@ -233,6 +235,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
 
     if (ctrl && input === "p") {
       setSelectedCommandIndex(0);
+      setHelpOpen(false);
       setCommandsOpen((open) => !open);
       return;
     }
@@ -418,6 +421,25 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     const shift = key.shift;
     const upArrow = key.name === "up";
     const downArrow = key.name === "down";
+
+    if (helpOpen) {
+      if (ctrl && key.name === "p") {
+        setSelectedCommandIndex(0);
+        setHelpOpen(false);
+        setCommandsOpen(true);
+        return;
+      }
+      if (key.name === "escape" || key.name === "esc" || key.name === "?") {
+        setHelpOpen(false);
+      }
+      return;
+    }
+
+    if (key.name === "?") {
+      setHelpOpen(true);
+      setCommandsOpen(false);
+      return;
+    }
 
     if (commandsOpen) {
       if (ctrl && key.name === "p") {
@@ -711,7 +733,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           <text fg={activePanel === "detail" ? "cyan" : undefined}>
             Detail Inspector
           </text>
-          {commandsOpen ? (
+          {helpOpen ? (
+            <HelpOverlay
+              commands={initial.command_options}
+              view={snapshot.view}
+            />
+          ) : commandsOpen ? (
             <CommandPalette
               commands={paletteCommands}
               selectedIndex={clampCommandIndex(selectedCommandIndex)}
@@ -723,22 +750,34 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       </box>
 
       <StatusLine message={status.message} error={status.error} />
-      <KeyHelp
-        keys={[
-          "Tab focus",
-          `1-${viewKeyLimit} view`,
-          "+/- reinforce/decay",
-          "a add",
-          "e edit",
-          "d delete",
-          "m merge",
-          "s split",
-          "f filter",
-          "q quit",
-        ]}
-      />
+      <KeyHelp keys={footerKeys({ commandsOpen, helpOpen, viewKeyLimit })} />
     </box>
   );
+}
+
+function footerKeys({
+  commandsOpen,
+  helpOpen,
+  viewKeyLimit,
+}: {
+  commandsOpen: boolean;
+  helpOpen: boolean;
+  viewKeyLimit: number;
+}) {
+  if (helpOpen) {
+    return ["Esc close help", "? close help", "Ctrl+P commands"];
+  }
+  if (commandsOpen) {
+    return ["↑/↓ move", "Enter run", "Esc close", "? help"];
+  }
+  return [
+    "Tab focus",
+    `1-${viewKeyLimit} view`,
+    "↑/↓ or j/k move",
+    "Ctrl+P commands",
+    "? help",
+    "q quit",
+  ];
 }
 
 function viewIndexForInput(input: string, viewCount: number) {

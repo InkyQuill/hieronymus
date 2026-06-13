@@ -1,5 +1,6 @@
 import React from "react";
 import { act } from "react";
+import type { ParsedKey } from "@opentui/core";
 import { describe, expect, it } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import type { RpcClient } from "../rpc/client.js";
@@ -216,7 +217,19 @@ async function setupTest() {
         if (name === "enter") {
           current.mockInput.pressEnter(options);
         } else if (name === "escape") {
-          current.mockInput.pressEscape(options);
+          const escapeKey: ParsedKey = {
+            name: "escape",
+            ctrl: options.ctrl ?? false,
+            meta: false,
+            shift: options.shift ?? false,
+            option: false,
+            sequence: "\x1B",
+            number: false,
+            raw: "\x1B",
+            eventType: "press",
+            source: "raw",
+          };
+          current.renderer.keyInput.processParsedKey(escapeKey);
         } else if (
           name === "up" ||
           name === "down" ||
@@ -293,6 +306,27 @@ describe("AdminScreen", () => {
     expect(output).toContain("> Add Memory [a]");
     expect(output).toContain("Reinforce Crystal [+]");
     expect(output).not.toContain("Approve Proposal");
+  });
+
+  it("opens contextual help with question mark and closes with escape", async () => {
+    const { root, mockInput, flush, captureCharFrame, waitFor } =
+      await setupTest();
+
+    root.render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await flush();
+
+    await mockInput.type("?");
+    await waitFor(async () => captureCharFrame().includes("Help"));
+
+    let output = captureCharFrame();
+    expect(output).toContain("Esc/? close");
+    expect(output).toContain("Ctrl+P commands");
+    expect(output).not.toContain("q quit");
+    expect(output).toContain("[+] Reinforce Crystal");
+    expect(output).not.toContain("Approve Proposal");
+
+    await mockInput.press("escape");
+    await waitFor(async () => !captureCharFrame().includes("Help"));
   });
 
   it("runs selected command palette actions through existing RPC handlers", async () => {
@@ -409,8 +443,8 @@ describe("AdminScreen", () => {
     await flush();
 
     const output = captureCharFrame();
-    expect(output).toContain("[f] filter");
-    expect(output).toContain("[e] edit");
+    expect(output).toContain("[Ctrl+P] commands");
+    expect(output).toContain("[?] help");
     expect(output).toContain("[1-9] view");
 
     await mockInput.type("f");
