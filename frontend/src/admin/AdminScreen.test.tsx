@@ -258,6 +258,32 @@ describe("AdminScreen", () => {
     expect(detailOutput).toContain("Guild ledger detail marker.");
   });
 
+  it("opens compact help from the initial views pane", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+
+    await mockInput.type("?");
+
+    const output = await waitForFrame((frame) => frame.includes("Help"));
+    expect(output).toContain("Help");
+    expect(output).toContain("Esc/? close");
+  });
+
+  it("opens compact command palette from the initial views pane", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+
+    await mockInput.press("p", { ctrl: true });
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Command Palette"),
+    );
+    expect(output).toContain("Command Palette");
+    expect(output).toContain("Enter run Esc close");
+  });
+
   it("renders a too-small admin message below the minimum width", async () => {
     const { render, waitForFrame } = setupSizedTest(49, 20);
 

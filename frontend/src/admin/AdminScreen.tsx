@@ -740,7 +740,23 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           borderColor="cyan"
           paddingX={1}
         >
-          {activePanel === "views" ? (
+          {helpOpen ? (
+            <>
+              <text fg="cyan">Detail Inspector</text>
+              <HelpOverlay
+                commands={initial.command_options}
+                view={snapshot.view}
+              />
+            </>
+          ) : commandsOpen ? (
+            <>
+              <text fg="cyan">Detail Inspector</text>
+              <CommandPalette
+                commands={paletteCommands}
+                selectedIndex={clampCommandIndex(selectedCommandIndex)}
+              />
+            </>
+          ) : activePanel === "views" ? (
             <>
               <text fg="cyan">Views</text>
               <FocusableList
@@ -766,25 +782,13 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           ) : (
             <>
               <text fg="cyan">Detail Inspector</text>
-              {helpOpen ? (
-                <HelpOverlay
-                  commands={initial.command_options}
-                  view={snapshot.view}
+              <box marginTop={1}>
+                <DetailPane
+                  detail={snapshot.detail}
+                  width={compactDetailWidth}
+                  height={Math.max(4, compactScrollHeight - 1)}
                 />
-              ) : commandsOpen ? (
-                <CommandPalette
-                  commands={paletteCommands}
-                  selectedIndex={clampCommandIndex(selectedCommandIndex)}
-                />
-              ) : (
-                <box marginTop={1}>
-                  <DetailPane
-                    detail={snapshot.detail}
-                    width={compactDetailWidth}
-                    height={Math.max(4, compactScrollHeight - 1)}
-                  />
-                </box>
-              )}
+              </box>
             </>
           )}
         </box>
