@@ -134,6 +134,18 @@ def _phase_input_counts(config: HieronymusConfig) -> list[int]:
     return [int(row["input_count"]) for row in rows]
 
 
+def _phase_rows(config: HieronymusConfig) -> list[dict[str, object]]:
+    with connect(config.database_path) as conn:
+        rows = conn.execute(
+            """
+            select phase, status, input_count, output_count
+            from dream_phase_runs
+            order by id
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _pending_memory_count(config: HieronymusConfig) -> int:
     with connect(config.database_path) as conn:
         row = conn.execute(
@@ -325,6 +337,93 @@ def test_affected_set_and_phase_audit_payloads_are_bounded_and_complete(
         for item in phase_payload["searched_related_candidates"]["crystals_by_concept"]
     )
     assert phase_payload["affected_memory_set"]["total_crystal_count"] <= 1
+
+
+def test_provider_backed_multi_batch_run_audits_crystallization_and_maintenance(
+    config: HieronymusConfig,
+) -> None:
+    _save_dreaming_config(config, min_pending=1, max_pending=10, per_cycle=2, max_changed=4)
+    context = _context(config)
+    memory_ids = _completed_session(config, context, memories=3)
+    reinforced_id = _add_crystal(
+        config,
+        context,
+        text="Provider-backed maintenance reinforcement.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    decayed_id = _add_crystal(
+        config,
+        context,
+        text="Provider-backed maintenance decay.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    FeedbackStore(config).record(
+        reinforced_id,
+        event_type="used_in_translation",
+        source_role="system",
+        evidence="used during provider-backed smoke",
+    )
+    provider = CapturingDictProvider()
+
+    run = DreamService(config, provider).run_all(owner="admin")
+
+    assert run.status == "completed"
+    assert run.provider == "capturing"
+    assert run.input_count == 3
+    assert provider.calls == [memory_ids[:2], memory_ids[2:]]
+    assert _phase_rows(config) == [
+        {"phase": "crystallization", "status": "completed", "input_count": 2, "output_count": 1},
+        {"phase": "crystallization", "status": "completed", "input_count": 1, "output_count": 1},
+        {"phase": "maintenance", "status": "completed", "input_count": 0, "output_count": 2},
+    ]
+
+    entries = DreamAuditStore(config).list_for_run(run.id)
+    assert [entry.event_type for entry in entries] == [
+        "provider_request",
+        "parse_warnings",
+        "provider_response",
+        "phase_completed",
+        "provider_request",
+        "parse_warnings",
+        "provider_response",
+        "phase_completed",
+        "phase_completed",
+    ]
+    phase_payloads = [entry.payload for entry in entries if entry.event_type == "phase_completed"]
+    assert [payload["phase_name"] for payload in phase_payloads] == [
+        "crystallization",
+        "crystallization",
+        "maintenance",
+    ]
+    assert phase_payloads[0]["selected_short_term_memory_ids"] == memory_ids[:2]
+    assert phase_payloads[1]["selected_short_term_memory_ids"] == memory_ids[2:]
+    maintenance_payload = phase_payloads[2]
+    assert maintenance_payload["selected_short_term_memory_ids"] == []
+    assert maintenance_payload["provider_profile"] == "capturing"
+    assert maintenance_payload["model"] == "capturing"
+    assert maintenance_payload["prompt_version"] == "maintenance:v1"
+    assert maintenance_payload["reinforced_crystals"] == [reinforced_id]
+    assert maintenance_payload["decayed_crystals"] == [decayed_id]
+    assert set(maintenance_payload["affected_memory_set"]["changed_crystal_ids"]) == {
+        reinforced_id,
+        decayed_id,
+    }
+    assert maintenance_payload["request_summary"] == {
+        "memory_count": 0,
+        "session_ids": [],
+        "context_count": 0,
+        "batch_cap": 2,
+    }
+    assert maintenance_payload["response_summary"] == {
+        "crystal_count": 0,
+        "concept_count": 0,
+        "facet_count": 0,
+        "concept_proposal_count": 0,
+        "supersede_action_count": 0,
+        "parse_warning_count": 0,
+    }
 
 
 def test_phase_audit_includes_passive_reinforcement_and_cycle_decay(
