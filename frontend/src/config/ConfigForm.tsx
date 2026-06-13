@@ -13,6 +13,7 @@ type ConfigFormProps = {
   isEditing: boolean;
   focused?: boolean;
   width?: number;
+  visibleRows?: number;
   onFieldChange: (key: string, value: string) => void;
   onSubmitField: () => void;
 };
@@ -24,6 +25,7 @@ export function ConfigForm({
   isEditing,
   focused = true,
   width = 68,
+  visibleRows,
   onFieldChange,
   onSubmitField,
 }: ConfigFormProps) {
@@ -55,12 +57,22 @@ export function ConfigForm({
   const autostartIndex = renderedFields.findIndex(
     (f) => f.key === "dreaming.autostart_enabled",
   );
+  const fieldWindow = getVisibleFieldWindow(
+    renderedFields.length,
+    focusedFieldIndex,
+    visibleRows,
+  );
+  const visibleFields = renderedFields.slice(
+    fieldWindow.start,
+    fieldWindow.end,
+  );
 
   return (
     <box flexDirection="column" width={width}>
       <text>Dreaming settings</text>
       <box flexDirection="column" marginTop={1}>
-        {renderedFields.map((field, index) => {
+        {visibleFields.map((field, visibleIndex) => {
+          const index = fieldWindow.start + visibleIndex;
           const isFieldFocused = focused && focusedFieldIndex === index;
           const labelColor = isFieldFocused ? "cyan" : "gray";
 
@@ -68,7 +80,9 @@ export function ConfigForm({
             <box
               key={field.key}
               flexDirection="row"
-              marginTop={index === autostartIndex ? 1 : 0}
+              marginTop={
+                visibleRows === undefined && index === autostartIndex ? 1 : 0
+              }
             >
               <text fg={labelColor}>
                 {isFieldFocused ? "> " : "  "}
@@ -116,4 +130,29 @@ export function ConfigForm({
       </box>
     </box>
   );
+}
+
+function getVisibleFieldWindow(
+  fieldCount: number,
+  focusedFieldIndex: number,
+  visibleRows: number | undefined,
+): { start: number; end: number } {
+  if (visibleRows === undefined || visibleRows >= fieldCount) {
+    return { start: 0, end: fieldCount };
+  }
+
+  const windowSize = Math.max(0, visibleRows);
+  if (windowSize === 0) {
+    return { start: 0, end: 0 };
+  }
+
+  const focusedIndex = Math.min(
+    Math.max(focusedFieldIndex, 0),
+    Math.max(fieldCount - 1, 0),
+  );
+  const preferredStart = focusedIndex - Math.floor(windowSize / 2);
+  const maxStart = Math.max(fieldCount - windowSize, 0);
+  const start = Math.min(Math.max(preferredStart, 0), maxStart);
+
+  return { start, end: Math.min(start + windowSize, fieldCount) };
 }

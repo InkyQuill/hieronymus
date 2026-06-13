@@ -347,6 +347,7 @@ export function ConfigScreen({ initial, client }: Props) {
 
   if (layout.kind !== "wide") {
     const compactHeight = panelHeight(layout, 12);
+    const compactVisibleFormRows = Math.max(0, compactHeight - 4);
     const compactErrors = [...payload.validation.errors, ...detailErrors].slice(
       0,
       2,
@@ -386,6 +387,7 @@ export function ConfigScreen({ initial, client }: Props) {
               isEditing={isEditing}
               focused
               width={contentWidth}
+              visibleRows={compactVisibleFormRows}
               onFieldChange={handleFieldChange}
               onSubmitField={submitField}
             />

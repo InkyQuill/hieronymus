@@ -212,6 +212,52 @@ describe("ConfigScreen", () => {
     expect(output).toContain("q quit");
   });
 
+  it("windows compact config fields without covering status or footer", async () => {
+    const manyFields = Array.from({ length: 11 }, (_, index) => ({
+      key: `provider.field_${index + 1}`,
+      group: "provider",
+      label: `Field ${index + 1}`,
+      hint: `Field ${index + 1} hint.`,
+      placeholder: `value-${index + 1}`,
+      type: "text" as const,
+      choices: [],
+      default: "",
+      redacted: false,
+    }));
+    const initial = {
+      ...payload(),
+      form_values: {
+        ...payload().form_values,
+        provider: {
+          ...payload().form_values.provider,
+          ...Object.fromEntries(
+            manyFields.map((field, index) => [
+              field.key.slice(9),
+              `value-${index + 1}`,
+            ]),
+          ),
+        },
+      },
+      form_schema: formSchema(manyFields),
+    };
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<ConfigScreen initial={initial} client={undefined} />);
+
+    await mockInput.press("tab");
+    for (let index = 0; index < 10; index += 1) {
+      await mockInput.press("down");
+    }
+
+    const output = await waitForFrame(
+      (frame) =>
+        frame.includes("> Field 11: value-11") &&
+        (frame.includes("q quit") || frame.includes("Ready")),
+    );
+    expect(output).toContain("> Field 11: value-11");
+    expect(output).toContain("q quit");
+  });
+
   it("renders a too-small config message below the minimum width", async () => {
     const { render, waitForFrame } = setupSizedTest(49, 20);
 
