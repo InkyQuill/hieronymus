@@ -868,7 +868,7 @@ uv run ruff format --check .
 
 Expected: all commands pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/roadmap.md
