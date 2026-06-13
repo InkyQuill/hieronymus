@@ -83,6 +83,10 @@ Completed baseline:
   keyboard command palette with availability state and bridge-backed execution.
 - `hiero admin` has a `?` help surface and context-aware footer hints for
   normal, command-palette, and help modes.
+- Frontend OpenTUI tests use a shared renderer harness that flushes React
+  updates through `act(...)`, destroys renderers after each test, and keeps
+  `bun test` free of React lifecycle and `TerminalConsoleCache` listener
+  warnings.
 
 Remaining work:
 
@@ -104,8 +108,6 @@ Remaining work:
   renderer once OpenTUI markdown output is reliable in the test renderer.
 - Enable visible scrollbars for multiline memory editors if OpenTUI exposes
   textarea scrollbar controls in a newer release.
-- Clean up React `act(...)` warnings and OpenTUI `TerminalConsoleCache`
-  listener warnings in `bun test` without globally muting stderr.
 
 ### Install, Release, And Quality
 
