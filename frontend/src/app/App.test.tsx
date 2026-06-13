@@ -1,62 +1,25 @@
-import React from "react";
-import { act } from "react";
-import { describe, expect, it } from "bun:test";
-import { testRender } from "@opentui/react/test-utils";
+import { afterEach, describe, expect, it } from "bun:test";
 import { App } from "./App.js";
 import type { RpcClient } from "../rpc/client.js";
+import {
+  cleanupOpenTuiHarnesses,
+  createOpenTuiHarness,
+} from "../test/opentuiHarness.js";
 
-async function setupTest() {
-  let node: React.ReactNode = null;
-  let setup: Awaited<ReturnType<typeof testRender>> | null = null;
-  const ensureSetup = async () => {
-    setup ??= await testRender(node, { width: 160, height: 60 });
-    return setup;
-  };
-  const flush = async () => {
-    const current = await ensureSetup();
-    await act(async () => {
-      await current.flush();
-    });
-  };
-  return {
-    root: {
-      render: (next: React.ReactNode) => {
-        node = next;
-      },
-    },
-    mockInput: {},
-    flush,
-    captureCharFrame: () => setup?.captureCharFrame() ?? "",
-    waitFor: async (
-      predicate: () => boolean | Promise<boolean>,
-      maxAttempts = 25,
-    ) => {
-      const current = await ensureSetup();
-      for (let index = 0; index < maxAttempts; index += 1) {
-        await act(async () => {
-          await Promise.resolve();
-          await current.renderOnce();
-        });
-        if (await predicate()) {
-          return;
-        }
-      }
-      throw new Error("Timed out waiting for predicate");
-    },
-  };
+function setupTest() {
+  return createOpenTuiHarness({ width: 160, height: 60 });
 }
+
+afterEach(async () => {
+  await cleanupOpenTuiHarnesses();
+});
 
 describe("App", () => {
   it("bootstraps and renders the admin screen", async () => {
-    const { root, flush, captureCharFrame, waitFor } = await setupTest();
+    const { render, captureCharFrame, waitForFrame } = setupTest();
 
-    root.render(<App mode="admin" client={fakeClient()} />);
-    await flush();
-
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("Hieronymus Admin");
-    });
+    await render(<App mode="admin" client={fakeClient()} />);
+    await waitForFrame((frame) => frame.includes("Hieronymus Admin"));
 
     const output = captureCharFrame();
     expect(output).toContain("Crystals");
@@ -66,17 +29,12 @@ describe("App", () => {
   });
 
   it("renders non-error bootstrap rejections", async () => {
-    const { root, flush, captureCharFrame, waitFor } = await setupTest();
+    const { render, waitForFrame } = setupTest();
 
-    root.render(
+    await render(
       <App mode="admin" client={fakeClient(() => Promise.reject("offline"))} />,
     );
-    await flush();
-
-    await waitFor(async () => {
-      const frame = captureCharFrame();
-      return frame.includes("offline");
-    });
+    await waitForFrame((frame) => frame.includes("offline"));
   });
 });
 
