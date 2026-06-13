@@ -128,15 +128,14 @@ Completed:
   anchors.
 - Update README and install/update wording so users understand the project is
   alpha software that can be used at their own risk.
+- Managed install, managed update, PR verification, and release verification
+  install frontend dependencies and rebuild `frontend/dist/main.js` before
+  package validation, publishing, or reinstalling.
+- Release build commands and active user-facing frontend build examples use
+  the supported Bun command order for this Bun version.
 
 Remaining work:
 
-- Keep managed install, update, and release builds installing frontend
-  dependencies and rebuilding `frontend/dist/main.js` before packaging or
-  reinstalling.
-- Fix command examples that use unsupported Bun flag order. Prefer
-  `bun run --cwd frontend build` and `bun run --cwd frontend typecheck` for this
-  Bun version.
 - Keep `.superpowers/` ignored as temporary brainstorming companion state.
   Keep `.agents/` trackable because project-local agent skills and configuration
   may live there.
