@@ -5,6 +5,7 @@ from hieronymus.admin import (
     ADMIN_VIEW_LABELS,
     ADMIN_VIEWS,
     AdminStore,
+    admin_command_options,
     admin_view_label,
     admin_view_options,
 )
@@ -45,6 +46,7 @@ class AdminBridge:
             "view_keys": list(ADMIN_VIEW_KEYS),
             "view_labels": dict(ADMIN_VIEW_LABELS),
             "view_options": admin_view_options(),
+            "command_options": admin_command_options(),
             "default_view": DEFAULT_VIEW,
             "default_view_key": "crystals",
             "header": self.store.header_status_payload(),

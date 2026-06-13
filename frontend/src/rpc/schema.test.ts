@@ -506,6 +506,17 @@ describe("runtime schemas", () => {
           },
         ],
       },
+      command_options: [
+        {
+          id: "reinforce_crystal",
+          label: "Reinforce Crystal",
+          hint: "Increase strength/confidence for the selected crystal or lesson.",
+          key: "+",
+          group: "Memory",
+          views: ["Crystals", "Lessons"],
+          requires_selection: true,
+        },
+      ],
     });
 
     expect(payload.header.logo.alt).toBe("Hieronymus feather logo");
@@ -514,6 +525,12 @@ describe("runtime schemas", () => {
     expect(payload.config_editor.model_cache_warnings[0].code).toBe(
       "model_cache_missing",
     );
+    expect(payload.command_options[0]).toMatchObject({
+      id: "reinforce_crystal",
+      key: "+",
+      views: ["Crystals", "Lessons"],
+      requires_selection: true,
+    });
   });
 
   it("parses success and error envelopes", () => {

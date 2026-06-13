@@ -314,26 +314,10 @@ records, dream runs, and audit events. Each view supports keyboard navigation
 through entries, filter dialogs, a detail pane, and command actions that match
 the selected entry type.
 
-Useful controls:
-
-- `1`-`8`: switch views
-- `j` / `k`: move through entries
-- `f` or `/`: filter the current view
-- `e`: edit the selected crystal or lesson
-- `a`: approve the selected legacy compatibility proposal record
-- `x`: reject the selected legacy compatibility proposal record
-- `+` / `-`: reinforce or decay the selected crystal or lesson
-- `d`: deprecate the selected crystal or lesson
-- `delete`: delete after confirmation
-- `p`: inspect provenance for the selected entry
-- `ctrl+p`: open the command palette
-
-The command palette exposes the broader admin action surface where the selected
-view supports it: add, edit, delete, merge, split, supersede, reinforce, decay,
-promote a local lesson to a global candidate, activate a global lesson, inspect
-provenance, inspect recall reasons, run manual dreaming, review dream outputs,
-and review concept, facet, rule-crystal, or legacy compatibility proposal
-records.
+The command palette is backed by Python command metadata. It shows only
+commands relevant to the current view, marks commands that require a selected
+row as unavailable when no row is selected, and executes actions through
+AdminBridge RPC rather than parsing CLI output.
 
 For scripts and health checks, use:
 
@@ -358,13 +342,13 @@ The React/OpenTUI TUI requires Bun >=1.3 to run. `hiero doctor` reports Bun runt
 
 ### Admin TUI Keys
 
-- `1`-`8`: switch views
-- `f`: select filter command
-- `e`: select edit command
-- `+`: reinforce the selected crystal or lesson
-- `-`: decay the selected crystal or lesson
-- `d`: delete the selected crystal or lesson
-- `ctrl+p`: toggle command palette
+- `Tab` / `Shift+Tab`: cycle focus between views, table, and detail
+- `1`-`9`: switch views
+- arrows or `j` / `k`: move within the focused list or command palette
+- `ctrl+p`: open the command palette
+- `?`: open contextual help
+- `Enter`: run the selected command while the command palette is open
+- `Esc`: close help, command palette, or dialogs
 - `q`: quit
 
 ### Frontend Development

@@ -61,6 +61,125 @@ ADMIN_VIEW_KEYS = (
 )
 ADMIN_VIEW_LABELS = dict(zip(ADMIN_VIEW_KEYS, ADMIN_VIEWS, strict=True))
 ADMIN_LABEL_VIEW_KEYS = {label: key for key, label in ADMIN_VIEW_LABELS.items()}
+ADMIN_COMMANDS = (
+    {
+        "id": "add_memory",
+        "label": "Add Memory",
+        "hint": "Create a new crystal in the current memory view.",
+        "key": "a",
+        "group": "Memory",
+        "views": ("Crystals", "Lessons"),
+        "requires_selection": False,
+    },
+    {
+        "id": "edit_memory",
+        "label": "Edit Memory",
+        "hint": "Edit the selected crystal or lesson text.",
+        "key": "e",
+        "group": "Memory",
+        "views": ("Crystals", "Lessons"),
+        "requires_selection": True,
+    },
+    {
+        "id": "delete_selected",
+        "label": "Delete Selected",
+        "hint": "Delete or archive the selected row after confirmation.",
+        "key": "d",
+        "group": "Memory",
+        "views": ("Concepts", "Crystals", "Lessons"),
+        "requires_selection": True,
+    },
+    {
+        "id": "merge_selected",
+        "label": "Merge Selected",
+        "hint": "Merge the selected concept or crystal into another item.",
+        "key": "m",
+        "group": "Memory",
+        "views": ("Concepts", "Crystals"),
+        "requires_selection": True,
+    },
+    {
+        "id": "split_crystal",
+        "label": "Split Crystal",
+        "hint": "Split the selected crystal or lesson into two memories.",
+        "key": "s",
+        "group": "Memory",
+        "views": ("Crystals", "Lessons"),
+        "requires_selection": True,
+    },
+    {
+        "id": "reinforce_crystal",
+        "label": "Reinforce Crystal",
+        "hint": "Increase strength/confidence for the selected crystal or lesson.",
+        "key": "+",
+        "group": "Memory",
+        "views": ("Crystals", "Lessons"),
+        "requires_selection": True,
+    },
+    {
+        "id": "decay_crystal",
+        "label": "Decay Crystal",
+        "hint": "Decrease strength/confidence for the selected crystal or lesson.",
+        "key": "-",
+        "group": "Memory",
+        "views": ("Crystals", "Lessons"),
+        "requires_selection": True,
+    },
+    {
+        "id": "approve_proposal",
+        "label": "Approve Proposal",
+        "hint": "Approve the selected compatibility proposal.",
+        "key": "a",
+        "group": "Proposals",
+        "views": ("Proposals",),
+        "requires_selection": True,
+    },
+    {
+        "id": "reject_proposal",
+        "label": "Reject Proposal",
+        "hint": "Reject the selected compatibility proposal.",
+        "key": "x",
+        "group": "Proposals",
+        "views": ("Proposals",),
+        "requires_selection": True,
+    },
+    {
+        "id": "inspect_provenance",
+        "label": "Inspect Provenance",
+        "hint": "Load provenance for the selected crystal or lesson.",
+        "key": "p",
+        "group": "Inspect",
+        "views": ("Crystals", "Lessons"),
+        "requires_selection": True,
+    },
+    {
+        "id": "inspect_recall_reasons",
+        "label": "Inspect Recall Reasons",
+        "hint": "Load recall reason data for the selected crystal or lesson.",
+        "key": "r",
+        "group": "Inspect",
+        "views": ("Crystals", "Lessons"),
+        "requires_selection": True,
+    },
+    {
+        "id": "run_manual_dreaming",
+        "label": "Run Manual Dreaming",
+        "hint": "Run dreaming manually and select the resulting dream run.",
+        "key": "D",
+        "group": "Dreaming",
+        "views": ("Dream Runs",),
+        "requires_selection": False,
+    },
+    {
+        "id": "review_dream_output",
+        "label": "Review Dream Output",
+        "hint": "Load the review payload for the selected dream run.",
+        "key": "enter",
+        "group": "Dreaming",
+        "views": ("Dream Runs",),
+        "requires_selection": True,
+    },
+)
 _ADMIN_IMMEDIATE_EVENT_DELTAS = {
     "confirmed_by_user": (0.15, 0.20),
     "contradicted_by_user": (-0.20, -0.25),
@@ -80,6 +199,21 @@ def admin_view_options() -> list[dict[str, str]]:
     return [
         {"key": key, "label": label}
         for key, label in zip(ADMIN_VIEW_KEYS, ADMIN_VIEWS, strict=True)
+    ]
+
+
+def admin_command_options() -> list[dict[str, object]]:
+    return [
+        {
+            "id": str(command["id"]),
+            "label": str(command["label"]),
+            "hint": str(command["hint"]),
+            "key": str(command["key"]),
+            "group": str(command["group"]),
+            "views": list(command["views"]),
+            "requires_selection": bool(command["requires_selection"]),
+        }
+        for command in ADMIN_COMMANDS
     ]
 
 

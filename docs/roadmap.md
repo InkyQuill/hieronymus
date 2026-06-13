@@ -79,6 +79,10 @@ Completed baseline:
   bundle is unavailable.
 - CI builds the frontend bundle before backend pytest so packaged startup
   coverage stays exercised in workflow runs.
+- `hiero admin` receives Python-owned command metadata and renders a real
+  keyboard command palette with availability state and bridge-backed execution.
+- `hiero admin` has a `?` help surface and context-aware footer hints for
+  normal, command-palette, and help modes.
 
 Remaining work:
 
@@ -88,10 +92,6 @@ Remaining work:
   RPC handlers, existing domain stores, migrations, and audited Python methods.
 - Ensure the frontend does not write SQLite, parse human CLI output, or
   duplicate migration/domain mutation logic.
-- Convert the command palette from a static command list into a real keyboard
-  picker with command names, keybindings, availability state, and bridge-backed
-  execution.
-- Add a `?` help surface and keep footer hints context-aware.
 - Support keyboard-first navigation with consistent `q`, `Esc`, `/`, `Tab`,
   `Shift+Tab`, arrows, and `hjkl` where useful.
 - Define responsive behavior at 80x24 and narrow tmux splits. Fixed wide

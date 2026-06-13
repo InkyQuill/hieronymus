@@ -58,6 +58,25 @@ def test_admin_bootstrap_returns_views_stats_and_initial_snapshot(tmp_path: Path
     assert payload["config_editor"]["workflows"]
     assert "general" in payload["config_editor"]["prompts"]
     assert "max_pending_short_term_memories" in payload["config_editor"]["thresholds"]
+    command_ids = [command["id"] for command in payload["command_options"]]
+    assert "reinforce_crystal" in command_ids
+    assert "run_manual_dreaming" in command_ids
+    reinforce = next(
+        command for command in payload["command_options"] if command["id"] == "reinforce_crystal"
+    )
+    delete_selected = next(
+        command for command in payload["command_options"] if command["id"] == "delete_selected"
+    )
+    assert reinforce == {
+        "id": "reinforce_crystal",
+        "label": "Reinforce Crystal",
+        "hint": "Increase strength/confidence for the selected crystal or lesson.",
+        "key": "+",
+        "group": "Memory",
+        "views": ["Crystals", "Lessons"],
+        "requires_selection": True,
+    }
+    assert delete_selected["views"] == ["Concepts", "Crystals", "Lessons"]
     assert payload["snapshot"]["view"] == "Crystals"
     assert payload["snapshot"]["selected"]["label"] == "Guild Ledger"
 
