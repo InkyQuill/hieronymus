@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useKeyboard, useRenderer } from "@opentui/react";
+import {
+  useKeyboard,
+  useRenderer,
+  useTerminalDimensions,
+} from "@opentui/react";
 import { z } from "zod";
 import {
   AdminConfigEditorSchema,
@@ -18,6 +22,13 @@ import type { RpcClient } from "../rpc/client.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
 import { FocusableList } from "../ui/FocusableList.js";
+import {
+  classifyTerminalLayout,
+  MIN_TERMINAL_HEIGHT,
+  MIN_TERMINAL_WIDTH,
+  panelHeight,
+  panelWidth,
+} from "../ui/responsive.js";
 import { AdminTable } from "./AdminTable.js";
 import { DetailPane } from "./DetailPane.js";
 import { CommandPalette, commandsForView } from "./CommandPalette.js";
@@ -49,6 +60,9 @@ const AdminOperationResponseSchema = z
 
 export function AdminScreen({ initial, client, showCommands = false }: Props) {
   const renderer = useRenderer();
+  const dimensions = useTerminalDimensions();
+  const layout = classifyTerminalLayout(dimensions.width, dimensions.height);
+  const contentWidth = panelWidth(layout);
   const [snapshot, setSnapshot] = useState<AdminSnapshot>(initial.snapshot);
   const [stats, setStats] = useState(initial.stats);
   const [shortTermStatus, setShortTermStatus] = useState(
@@ -669,8 +683,8 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     return (
       <box
         flexDirection="column"
-        width={136}
-        height={20}
+        width={Math.min(136, dimensions.width)}
+        height={Math.min(20, dimensions.height)}
         alignItems="center"
         justifyContent="center"
       >
@@ -683,8 +697,111 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     );
   }
 
+  if (layout.kind === "too-small") {
+    return (
+      <box flexDirection="column" width={dimensions.width}>
+        <text>Terminal too small</text>
+        <text fg="gray">
+          {dimensions.width}x{dimensions.height}; minimum {MIN_TERMINAL_WIDTH}x
+          {MIN_TERMINAL_HEIGHT}
+        </text>
+        <text fg="gray">Resize terminal to use Hieronymus admin.</text>
+      </box>
+    );
+  }
+
+  if (layout.kind !== "wide") {
+    const compactPaneHeight = panelHeight(layout, 11);
+    const compactScrollWidth = Math.max(20, contentWidth - 2);
+    const compactTableWidth = Math.min(48, compactScrollWidth);
+    const compactDetailWidth = Math.min(56, compactScrollWidth);
+    const compactScrollHeight = Math.max(4, compactPaneHeight - 2);
+
+    return (
+      <box flexDirection="column" width={dimensions.width}>
+        <text>
+          {initial.header.logo.text} {initial.header.product} Admin{" "}
+          {initial.header.version}
+        </text>
+        <text fg="gray">
+          {snapshot.view} · {layout.kind} {dimensions.width}x{dimensions.height}
+        </text>
+        <text>{formatStats(stats)}</text>
+        <text>
+          Short-term pending {shortTermStatus.pending_count} · Dream{" "}
+          {dreamStatus.state}
+        </text>
+
+        <box
+          flexDirection="column"
+          marginTop={1}
+          height={compactPaneHeight}
+          borderStyle="rounded"
+          borderColor="cyan"
+          paddingX={1}
+        >
+          {activePanel === "views" ? (
+            <>
+              <text fg="cyan">Views</text>
+              <FocusableList
+                items={initial.views}
+                selectedIndex={selectedViewIndex}
+                label={(view) => view}
+                focused
+              />
+            </>
+          ) : activePanel === "table" ? (
+            <>
+              <text fg="cyan">{snapshot.view}</text>
+              <box marginTop={1}>
+                <AdminTable
+                  rows={snapshot.rows}
+                  selectedId={snapshot.selected?.id ?? null}
+                  focused
+                  width={compactTableWidth}
+                  height={Math.max(4, compactScrollHeight - 1)}
+                />
+              </box>
+            </>
+          ) : (
+            <>
+              <text fg="cyan">Detail Inspector</text>
+              {helpOpen ? (
+                <HelpOverlay
+                  commands={initial.command_options}
+                  view={snapshot.view}
+                />
+              ) : commandsOpen ? (
+                <CommandPalette
+                  commands={paletteCommands}
+                  selectedIndex={clampCommandIndex(selectedCommandIndex)}
+                />
+              ) : (
+                <box marginTop={1}>
+                  <DetailPane
+                    detail={snapshot.detail}
+                    width={compactDetailWidth}
+                    height={Math.max(4, compactScrollHeight - 1)}
+                  />
+                </box>
+              )}
+            </>
+          )}
+        </box>
+
+        <StatusLine message={status.message} error={status.error} />
+        <box flexDirection="row" marginTop={1}>
+          <text fg="gray">
+            Tab pane 1-{viewKeyLimit} view ↑/↓ move Ctrl+P commands ? help q
+            quit
+          </text>
+        </box>
+      </box>
+    );
+  }
+
   return (
-    <box flexDirection="column" width={136}>
+    <box flexDirection="column" width={Math.min(136, dimensions.width)}>
       <box
         flexDirection="column"
         borderStyle="rounded"

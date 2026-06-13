@@ -216,11 +216,60 @@ function setupTest() {
   return createOpenTuiHarness({ width: 160, height: 60 });
 }
 
+function setupSizedTest(width: number, height: number) {
+  return createOpenTuiHarness({ width, height });
+}
+
 afterEach(async () => {
   await cleanupOpenTuiHarnesses();
 });
 
 describe("AdminScreen", () => {
+  it("renders admin as a single active pane at 80x24", async () => {
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+
+    const output = await waitForFrame((frame) => frame.includes("Views"));
+    expect(output).toContain("H Hieronymus Admin 0.1.0");
+    expect(output).toContain("Views");
+    expect(output).toContain("Crystals");
+    expect(output).toContain("Tab pane");
+    expect(output).not.toContain("Detail Inspector");
+  });
+
+  it("cycles compact admin panes with tab", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.press("tab");
+
+    const tableOutput = await waitForFrame((frame) =>
+      frame.includes("Guild Ledger"),
+    );
+    expect(tableOutput).toContain("Crystals");
+    expect(tableOutput).toContain("Guild Ledger");
+
+    await mockInput.press("tab");
+    const detailOutput = await waitForFrame((frame) =>
+      frame.includes("Guild ledger detail marker."),
+    );
+    expect(detailOutput).toContain("Detail Inspector");
+    expect(detailOutput).toContain("Guild ledger detail marker.");
+  });
+
+  it("renders a too-small admin message below the minimum width", async () => {
+    const { render, waitForFrame } = setupSizedTest(49, 20);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Terminal too small"),
+    );
+    expect(output).toContain("49x20");
+    expect(output).toContain("minimum 50x20");
+  });
+
   it("renders views, stats, table row, and detail", async () => {
     const { render, waitForFrame } = setupTest();
 

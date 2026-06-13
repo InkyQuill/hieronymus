@@ -417,7 +417,7 @@ git commit -m "feat: add compact config opentui layout"
 - Modify: `frontend/src/admin/AdminScreen.tsx`
 - Test: `frontend/src/admin/AdminScreen.test.tsx`
 
-- [ ] **Step 1: Write compact admin render tests**
+- [x] **Step 1: Write compact admin render tests**
 
 In `frontend/src/admin/AdminScreen.test.tsx`, add this helper near `setupTest()`:
 
@@ -476,7 +476,7 @@ it("renders a too-small admin message below the minimum width", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run:
 
@@ -486,7 +486,7 @@ bun test --cwd frontend src/admin/AdminScreen.test.tsx
 
 Expected: FAIL because the screen still renders all fixed-width panes at 80 columns and lacks the too-small message.
 
-- [ ] **Step 3: Make table and detail panes dimension-aware**
+- [x] **Step 3: Make table and detail panes dimension-aware**
 
 Modify `frontend/src/admin/AdminTable.tsx`:
 
@@ -533,7 +533,7 @@ export function DetailPane({
 }
 ```
 
-- [ ] **Step 4: Add compact admin rendering**
+- [x] **Step 4: Add compact admin rendering**
 
 Modify imports in `frontend/src/admin/AdminScreen.tsx`:
 
@@ -655,7 +655,7 @@ if (layout.kind !== "wide") {
 
 Leave the existing wide return in place, but change its root width from `136` to `Math.min(136, dimensions.width)`.
 
-- [ ] **Step 5: Run admin tests**
+- [x] **Step 5: Run admin tests**
 
 Run:
 
@@ -665,7 +665,7 @@ bun test --cwd frontend src/admin/AdminScreen.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/admin/AdminTable.tsx frontend/src/admin/DetailPane.tsx frontend/src/admin/AdminScreen.tsx frontend/src/admin/AdminScreen.test.tsx
