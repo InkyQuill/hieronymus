@@ -81,6 +81,18 @@ export const AdminHeaderSchema = z.object({
     .passthrough(),
 });
 
+export const AdminCommandSchema = z
+  .object({
+    id: z.string(),
+    label: z.string(),
+    hint: z.string(),
+    key: z.string(),
+    group: z.string(),
+    views: z.array(z.string()),
+    requires_selection: z.boolean(),
+  })
+  .passthrough();
+
 export const AdminShortTermStatusSchema = z.object({
   pending_count: z.number(),
   min_pending_short_term_memories: z.number(),
@@ -132,6 +144,7 @@ export const AdminBootstrapSchema = z.object({
   short_term_status: AdminShortTermStatusSchema,
   dream_status: AdminDreamStatusSchema,
   config_editor: AdminConfigEditorSchema,
+  command_options: z.array(AdminCommandSchema).default([]),
 });
 
 export const ConfigPathsSchema = z
@@ -255,6 +268,7 @@ export type AdminRow = z.infer<typeof AdminRowSchema>;
 export type AdminDetail = z.infer<typeof AdminDetailSchema>;
 export type AdminSnapshot = z.infer<typeof AdminSnapshotSchema>;
 export type AdminHeader = z.infer<typeof AdminHeaderSchema>;
+export type AdminCommand = z.infer<typeof AdminCommandSchema>;
 export type AdminShortTermStatus = z.infer<typeof AdminShortTermStatusSchema>;
 export type AdminDreamStatus = z.infer<typeof AdminDreamStatusSchema>;
 export type AdminConfigEditor = z.infer<typeof AdminConfigEditorSchema>;
