@@ -77,6 +77,11 @@ Completed baseline:
 - `hiero config` receives Python-owned field schema payloads for labels, hints,
   groups, input types, choices, redaction behavior, defaults, and field-level
   validation metadata.
+- Packaged `config` and `admin` startup have real-process smoke checks through
+  `frontend/dist/main.js`, skipped cleanly when Bun, a POSIX PTY, or the built
+  bundle is unavailable.
+- CI builds the frontend bundle before backend pytest so packaged startup
+  coverage stays exercised in workflow runs.
 
 Remaining work:
 
@@ -104,8 +109,6 @@ Remaining work:
   textarea scrollbar controls in a newer release.
 - Clean up React `act(...)` warnings and OpenTUI `TerminalConsoleCache`
   listener warnings in `bun test` without globally muting stderr.
-- Add real-process smoke checks for packaged `config` and `admin` startup using
-  `frontend/dist/main.js`, skipped cleanly when Bun or a PTY is unavailable.
 
 ### Install, Release, And Quality
 
