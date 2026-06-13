@@ -21,6 +21,11 @@ export function CommandPalette({
   commands: Array<AdminCommand & { disabled: boolean }>;
   selectedIndex: number;
 }) {
+  const commandRows = Math.max(commands.length, 1);
+  const hintRows = commands[selectedIndex] ? 1 : 0;
+  const borderAndPaddingRows = 4;
+  const height = 1 + commandRows + hintRows + 1 + borderAndPaddingRows;
+
   return (
     <box
       flexDirection="column"
@@ -29,7 +34,7 @@ export function CommandPalette({
       paddingX={1}
       paddingY={1}
       width={54}
-      height={10}
+      height={height}
     >
       <box height={1}>
         <text fg="cyan">Command Palette</text>

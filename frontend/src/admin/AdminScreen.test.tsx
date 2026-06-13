@@ -79,6 +79,24 @@ function bootstrap() {
         requires_selection: true,
       },
       {
+        id: "inspect_provenance",
+        label: "Inspect Provenance",
+        hint: "Load provenance data for the selected crystal or lesson.",
+        key: "p",
+        group: "Inspect",
+        views: ["Crystals", "Lessons"],
+        requires_selection: true,
+      },
+      {
+        id: "inspect_recall_reasons",
+        label: "Inspect Recall Reasons",
+        hint: "Load recall reason data for the selected crystal or lesson.",
+        key: "r",
+        group: "Inspect",
+        views: ["Crystals", "Lessons"],
+        requires_selection: true,
+      },
+      {
         id: "approve_proposal",
         label: "Approve Proposal",
         hint: "Approve the selected compatibility proposal.",
@@ -95,6 +113,15 @@ function bootstrap() {
         group: "Dreaming",
         views: ["Dream Runs"],
         requires_selection: false,
+      },
+      {
+        id: "review_dream_output",
+        label: "Review Dream Output",
+        hint: "Load the review payload for the selected dream run.",
+        key: "enter",
+        group: "Dreaming",
+        views: ["Dream Runs"],
+        requires_selection: true,
       },
     ],
     snapshot: {
@@ -305,6 +332,8 @@ describe("AdminScreen", () => {
     expect(output).toContain("Command Palette");
     expect(output).toContain("> Add Memory [a]");
     expect(output).toContain("Reinforce Crystal [+]");
+    expect(output).toContain("Inspect Recall Reasons [r]");
+    expect(output).toContain("Enter run Esc close");
     expect(output).not.toContain("Approve Proposal");
   });
 
@@ -428,6 +457,66 @@ describe("AdminScreen", () => {
       {
         method: "admin.run_manual_dreaming",
         params: { view: "Dream Runs" },
+      },
+    ]);
+  });
+
+  it("shows dream review payload from the palette command", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: {
+          ...snapshotForView("Dream Runs"),
+          detail: {
+            title: "Dream run",
+            subtitle: "Dream Runs",
+            body: "Stale refreshed dream detail.",
+            fields: [],
+          },
+        },
+        review: {
+          run_id: 1,
+          consumed_memories: ["Review payload memory marker."],
+          created_crystals: ["Review payload crystal marker."],
+          failed_outputs: [],
+          validation_errors: [],
+        },
+      });
+    });
+    const { root, mockInput, flush, captureCharFrame, waitFor } =
+      await setupTest();
+
+    root.render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: snapshotForView("Dream Runs"),
+        }}
+        client={client}
+      />,
+    );
+    await flush();
+
+    await mockInput.press("p", { ctrl: true });
+    await mockInput.press("j");
+    await mockInput.press("enter");
+
+    await waitFor(async () => {
+      const frame = captureCharFrame();
+      return frame.includes("Review payload memory marker.");
+    });
+
+    const output = captureCharFrame();
+    expect(output).toContain("admin.dream_review");
+    expect(output).toContain("Review payload crystal marker.");
+    expect(output).not.toContain("Stale refreshed dream detail.");
+    expect(calls).toEqual([
+      {
+        method: "admin.dream_review",
+        params: { id: 1, view: "Dream Runs" },
       },
     ]);
   });

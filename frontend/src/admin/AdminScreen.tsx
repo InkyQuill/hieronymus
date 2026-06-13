@@ -102,6 +102,9 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     method: string,
     params: Record<string, unknown>,
     successMessage: string,
+    detailFromResponse?: (
+      response: Record<string, unknown>,
+    ) => AdminSnapshot["detail"] | undefined,
   ) => {
     if (!client || operationInFlight.current) {
       return;
@@ -118,19 +121,28 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       setConfigEditor,
       setStatus,
       operationInFlight,
+      detailFromResponse,
     });
   };
 
   const runSelectedSnapshotCommand = (
     method: string,
     successMessage: string,
+    detailFromResponse?: (
+      response: Record<string, unknown>,
+    ) => AdminSnapshot["detail"] | undefined,
   ) => {
     const selectedId = snapshot.selected?.id;
     if (selectedId === undefined) {
       setStatus({ message: "No row selected", error: true });
       return;
     }
-    runSnapshotCommand(method, { id: selectedId }, successMessage);
+    runSnapshotCommand(
+      method,
+      { id: selectedId },
+      successMessage,
+      detailFromResponse,
+    );
   };
 
   const runInspectionCommand = (method: string, successMessage: string) => {
@@ -222,7 +234,11 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       return;
     }
     if (command.id === "review_dream_output") {
-      runSelectedSnapshotCommand("admin.dream_review", "Loaded dream review");
+      runSelectedSnapshotCommand(
+        "admin.dream_review",
+        "Loaded dream review",
+        dreamReviewDetail,
+      );
       return;
     }
     if (command.id === "inspect_provenance") {
@@ -808,6 +824,7 @@ async function runSnapshotOperation({
   setConfigEditor,
   setStatus,
   operationInFlight,
+  detailFromResponse,
 }: {
   client: RpcClient | undefined;
   method: string;
@@ -820,6 +837,9 @@ async function runSnapshotOperation({
   setConfigEditor: (configEditor: AdminConfigEditor) => void;
   setStatus: (status: Status) => void;
   operationInFlight: React.MutableRefObject<boolean>;
+  detailFromResponse?: (
+    response: Record<string, unknown>,
+  ) => AdminSnapshot["detail"] | undefined;
 }) {
   if (!client) {
     return;
@@ -829,7 +849,8 @@ async function runSnapshotOperation({
   try {
     const response = await client.request(method, params);
     const next = AdminOperationResponseSchema.parse(response);
-    setSnapshot(next.snapshot);
+    const detail = detailFromResponse?.(next);
+    setSnapshot(detail ? { ...next.snapshot, detail } : next.snapshot);
     if (next.stats) {
       setStats(next.stats);
     }
@@ -849,6 +870,15 @@ async function runSnapshotOperation({
   } finally {
     operationInFlight.current = false;
   }
+}
+
+function dreamReviewDetail(response: Record<string, unknown>) {
+  return {
+    title: "Dream Review",
+    subtitle: "admin.dream_review",
+    body: JSON.stringify(response.review ?? {}, null, 2),
+    fields: [],
+  };
 }
 
 function inspectionDetail(method: string, response: Record<string, unknown>) {
