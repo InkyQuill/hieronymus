@@ -157,5 +157,5 @@ def test_pr_workflow_frontend_job_runs_bun_tests_and_build() -> None:
     assert "      - run: bun install --cwd frontend --frozen-lockfile" in frontend
     assert "      - run: bun run --cwd frontend format" in frontend
     assert "      - run: bun run --cwd frontend typecheck" in frontend
-    assert "      - run: bun --cwd frontend test" in frontend
+    assert "      - run: bun run --cwd frontend test" in frontend
     assert "      - run: bun run --cwd frontend build" in frontend

@@ -175,6 +175,7 @@ def test_release_workflow_release_job_publishes_after_verification() -> None:
     )
     assert "        with:" in checkout
     assert "          fetch-depth: 0" in checkout
+    assert "          persist-credentials: false" in checkout
     assert "          token: ${{ secrets.GITHUB_TOKEN }}" in checkout
 
     release_runs = [line for line in release if line.startswith("      - run: ")]

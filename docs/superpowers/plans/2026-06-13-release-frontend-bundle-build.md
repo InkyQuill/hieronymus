@@ -4,7 +4,7 @@
 
 **Goal:** Make release and managed update paths consistently install frontend dependencies and rebuild `frontend/dist/main.js` before tests, packaging, publishing, or reinstalling.
 
-**Architecture:** Treat the OpenTUI bundle as a required build artifact for release-quality validation, not a best-effort local convenience. Keep the shell installer and Python managed updater behavior, but normalize Bun command order to the project-preferred `bun install --cwd frontend ...` and `bun run --cwd frontend build` forms. Update workflow tests and release/update tests so CI catches missing bundle builds, mutable release workflow actions, or command-order regressions.
+**Architecture:** Treat the OpenTUI bundle as a required build artifact for release-quality validation, not a best-effort local convenience. Keep the shell installer and Python-managed updater behavior, but normalize Bun command order to the project-preferred `bun install --cwd frontend ...` and `bun run --cwd frontend build` forms. Update workflow tests and release/update tests so CI catches missing bundle builds, mutable release workflow actions, or command-order regressions.
 
 **Tech Stack:** Python 3.12, pytest, GitHub Actions YAML, Bun 1.3.14, semantic-release, hatchling/uv build.
 
@@ -312,7 +312,7 @@ In `README.md`, replace the frontend development command block:
 
 ```bash
 bun install --cwd frontend --frozen-lockfile
-bun --cwd frontend test
+bun run --cwd frontend test
 bun run --cwd frontend build
 ```
 
@@ -321,10 +321,10 @@ with:
 ```bash
 bun install --cwd frontend --frozen-lockfile
 bun run --cwd frontend build
-bun --cwd frontend test
+bun run --cwd frontend test
 ```
 
-This keeps the currently working Bun test command and puts the required build command in the preferred project form.
+This uses the package `test` script and puts the required build command in the preferred project form.
 
 - [ ] **Step 2: Update roadmap**
 
@@ -397,11 +397,11 @@ Run:
 bun install --cwd frontend --frozen-lockfile
 bun run --cwd frontend format
 bun run --cwd frontend typecheck
-bun --cwd frontend test
+bun run --cwd frontend test
 bun run --cwd frontend build
 ```
 
-Expected: PASS. Existing React `act(...)` and OpenTUI `TerminalConsoleCache` warnings may still appear in `bun --cwd frontend test`; this plan does not address that separate roadmap item.
+Expected: PASS. Existing React `act(...)` and OpenTUI `TerminalConsoleCache` warnings may still appear in `bun run --cwd frontend test`; this plan does not address that separate roadmap item.
 
 - [ ] **Step 3: Run final diff check**
 
