@@ -20,7 +20,7 @@ export function classifyTerminalLayout(
     return { kind: "too-small", width, height };
   }
 
-  if (width >= WIDE_WIDTH) {
+  if (width >= WIDE_WIDTH && height >= MIN_COMPACT_HEIGHT) {
     return { kind: "wide", width, height };
   }
 

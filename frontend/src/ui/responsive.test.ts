@@ -22,6 +22,11 @@ describe("responsive layout helpers", () => {
       width: 60,
       height: 24,
     });
+    expect(classifyTerminalLayout(132, 20)).toEqual({
+      kind: "narrow",
+      width: 132,
+      height: 20,
+    });
     expect(classifyTerminalLayout(49, 20)).toEqual({
       kind: "too-small",
       width: 49,
