@@ -1,6 +1,11 @@
 import json
+import os
+import re
+import select
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -118,6 +123,136 @@ def test_frontend_entrypoint_fails_when_bundle_is_missing(
 
     with pytest.raises(FileNotFoundError, match="OpenTUI frontend bundle not found; looked for:"):
         cli._frontend_entrypoint()
+
+
+ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _built_frontend_bundle() -> Path:
+    return _repo_root() / "frontend" / "dist" / "main.js"
+
+
+def _require_opentui_smoke_runtime() -> Path:
+    if os.name != "posix":
+        pytest.skip("OpenTUI smoke tests require a POSIX PTY")
+    if shutil.which("bun") is None:
+        pytest.skip("OpenTUI smoke tests require Bun")
+    bundle = _built_frontend_bundle()
+    if not bundle.exists():
+        pytest.skip("OpenTUI smoke tests require frontend/dist/main.js")
+    return bundle
+
+
+def _strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text)
+
+
+def _read_pty_until(fd: int, expected: str, *, timeout: float = 8.0) -> str:
+    deadline = time.monotonic() + timeout
+    chunks: list[bytes] = []
+    expected_compact = "".join(expected.split())
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([fd], [], [], 0.1)
+        if not readable:
+            continue
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+        text = _strip_ansi(b"".join(chunks).decode(errors="replace"))
+        if expected in text or expected_compact in "".join(text.split()):
+            return text
+    text = _strip_ansi(b"".join(chunks).decode(errors="replace"))
+    raise AssertionError(f"did not see {expected!r} in OpenTUI output:\n{text}")
+
+
+def _set_pty_size(fd: int, *, rows: int, columns: int) -> None:
+    import fcntl
+    import struct
+    import termios
+
+    size = struct.pack("HHHH", rows, columns, 0, 0)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, size)
+
+
+def _smoke_opentui_bundle(mode: str, expected_title: str, tmp_path: Path) -> str:
+    bundle = _require_opentui_smoke_runtime()
+    import pty
+
+    try:
+        master_fd, slave_fd = pty.openpty()
+    except OSError as error:
+        pytest.skip(f"OpenTUI smoke tests could not allocate PTY: {error}")
+    try:
+        _set_pty_size(slave_fd, rows=48, columns=200)
+    except OSError as error:
+        os.close(master_fd)
+        os.close(slave_fd)
+        pytest.skip(f"OpenTUI smoke tests could not size PTY: {error}")
+    data_root = tmp_path / "hieronymus"
+    env = {
+        **os.environ,
+        "HIERONYMUS_DATA_ROOT": str(data_root),
+        "TERM": os.environ.get("TERM", "xterm-256color"),
+    }
+    command = [
+        "bun",
+        str(bundle),
+        mode,
+        "--bridge-command",
+        sys.executable,
+        "--bridge-arg",
+        "-m",
+        "--bridge-arg",
+        "hieronymus",
+    ]
+    process = subprocess.Popen(
+        command,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        cwd=_repo_root(),
+        env=env,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+    try:
+        output = _read_pty_until(master_fd, expected_title)
+        os.write(master_fd, b"q")
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            process.wait(timeout=5)
+            raise AssertionError(f"OpenTUI {mode} did not exit after q")
+        assert process.returncode == 0
+        return output
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        os.close(master_fd)
+
+
+def test_packaged_opentui_config_starts_from_built_bundle(tmp_path: Path) -> None:
+    output = _smoke_opentui_bundle("config", "Hieronymus Config", tmp_path)
+
+    assert "Providers" in output
+    assert "dream.conf" in output
+
+
+def test_packaged_opentui_admin_starts_from_built_bundle(tmp_path: Path) -> None:
+    output = _smoke_opentui_bundle("admin", "Hieronymus Admin", tmp_path)
+
+    assert "crystals0" in output
+    assert "DreamDISABLED" in output
 
 
 def test_cli_config_launches_opentui_when_tui_env_unset(tmp_path, monkeypatch) -> None:
