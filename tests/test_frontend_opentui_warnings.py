@@ -34,4 +34,4 @@ def test_frontend_opentui_tests_do_not_emit_lifecycle_warnings() -> None:
         for line in result.stdout.splitlines()
         if any(marker in line for marker in WARNING_MARKERS)
     ]
-    assert warning_lines == []
+    assert warning_lines == [], f"Found unexpected frontend warnings: {warning_lines}"
