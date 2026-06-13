@@ -121,8 +121,8 @@ def test_pr_workflow_backend_job_runs_python_checks() -> None:
         "      - run: uv run ruff check .",
         "      - run: uv run ruff format --check .",
     ]
-    assert backend_runs.index("      - run: bun install --cwd frontend --frozen-lockfile") < backend_runs.index(
-        "      - run: uv run pytest"
+    assert backend_runs.index("      - run: bun install --cwd frontend --frozen-lockfile") < (
+        backend_runs.index("      - run: uv run pytest")
     )
     assert backend_runs.index("      - run: bun run --cwd frontend build") < backend_runs.index(
         "      - run: uv run pytest"

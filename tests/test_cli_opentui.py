@@ -231,7 +231,7 @@ def _smoke_opentui_bundle(mode: str, expected_title: str, tmp_path: Path) -> str
         except subprocess.TimeoutExpired:
             process.terminate()
             process.wait(timeout=5)
-            raise AssertionError(f"OpenTUI {mode} did not exit after q")
+            raise AssertionError(f"OpenTUI {mode} did not exit after q") from None
         assert process.returncode == 0
         return output
     finally:
