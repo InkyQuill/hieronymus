@@ -53,5 +53,5 @@ jobs:
       - run: bun install --cwd frontend --frozen-lockfile
       - run: bun run --cwd frontend format
       - run: bun run --cwd frontend typecheck
-      - run: bun --cwd frontend test
+      - run: bun run --cwd frontend test
       - run: bun run --cwd frontend build

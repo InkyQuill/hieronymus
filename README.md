@@ -63,8 +63,8 @@ root:
 
 ```bash
 bun install --cwd frontend --frozen-lockfile
-bun --cwd frontend test
 bun run --cwd frontend build
+bun run --cwd frontend test
 ```
 
 After `bun run --cwd frontend build`, source checkouts can launch the TUI

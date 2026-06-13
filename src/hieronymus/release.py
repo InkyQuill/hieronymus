@@ -260,9 +260,8 @@ def _checkout_update_target(target: str, latest_tag: str, checkout: Path) -> Non
 
 
 def _build_frontend(checkout: Path) -> None:
-    frontend = checkout / "frontend"
-    _run(["bun", "install", "--frozen-lockfile"], cwd=frontend)
-    _run(["bun", "run", "build"], cwd=frontend)
+    _run(["bun", "install", "--cwd", "frontend", "--frozen-lockfile"], cwd=checkout)
+    _run(["bun", "run", "--cwd", "frontend", "build"], cwd=checkout)
 
 
 def run_update(*, target: str = "latest", allow_dev: bool = False) -> UpdateStatus:
