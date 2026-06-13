@@ -372,13 +372,6 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           entityId: selectedId,
           entityType: "concept",
         });
-      } else if (snapshot.view === "Short-Term Sessions") {
-        setDialog({
-          kind: "delete",
-          error: "",
-          entityId: selectedId,
-          entityType: "memory",
-        });
       } else if (crystalMutationViews.has(snapshot.view)) {
         setDialog({
           kind: "delete",
@@ -546,7 +539,6 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
               params: {
                 view: snapshot.view,
                 selected_id: prevRow.id,
-                filters: snapshot.filters,
               },
               successMessage: `Selected ${prevRow.label}`,
               setSnapshot,
@@ -577,7 +569,6 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
               params: {
                 view: snapshot.view,
                 selected_id: nextRow.id,
-                filters: snapshot.filters,
               },
               successMessage: `Selected ${nextRow.label}`,
               setSnapshot,

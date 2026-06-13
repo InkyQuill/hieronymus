@@ -64,6 +64,9 @@ def test_admin_bootstrap_returns_views_stats_and_initial_snapshot(tmp_path: Path
     reinforce = next(
         command for command in payload["command_options"] if command["id"] == "reinforce_crystal"
     )
+    delete_selected = next(
+        command for command in payload["command_options"] if command["id"] == "delete_selected"
+    )
     assert reinforce == {
         "id": "reinforce_crystal",
         "label": "Reinforce Crystal",
@@ -73,6 +76,7 @@ def test_admin_bootstrap_returns_views_stats_and_initial_snapshot(tmp_path: Path
         "views": ["Crystals", "Lessons"],
         "requires_selection": True,
     }
+    assert delete_selected["views"] == ["Concepts", "Crystals", "Lessons"]
     assert payload["snapshot"]["view"] == "Crystals"
     assert payload["snapshot"]["selected"]["label"] == "Guild Ledger"
 

@@ -86,7 +86,7 @@ ADMIN_COMMANDS = (
         "hint": "Delete or archive the selected row after confirmation.",
         "key": "d",
         "group": "Memory",
-        "views": ("Concepts", "Crystals", "Lessons", "Short-Term Sessions"),
+        "views": ("Concepts", "Crystals", "Lessons"),
         "requires_selection": True,
     },
     {

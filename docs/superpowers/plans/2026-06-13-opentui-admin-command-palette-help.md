@@ -6,7 +6,7 @@
 
 **Architecture:** Python remains the source of admin domain metadata and exposes command descriptors next to existing view metadata. React/OpenTUI owns local focus, palette selection, and help rendering, but all mutations and inspections continue through `AdminBridge` RPC methods or existing dialog flows. The first implementation covers the current admin action surface without adding fuzzy search or responsive layout changes.
 
-**Tech Stack:** Python 3.12, pytest, TypeScript, React 19, Bun 1.3, OpenTUI React, Zod, existing `AdminBridge`, `AdminScreen`, `CommandPalette`, `KeyHelp`, and `AdminScreen.test.tsx`.
+**Tech Stack:** Python 3.12, pytest, TypeScript, React 19, Bun 1.3.14, OpenTUI React, Zod, existing `AdminBridge`, `AdminScreen`, `CommandPalette`, `KeyHelp`, and `AdminScreen.test.tsx`.
 
 ---
 
@@ -111,7 +111,7 @@ ADMIN_COMMANDS = (
         "hint": "Delete or archive the selected row after confirmation.",
         "key": "d",
         "group": "Memory",
-        "views": ("Concepts", "Crystals", "Lessons", "Short-Term Sessions"),
+        "views": ("Concepts", "Crystals", "Lessons"),
         "requires_selection": True,
     },
     {
@@ -666,7 +666,7 @@ Add these helpers above `executeCommand()`:
     void runSnapshotOperation({
       client,
       method,
-      params: { ...params, view: snapshot.view, filters: snapshot.filters },
+      params: { ...params, view: snapshot.view },
       successMessage,
       setSnapshot,
       setStats,

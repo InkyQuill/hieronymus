@@ -243,6 +243,8 @@ async function setupTest() {
       act(() => {
         if (name === "enter") {
           current.mockInput.pressEnter(options);
+        } else if (name === "tab") {
+          current.mockInput.pressTab(options);
         } else if (name === "escape") {
           const escapeKey: ParsedKey = {
             name: "escape",
@@ -461,6 +463,58 @@ describe("AdminScreen", () => {
     ]);
   });
 
+  it("navigates rows without sending rendered filter labels", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const base = bootstrap().snapshot;
+    const filteredSnapshot = {
+      ...base,
+      filters: ["status=active"],
+      rows: [
+        base.rows[0],
+        {
+          ...base.rows[0],
+          id: 2,
+          label: "Second Crystal",
+        },
+      ],
+    };
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: {
+          ...filteredSnapshot,
+          selected: filteredSnapshot.rows[1],
+        },
+      });
+    });
+    const { root, mockInput, flush, waitFor } = await setupTest();
+
+    root.render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: filteredSnapshot,
+        }}
+        client={client}
+      />,
+    );
+    await flush();
+
+    await mockInput.press("tab");
+    await mockInput.press("down");
+
+    await waitFor(async () => calls.length >= 1);
+
+    expect(calls).toEqual([
+      {
+        method: "admin.snapshot",
+        params: { view: "Crystals", selected_id: 2 },
+      },
+    ]);
+  });
+
   it("shows dream review payload from the palette command", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
@@ -656,6 +710,38 @@ describe("AdminScreen", () => {
     await mockInput.type("+");
     await flush();
 
+    expect(calls).toEqual([]);
+  });
+
+  it("does not open delete for short-term session rows", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.reject(new Error("unexpected request"));
+    });
+    const { root, mockInput, flush, captureCharFrame, waitFor } =
+      await setupTest();
+
+    root.render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: snapshotForView("Short-Term Sessions"),
+        }}
+        client={client}
+      />,
+    );
+    await flush();
+
+    await mockInput.type("d");
+
+    await waitFor(async () =>
+      captureCharFrame().includes("Delete not supported for this view"),
+    );
+
+    const frame = captureCharFrame();
+    expect(frame).not.toContain("Confirm");
     expect(calls).toEqual([]);
   });
 
