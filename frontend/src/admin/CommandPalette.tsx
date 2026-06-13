@@ -1,49 +1,69 @@
 import React from "react";
+import type { AdminCommand } from "../rpc/schema.js";
 
-const COMMANDS: Record<string, string[]> = {
-  Crystals: [
-    "add",
-    "edit",
-    "delete",
-    "merge",
-    "split",
-    "deprecate",
-    "supersede",
-    "reinforce",
-    "decay",
-    "inspect provenance",
-    "inspect recall reason",
-  ],
-  Lessons: [
-    "add",
-    "edit",
-    "delete",
-    "merge",
-    "split",
-    "deprecate",
-    "supersede",
-    "reinforce",
-    "decay",
-    "promote local lesson",
-    "activate global lesson",
-    "inspect provenance",
-    "inspect recall reason",
-  ],
-  "Dream Runs": ["run manual dreaming", "review dream outputs"],
-  Proposals: ["approve", "reject"],
-};
-
-export function commandsForView(view: string): string[] {
-  return COMMANDS[view] ?? [];
+export function commandsForView(
+  commands: AdminCommand[],
+  view: string,
+  hasSelection: boolean,
+): Array<AdminCommand & { disabled: boolean }> {
+  return commands
+    .filter((command) => command.views.includes(view))
+    .map((command) => ({
+      ...command,
+      disabled: command.requires_selection && !hasSelection,
+    }));
 }
 
-export function CommandPalette({ view }: { view: string }) {
+export function CommandPalette({
+  commands,
+  selectedIndex,
+}: {
+  commands: Array<AdminCommand & { disabled: boolean }>;
+  selectedIndex: number;
+}) {
   return (
-    <box flexDirection="column">
-      <text>Commands</text>
-      {commandsForView(view).map((command) => (
-        <text key={command}>{command}</text>
+    <box
+      flexDirection="column"
+      borderStyle="rounded"
+      borderColor="cyan"
+      paddingX={1}
+      paddingY={1}
+      width={54}
+      height={10}
+    >
+      <box height={1}>
+        <text fg="cyan">Command Palette</text>
+      </box>
+      {commands.length === 0 ? (
+        <box height={1}>
+          <text fg="gray">No commands for this view</text>
+        </box>
+      ) : null}
+      {commands.map((command, index) => (
+        <box key={command.id} height={1}>
+          <text
+            fg={
+              command.disabled
+                ? "gray"
+                : index === selectedIndex
+                  ? "cyan"
+                  : undefined
+            }
+          >
+            {index === selectedIndex ? "> " : "  "}
+            {command.label} [{command.key}]{" "}
+            {command.disabled ? "(unavailable)" : ""}
+          </text>
+        </box>
       ))}
+      {commands[selectedIndex] ? (
+        <box height={1}>
+          <text fg="gray">{commands[selectedIndex].hint}</text>
+        </box>
+      ) : null}
+      <box height={1}>
+        <text fg="gray">Enter run  Esc close  ↑/↓ or j/k move</text>
+      </box>
     </box>
   );
 }

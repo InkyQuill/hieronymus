@@ -7,6 +7,7 @@ import {
   AdminShortTermStatusSchema,
   AdminSnapshotSchema,
   type AdminBootstrap,
+  type AdminCommand,
   type AdminConfigEditor,
   type AdminDreamStatus,
   type AdminHeader,
@@ -19,7 +20,7 @@ import { StatusLine } from "../ui/StatusLine.js";
 import { FocusableList } from "../ui/FocusableList.js";
 import { AdminTable } from "./AdminTable.js";
 import { DetailPane } from "./DetailPane.js";
-import { CommandPalette } from "./CommandPalette.js";
+import { CommandPalette, commandsForView } from "./CommandPalette.js";
 import { Spinner } from "../ui/Spinner.js";
 import { type DialogState, closedDialog, DialogOverlay } from "./dialogs.js";
 
@@ -47,7 +48,7 @@ const AdminOperationResponseSchema = z
 
 export function AdminScreen({ initial, client, showCommands = false }: Props) {
   const renderer = useRenderer();
-  const [snapshot, setSnapshot] = useState(initial.snapshot);
+  const [snapshot, setSnapshot] = useState<AdminSnapshot>(initial.snapshot);
   const [stats, setStats] = useState(initial.stats);
   const [shortTermStatus, setShortTermStatus] = useState(
     initial.short_term_status,
@@ -67,6 +68,14 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
 
   const selectedViewIndex = Math.max(initial.views.indexOf(snapshot.view), 0);
   const viewKeyLimit = Math.min(initial.views.length, 9);
+  const paletteCommands = commandsForView(
+    initial.command_options,
+    snapshot.view,
+    Boolean(snapshot.selected),
+  );
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const clampCommandIndex = (index: number) =>
+    Math.min(Math.max(index, 0), Math.max(paletteCommands.length - 1, 0));
 
   const loadView = (view: string) => {
     if (!client || operationInFlight.current) {
@@ -87,6 +96,135 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     });
   };
 
+  const runSnapshotCommand = (
+    method: string,
+    params: Record<string, unknown>,
+    successMessage: string,
+  ) => {
+    if (!client || operationInFlight.current) {
+      return;
+    }
+    void runSnapshotOperation({
+      client,
+      method,
+      params: { ...params, view: snapshot.view },
+      successMessage,
+      setSnapshot,
+      setStats,
+      setShortTermStatus,
+      setDreamStatus,
+      setConfigEditor,
+      setStatus,
+      operationInFlight,
+    });
+  };
+
+  const runSelectedSnapshotCommand = (
+    method: string,
+    successMessage: string,
+  ) => {
+    const selectedId = snapshot.selected?.id;
+    if (selectedId === undefined) {
+      setStatus({ message: "No row selected", error: true });
+      return;
+    }
+    runSnapshotCommand(method, { id: selectedId }, successMessage);
+  };
+
+  const runInspectionCommand = (method: string, successMessage: string) => {
+    const selectedId = snapshot.selected?.id;
+    if (!client || operationInFlight.current || selectedId === undefined) {
+      return;
+    }
+    operationInFlight.current = true;
+    setStatus({ message: `Working: ${successMessage}`, error: false });
+    void client
+      .request(method, { id: selectedId })
+      .then((response) => {
+        setSnapshot({
+          ...snapshot,
+          detail: inspectionDetail(method, response),
+        });
+        setStatus({ message: successMessage, error: false });
+      })
+      .catch((error) => {
+        setStatus({
+          message: error instanceof Error ? error.message : String(error),
+          error: true,
+        });
+      })
+      .finally(() => {
+        operationInFlight.current = false;
+      });
+  };
+
+  const executeCommand = (
+    command: (AdminCommand & { disabled?: boolean }) | undefined,
+  ) => {
+    if (!command) {
+      return;
+    }
+    if (command.disabled || (command.requires_selection && !snapshot.selected)) {
+      setStatus({
+        message: `${command.label} needs a selected row`,
+        error: true,
+      });
+      return;
+    }
+    setCommandsOpen(false);
+    if (command.id === "add_memory") {
+      setDialog({ kind: "add", error: "" });
+      return;
+    }
+    if (command.id === "edit_memory") {
+      handleInput("e");
+      return;
+    }
+    if (command.id === "delete_selected") {
+      handleInput("d");
+      return;
+    }
+    if (command.id === "merge_selected") {
+      handleInput("m");
+      return;
+    }
+    if (command.id === "split_crystal") {
+      handleInput("s");
+      return;
+    }
+    if (command.id === "reinforce_crystal") {
+      handleInput("+");
+      return;
+    }
+    if (command.id === "decay_crystal") {
+      handleInput("-");
+      return;
+    }
+    if (command.id === "approve_proposal") {
+      runSelectedSnapshotCommand("admin.approve_proposal", "Approved proposal");
+      return;
+    }
+    if (command.id === "reject_proposal") {
+      runSelectedSnapshotCommand("admin.reject_proposal", "Rejected proposal");
+      return;
+    }
+    if (command.id === "run_manual_dreaming") {
+      runSnapshotCommand("admin.run_manual_dreaming", {}, "Ran manual dreaming");
+      return;
+    }
+    if (command.id === "review_dream_output") {
+      runSelectedSnapshotCommand("admin.dream_review", "Loaded dream review");
+      return;
+    }
+    if (command.id === "inspect_provenance") {
+      runInspectionCommand("admin.provenance", "Loaded provenance");
+      return;
+    }
+    if (command.id === "inspect_recall_reasons") {
+      runInspectionCommand("admin.recall_reasons", "Loaded recall reasons");
+    }
+  };
+
   const handleInput = (input: string, ctrl = false) => {
     if (input === "q") {
       client?.close?.();
@@ -94,6 +232,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     }
 
     if (ctrl && input === "p") {
+      setSelectedCommandIndex(0);
       setCommandsOpen((open) => !open);
       return;
     }
@@ -279,6 +418,31 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     const shift = key.shift;
     const upArrow = key.name === "up";
     const downArrow = key.name === "down";
+
+    if (commandsOpen) {
+      if (ctrl && key.name === "p") {
+        setCommandsOpen(false);
+        return;
+      }
+      if (key.name === "escape") {
+        setCommandsOpen(false);
+        return;
+      }
+      if (key.name === "down" || key.name === "j") {
+        setSelectedCommandIndex((index) => clampCommandIndex(index + 1));
+        return;
+      }
+      if (key.name === "up" || key.name === "k") {
+        setSelectedCommandIndex((index) => clampCommandIndex(index - 1));
+        return;
+      }
+      if (key.name === "enter" || key.name === "return") {
+        const command = paletteCommands[clampCommandIndex(selectedCommandIndex)];
+        executeCommand(command);
+        return;
+      }
+      return;
+    }
 
     // 1. Focus Cycling
     if (tab) {
@@ -547,8 +711,14 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           <text fg={activePanel === "detail" ? "cyan" : undefined}>
             Detail Inspector
           </text>
-          <DetailPane detail={snapshot.detail} />
-          {commandsOpen ? <CommandPalette view={snapshot.view} /> : null}
+          {commandsOpen ? (
+            <CommandPalette
+              commands={paletteCommands}
+              selectedIndex={clampCommandIndex(selectedCommandIndex)}
+            />
+          ) : (
+            <DetailPane detail={snapshot.detail} />
+          )}
         </box>
       </box>
 
@@ -632,6 +802,23 @@ async function runSnapshotOperation({
   } finally {
     operationInFlight.current = false;
   }
+}
+
+function inspectionDetail(method: string, response: Record<string, unknown>) {
+  if (method === "admin.provenance") {
+    return {
+      title: "Provenance",
+      subtitle: "admin.provenance",
+      body: JSON.stringify(response.provenance ?? {}, null, 2),
+      fields: [],
+    };
+  }
+  return {
+    title: "Recall Reasons",
+    subtitle: "admin.recall_reasons",
+    body: JSON.stringify(response.reasons ?? [], null, 2),
+    fields: [],
+  };
 }
 
 function Header({ header }: { header: AdminHeader }) {
