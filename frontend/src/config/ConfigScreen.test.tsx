@@ -115,7 +115,7 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
       },
     },
     form_schema: formSchema(),
-    validation: { ok: true, errors: [] },
+    validation: { ok: true, errors: [], field_errors: {} },
     check_result: {},
     suggestions: {
       provider: selectedProvider,

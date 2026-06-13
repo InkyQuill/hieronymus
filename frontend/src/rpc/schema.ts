@@ -234,6 +234,7 @@ export const ConfigBootstrapSchema = z
     validation: z.object({
       ok: z.boolean(),
       errors: z.array(z.string()),
+      field_errors: z.record(z.array(z.string())).default({}),
     }),
     check_result: z.record(z.unknown()).default({}),
     suggestions: ModelSuggestionsSchema.default({}),

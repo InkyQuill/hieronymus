@@ -207,6 +207,26 @@ describe("runtime schemas", () => {
     expect(payload.form_schema).toEqual({ groups: [], fields: [] });
   });
 
+  it("parses config field validation errors", () => {
+    const payload = ConfigBootstrapSchema.parse(
+      configPayload("openai", {
+        validation: {
+          ok: false,
+          errors: ["providers.openai.timeout_seconds must be at least 1"],
+          field_errors: {
+            "provider.timeout_seconds": [
+              "providers.openai.timeout_seconds must be at least 1",
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(payload.validation.field_errors["provider.timeout_seconds"]).toEqual(
+      ["providers.openai.timeout_seconds must be at least 1"],
+    );
+  });
+
   it("applies Python-owned config form field defaults", () => {
     const payload = ConfigBootstrapSchema.parse(
       configPayload("openai", {

@@ -476,7 +476,11 @@ class ConfigBridge:
                 release_config,
             ),
             "form_schema": _form_schema(),
-            "validation": {"ok": not errors, "errors": errors},
+            "validation": {
+                "ok": not errors,
+                "errors": errors,
+                "field_errors": _field_errors(errors, selected),
+            },
             "check_result": check_result or {},
             "suggestions": suggestions or {},
             "detail": detail,
@@ -1118,6 +1122,42 @@ def _compat_provider_draft(
 
 def _load_errors(*errors: str) -> list[str]:
     return [error for error in errors if error]
+
+
+def _field_errors(errors: list[str], selected: str) -> dict[str, list[str]]:
+    mapping: dict[str, list[str]] = {}
+    for error in errors:
+        field = _field_for_error(error, selected)
+        if field:
+            mapping.setdefault(field, []).append(error)
+    return mapping
+
+
+def _field_for_error(error: str, selected: str) -> str:
+    selected_provider_prefix = f"providers.{selected}."
+    if error.startswith(selected_provider_prefix):
+        provider_field = error.removeprefix(selected_provider_prefix).split(" ", 1)[0]
+        return {
+            "model": "provider.model",
+            "endpoint": "provider.api_path",
+            "timeout_seconds": "provider.timeout_seconds",
+            "api_key": "provider.api_key",
+        }.get(provider_field, "")
+    if error == "enabled workflow must have a model: crystallization":
+        return "provider.model"
+    if error.startswith(("schedule_interval_minutes ", "min_interval_minutes ")):
+        return "dreaming.min_interval_minutes"
+    if error.startswith(("min_pending_short_term_memories ", "new_short_term_memory_threshold ")):
+        return "dreaming.new_short_term_memory_threshold"
+    if error.startswith("short_memory.warning_sentence_count "):
+        return "ingest.warning_sentence_count"
+    if error.startswith("short_memory.rejection_sentence_count "):
+        return "ingest.rejection_sentence_count"
+    if error.startswith("learn.max_block_chars "):
+        return "ingest.max_block_chars"
+    if error.startswith("updates.channel "):
+        return "release.update_channel"
+    return ""
 
 
 def _redacted_api_key(provider: ProviderProfile) -> str:
