@@ -58,9 +58,7 @@ export async function cleanupOpenTuiHarnesses(): Promise<void> {
   }
 }
 
-export function createOpenTuiHarness(
-  options: TestRendererOptions,
-): Harness {
+export function createOpenTuiHarness(options: TestRendererOptions): Harness {
   let setup: TestRendererSetup | null = null;
 
   const ensureSetup = () => {
@@ -104,10 +102,19 @@ export function createOpenTuiHarness(
   ) => {
     const current = ensureSetup();
     let frame = "";
-    await act(async () => {
-      frame = await current.waitForFrame(predicate, { maxPasses });
-    });
-    return frame;
+    for (let index = 0; index < maxPasses; index += 1) {
+      await act(async () => {
+        await Promise.resolve();
+        await current.renderOnce();
+      });
+      frame = current.captureCharFrame();
+      if (await predicate(frame)) {
+        return frame;
+      }
+    }
+    throw new Error(
+      `Timed out waiting for frame predicate after ${maxPasses} passes\n${frame}`,
+    );
   };
 
   const press = async (name: string, options: KeyOptions = {}) => {
