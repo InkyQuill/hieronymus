@@ -22,14 +22,19 @@ describe("responsive layout helpers", () => {
       width: 60,
       height: 24,
     });
-    expect(classifyTerminalLayout(132, 20)).toEqual({
-      kind: "narrow",
+    expect(classifyTerminalLayout(132, 24)).toEqual({
+      kind: "compact",
       width: 132,
+      height: 24,
+    });
+    expect(classifyTerminalLayout(136, 20)).toEqual({
+      kind: "narrow",
+      width: 136,
       height: 20,
     });
-    expect(classifyTerminalLayout(49, 20)).toEqual({
+    expect(classifyTerminalLayout(59, 20)).toEqual({
       kind: "too-small",
-      width: 49,
+      width: 59,
       height: 20,
     });
   });

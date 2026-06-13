@@ -289,7 +289,7 @@ describe("AdminScreen", () => {
   });
 
   it("keeps command palette inside the narrow admin viewport", async () => {
-    const { render, mockInput, waitForFrame } = setupSizedTest(50, 20);
+    const { render, mockInput, waitForFrame } = setupSizedTest(60, 20);
 
     await render(<AdminScreen initial={bootstrap()} client={undefined} />);
     await mockInput.press("p", { ctrl: true });
@@ -300,11 +300,11 @@ describe("AdminScreen", () => {
     expect(output).toContain("Command Palette");
     expect(output).toContain("Enter run Esc close");
     expect(output).not.toContain("Terminal too small");
-    expect(longestFrameLine(output)).toBeLessThanOrEqual(50);
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(60);
   });
 
   it("keeps help inside the narrow admin viewport", async () => {
-    const { render, mockInput, waitForFrame } = setupSizedTest(50, 20);
+    const { render, mockInput, waitForFrame } = setupSizedTest(60, 20);
 
     await render(<AdminScreen initial={bootstrap()} client={undefined} />);
     await mockInput.type("?");
@@ -313,7 +313,7 @@ describe("AdminScreen", () => {
     expect(output).toContain("Help");
     expect(output).toContain("Esc/? close");
     expect(output).not.toContain("Terminal too small");
-    expect(longestFrameLine(output)).toBeLessThanOrEqual(50);
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(60);
   });
 
   it("honors compact command palette width", async () => {
@@ -355,7 +355,7 @@ describe("AdminScreen", () => {
   });
 
   it("renders normal admin content at the minimum terminal size", async () => {
-    const { render, waitForFrame } = setupSizedTest(50, 20);
+    const { render, waitForFrame } = setupSizedTest(60, 20);
 
     await render(<AdminScreen initial={bootstrap()} client={undefined} />);
 
@@ -366,15 +366,15 @@ describe("AdminScreen", () => {
   });
 
   it("renders a too-small admin message below the minimum width", async () => {
-    const { render, waitForFrame } = setupSizedTest(49, 20);
+    const { render, waitForFrame } = setupSizedTest(59, 20);
 
     await render(<AdminScreen initial={bootstrap()} client={undefined} />);
 
     const output = await waitForFrame((frame) =>
       frame.includes("Terminal too small"),
     );
-    expect(output).toContain("49x20");
-    expect(output).toContain("minimum 50x20");
+    expect(output).toContain("59x20");
+    expect(output).toContain("minimum 60x20");
   });
 
   it("renders views, stats, table row, and detail", async () => {

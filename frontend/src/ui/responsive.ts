@@ -6,11 +6,11 @@ export type TerminalLayout = {
   height: number;
 };
 
-export const MIN_TERMINAL_WIDTH = 50;
+export const MIN_TERMINAL_WIDTH = 60;
 export const MIN_TERMINAL_HEIGHT = 20;
 export const MIN_COMPACT_WIDTH = 80;
 export const MIN_COMPACT_HEIGHT = 24;
-export const WIDE_WIDTH = 132;
+export const WIDE_WIDTH = 136;
 
 export function classifyTerminalLayout(
   width: number,

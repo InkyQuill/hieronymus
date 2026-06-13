@@ -125,10 +125,11 @@ export type TerminalLayout = {
   height: number;
 };
 
-export const MIN_TERMINAL_WIDTH = 50;
+export const MIN_TERMINAL_WIDTH = 60;
 export const MIN_TERMINAL_HEIGHT = 20;
-export const COMPACT_WIDTH = 100;
-export const WIDE_WIDTH = 132;
+export const MIN_COMPACT_WIDTH = 80;
+export const MIN_COMPACT_HEIGHT = 24;
+export const WIDE_WIDTH = 136;
 
 export function classifyTerminalLayout(
   width: number,
@@ -137,10 +138,10 @@ export function classifyTerminalLayout(
   if (width < MIN_TERMINAL_WIDTH || height < MIN_TERMINAL_HEIGHT) {
     return { kind: "too-small", width, height };
   }
-  if (width >= WIDE_WIDTH) {
+  if (width >= WIDE_WIDTH && height >= MIN_COMPACT_HEIGHT) {
     return { kind: "wide", width, height };
   }
-  if (width >= 80 && height >= 24) {
+  if (width >= MIN_COMPACT_WIDTH && height >= MIN_COMPACT_HEIGHT) {
     return { kind: "compact", width, height };
   }
   return { kind: "narrow", width, height };
@@ -212,15 +213,15 @@ it("renders config as a single active pane at 80x24", async () => {
 });
 
 it("renders a too-small config message below the minimum width", async () => {
-  const { render, waitForFrame } = setupSizedTest(49, 20);
+  const { render, waitForFrame } = setupSizedTest(59, 20);
 
   await render(<ConfigScreen initial={payload()} client={undefined} />);
 
   const output = await waitForFrame((frame) =>
     frame.includes("Terminal too small"),
   );
-  expect(output).toContain("49x20");
-  expect(output).toContain("minimum 50x20");
+  expect(output).toContain("59x20");
+  expect(output).toContain("minimum 60x20");
 });
 ```
 
@@ -307,7 +308,7 @@ if (layout.kind === "too-small") {
     <box flexDirection="column" width={dimensions.width}>
       <text>Terminal too small</text>
       <text fg="gray">
-        {dimensions.width}x{dimensions.height}; minimum 50x20
+        {dimensions.width}x{dimensions.height}; minimum 60x20
       </text>
       <text fg="gray">Resize terminal to edit Hieronymus config.</text>
     </box>
@@ -464,15 +465,15 @@ it("cycles compact admin panes with tab", async () => {
 });
 
 it("renders a too-small admin message below the minimum width", async () => {
-  const { render, waitForFrame } = setupSizedTest(49, 20);
+  const { render, waitForFrame } = setupSizedTest(59, 20);
 
   await render(<AdminScreen initial={bootstrap()} client={undefined} />);
 
   const output = await waitForFrame((frame) =>
     frame.includes("Terminal too small"),
   );
-  expect(output).toContain("49x20");
-  expect(output).toContain("minimum 50x20");
+  expect(output).toContain("59x20");
+  expect(output).toContain("minimum 60x20");
 });
 ```
 
@@ -562,7 +563,7 @@ if (layout.kind === "too-small") {
     <box flexDirection="column" width={dimensions.width}>
       <text>Terminal too small</text>
       <text fg="gray">
-        {dimensions.width}x{dimensions.height}; minimum 50x20
+        {dimensions.width}x{dimensions.height}; minimum 60x20
       </text>
       <text fg="gray">Resize terminal to inspect Hieronymus memory.</text>
     </box>

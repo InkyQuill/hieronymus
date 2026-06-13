@@ -140,7 +140,7 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
 }
 
 function setupTest() {
-  return createOpenTuiHarness({ width: 132, height: 36 });
+  return createOpenTuiHarness({ width: 136, height: 36 });
 }
 
 function setupSizedTest(width: number, height: number) {
@@ -259,15 +259,15 @@ describe("ConfigScreen", () => {
   });
 
   it("renders a too-small config message below the minimum width", async () => {
-    const { render, waitForFrame } = setupSizedTest(49, 20);
+    const { render, waitForFrame } = setupSizedTest(59, 20);
 
     await render(<ConfigScreen initial={payload()} client={undefined} />);
 
     const output = await waitForFrame((frame) =>
       frame.includes("Terminal too small"),
     );
-    expect(output).toContain("49x20");
-    expect(output).toContain("minimum 50x20");
+    expect(output).toContain("59x20");
+    expect(output).toContain("minimum 60x20");
   });
 
   it("renders one provider family selector instead of provider rows", async () => {
