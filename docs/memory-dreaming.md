@@ -137,6 +137,11 @@ scopes, rule crystals, thought memories, links, supersessions, consolidation,
 linking, decay, and reinforcement decisions. Audit records are append-only;
 corrections create later events.
 
+Provider-backed smoke coverage exercises multiple crystallization batches and
+the following maintenance phase in one dream run, so audit inspection can trace
+provider input, provider output, parse warnings, and maintenance mutations
+together.
+
 Decay is cycle-based, not wall-clock based. A crystal should weaken when
 translation work keeps happening without that crystal being recalled or
 reinforced. Wall-clock time would punish idle projects and long breaks; cycles

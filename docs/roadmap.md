@@ -26,16 +26,13 @@ Current baseline:
   rejection thresholds, with symbol thresholds disabled by default.
 - Invalid configured provider workflows are rejected instead of silently falling
   back to deterministic dreaming.
-- Provider-backed crystallization audit coverage verifies provider request and
-  response summaries, parse warnings, selected memory IDs, and affected memory
-  set payloads.
+- Provider-backed audit coverage verifies crystallization request and response
+  summaries, parse warnings, selected memory IDs, affected memory set payloads,
+  multi-batch phase runs, and maintenance phase decisions in the same dream run.
 
 Remaining work:
 
-- Add provider-backed dreaming smoke coverage that exercises multi-phase
-  provider payloads through crystallization and maintenance paths.
-- Extend dream audit coverage to maintenance decisions and multi-phase provider
-  runs.
+- No active roadmap items in this section.
 
 ### MCP And Agent Integrations
 
