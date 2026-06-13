@@ -1145,6 +1145,8 @@ def _field_for_error(error: str, selected: str) -> str:
         }.get(provider_field, "")
     if error == "enabled workflow must have a model: crystallization":
         return "provider.model"
+    if error.startswith("autostart_enabled "):
+        return "dreaming.autostart_enabled"
     if error.startswith(("schedule_interval_minutes ", "min_interval_minutes ")):
         return "dreaming.min_interval_minutes"
     if error.startswith(("min_pending_short_term_memories ", "new_short_term_memory_threshold ")):

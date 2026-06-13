@@ -99,7 +99,6 @@ export function ConfigForm({
                 <input
                   value={field.value}
                   onInput={(val) => onFieldChange(field.key, val)}
-                  onChange={(val) => onFieldChange(field.key, val)}
                   onSubmit={onSubmitField}
                   focused={true}
                   placeholder={field.placeholder}

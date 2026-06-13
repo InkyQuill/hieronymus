@@ -343,6 +343,32 @@ def test_config_validation_maps_dreaming_min_interval_form_error(tmp_path: Path)
     }
 
 
+def test_config_validation_maps_dreaming_autostart_form_error(tmp_path: Path) -> None:
+    bridge = ConfigBridge(_config(tmp_path))
+    payload = bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "30",
+            },
+            "dreaming": {
+                "autostart_enabled": "maybe",
+                "min_interval_minutes": "30",
+                "new_short_term_memory_threshold": "25",
+                "max_cycles_per_autostart": "1",
+            },
+        }
+    )
+
+    assert payload["validation"]["ok"] is False
+    assert payload["validation"]["field_errors"] == {
+        "dreaming.autostart_enabled": ["autostart_enabled must be yes or no"]
+    }
+
+
 def test_config_validation_maps_dreaming_threshold_form_error(tmp_path: Path) -> None:
     bridge = ConfigBridge(_config(tmp_path))
     payload = bridge.update_draft(
