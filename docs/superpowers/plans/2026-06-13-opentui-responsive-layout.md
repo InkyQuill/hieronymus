@@ -63,7 +63,7 @@
 - Create: `frontend/src/ui/responsive.ts`
 - Test: `frontend/src/ui/responsive.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `frontend/src/ui/responsive.test.ts`:
 
@@ -102,7 +102,7 @@ describe("responsive layout helpers", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run:
 
@@ -112,7 +112,7 @@ bun test --cwd frontend src/ui/responsive.test.ts
 
 Expected: FAIL because `frontend/src/ui/responsive.ts` does not exist.
 
-- [ ] **Step 3: Add the implementation**
+- [x] **Step 3: Add the implementation**
 
 Create `frontend/src/ui/responsive.ts`:
 
@@ -158,7 +158,7 @@ export function panelHeight(
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run:
 
@@ -168,7 +168,7 @@ bun test --cwd frontend src/ui/responsive.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/ui/responsive.ts frontend/src/ui/responsive.test.ts
