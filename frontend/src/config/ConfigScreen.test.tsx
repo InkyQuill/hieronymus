@@ -4,7 +4,49 @@ import { describe, expect, it } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { ConfigScreen } from "./ConfigScreen.js";
 import type { RpcClient } from "../rpc/client.js";
-import type { ConfigBootstrap, ProviderName } from "../rpc/schema.js";
+import type {
+  ConfigBootstrap,
+  ConfigFormField,
+  ProviderName,
+} from "../rpc/schema.js";
+
+function formSchema(
+  fields: ConfigFormField[] = [
+    {
+      key: "provider.model",
+      group: "provider",
+      label: "Model",
+      hint: "Model name used by the selected dream provider.",
+      placeholder: "gpt-4.1-mini",
+      type: "text" as const,
+      choices: [],
+      default: "",
+      redacted: false,
+    },
+    {
+      key: "provider.api_key",
+      group: "provider",
+      label: "API Key",
+      hint: "Stored as plaintext in dream.conf and redacted in UI payloads.",
+      placeholder: "stored in dream.conf",
+      type: "secret" as const,
+      choices: [],
+      default: "",
+      redacted: true,
+    },
+  ],
+) {
+  return {
+    groups: [
+      {
+        id: "provider",
+        label: "Provider",
+        description: "Connection settings for the selected dream provider.",
+      },
+    ],
+    fields,
+  };
+}
 
 function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
   return {
@@ -72,7 +114,7 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
         update_channel: "stable",
       },
     },
-    form_schema: { groups: [], fields: [] },
+    form_schema: formSchema(),
     validation: { ok: true, errors: [] },
     check_result: {},
     suggestions: {
@@ -110,6 +152,28 @@ async function setupTest() {
     });
   };
   const input = {
+    press: async (key: string) => {
+      const current = await ensureSetup();
+      act(() => {
+        if (key === "tab") {
+          current.mockInput.pressTab();
+        } else if (key === "backspace") {
+          current.mockInput.pressBackspace();
+        } else if (
+          key === "up" ||
+          key === "down" ||
+          key === "left" ||
+          key === "right"
+        ) {
+          current.mockInput.pressArrow(key);
+        } else if (key === "enter") {
+          current.mockInput.pressEnter();
+        } else {
+          current.mockInput.pressKey(key);
+        }
+      });
+      await flush();
+    },
     type: async (value: string) => {
       const current = await ensureSetup();
       for (const key of value) {
@@ -166,6 +230,35 @@ describe("ConfigScreen", () => {
     await flush();
 
     expect(captureCharFrame()).toContain("gpt-4.1-mini");
+  });
+
+  it("renders config fields from backend schema", async () => {
+    const { root, flush, captureCharFrame } = await setupTest();
+
+    root.render(
+      <ConfigScreen
+        initial={{
+          ...payload(),
+          form_schema: formSchema([
+            {
+              key: "provider.model",
+              group: "provider",
+              label: "Backend Model Label",
+              hint: "Backend-owned model hint.",
+              placeholder: "backend placeholder",
+              type: "text",
+              choices: [],
+              default: "",
+              redacted: false,
+            },
+          ]),
+        }}
+        client={undefined}
+      />,
+    );
+    await flush();
+
+    expect(captureCharFrame()).toContain("Backend Model Label");
   });
 
   it("renders a placeholder when model suggestions are absent", async () => {
@@ -267,6 +360,186 @@ describe("ConfigScreen", () => {
       return frame.includes("Selected gemini");
     });
     expect(calls).toHaveLength(1);
+  });
+
+  it("updates schema-driven number, toggle, and choice fields from the form panel", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const initial = {
+      ...payload(),
+      form_schema: formSchema([
+        {
+          key: "provider.timeout_seconds",
+          group: "provider",
+          label: "Timeout",
+          hint: "Request timeout in seconds.",
+          placeholder: "30",
+          type: "number" as const,
+          choices: [],
+          default: "30",
+          minimum: 1,
+          redacted: false,
+        },
+        {
+          key: "dreaming.autostart_enabled",
+          group: "provider",
+          label: "Autostart",
+          hint: "Start dreaming automatically.",
+          placeholder: "",
+          type: "toggle" as const,
+          choices: ["no", "yes"],
+          default: "no",
+          redacted: false,
+        },
+        {
+          key: "release.update_channel",
+          group: "provider",
+          label: "Update channel",
+          hint: "Release update channel.",
+          placeholder: "",
+          type: "choice" as const,
+          choices: ["stable", "beta", "dev"],
+          default: "stable",
+          redacted: false,
+        },
+      ]),
+    };
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve(initial);
+    });
+    const { root, mockInput, flush, waitFor } = await setupTest();
+
+    root.render(<ConfigScreen initial={initial} client={client} />);
+    await flush();
+
+    await mockInput.press("tab");
+    await mockInput.press("enter");
+    await mockInput.press("backspace");
+    await mockInput.press("backspace");
+    await mockInput.type("45");
+    await mockInput.press("enter");
+
+    await waitFor(async () => calls.length >= 1);
+
+    await mockInput.press("down");
+    await mockInput.press("enter");
+    await mockInput.press("right");
+    await mockInput.press("enter");
+
+    await waitFor(async () => calls.length >= 2);
+
+    await mockInput.press("down");
+    await mockInput.press("enter");
+    await mockInput.press("right");
+    await mockInput.press("enter");
+
+    await waitFor(async () => calls.length >= 3);
+
+    expect(calls).toEqual([
+      {
+        method: "config.update_draft",
+        params: {
+          selected_provider: "openai",
+          provider: {
+            model: "gpt-4.1-mini",
+            api_key: "openai-secret",
+            api_path: "https://api.openai.com/v1",
+            timeout_seconds: "45",
+          },
+          dreaming: {
+            autostart_enabled: "no",
+            min_interval_minutes: "30",
+            new_short_term_memory_threshold: "25",
+          },
+          ingest: {
+            warning_sentence_count: "6",
+            rejection_sentence_count: "30",
+            max_block_chars: "1200",
+          },
+          release: {
+            update_channel: "stable",
+          },
+        },
+      },
+      {
+        method: "config.update_draft",
+        params: {
+          selected_provider: "openai",
+          provider: {
+            model: "gpt-4.1-mini",
+            api_key: "openai-secret",
+            api_path: "https://api.openai.com/v1",
+            timeout_seconds: "30",
+          },
+          dreaming: {
+            autostart_enabled: "yes",
+            min_interval_minutes: "30",
+            new_short_term_memory_threshold: "25",
+          },
+          ingest: {
+            warning_sentence_count: "6",
+            rejection_sentence_count: "30",
+            max_block_chars: "1200",
+          },
+          release: {
+            update_channel: "stable",
+          },
+        },
+      },
+      {
+        method: "config.update_draft",
+        params: {
+          selected_provider: "openai",
+          provider: {
+            model: "gpt-4.1-mini",
+            api_key: "openai-secret",
+            api_path: "https://api.openai.com/v1",
+            timeout_seconds: "30",
+          },
+          dreaming: {
+            autostart_enabled: "no",
+            min_interval_minutes: "30",
+            new_short_term_memory_threshold: "25",
+          },
+          ingest: {
+            warning_sentence_count: "6",
+            rejection_sentence_count: "30",
+            max_block_chars: "1200",
+          },
+          release: {
+            update_channel: "beta",
+          },
+        },
+      },
+    ]);
+  });
+
+  it("ignores form edit keys when the backend returns an empty schema", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve(payload());
+    });
+    const { root, mockInput, flush } = await setupTest();
+
+    root.render(
+      <ConfigScreen
+        initial={{
+          ...payload(),
+          form_schema: { groups: [], fields: [] },
+        }}
+        client={client}
+      />,
+    );
+    await flush();
+
+    await mockInput.press("tab");
+    await mockInput.press("down");
+    await mockInput.press("enter");
+
+    expect(calls).toEqual([]);
   });
 
   it("closes the client when q is pressed", async () => {

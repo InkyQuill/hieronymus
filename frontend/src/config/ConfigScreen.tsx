@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { ConfigBootstrapSchema, type ConfigBootstrap } from "../rpc/schema.js";
 import type { RpcClient } from "../rpc/client.js";
-import { ConfigForm, fieldDefinitions } from "./ConfigForm.js";
+import { ConfigForm } from "./ConfigForm.js";
 import { ProviderSelector } from "./ProviderSelector.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
@@ -54,6 +54,7 @@ export function ConfigScreen({ initial, client }: Props) {
 
   const providerChoices = payload.provider_choices;
   const selectedProvider = payload.selected_provider;
+  const formFields = payload.form_schema.fields;
 
   const currentProviderIndex = Math.max(
     providerChoices.findIndex((p) => p.name === selectedProvider),
@@ -62,6 +63,12 @@ export function ConfigScreen({ initial, client }: Props) {
 
   const suggestions = modelSuggestions(payload);
   const detailErrors = getDetailErrors(payload);
+
+  useEffect(() => {
+    setFocusedFieldIndex((index) =>
+      Math.min(index, Math.max(formFields.length - 1, 0)),
+    );
+  }, [formFields.length]);
 
   const selectProviderByIndex = (index: number) => {
     const provider = providerChoices[index]?.name;
@@ -192,7 +199,7 @@ export function ConfigScreen({ initial, client }: Props) {
     const downArrow = key.name === "down";
     const leftArrow = key.name === "left";
     const rightArrow = key.name === "right";
-    const enter = key.name === "enter";
+    const enter = key.name === "enter" || key.name === "return";
     const escape = key.name === "escape";
 
     // 1. Focus Cycling
@@ -220,7 +227,7 @@ export function ConfigScreen({ initial, client }: Props) {
         return;
       }
 
-      const focusedField = fieldDefinitions[focusedFieldIndex];
+      const focusedField = formFields[focusedFieldIndex];
       if (focusedField?.type === "toggle" || focusedField?.type === "choice") {
         if (
           leftArrow ||
@@ -228,7 +235,9 @@ export function ConfigScreen({ initial, client }: Props) {
           key.name === "space" ||
           key.name === " "
         ) {
-          const choices = focusedField.choices || ["yes", "no"];
+          const choices = focusedField.choices.length
+            ? focusedField.choices
+            : ["yes", "no"];
           const currentVal = valueForField(localFormValues, focusedField.key);
           const currentIndex = Math.max(choices.indexOf(currentVal), 0);
           handleFieldChange(
@@ -270,11 +279,11 @@ export function ConfigScreen({ initial, client }: Props) {
       }
       if (downArrow) {
         setFocusedFieldIndex((prev) =>
-          Math.min(fieldDefinitions.length - 1, prev + 1),
+          Math.min(Math.max(formFields.length - 1, 0), prev + 1),
         );
         return;
       }
-      if (enter) {
+      if (enter && formFields.length > 0) {
         setIsEditing(true);
         return;
       }
@@ -353,6 +362,7 @@ export function ConfigScreen({ initial, client }: Props) {
           paddingX={1}
         >
           <ConfigForm
+            fields={formFields}
             formValues={localFormValues}
             focusedFieldIndex={focusedFieldIndex}
             isEditing={isEditing}
