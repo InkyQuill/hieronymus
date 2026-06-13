@@ -825,7 +825,7 @@ git commit -m "test: cover compact admin overlays"
 **Files:**
 - Modify: `docs/roadmap.md`
 
-- [ ] **Step 1: Update roadmap completed work**
+- [x] **Step 1: Update roadmap completed work**
 
 In `docs/roadmap.md`, add this bullet to the OpenTUI `Completed baseline:` list:
 
@@ -843,7 +843,7 @@ Remove this bullet from OpenTUI `Remaining work:`:
   rendering broken panels.
 ```
 
-- [ ] **Step 2: Run focused frontend tests**
+- [x] **Step 2: Run focused frontend tests**
 
 Run:
 
@@ -853,7 +853,7 @@ bun test --cwd frontend src/ui/responsive.test.ts src/config/ConfigScreen.test.t
 
 Expected: PASS.
 
-- [ ] **Step 3: Run full verification**
+- [x] **Step 3: Run full verification**
 
 Run:
 
