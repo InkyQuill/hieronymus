@@ -184,7 +184,7 @@ git commit -m "test: add opentui responsive layout helpers"
 - Modify: `frontend/src/config/ConfigScreen.tsx`
 - Test: `frontend/src/config/ConfigScreen.test.tsx`
 
-- [ ] **Step 1: Write compact config render tests**
+- [x] **Step 1: Write compact config render tests**
 
 In `frontend/src/config/ConfigScreen.test.tsx`, add this helper near `setupTest()`:
 
@@ -224,7 +224,7 @@ it("renders a too-small config message below the minimum width", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run:
 
@@ -234,7 +234,7 @@ bun test --cwd frontend src/config/ConfigScreen.test.tsx
 
 Expected: FAIL because the screen still renders fixed-width columns and does not show the compact footer wording or too-small message.
 
-- [ ] **Step 3: Let `ConfigForm` accept a width**
+- [x] **Step 3: Let `ConfigForm` accept a width**
 
 Modify `frontend/src/config/ConfigForm.tsx`:
 
@@ -278,7 +278,7 @@ export function ConfigForm({
 }
 ```
 
-- [ ] **Step 4: Add compact config rendering**
+- [x] **Step 4: Add compact config rendering**
 
 Modify imports in `frontend/src/config/ConfigScreen.tsx`:
 
@@ -390,7 +390,7 @@ if (layout.kind !== "wide") {
 
 Leave the existing wide return in place, but change its root width from `100` to `Math.min(100, dimensions.width)`.
 
-- [ ] **Step 5: Run config tests**
+- [x] **Step 5: Run config tests**
 
 Run:
 
@@ -400,7 +400,7 @@ bun test --cwd frontend src/config/ConfigScreen.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/config/ConfigForm.tsx frontend/src/config/ConfigScreen.tsx frontend/src/config/ConfigScreen.test.tsx

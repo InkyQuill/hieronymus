@@ -140,7 +140,11 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
 }
 
 function setupTest() {
-  return createOpenTuiHarness({ width: 120, height: 36 });
+  return createOpenTuiHarness({ width: 132, height: 36 });
+}
+
+function setupSizedTest(width: number, height: number) {
+  return createOpenTuiHarness({ width, height });
 }
 
 afterEach(async () => {
@@ -148,6 +152,34 @@ afterEach(async () => {
 });
 
 describe("ConfigScreen", () => {
+  it("renders config as a single active pane at 80x24", async () => {
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Hieronymus Config"),
+    );
+    expect(output).toContain("Providers");
+    expect(output).toContain("OpenAI compatible");
+    expect(output).toContain("Tab pane");
+    expect(output).not.toContain(
+      "/tmp/dream.conf | /tmp/ingest.conf | /tmp/release.conf",
+    );
+  });
+
+  it("renders a too-small config message below the minimum width", async () => {
+    const { render, waitForFrame } = setupSizedTest(49, 20);
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Terminal too small"),
+    );
+    expect(output).toContain("49x20");
+    expect(output).toContain("minimum 50x20");
+  });
+
   it("renders one provider family selector instead of provider rows", async () => {
     const { render, waitForFrame } = setupTest();
 

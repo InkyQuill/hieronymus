@@ -12,6 +12,7 @@ type ConfigFormProps = {
   focusedFieldIndex: number;
   isEditing: boolean;
   focused?: boolean;
+  width?: number;
   onFieldChange: (key: string, value: string) => void;
   onSubmitField: () => void;
 };
@@ -22,6 +23,7 @@ export function ConfigForm({
   focusedFieldIndex,
   isEditing,
   focused = true,
+  width = 68,
   onFieldChange,
   onSubmitField,
 }: ConfigFormProps) {
@@ -55,7 +57,7 @@ export function ConfigForm({
   );
 
   return (
-    <box flexDirection="column" width={68}>
+    <box flexDirection="column" width={width}>
       <text>Dreaming settings</text>
       <box flexDirection="column" marginTop={1}>
         {renderedFields.map((field, index) => {
