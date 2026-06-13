@@ -241,7 +241,9 @@ def test_pyproject_configures_semantic_release() -> None:
     assert semantic_release["version_variables"] == ["src/hieronymus/__init__.py:__version__"]
     assert semantic_release["tag_format"] == "v{version}"
     assert semantic_release["build_command"] == (
-        "bun --cwd frontend install --frozen-lockfile && bun --cwd frontend run build && uv build"
+        "bun install --cwd frontend --frozen-lockfile && "
+        "bun run --cwd frontend build && "
+        "uv build"
     )
     assert semantic_release["commit_message"] == "chore(release): v{version}"
     assert "branch" not in semantic_release
