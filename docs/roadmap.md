@@ -104,8 +104,6 @@ Remaining work:
   listener warnings in `bun test` without globally muting stderr.
 - Add real-process smoke checks for packaged `config` and `admin` startup using
   `frontend/dist/main.js`, skipped cleanly when Bun or a PTY is unavailable.
-- Restore frontend typechecking by declaring all required test/runtime
-  dependencies and keeping `bun run --cwd frontend typecheck` green.
 
 ### Install, Release, And Quality
 
