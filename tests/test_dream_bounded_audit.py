@@ -767,3 +767,43 @@ def test_admin_bridge_audit_lookup_returns_phase_entries_and_parse_warning_recor
     ]
     assert all(entry.phase_run_id is not None for entry in entries)
     assert all(json.dumps(entry.payload, ensure_ascii=False) for entry in entries)
+
+
+def test_admin_bridge_audit_lookup_includes_provider_backed_maintenance_phase(
+    config: HieronymusConfig,
+) -> None:
+    _save_dreaming_config(config, min_pending=1, max_pending=10, per_cycle=2, max_changed=3)
+    context = _context(config)
+    _completed_session(config, context, memories=2)
+    reinforced_id = _add_crystal(
+        config,
+        context,
+        text="Admin visible provider-backed maintenance.",
+        strength=0.5,
+        confidence=0.5,
+    )
+    FeedbackStore(config).record(
+        reinforced_id,
+        event_type="used_in_translation",
+        source_role="system",
+        evidence="visible in admin audit smoke",
+    )
+
+    run = DreamService(config, CapturingDictProvider()).run_all(owner="admin")
+
+    payload = AdminBridge(config).snapshot({"view": "Dream Audits"})
+    labels = [row["label"] for row in payload["snapshot"]["rows"]]
+    assert labels[:5] == [
+        "phase_completed: completed maintenance phase",
+        "phase_completed: completed crystallization phase",
+        "provider_response: received crystallization response",
+        "parse_warnings: dream response parsed with recoverable warnings",
+        "provider_request: sent crystallization request",
+    ]
+    assert payload["snapshot"]["detail"]["title"] == labels[0]
+    assert '"phase_name": "maintenance"' in payload["snapshot"]["detail"]["body"]
+    assert str(reinforced_id) in payload["snapshot"]["detail"]["body"]
+
+    entries = DreamAuditStore(config).list_for_run(run.id)
+    assert entries[-1].event_type == "phase_completed"
+    assert entries[-1].payload["phase_name"] == "maintenance"
