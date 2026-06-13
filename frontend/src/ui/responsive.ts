@@ -8,10 +8,14 @@ export type TerminalLayout = {
 
 export const MIN_TERMINAL_WIDTH = 50;
 export const MIN_TERMINAL_HEIGHT = 20;
-export const COMPACT_WIDTH = 100;
+export const MIN_COMPACT_WIDTH = 80;
+export const MIN_COMPACT_HEIGHT = 24;
 export const WIDE_WIDTH = 132;
 
-export function classifyTerminalLayout(width: number, height: number): TerminalLayout {
+export function classifyTerminalLayout(
+  width: number,
+  height: number,
+): TerminalLayout {
   if (width < MIN_TERMINAL_WIDTH || height < MIN_TERMINAL_HEIGHT) {
     return { kind: "too-small", width, height };
   }
@@ -20,7 +24,7 @@ export function classifyTerminalLayout(width: number, height: number): TerminalL
     return { kind: "wide", width, height };
   }
 
-  if (width >= 80 && height >= 24) {
+  if (width >= MIN_COMPACT_WIDTH && height >= MIN_COMPACT_HEIGHT) {
     return { kind: "compact", width, height };
   }
 
@@ -31,6 +35,9 @@ export function panelWidth(layout: TerminalLayout, borderPadding = 2): number {
   return Math.max(20, layout.width - borderPadding * 2);
 }
 
-export function panelHeight(layout: TerminalLayout, reservedRows: number): number {
+export function panelHeight(
+  layout: TerminalLayout,
+  reservedRows: number,
+): number {
   return Math.max(4, layout.height - reservedRows);
 }
