@@ -4,6 +4,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 EXPECTED_RELEASE_BUN_VERSION = "1.3.14"
+CHECKOUT_SHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
+SETUP_UV_SHA = "d0d8abe699bfb85fec6de9f7adb5ae17292296ff"
+SETUP_PYTHON_SHA = "a309ff8b426b58ec0e2a45f0f869d46889d02405"
+SETUP_BUN_SHA = "0c5077e51419868618aeaa5fe8019c62421857d6"
 
 
 def _workflow_lines() -> list[str]:
@@ -56,6 +60,24 @@ def _step_value(step: list[str], key: str) -> str | None:
     return None
 
 
+def _uses_lines(lines: list[str]) -> list[str]:
+    uses: list[str] = []
+    for step in _step_blocks(lines):
+        if any(line.strip().startswith("- uses:") for line in step):
+            value = _step_value(step, "uses")
+            if value is not None:
+                uses.append(value)
+    return uses
+
+
+def _assert_pinned_uses(lines: list[str], expected: list[str]) -> None:
+    uses = _uses_lines(lines)
+    for action in expected:
+        assert action in uses
+    assert all("@" in action and len(action.rsplit("@", maxsplit=1)[1]) == 40 for action in uses)
+    assert not any(action.endswith(("@v4", "@v6")) for action in uses)
+
+
 def test_release_workflow_serializes_main_releases() -> None:
     lines = _workflow_lines()
 
@@ -80,19 +102,52 @@ def test_release_workflow_verify_job_uses_read_only_credentials() -> None:
     assert "    permissions:" in verify
     assert "      contents: read" in verify
 
-    checkout = _step_block(verify, "      - uses: actions/checkout@v4")
+    _assert_pinned_uses(
+        verify,
+        [
+            f"actions/checkout@{CHECKOUT_SHA}",
+            f"astral-sh/setup-uv@{SETUP_UV_SHA}",
+            f"actions/setup-python@{SETUP_PYTHON_SHA}",
+            f"oven-sh/setup-bun@{SETUP_BUN_SHA}",
+        ],
+    )
+
+    checkout = next(
+        step
+        for step in _step_blocks(verify)
+        if _step_value(step, "uses") == f"actions/checkout@{CHECKOUT_SHA}"
+    )
     assert "        with:" in checkout
     assert "          persist-credentials: false" in checkout
     assert not any(line.strip().startswith("token:") for line in checkout)
 
-    expected_runs = [
+    bun_step = next(
+        step
+        for step in _step_blocks(verify)
+        if _step_value(step, "uses") == f"oven-sh/setup-bun@{SETUP_BUN_SHA}"
+    )
+    assert _step_value(bun_step, "bun-version") == f'"{EXPECTED_RELEASE_BUN_VERSION}"'
+
+    verify_runs = [line for line in verify if line.startswith("      - run: ")]
+    for command in [
         "      - run: uv sync --dev",
+        "      - run: bun install --cwd frontend --frozen-lockfile",
+        "      - run: bun run --cwd frontend build",
         "      - run: uv run pytest",
         "      - run: uv run ruff check .",
         "      - run: uv run ruff format --check .",
-    ]
-    for command in expected_runs:
-        assert command in verify
+    ]:
+        assert command in verify_runs
+
+    assert verify_runs.index("      - run: uv sync --dev") < verify_runs.index(
+        "      - run: bun install --cwd frontend --frozen-lockfile"
+    )
+    assert verify_runs.index(
+        "      - run: bun install --cwd frontend --frozen-lockfile"
+    ) < verify_runs.index("      - run: bun run --cwd frontend build")
+    assert verify_runs.index("      - run: bun run --cwd frontend build") < verify_runs.index(
+        "      - run: uv run pytest"
+    )
 
 
 def test_release_workflow_release_job_publishes_after_verification() -> None:
@@ -103,18 +158,33 @@ def test_release_workflow_release_job_publishes_after_verification() -> None:
     assert "    permissions:" in release
     assert "      contents: write" in release
 
-    checkout = _step_block(release, "      - uses: actions/checkout@v4")
+    _assert_pinned_uses(
+        release,
+        [
+            f"actions/checkout@{CHECKOUT_SHA}",
+            f"astral-sh/setup-uv@{SETUP_UV_SHA}",
+            f"actions/setup-python@{SETUP_PYTHON_SHA}",
+            f"oven-sh/setup-bun@{SETUP_BUN_SHA}",
+        ],
+    )
+
+    checkout = next(
+        step
+        for step in _step_blocks(release)
+        if _step_value(step, "uses") == f"actions/checkout@{CHECKOUT_SHA}"
+    )
     assert "        with:" in checkout
     assert "          fetch-depth: 0" in checkout
     assert "          token: ${{ secrets.GITHUB_TOKEN }}" in checkout
 
-    expected_runs = [
+    release_runs = [line for line in release if line.startswith("      - run: ")]
+    assert release_runs == [
         "      - run: uv sync --dev",
+        "      - run: uv run python -m hieronymus.release_guard",
         "      - run: uv run semantic-release version",
+        "      - run: uv run python -m hieronymus.release_guard",
         "      - run: uv run semantic-release publish",
     ]
-    for command in expected_runs:
-        assert command in release
 
     for command in [
         "      - run: uv run semantic-release version",
@@ -126,19 +196,8 @@ def test_release_workflow_release_job_publishes_after_verification() -> None:
 
     steps = _step_blocks(release)
     bun_step = next(
-        (
-            step
-            for step in steps
-            if "setup-bun" in (_step_value(step, "uses") or "").lower()
-            or "setup-bun" in (_step_value(step, "name") or "").lower()
-        ),
-        None,
+        step for step in steps if _step_value(step, "uses") == f"oven-sh/setup-bun@{SETUP_BUN_SHA}"
     )
-    assert bun_step is not None
-    bun_uses = _step_value(bun_step, "uses")
-    assert bun_uses is not None
-    assert bun_uses.startswith("oven-sh/setup-bun@")
-    assert len(bun_uses.rsplit("@", maxsplit=1)[1]) == 40
     assert _step_value(bun_step, "bun-version") == f'"{EXPECTED_RELEASE_BUN_VERSION}"'
 
 
