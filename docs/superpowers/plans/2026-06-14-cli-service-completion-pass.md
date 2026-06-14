@@ -204,7 +204,7 @@ Commit only after Task 5 updates docs and the boundary tests pass. Keep this tas
 - Test: `tests/test_agent_hooks.py`
 - Test: `tests/test_mcp_server.py`
 
-- [ ] **Step 1: Write service discovery unit tests through agent hooks**
+- [x] **Step 1: Write service discovery unit tests through agent hooks**
 
 Append to `tests/test_agent_hooks.py`:
 
@@ -267,7 +267,7 @@ def test_hook_session_start_json_includes_discovered_service(
     }
 ```
 
-- [ ] **Step 2: Write MCP status tool test**
+- [x] **Step 2: Write MCP status tool test**
 
 Append to `tests/test_mcp_server.py`:
 
@@ -304,7 +304,7 @@ def test_mcp_status_reports_direct_adapter_and_service_discovery(monkeypatch, tm
     }
 ```
 
-- [ ] **Step 3: Run targeted tests and confirm failures**
+- [x] **Step 3: Run targeted tests and confirm failures**
 
 Run:
 
@@ -314,7 +314,7 @@ uv run pytest tests/test_agent_hooks.py tests/test_mcp_server.py::test_mcp_statu
 
 Expected: FAIL because `service` is absent from hook payloads and `hieronymus_status` does not exist.
 
-- [ ] **Step 4: Implement service discovery helper**
+- [x] **Step 4: Implement service discovery helper**
 
 Create `src/hieronymus/service_discovery.py`:
 
@@ -358,7 +358,7 @@ def discover_local_service(config: HieronymusConfig) -> dict[str, Any]:
     }
 ```
 
-- [ ] **Step 5: Add discovery to agent hook JSON payloads**
+- [x] **Step 5: Add discovery to agent hook JSON payloads**
 
 Modify `src/hieronymus/agent_hooks.py` imports:
 
@@ -379,7 +379,7 @@ Do not add this field to non-JSON human output. The existing human output remain
     click.echo("Hieronymus context loaded" if payload["handled"] else payload["reason"])
 ```
 
-- [ ] **Step 6: Add MCP status tool**
+- [x] **Step 6: Add MCP status tool**
 
 Modify `src/hieronymus/mcp_server.py` imports:
 
@@ -407,7 +407,7 @@ def hieronymus_status() -> dict[str, Any]:
     }
 ```
 
-- [ ] **Step 7: Run targeted tests**
+- [x] **Step 7: Run targeted tests**
 
 Run:
 
@@ -417,7 +417,7 @@ uv run pytest tests/test_agent_hooks.py tests/test_mcp_server.py::test_mcp_statu
 
 Expected: PASS after adding `hieronymus_status` to the expected MCP tool-name list if that test enumerates every tool.
 
-- [ ] **Step 8: Commit service discovery changes**
+- [x] **Step 8: Commit service discovery changes**
 
 Run:
 
