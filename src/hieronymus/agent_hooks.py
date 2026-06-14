@@ -6,7 +6,9 @@ from pathlib import Path
 import click
 
 from hieronymus.agent_context import discover_project_context
+from hieronymus.config import load_config
 from hieronymus.presentation import render_json
+from hieronymus.service_discovery import discover_local_service
 
 
 @click.group()
@@ -33,6 +35,7 @@ def session_start(cwd: str, as_json: bool) -> None:
         }
 
     if as_json:
+        payload["service"] = discover_local_service(load_config())
         click.echo(render_json(payload))
         return
 
