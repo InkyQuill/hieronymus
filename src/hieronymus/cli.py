@@ -463,17 +463,47 @@ def doctor_command(ctx: click.Context, autofix: bool, as_json: bool) -> None:
 @main.command("help")
 def help_command() -> None:
     click.echo(render_greeting())
+    click.echo("Alpha software: local-first, usable at your own risk.")
     click.echo()
-    click.echo(f"{GUIDE_ICON} Common commands")
+    click.echo(f"{GUIDE_ICON} Service")
     click.echo("  hiero                  Start or connect to the local service")
     click.echo("  hiero status           Show daemon and provider status")
-    click.echo("  hiero doctor           Check configuration and service health")
+    click.echo("  hiero status --json    Emit daemon and provider status for scripts")
+    click.echo("  hiero stop             Request graceful daemon shutdown")
     click.echo("  hiero restart          Restart the local daemon")
-    click.echo("  hiero admin            Open the local management TUI")
-    click.echo("  hiero admin --json     Show management counts and available views")
+    click.echo()
+    click.echo(f"{GUIDE_ICON} Management")
     click.echo("  hiero config           Open the configuration TUI")
-    click.echo("  hiero update           Update managed installs in place")
+    click.echo(
+        "  hiero config --json    Emit config, provider, dreaming, ingest, and release state"
+    )
+    click.echo("  hiero admin            Open the local management TUI")
+    click.echo("  hiero admin --json     Emit management counts and available views")
+    click.echo("  hiero doctor           Check configuration and service health")
+    click.echo()
+    click.echo(f"{GUIDE_ICON} Agent and automation")
+    click.echo("  hiero session-start <series> --task-type <type> --json")
+    click.echo(
+        "  hiero remember-short <session-id> --role user --kind correction --text <text> --json"
+    )
+    click.echo(
+        "  hiero recall <session-id> --series <series> --query <query> "
+        "--source-language <src> --target-language <dst> --task-type <type> --json"
+    )
+    click.echo("  hiero feedback <crystal-id> --event helpful --role user --json")
+    click.echo()
+    click.echo(f"{GUIDE_ICON} Maintenance")
     click.echo("  hiero install codex --dry-run")
+    click.echo("  hiero update           Update managed installs in place")
+    click.echo("  hiero dream --json     Run local dreaming and emit machine-readable status")
+    click.echo()
+    click.echo(f"{GUIDE_ICON} Examples")
+    click.echo("  hiero status --json")
+    click.echo("  hiero session-start oso --task-type translation --json")
+    click.echo(
+        '  hiero recall 1 --series oso --query "style" --source-language ja '
+        "--target-language en --task-type translation --json"
+    )
 
 
 @main.command("init-series")
