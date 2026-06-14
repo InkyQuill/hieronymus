@@ -75,7 +75,15 @@ const renderMarkdownLines = (text: string) => {
   });
 };
 
-export function DetailPane({ detail }: { detail: AdminSnapshot["detail"] }) {
+export function DetailPane({
+  detail,
+  width = 56,
+  height = 14,
+}: {
+  detail: AdminSnapshot["detail"];
+  width?: number;
+  height?: number;
+}) {
   const renderBody = () => {
     if (!detail.body) return null;
     if (isDiff(detail.body)) {
@@ -100,7 +108,7 @@ export function DetailPane({ detail }: { detail: AdminSnapshot["detail"] }) {
   };
 
   return (
-    <scrollbox flexDirection="column" width={56} height={14}>
+    <scrollbox flexDirection="column" width={width} height={height}>
       <text>{detail.title}</text>
       <text fg="gray">{detail.subtitle}</text>
       <box flexDirection="column" marginTop={1} marginBottom={1}>

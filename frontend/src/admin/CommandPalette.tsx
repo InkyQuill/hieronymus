@@ -17,9 +17,11 @@ export function commandsForView(
 export function CommandPalette({
   commands,
   selectedIndex,
+  width = 54,
 }: {
   commands: Array<AdminCommand & { disabled: boolean }>;
   selectedIndex: number;
+  width?: number;
 }) {
   const commandRows = Math.max(commands.length, 1);
   const hintRows = commands[selectedIndex] ? 1 : 0;
@@ -33,7 +35,7 @@ export function CommandPalette({
       borderColor="cyan"
       paddingX={1}
       paddingY={1}
-      width={54}
+      width={width}
       height={height}
     >
       <box height={1}>

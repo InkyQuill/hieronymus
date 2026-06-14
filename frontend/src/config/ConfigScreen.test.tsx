@@ -140,7 +140,11 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
 }
 
 function setupTest() {
-  return createOpenTuiHarness({ width: 120, height: 36 });
+  return createOpenTuiHarness({ width: 136, height: 36 });
+}
+
+function setupSizedTest(width: number, height: number) {
+  return createOpenTuiHarness({ width, height });
 }
 
 afterEach(async () => {
@@ -148,6 +152,124 @@ afterEach(async () => {
 });
 
 describe("ConfigScreen", () => {
+  it("renders config as a single active pane at 80x24", async () => {
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Hieronymus Config"),
+    );
+    expect(output).toContain("Providers");
+    expect(output).toContain("OpenAI compatible");
+    expect(output).toContain("Tab pane");
+    expect(output).not.toContain(
+      "/tmp/dream.conf | /tmp/ingest.conf | /tmp/release.conf",
+    );
+  });
+
+  it("keeps compact footer visible with validation and detail errors", async () => {
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(
+      <ConfigScreen
+        initial={{
+          ...payload(),
+          validation: {
+            ok: false,
+            errors: [
+              "validation error one",
+              "validation error two",
+              "validation error three",
+              "validation error four",
+            ],
+            field_errors: {},
+          },
+          detail: {
+            title: "Provider check",
+            fields: [],
+            errors: [
+              "detail error one",
+              "detail error two",
+              "detail error three",
+              "detail error four",
+            ],
+          },
+          suggestions: {
+            provider: "openai",
+            models: ["gpt-4.1-mini", "gpt-4.1", "o4-mini"],
+            source: "defaults",
+            error: "",
+          },
+        }}
+        client={undefined}
+      />,
+    );
+
+    const output = await waitForFrame(
+      (frame) => frame.includes("q quit") || frame.includes("Ready"),
+    );
+    expect(output).toContain("q quit");
+  });
+
+  it("windows compact config fields without covering status or footer", async () => {
+    const manyFields = Array.from({ length: 11 }, (_, index) => ({
+      key: `provider.field_${index + 1}`,
+      group: "provider",
+      label: `Field ${index + 1}`,
+      hint: `Field ${index + 1} hint.`,
+      placeholder: `value-${index + 1}`,
+      type: "text" as const,
+      choices: [],
+      default: "",
+      redacted: false,
+    }));
+    const initial = {
+      ...payload(),
+      form_values: {
+        ...payload().form_values,
+        provider: {
+          ...payload().form_values.provider,
+          ...Object.fromEntries(
+            manyFields.map((field, index) => [
+              field.key.slice(9),
+              `value-${index + 1}`,
+            ]),
+          ),
+        },
+      },
+      form_schema: formSchema(manyFields),
+    };
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<ConfigScreen initial={initial} client={undefined} />);
+
+    await mockInput.press("tab");
+    for (let index = 0; index < 10; index += 1) {
+      await mockInput.press("down");
+    }
+
+    const output = await waitForFrame(
+      (frame) =>
+        frame.includes("> Field 11: value-11") &&
+        (frame.includes("q quit") || frame.includes("Ready")),
+    );
+    expect(output).toContain("> Field 11: value-11");
+    expect(output).toContain("q quit");
+  });
+
+  it("renders a too-small config message below the minimum width", async () => {
+    const { render, waitForFrame } = setupSizedTest(59, 20);
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Terminal too small"),
+    );
+    expect(output).toContain("59x20");
+    expect(output).toContain("minimum 60x20");
+  });
+
   it("renders one provider family selector instead of provider rows", async () => {
     const { render, waitForFrame } = setupTest();
 

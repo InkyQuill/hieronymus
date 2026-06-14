@@ -87,6 +87,9 @@ Completed baseline:
   updates through `act(...)`, destroys renderers after each test, and keeps
   `bun test` free of React lifecycle and `TerminalConsoleCache` listener
   warnings.
+- `hiero admin` and `hiero config` define responsive behavior for 80x24
+  terminals and narrow tmux splits, using compact single-pane fallbacks instead
+  of fixed-width broken panel layouts.
 
 Remaining work:
 
@@ -98,9 +101,6 @@ Remaining work:
   duplicate migration/domain mutation logic.
 - Support keyboard-first navigation with consistent `q`, `Esc`, `/`, `Tab`,
   `Shift+Tab`, arrows, and `hjkl` where useful.
-- Define responsive behavior at 80x24 and narrow tmux splits. Fixed wide
-  layouts should collapse to a single-pane or drill-down fallback rather than
-  rendering broken panels.
 - Keep detail panes useful for dense inspection: fields, readable prose, JSON,
   diffs, provenance, recall reasons, and dream/audit output should render
   inside the admin interface.

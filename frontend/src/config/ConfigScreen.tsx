@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useKeyboard, useRenderer } from "@opentui/react";
+import {
+  useKeyboard,
+  useRenderer,
+  useTerminalDimensions,
+} from "@opentui/react";
 import {
   ConfigBootstrapSchema,
   type ConfigBootstrap,
@@ -10,6 +14,13 @@ import { ConfigForm } from "./ConfigForm.js";
 import { ProviderSelector } from "./ProviderSelector.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
+import {
+  classifyTerminalLayout,
+  MIN_TERMINAL_HEIGHT,
+  MIN_TERMINAL_WIDTH,
+  panelHeight,
+  panelWidth,
+} from "../ui/responsive.js";
 
 type Props = {
   initial: ConfigBootstrap;
@@ -30,6 +41,9 @@ type ConfigFormValues = {
 
 export function ConfigScreen({ initial, client }: Props) {
   const renderer = useRenderer();
+  const dimensions = useTerminalDimensions();
+  const layout = classifyTerminalLayout(dimensions.width, dimensions.height);
+  const contentWidth = panelWidth(layout);
   const [payload, setPayload] = useState(initial);
   const [status, setStatus] = useState<Status>({
     message: "Ready",
@@ -318,8 +332,91 @@ export function ConfigScreen({ initial, client }: Props) {
     }
   });
 
+  if (layout.kind === "too-small") {
+    return (
+      <box flexDirection="column" width={dimensions.width}>
+        <text>Terminal too small</text>
+        <text fg="gray">
+          {dimensions.width}x{dimensions.height}; minimum {MIN_TERMINAL_WIDTH}x
+          {MIN_TERMINAL_HEIGHT}
+        </text>
+        <text fg="gray">Resize terminal to edit Hieronymus config.</text>
+      </box>
+    );
+  }
+
+  if (layout.kind !== "wide") {
+    const compactHeight = panelHeight(layout, 12);
+    const compactVisibleFormRows = Math.max(0, compactHeight - 4);
+    const compactErrors = [...payload.validation.errors, ...detailErrors].slice(
+      0,
+      2,
+    );
+
+    return (
+      <box flexDirection="column" width={dimensions.width}>
+        <text>Hieronymus Config</text>
+        <text fg="gray">
+          {selectedProvider} · {layout.kind} {dimensions.width}x
+          {dimensions.height}
+        </text>
+
+        <box
+          flexDirection="column"
+          marginTop={1}
+          height={compactHeight}
+          borderStyle="rounded"
+          borderColor="cyan"
+          paddingX={1}
+        >
+          {activePanel === "provider" ? (
+            <>
+              <text fg="cyan">Providers</text>
+              <ProviderSelector
+                choices={providerChoices}
+                selected={selectedProvider}
+                focused
+                onSelect={selectProviderByIndex}
+              />
+            </>
+          ) : (
+            <ConfigForm
+              fields={formFields}
+              formValues={localFormValues}
+              focusedFieldIndex={focusedFieldIndex}
+              isEditing={isEditing}
+              focused
+              width={contentWidth}
+              visibleRows={compactVisibleFormRows}
+              onFieldChange={handleFieldChange}
+              onSubmitField={submitField}
+            />
+          )}
+        </box>
+
+        <box marginTop={1} flexDirection="column">
+          <text>
+            Models: {suggestions.length > 0 ? suggestions.join(", ") : "-"}
+          </text>
+          {compactErrors.map((error) => (
+            <text key={error} fg="red">
+              {error}
+            </text>
+          ))}
+        </box>
+
+        <StatusLine message={status.message} error={status.error} busy={busy} />
+        <box flexDirection="row" marginTop={1}>
+          <text fg="gray">
+            Tab pane {providerKeyRange(providerChoices)} provider s save q quit
+          </text>
+        </box>
+      </box>
+    );
+  }
+
   return (
-    <box flexDirection="column" width={100}>
+    <box flexDirection="column" width={Math.min(100, dimensions.width)}>
       <text>Hieronymus Config</text>
       <text fg="gray">
         {[

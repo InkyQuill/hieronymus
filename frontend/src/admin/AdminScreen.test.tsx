@@ -5,6 +5,8 @@ import {
   createOpenTuiHarness,
 } from "../test/opentuiHarness.js";
 import { AdminScreen } from "./AdminScreen.js";
+import { CommandPalette, commandsForView } from "./CommandPalette.js";
+import { HelpOverlay } from "./HelpOverlay.js";
 
 function bootstrap() {
   return {
@@ -216,11 +218,178 @@ function setupTest() {
   return createOpenTuiHarness({ width: 160, height: 60 });
 }
 
+function setupSizedTest(width: number, height: number) {
+  return createOpenTuiHarness({ width, height });
+}
+
+function longestFrameLine(output: string) {
+  return Math.max(...output.split("\n").map((line) => line.trimEnd().length));
+}
+
 afterEach(async () => {
   await cleanupOpenTuiHarnesses();
 });
 
 describe("AdminScreen", () => {
+  it("renders admin as a single active pane at 80x24", async () => {
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+
+    const output = await waitForFrame((frame) => frame.includes("Views"));
+    expect(output).toContain("H Hieronymus Admin 0.1.0");
+    expect(output).toContain("Views");
+    expect(output).toContain("Crystals");
+    expect(output).toContain("Tab pane");
+    expect(output).not.toContain("Detail Inspector");
+  });
+
+  it("cycles compact admin panes with tab", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.press("tab");
+
+    const tableOutput = await waitForFrame((frame) =>
+      frame.includes("Guild Ledger"),
+    );
+    expect(tableOutput).toContain("Crystals");
+    expect(tableOutput).toContain("Guild Ledger");
+
+    await mockInput.press("tab");
+    const detailOutput = await waitForFrame((frame) =>
+      frame.includes("Guild ledger detail marker."),
+    );
+    expect(detailOutput).toContain("Detail Inspector");
+    expect(detailOutput).toContain("Guild ledger detail marker.");
+  });
+
+  it("renders command palette in compact admin layout", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.press("p", { ctrl: true });
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Command Palette"),
+    );
+    expect(output).toContain("Command Palette");
+    expect(output).toContain("Enter run Esc close");
+  });
+
+  it("renders help in compact admin layout", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.type("?");
+
+    const output = await waitForFrame((frame) => frame.includes("Help"));
+    expect(output).toContain("Help");
+    expect(output).toContain("Esc/? close");
+  });
+
+  it("keeps command palette inside the narrow admin viewport", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(60, 20);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.press("p", { ctrl: true });
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Command Palette"),
+    );
+    expect(output).toContain("Command Palette");
+    expect(output).toContain("Enter run Esc close");
+    expect(output).not.toContain("Terminal too small");
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(60);
+  });
+
+  it("keeps help inside the narrow admin viewport", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(60, 20);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.type("?");
+
+    const output = await waitForFrame((frame) => frame.includes("Help"));
+    expect(output).toContain("Help");
+    expect(output).toContain("Esc/? close");
+    expect(output).not.toContain("Terminal too small");
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(60);
+  });
+
+  it("honors compact command palette width", async () => {
+    const data = bootstrap();
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(
+      <CommandPalette
+        commands={commandsForView(
+          data.command_options,
+          data.snapshot.view,
+          Boolean(data.snapshot.selected),
+        )}
+        selectedIndex={0}
+        width={46}
+      />,
+    );
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Command Palette"),
+    );
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(46);
+  });
+
+  it("honors compact help overlay width", async () => {
+    const data = bootstrap();
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(
+      <HelpOverlay
+        commands={data.command_options}
+        view={data.snapshot.view}
+        width={46}
+      />,
+    );
+
+    const output = await waitForFrame((frame) => frame.includes("Help"));
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(46);
+  });
+
+  it("renders normal admin content at the minimum terminal size", async () => {
+    const { render, waitForFrame } = setupSizedTest(60, 20);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+
+    const output = await waitForFrame((frame) => frame.includes("Views"));
+    expect(output).toContain("Views");
+    expect(output).toContain("Crystals");
+    expect(output).not.toContain("Terminal too small");
+  });
+
+  it("renders a too-small admin message below the minimum width", async () => {
+    const { render, waitForFrame } = setupSizedTest(59, 20);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Terminal too small"),
+    );
+    expect(output).toContain("59x20");
+    expect(output).toContain("minimum 60x20");
+  });
+
+  it("does not open hidden dialogs below the minimum terminal size", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(59, 20);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.type("a");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Terminal too small"),
+    );
+    expect(output).toContain("Terminal too small");
+    expect(output).not.toContain("Add New Crystal / Lesson / Rule");
+  });
+
   it("renders views, stats, table row, and detail", async () => {
     const { render, waitForFrame } = setupTest();
 
