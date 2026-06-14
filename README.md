@@ -16,7 +16,11 @@ curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.s
 
 The installer creates a managed checkout at
 `~/.local/share/hieronymus/app` and installs console commands through
-`uv tool install`.
+`uv tool install`. In an interactive terminal it asks whether to install the
+stable channel or the dev channel. Stable installs the latest tagged alpha
+release; dev installs the latest `main` commit. For non-interactive installs,
+the default is stable. Set `HIERONYMUS_INSTALL_CHANNEL=dev` to install from
+`main`.
 
 Update managed installs in place with:
 

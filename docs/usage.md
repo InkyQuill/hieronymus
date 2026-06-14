@@ -15,6 +15,19 @@ The installer keeps the managed application checkout at
 `hieronymus-mcp` console commands through `uv tool install`. If `hiero` is not
 available after installation, add `~/.local/bin` to `PATH`.
 
+In an interactive terminal, the installer asks whether to install the stable or
+dev channel. Stable installs the latest tagged alpha release and dev installs
+the latest `main` commit. Non-interactive installs default to stable. To choose
+the channel explicitly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | HIERONYMUS_INSTALL_CHANNEL=stable sh
+curl -fsSL https://raw.githubusercontent.com/InkyQuill/hieronymus/main/install.sh | HIERONYMUS_INSTALL_CHANNEL=dev sh
+```
+
+The installer writes the selected update channel to `release.conf`, so later
+`hiero update` calls follow the same stable or dev channel.
+
 Update an installed checkout:
 
 ```bash

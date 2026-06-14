@@ -3,6 +3,11 @@ set -eu
 
 REPO_URL="${HIERONYMUS_REPO_URL:-https://github.com/InkyQuill/hieronymus.git}"
 APP_DIR="${HIERONYMUS_APP_DIR:-${HOME}/.local/share/hieronymus/app}"
+DATA_ROOT="${HIERONYMUS_DATA_ROOT:-${HOME}/.config/hieronymus}"
+case "$DATA_ROOT" in
+    "~/"*) DATA_ROOT="${HOME}/${DATA_ROOT#~/}" ;;
+esac
+RELEASE_CONF="${DATA_ROOT}/release.conf"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -11,13 +16,17 @@ require_command() {
     fi
 }
 
+has_tty() {
+    [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null && ( : >/dev/tty ) 2>/dev/null
+}
+
 confirm() {
     prompt="$1"
     case "${HIERONYMUS_INSTALL_YES:-}" in
         1|true|TRUE|yes|YES) return 0 ;;
         0|false|FALSE|no|NO) return 1 ;;
     esac
-    if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    if has_tty; then
         printf "%s [Y/n] " "$prompt" >/dev/tty
         IFS= read -r answer </dev/tty || answer=
         case "$answer" in
@@ -27,6 +36,47 @@ confirm() {
     fi
     echo "info: no interactive terminal; proceeding automatically. Set HIERONYMUS_INSTALL_YES=0 to abort instead." >&2
     return 0
+}
+
+select_install_channel() {
+    case "${HIERONYMUS_INSTALL_CHANNEL:-}" in
+        stable|STABLE) printf '%s\n' "stable"; return 0 ;;
+        dev|DEV) printf '%s\n' "dev"; return 0 ;;
+        "")
+            ;;
+        *)
+            echo "error: HIERONYMUS_INSTALL_CHANNEL must be stable or dev" >&2
+            exit 1
+            ;;
+    esac
+
+    if has_tty; then
+        echo "Choose Hieronymus install channel:" >/dev/tty
+        echo "  1) stable - latest tagged alpha release (recommended)" >/dev/tty
+        echo "  2) dev    - latest main commit" >/dev/tty
+        printf "Install channel [stable/dev] (stable): " >/dev/tty
+        IFS= read -r answer </dev/tty || answer=
+        case "$answer" in
+            ""|1|stable|STABLE) printf '%s\n' "stable"; return 0 ;;
+            2|dev|DEV) printf '%s\n' "dev"; return 0 ;;
+            *)
+                echo "error: install channel must be stable or dev" >&2
+                exit 1
+                ;;
+        esac
+    fi
+
+    echo "info: no interactive terminal; installing stable channel. Set HIERONYMUS_INSTALL_CHANNEL=dev for main." >&2
+    printf '%s\n' "stable"
+}
+
+write_release_config() {
+    channel="$1"
+    mkdir -p "$DATA_ROOT"
+    cat > "$RELEASE_CONF" <<EOF
+[updates]
+channel = "$channel"
+EOF
 }
 
 install_uv() {
@@ -126,6 +176,8 @@ if ! command -v uv >/dev/null 2>&1; then
     install_uv
 fi
 
+INSTALL_CHANNEL=$(select_install_channel)
+
 if [ -d "${APP_DIR}/.git" ]; then
     ORIGIN_URL=$(git -C "$APP_DIR" remote get-url origin)
     if [ "$ORIGIN_URL" != "$REPO_URL" ]; then
@@ -141,28 +193,32 @@ else
     git clone "$REPO_URL" "$APP_DIR"
 fi
 
-REMOTE_TAGS=$(git ls-remote --tags "$REPO_URL")
-LATEST_TAG=$(
-    printf '%s\n' "$REMOTE_TAGS" \
-        | awk '{
-            ref = $2
-            sub("^refs/tags/", "", ref)
-            sub("\\^\\{\\}$", "", ref)
-            if (ref ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/) {
-                print ref
-            }
-        }' \
-        | sort -u \
-        | awk '{
-            split(substr($0, 2), parts, ".")
-            printf "%09d.%09d.%09d %s\n", parts[1], parts[2], parts[3], $0
-        }' \
-        | sort \
-        | tail -n 1 \
-        | awk '{ print $2 }'
-)
-
-if [ -n "$LATEST_TAG" ]; then
+if [ "$INSTALL_CHANNEL" = "stable" ]; then
+    REMOTE_TAGS=$(git ls-remote --tags "$REPO_URL")
+    LATEST_TAG=$(
+        printf '%s\n' "$REMOTE_TAGS" \
+            | awk '{
+                ref = $2
+                sub("^refs/tags/", "", ref)
+                sub("\\^\\{\\}$", "", ref)
+                if (ref ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/) {
+                    print ref
+                }
+            }' \
+            | sort -u \
+            | awk '{
+                split(substr($0, 2), parts, ".")
+                printf "%09d.%09d.%09d %s\n", parts[1], parts[2], parts[3], $0
+            }' \
+            | sort \
+            | tail -n 1 \
+            | awk '{ print $2 }'
+    )
+    if [ -z "$LATEST_TAG" ]; then
+        echo "error: stable install requested, but no release tags were found" >&2
+        echo "       Set HIERONYMUS_INSTALL_CHANNEL=dev to install latest main." >&2
+        exit 1
+    fi
     git -C "$APP_DIR" fetch --tags origin
     git -C "$APP_DIR" checkout --detach "$LATEST_TAG"
     SELECTED_REF="$LATEST_TAG"
@@ -171,12 +227,14 @@ else
     git -C "$APP_DIR" checkout --detach FETCH_HEAD
     SELECTED_REF="main"
 fi
+write_release_config "$INSTALL_CHANNEL"
 
 build_frontend
 uv tool install --force "$APP_DIR"
 
-echo "Hieronymus installed successfully from ${SELECTED_REF}."
+echo "Hieronymus installed successfully from ${SELECTED_REF} (${INSTALL_CHANNEL})."
 echo "Managed checkout: ${APP_DIR}"
+echo "Update channel config: ${RELEASE_CONF}"
 
 if ! command -v hiero >/dev/null 2>&1; then
     echo "If 'hiero' is not on PATH, add ${HOME}/.local/bin to PATH."

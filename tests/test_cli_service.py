@@ -135,6 +135,8 @@ def test_readme_documents_production_install_update_and_uninstall() -> None:
         in readme
     )
     assert "hiero update" in readme
+    assert "HIERONYMUS_INSTALL_CHANNEL=dev" in readme
+    assert "Stable installs the latest tagged alpha release" in normalized_readme
     assert "uninstall.sh" in readme
     assert "--keep-data" in readme
     assert "--purge-data" in readme
@@ -162,6 +164,9 @@ def test_usage_documents_uninstall_data_modes_and_workspace_warning() -> None:
 
     assert "--keep-data" in usage
     assert "--purge-data" in usage
+    assert "HIERONYMUS_INSTALL_CHANNEL=stable" in usage
+    assert "HIERONYMUS_INSTALL_CHANNEL=dev" in usage
+    assert "release.conf" in usage
     assert (
         "The non-interactive uninstall one-liner removes the app and keeps "
         "settings/data by default." in normalized_usage

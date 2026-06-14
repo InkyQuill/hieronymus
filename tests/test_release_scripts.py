@@ -44,9 +44,13 @@ def test_install_script_uses_managed_github_checkout() -> None:
     assert 'uv tool install --force "$APP_DIR"' in text
     assert "Bun >= 1.3" in text
     assert "HIERONYMUS_INSTALL_YES" in text
+    assert "HIERONYMUS_INSTALL_CHANNEL" in text
+    assert 'channel = "$channel"' in text
 
 
-def test_install_script_builds_frontend_before_tool_install(tmp_path: Path) -> None:
+def test_install_script_builds_frontend_before_tool_install_and_writes_stable_channel(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / "home"
     app_dir = home / ".local" / "share" / "hieronymus" / "app"
     frontend_dir = app_dir / "frontend"
@@ -125,6 +129,93 @@ def test_install_script_builds_frontend_before_tool_install(tmp_path: Path) -> N
     assert commands.index(f"bun:{frontend_dir}:run build") < commands.index(
         f"uv:{ROOT}:tool install --force {app_dir}"
     )
+    assert (home / ".config" / "hieronymus" / "release.conf").read_text(
+        encoding="utf-8"
+    ) == '[updates]\nchannel = "stable"\n'
+    assert "Hieronymus installed successfully from v1.2.3 (stable)." in result.stdout
+
+
+def test_install_script_dev_channel_checks_out_main_and_writes_release_conf(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    app_dir = home / ".local" / "share" / "hieronymus" / "app"
+    frontend_dir = app_dir / "frontend"
+    frontend_dir.mkdir(parents=True)
+    (app_dir / ".git").mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    command_log = tmp_path / "commands.log"
+    write_executable(
+        fake_bin / "git",
+        f"""
+        #!/bin/sh
+        echo "git:$PWD:$@" >> "{command_log}"
+        if [ "$1" = "-C" ] && [ "$3" = "remote" ] && [ "$4" = "get-url" ]; then
+            echo "https://github.com/InkyQuill/hieronymus.git"
+            exit 0
+        fi
+        if [ "$1" = "ls-remote" ]; then
+            echo "unexpected ls-remote for dev channel" >&2
+            exit 2
+        fi
+        exit 0
+        """,
+    )
+    write_executable(
+        fake_bin / "uv",
+        f"""
+        #!/bin/sh
+        echo "uv:$PWD:$@" >> "{command_log}"
+        exit 0
+        """,
+    )
+    write_executable(
+        fake_bin / "python3",
+        """
+        #!/bin/sh
+        if [ "$1" = "-c" ]; then
+            if echo "$2" | grep -q "print"; then
+                echo "3.12.0"
+            fi
+            exit 0
+        fi
+        exit 0
+        """,
+    )
+    write_executable(
+        fake_bin / "bun",
+        f"""
+        #!/bin/sh
+        echo "bun:$PWD:$@" >> "{command_log}"
+        if [ "$1" = "--version" ]; then
+            echo "1.3.14"
+            exit 0
+        fi
+        exit 0
+        """,
+    )
+    env = script_env(tmp_path, home=home)
+    env["HIERONYMUS_INSTALL_YES"] = "1"
+    env["HIERONYMUS_INSTALL_CHANNEL"] = "dev"
+
+    result = subprocess.run(
+        ["sh", str(ROOT / "install.sh")],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    commands = command_log.read_text(encoding="utf-8").splitlines()
+    assert f"git:{ROOT}:-C {app_dir} fetch origin main" in commands
+    assert f"git:{ROOT}:-C {app_dir} checkout --detach FETCH_HEAD" in commands
+    assert f"bun:{frontend_dir}:run build" in commands
+    assert (home / ".config" / "hieronymus" / "release.conf").read_text(
+        encoding="utf-8"
+    ) == '[updates]\nchannel = "dev"\n'
+    assert "Hieronymus installed successfully from main (dev)." in result.stdout
 
 
 def test_uninstall_script_removes_tool_and_supports_data_modes() -> None:
