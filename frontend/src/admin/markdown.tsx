@@ -8,7 +8,7 @@ type InlineToken =
   | { kind: "link"; label: string; url: string };
 
 const inlinePattern =
-  /(`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*|_([^_]+)_)/g;
+  /(`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|\*\*([^*]+)\*\*|\*([^*]+)\*)/g;
 
 function parseInline(text: string): InlineToken[] {
   const tokens: InlineToken[] = [];
@@ -24,10 +24,10 @@ function parseInline(text: string): InlineToken[] {
       tokens.push({ kind: "code", value: match[2] });
     } else if (match[3] !== undefined && match[4] !== undefined) {
       tokens.push({ kind: "link", label: match[3], url: match[4] });
-    } else if (match[5] !== undefined || match[6] !== undefined) {
-      tokens.push({ kind: "bold", value: match[5] ?? match[6] ?? "" });
+    } else if (match[5] !== undefined) {
+      tokens.push({ kind: "bold", value: match[5] });
     } else {
-      tokens.push({ kind: "italic", value: match[7] ?? match[8] ?? "" });
+      tokens.push({ kind: "italic", value: match[6] ?? "" });
     }
 
     offset = match.index + match[0].length;
@@ -129,7 +129,7 @@ export function MarkdownBody({ content }: { content: string }) {
     if (heading) {
       blocks.push(
         <text key={key}>
-          <strong>{heading[1]}</strong>
+          <strong>{renderInline(heading[1], `${key}-heading`)}</strong>
         </text>,
       );
       index += 1;
@@ -171,17 +171,10 @@ export function MarkdownBody({ content }: { content: string }) {
       continue;
     }
 
-    const paragraphLines = [line.trim()];
-    index += 1;
-    while (index < lines.length && !isBlockStart(lines[index] ?? "")) {
-      paragraphLines.push((lines[index] ?? "").trim());
-      index += 1;
-    }
     blocks.push(
-      <text key={key}>
-        {renderInline(paragraphLines.join(" "), `${key}-paragraph`)}
-      </text>,
+      <text key={key}>{renderInline(line.trim(), `${key}-paragraph`)}</text>,
     );
+    index += 1;
   }
 
   return <box flexDirection="column">{blocks}</box>;

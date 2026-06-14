@@ -58,6 +58,35 @@ describe("MarkdownBody", () => {
     expect(output).toContain("quoted memory");
     expect(output).toContain('{ "kind": "crystal" }');
   });
+
+  it("renders inline markdown inside headings", async () => {
+    const { render, waitForFrame } = setupTest();
+
+    await render(
+      <MarkdownBody content={"## See [source](https://example.test)"} />,
+    );
+
+    const output = await waitForFrame((frame) => frame.includes("See source"));
+    expect(output).toContain("See source (https://example.test)");
+    expect(output).not.toContain("[source]");
+  });
+
+  it("preserves snake_case text and source line breaks", async () => {
+    const { render, waitForFrame } = setupTest();
+
+    await render(
+      <MarkdownBody
+        content={"phase_run_id stays literal\nmemory_source_role stays literal"}
+      />,
+    );
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("phase_run_id stays literal"),
+    );
+    expect(output).toContain("phase_run_id stays literal");
+    expect(output).toContain("memory_source_role stays literal");
+    expect(output).not.toContain("phaserunid");
+  });
 });
 
 describe("DetailPane markdown body integration", () => {
