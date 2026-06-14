@@ -39,7 +39,7 @@
 - Create: `src/hieronymus/cli_boundaries.py`
 - Test: `tests/test_cli_boundaries.py`
 
-- [ ] **Step 1: Write the failing boundary tests**
+- [x] **Step 1: Write the failing boundary tests**
 
 Create `tests/test_cli_boundaries.py`:
 
@@ -85,7 +85,7 @@ def test_service_toolkit_mentions_every_direct_store_command() -> None:
         assert entry.reason in docs
 ```
 
-- [ ] **Step 2: Run tests and confirm the catalog is missing**
+- [x] **Step 2: Run tests and confirm the catalog is missing**
 
 Run:
 
@@ -95,7 +95,7 @@ uv run pytest tests/test_cli_boundaries.py -v
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'hieronymus.cli_boundaries'`.
 
-- [ ] **Step 3: Implement the boundary catalog**
+- [x] **Step 3: Implement the boundary catalog**
 
 Create `src/hieronymus/cli_boundaries.py`:
 
@@ -175,11 +175,11 @@ DIRECT_STORE_MCP_ADAPTER = DirectStoreCommand(
 )
 ```
 
-- [ ] **Step 4: Add temporary docs section so the catalog test can pass later**
+- [x] **Step 4: Add temporary docs section so the catalog test can pass later**
 
 Do not update `docs/service-toolkit.md` in this task. Leave the docs assertion failing until Task 5 updates the service documentation with the exact command list and reasons.
 
-- [ ] **Step 5: Run catalog tests and record expected partial failure**
+- [x] **Step 5: Run catalog tests and record expected partial failure**
 
 Run:
 
@@ -189,7 +189,7 @@ uv run pytest tests/test_cli_boundaries.py -v
 
 Expected: the first two tests PASS, and `test_service_toolkit_mentions_every_direct_store_command` FAILS because the docs do not yet mention every command.
 
-- [ ] **Step 6: Commit the catalog and tests**
+- [x] **Step 6: Commit the catalog and tests**
 
 Commit only after Task 5 updates docs and the boundary tests pass. Keep this task's file changes staged for the later docs commit.
 
