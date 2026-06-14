@@ -46,6 +46,8 @@ def session_start(cwd: str, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True)
 def session_end(as_json: bool) -> None:
     payload = {"event": "session-end", "handled": True}
+    if as_json:
+        payload["service"] = discover_local_service(load_config())
     click.echo(render_json(payload) if as_json else "Hieronymus session hook complete")
 
 

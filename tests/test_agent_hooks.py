@@ -135,8 +135,18 @@ def test_hook_session_start_human_output_is_concise(tmp_path: Path) -> None:
     assert result.output == "no .hieronymus.json context found\n"
 
 
-def test_hook_session_end_outputs_json() -> None:
+def test_hook_session_end_outputs_json(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+
     result = CliRunner().invoke(main, ["session-end", "--json"])
 
     assert result.exit_code == 0
-    assert json.loads(result.output) == {"event": "session-end", "handled": True}
+    assert json.loads(result.output) == {
+        "event": "session-end",
+        "handled": True,
+        "service": {
+            "available": False,
+            "mode": "direct-local",
+            "reason": "no running local service discovered",
+        },
+    }

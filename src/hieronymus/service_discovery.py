@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.service_client import ServiceClient
+from hieronymus.service_client import ServiceClient, ServiceClientError
 from hieronymus.service_state import cleanup_stale_state, read_server_state
 
 
@@ -19,7 +19,7 @@ def discover_local_service(config: HieronymusConfig) -> dict[str, Any]:
 
     try:
         health = ServiceClient().health(state)
-    except Exception as exc:
+    except (OSError, ServiceClientError) as exc:
         return {
             "available": False,
             "mode": "direct-local",
