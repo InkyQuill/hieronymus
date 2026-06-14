@@ -999,7 +999,7 @@ Expected: branch `plan/cli-service-completion-pass` with no unstaged changes aft
 **Files:**
 - No source changes.
 
-- [ ] **Step 1: Push the branch**
+- [x] **Step 1: Push the branch**
 
 Run:
 
@@ -1009,7 +1009,7 @@ git push -u origin plan/cli-service-completion-pass
 
 Expected: branch pushed to GitHub.
 
-- [ ] **Step 2: Open PR**
+- [x] **Step 2: Open PR**
 
 Run:
 
