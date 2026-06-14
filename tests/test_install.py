@@ -28,6 +28,7 @@ def test_known_targets_include_initial_and_future_names() -> None:
         "openclaw",
         "opencode",
         "gemini",
+        "mimo",
         "pi",
         "hermes",
     ]
@@ -44,6 +45,10 @@ def test_resolve_target_has_metadata_for_codex() -> None:
     assert "MCP" in target.protocol_note
 
 
+def test_resolve_target_supports_aliases() -> None:
+    assert resolve_target("mimocode").name == "mimo"
+
+
 def test_resolve_target_has_complete_metadata_for_all_targets() -> None:
     expected = {
         "claude": ("Claude Code / Claude Desktop", "~/.claude", "~/.claude.json"),
@@ -55,6 +60,7 @@ def test_resolve_target_has_complete_metadata_for_all_targets() -> None:
             "~/.config/opencode/plugin.json",
         ),
         "gemini": ("Gemini CLI", "~/.gemini", "~/.gemini/settings.json"),
+        "mimo": ("Xiaomi MiMo", "~/.mimocode", "~/.config/mimocode"),
         "pi": ("Pi", "~/.pi", "~/.pi/config.json"),
         "hermes": ("Hermes", "~/.hermes", "~/.hermes/config.json"),
     }

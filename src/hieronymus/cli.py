@@ -357,7 +357,9 @@ def install_command(
     for step in plan.steps:
         click.echo(f"- {step.action}: {step.path}")
         click.echo(f"  {step.description}")
-    if plan.result_kind == "stub":
+    if plan.result_kind == "reserved":
+        click.echo("Result: reserved; no config was written for this target.")
+    elif plan.result_kind == "stub":
         click.echo("Result: stub; real integration is deferred to the agent workflow spec.")
     else:
         click.echo(f"Result: {plan.result_kind}.")

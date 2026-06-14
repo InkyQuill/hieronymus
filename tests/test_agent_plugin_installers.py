@@ -6,9 +6,87 @@ from pathlib import Path
 
 import pytest
 
-from hieronymus.agent_plugins import resolve_plugin
+from hieronymus.agent_plugins import available_plugins, resolve_plugin
 from hieronymus.agent_plugins.base import write_plugin_assets
 from hieronymus.config import HieronymusConfig
+
+WRITABLE_PLUGIN_TARGETS = ["claude", "codex", "openclaw", "opencode", "gemini"]
+RESERVED_PLUGIN_TARGETS = ["mimo", "pi", "hermes"]
+
+
+@pytest.fixture
+def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+def _host_config_snapshot(target: str, home: Path) -> dict[str, object]:
+    if target == "codex":
+        return tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    if target == "claude":
+        return json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+    if target == "openclaw":
+        return json.loads((home / ".openclaw" / "openclaw.json").read_text(encoding="utf-8"))
+    if target == "opencode":
+        return json.loads(
+            (home / ".config" / "opencode" / "plugin.json").read_text(encoding="utf-8")
+        )
+    if target == "gemini":
+        return json.loads((home / ".gemini" / "settings.json").read_text(encoding="utf-8"))
+    raise AssertionError(f"unexpected writable plugin target: {target}")
+
+
+def _host_path(path: str, home: Path) -> Path:
+    if path.startswith("~/"):
+        return home / path.removeprefix("~/")
+    return Path(path)
+
+
+def test_writable_plugin_targets_match_registry() -> None:
+    assert [
+        plugin.name for plugin in available_plugins() if plugin.installs_managed_config
+    ] == WRITABLE_PLUGIN_TARGETS
+
+
+def test_reserved_plugin_targets_match_registry() -> None:
+    assert [
+        plugin.name for plugin in available_plugins() if not plugin.installs_managed_config
+    ] == RESERVED_PLUGIN_TARGETS
+
+
+@pytest.mark.parametrize("target", WRITABLE_PLUGIN_TARGETS)
+def test_writable_plugin_reinstall_is_idempotent(
+    target: str,
+    isolated_home: Path,
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path)
+    plugin = resolve_plugin(target)
+
+    first_plan = plugin.install(config)
+    first_snapshot = _host_config_snapshot(target, isolated_home)
+    second_plan = plugin.install(config)
+    second_snapshot = _host_config_snapshot(target, isolated_home)
+
+    assert first_plan.result_kind == "installed"
+    assert second_plan.result_kind == "installed"
+    assert second_snapshot == first_snapshot
+    assert plugin.availability(config).installed is True
+
+
+def test_reserved_targets_do_not_write_host_configuration(
+    isolated_home: Path,
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path)
+    for target in RESERVED_PLUGIN_TARGETS:
+        plugin = resolve_plugin(target)
+        plan = plugin.install(config)
+        assert plan.result_kind == "reserved"
+        assert not (config.agent_plugins_root / plugin.name).exists()
+        assert all(not _host_path(path, isolated_home).exists() for path in plugin.config_paths)
 
 
 def test_write_plugin_assets_creates_expected_files(tmp_path: Path) -> None:

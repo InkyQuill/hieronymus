@@ -36,16 +36,14 @@ Remaining work:
 
 ### MCP And Agent Integrations
 
-MCP exposes primitives. Agent integrations and skills contain judgment-heavy
-workflow behavior.
+Status: complete for the alpha integration baseline.
 
-Remaining work:
+Completed:
 
-- Replace stub output for integrations whose host protocol is known and ready.
-- Keep reserved targets explicit when no host protocol is implemented.
-- Add install/update tests for every integration that writes host configuration.
-- Continue to keep Read, Learn, and Remember as agent skill workflows rather
-  than MCP judgment wrappers.
+- Claude Code, Codex, OpenCode, OpenClaw, and Gemini CLI have installable host configuration paths.
+- Xiaomi MiMo, Pi, and Hermes remain explicit reserved targets because no safe noninteractive host configuration protocol is implemented.
+- Install and reinstall coverage exists for every integration that writes host configuration.
+- Read, Learn, and Remember remain agent skill workflows rather than MCP judgment wrappers.
 
 ### CLI And Service
 

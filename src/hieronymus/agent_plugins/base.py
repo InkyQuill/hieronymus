@@ -83,6 +83,7 @@ class InstallPlan:
 
 class AgentPlugin(Protocol):
     name: str
+    aliases: tuple[str, ...]
     display_name: str
     detect_paths: tuple[str, ...]
     config_paths: tuple[str, ...]
@@ -254,12 +255,13 @@ def write_plugin_assets(
 
 
 class BaseAgentPlugin:
-    name: str
-    display_name: str
-    detect_paths: tuple[str, ...]
-    config_paths: tuple[str, ...]
+    name = "base"
+    aliases: tuple[str, ...] = ()
+    display_name = "Base"
+    detect_paths: tuple[str, ...] = ()
+    config_paths: tuple[str, ...] = ()
     docs = AGENT_WORKFLOW_SPEC
-    protocol_note: str
+    protocol_note = ""
     installs_managed_config = False
     required_asset_paths: tuple[str, ...] = ()
 

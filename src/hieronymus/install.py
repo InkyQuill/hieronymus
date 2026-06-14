@@ -68,7 +68,10 @@ def resolve_target(name: str) -> InstallTarget:
     for target in TARGETS:
         if target.name == normalized:
             return target
-    resolve_plugin(name)
+    plugin = resolve_plugin(name)
+    for target in TARGETS:
+        if target.name == plugin.name:
+            return target
     raise AssertionError("resolve_plugin returned for an unknown target")
 
 

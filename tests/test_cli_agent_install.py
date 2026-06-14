@@ -89,7 +89,52 @@ def test_install_codex_json_installs_but_dry_run_does_not_mutate(
     assert "Result: installed." in human_result.output
 
 
-def test_install_deferred_provider_human_output_remains_plan(
+def test_install_reserved_provider_json_reports_reserved(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".pi").mkdir(parents=True)
+    data_root = tmp_path / "hieronymus"
+    monkeypatch.setenv("HOME", str(home))
+
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "install", "pi", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["result_kind"] == "reserved"
+    assert payload["steps"] == []
+    assert not (data_root / "agent-plugins" / "pi").exists()
+    assert not (home / ".pi" / "config.json").exists()
+
+
+def test_install_mimocode_alias_json_reports_mimo_reserved(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".mimocode").mkdir(parents=True)
+    data_root = tmp_path / "hieronymus"
+    monkeypatch.setenv("HOME", str(home))
+
+    result = CliRunner().invoke(
+        main,
+        ["--data-root", str(data_root), "install", "mimocode", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["target"] == "mimo"
+    assert payload["result_kind"] == "reserved"
+    assert payload["steps"] == []
+    assert not (data_root / "agent-plugins" / "mimo").exists()
+    assert not (home / ".config" / "mimocode").exists()
+
+
+def test_install_reserved_provider_human_output_remains_plan(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -106,7 +151,8 @@ def test_install_deferred_provider_human_output_remains_plan(
     assert result.exit_code == 0
     assert "Planning Pi integration" in result.output
     assert "Planned changes:" in result.output
-    assert "Result: stub; real integration is deferred" in result.output
+    assert "reserved" in result.output
+    assert "Result: reserved; no config was written" in result.output
     assert not (data_root / "agent-plugins" / "pi").exists()
     assert not (home / ".pi" / "config.json").exists()
 

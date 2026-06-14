@@ -9,13 +9,22 @@ from hieronymus.agent_plugins.base import AgentAvailability, BaseAgentPlugin, In
 from hieronymus.config import HieronymusConfig
 
 
-def test_available_plugins_include_supported_targets() -> None:
+@pytest.fixture
+def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+def test_available_plugins_lists_canonical_targets_in_order() -> None:
     assert [plugin.name for plugin in available_plugins()] == [
         "claude",
         "codex",
         "openclaw",
         "opencode",
         "gemini",
+        "mimo",
         "pi",
         "hermes",
     ]
@@ -29,12 +38,19 @@ def test_resolve_plugin_normalizes_lower_case_name() -> None:
     assert resolve_plugin("CoDeX").name == "codex"
 
 
+def test_resolve_plugin_supports_aliases() -> None:
+    assert resolve_plugin("xiaomi-mimo").name == "mimo"
+    assert resolve_plugin("xiaomi_mimo").name == "mimo"
+    assert resolve_plugin("mimocode").name == "mimo"
+    assert resolve_plugin("MiMoCode").name == "mimo"
+
+
 def test_resolve_plugin_reports_supported_targets() -> None:
     with pytest.raises(
         ValueError,
         match=(
-            "unknown install target: unknown; supported targets: "
-            "claude, codex, openclaw, opencode, gemini, pi, hermes"
+            "Unsupported agent target 'unknown'; supported targets: "
+            "claude, codex, openclaw, opencode, gemini, mimo, pi, hermes"
         ),
     ):
         resolve_plugin("unknown")
@@ -233,6 +249,33 @@ def test_reserved_provider_ignores_stale_managed_marker(
 
     assert availability.available is True
     assert availability.installed is False
+    assert availability.reason == "reserved target"
+
+
+def test_mimo_availability_detects_mimocode_home(
+    isolated_home: Path,
+    tmp_path: Path,
+) -> None:
+    (isolated_home / ".mimocode").mkdir()
+    config = HieronymusConfig(data_root=tmp_path)
+
+    availability = resolve_plugin("mimo").availability(config)
+
+    assert availability.available is True
+    assert availability.installed is False
+    assert availability.reason == "reserved target"
+
+
+def test_reserved_plugins_report_reserved_install_plan(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path)
+    plugin = resolve_plugin("pi")
+
+    plan = plugin.install(config)
+
+    assert plan.result_kind == "reserved"
+    assert plan.steps == []
+    assert "protocol" in plan.protocol_note.lower()
+    assert not (config.agent_plugins_root / "pi").exists()
 
 
 def test_claude_availability_checks_all_detect_paths(

@@ -166,6 +166,8 @@ CLI output.
 - `hiero install <app> --dry-run`: shows the safe installer plan for an agent.
 - `hiero install <app>` writes plugin assets and patches supported agent host
   config.
+- Automation components should call service and install commands with `--json`
+  and consume their machine-readable payloads, not parse human CLI text.
 - `hiero dream --json`: runs local dreaming and emits machine-readable status.
 - `hiero update --check --json`: checks managed update state for scripts.
 - `hiero update --json`: applies an available managed update and emits
@@ -173,9 +175,9 @@ CLI output.
 
 ## Agent Install Boundary
 
-This pass provides real Claude, Codex, OpenClaw, opencode, and Gemini CLI
-installer wiring. Pi and Hermes are reserved detectable targets until their
-host config formats are known.
+This pass provides real Claude, Codex, OpenCode, OpenClaw, and Gemini CLI
+installer wiring. MiMo, Pi, and Hermes are reserved detectable targets until
+safe noninteractive host configuration protocols are implemented.
 
 See [Agent workflows](agent-workflows.md) for the host integration contract.
 
