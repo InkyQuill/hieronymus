@@ -33,9 +33,7 @@ MODULE_CALL_RE = re.compile(
     """,
     re.VERBOSE,
 )
-RPC_METHOD_RE = re.compile(
-    r'\bmethod:\s*["\'](?P<method>(?:admin|config)\.[^"\']+)["\']'
-)
+RPC_METHOD_RE = re.compile(r'\bmethod:\s*["\'](?P<method>(?:admin|config)\.[^"\']+)["\']')
 
 
 def _frontend_sources() -> list[Path]:
@@ -47,9 +45,7 @@ def _relative(path: Path) -> str:
 
 
 def _import_specifiers(text: str) -> list[str]:
-    static_imports = [
-        match.group("specifier") for match in IMPORT_SPECIFIER_RE.finditer(text)
-    ]
+    static_imports = [match.group("specifier") for match in IMPORT_SPECIFIER_RE.finditer(text)]
     module_calls = [match.group("specifier") for match in MODULE_CALL_RE.finditer(text)]
     return static_imports + module_calls
 
