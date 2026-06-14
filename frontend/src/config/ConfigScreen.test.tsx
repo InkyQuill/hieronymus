@@ -3,7 +3,6 @@ import { ConfigScreen } from "./ConfigScreen.js";
 import type { RpcClient } from "../rpc/client.js";
 import type {
   ConfigBootstrap,
-  ConfigFormField,
   ProviderName,
 } from "../rpc/schema.js";
 import {
@@ -11,8 +10,18 @@ import {
   createOpenTuiHarness,
 } from "../test/opentuiHarness.js";
 
-type TestConfigFormField = Omit<ConfigFormField, "section"> & {
+type TestConfigFormField = {
+  key: string;
+  group: string;
   section?: string;
+  label: string;
+  hint: string;
+  placeholder: string;
+  type: "text" | "secret" | "number" | "toggle" | "choice";
+  choices: string[];
+  default: string;
+  minimum?: number;
+  redacted: boolean;
 };
 
 function formSchema(
@@ -53,6 +62,25 @@ function formSchema(
         section: "dream",
         label: "Provider",
         description: "Connection settings for the selected dream provider.",
+      },
+      {
+        id: "dreaming",
+        section: "dream",
+        label: "Dreaming",
+        description:
+          "Autostart thresholds for turning short-term memory into durable memory.",
+      },
+      {
+        id: "ingest",
+        section: "ingest",
+        label: "Ingestion",
+        description: "Limits for short-term memory and Learn ingestion.",
+      },
+      {
+        id: "release",
+        section: "release",
+        label: "Updates",
+        description: "Managed install update channel.",
       },
     ],
     fields: fields.map((field) => ({
@@ -461,6 +489,22 @@ describe("ConfigScreen", () => {
     expect(output).toContain("> Model");
   });
 
+  it("moves between config panels with h and l", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    await mockInput.type("l");
+
+    let output = await waitForFrame((frame) => frame.includes("> Model"));
+    expect(output).toContain("> Model");
+
+    await mockInput.type("h");
+
+    output = await waitForFrame((frame) => frame.includes("▶ OpenAI compatible"));
+    expect(output).toContain("▶ OpenAI compatible");
+  });
+
   it("searches config fields from the keyboard", async () => {
     const { render, mockInput, waitForFrame } = setupTest();
 
@@ -480,6 +524,73 @@ describe("ConfigScreen", () => {
 
     output = await waitForFrame((frame) => frame.includes("> API Key"));
     expect(output).toContain("> API Key");
+  });
+
+  it("searches config fields by hint, group, and section metadata", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+    const initial = {
+      ...payload(),
+      form_schema: formSchema([
+        {
+          key: "provider.model",
+          group: "provider",
+          section: "dream",
+          label: "Model",
+          hint: "unique model hint",
+          placeholder: "gpt-4.1-mini",
+          type: "text" as const,
+          choices: [],
+          default: "",
+          redacted: false,
+        },
+        {
+          key: "release.update_channel",
+          group: "release",
+          section: "release",
+          label: "Update channel",
+          hint: "Release update channel.",
+          placeholder: "",
+          type: "choice" as const,
+          choices: ["stable", "dev"],
+          default: "stable",
+          redacted: false,
+        },
+        {
+          key: "ingest.warning_sentence_count",
+          group: "ingest",
+          section: "ingest",
+          label: "Memory warn sentences",
+          hint: "Warn before rejection.",
+          placeholder: "6",
+          type: "number" as const,
+          choices: [],
+          default: "6",
+          redacted: false,
+        },
+      ]),
+    };
+
+    await render(<ConfigScreen initial={initial} client={undefined} />);
+
+    await mockInput.type("/");
+    await mockInput.type("unique model hint");
+    await mockInput.press("enter");
+    let output = await waitForFrame((frame) => frame.includes("> Model"));
+    expect(output).toContain("> Model");
+
+    await mockInput.type("/");
+    await mockInput.type("release.conf");
+    await mockInput.press("enter");
+    output = await waitForFrame((frame) => frame.includes("> Update channel"));
+    expect(output).toContain("> Update channel");
+
+    await mockInput.type("/");
+    await mockInput.type("Ingestion");
+    await mockInput.press("enter");
+    output = await waitForFrame((frame) =>
+      frame.includes("> Memory warn sentences"),
+    );
+    expect(output).toContain("> Memory warn sentences");
   });
 
   it("ignores further action keys while an operation is in flight", async () => {
