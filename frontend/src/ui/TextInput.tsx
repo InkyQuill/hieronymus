@@ -56,6 +56,8 @@ export function TextAreaInput({
       width={width}
       height={height}
       wrapMode="word"
+      // OpenTUI 0.4.0 textarea exposes scrolling behavior but no visible
+      // scrollbar option; keep bounded dimensions until that API exists.
       scrollMargin={2}
       cursorColor="cyan"
       focusedTextColor="white"

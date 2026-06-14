@@ -40,3 +40,7 @@ work; they are not one-off roadmap deliverables.
   keys.
 - Responsive behavior must preserve the 60-column minimum floor, the 80x24
   compact layout, and wide layouts that do not overflow fixed panes.
+- Multiline memory editors should stay bounded to their modal dimensions. Add a
+  visible textarea scrollbar when OpenTUI exposes a textarea scrollbar control;
+  OpenTUI 0.4.0 only exposes textarea scrolling behavior, not a visible
+  scrollbar option.

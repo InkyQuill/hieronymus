@@ -1092,6 +1092,38 @@ describe("AdminScreen", () => {
     expect(calls).toEqual([]);
   });
 
+  it("keeps multiline memory editor bounded in the admin dialog", async () => {
+    const longBody = Array.from(
+      { length: 20 },
+      (_, index) => `Long memory line ${index + 1}`,
+    ).join("\n");
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: {
+            ...bootstrap().snapshot,
+            detail: {
+              ...bootstrap().snapshot.detail,
+              body: longBody,
+            },
+          },
+        }}
+        client={undefined}
+      />,
+    );
+
+    await mockInput.type("e");
+
+    const output = await waitForFrame((frame) => frame.includes("Edit Memory"));
+    expect(output).toContain("Edit Memory");
+    expect(output).toContain("Text:");
+    expect(output).toContain("[Enter] Submit");
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(80);
+  });
+
   it("reinforces lessons with the current view and preserves lessons", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
