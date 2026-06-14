@@ -24,11 +24,11 @@
 
 - Create `src/hieronymus/cli_boundaries.py`: central catalog of direct-store command names, reasons, and intended consumers.
 - Create `src/hieronymus/service_discovery.py`: small helper that reads runtime state, verifies local service health through `ServiceClient`, and returns a JSON-safe status object.
-- Modify `src/hieronymus/cli.py`: improve `hiero help`, add `--json` to legacy automation commands, and use boundary metadata for help/docs consistency.
-- Modify `src/hieronymus/agent_hooks.py`: include local service discovery in JSON hook payloads while keeping human hook output concise.
-- Modify `src/hieronymus/mcp_server.py`: expose a lightweight MCP status tool that reports direct-adapter mode and discovered daemon status without routing mutations through human CLI output.
-- Modify `docs/service-toolkit.md`: document command groups, direct SQLite boundary, local-first data-root behavior, examples, and alpha status.
-- Modify `docs/roadmap.md`: move the CLI and service bullets into completed baseline after implementation is verified.
+- Refine `src/hieronymus/cli.py`: improve `hiero help`, add `--json` to legacy automation commands, and use boundary metadata for help/docs consistency.
+- Extend `src/hieronymus/agent_hooks.py`: include local service discovery in JSON hook payloads while keeping human hook output concise.
+- Extend `src/hieronymus/mcp_server.py`: expose a lightweight MCP status tool that reports direct-adapter mode and discovered daemon status without routing mutations through human CLI output.
+- Update `docs/service-toolkit.md`: document command groups, direct SQLite boundary, local-first data-root behavior, examples, and alpha status.
+- Revise `docs/roadmap.md`: move the CLI and service bullets into completed baseline after implementation is verified.
 - Test in `tests/test_cli_service.py`, `tests/test_cli.py`, `tests/test_agent_hooks.py`, `tests/test_mcp_server.py`, and a new `tests/test_cli_boundaries.py`.
 
 ---
@@ -52,9 +52,9 @@ from hieronymus.cli_boundaries import DIRECT_STORE_COMMANDS, DIRECT_STORE_MCP_AD
 
 
 def test_direct_store_cli_commands_are_documented() -> None:
-    names = {entry.name for entry in DIRECT_STORE_COMMANDS}
+    names = [entry.name for entry in DIRECT_STORE_COMMANDS]
 
-    assert names == {
+    assert names == [
         "init-series",
         "propose-term",
         "validate",
@@ -65,7 +65,7 @@ def test_direct_store_cli_commands_are_documented() -> None:
         "recall",
         "feedback",
         "dream",
-    }
+    ]
     assert all(entry.reason for entry in DIRECT_STORE_COMMANDS)
     assert all(entry.consumer in {"human-debug", "agent-automation", "maintenance"} for entry in DIRECT_STORE_COMMANDS)
 
@@ -340,7 +340,7 @@ def discover_local_service(config: HieronymusConfig) -> dict[str, Any]:
 
     try:
         health = ServiceClient().health(state)
-    except ServiceClientError as error:
+    except (OSError, ServiceClientError) as error:
         return {
             "available": False,
             "mode": "direct-local",

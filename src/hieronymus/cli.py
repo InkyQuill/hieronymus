@@ -5,6 +5,7 @@ import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -96,7 +97,9 @@ def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str
     }
 
 
-def _echo_json_or_line(payload: object, *, json_output: bool, line: str) -> None:
+def _echo_json_or_line(
+    payload: dict[str, Any] | list[Any], *, json_output: bool, line: str
+) -> None:
     if json_output:
         click.echo(render_json(payload))
         return
