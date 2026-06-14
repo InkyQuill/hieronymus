@@ -95,15 +95,8 @@ Remaining work:
 
 - Extend `hiero config` beyond the current `dream.conf`, `ingest.conf`, and
   `release.conf` editor as future configuration files are added.
-- Keep TUI admin and config mutations behind `AdminBridge` and `ConfigBridge`
-  RPC handlers, existing domain stores, migrations, and audited Python methods.
-- Ensure the frontend does not write SQLite, parse human CLI output, or
-  duplicate migration/domain mutation logic.
 - Support keyboard-first navigation with consistent `q`, `Esc`, `/`, `Tab`,
   `Shift+Tab`, arrows, and `hjkl` where useful.
-- Keep detail panes useful for dense inspection: fields, readable prose, JSON,
-  diffs, provenance, recall reasons, and dream/audit output should render
-  inside the admin interface.
 - Replace the lightweight memory-detail markdown renderer with a full markdown
   renderer once OpenTUI markdown output is reliable in the test renderer.
 - Enable visible scrollbars for multiline memory editors if OpenTUI exposes
