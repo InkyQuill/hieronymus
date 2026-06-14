@@ -8,7 +8,6 @@ from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.tui_bridge.config_api import ConfigBridge
 from hieronymus.tui_bridge.server import _handlers
 
-
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_SRC = ROOT / "frontend" / "src"
 PYTHON_SRC = ROOT / "src"
