@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -95,6 +95,15 @@ def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str
         "text": memory.text,
         "metadata": memory.metadata,
     }
+
+
+def _echo_json_or_line(
+    payload: dict[str, Any] | list[Any], *, json_output: bool, line: str
+) -> None:
+    if json_output:
+        click.echo(render_json(payload))
+        return
+    click.echo(line)
 
 
 def _validate_provided_match(
@@ -457,17 +466,45 @@ def doctor_command(ctx: click.Context, autofix: bool, as_json: bool) -> None:
 @main.command("help")
 def help_command() -> None:
     click.echo(render_greeting())
+    click.echo("Alpha software: local-first, usable at your own risk.")
     click.echo()
-    click.echo(f"{GUIDE_ICON} Common commands")
+    click.echo(f"{GUIDE_ICON} Service")
     click.echo("  hiero                  Start or connect to the local service")
     click.echo("  hiero status           Show daemon and provider status")
-    click.echo("  hiero doctor           Check configuration and service health")
+    click.echo("  hiero status --json    Emit daemon and provider status for scripts")
+    click.echo("  hiero stop             Request graceful daemon shutdown")
     click.echo("  hiero restart          Restart the local daemon")
-    click.echo("  hiero admin            Open the local management TUI")
-    click.echo("  hiero admin --json     Show management counts and available views")
+    click.echo()
+    click.echo(f"{GUIDE_ICON} Management")
     click.echo("  hiero config           Open the configuration TUI")
-    click.echo("  hiero update           Update managed installs in place")
+    click.echo(
+        "  hiero config --json    Emit config, provider, dreaming, ingest, and release state"
+    )
+    click.echo("  hiero admin            Open the local management TUI")
+    click.echo("  hiero admin --json     Emit management counts and available views")
+    click.echo("  hiero doctor           Check configuration and service health")
+    click.echo("  hiero doctor --json    Emit configuration and service diagnostics")
+    click.echo()
+    click.echo(f"{GUIDE_ICON} Agent and automation")
+    click.echo("  hiero session-start <series> --task-type <type> --json")
+    click.echo("  hiero remember-short <session-id> --role user --kind correction")
+    click.echo("      --text <text> --json")
+    click.echo("  hiero recall <session-id> --series <series> --query <query>")
+    click.echo("      --source-language <src> --target-language <dst>")
+    click.echo("      --task-type <type> --json")
+    click.echo("  hiero feedback <crystal-id> --event confirmed_by_user --role user --json")
+    click.echo()
+    click.echo(f"{GUIDE_ICON} Maintenance")
     click.echo("  hiero install codex --dry-run")
+    click.echo("  hiero update           Update managed installs in place")
+    click.echo("  hiero dream --json     Run local dreaming and emit machine-readable status")
+    click.echo()
+    click.echo(f"{GUIDE_ICON} Examples")
+    click.echo("  hiero status --json")
+    click.echo("  hiero session-start oso --task-type translation --json")
+    click.echo('  hiero recall 1 --series oso --query "style"')
+    click.echo("      --source-language ja --target-language en")
+    click.echo("      --task-type translation --json")
 
 
 @main.command("init-series")
@@ -475,9 +512,15 @@ def help_command() -> None:
 @click.option("--title", required=True)
 @click.option("--source-language", default="ja")
 @click.option("--target-language", default="en")
+@click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def init_series(
-    ctx: click.Context, slug: str, title: str, source_language: str, target_language: str
+    ctx: click.Context,
+    slug: str,
+    title: str,
+    source_language: str,
+    target_language: str,
+    json_output: bool,
 ) -> None:
     try:
         series = Registry(ctx.obj["config"]).create_series(
@@ -488,11 +531,10 @@ def init_series(
         )
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
-    click.echo(
-        json.dumps(
-            {"slug": series.slug, "database_path": str(ctx.obj["config"].database_path)},
-            ensure_ascii=False,
-        )
+    _echo_json_or_line(
+        {"slug": series.slug, "database_path": str(ctx.obj["config"].database_path)},
+        json_output=json_output,
+        line=f"Series {series.slug} initialized at {ctx.obj['config'].database_path}",
     )
 
 
@@ -502,6 +544,7 @@ def init_series(
 @click.option("--source", "source_text", required=True)
 @click.option("--translation", required=True)
 @click.option("--tag", "tags", multiple=True)
+@click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def propose_term(
     ctx: click.Context,
@@ -510,6 +553,7 @@ def propose_term(
     source_text: str,
     translation: str,
     tags: tuple[str, ...],
+    json_output: bool,
 ) -> None:
     try:
         series = Registry(ctx.obj["config"]).get_series(series_slug)
@@ -525,7 +569,11 @@ def propose_term(
         )
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
-    click.echo(json.dumps({"term_id": term_id}, ensure_ascii=False))
+    _echo_json_or_line(
+        {"term_id": term_id},
+        json_output=json_output,
+        line=f"Term proposal {term_id} created",
+    )
 
 
 @main.command("validate")
@@ -538,8 +586,15 @@ def propose_term(
     type=click.Path(exists=True, dir_okay=False, readable=True),
     required=True,
 )
+@click.option("--json", "json_output", is_flag=True)
 @click.pass_context
-def validate(ctx: click.Context, series_slug: str, raw_file: str, translated_file: str) -> None:
+def validate(
+    ctx: click.Context,
+    series_slug: str,
+    raw_file: str,
+    translated_file: str,
+    json_output: bool,
+) -> None:
     try:
         series = Registry(ctx.obj["config"]).get_series(series_slug)
         with (
@@ -555,7 +610,14 @@ def validate(ctx: click.Context, series_slug: str, raw_file: str, translated_fil
             )
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
-    click.echo(json.dumps([asdict(finding) for finding in findings], ensure_ascii=False, indent=2))
+    payload = [asdict(finding) for finding in findings]
+    _echo_json_or_line(
+        payload,
+        json_output=json_output,
+        line=(
+            "No terminology findings." if not payload else f"{len(payload)} terminology finding(s)."
+        ),
+    )
 
 
 @main.command("remember")
@@ -563,8 +625,16 @@ def validate(ctx: click.Context, series_slug: str, raw_file: str, translated_fil
 @click.option("--kind", required=True)
 @click.option("--text", required=True)
 @click.option("--source-ref", default="")
+@click.option("--json", "json_output", is_flag=True)
 @click.pass_context
-def remember(ctx: click.Context, series_slug: str, kind: str, text: str, source_ref: str) -> None:
+def remember(
+    ctx: click.Context,
+    series_slug: str,
+    kind: str,
+    text: str,
+    source_ref: str,
+    json_output: bool,
+) -> None:
     try:
         series = Registry(ctx.obj["config"]).get_series(series_slug)
         memory_id = MemoryStore(
@@ -573,7 +643,11 @@ def remember(ctx: click.Context, series_slug: str, kind: str, text: str, source_
         ).add(kind=kind, text=text, source_ref=source_ref)
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
-    click.echo(json.dumps({"memory_id": memory_id}, ensure_ascii=False))
+    _echo_json_or_line(
+        {"memory_id": memory_id},
+        json_output=json_output,
+        line=f"Memory {memory_id} stored",
+    )
 
 
 @main.command("session-start")
@@ -583,6 +657,7 @@ def remember(ctx: click.Context, series_slug: str, kind: str, text: str, source_
 @click.option("--task-type", required=True)
 @click.option("--volume", default="")
 @click.option("--chapter", default="")
+@click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def session_start(
     ctx: click.Context,
@@ -592,6 +667,7 @@ def session_start(
     task_type: str,
     volume: str,
     chapter: str,
+    json_output: bool,
 ) -> None:
     try:
         series = Registry(ctx.obj["config"]).get_series(series_slug)
@@ -619,18 +695,27 @@ def session_start(
         )
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
-    click.echo(json.dumps({"session_id": session.id}, ensure_ascii=False))
+    _echo_json_or_line(
+        {"session_id": session.id},
+        json_output=json_output,
+        line=f"Session {session.id} started",
+    )
 
 
 @main.command("session-complete")
 @click.argument("session_id", type=int)
+@click.option("--json", "json_output", is_flag=True)
 @click.pass_context
-def session_complete(ctx: click.Context, session_id: int) -> None:
+def session_complete(ctx: click.Context, session_id: int, json_output: bool) -> None:
     try:
         WorkspaceStore(ctx.obj["config"]).complete_session(session_id)
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
-    click.echo(json.dumps({"session_id": session_id, "completed": True}, ensure_ascii=False))
+    _echo_json_or_line(
+        {"session_id": session_id, "completed": True},
+        json_output=json_output,
+        line=f"Session {session_id} completed",
+    )
 
 
 @main.command("remember-short")
@@ -639,6 +724,7 @@ def session_complete(ctx: click.Context, session_id: int) -> None:
 @click.option("--kind", required=True)
 @click.option("--text", required=True)
 @click.option("--source-ref", default="")
+@click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def remember_short(
     ctx: click.Context,
@@ -647,6 +733,7 @@ def remember_short(
     kind: str,
     text: str,
     source_ref: str,
+    json_output: bool,
 ) -> None:
     try:
         memory_id = WorkspaceStore(ctx.obj["config"]).add_short_term_memory(
@@ -658,7 +745,11 @@ def remember_short(
         )
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
-    click.echo(json.dumps({"memory_id": memory_id}, ensure_ascii=False))
+    _echo_json_or_line(
+        {"memory_id": memory_id},
+        json_output=json_output,
+        line=f"Short-term memory {memory_id} stored",
+    )
 
 
 @main.command("recall")
@@ -671,6 +762,7 @@ def remember_short(
 @click.option("--volume", default="")
 @click.option("--chapter", default="")
 @click.option("--limit", default=10, type=int)
+@click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def recall(
     ctx: click.Context,
@@ -683,6 +775,7 @@ def recall(
     volume: str,
     chapter: str,
     limit: int,
+    json_output: bool,
 ) -> None:
     try:
         Registry(ctx.obj["config"]).get_series(series_slug)
@@ -709,21 +802,21 @@ def recall(
         )
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
-    click.echo(
-        json.dumps(
-            [
-                {
-                    "source": result.source,
-                    "rank": result.rank,
-                    "score": result.score,
-                    "reason": result.reason,
-                    "crystal": _crystal_payload(result.crystal),
-                    "short_term_memory": _short_term_memory_payload(result.short_term_memory),
-                }
-                for result in results
-            ],
-            ensure_ascii=False,
-        )
+    payload = [
+        {
+            "source": result.source,
+            "rank": result.rank,
+            "score": result.score,
+            "reason": result.reason,
+            "crystal": _crystal_payload(result.crystal),
+            "short_term_memory": _short_term_memory_payload(result.short_term_memory),
+        }
+        for result in results
+    ]
+    _echo_json_or_line(
+        payload,
+        json_output=json_output,
+        line="No recall results." if not payload else f"{len(payload)} recall result(s).",
     )
 
 
@@ -733,6 +826,7 @@ def recall(
 @click.option("--role", "source_role", required=True)
 @click.option("--evidence", default="")
 @click.option("--session-id", type=int, default=None)
+@click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def feedback(
     ctx: click.Context,
@@ -741,6 +835,7 @@ def feedback(
     source_role: str,
     evidence: str,
     session_id: int | None,
+    json_output: bool,
 ) -> None:
     try:
         event_id = FeedbackStore(ctx.obj["config"]).record(
@@ -752,7 +847,11 @@ def feedback(
         )
     except (KeyError, ValueError) as error:
         _raise_click_error(error)
-    click.echo(json.dumps({"event_id": event_id}, ensure_ascii=False))
+    _echo_json_or_line(
+        {"event_id": event_id},
+        json_output=json_output,
+        line=f"Feedback event {event_id} recorded",
+    )
 
 
 @main.command("dream")

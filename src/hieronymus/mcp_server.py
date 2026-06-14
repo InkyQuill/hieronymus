@@ -6,6 +6,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from hieronymus.cli_boundaries import DIRECT_STORE_MCP_ADAPTER
 from hieronymus.concept_models import ConceptFacetRecord, ConceptRecord
 from hieronymus.concepts import CONCEPT_CANDIDATE, ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig, load_config
@@ -22,6 +23,7 @@ from hieronymus.memory_models import (
 )
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry, Series
+from hieronymus.service_discovery import discover_local_service
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
@@ -303,6 +305,22 @@ def _recent_dream_audit_proposal_payloads(config: HieronymusConfig) -> list[dict
                 }
             )
     return payloads
+
+
+@server.tool()
+def hieronymus_status() -> dict[str, Any]:
+    """Report MCP adapter mode and discovered local service status."""
+    config = _load_validated_config()
+    return {
+        "adapter": {
+            "name": DIRECT_STORE_MCP_ADAPTER.name,
+            "mode": "stdio-direct-store",
+            "reason": DIRECT_STORE_MCP_ADAPTER.reason,
+        },
+        "service": discover_local_service(config),
+        "data_root": str(config.data_root),
+        "database_path": str(config.database_path),
+    }
 
 
 @server.tool()

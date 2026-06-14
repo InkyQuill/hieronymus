@@ -72,6 +72,7 @@ def test_hiero_console_alias_runs_existing_command(tmp_path: Path) -> None:
             str(data_root),
             "init-series",
             "oso",
+            "--json",
             "--title",
             "Only Sense Online",
         ],
@@ -92,14 +93,28 @@ def test_cli_help_mentions_service_commands() -> None:
     result = CliRunner().invoke(main, ["help"])
 
     assert result.exit_code == 0
-    assert "hiero status" in result.output
-    assert "hiero install codex --dry-run" in result.output
+    assert all(len(line) <= 100 for line in result.output.splitlines())
+    assert "Hieronymus v0.2.0α" in result.output
+    assert "Alpha software: local-first, usable at your own risk." in result.output
+    assert "Service" in result.output
+    assert "Management" in result.output
+    assert "Agent and automation" in result.output
+    assert "Maintenance" in result.output
+    assert "Examples" in result.output
+    assert "hiero status --json" in result.output
+    assert "hiero doctor --json" in result.output
+    assert "hiero session-start oso --task-type translation --json" in result.output
+    assert "hiero feedback <crystal-id> --event confirmed_by_user --role user --json" in (
+        result.output
+    )
+    assert "--event helpful" not in result.output
+    assert (
+        'hiero recall 1 --series oso --query "style"\n'
+        "      --source-language ja --target-language en\n"
+        "      --task-type translation --json"
+    ) in result.output
     assert "Open the memory management TUI" not in result.output
-    assert "Open the configuration TUI" in result.output
-    assert "Open the local management TUI" in result.output
-    assert "Show management counts and available views" in result.output
     assert "Show config paths" not in result.output
-    assert "hiero update           Update managed installs in place" in result.output
 
 
 def test_click_help_describes_config_command() -> None:

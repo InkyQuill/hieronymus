@@ -22,6 +22,37 @@ from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
 
+def test_mcp_status_reports_direct_adapter_and_service_discovery(monkeypatch, tmp_path):
+    data_root = tmp_path / "hieronymus"
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(data_root))
+    monkeypatch.setattr(
+        "hieronymus.mcp_server.discover_local_service",
+        lambda config: {
+            "available": False,
+            "mode": "direct-local",
+            "reason": "no running local service discovered",
+        },
+    )
+
+    from hieronymus.cli_boundaries import DIRECT_STORE_MCP_ADAPTER
+    from hieronymus.mcp_server import hieronymus_status
+
+    assert hieronymus_status() == {
+        "adapter": {
+            "name": "hieronymus-mcp",
+            "mode": "stdio-direct-store",
+            "reason": DIRECT_STORE_MCP_ADAPTER.reason,
+        },
+        "service": {
+            "available": False,
+            "mode": "direct-local",
+            "reason": "no running local service discovered",
+        },
+        "data_root": str(data_root),
+        "database_path": str(data_root / "hieronymus.sqlite"),
+    }
+
+
 def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     series = Registry(load_config()).create_series(
@@ -309,6 +340,7 @@ def test_mcp_server_registers_expected_tool_names():
         "hieronymus_feedback",
         "hieronymus_dream",
         "hieronymus_concept_proposals_list",
+        "hieronymus_status",
     }
 
 
