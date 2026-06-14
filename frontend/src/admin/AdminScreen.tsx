@@ -538,6 +538,27 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     const enter = isConfirmKey(keyboardKey);
     const escape = isEscapeKey(keyboardKey);
 
+    if (searchActive) {
+      if (escape) {
+        cancelSearch();
+        return;
+      }
+      if (enter) {
+        submitSearch();
+        return;
+      }
+      if (keyboardKey.name === "backspace") {
+        setSearchText((current) => current.slice(0, -1));
+        return;
+      }
+
+      const char = printableSearchChar(keyboardKey);
+      if (char !== null) {
+        setSearchText((current) => current + char);
+      }
+      return;
+    }
+
     if (helpOpen) {
       if (ctrl && keyboardKey.name === "p") {
         setSelectedCommandIndex(0);
@@ -579,27 +600,6 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           paletteCommands[clampCommandIndex(selectedCommandIndex)];
         executeCommand(command);
         return;
-      }
-      return;
-    }
-
-    if (searchActive) {
-      if (escape) {
-        cancelSearch();
-        return;
-      }
-      if (enter) {
-        submitSearch();
-        return;
-      }
-      if (keyboardKey.name === "backspace") {
-        setSearchText((current) => current.slice(0, -1));
-        return;
-      }
-
-      const char = printableSearchChar(keyboardKey);
-      if (char !== null) {
-        setSearchText((current) => current + char);
       }
       return;
     }
@@ -699,6 +699,16 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     if (keyboardKey.name === "/") {
       setSearchActive(true);
       setSearchText("");
+      return;
+    }
+
+    const command = commandForKey(
+      paletteCommands,
+      keyboardKey,
+      Boolean(snapshot.selected),
+    );
+    if (command) {
+      executeCommand(command);
       return;
     }
 
@@ -898,13 +908,19 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         </box>
 
         <SearchPrompt active={searchActive} query={searchText} />
-        <StatusLine message={status.message} error={status.error} />
         <box flexDirection="row" marginTop={1}>
           <text fg="gray">
-            Tab pane / search 1-{viewKeyLimit} view ↑/↓ or hjkl move Ctrl+P
-            commands ? help q quit
+            {footerText(
+              footerKeys({
+                commandsOpen,
+                helpOpen,
+                searchActive,
+                viewKeyLimit,
+              }),
+            )}
           </text>
         </box>
+        <StatusLine message={status.message} error={status.error} />
       </box>
     );
   }
@@ -1025,7 +1041,7 @@ function footerKeys({
     return ["↑/↓ or j/k move", "Enter run", "Esc close", "? help"];
   }
   return [
-    "Tab focus",
+    "Tab pane",
     "/ search",
     `1-${viewKeyLimit} view`,
     "↑/↓ or hjkl move",
@@ -1033,6 +1049,47 @@ function footerKeys({
     "? help",
     "q quit",
   ];
+}
+
+function commandForKey(
+  commands: Array<AdminCommand & { disabled: boolean }>,
+  key: KeyboardInput,
+  hasSelection: boolean,
+): (AdminCommand & { disabled: boolean }) | undefined {
+  if (key.ctrl || key.meta || key.option) {
+    return undefined;
+  }
+  return commands.find((command) => {
+    if (command.disabled || (command.requires_selection && !hasSelection)) {
+      return false;
+    }
+    return commandKeyMatches(command.key, key);
+  });
+}
+
+function commandKeyMatches(commandKey: string, key: KeyboardInput): boolean {
+  if (commandKey === "enter") {
+    return isConfirmKey(key);
+  }
+  if (commandKey.length === 1) {
+    if (
+      key.name === commandKey ||
+      key.raw === commandKey ||
+      key.sequence === commandKey
+    ) {
+      return true;
+    }
+    if (commandKey.toLocaleLowerCase() !== key.name) {
+      return false;
+    }
+    const expectsShift = commandKey !== commandKey.toLocaleLowerCase();
+    return expectsShift ? Boolean(key.shift) : true;
+  }
+  return commandKey === key.name;
+}
+
+function footerText(keys: string[]): string {
+  return keys.join(" ");
 }
 
 function SearchPrompt({ active, query }: { active: boolean; query: string }) {
