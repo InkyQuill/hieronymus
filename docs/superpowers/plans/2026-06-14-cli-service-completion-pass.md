@@ -690,7 +690,7 @@ git commit -m "feat: require json flag for automation cli payloads"
 - Modify: `src/hieronymus/cli.py`
 - Modify: `tests/test_cli_service.py`
 
-- [ ] **Step 1: Replace brittle help assertions with grouped-help expectations**
+- [x] **Step 1: Replace brittle help assertions with grouped-help expectations**
 
 Update `tests/test_cli_service.py::test_cli_help_mentions_service_commands`:
 
@@ -713,7 +713,7 @@ def test_cli_help_mentions_service_commands() -> None:
     assert "Show config paths" not in result.output
 ```
 
-- [ ] **Step 2: Run the help test and confirm failure**
+- [x] **Step 2: Run the help test and confirm failure**
 
 Run:
 
@@ -723,7 +723,7 @@ uv run pytest tests/test_cli_service.py::test_cli_help_mentions_service_commands
 
 Expected: FAIL because the current custom help lacks alpha risk language, groups, and examples.
 
-- [ ] **Step 3: Implement grouped custom help**
+- [x] **Step 3: Implement grouped custom help**
 
 Replace `help_command()` in `src/hieronymus/cli.py` with:
 
@@ -764,7 +764,7 @@ def help_command() -> None:
     click.echo('  hiero recall 1 --series oso --query "style" --source-language ja --target-language en --task-type translation --json')
 ```
 
-- [ ] **Step 4: Run the help test**
+- [x] **Step 4: Run the help test**
 
 Run:
 
@@ -774,7 +774,7 @@ uv run pytest tests/test_cli_service.py::test_cli_help_mentions_service_commands
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit help changes**
+- [x] **Step 5: Commit help changes**
 
 Run:
 
