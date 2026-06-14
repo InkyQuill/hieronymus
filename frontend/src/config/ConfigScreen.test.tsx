@@ -11,8 +11,12 @@ import {
   createOpenTuiHarness,
 } from "../test/opentuiHarness.js";
 
+type TestConfigFormField = Omit<ConfigFormField, "section"> & {
+  section?: string;
+};
+
 function formSchema(
-  fields: ConfigFormField[] = [
+  fields: TestConfigFormField[] = [
     {
       key: "provider.model",
       group: "provider",
@@ -38,15 +42,30 @@ function formSchema(
   ],
 ) {
   return {
+    sections: [
+      { id: "dream", label: "Dream", description: "dream.conf" },
+      { id: "ingest", label: "Ingest", description: "ingest.conf" },
+      { id: "release", label: "Release", description: "release.conf" },
+    ],
     groups: [
       {
         id: "provider",
+        section: "dream",
         label: "Provider",
         description: "Connection settings for the selected dream provider.",
       },
     ],
-    fields,
+    fields: fields.map((field) => ({
+      ...field,
+      section: field.section ?? sectionForField(field.key),
+    })),
   };
+}
+
+function sectionForField(key: string): string {
+  if (key.startsWith("ingest.")) return "ingest";
+  if (key.startsWith("release.")) return "release";
+  return "dream";
 }
 
 function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
@@ -162,6 +181,7 @@ describe("ConfigScreen", () => {
     );
     expect(output).toContain("Providers");
     expect(output).toContain("OpenAI compatible");
+    expect(output).toContain("Config files: Dream | Ingest | Release");
     expect(output).toContain("Tab pane");
     expect(output).not.toContain(
       "/tmp/dream.conf | /tmp/ingest.conf | /tmp/release.conf",
@@ -324,6 +344,17 @@ describe("ConfigScreen", () => {
       frame.includes("Backend Model Label"),
     );
     expect(output).toContain("Backend Model Label");
+  });
+
+  it("renders backend-owned config section labels", async () => {
+    const { render, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Config files: Dream | Ingest | Release"),
+    );
+    expect(output).toContain("Config files: Dream | Ingest | Release");
   });
 
   it("renders a placeholder when model suggestions are absent", async () => {
@@ -630,7 +661,7 @@ describe("ConfigScreen", () => {
       <ConfigScreen
         initial={{
           ...payload(),
-          form_schema: { groups: [], fields: [] },
+          form_schema: { sections: [], groups: [], fields: [] },
         }}
         client={client}
       />,

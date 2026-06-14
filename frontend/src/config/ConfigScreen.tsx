@@ -8,6 +8,7 @@ import {
   ConfigBootstrapSchema,
   type ConfigBootstrap,
   type ConfigFormField,
+  type ConfigFormSection,
 } from "../rpc/schema.js";
 import type { RpcClient } from "../rpc/client.js";
 import { ConfigForm } from "./ConfigForm.js";
@@ -88,6 +89,7 @@ export function ConfigScreen({ initial, client }: Props) {
 
   const suggestions = modelSuggestions(payload);
   const detailErrors = getDetailErrors(payload);
+  const sectionLabels = configSectionLabels(payload.form_schema.sections);
 
   useEffect(() => {
     setFocusedFieldIndex((index) =>
@@ -360,6 +362,9 @@ export function ConfigScreen({ initial, client }: Props) {
           {selectedProvider} · {layout.kind} {dimensions.width}x
           {dimensions.height}
         </text>
+        {sectionLabels.length > 0 ? (
+          <text fg="gray">Config files: {sectionLabels.join(" | ")}</text>
+        ) : null}
 
         <box
           flexDirection="column"
@@ -427,6 +432,9 @@ export function ConfigScreen({ initial, client }: Props) {
           .filter(Boolean)
           .join(" | ")}
       </text>
+      {sectionLabels.length > 0 ? (
+        <text fg="gray">Config files: {sectionLabels.join(" | ")}</text>
+      ) : null}
 
       <box flexDirection="row" marginTop={1}>
         {/* Left Column: Provider Selector */}
@@ -563,6 +571,10 @@ function getDetailErrors(payload: ConfigBootstrap): string[] {
     return [detail];
   }
   return [];
+}
+
+function configSectionLabels(sections: ConfigFormSection[]): string[] {
+  return sections.map((section) => section.label).filter(Boolean);
 }
 
 function providerKeys(providerCount: number): string[] {

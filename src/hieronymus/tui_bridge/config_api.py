@@ -45,14 +45,33 @@ REMOTE_PROVIDERS = ("openai", "gemini", "anthropic")
 
 def _form_schema() -> dict[str, object]:
     return {
+        "sections": [
+            {
+                "id": "dream",
+                "label": "Dream",
+                "description": "dream.conf",
+            },
+            {
+                "id": "ingest",
+                "label": "Ingest",
+                "description": "ingest.conf",
+            },
+            {
+                "id": "release",
+                "label": "Release",
+                "description": "release.conf",
+            },
+        ],
         "groups": [
             {
                 "id": "provider",
+                "section": "dream",
                 "label": "Provider",
                 "description": "Connection settings for the selected dream provider.",
             },
             {
                 "id": "dreaming",
+                "section": "dream",
                 "label": "Dreaming",
                 "description": (
                     "Autostart thresholds for turning short-term memory into durable memory."
@@ -60,11 +79,13 @@ def _form_schema() -> dict[str, object]:
             },
             {
                 "id": "release",
+                "section": "release",
                 "label": "Updates",
                 "description": "Managed install update channel.",
             },
             {
                 "id": "ingest",
+                "section": "ingest",
                 "label": "Ingestion",
                 "description": "Limits for short-term memory and Learn ingestion.",
             },
@@ -75,6 +96,7 @@ def _form_schema() -> dict[str, object]:
                 "provider",
                 "Model",
                 "text",
+                section="dream",
                 hint="Workflow model used by the selected provider.",
                 placeholder="e.g. gpt-4.1-mini",
             ),
@@ -83,6 +105,7 @@ def _form_schema() -> dict[str, object]:
                 "provider",
                 "API Key",
                 "secret",
+                section="dream",
                 hint="Stored as plaintext in dream.conf and redacted in UI payloads.",
                 placeholder="stored in dream.conf",
                 redacted=True,
@@ -92,6 +115,7 @@ def _form_schema() -> dict[str, object]:
                 "provider",
                 "API Path",
                 "text",
+                section="dream",
                 hint="Base URL for OpenAI-compatible, Gemini, or Anthropic gateways.",
                 placeholder="e.g. https://api.openai.com/v1",
             ),
@@ -100,6 +124,7 @@ def _form_schema() -> dict[str, object]:
                 "provider",
                 "Timeout (seconds)",
                 "number",
+                section="dream",
                 hint="Provider check and model-list timeout.",
                 placeholder="e.g. 30",
                 minimum=1,
@@ -109,6 +134,7 @@ def _form_schema() -> dict[str, object]:
                 "dreaming",
                 "Autostart Enabled",
                 "toggle",
+                section="dream",
                 hint="Whether scheduled dreaming can run automatically.",
                 choices=["yes", "no"],
                 default="no",
@@ -118,6 +144,7 @@ def _form_schema() -> dict[str, object]:
                 "dreaming",
                 "Min Interval (minutes)",
                 "number",
+                section="dream",
                 hint="Minimum minutes between scheduled dream cycles.",
                 placeholder="e.g. 30",
                 minimum=1,
@@ -127,6 +154,7 @@ def _form_schema() -> dict[str, object]:
                 "dreaming",
                 "New Memory Threshold",
                 "number",
+                section="dream",
                 hint="Pending short-term memories required before scheduled dreaming runs.",
                 placeholder="e.g. 25",
                 minimum=1,
@@ -136,6 +164,7 @@ def _form_schema() -> dict[str, object]:
                 "release",
                 "Update Channel",
                 "choice",
+                section="release",
                 hint="Stable uses release tags; dev tracks the configured development target.",
                 choices=["stable", "dev"],
                 default="stable",
@@ -145,6 +174,7 @@ def _form_schema() -> dict[str, object]:
                 "ingest",
                 "Memory Warn Sentences",
                 "number",
+                section="ingest",
                 hint="Warn when direct short-term memory exceeds this sentence count.",
                 placeholder="e.g. 6",
                 default="6",
@@ -155,6 +185,7 @@ def _form_schema() -> dict[str, object]:
                 "ingest",
                 "Memory Reject Sentences",
                 "number",
+                section="ingest",
                 hint="Reject direct short-term memory above this sentence count.",
                 placeholder="e.g. 30",
                 default="30",
@@ -165,6 +196,7 @@ def _form_schema() -> dict[str, object]:
                 "ingest",
                 "Learn Block Characters",
                 "number",
+                section="ingest",
                 hint="Maximum Learn block size before splitting.",
                 placeholder="e.g. 1200",
                 default="1200",
@@ -180,6 +212,7 @@ def _field(
     label: str,
     field_type: str,
     *,
+    section: str,
     hint: str,
     placeholder: str = "",
     choices: list[str] | None = None,
@@ -190,6 +223,7 @@ def _field(
     payload: dict[str, object] = {
         "key": key,
         "group": group,
+        "section": section,
         "label": label,
         "hint": hint,
         "placeholder": placeholder,
