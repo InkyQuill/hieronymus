@@ -262,15 +262,6 @@ export function ConfigScreen({ initial, client }: Props) {
     const enter = isConfirmKey(keyboardKey);
     const escape = isEscapeKey(keyboardKey);
 
-    // 1. Focus Cycling
-    if (tab) {
-      if (isEditing) {
-        submitField();
-      }
-      switchPanel();
-      return;
-    }
-
     if (searchActive) {
       if (escape) {
         cancelSearch();
@@ -289,6 +280,15 @@ export function ConfigScreen({ initial, client }: Props) {
       if (char !== null) {
         setSearchText((current) => current + char);
       }
+      return;
+    }
+
+    // 1. Focus Cycling
+    if (tab) {
+      if (isEditing) {
+        submitField();
+      }
+      switchPanel();
       return;
     }
 

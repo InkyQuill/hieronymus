@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { ConfigScreen } from "./ConfigScreen.js";
 import type { RpcClient } from "../rpc/client.js";
-import type {
-  ConfigBootstrap,
-  ProviderName,
-} from "../rpc/schema.js";
+import type { ConfigBootstrap, ProviderName } from "../rpc/schema.js";
 import {
   cleanupOpenTuiHarnesses,
   createOpenTuiHarness,
@@ -501,7 +498,9 @@ describe("ConfigScreen", () => {
 
     await mockInput.type("h");
 
-    output = await waitForFrame((frame) => frame.includes("▶ OpenAI compatible"));
+    output = await waitForFrame((frame) =>
+      frame.includes("▶ OpenAI compatible"),
+    );
     expect(output).toContain("▶ OpenAI compatible");
   });
 
@@ -524,6 +523,23 @@ describe("ConfigScreen", () => {
 
     output = await waitForFrame((frame) => frame.includes("> API Key"));
     expect(output).toContain("> API Key");
+  });
+
+  it("keeps tab inside active config search mode", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    await mockInput.type("/");
+    await mockInput.type("mod");
+    await waitForFrame((frame) => frame.includes("Search: mod"));
+
+    await mockInput.press("tab");
+
+    const output = await waitForFrame((frame) => frame.includes("Search: mod"));
+    expect(output).toContain("Search: mod");
+    expect(output).toContain("▶ OpenAI compatible");
+    expect(output).not.toContain("> Model");
   });
 
   it("searches config fields by hint, group, and section metadata", async () => {

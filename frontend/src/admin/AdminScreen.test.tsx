@@ -780,7 +780,9 @@ describe("AdminScreen", () => {
 
     await mockInput.type("/");
 
-    const output = await waitForFrame((frame) => frame.includes("Enter search"));
+    const output = await waitForFrame((frame) =>
+      frame.includes("Enter search"),
+    );
     expect(output).toContain("Enter search");
     expect(output).toContain("Esc cancel");
     expect(output).not.toContain("q quit");

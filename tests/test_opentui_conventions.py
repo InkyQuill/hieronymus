@@ -100,8 +100,12 @@ def test_frontend_does_not_parse_human_hiero_cli_output() -> None:
 
     bridge_text = (ROOT / BRIDGE_CLIENT).read_text(encoding="utf-8")
     assert '"tui-bridge"' in bridge_text
-    assert "JSON.stringify({ id, method, params })" in bridge_text
-    assert "JSON.parse(line)" in bridge_text
+    assert re.search(
+        r"JSON\.stringify\(\s*\{[^}]*\bid\b[^}]*\bmethod\b[^}]*\bparams\b[^}]*\}\s*\)",
+        bridge_text,
+        re.DOTALL,
+    )
+    assert re.search(r"JSON\.parse\(\s*line\s*\)", bridge_text)
 
     assert offenders == []
 

@@ -222,7 +222,11 @@ describe("runtime schemas", () => {
   it("defaults missing config form schema to empty groups and fields", () => {
     const payload = ConfigBootstrapSchema.parse(configPayload());
 
-    expect(payload.form_schema).toEqual({ sections: [], groups: [], fields: [] });
+    expect(payload.form_schema).toEqual({
+      sections: [],
+      groups: [],
+      fields: [],
+    });
   });
 
   it("defaults missing config form section metadata", () => {

@@ -45,9 +45,7 @@ describe("keyboard helpers", () => {
     expect(printableSearchChar(key({ name: "a" }))).toBe("a");
     expect(printableSearchChar(key({ name: "/" }))).toBe("/");
     expect(printableSearchChar(key({ name: "space" }))).toBe(" ");
-    expect(printableSearchChar(key({ name: "unknown", raw: "Ж" }))).toBe(
-      "Ж",
-    );
+    expect(printableSearchChar(key({ name: "unknown", raw: "Ж" }))).toBe("Ж");
   });
 
   it("excludes ctrl, meta, option, navigation, and control characters", () => {
@@ -57,6 +55,8 @@ describe("keyboard helpers", () => {
     expect(printableSearchChar(key({ name: "up" }))).toBeNull();
     expect(printableSearchChar(key({ name: "enter" }))).toBeNull();
     expect(printableSearchChar(key({ name: "tab" }))).toBeNull();
-    expect(printableSearchChar(key({ name: "unknown", raw: "\x1B" }))).toBeNull();
+    expect(
+      printableSearchChar(key({ name: "unknown", raw: "\x1B" })),
+    ).toBeNull();
   });
 });
