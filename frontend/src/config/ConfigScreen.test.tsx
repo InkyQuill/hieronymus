@@ -1,18 +1,28 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { ConfigScreen } from "./ConfigScreen.js";
 import type { RpcClient } from "../rpc/client.js";
-import type {
-  ConfigBootstrap,
-  ConfigFormField,
-  ProviderName,
-} from "../rpc/schema.js";
+import type { ConfigBootstrap, ProviderName } from "../rpc/schema.js";
 import {
   cleanupOpenTuiHarnesses,
   createOpenTuiHarness,
 } from "../test/opentuiHarness.js";
 
+type TestConfigFormField = {
+  key: string;
+  group: string;
+  section?: string;
+  label: string;
+  hint: string;
+  placeholder: string;
+  type: "text" | "secret" | "number" | "toggle" | "choice";
+  choices: string[];
+  default: string;
+  minimum?: number;
+  redacted: boolean;
+};
+
 function formSchema(
-  fields: ConfigFormField[] = [
+  fields: TestConfigFormField[] = [
     {
       key: "provider.model",
       group: "provider",
@@ -38,15 +48,49 @@ function formSchema(
   ],
 ) {
   return {
+    sections: [
+      { id: "dream", label: "Dream", description: "dream.conf" },
+      { id: "ingest", label: "Ingest", description: "ingest.conf" },
+      { id: "release", label: "Release", description: "release.conf" },
+    ],
     groups: [
       {
         id: "provider",
+        section: "dream",
         label: "Provider",
         description: "Connection settings for the selected dream provider.",
       },
+      {
+        id: "dreaming",
+        section: "dream",
+        label: "Dreaming",
+        description:
+          "Autostart thresholds for turning short-term memory into durable memory.",
+      },
+      {
+        id: "ingest",
+        section: "ingest",
+        label: "Ingestion",
+        description: "Limits for short-term memory and Learn ingestion.",
+      },
+      {
+        id: "release",
+        section: "release",
+        label: "Updates",
+        description: "Managed install update channel.",
+      },
     ],
-    fields,
+    fields: fields.map((field) => ({
+      ...field,
+      section: field.section ?? sectionForField(field.key),
+    })),
   };
+}
+
+function sectionForField(key: string): string {
+  if (key.startsWith("ingest.")) return "ingest";
+  if (key.startsWith("release.")) return "release";
+  return "dream";
 }
 
 function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
@@ -162,6 +206,7 @@ describe("ConfigScreen", () => {
     );
     expect(output).toContain("Providers");
     expect(output).toContain("OpenAI compatible");
+    expect(output).toContain("Config files: Dream | Ingest | Release");
     expect(output).toContain("Tab pane");
     expect(output).not.toContain(
       "/tmp/dream.conf | /tmp/ingest.conf | /tmp/release.conf",
@@ -326,6 +371,17 @@ describe("ConfigScreen", () => {
     expect(output).toContain("Backend Model Label");
   });
 
+  it("renders backend-owned config section labels", async () => {
+    const { render, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Config files: Dream | Ingest | Release"),
+    );
+    expect(output).toContain("Config files: Dream | Ingest | Release");
+  });
+
   it("renders a placeholder when model suggestions are absent", async () => {
     const { render, waitForFrame } = setupTest();
 
@@ -388,6 +444,169 @@ describe("ConfigScreen", () => {
     const output = captureCharFrame();
     expect(output).toContain("▶ Gemini");
     expect(output).toContain("gemini-2.5-flash");
+  });
+
+  it("moves through providers with j and k like arrow keys", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve(payload(params.provider as ProviderName));
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={client} />);
+
+    await mockInput.type("j");
+    await waitForFrame((frame) => frame.includes("Selected gemini"));
+
+    await mockInput.type("k");
+    await waitForFrame((frame) => frame.includes("Selected openai"));
+
+    expect(calls.map((call) => call.params.provider)).toEqual([
+      "gemini",
+      "openai",
+    ]);
+  });
+
+  it("moves through form fields with j and k like arrow keys", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    await mockInput.press("tab");
+    await mockInput.type("j");
+
+    let output = await waitForFrame((frame) => frame.includes("> API Key"));
+    expect(output).toContain("> API Key");
+
+    await mockInput.type("k");
+
+    output = await waitForFrame((frame) => frame.includes("> Model"));
+    expect(output).toContain("> Model");
+  });
+
+  it("moves between config panels with h and l", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    await mockInput.type("l");
+
+    let output = await waitForFrame((frame) => frame.includes("> Model"));
+    expect(output).toContain("> Model");
+
+    await mockInput.type("h");
+
+    output = await waitForFrame((frame) =>
+      frame.includes("▶ OpenAI compatible"),
+    );
+    expect(output).toContain("▶ OpenAI compatible");
+  });
+
+  it("searches config fields from the keyboard", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    await mockInput.type("/");
+
+    let output = await waitForFrame((frame) => frame.includes("Search: "));
+    expect(output).toContain("Search: ");
+
+    await mockInput.type("api");
+
+    output = await waitForFrame((frame) => frame.includes("Search: api"));
+    expect(output).toContain("Search: api");
+
+    await mockInput.press("enter");
+
+    output = await waitForFrame((frame) => frame.includes("> API Key"));
+    expect(output).toContain("> API Key");
+  });
+
+  it("keeps tab inside active config search mode", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    await mockInput.type("/");
+    await mockInput.type("mod");
+    await waitForFrame((frame) => frame.includes("Search: mod"));
+
+    await mockInput.press("tab");
+
+    const output = await waitForFrame((frame) => frame.includes("Search: mod"));
+    expect(output).toContain("Search: mod");
+    expect(output).toContain("▶ OpenAI compatible");
+    expect(output).not.toContain("> Model");
+  });
+
+  it("searches config fields by hint, group, and section metadata", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+    const initial = {
+      ...payload(),
+      form_schema: formSchema([
+        {
+          key: "provider.model",
+          group: "provider",
+          section: "dream",
+          label: "Model",
+          hint: "unique model hint",
+          placeholder: "gpt-4.1-mini",
+          type: "text" as const,
+          choices: [],
+          default: "",
+          redacted: false,
+        },
+        {
+          key: "release.update_channel",
+          group: "release",
+          section: "release",
+          label: "Update channel",
+          hint: "Release update channel.",
+          placeholder: "",
+          type: "choice" as const,
+          choices: ["stable", "dev"],
+          default: "stable",
+          redacted: false,
+        },
+        {
+          key: "ingest.warning_sentence_count",
+          group: "ingest",
+          section: "ingest",
+          label: "Memory warn sentences",
+          hint: "Warn before rejection.",
+          placeholder: "6",
+          type: "number" as const,
+          choices: [],
+          default: "6",
+          redacted: false,
+        },
+      ]),
+    };
+
+    await render(<ConfigScreen initial={initial} client={undefined} />);
+
+    await mockInput.type("/");
+    await mockInput.type("unique model hint");
+    await mockInput.press("enter");
+    let output = await waitForFrame((frame) => frame.includes("> Model"));
+    expect(output).toContain("> Model");
+
+    await mockInput.type("/");
+    await mockInput.type("release.conf");
+    await mockInput.press("enter");
+    output = await waitForFrame((frame) => frame.includes("> Update channel"));
+    expect(output).toContain("> Update channel");
+
+    await mockInput.type("/");
+    await mockInput.type("Ingestion");
+    await mockInput.press("enter");
+    output = await waitForFrame((frame) =>
+      frame.includes("> Memory warn sentences"),
+    );
+    expect(output).toContain("> Memory warn sentences");
   });
 
   it("ignores further action keys while an operation is in flight", async () => {
@@ -630,7 +849,7 @@ describe("ConfigScreen", () => {
       <ConfigScreen
         initial={{
           ...payload(),
-          form_schema: { groups: [], fields: [] },
+          form_schema: { sections: [], groups: [], fields: [] },
         }}
         client={client}
       />,

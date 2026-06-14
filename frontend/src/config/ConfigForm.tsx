@@ -69,7 +69,7 @@ export function ConfigForm({
 
   return (
     <box flexDirection="column" width={width}>
-      <text>Dreaming settings</text>
+      <text>Configuration settings</text>
       <box flexDirection="column" marginTop={1}>
         {visibleFields.map((field, visibleIndex) => {
           const index = fieldWindow.start + visibleIndex;

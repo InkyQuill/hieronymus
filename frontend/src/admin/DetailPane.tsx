@@ -1,6 +1,7 @@
 import React from "react";
 import { SyntaxStyle } from "@opentui/core";
 import type { AdminSnapshot } from "../rpc/schema.js";
+import { MarkdownBody } from "./markdown.js";
 
 const codeSyntaxStyle = SyntaxStyle.fromStyles({
   string: { fg: "#9ece6a" },
@@ -40,41 +41,6 @@ const isJson = (text: string) => {
   }
 };
 
-const renderInlineMarkdown = (text: string, keyPrefix: string) => {
-  const parts: React.ReactNode[] = [];
-  const pattern = /(<strong>(.*?)<\/strong>|\*\*(.*?)\*\*)/gi;
-  let offset = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > offset) {
-      parts.push(text.slice(offset, match.index));
-    }
-    parts.push(
-      <strong key={`${keyPrefix}-${match.index}`}>
-        {match[2] ?? match[3] ?? ""}
-      </strong>,
-    );
-    offset = match.index + match[0].length;
-  }
-  if (offset < text.length) {
-    parts.push(text.slice(offset));
-  }
-  return parts;
-};
-
-const renderMarkdownLines = (text: string) => {
-  return text.split("\n").map((line, index) => {
-    const displayLine = line
-      .replace(/^\s{0,3}#{1,6}\s+/, "")
-      .replace(/^\s{0,3}[-*+]\s+/, "- ");
-    return (
-      <text key={`${index}-${displayLine}`}>
-        {renderInlineMarkdown(displayLine, `line-${index}`)}
-      </text>
-    );
-  });
-};
-
 export function DetailPane({
   detail,
   width = 56,
@@ -104,7 +70,7 @@ export function DetailPane({
         />
       );
     }
-    return <box flexDirection="column">{renderMarkdownLines(detail.body)}</box>;
+    return <MarkdownBody content={detail.body} />;
   };
 
   return (

@@ -159,9 +159,18 @@ describe("runtime schemas", () => {
     const payload = ConfigBootstrapSchema.parse(
       configPayload("openai", {
         form_schema: {
+          sections: [
+            {
+              id: "dream",
+              label: "Dream",
+              description: "dream.conf",
+              owner: "python",
+            },
+          ],
           groups: [
             {
               id: "provider",
+              section: "dream",
               label: "Provider",
               description:
                 "Connection settings for the selected dream provider.",
@@ -171,6 +180,7 @@ describe("runtime schemas", () => {
             {
               key: "provider.api_key",
               group: "provider",
+              section: "dream",
               label: "API Key",
               hint: "Stored as plaintext in dream.conf and redacted in UI payloads.",
               placeholder: "stored in dream.conf",
@@ -198,13 +208,47 @@ describe("runtime schemas", () => {
       throw new Error("form_schema should be defaulted");
     }
     expect(payload.form_schema.fields[0].type).toBe("secret");
+    expect(payload.form_schema.sections[0]).toMatchObject({
+      id: "dream",
+      label: "Dream",
+      description: "dream.conf",
+      owner: "python",
+    });
+    expect(payload.form_schema.groups[0].section).toBe("dream");
+    expect(payload.form_schema.fields[0].section).toBe("dream");
     expect(payload.form_schema.fields[1].choices).toEqual(["stable", "dev"]);
   });
 
   it("defaults missing config form schema to empty groups and fields", () => {
     const payload = ConfigBootstrapSchema.parse(configPayload());
 
-    expect(payload.form_schema).toEqual({ groups: [], fields: [] });
+    expect(payload.form_schema).toEqual({
+      sections: [],
+      groups: [],
+      fields: [],
+    });
+  });
+
+  it("defaults missing config form section metadata", () => {
+    const payload = ConfigBootstrapSchema.parse(
+      configPayload("openai", {
+        form_schema: {
+          groups: [{ id: "provider", label: "Provider" }],
+          fields: [
+            {
+              key: "provider.model",
+              group: "provider",
+              label: "Model",
+              type: "text",
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(payload.form_schema.sections).toEqual([]);
+    expect(payload.form_schema.groups[0].section).toBe("");
+    expect(payload.form_schema.fields[0].section).toBe("");
   });
 
   it("parses config field validation errors", () => {
@@ -255,6 +299,7 @@ describe("runtime schemas", () => {
       hint: "",
       placeholder: "",
       redacted: false,
+      section: "",
     });
     expect(payload.form_schema.fields[0].minimum).toBeUndefined();
   });

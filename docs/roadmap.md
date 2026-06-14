@@ -90,24 +90,21 @@ Completed baseline:
 - `hiero admin` and `hiero config` define responsive behavior for 80x24
   terminals and narrow tmux splits, using compact single-pane fallbacks instead
   of fixed-width broken panel layouts.
+- `hiero config` exposes Python-owned section metadata for current and future
+  configuration files while keeping the frontend schema-driven.
+- `hiero admin` and `hiero config` support keyboard-first navigation with
+  `hjkl`, `/` search, `Esc` cancellation, `Tab`/`Shift+Tab` focus movement, and
+  footer hints aligned with the active mode.
+- Admin detail panes render dense inspection bodies with structured fields,
+  JSON, diffs, markdown blocks, provenance, recall reasons, dream output, and
+  audit output through the admin interface.
+- Multiline memory editor dialogs stay bounded in compact admin layouts. Visible
+  textarea scrollbars remain dependent on a future OpenTUI textarea scrollbar
+  API and are tracked in `docs/opentui-conventions.md`.
 
 Remaining work:
 
-- Extend `hiero config` beyond the current `dream.conf`, `ingest.conf`, and
-  `release.conf` editor as future configuration files are added.
-- Keep TUI admin and config mutations behind `AdminBridge` and `ConfigBridge`
-  RPC handlers, existing domain stores, migrations, and audited Python methods.
-- Ensure the frontend does not write SQLite, parse human CLI output, or
-  duplicate migration/domain mutation logic.
-- Support keyboard-first navigation with consistent `q`, `Esc`, `/`, `Tab`,
-  `Shift+Tab`, arrows, and `hjkl` where useful.
-- Keep detail panes useful for dense inspection: fields, readable prose, JSON,
-  diffs, provenance, recall reasons, and dream/audit output should render
-  inside the admin interface.
-- Replace the lightweight memory-detail markdown renderer with a full markdown
-  renderer once OpenTUI markdown output is reliable in the test renderer.
-- Enable visible scrollbars for multiline memory editors if OpenTUI exposes
-  textarea scrollbar controls in a newer release.
+- No active roadmap items in this section.
 
 ### Install, Release, And Quality
 

@@ -598,6 +598,288 @@ describe("AdminScreen", () => {
     ]);
   });
 
+  it("navigates rows with j and k like arrow keys", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const base = bootstrap().snapshot;
+    const rows = [
+      base.rows[0],
+      {
+        ...base.rows[0],
+        id: 2,
+        label: "Second Crystal",
+      },
+    ];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      const selected = rows.find((row) => row.id === params.selected_id);
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: {
+          ...base,
+          rows,
+          selected,
+          detail: {
+            ...base.detail,
+            title: selected?.label ?? base.detail.title,
+            body: `${selected?.label ?? "Unknown"} detail marker.`,
+          },
+        },
+      });
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: { ...base, rows, selected: rows[0] },
+        }}
+        client={client}
+      />,
+    );
+
+    await mockInput.press("tab");
+    await mockInput.type("j");
+    await waitForFrame((frame) => frame.includes("Selected Second Crystal"));
+
+    await mockInput.type("k");
+    await waitForFrame((frame) => frame.includes("Selected Guild Ledger"));
+
+    expect(calls).toEqual([
+      {
+        method: "admin.snapshot",
+        params: { view: "Crystals", selected_id: 2 },
+      },
+      {
+        method: "admin.snapshot",
+        params: { view: "Crystals", selected_id: 1 },
+      },
+    ]);
+  });
+
+  it("navigates views with j and k like arrow keys", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: snapshotForView(String(params.view)),
+      });
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<AdminScreen initial={bootstrap()} client={client} />);
+
+    await mockInput.type("j");
+    await waitForFrame((frame) => frame.includes("Loaded Lessons"));
+
+    await mockInput.type("k");
+    await waitForFrame((frame) => frame.includes("Loaded Crystals"));
+
+    expect(calls).toEqual([
+      {
+        method: "admin.snapshot",
+        params: { view: "Lessons" },
+      },
+      {
+        method: "admin.snapshot",
+        params: { view: "Crystals" },
+      },
+    ]);
+  });
+
+  it("searches current rows and selects the first matching row", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const base = bootstrap().snapshot;
+    const rows = [
+      base.rows[0],
+      {
+        ...base.rows[0],
+        id: 2,
+        kind: "lesson",
+        label: "Canal Registry",
+        status: "active",
+        scope: "library-wing",
+        language_pair: "en -> ru",
+        quality_label: "draft",
+        tags: ["waterways"],
+        summary: "Contains the lockkeeper oath.",
+      },
+    ];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      const selected = rows.find((row) => row.id === params.selected_id);
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: {
+          ...base,
+          rows,
+          selected,
+          detail: {
+            ...base.detail,
+            title: selected?.label ?? base.detail.title,
+            body: `${selected?.label ?? "Unknown"} detail marker.`,
+          },
+        },
+      });
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: { ...base, rows, selected: rows[0] },
+        }}
+        client={client}
+      />,
+    );
+
+    await mockInput.press("tab");
+    await mockInput.type("/");
+    await waitForFrame((frame) => frame.includes("Search: "));
+
+    await mockInput.type("lockkeeper");
+    await waitForFrame((frame) => frame.includes("Search: lockkeeper"));
+
+    await mockInput.press("enter");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Found Canal Registry"),
+    );
+
+    expect(calls).toEqual([
+      {
+        method: "admin.snapshot",
+        params: { view: "Crystals", selected_id: 2 },
+      },
+    ]);
+    expect(output).toContain("Canal Registry detail marker.");
+  });
+
+  it("keeps question marks inside admin search mode", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+
+    await mockInput.type("/");
+    await mockInput.type("?");
+
+    const output = await waitForFrame((frame) => frame.includes("Search: ?"));
+    expect(output).toContain("Search: ?");
+    expect(output).not.toContain("Help");
+  });
+
+  it("shows mode-aware compact admin search footer", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+
+    await mockInput.type("/");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Enter search"),
+    );
+    expect(output).toContain("Enter search");
+    expect(output).toContain("Esc cancel");
+    expect(output).not.toContain("q quit");
+  });
+
+  it("runs visible proposal command shortcuts directly", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: snapshotForView("Proposals"),
+      });
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: snapshotForView("Proposals"),
+        }}
+        client={client}
+      />,
+    );
+
+    await mockInput.type("a");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Approved proposal"),
+    );
+    expect(output).not.toContain("Add New Crystal");
+    expect(calls).toEqual([
+      {
+        method: "admin.approve_proposal",
+        params: { id: 1, view: "Proposals" },
+      },
+    ]);
+  });
+
+  it("runs visible dream command shortcuts directly", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      if (method === "admin.dream_review") {
+        return Promise.resolve({
+          stats: bootstrap().stats,
+          snapshot: snapshotForView("Dream Runs"),
+          review: {
+            consumed_memories: "Direct review memory marker.",
+            created_crystals: ["Direct review crystal marker."],
+            run_id: 1,
+            failed_outputs: [],
+            validation_errors: [],
+          },
+        });
+      }
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: snapshotForView("Dream Runs"),
+      });
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: snapshotForView("Dream Runs"),
+        }}
+        client={client}
+      />,
+    );
+
+    await mockInput.type("D");
+    await waitForFrame((frame) => frame.includes("Ran manual dreaming"));
+
+    await mockInput.press("enter");
+    const output = await waitForFrame((frame) =>
+      frame.includes("Direct review memory marker."),
+    );
+
+    expect(output).toContain("Direct review crystal marker.");
+    expect(calls).toEqual([
+      {
+        method: "admin.run_manual_dreaming",
+        params: { view: "Dream Runs" },
+      },
+      {
+        method: "admin.dream_review",
+        params: { id: 1, view: "Dream Runs" },
+      },
+    ]);
+  });
+
   it("shows dream review payload from the palette command", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
@@ -810,6 +1092,38 @@ describe("AdminScreen", () => {
 
     expect(frame).not.toContain("Confirm");
     expect(calls).toEqual([]);
+  });
+
+  it("keeps multiline memory editor bounded in the admin dialog", async () => {
+    const longBody = Array.from(
+      { length: 20 },
+      (_, index) => `Long memory line ${index + 1}`,
+    ).join("\n");
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: {
+            ...bootstrap().snapshot,
+            detail: {
+              ...bootstrap().snapshot.detail,
+              body: longBody,
+            },
+          },
+        }}
+        client={undefined}
+      />,
+    );
+
+    await mockInput.type("e");
+
+    const output = await waitForFrame((frame) => frame.includes("Edit Memory"));
+    expect(output).toContain("Edit Memory");
+    expect(output).toContain("Text:");
+    expect(output).toContain("[Enter] Submit");
+    expect(longestFrameLine(output)).toBeLessThanOrEqual(80);
   });
 
   it("reinforces lessons with the current view and preserves lessons", async () => {

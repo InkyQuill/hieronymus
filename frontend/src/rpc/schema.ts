@@ -163,9 +163,18 @@ const ConfigFieldTypeSchema = z.enum([
   "choice",
 ]);
 
+const ConfigFormSectionSchema = z
+  .object({
+    id: z.string(),
+    label: z.string(),
+    description: z.string().default(""),
+  })
+  .passthrough();
+
 const ConfigFormGroupSchema = z
   .object({
     id: z.string(),
+    section: z.string().default(""),
     label: z.string(),
     description: z.string().default(""),
   })
@@ -175,6 +184,7 @@ const ConfigFormFieldSchema = z
   .object({
     key: z.string(),
     group: z.string(),
+    section: z.string().default(""),
     label: z.string(),
     hint: z.string().default(""),
     placeholder: z.string().default(""),
@@ -188,6 +198,7 @@ const ConfigFormFieldSchema = z
 
 const ConfigFormSchemaSchema = z
   .object({
+    sections: z.array(ConfigFormSectionSchema).default([]),
     groups: z.array(ConfigFormGroupSchema),
     fields: z.array(ConfigFormFieldSchema),
   })
@@ -254,7 +265,11 @@ export const ConfigBootstrapSchema = z
     check_result: z.record(z.unknown()).default({}),
     suggestions: ModelSuggestionsSchema.default({}),
     detail: ConfigDetailSchema,
-    form_schema: ConfigFormSchemaSchema.default({ groups: [], fields: [] }),
+    form_schema: ConfigFormSchemaSchema.default({
+      sections: [],
+      groups: [],
+      fields: [],
+    }),
   })
   .passthrough();
 
@@ -262,6 +277,7 @@ export type ProviderName = z.infer<typeof ProviderNameSchema>;
 export type RpcResponse = z.infer<typeof RpcResponseSchema>;
 export type ModelSuggestions = z.infer<typeof ModelSuggestionsSchema>;
 export type ConfigDetail = z.infer<typeof ConfigDetailSchema>;
+export type ConfigFormSection = z.infer<typeof ConfigFormSectionSchema>;
 export type ConfigFormField = z.infer<typeof ConfigFormFieldSchema>;
 export type ConfigFormGroup = z.infer<typeof ConfigFormGroupSchema>;
 export type AdminRow = z.infer<typeof AdminRowSchema>;
