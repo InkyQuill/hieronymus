@@ -52,3 +52,25 @@ def test_doctor_does_not_warn_for_installed_agent(
         finding["code"] == "agent-plugin-available" and "Codex is available" in finding["message"]
         for finding in payload["warnings"]
     )
+
+
+def test_doctor_reports_mimo_without_missing_config_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".mimocode").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {"running": False}
+        report = Doctor(config).run()
+    payload = report_to_json(report)
+
+    assert any(
+        finding["code"] == "agent-plugin-available"
+        and "Xiaomi MiMo is available but Hieronymus is not installed" in finding["message"]
+        for finding in payload["warnings"]
+    )
+    assert not any("missing-config" in finding["code"] for finding in payload["errors"])

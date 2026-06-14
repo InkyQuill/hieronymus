@@ -446,7 +446,7 @@ def test_install_unknown_target_returns_clean_error(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 1
-    assert "unknown install target: unknown-agent" in result.output
+    assert "Unsupported agent target 'unknown-agent'" in result.output
     assert "Traceback" not in result.output
 
 

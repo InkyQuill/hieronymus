@@ -53,6 +53,10 @@ Read, Learn, and Remember are agent judgment workflows. MCP tools are storage an
 primitives, not judgment engines. Read and Learn are no longer exposed as judgment-heavy MCP tools;
 agents should use the skill workflows plus `hieronymus_short_term_add`.
 
+The MCP server continues to expose primitives only. Read, Learn, and Remember remain agent skills
+so host agents make contextual workflow decisions instead of asking Hieronymus MCP tools to judge
+translation intent.
+
 `remember` records corrections as short-term memory. For high-credibility user rules, phrase the
 memory as "User told me to ...", use user-rule credibility, and let dreaming crystallize it later.
 
@@ -78,13 +82,18 @@ plugin assets and patch the host config with backups under `~/.config/hieronymus
 
 Supported install targets in this pass:
 
-- `claude`
-- `codex`
-- `openclaw`
-- `opencode`
-- `gemini`
+- `claude` writes Claude Code MCP registration into `~/.claude.json`.
+- `codex` writes Codex MCP and plugin registration into `~/.codex/config.toml`.
+- `opencode` writes OpenCode MCP and plugin registration into `~/.config/opencode/plugin.json`.
+- `openclaw` writes OpenClaw MCP and plugin registration into `~/.openclaw/openclaw.json`.
+- `gemini` writes Gemini CLI MCP and extension registration into `~/.gemini/settings.json`.
 
 Reserved detectable targets:
 
-- `pi`
-- `hermes`
+- `mimo` detects Xiaomi MiMo through `~/.mimocode` and `~/.config/mimocode`, but does not write
+  host configuration until a stable noninteractive MCP or plugin configuration contract is
+  implemented. Aliases: `xiaomi-mimo`, `xiaomi_mimo`, `mimocode`.
+- `pi` is detected for status/doctor output, but Hieronymus does not write host configuration
+  because no safe Pi protocol is implemented.
+- `hermes` is detected for status/doctor output, but Hieronymus does not write host configuration
+  because no safe Hermes protocol is implemented.

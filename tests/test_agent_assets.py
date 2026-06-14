@@ -103,9 +103,10 @@ def test_render_agent_plugin_assets_includes_agent_name() -> None:
         ("claude", ".claude-plugin/plugin.json"),
         ("gemini", "gemini-extension.json"),
         ("opencode", "opencode/plugin.json"),
+        ("openclaw", "openclaw/plugin.json"),
     ],
 )
-def test_render_agent_plugin_assets_adds_target_manifest(
+def test_render_agent_plugin_assets_includes_writable_target_manifest(
     target: str,
     manifest_path: str,
 ) -> None:
@@ -114,6 +115,10 @@ def test_render_agent_plugin_assets_adds_target_manifest(
 
     assert manifest["name"] == "hieronymus"
     assert "mcp/hieronymus.mcp.json" in assets
+    assert "skills/hieronymus-recall/SKILL.md" in assets
+    assert "skills/hieronymus-learn/SKILL.md" in assets
+    assert "skills/hieronymus-read/SKILL.md" in assets
+    assert "skills/hieronymus-remember/SKILL.md" in assets
 
 
 def test_codex_manifest_uses_validator_supported_fields() -> None:
