@@ -25,9 +25,9 @@ export function HelpOverlay({
       <text fg="cyan">Help</text>
       <text>Navigation</text>
       <text fg="gray">
-        Tab/Shift+Tab focus panels ↑/↓ or j/k move 1-9 switch views
+        Tab/Shift+Tab focus panels ↑/↓ or hjkl move 1-9 switch views
       </text>
-      <text fg="gray">Esc/? close Ctrl+P commands</text>
+      <text fg="gray">/ search Esc/? close Ctrl+P commands</text>
       <text>Commands for {view}</text>
       {visibleCommands.length === 0 ? (
         <text fg="gray">No commands for this view</text>

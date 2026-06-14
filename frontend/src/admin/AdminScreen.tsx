@@ -35,6 +35,16 @@ import { CommandPalette, commandsForView } from "./CommandPalette.js";
 import { HelpOverlay } from "./HelpOverlay.js";
 import { Spinner } from "../ui/Spinner.js";
 import { type DialogState, closedDialog, DialogOverlay } from "./dialogs.js";
+import {
+  isConfirmKey,
+  isDownKey,
+  isEscapeKey,
+  isLeftKey,
+  isRightKey,
+  isUpKey,
+  printableSearchChar,
+  type KeyboardInput,
+} from "../ui/keyboard.js";
 
 type Props = {
   initial: AdminBootstrap;
@@ -72,6 +82,8 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
   const [configEditor, setConfigEditor] = useState(initial.config_editor);
   const [commandsOpen, setCommandsOpen] = useState(showCommands);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [searchActive, setSearchActive] = useState(false);
+  const [searchText, setSearchText] = useState("");
   const [activePanel, setActivePanel] = useState<"views" | "table" | "detail">(
     "views",
   );
@@ -98,6 +110,31 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const clampCommandIndex = (index: number) =>
     Math.min(Math.max(index, 0), Math.max(paletteCommands.length - 1, 0));
+
+  const selectRow = (
+    row: AdminSnapshot["rows"][number],
+    successMessage = `Selected ${row.label}`,
+  ) => {
+    if (!client || operationInFlight.current) {
+      return;
+    }
+    void runSnapshotOperation({
+      client,
+      method: "admin.snapshot",
+      params: {
+        view: snapshot.view,
+        selected_id: row.id,
+      },
+      successMessage,
+      setSnapshot,
+      setStats,
+      setShortTermStatus,
+      setDreamStatus,
+      setConfigEditor,
+      setStatus,
+      operationInFlight,
+    });
+  };
 
   const loadView = (view: string) => {
     if (!client || operationInFlight.current) {
@@ -268,6 +305,36 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     if (command.id === "inspect_recall_reasons") {
       runInspectionCommand("admin.recall_reasons", "Loaded recall reasons");
     }
+  };
+
+  const cancelSearch = () => {
+    setSearchActive(false);
+    setSearchText("");
+  };
+
+  const submitSearch = () => {
+    const query = searchText.trim();
+    if (!query) {
+      setStatus({ message: "Search query is empty", error: true });
+      return;
+    }
+
+    const match = snapshot.rows.find((row) => rowMatchesQuery(row, query));
+    if (!match) {
+      setStatus({
+        message: `No ${snapshot.view} row matches "${query}"`,
+        error: true,
+      });
+      return;
+    }
+
+    setSearchActive(false);
+    setSearchText("");
+    if (!client) {
+      setStatus({ message: "Search needs admin client", error: true });
+      return;
+    }
+    selectRow(match, `Found ${match.label}`);
   };
 
   const handleInput = (input: string, ctrl = false) => {
@@ -460,53 +527,79 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       return;
     }
 
-    const ctrl = key.ctrl;
-    const tab = key.name === "tab";
-    const shift = key.shift;
-    const upArrow = key.name === "up";
-    const downArrow = key.name === "down";
+    const keyboardKey = key as KeyboardInput;
+    const ctrl = keyboardKey.ctrl;
+    const tab = keyboardKey.name === "tab";
+    const shift = keyboardKey.shift;
+    const up = isUpKey(keyboardKey);
+    const down = isDownKey(keyboardKey);
+    const left = isLeftKey(keyboardKey);
+    const right = isRightKey(keyboardKey);
+    const enter = isConfirmKey(keyboardKey);
+    const escape = isEscapeKey(keyboardKey);
 
     if (helpOpen) {
-      if (ctrl && key.name === "p") {
+      if (ctrl && keyboardKey.name === "p") {
         setSelectedCommandIndex(0);
         setHelpOpen(false);
         setCommandsOpen(true);
         return;
       }
-      if (key.name === "escape" || key.name === "esc" || key.name === "?") {
+      if (escape || keyboardKey.name === "?") {
         setHelpOpen(false);
       }
       return;
     }
 
-    if (key.name === "?") {
+    if (keyboardKey.name === "?") {
       setHelpOpen(true);
       setCommandsOpen(false);
       return;
     }
 
     if (commandsOpen) {
-      if (ctrl && key.name === "p") {
+      if (ctrl && keyboardKey.name === "p") {
         setCommandsOpen(false);
         return;
       }
-      if (key.name === "escape") {
+      if (escape) {
         setCommandsOpen(false);
         return;
       }
-      if (key.name === "down" || key.name === "j") {
+      if (down) {
         setSelectedCommandIndex((index) => clampCommandIndex(index + 1));
         return;
       }
-      if (key.name === "up" || key.name === "k") {
+      if (up) {
         setSelectedCommandIndex((index) => clampCommandIndex(index - 1));
         return;
       }
-      if (key.name === "enter" || key.name === "return") {
+      if (enter) {
         const command =
           paletteCommands[clampCommandIndex(selectedCommandIndex)];
         executeCommand(command);
         return;
+      }
+      return;
+    }
+
+    if (searchActive) {
+      if (escape) {
+        cancelSearch();
+        return;
+      }
+      if (enter) {
+        submitSearch();
+        return;
+      }
+      if (keyboardKey.name === "backspace") {
+        setSearchText((current) => current.slice(0, -1));
+        return;
+      }
+
+      const char = printableSearchChar(keyboardKey);
+      if (char !== null) {
+        setSearchText((current) => current + char);
       }
       return;
     }
@@ -529,7 +622,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
 
     // 2. Panel Navigation
     if (activePanel === "views") {
-      if (upArrow) {
+      if (up) {
         const nextIndex = Math.max(0, selectedViewIndex - 1);
         const view = initial.views[nextIndex];
         if (view && view !== snapshot.view) {
@@ -537,7 +630,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         }
         return;
       }
-      if (downArrow) {
+      if (down) {
         const nextIndex = Math.min(
           initial.views.length - 1,
           selectedViewIndex + 1,
@@ -548,10 +641,14 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         }
         return;
       }
+      if (right) {
+        setActivePanel("table");
+        return;
+      }
     }
 
     if (activePanel === "table") {
-      if (upArrow) {
+      if (up) {
         if (operationInFlight.current) {
           return;
         }
@@ -561,27 +658,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         if (currentIndex > 0) {
           const prevRow = snapshot.rows[currentIndex - 1];
           if (prevRow) {
-            void runSnapshotOperation({
-              client,
-              method: "admin.snapshot",
-              params: {
-                view: snapshot.view,
-                selected_id: prevRow.id,
-              },
-              successMessage: `Selected ${prevRow.label}`,
-              setSnapshot,
-              setStats,
-              setShortTermStatus,
-              setDreamStatus,
-              setConfigEditor,
-              setStatus,
-              operationInFlight,
-            });
+            selectRow(prevRow);
           }
         }
         return;
       }
-      if (downArrow) {
+      if (down) {
         if (operationInFlight.current) {
           return;
         }
@@ -591,30 +673,36 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         if (currentIndex >= 0 && currentIndex < snapshot.rows.length - 1) {
           const nextRow = snapshot.rows[currentIndex + 1];
           if (nextRow) {
-            void runSnapshotOperation({
-              client,
-              method: "admin.snapshot",
-              params: {
-                view: snapshot.view,
-                selected_id: nextRow.id,
-              },
-              successMessage: `Selected ${nextRow.label}`,
-              setSnapshot,
-              setStats,
-              setShortTermStatus,
-              setDreamStatus,
-              setConfigEditor,
-              setStatus,
-              operationInFlight,
-            });
+            selectRow(nextRow);
           }
         }
+        return;
+      }
+      if (left) {
+        setActivePanel("views");
+        return;
+      }
+      if (right) {
+        setActivePanel("detail");
+        return;
+      }
+    }
+
+    if (activePanel === "detail") {
+      if (left) {
+        setActivePanel("table");
         return;
       }
     }
 
     // 3. Fallback to hotkeys/input handling
-    handleInput(key.name, ctrl);
+    if (keyboardKey.name === "/") {
+      setSearchActive(true);
+      setSearchText("");
+      return;
+    }
+
+    handleInput(keyboardKey.name, ctrl);
   });
 
   async function handleDialogSubmit(params: Record<string, any>) {
@@ -809,11 +897,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           )}
         </box>
 
+        <SearchPrompt active={searchActive} query={searchText} />
         <StatusLine message={status.message} error={status.error} />
         <box flexDirection="row" marginTop={1}>
           <text fg="gray">
-            Tab pane 1-{viewKeyLimit} view ↑/↓ move Ctrl+P commands ? help q
-            quit
+            Tab pane / search 1-{viewKeyLimit} view ↑/↓ or hjkl move Ctrl+P
+            commands ? help q quit
           </text>
         </box>
       </box>
@@ -901,8 +990,16 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         </box>
       </box>
 
+      <SearchPrompt active={searchActive} query={searchText} />
       <StatusLine message={status.message} error={status.error} />
-      <KeyHelp keys={footerKeys({ commandsOpen, helpOpen, viewKeyLimit })} />
+      <KeyHelp
+        keys={footerKeys({
+          commandsOpen,
+          helpOpen,
+          searchActive,
+          viewKeyLimit,
+        })}
+      />
     </box>
   );
 }
@@ -910,26 +1007,72 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
 function footerKeys({
   commandsOpen,
   helpOpen,
+  searchActive,
   viewKeyLimit,
 }: {
   commandsOpen: boolean;
   helpOpen: boolean;
+  searchActive: boolean;
   viewKeyLimit: number;
 }) {
+  if (searchActive) {
+    return ["Enter search", "Esc cancel", "Backspace edit"];
+  }
   if (helpOpen) {
     return ["Esc close help", "? close help", "Ctrl+P commands"];
   }
   if (commandsOpen) {
-    return ["↑/↓ move", "Enter run", "Esc close", "? help"];
+    return ["↑/↓ or j/k move", "Enter run", "Esc close", "? help"];
   }
   return [
     "Tab focus",
+    "/ search",
     `1-${viewKeyLimit} view`,
-    "↑/↓ or j/k move",
+    "↑/↓ or hjkl move",
     "Ctrl+P commands",
     "? help",
     "q quit",
   ];
+}
+
+function SearchPrompt({ active, query }: { active: boolean; query: string }) {
+  if (!active) {
+    return null;
+  }
+
+  return (
+    <box marginTop={1}>
+      <text fg="cyan">Search: {query}</text>
+    </box>
+  );
+}
+
+function rowMatchesQuery(
+  row: AdminSnapshot["rows"][number],
+  query: string,
+): boolean {
+  const normalizedQuery = query.toLocaleLowerCase();
+  return searchableValues(row).some((value) =>
+    value.toLocaleLowerCase().includes(normalizedQuery),
+  );
+}
+
+function searchableValues(value: unknown): string[] {
+  if (typeof value === "string") {
+    return [value];
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return [String(value)];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(searchableValues);
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).flatMap(
+      searchableValues,
+    );
+  }
+  return [];
 }
 
 function viewIndexForInput(input: string, viewCount: number) {

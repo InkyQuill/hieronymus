@@ -598,6 +598,168 @@ describe("AdminScreen", () => {
     ]);
   });
 
+  it("navigates rows with j and k like arrow keys", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const base = bootstrap().snapshot;
+    const rows = [
+      base.rows[0],
+      {
+        ...base.rows[0],
+        id: 2,
+        label: "Second Crystal",
+      },
+    ];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      const selected = rows.find((row) => row.id === params.selected_id);
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: {
+          ...base,
+          rows,
+          selected,
+          detail: {
+            ...base.detail,
+            title: selected?.label ?? base.detail.title,
+            body: `${selected?.label ?? "Unknown"} detail marker.`,
+          },
+        },
+      });
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: { ...base, rows, selected: rows[0] },
+        }}
+        client={client}
+      />,
+    );
+
+    await mockInput.press("tab");
+    await mockInput.type("j");
+    await waitForFrame((frame) => frame.includes("Selected Second Crystal"));
+
+    await mockInput.type("k");
+    await waitForFrame((frame) => frame.includes("Selected Guild Ledger"));
+
+    expect(calls).toEqual([
+      {
+        method: "admin.snapshot",
+        params: { view: "Crystals", selected_id: 2 },
+      },
+      {
+        method: "admin.snapshot",
+        params: { view: "Crystals", selected_id: 1 },
+      },
+    ]);
+  });
+
+  it("navigates views with j and k like arrow keys", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: snapshotForView(String(params.view)),
+      });
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<AdminScreen initial={bootstrap()} client={client} />);
+
+    await mockInput.type("j");
+    await waitForFrame((frame) => frame.includes("Loaded Lessons"));
+
+    await mockInput.type("k");
+    await waitForFrame((frame) => frame.includes("Loaded Crystals"));
+
+    expect(calls).toEqual([
+      {
+        method: "admin.snapshot",
+        params: { view: "Lessons" },
+      },
+      {
+        method: "admin.snapshot",
+        params: { view: "Crystals" },
+      },
+    ]);
+  });
+
+  it("searches current rows and selects the first matching row", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const base = bootstrap().snapshot;
+    const rows = [
+      base.rows[0],
+      {
+        ...base.rows[0],
+        id: 2,
+        kind: "lesson",
+        label: "Canal Registry",
+        status: "active",
+        scope: "library-wing",
+        language_pair: "en -> ru",
+        quality_label: "draft",
+        tags: ["waterways"],
+        summary: "Contains the lockkeeper oath.",
+      },
+    ];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      const selected = rows.find((row) => row.id === params.selected_id);
+      return Promise.resolve({
+        stats: bootstrap().stats,
+        snapshot: {
+          ...base,
+          rows,
+          selected,
+          detail: {
+            ...base.detail,
+            title: selected?.label ?? base.detail.title,
+            body: `${selected?.label ?? "Unknown"} detail marker.`,
+          },
+        },
+      });
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(
+      <AdminScreen
+        initial={{
+          ...bootstrap(),
+          snapshot: { ...base, rows, selected: rows[0] },
+        }}
+        client={client}
+      />,
+    );
+
+    await mockInput.press("tab");
+    await mockInput.type("/");
+    await waitForFrame((frame) => frame.includes("Search: "));
+
+    await mockInput.type("lockkeeper");
+    await waitForFrame((frame) => frame.includes("Search: lockkeeper"));
+
+    await mockInput.press("enter");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Found Canal Registry"),
+    );
+
+    expect(calls).toEqual([
+      {
+        method: "admin.snapshot",
+        params: { view: "Crystals", selected_id: 2 },
+      },
+    ]);
+    expect(output).toContain("Canal Registry detail marker.");
+  });
+
   it("shows dream review payload from the palette command", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
