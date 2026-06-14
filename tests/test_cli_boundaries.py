@@ -57,6 +57,8 @@ def test_service_toolkit_session_complete_example_matches_click_options() -> Non
 
     assert "--summary <summary>" not in docs
     assert "provider key env configuration" not in docs
+    assert "--event helpful" not in docs
+    assert "--event confirmed_by_user" in docs
     assert result.exit_code == 0
     assert "--json" in result.output
     assert "--summary" not in result.output

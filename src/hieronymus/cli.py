@@ -489,7 +489,7 @@ def help_command() -> None:
     click.echo("  hiero recall <session-id> --series <series> --query <query>")
     click.echo("      --source-language <src> --target-language <dst>")
     click.echo("      --task-type <type> --json")
-    click.echo("  hiero feedback <crystal-id> --event helpful --role user --json")
+    click.echo("  hiero feedback <crystal-id> --event confirmed_by_user --role user --json")
     click.echo()
     click.echo(f"{GUIDE_ICON} Maintenance")
     click.echo("  hiero install codex --dry-run")

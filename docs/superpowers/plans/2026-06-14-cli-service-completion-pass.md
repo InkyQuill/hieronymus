@@ -459,7 +459,7 @@ In `tests/test_cli.py`, update invocations that parse JSON from these commands t
 ```
 
 ```python
-"feedback", str(crystal_id), "--event", "helpful", "--role", "user", "--json"
+"feedback", str(crystal_id), "--event", "confirmed_by_user", "--role", "user", "--json"
 ```
 
 Apply the same explicit `--json` pattern to `propose-term`, `validate`, and `remember` tests if they parse JSON.
@@ -751,7 +751,7 @@ def help_command() -> None:
     click.echo("  hiero session-start <series> --task-type <type> --json")
     click.echo("  hiero remember-short <session-id> --role user --kind correction --text <text> --json")
     click.echo("  hiero recall <session-id> --series <series> --query <query> --source-language <src> --target-language <dst> --task-type <type> --json")
-    click.echo("  hiero feedback <crystal-id> --event helpful --role user --json")
+    click.echo("  hiero feedback <crystal-id> --event confirmed_by_user --role user --json")
     click.echo()
     click.echo(f"{GUIDE_ICON} Maintenance")
     click.echo("  hiero install codex --dry-run")
@@ -841,7 +841,7 @@ Automation should prefer:
 - `hiero session-start <series> --task-type <type> --json`
 - `hiero remember-short <session-id> --role user --kind correction --text <text> --json`
 - `hiero recall <session-id> --series <series> --query <query> --source-language <src> --target-language <dst> --task-type <type> --json`
-- `hiero feedback <crystal-id> --event helpful --role user --json`
+- `hiero feedback <crystal-id> --event confirmed_by_user --role user --json`
 - `hiero dream --json`
 
 ## Direct SQLite Command Boundary

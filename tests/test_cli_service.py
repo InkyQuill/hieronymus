@@ -104,6 +104,10 @@ def test_cli_help_mentions_service_commands() -> None:
     assert "hiero status --json" in result.output
     assert "hiero doctor --json" in result.output
     assert "hiero session-start oso --task-type translation --json" in result.output
+    assert "hiero feedback <crystal-id> --event confirmed_by_user --role user --json" in (
+        result.output
+    )
+    assert "--event helpful" not in result.output
     assert (
         'hiero recall 1 --series oso --query "style"\n'
         "      --source-language ja --target-language en\n"

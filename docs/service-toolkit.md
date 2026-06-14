@@ -150,8 +150,8 @@ CLI output.
   records a short-term observation and emits a machine-readable payload.
 - `hiero recall <session-id> --series <series> --query <query> --source-language <src> --target-language <dst> --task-type <type> --json`:
   emits recall output for automation without parsing human text.
-- `hiero feedback <crystal-id> --event helpful --role user --json`: records
-  feedback and emits a machine-readable payload.
+- `hiero feedback <crystal-id> --event confirmed_by_user --role user --json`:
+  records feedback and emits a machine-readable payload.
 
 ### Maintenance
 
