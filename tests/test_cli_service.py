@@ -72,6 +72,7 @@ def test_hiero_console_alias_runs_existing_command(tmp_path: Path) -> None:
             str(data_root),
             "init-series",
             "oso",
+            "--json",
             "--title",
             "Only Sense Online",
         ],

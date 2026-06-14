@@ -48,6 +48,7 @@ def _start_session(runner: CliRunner, data_root: Path) -> int:
             str(data_root),
             "session-start",
             "only-sense-online",
+            "--json",
             "--source-language",
             "ja",
             "--target-language",
@@ -76,6 +77,7 @@ def test_init_series_outputs_json_and_creates_database(tmp_path):
             str(data_root),
             "init-series",
             "only-sense-online",
+            "--json",
             "--title",
             "Only Sense Online",
         ],
@@ -88,6 +90,26 @@ def test_init_series_outputs_json_and_creates_database(tmp_path):
         "database_path": str(data_root / "hieronymus.sqlite"),
     }
     assert (data_root / "hieronymus.sqlite").exists()
+
+
+def test_init_series_human_output_is_not_json(tmp_path):
+    data_root = tmp_path / "hieronymus"
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "init-series",
+            "oso",
+            "--title",
+            "Only Sense Online",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.output == f"Series oso initialized at {data_root / 'hieronymus.sqlite'}\n"
+    assert result.output.strip().startswith("{") is False
 
 
 def test_unknown_series_returns_clean_click_error(tmp_path):
@@ -126,6 +148,7 @@ def test_data_root_rejects_existing_file_without_traceback(tmp_path):
             str(data_root),
             "init-series",
             "only-sense-online",
+            "--json",
             "--title",
             "Only Sense Online",
         ],
@@ -179,6 +202,7 @@ def test_console_entrypoint_init_series_outputs_json(tmp_path):
             str(data_root),
             "init-series",
             "only-sense-online",
+            "--json",
             "--title",
             "Only Sense Online",
         ],
@@ -218,6 +242,7 @@ def test_session_start_uses_registry_languages_when_options_are_omitted(tmp_path
             str(data_root),
             "session-start",
             "only-sense-online",
+            "--json",
             "--task-type",
             "translation",
         ],
@@ -232,6 +257,29 @@ def test_session_start_uses_registry_languages_when_options_are_omitted(tmp_path
         ).fetchone()
     assert row["source_language"] == "ja"
     assert row["target_language"] == "en"
+
+
+def test_session_start_human_output_is_not_json(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    runner = CliRunner()
+    _create_series(data_root)
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "session-start",
+            "only-sense-online",
+            "--task-type",
+            "translation",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.output.startswith("Session ")
+    assert result.output.endswith(" started\n")
+    assert result.output.strip().startswith("{") is False
 
 
 def test_session_start_rejects_language_mismatch(tmp_path):
@@ -273,6 +321,7 @@ def test_session_complete_outputs_completed_json(tmp_path):
             str(data_root),
             "session-complete",
             str(session_id),
+            "--json",
         ],
     )
 
@@ -293,6 +342,7 @@ def test_remember_short_outputs_memory_id_json(tmp_path):
             str(data_root),
             "remember-short",
             str(session_id),
+            "--json",
             "--role",
             "user",
             "--kind",
@@ -444,6 +494,7 @@ def test_recall_outputs_ranked_crystal_results(tmp_path):
             str(data_root),
             "recall",
             str(session_id),
+            "--json",
             "--series",
             "only-sense-online",
             "--query",
@@ -492,6 +543,7 @@ def test_recall_outputs_short_term_results(tmp_path):
             str(data_root),
             "recall",
             str(session_id),
+            "--json",
             "--series",
             "only-sense-online",
             "--query",
@@ -532,6 +584,40 @@ def test_recall_outputs_short_term_results(tmp_path):
             },
         }
     ]
+
+
+def test_recall_human_output_is_not_json(tmp_path):
+    data_root = tmp_path / "hieronymus"
+    runner = CliRunner()
+    _create_series(data_root)
+    session_id = _start_session(runner, data_root)
+
+    result = runner.invoke(
+        main,
+        [
+            "--data-root",
+            str(data_root),
+            "recall",
+            str(session_id),
+            "--series",
+            "only-sense-online",
+            "--query",
+            "anything",
+            "--source-language",
+            "ja",
+            "--target-language",
+            "en",
+            "--task-type",
+            "translation",
+            "--volume",
+            "01",
+            "--chapter",
+            "002",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.output == "No recall results.\n"
 
 
 def test_recall_rejects_series_mismatch_without_writing_trace(tmp_path):
@@ -656,6 +742,7 @@ def test_feedback_outputs_event_id_json(tmp_path):
             str(data_root),
             "feedback",
             str(crystal_id),
+            "--json",
             "--event",
             "confirmed_by_user",
             "--role",
