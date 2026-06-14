@@ -793,7 +793,7 @@ git commit -m "docs: improve cli help groups and alpha warning"
 - Test: `tests/test_cli_boundaries.py`
 - Test: `tests/test_cli_service.py`
 
-- [ ] **Step 1: Replace `docs/service-toolkit.md` with complete service docs**
+- [x] **Step 1: Replace `docs/service-toolkit.md` with complete service docs**
 
 Rewrite the relevant sections of `docs/service-toolkit.md` so it contains this structure and exact command boundary lines:
 
@@ -900,7 +900,7 @@ Maintenance:
 - `hiero dream --json`
 ```
 
-- [ ] **Step 2: Move roadmap CLI and service items to completed baseline**
+- [x] **Step 2: Move roadmap CLI and service items to completed baseline**
 
 In `docs/roadmap.md`, replace the CLI And Service section with:
 
@@ -926,7 +926,7 @@ Remaining work:
 - No active roadmap items in this section.
 ```
 
-- [ ] **Step 3: Run docs and boundary tests**
+- [x] **Step 3: Run docs and boundary tests**
 
 Run:
 
@@ -936,7 +936,7 @@ uv run pytest tests/test_cli_boundaries.py tests/test_cli_service.py::test_cli_h
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit docs**
+- [x] **Step 4: Commit docs**
 
 Run:
 
