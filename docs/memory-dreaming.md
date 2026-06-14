@@ -189,11 +189,11 @@ current recall and dreaming vocabulary:
 hieronymus init-series oso --title "Only Sense Online" --source-language ja --target-language en
 ```
 
-Start a task session for the chapter being translated. The command prints
-`{"session_id": 1}` in a fresh store:
+Start a task session for the chapter being translated. With `--json`, the
+command prints `{"session_id": 1}` in a fresh store:
 
 ```bash
-hieronymus session-start oso --source-language ja --target-language en --task-type translation --volume 01 --chapter 002
+hieronymus session-start oso --json --source-language ja --target-language en --task-type translation --volume 01 --chapter 002
 ```
 
 Add a short-term correction to the active session:
@@ -216,11 +216,11 @@ small batch below the scheduled minimum threshold:
 hieronymus dream
 ```
 
-Recall requires an active session. Start a new session for the next workflow; in a
-fresh store this prints `{"session_id": 2}`:
+Recall requires an active session. Start a new session for the next workflow;
+with `--json`, a fresh store prints `{"session_id": 2}`:
 
 ```bash
-hieronymus session-start oso --source-language ja --target-language en --task-type translation --volume 01 --chapter 002
+hieronymus session-start oso --json --source-language ja --target-language en --task-type translation --volume 01 --chapter 002
 ```
 
 Recall the crystallized lesson in that new active session:

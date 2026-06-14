@@ -41,3 +41,11 @@ def test_service_toolkit_mentions_every_direct_store_command() -> None:
         assert f"`hiero {entry.name}`" in docs
         assert entry.reason in docs
     assert DIRECT_STORE_MCP_ADAPTER.reason in docs
+
+
+def test_memory_dreaming_session_start_json_examples_request_json() -> None:
+    docs = Path("docs/memory-dreaming.md").read_text(encoding="utf-8")
+
+    for line in docs.splitlines():
+        if line.startswith("hieronymus session-start "):
+            assert "--json" in line
