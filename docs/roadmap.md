@@ -3,8 +3,8 @@
 Hieronymus is still an alpha local-first translation memory system. The current
 codebase already contains the core memory graph, primitive MCP tools, local
 service, React/OpenTUI management app, install/update flow, and dreaming
-pipeline. This roadmap records what remains without turning those items into a
-locked implementation plan.
+pipeline. The alpha baseline roadmap is closed; future work should start from a
+new plan or ADR-backed decision when scope is approved.
 
 ## Product Surfaces
 
@@ -30,9 +30,7 @@ Current baseline:
   summaries, parse warnings, selected memory IDs, affected memory set payloads,
   multi-batch phase runs, and maintenance phase decisions in the same dream run.
 
-Remaining work:
-
-- No active roadmap items in this section.
+Status: complete for the alpha baseline.
 
 ### MCP And Agent Integrations
 
@@ -62,9 +60,7 @@ Completed baseline:
   alpha status language.
 - Machine-readable legacy automation command output is behind `--json`.
 
-Remaining work:
-
-- No active roadmap items in this section.
+Status: complete for the alpha baseline.
 
 ### OpenTUI Management App
 
@@ -105,9 +101,7 @@ Completed baseline:
   textarea scrollbars remain dependent on a future OpenTUI textarea scrollbar
   API and are tracked in `docs/opentui-conventions.md`.
 
-Remaining work:
-
-- No active roadmap items in this section.
+Status: complete for the alpha baseline.
 
 ### Install, Release, And Quality
 
@@ -133,11 +127,7 @@ Completed:
 - Release build commands and active user-facing frontend build examples use
   the supported Bun command order for this Bun version.
 
-Remaining work:
-
-- Keep `.superpowers/` ignored as temporary brainstorming companion state.
-  Keep `.agents/` trackable because project-local agent skills and configuration
-  may live there.
+Status: complete for the alpha baseline.
 
 ## ADR Follow-Up
 
