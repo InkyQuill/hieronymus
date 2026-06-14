@@ -421,6 +421,67 @@ describe("ConfigScreen", () => {
     expect(output).toContain("gemini-2.5-flash");
   });
 
+  it("moves through providers with j and k like arrow keys", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve(payload(params.provider as ProviderName));
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={client} />);
+
+    await mockInput.type("j");
+    await waitForFrame((frame) => frame.includes("Selected gemini"));
+
+    await mockInput.type("k");
+    await waitForFrame((frame) => frame.includes("Selected openai"));
+
+    expect(calls.map((call) => call.params.provider)).toEqual([
+      "gemini",
+      "openai",
+    ]);
+  });
+
+  it("moves through form fields with j and k like arrow keys", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    await mockInput.press("tab");
+    await mockInput.type("j");
+
+    let output = await waitForFrame((frame) => frame.includes("> API Key"));
+    expect(output).toContain("> API Key");
+
+    await mockInput.type("k");
+
+    output = await waitForFrame((frame) => frame.includes("> Model"));
+    expect(output).toContain("> Model");
+  });
+
+  it("searches config fields from the keyboard", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    await mockInput.type("/");
+
+    let output = await waitForFrame((frame) => frame.includes("Search: "));
+    expect(output).toContain("Search: ");
+
+    await mockInput.type("api");
+
+    output = await waitForFrame((frame) => frame.includes("Search: api"));
+    expect(output).toContain("Search: api");
+
+    await mockInput.press("enter");
+
+    output = await waitForFrame((frame) => frame.includes("> API Key"));
+    expect(output).toContain("> API Key");
+  });
+
   it("ignores further action keys while an operation is in flight", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];

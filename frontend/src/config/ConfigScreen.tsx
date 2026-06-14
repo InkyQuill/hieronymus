@@ -22,6 +22,16 @@ import {
   panelHeight,
   panelWidth,
 } from "../ui/responsive.js";
+import {
+  isConfirmKey,
+  isDownKey,
+  isEscapeKey,
+  isLeftKey,
+  isRightKey,
+  isUpKey,
+  printableSearchChar,
+  type KeyboardInput,
+} from "../ui/keyboard.js";
 
 type Props = {
   initial: ConfigBootstrap;
@@ -59,6 +69,8 @@ export function ConfigScreen({ initial, client }: Props) {
   );
   const [focusedFieldIndex, setFocusedFieldIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
+  const [searchActive, setSearchActive] = useState(false);
+  const [searchText, setSearchText] = useState("");
 
   // Local form state draft to prevent lag on keystrokes
   const [localFormValues, setLocalFormValues] = useState({
@@ -196,25 +208,87 @@ export function ConfigScreen({ initial, client }: Props) {
     });
   };
 
+  const switchPanel = () => {
+    setActivePanel((current) => (current === "provider" ? "form" : "provider"));
+  };
+
+  const focusProviderPanel = () => {
+    setActivePanel("provider");
+  };
+
+  const focusFormPanel = () => {
+    setActivePanel("form");
+  };
+
+  const cancelSearch = () => {
+    setSearchActive(false);
+    setSearchText("");
+  };
+
+  const submitSearch = () => {
+    const query = searchText.trim();
+    if (!query) {
+      setStatus({ message: "Search query is empty", error: true });
+      return;
+    }
+
+    const matchIndex = findConfigFieldMatch(
+      query,
+      formFields,
+      payload.form_schema.groups,
+      payload.form_schema.sections,
+    );
+    if (matchIndex < 0) {
+      setStatus({ message: `No config field matches "${query}"`, error: true });
+      return;
+    }
+
+    setFocusedFieldIndex(matchIndex);
+    setActivePanel("form");
+    setSearchActive(false);
+    setStatus({
+      message: `Found ${formFields[matchIndex]?.label ?? query}`,
+      error: false,
+    });
+  };
+
   useKeyboard((key) => {
-    const ctrl = key.ctrl;
-    const tab = key.name === "tab";
-    const shift = key.shift;
-    const upArrow = key.name === "up";
-    const downArrow = key.name === "down";
-    const leftArrow = key.name === "left";
-    const rightArrow = key.name === "right";
-    const enter = key.name === "enter" || key.name === "return";
-    const escape = key.name === "escape";
+    const keyboardKey = key as KeyboardInput;
+    const tab = keyboardKey.name === "tab";
+    const up = isUpKey(keyboardKey);
+    const down = isDownKey(keyboardKey);
+    const left = isLeftKey(keyboardKey);
+    const right = isRightKey(keyboardKey);
+    const enter = isConfirmKey(keyboardKey);
+    const escape = isEscapeKey(keyboardKey);
 
     // 1. Focus Cycling
     if (tab) {
       if (isEditing) {
         submitField();
       }
-      setActivePanel((current) =>
-        current === "provider" ? "form" : "provider",
-      );
+      switchPanel();
+      return;
+    }
+
+    if (searchActive) {
+      if (escape) {
+        cancelSearch();
+        return;
+      }
+      if (enter) {
+        submitSearch();
+        return;
+      }
+      if (keyboardKey.name === "backspace") {
+        setSearchText((current) => current.slice(0, -1));
+        return;
+      }
+
+      const char = printableSearchChar(keyboardKey);
+      if (char !== null) {
+        setSearchText((current) => current + char);
+      }
       return;
     }
 
@@ -235,10 +309,10 @@ export function ConfigScreen({ initial, client }: Props) {
       const focusedField = formFields[focusedFieldIndex];
       if (focusedField?.type === "toggle" || focusedField?.type === "choice") {
         if (
-          leftArrow ||
-          rightArrow ||
-          key.name === "space" ||
-          key.name === " "
+          left ||
+          right ||
+          keyboardKey.name === "space" ||
+          keyboardKey.name === " "
         ) {
           const choices = focusedField.choices.length
             ? focusedField.choices
@@ -267,14 +341,14 @@ export function ConfigScreen({ initial, client }: Props) {
 
     // 3. Panel navigation
     if (activePanel === "provider") {
-      if (upArrow) {
+      if (up) {
         const nextIndex = Math.max(0, currentProviderIndex - 1);
         if (nextIndex !== currentProviderIndex) {
           selectProviderByIndex(nextIndex);
         }
         return;
       }
-      if (downArrow) {
+      if (down) {
         const nextIndex = Math.min(
           providerChoices.length - 1,
           currentProviderIndex + 1,
@@ -284,17 +358,25 @@ export function ConfigScreen({ initial, client }: Props) {
         }
         return;
       }
+      if (right) {
+        focusFormPanel();
+        return;
+      }
     }
 
     if (activePanel === "form") {
-      if (upArrow) {
+      if (up) {
         setFocusedFieldIndex((prev) => Math.max(0, prev - 1));
         return;
       }
-      if (downArrow) {
+      if (down) {
         setFocusedFieldIndex((prev) =>
           Math.min(Math.max(formFields.length - 1, 0), prev + 1),
         );
+        return;
+      }
+      if (left) {
+        focusProviderPanel();
         return;
       }
       if (enter && formFields.length > 0) {
@@ -304,29 +386,35 @@ export function ConfigScreen({ initial, client }: Props) {
     }
 
     // 4. Global hotkeys
-    if (key.name === "q") {
+    if (keyboardKey.name === "/") {
+      setSearchActive(true);
+      setSearchText("");
+      return;
+    }
+
+    if (keyboardKey.name === "q") {
       client?.close();
       renderer.destroy();
     }
 
-    if (key.name === "s") {
+    if (keyboardKey.name === "s") {
       handleSave();
       return;
     }
 
-    if (key.name === "r") {
+    if (keyboardKey.name === "r") {
       handleReload();
       return;
     }
 
-    if (key.name === "c") {
+    if (keyboardKey.name === "c") {
       handleCheck();
       return;
     }
 
     // Numeric provider selection shortcuts
     const providerIndex = providerIndexForInput(
-      key.name,
+      keyboardKey.name,
       providerChoices.length,
     );
     if (providerIndex >= 0) {
@@ -410,10 +498,12 @@ export function ConfigScreen({ initial, client }: Props) {
           ))}
         </box>
 
+        <SearchPrompt active={searchActive} query={searchText} />
         <StatusLine message={status.message} error={status.error} busy={busy} />
         <box flexDirection="row" marginTop={1}>
           <text fg="gray">
-            Tab pane {providerKeyRange(providerChoices)} provider s save q quit
+            Tab pane / search {providerKeyRange(providerChoices)} provider s
+            save q quit
           </text>
         </box>
       </box>
@@ -492,10 +582,12 @@ export function ConfigScreen({ initial, client }: Props) {
         ))}
       </box>
 
+      <SearchPrompt active={searchActive} query={searchText} />
       <StatusLine message={status.message} error={status.error} busy={busy} />
       <KeyHelp
         keys={[
           "Tab focus",
+          "/ search",
           `${providerKeyRange(providerChoices)} provider`,
           "s save",
           "r reload",
@@ -503,6 +595,18 @@ export function ConfigScreen({ initial, client }: Props) {
           "q quit",
         ]}
       />
+    </box>
+  );
+}
+
+function SearchPrompt({ active, query }: { active: boolean; query: string }) {
+  if (!active) {
+    return null;
+  }
+
+  return (
+    <box marginTop={1}>
+      <text fg="cyan">Search: {query}</text>
     </box>
   );
 }
@@ -575,6 +679,47 @@ function getDetailErrors(payload: ConfigBootstrap): string[] {
 
 function configSectionLabels(sections: ConfigFormSection[]): string[] {
   return sections.map((section) => section.label).filter(Boolean);
+}
+
+function findConfigFieldMatch(
+  query: string,
+  fields: ConfigFormField[],
+  groups: Array<{
+    id: string;
+    section?: string;
+    label?: string;
+    description?: string;
+  }>,
+  sections: ConfigFormSection[],
+): number {
+  const normalizedQuery = normalizeSearchText(query);
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+  const sectionById = new Map(sections.map((section) => [section.id, section]));
+
+  return fields.findIndex((field) => {
+    const group = groupById.get(field.group);
+    const sectionId = field.section || group?.section || "";
+    const section = sectionById.get(sectionId);
+    const values = [
+      field.label,
+      field.key,
+      field.hint,
+      field.group,
+      field.section,
+      group?.label,
+      group?.description,
+      section?.label,
+      section?.description,
+    ];
+
+    return values.some((value) =>
+      normalizeSearchText(value ?? "").includes(normalizedQuery),
+    );
+  });
+}
+
+function normalizeSearchText(value: string): string {
+  return value.trim().toLocaleLowerCase();
 }
 
 function providerKeys(providerCount: number): string[] {
