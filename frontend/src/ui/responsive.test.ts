@@ -22,9 +22,29 @@ describe("responsive layout helpers", () => {
       width: 60,
       height: 24,
     });
+    expect(classifyTerminalLayout(60, 20)).toEqual({
+      kind: "narrow",
+      width: 60,
+      height: 20,
+    });
+    expect(classifyTerminalLayout(79, 24)).toEqual({
+      kind: "narrow",
+      width: 79,
+      height: 24,
+    });
+    expect(classifyTerminalLayout(80, 23)).toEqual({
+      kind: "narrow",
+      width: 80,
+      height: 23,
+    });
     expect(classifyTerminalLayout(132, 24)).toEqual({
       kind: "compact",
       width: 132,
+      height: 24,
+    });
+    expect(classifyTerminalLayout(136, 24)).toEqual({
+      kind: "wide",
+      width: 136,
       height: 24,
     });
     expect(classifyTerminalLayout(136, 20)).toEqual({
@@ -37,6 +57,13 @@ describe("responsive layout helpers", () => {
       width: 59,
       height: 20,
     });
+  });
+
+  it("treats non-finite terminal dimensions as too small", () => {
+    expect(classifyTerminalLayout(Number.NaN, 24).kind).toBe("too-small");
+    expect(classifyTerminalLayout(80, Number.POSITIVE_INFINITY).kind).toBe(
+      "too-small",
+    );
   });
 
   it("keeps panel content inside the terminal width after borders", () => {
