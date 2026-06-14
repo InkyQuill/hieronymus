@@ -52,16 +52,21 @@ Remaining work:
 The CLI is both a human tool and an automation surface. Human output should be
 clear, while JSON output remains stable for scripts.
 
+Completed baseline:
+
+- Commands that intentionally access SQLite through Python domain stores are
+  documented with command-level reasons.
+- Agent-facing hook and MCP adapter status paths report local service discovery
+  from configured runtime files instead of parsing human CLI output.
+- Local-first operation and existing `--data-root` / `HIERONYMUS_DATA_ROOT`
+  behavior remain the data-root selection contract.
+- CLI help has clearer command grouping, examples, readable line lengths, and
+  alpha status language.
+- Machine-readable legacy automation command output is behind `--json`.
+
 Remaining work:
 
-- Document which commands intentionally access SQLite directly and why.
-- Route agent-facing command/adaptor paths through local service discovery where
-  that improves concurrency or deployment behavior.
-- Preserve local-first operation and existing `--data-root` behavior.
-- Improve CLI help quality with examples, clearer command grouping, and alpha
-  status language.
-- Keep machine-readable output behind `--json`; avoid parsing human CLI output
-  from other components.
+- No active roadmap items in this section.
 
 ### OpenTUI Management App
 
