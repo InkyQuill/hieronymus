@@ -12,9 +12,11 @@ Running `hiero` with no subcommand starts the local daemon if it is not already 
 short status surface. The identity portion looks like this:
 
 ```text
-🪶 Hieronymus v0.1.0
+🪶 Hieronymus v0.2.0α
 Remembers things for you.
 ```
+
+Hieronymus is alpha software: local-first, usable at your own risk.
 
 The daemon is the normal service surface for the global SQLite store. Some legacy and debug CLI
 commands still access storage directly in this pass; future agent adapters should discover the daemon

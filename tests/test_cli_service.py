@@ -93,6 +93,7 @@ def test_cli_help_mentions_service_commands() -> None:
     result = CliRunner().invoke(main, ["help"])
 
     assert result.exit_code == 0
+    assert all(len(line) <= 100 for line in result.output.splitlines())
     assert "Hieronymus v0.2.0α" in result.output
     assert "Alpha software: local-first, usable at your own risk." in result.output
     assert "Service" in result.output
@@ -101,10 +102,12 @@ def test_cli_help_mentions_service_commands() -> None:
     assert "Maintenance" in result.output
     assert "Examples" in result.output
     assert "hiero status --json" in result.output
+    assert "hiero doctor --json" in result.output
     assert "hiero session-start oso --task-type translation --json" in result.output
     assert (
-        'hiero recall 1 --series oso --query "style" --source-language ja '
-        "--target-language en --task-type translation --json"
+        'hiero recall 1 --series oso --query "style"\n'
+        "      --source-language ja --target-language en\n"
+        "      --task-type translation --json"
     ) in result.output
     assert "Open the memory management TUI" not in result.output
     assert "Show config paths" not in result.output

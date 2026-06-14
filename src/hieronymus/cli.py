@@ -480,16 +480,15 @@ def help_command() -> None:
     click.echo("  hiero admin            Open the local management TUI")
     click.echo("  hiero admin --json     Emit management counts and available views")
     click.echo("  hiero doctor           Check configuration and service health")
+    click.echo("  hiero doctor --json    Emit configuration and service diagnostics")
     click.echo()
     click.echo(f"{GUIDE_ICON} Agent and automation")
     click.echo("  hiero session-start <series> --task-type <type> --json")
-    click.echo(
-        "  hiero remember-short <session-id> --role user --kind correction --text <text> --json"
-    )
-    click.echo(
-        "  hiero recall <session-id> --series <series> --query <query> "
-        "--source-language <src> --target-language <dst> --task-type <type> --json"
-    )
+    click.echo("  hiero remember-short <session-id> --role user --kind correction")
+    click.echo("      --text <text> --json")
+    click.echo("  hiero recall <session-id> --series <series> --query <query>")
+    click.echo("      --source-language <src> --target-language <dst>")
+    click.echo("      --task-type <type> --json")
     click.echo("  hiero feedback <crystal-id> --event helpful --role user --json")
     click.echo()
     click.echo(f"{GUIDE_ICON} Maintenance")
@@ -500,10 +499,9 @@ def help_command() -> None:
     click.echo(f"{GUIDE_ICON} Examples")
     click.echo("  hiero status --json")
     click.echo("  hiero session-start oso --task-type translation --json")
-    click.echo(
-        '  hiero recall 1 --series oso --query "style" --source-language ja '
-        "--target-language en --task-type translation --json"
-    )
+    click.echo('  hiero recall 1 --series oso --query "style"')
+    click.echo("      --source-language ja --target-language en")
+    click.echo("      --task-type translation --json")
 
 
 @main.command("init-series")
