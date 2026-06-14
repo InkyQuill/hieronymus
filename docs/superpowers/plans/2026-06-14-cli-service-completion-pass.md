@@ -434,7 +434,7 @@ git commit -m "feat: expose local service discovery to agent adapters"
 - Modify: `src/hieronymus/cli.py`
 - Modify: `tests/test_cli.py`
 
-- [ ] **Step 1: Update CLI tests to request JSON explicitly**
+- [x] **Step 1: Update CLI tests to request JSON explicitly**
 
 In `tests/test_cli.py`, update invocations that parse JSON from these commands to include `--json`:
 
@@ -464,7 +464,7 @@ In `tests/test_cli.py`, update invocations that parse JSON from these commands t
 
 Apply the same explicit `--json` pattern to `propose-term`, `validate`, and `remember` tests if they parse JSON.
 
-- [ ] **Step 2: Add human-output tests for the same commands**
+- [x] **Step 2: Add human-output tests for the same commands**
 
 Append focused tests to `tests/test_cli.py`:
 
@@ -540,7 +540,7 @@ def test_recall_human_output_is_not_json(tmp_path):
     assert result.output == "No recall results.\n"
 ```
 
-- [ ] **Step 3: Run tests and confirm failures**
+- [x] **Step 3: Run tests and confirm failures**
 
 Run:
 
@@ -550,7 +550,7 @@ uv run pytest tests/test_cli.py -v
 
 Expected: FAIL because the legacy commands do not accept `--json` yet and still print JSON by default.
 
-- [ ] **Step 4: Add helper output functions in `src/hieronymus/cli.py`**
+- [x] **Step 4: Add helper output functions in `src/hieronymus/cli.py`**
 
 Near the existing payload helpers, add:
 
@@ -564,7 +564,7 @@ def _echo_json_or_line(payload: object, *, json_output: bool, line: str) -> None
 
 Use `render_json` rather than `json.dumps` so all machine output uses the same formatting path.
 
-- [ ] **Step 5: Add `--json` flags and human output**
+- [x] **Step 5: Add `--json` flags and human output**
 
 For each command below, add `@click.option("--json", "json_output", is_flag=True)` before `@click.pass_context`, add `json_output: bool` to the function signature, build the existing payload, and call `_echo_json_or_line`.
 
@@ -653,7 +653,7 @@ For each command below, add `@click.option("--json", "json_output", is_flag=True
     _echo_json_or_line(payload, json_output=json_output, line=f"Feedback event {event_id} recorded")
 ```
 
-- [ ] **Step 6: Preserve console alias behavior**
+- [x] **Step 6: Preserve console alias behavior**
 
 Update `tests/test_cli_service.py::test_hiero_console_alias_runs_existing_command` to pass `--json` to `init-series`, because that test parses stdout:
 
@@ -663,7 +663,7 @@ Update `tests/test_cli_service.py::test_hiero_console_alias_runs_existing_comman
 "--json",
 ```
 
-- [ ] **Step 7: Run targeted tests**
+- [x] **Step 7: Run targeted tests**
 
 Run:
 
@@ -673,7 +673,7 @@ uv run pytest tests/test_cli.py tests/test_cli_service.py::test_hiero_console_al
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit JSON gating changes**
+- [x] **Step 8: Commit JSON gating changes**
 
 Run:
 
