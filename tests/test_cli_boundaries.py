@@ -6,9 +6,9 @@ from hieronymus.cli_boundaries import DIRECT_STORE_COMMANDS, DIRECT_STORE_MCP_AD
 
 
 def test_direct_store_cli_commands_are_documented() -> None:
-    names = {entry.name for entry in DIRECT_STORE_COMMANDS}
+    names = [entry.name for entry in DIRECT_STORE_COMMANDS]
 
-    assert names == {
+    assert names == [
         "init-series",
         "propose-term",
         "validate",
@@ -19,8 +19,8 @@ def test_direct_store_cli_commands_are_documented() -> None:
         "recall",
         "feedback",
         "dream",
-    }
-    assert all(entry.reason for entry in DIRECT_STORE_COMMANDS)
+    ]
+    assert all(entry.reason.strip() for entry in DIRECT_STORE_COMMANDS)
     assert all(
         entry.consumer in {"human-debug", "agent-automation", "maintenance"}
         for entry in DIRECT_STORE_COMMANDS
@@ -40,3 +40,4 @@ def test_service_toolkit_mentions_every_direct_store_command() -> None:
     for entry in DIRECT_STORE_COMMANDS:
         assert f"`hiero {entry.name}`" in docs
         assert entry.reason in docs
+    assert DIRECT_STORE_MCP_ADAPTER.reason in docs

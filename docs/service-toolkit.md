@@ -43,9 +43,7 @@ These commands still use Python domain stores directly in this pass:
 - `hiero feedback`: agent workflow primitive that records correction events through the feedback store
 - `hiero dream`: maintenance command that invokes DreamService directly so local dreaming works without a daemon
 
-`hieronymus-mcp` is also a direct-store boundary: stdio MCP adapter uses Python domain stores
-directly because the local daemon currently exposes lifecycle and status HTTP only; it does not parse
-person-facing CLI output.
+`hieronymus-mcp` is also a direct-store boundary: stdio MCP adapter uses Python domain stores directly because the local daemon currently exposes lifecycle and status HTTP only; it does not parse person-facing CLI output.
 
 ## Commands
 
