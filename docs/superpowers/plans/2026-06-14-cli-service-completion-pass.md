@@ -952,7 +952,7 @@ git commit -m "docs: document cli service boundaries"
 **Files:**
 - No new files unless verification reveals a still-valid issue.
 
-- [ ] **Step 1: Run backend tests**
+- [x] **Step 1: Run backend tests**
 
 Run:
 
@@ -962,7 +962,7 @@ uv run pytest
 
 Expected: PASS.
 
-- [ ] **Step 2: Run Ruff lint**
+- [x] **Step 2: Run Ruff lint**
 
 Run:
 
@@ -972,7 +972,7 @@ uv run ruff check .
 
 Expected: PASS.
 
-- [ ] **Step 3: Run Ruff formatting check**
+- [x] **Step 3: Run Ruff formatting check**
 
 Run:
 
@@ -982,7 +982,7 @@ uv run ruff format --check .
 
 Expected: PASS.
 
-- [ ] **Step 4: Check git status**
+- [x] **Step 4: Check git status**
 
 Run:
 
