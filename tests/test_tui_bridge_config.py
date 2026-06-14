@@ -66,8 +66,8 @@ def test_config_bootstrap_exposes_python_owned_form_schema(tmp_path: Path) -> No
     assert [group["id"] for group in schema["groups"]] == [
         "provider",
         "dreaming",
-        "release",
         "ingest",
+        "release",
     ]
     assert schema["groups"][0] == {
         "id": "provider",
@@ -107,12 +107,30 @@ def test_config_form_schema_groups_fields_by_config_file(tmp_path: Path) -> None
 
     section_ids = [section["id"] for section in schema["sections"]]
     assert section_ids == ["dream", "ingest", "release"]
+    assert [group["section"] for group in schema["groups"]] == [
+        "dream",
+        "dream",
+        "ingest",
+        "release",
+    ]
 
     field_sections = {field["key"]: field["section"] for field in schema["fields"]}
     assert field_sections["provider.model"] == "dream"
     assert field_sections["dreaming.autostart_enabled"] == "dream"
     assert field_sections["ingest.warning_sentence_count"] == "ingest"
     assert field_sections["release.update_channel"] == "release"
+    field_section_order = [
+        field["section"]
+        for field in schema["fields"]
+        if field["key"]
+        in {
+            "provider.model",
+            "dreaming.autostart_enabled",
+            "ingest.warning_sentence_count",
+            "release.update_channel",
+        }
+    ]
+    assert field_section_order == ["dream", "dream", "ingest", "release"]
 
 
 def test_config_bootstrap_exposes_redacted_dream_config_and_model_cache(

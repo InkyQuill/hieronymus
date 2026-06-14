@@ -78,16 +78,16 @@ def _form_schema() -> dict[str, object]:
                 ),
             },
             {
-                "id": "release",
-                "section": "release",
-                "label": "Updates",
-                "description": "Managed install update channel.",
-            },
-            {
                 "id": "ingest",
                 "section": "ingest",
                 "label": "Ingestion",
                 "description": "Limits for short-term memory and Learn ingestion.",
+            },
+            {
+                "id": "release",
+                "section": "release",
+                "label": "Updates",
+                "description": "Managed install update channel.",
             },
         ],
         "fields": [
@@ -160,16 +160,6 @@ def _form_schema() -> dict[str, object]:
                 minimum=1,
             ),
             _field(
-                "release.update_channel",
-                "release",
-                "Update Channel",
-                "choice",
-                section="release",
-                hint="Stable uses release tags; dev tracks the configured development target.",
-                choices=["stable", "dev"],
-                default="stable",
-            ),
-            _field(
                 "ingest.warning_sentence_count",
                 "ingest",
                 "Memory Warn Sentences",
@@ -201,6 +191,16 @@ def _form_schema() -> dict[str, object]:
                 placeholder="e.g. 1200",
                 default="1200",
                 minimum=1,
+            ),
+            _field(
+                "release.update_channel",
+                "release",
+                "Update Channel",
+                "choice",
+                section="release",
+                hint="Stable uses release tags; dev tracks the configured development target.",
+                choices=["stable", "dev"],
+                default="stable",
             ),
         ],
     }
