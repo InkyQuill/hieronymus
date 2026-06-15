@@ -129,6 +129,7 @@ export function ConfigScreen({ initial, client }: Props) {
       method: "config.update_draft",
       params: {
         selected_provider: payload.selected_provider,
+        draft: payload.draft,
         provider: draftValues.provider,
         dreaming: draftValues.dreaming,
         ingest: draftValues.ingest,
