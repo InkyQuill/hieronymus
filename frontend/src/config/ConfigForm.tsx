@@ -79,9 +79,11 @@ export function ConfigForm({
           const visibleGroupFields = groupFields.filter(({ index }) =>
             visibleIndexes.has(index),
           );
-          const activeField = groupFields.find(
-            ({ index }) => focusedFieldIndex === index,
-          )?.field;
+          const activeField =
+            visibleRows === undefined
+              ? groupFields.find(({ index }) => focusedFieldIndex === index)
+                  ?.field
+              : visibleGroupFields[0]?.field;
           const isGroupActive = focused && activeField !== undefined;
 
           if (visibleGroupFields.length === 0 && activeField === undefined) {
@@ -105,13 +107,16 @@ export function ConfigForm({
                   <text fg="gray"> [{configFileLabel(group)}]</text>
                 ) : null}
               </box>
-              {group.description &&
-              (visibleRows === undefined || isGroupActive) ? (
+              {group.description && visibleRows === undefined ? (
                 <text fg="gray">{group.description}</text>
               ) : null}
 
               {visibleGroupFields.map(({ field, index }) => {
-                const isFieldFocused = focused && focusedFieldIndex === index;
+                const isFieldFocused =
+                  focused &&
+                  (visibleRows === undefined
+                    ? focusedFieldIndex === index
+                    : visibleIndexes.has(index));
                 const labelColor = isFieldFocused ? "cyan" : "gray";
 
                 return (
@@ -249,12 +254,22 @@ function visibleIndexSet(
   focusedFieldIndex: number,
   visibleRows: number | undefined,
 ): Set<number> {
-  const compactFieldBudget =
-    visibleRows === undefined ? undefined : Math.max(1, visibleRows - 6);
+  if (visibleRows !== undefined) {
+    if (fieldCount === 0) {
+      return new Set();
+    }
+
+    const focusedIndex = Math.min(
+      Math.max(focusedFieldIndex, 0),
+      fieldCount - 1,
+    );
+    return new Set([focusedIndex]);
+  }
+
   const fieldWindow = getVisibleFieldWindow(
     fieldCount,
     focusedFieldIndex,
-    compactFieldBudget,
+    visibleRows,
   );
   const visibleIndexes = new Set<number>();
 
