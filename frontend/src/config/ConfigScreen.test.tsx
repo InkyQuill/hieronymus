@@ -530,6 +530,7 @@ describe("ConfigScreen", () => {
     const output = captureCharFrame();
     expect(output).toContain("Provider: Gemini");
     expect(output).toContain("gemini-2.5-flash");
+    expect(output).not.toContain("▶ Gemini");
   });
 
   it("changes provider choice while editing the provider field", async () => {
