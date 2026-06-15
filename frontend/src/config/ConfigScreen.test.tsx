@@ -880,6 +880,42 @@ describe("ConfigScreen", () => {
     ]);
   });
 
+  it("preserves leading characters when editing the model field", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve({
+        ...payload(),
+        form_values: {
+          ...payload().form_values,
+          provider: {
+            ...payload().form_values.provider,
+            model: "deepseek",
+          },
+        },
+      });
+    });
+    const { render, mockInput, waitFor, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={client} />);
+
+    await mockInput.press("down");
+    await mockInput.press("enter");
+    for (let index = 0; index < "gpt-4.1-mini".length; index += 1) {
+      await mockInput.press("backspace");
+    }
+    await mockInput.type("deepseek");
+    await mockInput.press("enter");
+
+    await waitFor(async () => calls.length >= 1);
+    const output = await waitForFrame((frame) => frame.includes("deepseek"));
+
+    expect(calls[0]?.params.provider).toMatchObject({ model: "deepseek" });
+    expect(output).toContain("Model: deepseek");
+    expect(output).not.toContain("Model: epseek");
+  });
+
   it("submits schema-effective choice defaults from the form panel", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
