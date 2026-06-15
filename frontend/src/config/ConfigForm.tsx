@@ -105,7 +105,8 @@ export function ConfigForm({
                   <text fg="gray"> [{configFileLabel(group)}]</text>
                 ) : null}
               </box>
-              {group.description ? (
+              {group.description &&
+              (visibleRows === undefined || isGroupActive) ? (
                 <text fg="gray">{group.description}</text>
               ) : null}
 
@@ -248,10 +249,12 @@ function visibleIndexSet(
   focusedFieldIndex: number,
   visibleRows: number | undefined,
 ): Set<number> {
+  const compactFieldBudget =
+    visibleRows === undefined ? undefined : Math.max(1, visibleRows - 6);
   const fieldWindow = getVisibleFieldWindow(
     fieldCount,
     focusedFieldIndex,
-    visibleRows,
+    compactFieldBudget,
   );
   const visibleIndexes = new Set<number>();
 
