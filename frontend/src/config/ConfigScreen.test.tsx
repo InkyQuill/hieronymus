@@ -196,18 +196,21 @@ afterEach(async () => {
 });
 
 describe("ConfigScreen", () => {
-  it("renders config as a single active pane at 80x24", async () => {
+  it("renders compact config as one grouped form at 80x24", async () => {
     const { render, waitForFrame } = setupSizedTest(80, 24);
 
     await render(<ConfigScreen initial={payload()} client={undefined} />);
 
     const output = await waitForFrame((frame) =>
-      frame.includes("Hieronymus Config"),
+      frame.includes("Provider/API | Dreaming | Ingest | Release"),
     );
-    expect(output).toContain("Providers");
+    expect(output).toContain("Hieronymus Config");
+    expect(output).toContain("Provider/API | Dreaming | Ingest | Release");
+    expect(output).toContain("Provider/API");
     expect(output).toContain("OpenAI compatible");
-    expect(output).toContain("Config files: Dream | Ingest | Release");
-    expect(output).toContain("Tab pane");
+    expect(output).toContain("Model");
+    expect(output).not.toContain("Config files:");
+    expect(output).not.toContain("compact 80x24");
     expect(output).not.toContain(
       "/tmp/dream.conf | /tmp/ingest.conf | /tmp/release.conf",
     );
@@ -303,6 +306,20 @@ describe("ConfigScreen", () => {
     expect(output).toContain("q quit");
   });
 
+  it("renders footer keys as bracketed key labels", async () => {
+    const { render, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+
+    const output = await waitForFrame((frame) => frame.includes("[Enter] edit"));
+    expect(output).toContain("[↑↓] field");
+    expect(output).toContain("[Enter] edit");
+    expect(output).toContain("[s] save");
+    expect(output).toContain("[/] search");
+    expect(output).toContain("[q] quit");
+    expect(output).not.toContain("Tab pane / search");
+  });
+
   it("renders a too-small config message below the minimum width", async () => {
     const { render, waitForFrame } = setupSizedTest(59, 20);
 
@@ -315,18 +332,19 @@ describe("ConfigScreen", () => {
     expect(output).toContain("minimum 60x20");
   });
 
-  it("renders one provider family selector instead of provider rows", async () => {
+  it("renders provider choice as the first Provider/API field", async () => {
     const { render, waitForFrame } = setupTest();
 
     await render(<ConfigScreen initial={payload()} client={undefined} />);
 
     const output = await waitForFrame((frame) =>
-      frame.includes("OpenAI compatible"),
+      frame.includes("> Provider: OpenAI compatible"),
     );
-    expect(output).toContain("OpenAI compatible");
-    expect(output).toContain("Gemini");
-    expect(output).toContain("Anthropic");
-    expect(output).not.toContain("Deterministic");
+    expect(output).toContain("Provider/API");
+    expect(output).toContain("> Provider: OpenAI compatible");
+    expect(output).toContain("Model: gpt-4.1-mini");
+    expect(output).not.toContain("Providers");
+    expect(output).not.toContain("▶ OpenAI compatible");
   });
 
   it("renders model suggestions when present", async () => {
@@ -371,15 +389,26 @@ describe("ConfigScreen", () => {
     expect(output).toContain("Backend Model Label");
   });
 
-  it("renders backend-owned config section labels", async () => {
+  it("renders grouped config blocks in bridge schema order", async () => {
     const { render, waitForFrame } = setupTest();
 
     await render(<ConfigScreen initial={payload()} client={undefined} />);
 
     const output = await waitForFrame((frame) =>
-      frame.includes("Config files: Dream | Ingest | Release"),
+      frame.includes("Provider/API") && frame.includes("Dreaming"),
     );
-    expect(output).toContain("Config files: Dream | Ingest | Release");
+    const providerIndex = output.indexOf("Provider/API");
+    const dreamingIndex = output.indexOf("Dreaming");
+    const ingestionIndex = output.indexOf("Ingestion");
+    const updatesIndex = output.indexOf("Updates");
+
+    expect(providerIndex).toBeGreaterThanOrEqual(0);
+    expect(dreamingIndex).toBeGreaterThan(providerIndex);
+    expect(ingestionIndex).toBeGreaterThan(dreamingIndex);
+    expect(updatesIndex).toBeGreaterThan(ingestionIndex);
+    expect(output).toContain("dream.conf");
+    expect(output).toContain("ingest.conf");
+    expect(output).toContain("release.conf");
   });
 
   it("renders a placeholder when model suggestions are absent", async () => {
