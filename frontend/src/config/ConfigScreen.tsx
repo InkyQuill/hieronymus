@@ -12,7 +12,6 @@ import {
 } from "../rpc/schema.js";
 import type { RpcClient } from "../rpc/client.js";
 import { ConfigForm } from "./ConfigForm.js";
-import { ProviderSelector } from "./ProviderSelector.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
 import {
@@ -32,6 +31,8 @@ import {
   printableSearchChar,
   type KeyboardInput,
 } from "../ui/keyboard.js";
+
+const SYNTHETIC_PROVIDER_KEY = "provider.__selected";
 
 type Props = {
   initial: ConfigBootstrap;
@@ -63,45 +64,28 @@ export function ConfigScreen({ initial, client }: Props) {
   const [busy, setBusy] = useState(false);
   const operationInFlight = useRef(false);
 
-  // Focus and local form state
-  const [activePanel, setActivePanel] = useState<"provider" | "form">(
-    "provider",
-  );
   const [focusedFieldIndex, setFocusedFieldIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [searchActive, setSearchActive] = useState(false);
   const [searchText, setSearchText] = useState("");
 
   // Local form state draft to prevent lag on keystrokes
-  const [localFormValues, setLocalFormValues] = useState({
-    provider: { ...payload.form_values.provider },
-    dreaming: { ...payload.form_values.dreaming },
-    ingest: { ...payload.form_values.ingest },
-    release: { ...payload.form_values.release },
-  });
+  const [localFormValues, setLocalFormValues] = useState(() =>
+    formValuesWithSelectedProvider(payload.form_values, payload),
+  );
 
   // Keep local values in sync when payload changes
   useEffect(() => {
-    setLocalFormValues({
-      provider: { ...payload.form_values.provider },
-      dreaming: { ...payload.form_values.dreaming },
-      ingest: { ...payload.form_values.ingest },
-      release: { ...payload.form_values.release },
-    });
-  }, [payload.form_values]);
+    setLocalFormValues(
+      formValuesWithSelectedProvider(payload.form_values, payload),
+    );
+  }, [payload]);
 
   const providerChoices = payload.provider_choices;
-  const selectedProvider = payload.selected_provider;
-  const formFields = payload.form_schema.fields;
-
-  const currentProviderIndex = Math.max(
-    providerChoices.findIndex((p) => p.name === selectedProvider),
-    0,
-  );
+  const formFields = configFieldsWithProviderChoice(payload);
 
   const suggestions = modelSuggestions(payload);
   const detailErrors = getDetailErrors(payload);
-  const sectionLabels = configSectionLabels(payload.form_schema.sections);
 
   useEffect(() => {
     setFocusedFieldIndex((index) =>
@@ -138,16 +122,17 @@ export function ConfigScreen({ initial, client }: Props) {
     if (!client || busy || operationInFlight.current) {
       return;
     }
+    const draftValues = draftFormValues(formValues);
 
     void runConfigOperation({
       client,
       method: "config.update_draft",
       params: {
         selected_provider: payload.selected_provider,
-        provider: formValues.provider,
-        dreaming: formValues.dreaming,
-        ingest: formValues.ingest,
-        release: formValues.release,
+        provider: draftValues.provider,
+        dreaming: draftValues.dreaming,
+        ingest: draftValues.ingest,
+        release: draftValues.release,
       },
       pendingMessage: "Updating draft settings",
       successMessage: "Draft settings updated",
@@ -208,18 +193,6 @@ export function ConfigScreen({ initial, client }: Props) {
     });
   };
 
-  const switchPanel = () => {
-    setActivePanel((current) => (current === "provider" ? "form" : "provider"));
-  };
-
-  const focusProviderPanel = () => {
-    setActivePanel("provider");
-  };
-
-  const focusFormPanel = () => {
-    setActivePanel("form");
-  };
-
   const cancelSearch = () => {
     setSearchActive(false);
     setSearchText("");
@@ -244,7 +217,6 @@ export function ConfigScreen({ initial, client }: Props) {
     }
 
     setFocusedFieldIndex(matchIndex);
-    setActivePanel("form");
     setSearchActive(false);
     setStatus({
       message: `Found ${formFields[matchIndex]?.label ?? query}`,
@@ -283,25 +255,16 @@ export function ConfigScreen({ initial, client }: Props) {
       return;
     }
 
-    // 1. Focus Cycling
-    if (tab) {
-      if (isEditing) {
-        submitField();
-      }
-      switchPanel();
-      return;
-    }
+    // 1. Ignore Tab outside search mode; this screen has one editor.
+    if (tab) return;
 
     // 2. Editing toggle handling
     if (isEditing) {
       if (escape) {
         // Discard edits
-        setLocalFormValues({
-          provider: { ...payload.form_values.provider },
-          dreaming: { ...payload.form_values.dreaming },
-          ingest: { ...payload.form_values.ingest },
-          release: { ...payload.form_values.release },
-        });
+        setLocalFormValues(
+          formValuesWithSelectedProvider(payload.form_values, payload),
+        );
         setIsEditing(false);
         return;
       }
@@ -331,6 +294,20 @@ export function ConfigScreen({ initial, client }: Props) {
             localFormValues,
             focusedField,
           );
+          if (focusedField.key === SYNTHETIC_PROVIDER_KEY) {
+            const provider = providerNameForDisplay(
+              providerChoices,
+              currentVal,
+            );
+            const providerIndex = providerChoices.findIndex(
+              (choice) => choice.name === provider,
+            );
+            if (providerIndex >= 0) {
+              selectProviderByIndex(providerIndex);
+            }
+            setIsEditing(false);
+            return;
+          }
           submitField(
             withFieldValue(localFormValues, focusedField.key, currentVal),
           );
@@ -339,50 +316,20 @@ export function ConfigScreen({ initial, client }: Props) {
       return;
     }
 
-    // 3. Panel navigation
-    if (activePanel === "provider") {
-      if (up) {
-        const nextIndex = Math.max(0, currentProviderIndex - 1);
-        if (nextIndex !== currentProviderIndex) {
-          selectProviderByIndex(nextIndex);
-        }
-        return;
-      }
-      if (down) {
-        const nextIndex = Math.min(
-          providerChoices.length - 1,
-          currentProviderIndex + 1,
-        );
-        if (nextIndex !== currentProviderIndex) {
-          selectProviderByIndex(nextIndex);
-        }
-        return;
-      }
-      if (right) {
-        focusFormPanel();
-        return;
-      }
+    // 3. Field navigation
+    if (up) {
+      setFocusedFieldIndex((prev) => Math.max(0, prev - 1));
+      return;
     }
-
-    if (activePanel === "form") {
-      if (up) {
-        setFocusedFieldIndex((prev) => Math.max(0, prev - 1));
-        return;
-      }
-      if (down) {
-        setFocusedFieldIndex((prev) =>
-          Math.min(Math.max(formFields.length - 1, 0), prev + 1),
-        );
-        return;
-      }
-      if (left) {
-        focusProviderPanel();
-        return;
-      }
-      if (enter && formFields.length > 0) {
-        setIsEditing(true);
-        return;
-      }
+    if (down) {
+      setFocusedFieldIndex((prev) =>
+        Math.min(Math.max(formFields.length - 1, 0), prev + 1),
+      );
+      return;
+    }
+    if (enter && formFields.length > 0) {
+      setIsEditing(true);
+      return;
     }
 
     // 4. Global hotkeys
@@ -436,7 +383,7 @@ export function ConfigScreen({ initial, client }: Props) {
   }
 
   if (layout.kind !== "wide") {
-    const compactHeight = panelHeight(layout, 12);
+    const compactHeight = panelHeight(layout, 13);
     const compactVisibleFormRows = Math.max(0, compactHeight - 4);
     const compactErrors = [...payload.validation.errors, ...detailErrors].slice(
       0,
@@ -446,13 +393,7 @@ export function ConfigScreen({ initial, client }: Props) {
     return (
       <box flexDirection="column" width={dimensions.width}>
         <text>Hieronymus Config</text>
-        <text fg="gray">
-          {selectedProvider} · {layout.kind} {dimensions.width}x
-          {dimensions.height}
-        </text>
-        {sectionLabels.length > 0 ? (
-          <text fg="gray">Config files: {sectionLabels.join(" | ")}</text>
-        ) : null}
+        <text fg="gray">Provider/API | Dreaming | Ingest | Release</text>
 
         <box
           flexDirection="column"
@@ -462,29 +403,18 @@ export function ConfigScreen({ initial, client }: Props) {
           borderColor="cyan"
           paddingX={1}
         >
-          {activePanel === "provider" ? (
-            <>
-              <text fg="cyan">Providers</text>
-              <ProviderSelector
-                choices={providerChoices}
-                selected={selectedProvider}
-                focused
-                onSelect={selectProviderByIndex}
-              />
-            </>
-          ) : (
-            <ConfigForm
-              fields={formFields}
-              formValues={localFormValues}
-              focusedFieldIndex={focusedFieldIndex}
-              isEditing={isEditing}
-              focused
-              width={contentWidth}
-              visibleRows={compactVisibleFormRows}
-              onFieldChange={handleFieldChange}
-              onSubmitField={submitField}
-            />
-          )}
+          <ConfigForm
+            groups={payload.form_schema.groups}
+            fields={formFields}
+            formValues={localFormValues}
+            focusedFieldIndex={focusedFieldIndex}
+            isEditing={isEditing}
+            focused
+            width={contentWidth}
+            visibleRows={compactVisibleFormRows}
+            onFieldChange={handleFieldChange}
+            onSubmitField={submitField}
+          />
         </box>
 
         <box marginTop={1} flexDirection="column">
@@ -500,12 +430,7 @@ export function ConfigScreen({ initial, client }: Props) {
 
         <SearchPrompt active={searchActive} query={searchText} />
         <StatusLine message={status.message} error={status.error} busy={busy} />
-        <box flexDirection="row" marginTop={1}>
-          <text fg="gray">
-            Tab pane / search {providerKeyRange(providerChoices)} provider s
-            save q quit
-          </text>
-        </box>
+        <CompactKeyHelp providerChoices={providerChoices} />
       </box>
     );
   }
@@ -513,57 +438,26 @@ export function ConfigScreen({ initial, client }: Props) {
   return (
     <box flexDirection="column" width={Math.min(100, dimensions.width)}>
       <text>Hieronymus Config</text>
-      <text fg="gray">
-        {[
-          payload.config_paths.dream_config_path,
-          payload.config_paths.ingest_config_path,
-          payload.config_paths.release_config_path,
-        ]
-          .filter(Boolean)
-          .join(" | ")}
-      </text>
-      {sectionLabels.length > 0 ? (
-        <text fg="gray">Config files: {sectionLabels.join(" | ")}</text>
-      ) : null}
+      <text fg="gray">Provider/API | Dreaming | Ingest | Release</text>
 
-      <box flexDirection="row" marginTop={1}>
-        {/* Left Column: Provider Selector */}
-        <box
-          flexDirection="column"
-          width={28}
-          borderStyle="rounded"
-          borderColor={activePanel === "provider" ? "cyan" : "gray"}
-          paddingX={1}
-        >
-          <text fg={activePanel === "provider" ? "cyan" : undefined}>
-            Providers
-          </text>
-          <ProviderSelector
-            choices={providerChoices}
-            selected={selectedProvider}
-            focused={activePanel === "provider"}
-            onSelect={selectProviderByIndex}
-          />
-        </box>
-
-        {/* Right Column: Configuration Form */}
-        <box
-          flexDirection="column"
-          width={70}
-          borderStyle="rounded"
-          borderColor={activePanel === "form" ? "cyan" : "gray"}
-          paddingX={1}
-        >
-          <ConfigForm
-            fields={formFields}
-            formValues={localFormValues}
-            focusedFieldIndex={focusedFieldIndex}
-            isEditing={isEditing}
-            focused={activePanel === "form"}
-            onFieldChange={handleFieldChange}
-            onSubmitField={submitField}
-          />
-        </box>
+      <box
+        flexDirection="column"
+        marginTop={1}
+        width={Math.min(96, dimensions.width)}
+        borderStyle="rounded"
+        borderColor="cyan"
+        paddingX={1}
+      >
+        <ConfigForm
+          groups={payload.form_schema.groups}
+          fields={formFields}
+          formValues={localFormValues}
+          focusedFieldIndex={focusedFieldIndex}
+          isEditing={isEditing}
+          focused
+          onFieldChange={handleFieldChange}
+          onSubmitField={submitField}
+        />
       </box>
 
       <box marginTop={1} flexDirection="column">
@@ -584,17 +478,35 @@ export function ConfigScreen({ initial, client }: Props) {
 
       <SearchPrompt active={searchActive} query={searchText} />
       <StatusLine message={status.message} error={status.error} busy={busy} />
+      <KeyHelp keys={["↑↓ field", "Enter edit", "/ search", "q quit"]} />
       <KeyHelp
         keys={[
-          "Tab focus",
-          "/ search",
           `${providerKeyRange(providerChoices)} provider`,
           "s save",
           "r reload",
           "c check",
-          "q quit",
         ]}
       />
+    </box>
+  );
+}
+
+function CompactKeyHelp({
+  providerChoices,
+}: {
+  providerChoices: ConfigBootstrap["provider_choices"];
+}) {
+  return (
+    <box flexDirection="column">
+      <KeyHelp
+        keys={[
+          "↑↓ field",
+          "Enter edit",
+          "/ search",
+          `${providerKeyRange(providerChoices)} provider`,
+        ]}
+      />
+      <KeyHelp keys={["s save", "r reload", "c check", "q quit"]} />
     </box>
   );
 }
@@ -677,8 +589,80 @@ function getDetailErrors(payload: ConfigBootstrap): string[] {
   return [];
 }
 
-function configSectionLabels(sections: ConfigFormSection[]): string[] {
-  return sections.map((section) => section.label).filter(Boolean);
+function providerDisplayName(
+  providerChoices: ConfigBootstrap["provider_choices"],
+  provider: string,
+): string {
+  return (
+    providerChoices.find((choice) => choice.name === provider)?.display_name ??
+    provider
+  );
+}
+
+function providerNameForDisplay(
+  providerChoices: ConfigBootstrap["provider_choices"],
+  displayName: string,
+): ConfigBootstrap["provider_choices"][number]["name"] | undefined {
+  return providerChoices.find((choice) => choice.display_name === displayName)
+    ?.name;
+}
+
+function configFieldsWithProviderChoice(
+  payload: ConfigBootstrap,
+): ConfigFormField[] {
+  const currentDisplayName = providerDisplayName(
+    payload.provider_choices,
+    payload.selected_provider,
+  );
+  const providerField: ConfigFormField = {
+    key: SYNTHETIC_PROVIDER_KEY,
+    group: "provider",
+    section: "dream",
+    label: "Provider",
+    hint: "Provider family used for dreaming workflows and model checks.",
+    placeholder: "",
+    type: "choice",
+    choices: payload.provider_choices.map((choice) => choice.display_name),
+    default: currentDisplayName,
+    redacted: false,
+  };
+
+  return [
+    providerField,
+    ...payload.form_schema.fields.filter(
+      (field) => field.key !== SYNTHETIC_PROVIDER_KEY,
+    ),
+  ];
+}
+
+function formValuesWithSelectedProvider(
+  values: ConfigFormValues,
+  payload: ConfigBootstrap,
+): ConfigFormValues {
+  return {
+    provider: {
+      ...values.provider,
+      __selected: providerDisplayName(
+        payload.provider_choices,
+        payload.selected_provider,
+      ),
+    },
+    dreaming: { ...values.dreaming },
+    ingest: { ...values.ingest },
+    release: { ...values.release },
+  };
+}
+
+function draftFormValues(values: ConfigFormValues): ConfigFormValues {
+  const provider = { ...values.provider };
+  delete provider.__selected;
+
+  return {
+    provider,
+    dreaming: { ...values.dreaming },
+    ingest: { ...values.ingest },
+    release: { ...values.release },
+  };
 }
 
 function findConfigFieldMatch(
