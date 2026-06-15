@@ -8,6 +8,7 @@ import {
   ConfigBootstrapSchema,
   type ConfigBootstrap,
   type ConfigFormField,
+  type ConfigFormGroup,
   type ConfigFormSection,
 } from "../rpc/schema.js";
 import type { RpcClient } from "../rpc/client.js";
@@ -436,6 +437,14 @@ export function ConfigScreen({ initial, client }: Props) {
     );
   }
 
+  const widePanelRows = panelHeight(layout, 10);
+  const wideVisibleFormRows =
+    dimensions.height < 44 &&
+    estimatedWideFormRows(payload.form_schema.groups, formFields) >
+      widePanelRows
+      ? Math.max(1, Math.min(6, widePanelRows - 4))
+      : undefined;
+
   return (
     <box flexDirection="column" width={Math.min(100, dimensions.width)}>
       <text>Hieronymus Config</text>
@@ -456,6 +465,7 @@ export function ConfigScreen({ initial, client }: Props) {
           focusedFieldIndex={focusedFieldIndex}
           isEditing={isEditing}
           focused
+          visibleRows={wideVisibleFormRows}
           onFieldChange={handleFieldChange}
           onSubmitField={submitField}
         />
@@ -784,4 +794,32 @@ function withFieldValue(
 function providerIndexForInput(input: string, providerCount: number) {
   const index = providerKeys(providerCount).indexOf(input);
   return index >= 0 ? index : -1;
+}
+
+function estimatedWideFormRows(
+  groups: ConfigFormGroup[],
+  fields: ConfigFormField[],
+): number {
+  const formHeaderRows = 2;
+  const groupChromeRows = 4;
+  const activeHintRows = 2;
+  const fieldCounts = new Map<string, number>();
+  for (const field of fields) {
+    fieldCounts.set(field.group, (fieldCounts.get(field.group) ?? 0) + 1);
+  }
+
+  let rows = formHeaderRows;
+  for (const group of groups) {
+    const fieldCount = fieldCounts.get(group.id) ?? 0;
+    if (fieldCount === 0) {
+      continue;
+    }
+
+    rows += groupChromeRows;
+    rows += group.description ? 1 : 0;
+    rows += fieldCount;
+  }
+
+  rows += activeHintRows;
+  return rows;
 }

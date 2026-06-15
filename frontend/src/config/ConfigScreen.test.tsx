@@ -191,6 +191,132 @@ function setupSizedTest(width: number, height: number) {
   return createOpenTuiHarness({ width, height });
 }
 
+function fullConfigFields(): TestConfigFormField[] {
+  return [
+    {
+      key: "provider.model",
+      group: "provider",
+      label: "Model",
+      hint: "Model name used by the selected dream provider.",
+      placeholder: "gpt-4.1-mini",
+      type: "text",
+      choices: [],
+      default: "",
+      redacted: false,
+    },
+    {
+      key: "provider.api_key",
+      group: "provider",
+      label: "API Key",
+      hint: "Stored as plaintext in dream.conf and redacted in UI payloads.",
+      placeholder: "stored in dream.conf",
+      type: "secret",
+      choices: [],
+      default: "",
+      redacted: true,
+    },
+    {
+      key: "provider.api_path",
+      group: "provider",
+      label: "API Path",
+      hint: "OpenAI-compatible API base URL.",
+      placeholder: "https://api.openai.com/v1",
+      type: "text",
+      choices: [],
+      default: "",
+      redacted: false,
+    },
+    {
+      key: "provider.timeout_seconds",
+      group: "provider",
+      label: "Timeout",
+      hint: "Request timeout in seconds.",
+      placeholder: "30",
+      type: "number",
+      choices: [],
+      default: "30",
+      redacted: false,
+    },
+    {
+      key: "dreaming.autostart_enabled",
+      group: "dreaming",
+      label: "Autostart",
+      hint: "Start dreaming automatically.",
+      placeholder: "",
+      type: "toggle",
+      choices: ["no", "yes"],
+      default: "no",
+      redacted: false,
+    },
+    {
+      key: "dreaming.min_interval_minutes",
+      group: "dreaming",
+      label: "Dream interval",
+      hint: "Minutes between dreaming runs.",
+      placeholder: "30",
+      type: "number",
+      choices: [],
+      default: "30",
+      redacted: false,
+    },
+    {
+      key: "dreaming.new_short_term_memory_threshold",
+      group: "dreaming",
+      label: "Memory threshold",
+      hint: "Short-term memory count needed before dreaming starts.",
+      placeholder: "25",
+      type: "number",
+      choices: [],
+      default: "25",
+      redacted: false,
+    },
+    {
+      key: "ingest.warning_sentence_count",
+      group: "ingest",
+      label: "Memory warn sentences",
+      hint: "Warn before rejection.",
+      placeholder: "6",
+      type: "number",
+      choices: [],
+      default: "6",
+      redacted: false,
+    },
+    {
+      key: "ingest.rejection_sentence_count",
+      group: "ingest",
+      label: "Memory reject sentences",
+      hint: "Reject blocks above this sentence count.",
+      placeholder: "30",
+      type: "number",
+      choices: [],
+      default: "30",
+      redacted: false,
+    },
+    {
+      key: "ingest.max_block_chars",
+      group: "ingest",
+      label: "Max block chars",
+      hint: "Maximum imported block size.",
+      placeholder: "1200",
+      type: "number",
+      choices: [],
+      default: "1200",
+      redacted: false,
+    },
+    {
+      key: "release.update_channel",
+      group: "release",
+      label: "Update Channel",
+      hint: "Managed install update channel.",
+      placeholder: "",
+      type: "choice",
+      choices: ["stable", "dev"],
+      default: "stable",
+      redacted: false,
+    },
+  ];
+}
+
 afterEach(async () => {
   await cleanupOpenTuiHarnesses();
 });
@@ -464,6 +590,33 @@ describe("ConfigScreen", () => {
     expect(output).toContain("dream.conf");
     expect(output).toContain("ingest.conf");
     expect(output).toContain("release.conf");
+  });
+
+  it("keeps wide default-height footer visible while navigating to the last field", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(136, 36);
+
+    await render(
+      <ConfigScreen
+        initial={{
+          ...payload(),
+          form_schema: formSchema(fullConfigFields()),
+        }}
+        client={undefined}
+      />,
+    );
+
+    let output = await waitForFrame((frame) =>
+      frame.includes("Hieronymus Config"),
+    );
+    expect(output).toContain("[q] quit");
+
+    for (let index = 0; index < 20; index += 1) {
+      await mockInput.press("down");
+    }
+
+    output = await waitForFrame((frame) => frame.includes("> Update Channel"));
+    expect(output).toContain("> Update Channel");
+    expect(output).toContain("[q] quit");
   });
 
   it("renders a placeholder when model suggestions are absent", async () => {
