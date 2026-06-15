@@ -98,7 +98,7 @@ export function ConfigForm({
               paddingX={1}
             >
               <box flexDirection="row">
-                <text fg={isGroupActive ? "cyan" : undefined}>
+                <text fg={isGroupActive ? "cyan" : "gray"}>
                   {displayGroupLabel(group)}
                 </text>
                 {configFileLabel(group) ? (
