@@ -928,6 +928,12 @@ describe("ConfigScreen", () => {
   });
 
   it("ignores form edit keys when the backend returns an empty schema", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve(payload());
+    });
     const { render, mockInput, waitForFrame } = setupTest();
 
     await render(
@@ -936,22 +942,23 @@ describe("ConfigScreen", () => {
           ...payload(),
           form_schema: { sections: [], groups: [], fields: [] },
         }}
-        client={undefined}
+        client={client}
       />,
     );
 
-    let output = await waitForFrame((frame) =>
+    const output = await waitForFrame((frame) =>
       frame.includes("> Provider: OpenAI compatible"),
     );
     expect(output).toContain("> Provider: OpenAI compatible");
     expect(output).not.toContain("> Model");
 
     await mockInput.press("down");
-    await mockInput.press("enter");
+    await mockInput.press("up");
+    await mockInput.press("tab");
+    await mockInput.type("/");
+    await mockInput.press("escape");
 
-    output = await waitForFrame((frame) => frame.includes("> Provider:"));
-    expect(output).toContain("> Provider:");
-    expect(output).not.toContain("> Model");
+    expect(calls).toEqual([]);
   });
 
   it("closes the client when q is pressed", async () => {
