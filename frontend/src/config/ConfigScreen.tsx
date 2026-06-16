@@ -129,13 +129,14 @@ export function ConfigScreen({ initial, client }: Props) {
       return;
     }
     const draftValues = draftFormValues(formValues);
+    const draft = draftWithFormValues(payload.draft, draftValues);
 
     void runConfigOperation({
       client,
       method: "config.update_draft",
       params: {
         selected_provider: payload.selected_provider,
-        draft: payload.draft,
+        draft,
         provider_catalog: draftValues.providerCatalog,
         workflows: draftValues.workflows,
         dreaming: draftValues.dreaming,
@@ -809,6 +810,63 @@ function draftFormValues(values: ConfigFormValues): ConfigFormValues {
     ingest: { ...values.ingest },
     release: { ...values.release },
   };
+}
+
+function draftWithFormValues(
+  draft: ConfigBootstrap["draft"],
+  values: ConfigFormValues,
+): ConfigBootstrap["draft"] {
+  return {
+    ...draft,
+    provider_catalog: sectionDraftWithFormValues(
+      draft.provider_catalog,
+      values.providerCatalog,
+    ) as ConfigBootstrap["draft"]["provider_catalog"],
+    workflows: sectionDraftWithFormValues(
+      draft.workflows,
+      values.workflows,
+    ) as ConfigBootstrap["draft"]["workflows"],
+    dreaming: sectionDraftWithFormValues(draft.dreaming, values.dreaming),
+    ingest: sectionDraftWithFormValues(
+      draft.ingest,
+      values.ingest,
+    ) as ConfigBootstrap["draft"]["ingest"],
+    release: sectionDraftWithFormValues(draft.release, values.release),
+  };
+}
+
+function sectionDraftWithFormValues(
+  section: Record<string, unknown>,
+  formValues: Record<string, string>,
+): Record<string, unknown> {
+  const next = { ...section };
+  for (const [key, value] of Object.entries(formValues)) {
+    setDottedDraftValue(next, key, value);
+  }
+  return next;
+}
+
+function setDottedDraftValue(
+  target: Record<string, unknown>,
+  key: string,
+  value: string,
+) {
+  const parts = key.split(".").filter(Boolean);
+  if (parts.length === 0) {
+    return;
+  }
+
+  let cursor = target;
+  for (const part of parts.slice(0, -1)) {
+    const child = cursor[part];
+    const next =
+      child !== null && typeof child === "object" && !Array.isArray(child)
+        ? { ...(child as Record<string, unknown>) }
+        : {};
+    cursor[part] = next;
+    cursor = next;
+  }
+  cursor[parts[parts.length - 1]] = value;
 }
 
 function findConfigFieldMatch(

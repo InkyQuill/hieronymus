@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-export const ProviderNameSchema = z.string();
+export const ProviderNameSchema = z.string().min(1);
+const ProviderCatalogDefaultProviderSchema = z.string();
+const TimeoutSecondsSchema = z
+  .union([z.number(), z.string().trim().regex(/^\d+(\.\d+)?$/)])
+  .default(30);
 
 export const RpcResponseSchema = z.discriminatedUnion("ok", [
   z.object({
@@ -158,20 +162,20 @@ export const ConfigPathsSchema = z
 
 const ProviderCatalogProfileSchema = z
   .object({
-    name: z.string().default(""),
+    name: ProviderNameSchema.default(""),
     type: z.string().default(""),
     url: z.string().default(""),
     key: z.string().default(""),
-    timeout_seconds: z.union([z.number(), z.string()]).default(""),
+    timeout_seconds: TimeoutSecondsSchema,
   })
   .passthrough();
 
 const ProviderCatalogSchema = z
   .object({
-    profiles: z.record(ProviderCatalogProfileSchema).default({}),
+    profiles: z.record(ProviderNameSchema, ProviderCatalogProfileSchema).default({}),
     defaults: z
       .object({
-        provider: ProviderNameSchema.default(""),
+        provider: ProviderCatalogDefaultProviderSchema.default(""),
         model: z.string().default(""),
       })
       .passthrough()

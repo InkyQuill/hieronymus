@@ -367,6 +367,107 @@ describe("runtime schemas", () => {
     ).toThrow();
   });
 
+  it("rejects empty provider identifiers", () => {
+    expect(() =>
+      ConfigBootstrapSchema.parse(configPayload("", { selected_provider: "" })),
+    ).toThrow();
+
+    expect(() =>
+      ConfigBootstrapSchema.parse(
+        configPayload("openai", {
+          provider_choices: [
+            {
+              name: "",
+              display_name: "Empty",
+              requires_api_key: true,
+              supports_api_path: true,
+            },
+          ],
+        }),
+      ),
+    ).toThrow();
+
+    expect(() =>
+      ConfigBootstrapSchema.parse(
+        configPayload("openai", {
+          provider_catalog: {
+            profiles: {
+              "": {
+                name: "openai",
+                type: "openai",
+                url: "https://api.openai.com/v1",
+                key: "secret",
+                timeout_seconds: 30,
+              },
+            },
+            defaults: { provider: "openai", model: "gpt-4.1-mini" },
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it("rejects malformed provider catalog timeout defaults", () => {
+    expect(() =>
+      ConfigBootstrapSchema.parse(
+        configPayload("openai", {
+          provider_catalog: {
+            profiles: {
+              openai: {
+                name: "openai",
+                type: "openai",
+                url: "https://api.openai.com/v1",
+                key: "secret",
+                timeout_seconds: "",
+              },
+            },
+            defaults: { provider: "openai", model: "gpt-4.1-mini" },
+          },
+        }),
+      ),
+    ).toThrow();
+
+    expect(() =>
+      ConfigBootstrapSchema.parse(
+        configPayload("openai", {
+          provider_catalog: {
+            profiles: {
+              openai: {
+                name: "openai",
+                type: "openai",
+                url: "https://api.openai.com/v1",
+                key: "secret",
+                timeout_seconds: "not-a-number",
+              },
+            },
+            defaults: { provider: "openai", model: "gpt-4.1-mini" },
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it("accepts numeric provider catalog timeout strings", () => {
+    const payload = ConfigBootstrapSchema.parse(
+      configPayload("openai", {
+        provider_catalog: {
+          profiles: {
+            openai: {
+              name: "openai",
+              type: "openai",
+              url: "https://api.openai.com/v1",
+              key: "secret",
+              timeout_seconds: "45",
+            },
+          },
+          defaults: { provider: "openai", model: "gpt-4.1-mini" },
+        },
+      }),
+    );
+
+    expect(payload.provider_catalog.profiles.openai.timeout_seconds).toBe("45");
+  });
+
   it("rejects null config form schema payloads", () => {
     expect(() =>
       ConfigBootstrapSchema.parse(

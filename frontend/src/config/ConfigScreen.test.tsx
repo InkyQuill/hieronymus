@@ -743,8 +743,8 @@ describe("ConfigScreen", () => {
     expect(output).toContain("release.conf");
   });
 
-  it("keeps wide default-height footer visible with a full config schema", async () => {
-    const { render, waitForFrame } = setupSizedTest(136, 36);
+  it("keeps wide default-height footer visible deep in a full config schema", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(136, 36);
 
     await render(
       <ConfigScreen
@@ -756,7 +756,18 @@ describe("ConfigScreen", () => {
       />,
     );
 
-    const output = await waitForFrame((frame) => frame.includes("[q] quit"));
+    for (let index = 0; index < 10; index += 1) {
+      await mockInput.press("down");
+    }
+    await mockInput.press("enter");
+
+    const output = await waitForFrame(
+      (frame) =>
+        frame.includes("> Max block chars: 1200") &&
+        frame.includes("[q] quit"),
+    );
+    expect(output).toContain("Ingestion");
+    expect(output).toContain("> Max block chars: 1200");
     expect(output).toContain("[q] quit");
   });
 
@@ -1200,77 +1211,107 @@ describe("ConfigScreen", () => {
 
     await waitFor(async () => calls.length >= 3);
 
-    expect(calls).toEqual([
-      {
-        method: "config.update_draft",
-        params: {
-          draft: initial.draft,
-          selected_provider: "openai",
-          provider_catalog: {
-            ...payload().form_values.provider_catalog,
-            "profiles.openai.timeout_seconds": "45",
-          },
-          workflows: {},
-          dreaming: {
-            autostart_enabled: "no",
-            min_interval_minutes: "30",
-            new_short_term_memory_threshold: "25",
-          },
-          ingest: {
-            warning_sentence_count: "6",
-            rejection_sentence_count: "30",
-            max_block_chars: "1200",
-          },
-          release: {
-            update_channel: "stable",
+    expect(calls).toHaveLength(3);
+    expect(calls[0]).toMatchObject({
+      method: "config.update_draft",
+      params: {
+        selected_provider: "openai",
+        provider_catalog: {
+          ...payload().form_values.provider_catalog,
+          "profiles.openai.timeout_seconds": "45",
+        },
+        workflows: {},
+        dreaming: {
+          autostart_enabled: "no",
+          min_interval_minutes: "30",
+          new_short_term_memory_threshold: "25",
+        },
+        ingest: {
+          warning_sentence_count: "6",
+          rejection_sentence_count: "30",
+          max_block_chars: "1200",
+        },
+        release: {
+          update_channel: "stable",
+        },
+      },
+    });
+    expect(calls[0]?.params.draft).toMatchObject({
+      provider_catalog: {
+        profiles: {
+          openai: {
+            timeout_seconds: "45",
           },
         },
       },
-      {
-        method: "config.update_draft",
-        params: {
-          draft: initial.draft,
-          selected_provider: "openai",
-          provider_catalog: payload().form_values.provider_catalog,
-          workflows: {},
-          dreaming: {
-            autostart_enabled: "yes",
-            min_interval_minutes: "30",
-            new_short_term_memory_threshold: "25",
-          },
-          ingest: {
-            warning_sentence_count: "6",
-            rejection_sentence_count: "30",
-            max_block_chars: "1200",
-          },
-          release: {
-            update_channel: "stable",
-          },
+      dreaming: {
+        autostart_enabled: "no",
+        min_interval_minutes: "30",
+        new_short_term_memory_threshold: "25",
+      },
+      ingest: {
+        warning_sentence_count: "6",
+        rejection_sentence_count: "30",
+        max_block_chars: "1200",
+      },
+      release: {
+        update_channel: "stable",
+      },
+    });
+    expect(calls[1]).toMatchObject({
+      method: "config.update_draft",
+      params: {
+        selected_provider: "openai",
+        provider_catalog: payload().form_values.provider_catalog,
+        workflows: {},
+        dreaming: {
+          autostart_enabled: "yes",
+          min_interval_minutes: "30",
+          new_short_term_memory_threshold: "25",
+        },
+        ingest: {
+          warning_sentence_count: "6",
+          rejection_sentence_count: "30",
+          max_block_chars: "1200",
+        },
+        release: {
+          update_channel: "stable",
         },
       },
-      {
-        method: "config.update_draft",
-        params: {
-          draft: initial.draft,
-          selected_provider: "openai",
-          provider_catalog: payload().form_values.provider_catalog,
-          workflows: {},
-          dreaming: {
-            autostart_enabled: "no",
-            min_interval_minutes: "30",
-            new_short_term_memory_threshold: "25",
-          },
-          ingest: {
-            warning_sentence_count: "6",
-            rejection_sentence_count: "30",
-            max_block_chars: "1200",
-          },
-          release: {
-            update_channel: "beta",
-          },
+    });
+    expect(calls[1]?.params.draft).toMatchObject({
+      dreaming: {
+        autostart_enabled: "yes",
+        min_interval_minutes: "30",
+        new_short_term_memory_threshold: "25",
+      },
+    });
+    expect(calls[2]).toMatchObject({
+      method: "config.update_draft",
+      params: {
+        selected_provider: "openai",
+        provider_catalog: payload().form_values.provider_catalog,
+        workflows: {},
+        dreaming: {
+          autostart_enabled: "no",
+          min_interval_minutes: "30",
+          new_short_term_memory_threshold: "25",
+        },
+        ingest: {
+          warning_sentence_count: "6",
+          rejection_sentence_count: "30",
+          max_block_chars: "1200",
+        },
+        release: {
+          update_channel: "beta",
         },
       },
-    ]);
+    });
+    expect(calls[2]?.params.draft).toMatchObject({
+      release: {
+        update_channel: "beta",
+      },
+    });
   });
 
   it("preserves leading characters when editing the model field", async () => {
@@ -1330,6 +1371,95 @@ describe("ConfigScreen", () => {
     });
     expect(output).toContain("Model: deepseek");
     expect(output).not.toContain("Model: epseek");
+  });
+
+  it("submits edited provider catalog and workflows inside draft params", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const initial = {
+      ...payload(),
+      form_values: {
+        ...payload().form_values,
+        workflows: {
+          "crystallization.provider": "openai",
+        },
+      },
+      form_schema: formSchema([
+        {
+          key: "provider_catalog.profiles.openai.timeout_seconds",
+          group: "provider",
+          label: "Timeout",
+          hint: "Request timeout in seconds.",
+          placeholder: "30",
+          type: "number" as const,
+          choices: [],
+          default: "30",
+          minimum: 1,
+          redacted: false,
+        },
+        {
+          key: "workflows.crystallization.provider",
+          group: "workflows",
+          section: "workflows",
+          label: "Crystallization Provider",
+          hint: "Provider profile used for crystallization.",
+          placeholder: "",
+          type: "text" as const,
+          choices: [],
+          default: "",
+          redacted: false,
+        },
+      ]),
+    };
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve(initial);
+    });
+    const { render, mockInput, waitFor } = setupTest();
+
+    await render(<ConfigScreen initial={initial} client={client} />);
+
+    await mockInput.press("down");
+    await mockInput.press("enter");
+    await mockInput.press("backspace");
+    await mockInput.press("backspace");
+    await mockInput.type("45");
+    await mockInput.press("enter");
+
+    await waitFor(async () => calls.length >= 1);
+
+    await mockInput.press("down");
+    await mockInput.press("enter");
+    for (let index = 0; index < "openai".length; index += 1) {
+      await mockInput.press("backspace");
+    }
+    await mockInput.type("deepseek-api");
+    await mockInput.press("enter");
+
+    await waitFor(async () => calls.length >= 2);
+
+    expect(calls[0]?.params.provider_catalog).toMatchObject({
+      "profiles.openai.timeout_seconds": "45",
+    });
+    expect(calls[0]?.params.draft).toMatchObject({
+      provider_catalog: {
+        profiles: {
+          openai: {
+            timeout_seconds: "45",
+          },
+        },
+      },
+    });
+    expect(calls[1]?.params.workflows).toEqual({
+      "crystallization.provider": "deepseek-api",
+    });
+    expect(calls[1]?.params.draft).toMatchObject({
+      workflows: {
+        crystallization: {
+          provider: "deepseek-api",
+        },
+      },
+    });
   });
 
   it("submits schema-effective choice defaults from the form panel", async () => {
