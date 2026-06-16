@@ -34,6 +34,77 @@ def test_load_provider_catalog_defaults_when_missing(tmp_path: Path) -> None:
     assert catalog.defaults == ProviderDefaults(provider="", model="")
 
 
+def test_load_provider_catalog_migrates_legacy_dream_providers_on_disk(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    config.config_root.mkdir(parents=True)
+    config.dream_config_path.write_text(
+        """
+[providers.openai]
+name = "DeepSeek"
+type = "openai"
+endpoint = "https://api.deepseek.com"
+api_key = "raw-secret"
+timeout_seconds = 12
+
+[workflows.crystallization]
+provider = "openai"
+model = "deepseek-v4-flash"
+enabled = true
+""",
+        encoding="utf-8",
+    )
+
+    catalog = load_provider_catalog(config)
+
+    assert catalog.providers["openai"] == ProviderProfile(
+        name="DeepSeek",
+        type="openai",
+        url="https://api.deepseek.com",
+        key="raw-secret",
+        timeout_seconds=12.0,
+    )
+    provider_payload = tomllib.loads(config.provider_config_path.read_text(encoding="utf-8"))
+    assert provider_payload["openai"]["key"] == "raw-secret"
+    dream_payload = tomllib.loads(config.dream_config_path.read_text(encoding="utf-8"))
+    assert "providers" not in dream_payload
+    assert dream_payload["workflows"]["crystallization"]["provider"] == "openai"
+
+
+def test_load_provider_catalog_rejects_legacy_dream_provider_collision_on_disk(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "openai": ProviderProfile(
+                    name="OpenAI",
+                    type="openai",
+                    url="https://api.openai.com/v1",
+                    key="existing-secret",
+                )
+            },
+        ),
+    )
+    config.dream_config_path.write_text(
+        """
+[providers.openai]
+type = "openai"
+endpoint = "https://api.deepseek.com"
+api_key = "legacy-secret"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProviderCatalogError, match="would overwrite provider profile"):
+        load_provider_catalog(config)
+
+    assert "legacy-secret" not in config.provider_config_path.read_text(encoding="utf-8")
+
+
 def test_default_provider_catalog_returns_empty_providers_and_defaults() -> None:
     assert default_provider_catalog() == ProviderCatalog(
         providers={},

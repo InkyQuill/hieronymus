@@ -1,5 +1,11 @@
 # Store Local Configuration In Plaintext Config Files
 
+Status: Superseded in part by
+[ADR 0007](0007-provider-catalog-and-workflow-assignments.md). The plaintext
+local-secret decision remains current, but provider profiles and API keys are
+now owned by `provider.conf`; `dream.conf` owns workflow assignments, prompts,
+trigger settings, and caps.
+
 Hieronymus is local-first alpha software, so user-editable configuration should
 live in plaintext files under the configured data root rather than in
 environment-only provider settings or an encryption/key-management layer. The

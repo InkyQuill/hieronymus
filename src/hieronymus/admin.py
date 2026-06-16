@@ -34,7 +34,12 @@ from hieronymus.dreaming import DreamRunRecord, DreamService
 from hieronymus.llm_cache import dream_profile_cache_identity, load_model_cache
 from hieronymus.memory_models import TranslationContext
 from hieronymus.presentation import GREETING_ICON, TAGLINE, package_display_version
-from hieronymus.provider_config import load_provider_catalog, redacted_provider_catalog_payload
+from hieronymus.provider_config import (
+    ProviderCatalogError,
+    default_provider_catalog,
+    load_provider_catalog,
+    redacted_provider_catalog_payload,
+)
 from hieronymus.rule_crystals import parse_rule_crystal
 from hieronymus.service_manager import ServiceManager
 from hieronymus.workspace import WorkspaceStore
@@ -224,6 +229,13 @@ def _safe_dream_config(config: HieronymusConfig) -> tuple[DreamConfig, str]:
         return load_dream_config(config), ""
     except DreamConfigError as error:
         return default_dream_config(), str(error)
+
+
+def _safe_provider_catalog(config: HieronymusConfig):
+    try:
+        return load_provider_catalog(config), ""
+    except (OSError, ProviderCatalogError) as error:
+        return default_provider_catalog(), str(error)
 
 
 def _rule_crystal_text(
@@ -931,9 +943,16 @@ class AdminStore:
 
     def config_editor_payload(self) -> dict[str, object]:
         dream_config, dream_config_error = _safe_dream_config(self.config)
-        provider_catalog = load_provider_catalog(self.config)
+        provider_catalog, provider_config_error = _safe_provider_catalog(self.config)
         cache = load_model_cache(self.config)
         warnings: list[dict[str, str]] = []
+        if provider_config_error:
+            warnings.append(
+                {
+                    "code": "provider_config_invalid",
+                    "message": provider_config_error,
+                }
+            )
         for workflow_name, workflow in dream_config.workflows.items():
             provider = provider_catalog.providers.get(workflow.provider)
             if provider is None:
@@ -1003,6 +1022,7 @@ class AdminStore:
         return {
             "config": redacted_dream_config_payload(dream_config),
             "config_error": dream_config_error,
+            "provider_config_error": provider_config_error,
             "providers": redacted_provider_catalog_payload(provider_catalog),
             "workflows": redacted_dream_config_payload(dream_config)["workflows"],
             "prompts": {"general": dream_config.general_prompt},

@@ -9,6 +9,7 @@ import tomli_w
 
 from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
+from hieronymus.dream_config import DreamConfigError, load_dream_config, save_dream_config
 
 SUPPORTED_PROVIDER_TYPES = frozenset({"anthropic", "google", "ollama", "openai"})
 
@@ -70,6 +71,11 @@ def default_provider_catalog() -> ProviderCatalog:
 
 
 def load_provider_catalog(config: HieronymusConfig) -> ProviderCatalog:
+    catalog = _load_provider_catalog_file(config)
+    return _migrate_legacy_dream_providers(config, catalog)
+
+
+def _load_provider_catalog_file(config: HieronymusConfig) -> ProviderCatalog:
     if not config.provider_config_path.exists():
         return validate_provider_catalog(default_provider_catalog())
 
@@ -79,6 +85,36 @@ def load_provider_catalog(config: HieronymusConfig) -> ProviderCatalog:
         raise ProviderCatalogError(f"provider.conf is not valid TOML: {error}") from error
 
     return validate_provider_catalog(_provider_catalog_from_payload(payload))
+
+
+def _migrate_legacy_dream_providers(
+    config: HieronymusConfig,
+    catalog: ProviderCatalog,
+) -> ProviderCatalog:
+    providers_payload = _legacy_dream_provider_payload(config)
+    if not providers_payload:
+        return catalog
+
+    migrated = migrate_dream_provider_payload(providers_payload, existing=catalog)
+    save_provider_catalog(config, migrated)
+    try:
+        save_dream_config(config, load_dream_config(config))
+    except DreamConfigError:
+        pass
+    return migrated
+
+
+def _legacy_dream_provider_payload(config: HieronymusConfig) -> dict[str, object]:
+    if not config.dream_config_path.exists():
+        return {}
+    try:
+        payload = tomllib.loads(config.dream_config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError:
+        return {}
+    providers = payload.get("providers")
+    if providers is None:
+        return {}
+    return _dict_payload(providers, "providers")
 
 
 def save_provider_catalog(config: HieronymusConfig, catalog: ProviderCatalog) -> None:
@@ -107,6 +143,13 @@ def migrate_dream_provider_payload(
             ),
             prefix=f"providers.{profile_id}",
         )
+        existing_profile = next_catalog.providers.get(profile_id)
+        if existing_profile is not None:
+            table.setdefault("name", existing_profile.name)
+            table.setdefault("type", existing_profile.type)
+            table.setdefault("url", existing_profile.url)
+            table.setdefault("key", existing_profile.key)
+            table.setdefault("timeout_seconds", existing_profile.timeout_seconds)
         _validate_dream_provider_payload(profile_id, table)
         _require_migration_profile_fields(profile_id, table)
         profile = ProviderProfile(
@@ -119,7 +162,6 @@ def migrate_dream_provider_payload(
                 table.get("timeout_seconds", 30.0),
             ),
         )
-        existing_profile = next_catalog.providers.get(profile_id)
         if existing_profile is not None and existing_profile != profile:
             raise ProviderCatalogError(
                 f"dream.conf migration would overwrite provider profile: {profile_id}",
