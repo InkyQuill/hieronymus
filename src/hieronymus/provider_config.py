@@ -52,6 +52,9 @@ class ProviderCatalog:
     providers: dict[str, ProviderProfile] = field(default_factory=dict)
     defaults: ProviderDefaults = field(default_factory=ProviderDefaults)
 
+    def with_provider(self, name: str, provider: ProviderProfile) -> ProviderCatalog:
+        return replace(self, providers={**self.providers, name: provider})
+
     def to_payload(self, *, redact: bool = False) -> dict[str, object]:
         return {
             **{
@@ -86,6 +89,34 @@ def save_provider_catalog(config: HieronymusConfig, catalog: ProviderCatalog) ->
 
 def redacted_provider_catalog_payload(catalog: ProviderCatalog) -> dict[str, object]:
     return catalog.to_payload(redact=True)
+
+
+def migrate_dream_provider_payload(
+    providers_payload: dict[str, object],
+    *,
+    existing: ProviderCatalog,
+) -> ProviderCatalog:
+    next_catalog = existing
+    for profile_id, raw_profile in providers_payload.items():
+        _validate_provider_id(profile_id)
+        table = _dict_payload(raw_profile, f"providers.{profile_id}")
+        profile = ProviderProfile(
+            name=str(table.get("name", profile_id.replace("_", " ").title())),
+            type=str(table["type"]),
+            url=str(table.get("endpoint", table.get("url", ""))),
+            key=str(table.get("api_key", table.get("key", ""))),
+            timeout_seconds=_coerce_positive_float(
+                f"providers.{profile_id}.timeout_seconds",
+                table.get("timeout_seconds", 30.0),
+            ),
+        )
+        existing_profile = next_catalog.providers.get(profile_id)
+        if existing_profile is not None and existing_profile != profile:
+            raise ProviderCatalogError(
+                f"dream.conf migration would overwrite provider profile: {profile_id}",
+            )
+        next_catalog = next_catalog.with_provider(profile_id, profile)
+    return validate_provider_catalog(next_catalog)
 
 
 def validate_provider_catalog(catalog: ProviderCatalog) -> ProviderCatalog:

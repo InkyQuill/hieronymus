@@ -6,7 +6,6 @@ import pytest
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_config import (
     DreamConfigError,
-    ProviderProfile,
     WorkflowProfile,
     default_dream_config,
     load_dream_config,
@@ -43,51 +42,41 @@ def test_default_dream_config_matches_memory_spec(tmp_path: Path) -> None:
     assert dream_config.workflows["reinforcement_compaction"].provider == "ollama"
 
 
-def test_save_dream_config_writes_plaintext_api_key_and_redacts_json(
+def test_save_dream_config_does_not_write_provider_profiles_or_secrets(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    dream_config = default_dream_config().with_provider(
-        "anthropic",
-        ProviderProfile(
-            type="anthropic",
-            endpoint="https://api.anthropic.com",
-            api_key="secret-value",
-            timeout_seconds=30.0,
-        ),
-    )
+    dream_config = default_dream_config()
 
     save_dream_config(config, dream_config)
 
     raw = config.dream_config_path.read_text(encoding="utf-8")
-    assert "secret-value" in raw
+    assert "api_key" not in raw
+    assert "providers" not in raw
     payload = tomllib.loads(raw)
-    assert payload["providers"]["anthropic"]["api_key"] == "secret-value"
+    assert "providers" not in payload
     redacted = redacted_dream_config_payload(dream_config)
-    assert redacted["providers"]["anthropic"]["api_key"] == "***"
+    assert "providers" not in redacted
 
 
-def test_load_save_dream_config_round_trips_plaintext_api_key(tmp_path: Path) -> None:
+def test_load_save_dream_config_round_trips_workflows_without_providers(
+    tmp_path: Path,
+) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    dream_config = default_dream_config().with_provider(
-        "local_llm",
-        ProviderProfile(
-            type="ollama",
-            endpoint="http://localhost:11434",
-            api_key="local-secret",
-            timeout_seconds=10.5,
-        ),
+    dream_config = default_dream_config().with_workflow(
+        "crystallization",
+        WorkflowProfile(provider="local_llm", model="local-model", enabled=True),
     )
 
     save_dream_config(config, dream_config)
     loaded = load_dream_config(config)
 
-    assert loaded.providers["local_llm"] == ProviderProfile(
-        type="ollama",
-        endpoint="http://localhost:11434",
-        api_key="local-secret",
-        timeout_seconds=10.5,
+    assert loaded.workflows["crystallization"] == WorkflowProfile(
+        provider="local_llm",
+        model="local-model",
+        enabled=True,
     )
+    assert "providers" not in loaded.to_payload()
 
 
 def test_load_dream_config_rejects_invalid_threshold_order(tmp_path: Path) -> None:
@@ -144,18 +133,19 @@ def test_load_dream_config_rejects_non_positive_thresholds(
         load_dream_config(config)
 
 
-def test_user_defined_provider_requires_explicit_type(tmp_path: Path) -> None:
+def test_deprecated_user_defined_provider_payload_is_ignored(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     write_dream_config(
         config,
         '[providers.local_llm]\nendpoint = "http://localhost:11434"\n',
     )
 
-    with pytest.raises(DreamConfigError, match=r"providers\.local_llm\.type"):
-        load_dream_config(config)
+    dream_config = load_dream_config(config)
+
+    assert "providers" not in dream_config.to_payload()
 
 
-def test_builtin_provider_can_inherit_default_type(tmp_path: Path) -> None:
+def test_deprecated_builtin_provider_payload_is_ignored(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     write_dream_config(
         config,
@@ -164,22 +154,24 @@ def test_builtin_provider_can_inherit_default_type(tmp_path: Path) -> None:
 
     dream_config = load_dream_config(config)
 
-    assert dream_config.providers["ollama"].type == "ollama"
-    assert dream_config.providers["ollama"].endpoint == "http://localhost:11435"
+    assert "providers" not in dream_config.to_payload()
 
 
-def test_load_dream_config_rejects_unsupported_provider_type(tmp_path: Path) -> None:
+def test_deprecated_provider_type_is_not_validated_by_dream_config(
+    tmp_path: Path,
+) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     write_dream_config(
         config,
         '[providers.local_llm]\ntype = "local"\n',
     )
 
-    with pytest.raises(DreamConfigError, match="unsupported provider type"):
-        load_dream_config(config)
+    dream_config = load_dream_config(config)
+
+    assert "providers" not in dream_config.to_payload()
 
 
-def test_load_dream_config_rejects_non_positive_provider_timeout(
+def test_deprecated_provider_timeout_is_not_validated_by_dream_config(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
@@ -188,33 +180,37 @@ def test_load_dream_config_rejects_non_positive_provider_timeout(
         "[providers.ollama]\ntimeout_seconds = 0\n",
     )
 
-    with pytest.raises(
-        DreamConfigError,
-        match=r"providers\.ollama\.timeout_seconds must be greater than 0",
-    ):
-        load_dream_config(config)
+    dream_config = load_dream_config(config)
+
+    assert "providers" not in dream_config.to_payload()
 
 
-def test_workflow_references_existing_provider(tmp_path: Path) -> None:
+def test_workflow_provider_existence_is_validated_outside_dream_config(
+    tmp_path: Path,
+) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     dream_config = default_dream_config().with_workflow(
         "crystallization",
         WorkflowProfile(provider="missing", model="model", enabled=True),
     )
 
-    with pytest.raises(DreamConfigError, match="referenced provider profile is missing"):
-        save_dream_config(config, dream_config)
+    save_dream_config(config, dream_config)
+
+    assert load_dream_config(config).workflows["crystallization"].provider == "missing"
 
 
-def test_enabled_workflow_rejects_empty_model(tmp_path: Path) -> None:
+def test_enabled_workflow_model_presence_is_validated_outside_dream_config(
+    tmp_path: Path,
+) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     dream_config = default_dream_config().with_workflow(
         "crystallization",
         WorkflowProfile(provider="anthropic", model="", enabled=True),
     )
 
-    with pytest.raises(DreamConfigError, match="enabled workflow must have a model"):
-        save_dream_config(config, dream_config)
+    save_dream_config(config, dream_config)
+
+    assert load_dream_config(config).workflows["crystallization"].model == ""
 
 
 @pytest.mark.parametrize(
@@ -227,14 +223,6 @@ def test_enabled_workflow_rejects_empty_model(tmp_path: Path) -> None:
         (
             "[dreaming]\nschedule_interval_minutes = true\n",
             "schedule_interval_minutes must be an integer",
-        ),
-        (
-            "[providers.ollama]\nendpoint = 123\n",
-            r"providers\.ollama\.endpoint must be a string",
-        ),
-        (
-            "[providers.ollama]\ntimeout_seconds = 'slow'\n",
-            r"providers\.ollama\.timeout_seconds must be a number",
         ),
         (
             "[workflows.crystallization]\nprovider = 123\n",
@@ -256,3 +244,29 @@ def test_load_dream_config_rejects_toml_type_mismatches(
 
     with pytest.raises(DreamConfigError, match=error):
         load_dream_config(config)
+
+
+def test_load_dream_config_ignores_deprecated_providers_after_migration(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    config.dream_config_path.write_text(
+        """
+[providers.openai]
+type = "openai"
+endpoint = "https://api.deepseek.com"
+api_key = "secret"
+
+[workflows.crystallization]
+provider = "openai"
+model = "deepseek-v4-flash"
+enabled = true
+""",
+        encoding="utf-8",
+    )
+
+    dream_config = load_dream_config(config)
+
+    assert dream_config.workflows["crystallization"].provider == "openai"
+    assert "openai" not in dream_config.to_payload()

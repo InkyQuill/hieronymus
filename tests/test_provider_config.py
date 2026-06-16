@@ -11,6 +11,7 @@ from hieronymus.provider_config import (
     ProviderProfile,
     default_provider_catalog,
     load_provider_catalog,
+    migrate_dream_provider_payload,
     redacted_provider_catalog_payload,
     save_provider_catalog,
     validate_provider_catalog,
@@ -206,9 +207,7 @@ def test_load_provider_catalog_defaults_provider_name_to_table_id(
     config = _config(tmp_path)
     _write_provider_config(
         config,
-        "[deepseek]\n"
-        'type = "openai"\n'
-        'url = "https://api.deepseek.com"\n',
+        '[deepseek]\ntype = "openai"\nurl = "https://api.deepseek.com"\n',
     )
 
     assert load_provider_catalog(config).providers["deepseek"] == ProviderProfile(
@@ -221,8 +220,8 @@ def test_load_provider_catalog_defaults_provider_name_to_table_id(
 @pytest.mark.parametrize(
     ("raw_config", "error"),
     [
-        ("[deepseek]\nurl = \"https://api.deepseek.com\"\n", "deepseek.type is required"),
-        ("[deepseek]\ntype = \"openai\"\n", "deepseek.url is required"),
+        ('[deepseek]\nurl = "https://api.deepseek.com"\n', "deepseek.type is required"),
+        ('[deepseek]\ntype = "openai"\n', "deepseek.url is required"),
     ],
 )
 def test_load_provider_catalog_rejects_missing_required_provider_fields(
@@ -241,17 +240,11 @@ def test_load_provider_catalog_rejects_missing_required_provider_fields(
     ("raw_config", "error"),
     [
         (
-            "[deepseek]\n"
-            'type = "openai"\n'
-            'url = "https://api.deepseek.com"\n'
-            'extra = "nope"\n',
+            '[deepseek]\ntype = "openai"\nurl = "https://api.deepseek.com"\nextra = "nope"\n',
             "unknown provider config setting: deepseek.extra",
         ),
         (
-            "[defaults]\n"
-            'provider = ""\n'
-            'model = ""\n'
-            'extra = "nope"\n',
+            '[defaults]\nprovider = ""\nmodel = ""\nextra = "nope"\n',
             "unknown provider config setting: defaults.extra",
         ),
     ],
@@ -301,39 +294,27 @@ def test_provider_catalog_allows_default_model_without_default_provider() -> Non
     ("raw_config", "error"),
     [
         (
-            "[deepseek]\n"
-            "name = 1\n"
-            'type = "openai"\n'
-            'url = "https://api.deepseek.com"\n',
+            '[deepseek]\nname = 1\ntype = "openai"\nurl = "https://api.deepseek.com"\n',
             "providers.deepseek.name must be a string",
         ),
         (
-            "[deepseek]\n"
-            "type = 1\n"
-            'url = "https://api.deepseek.com"\n',
+            '[deepseek]\ntype = 1\nurl = "https://api.deepseek.com"\n',
             "providers.deepseek.type must be a string",
         ),
         (
-            "[deepseek]\n"
-            'type = "openai"\n'
-            "url = 1\n",
+            '[deepseek]\ntype = "openai"\nurl = 1\n',
             "providers.deepseek.url must be a string",
         ),
         (
-            "[deepseek]\n"
-            'type = "openai"\n'
-            'url = "https://api.deepseek.com"\n'
-            "key = 1\n",
+            '[deepseek]\ntype = "openai"\nurl = "https://api.deepseek.com"\nkey = 1\n',
             "providers.deepseek.key must be a string",
         ),
         (
-            "[defaults]\n"
-            "provider = 1\n",
+            "[defaults]\nprovider = 1\n",
             "defaults.provider must be a string",
         ),
         (
-            "[defaults]\n"
-            "model = 1\n",
+            "[defaults]\nmodel = 1\n",
             "defaults.model must be a string",
         ),
     ],
@@ -361,17 +342,11 @@ def test_load_provider_catalog_rejects_field_type_mismatches(
             "providers.deepseek.timeout_seconds must be a number",
         ),
         (
-            "[deepseek]\n"
-            'type = "openai"\n'
-            'url = "https://api.deepseek.com"\n'
-            "timeout_seconds = 0\n",
+            '[deepseek]\ntype = "openai"\nurl = "https://api.deepseek.com"\ntimeout_seconds = 0\n',
             "providers.deepseek.timeout_seconds must be greater than 0",
         ),
         (
-            "[deepseek]\n"
-            'type = "openai"\n'
-            'url = "https://api.deepseek.com"\n'
-            "timeout_seconds = -1\n",
+            '[deepseek]\ntype = "openai"\nurl = "https://api.deepseek.com"\ntimeout_seconds = -1\n',
             "providers.deepseek.timeout_seconds must be greater than 0",
         ),
         (
@@ -393,3 +368,50 @@ def test_load_provider_catalog_rejects_invalid_timeout_values(
 
     with pytest.raises(ProviderCatalogError, match=error):
         load_provider_catalog(config)
+
+
+def test_migrate_dream_provider_payload_preserves_secret_and_endpoint() -> None:
+    catalog = migrate_dream_provider_payload(
+        {
+            "openai": {
+                "type": "openai",
+                "endpoint": "https://api.deepseek.com",
+                "api_key": "secret",
+                "timeout_seconds": 12,
+            }
+        },
+        existing=ProviderCatalog(providers={}, defaults=ProviderDefaults()),
+    )
+
+    assert catalog.providers["openai"] == ProviderProfile(
+        name="Openai",
+        type="openai",
+        url="https://api.deepseek.com",
+        key="secret",
+        timeout_seconds=12.0,
+    )
+
+
+def test_migrate_dream_provider_payload_rejects_profile_collision() -> None:
+    existing = ProviderCatalog(
+        providers={
+            "openai": ProviderProfile(
+                name="Existing",
+                type="openai",
+                url="https://api.openai.com/v1",
+            )
+        },
+        defaults=ProviderDefaults(),
+    )
+
+    with pytest.raises(ProviderCatalogError, match="would overwrite provider profile"):
+        migrate_dream_provider_payload(
+            {
+                "openai": {
+                    "type": "openai",
+                    "endpoint": "https://api.deepseek.com",
+                    "api_key": "secret",
+                }
+            },
+            existing=existing,
+        )
