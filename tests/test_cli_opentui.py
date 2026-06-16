@@ -260,12 +260,13 @@ def _smoke_opentui_bundle(
 def test_packaged_opentui_config_starts_from_built_bundle(tmp_path: Path) -> None:
     output = _smoke_opentui_bundle(
         "config",
-        ["Hieronymus Config", "Providers", "dream.conf"],
+        ["Hieronymus Config", "Provider/API | Dreaming | Ingest | Release", "dream.conf"],
         tmp_path,
     )
 
-    assert "Providers" in output
+    assert "Provider/API | Dreaming | Ingest | Release" in output
     assert "dream.conf" in output
+    assert "│Providers│" not in output
 
 
 def test_packaged_opentui_admin_starts_from_built_bundle(tmp_path: Path) -> None:
