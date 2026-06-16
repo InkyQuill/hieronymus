@@ -23,7 +23,6 @@ from hieronymus.llm_cache import (
     ModelCacheEntry,
     dream_profile_cache_identity,
     load_model_cache,
-    model_cache_identity,
     save_model_cache,
 )
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
@@ -284,10 +283,11 @@ class ProviderRegistry:
         catalog_profile = provider_catalog.providers.get(name)
         if catalog_profile is None:
             self.metadata(name)
-            return self._list_static_cached_model_suggestions(
-                config,
-                name,
-                missing_profile_error=f"provider profile missing: {name}",
+            return ModelSuggestionResult(
+                provider=name,
+                models=_default_model_suggestions(name),
+                source="defaults",
+                error=f"provider profile missing: {name}",
             )
         profile = _catalog_profile_to_runtime(catalog_profile)
         return self.list_profile_model_suggestions(config, name, profile)
@@ -324,49 +324,6 @@ class ProviderRegistry:
                     fetched_at=datetime.now(UTC).isoformat(),
                     error=result.error,
                     identity=identity,
-                )
-            ),
-        )
-        return result
-
-    def _list_static_cached_model_suggestions(
-        self,
-        config: HieronymusConfig,
-        name: str,
-        *,
-        missing_profile_error: str = "",
-    ) -> ModelSuggestionResult:
-        cache = load_model_cache(config)
-        entry = cache.providers.get(name)
-        identity = model_cache_identity(name)
-        if (
-            entry is not None
-            and not entry.error
-            and entry.identity == identity
-            and not entry.is_stale()
-        ):
-            return ModelSuggestionResult(
-                provider=name,
-                models=list(entry.models),
-                source=config.llm_cache_path.name,
-                error=entry.error,
-            )
-
-        result = ModelSuggestionResult(
-            provider=name,
-            models=_default_model_suggestions(name),
-            source="defaults",
-            error=missing_profile_error,
-        )
-        _save_model_cache_best_effort(
-            config,
-            cache.with_entry(
-                ModelCacheEntry(
-                    provider=name,
-                    models=tuple(result.models),
-                    fetched_at=datetime.now(UTC).isoformat(),
-                    error=result.error,
-                    identity=model_cache_identity(name),
                 )
             ),
         )
