@@ -4,7 +4,8 @@ import pytest
 
 import hieronymus.tui_bridge as tui_bridge
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import ProviderProfile, default_dream_config, save_dream_config
+from hieronymus.dream_config import default_dream_config, save_dream_config
+from hieronymus.provider_config import ProviderCatalog, ProviderProfile, save_provider_catalog
 from hieronymus.tui_bridge.errors import error_payload
 from hieronymus.tui_bridge.protocol import (
     RpcError,
@@ -99,14 +100,12 @@ def test_dataclass_to_json_recurses_without_private_state() -> None:
 
 
 def test_error_payload_redacts_configured_secret_values() -> None:
-    dream_config = default_dream_config().with_provider(
-        "openai",
-        ProviderProfile(type="openai", api_key="raw-secret-value"),
-    )
+    dream_config = default_dream_config()
 
     payload = error_payload(
         ValueError("provider rejected raw-secret-value"),
         dream_config=dream_config,
+        redact=lambda text: text.replace("raw-secret-value", "[redacted]"),
     )
 
     assert payload == {
@@ -132,14 +131,28 @@ def test_error_response_can_redact_configured_secret_values() -> None:
     }
 
 
-def test_dispatch_error_redacts_secret_from_dream_config(tmp_path) -> None:
+def test_dispatch_error_redacts_secret_from_provider_catalog(tmp_path, monkeypatch) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "openai": ProviderProfile(
+                    name="OpenAI",
+                    type="openai",
+                    url="https://api.example.test/v1",
+                    key="raw-secret-value",
+                )
+            }
+        ),
+    )
     save_dream_config(
         config,
-        default_dream_config().with_provider(
-            "openai",
-            ProviderProfile(type="openai", api_key="raw-secret-value"),
-        ),
+        default_dream_config(),
+    )
+    monkeypatch.setattr(
+        "hieronymus.tui_bridge.server._redactor_or_none",
+        lambda config: lambda text: text.replace("raw-secret-value", "[redacted]"),
     )
 
     response = dispatch(

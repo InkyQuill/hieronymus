@@ -27,6 +27,11 @@ from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import CrystalRecord, ShortTermMemoryRecord, TranslationContext
 from hieronymus.presentation import GUIDE_ICON, display_version, render_greeting, render_json
+from hieronymus.provider_config import (
+    ProviderCatalogError,
+    load_provider_catalog,
+    redacted_provider_catalog_payload,
+)
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.release import check_update, run_update
@@ -284,16 +289,25 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
 
     try:
         dream_config = load_dream_config(config)
+        provider_catalog = load_provider_catalog(config)
         release_config = load_release_config(config)
         ingest_config = load_ingest_config(config)
+        raw_provider_catalog = redacted_provider_catalog_payload(provider_catalog)
         payload = {
             "config_root": str(config.config_root),
             "database_path": str(config.database_path),
             "dream_config_path": str(config.dream_config_path),
+            "provider_config_path": str(config.provider_config_path),
             "ingest_config_path": str(config.ingest_config_path),
             "release_config_path": str(config.release_config_path),
             "tui": "available",
             "dream": redacted_dream_config_payload(dream_config),
+            "provider_catalog": {
+                "profiles": {
+                    key: value for key, value in raw_provider_catalog.items() if key != "defaults"
+                },
+                "defaults": raw_provider_catalog.get("defaults", {}),
+            },
             "ingest": ingest_config.to_payload(),
             "release": {
                 "update_channel": release_config.update_channel,
@@ -302,7 +316,12 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
             "providers": ProviderRegistry().status_payload(config),
             "dreaming": DreamAutostart(config).status(),
         }
-    except (DreamConfigError, IngestConfigError, ReleaseConfigError) as error:
+    except (
+        DreamConfigError,
+        ProviderCatalogError,
+        IngestConfigError,
+        ReleaseConfigError,
+    ) as error:
         raise click.ClickException(str(error)) from error
 
     click.echo(render_json(payload))

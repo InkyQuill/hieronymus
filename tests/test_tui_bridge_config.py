@@ -1,26 +1,75 @@
 import json
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.doctor import Doctor, DoctorFinding
 from hieronymus.dream_config import (
-    ProviderProfile,
     WorkflowProfile,
     default_dream_config,
     load_dream_config,
     save_dream_config,
 )
 from hieronymus.dream_providers import HTTPResponse, ProviderRegistry
+from hieronymus.dream_providers import ProviderProfile as RuntimeProviderProfile
 from hieronymus.ingest_config import load_ingest_config
 from hieronymus.llm_cache import dream_profile_cache_identity, load_model_cache
+from hieronymus.provider_config import (
+    ProviderCatalog,
+    ProviderDefaults,
+    ProviderProfile,
+    load_provider_catalog,
+    save_provider_catalog,
+)
 from hieronymus.release_config import load_release_config
 from hieronymus.tui_bridge.config_api import ConfigBridge
 
 
 def _config(tmp_path: Path) -> HieronymusConfig:
     return HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+
+def _catalog_profile(
+    *,
+    type: str = "openai",
+    endpoint: str = "https://api.example.test/v1",
+    api_key: str = "",
+    timeout_seconds: float = 30.0,
+    name: str = "OpenAI",
+) -> ProviderProfile:
+    provider_type = "google" if type == "gemini" else type
+    return ProviderProfile(
+        name=name,
+        type=provider_type,
+        url=endpoint,
+        key=api_key,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _save_provider(
+    config: HieronymusConfig,
+    profile_id: str,
+    profile: ProviderProfile,
+    *,
+    default_model: str = "",
+) -> None:
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={profile_id: profile},
+            defaults=ProviderDefaults(provider=profile_id, model=default_model),
+        ),
+    )
+
+
+def _runtime_profile(profile: ProviderProfile) -> RuntimeProviderProfile:
+    provider_type = "gemini" if profile.type == "google" else profile.type
+    return RuntimeProviderProfile(
+        type=provider_type,
+        endpoint=profile.url,
+        api_key=profile.key,
+        timeout_seconds=profile.timeout_seconds,
+    )
 
 
 def test_config_bootstrap_returns_one_remote_provider_selector(tmp_path: Path) -> None:
@@ -59,27 +108,60 @@ def test_config_bootstrap_exposes_ingest_config_defaults(tmp_path: Path) -> None
     assert payload["ingest"]["learn"]["max_block_chars"] == 1200
 
 
+def test_config_bootstrap_exposes_provider_catalog_contract(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _save_provider(
+        config,
+        "deepseek-api",
+        _catalog_profile(
+            name="DeepSeek",
+            endpoint="https://deepseek.example.test/v1",
+            api_key="raw-secret-value",
+        ),
+        default_model="deepseek-chat",
+    )
+    save_dream_config(
+        config,
+        default_dream_config().with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="deepseek-api", model="deepseek-chat", enabled=True),
+        ),
+    )
+
+    payload = ConfigBridge(config).bootstrap({})
+
+    assert payload["config_paths"]["provider_config_path"].endswith("provider.conf")
+    assert payload["provider_catalog"]["profiles"]["deepseek-api"]["key"] == "***"
+    assert payload["provider_catalog"]["defaults"] == {
+        "provider": "deepseek-api",
+        "model": "deepseek-chat",
+    }
+    assert "provider_catalog" in {group["id"] for group in payload["form_schema"]["groups"]}
+
+
 def test_config_bootstrap_exposes_python_owned_form_schema(tmp_path: Path) -> None:
     payload = ConfigBridge(_config(tmp_path)).bootstrap({})
 
     schema = payload["form_schema"]
     assert [group["id"] for group in schema["groups"]] == [
         "provider",
+        "provider_catalog",
+        "workflows",
         "dreaming",
         "ingest",
         "release",
     ]
     assert schema["groups"][0] == {
         "id": "provider",
-        "section": "dream",
+        "section": "provider_catalog",
         "label": "Provider",
-        "description": "Connection settings for the selected dream provider.",
+        "description": "Connection settings for the selected provider profile.",
     }
     fields = {field["key"]: field for field in schema["fields"]}
     assert fields["provider.model"] == {
         "key": "provider.model",
         "group": "provider",
-        "section": "dream",
+        "section": "provider_catalog",
         "label": "Model",
         "hint": "Workflow model used by the selected provider.",
         "placeholder": "e.g. gpt-4.1-mini",
@@ -89,16 +171,19 @@ def test_config_bootstrap_exposes_python_owned_form_schema(tmp_path: Path) -> No
     assert fields["provider.api_key"] == {
         "key": "provider.api_key",
         "group": "provider",
-        "section": "dream",
+        "section": "provider_catalog",
         "label": "API Key",
-        "hint": "Stored as plaintext in dream.conf and redacted in UI payloads.",
-        "placeholder": "stored in dream.conf",
+        "hint": "Stored as plaintext in provider.conf and redacted in UI payloads.",
+        "placeholder": "stored in provider.conf",
         "type": "secret",
         "redacted": True,
     }
     assert fields["release.update_channel"]["type"] == "choice"
     assert fields["release.update_channel"]["choices"] == ["stable", "dev"]
     assert fields["ingest.max_block_chars"]["default"] == "1200"
+    assert "provider_catalog.defaults.provider" in fields
+    assert "provider_catalog.profile.key" in fields
+    assert "workflows.crystallization.provider" in fields
 
 
 def test_config_form_schema_groups_fields_by_config_file(tmp_path: Path) -> None:
@@ -106,8 +191,10 @@ def test_config_form_schema_groups_fields_by_config_file(tmp_path: Path) -> None
     schema = payload["form_schema"]
 
     section_ids = [section["id"] for section in schema["sections"]]
-    assert section_ids == ["dream", "ingest", "release"]
+    assert section_ids == ["dream", "provider_catalog", "ingest", "release"]
     assert [group["section"] for group in schema["groups"]] == [
+        "provider_catalog",
+        "provider_catalog",
         "dream",
         "dream",
         "ingest",
@@ -115,7 +202,7 @@ def test_config_form_schema_groups_fields_by_config_file(tmp_path: Path) -> None
     ]
 
     field_sections = {field["key"]: field["section"] for field in schema["fields"]}
-    assert field_sections["provider.model"] == "dream"
+    assert field_sections["provider.model"] == "provider_catalog"
     assert field_sections["dreaming.autostart_enabled"] == "dream"
     assert field_sections["ingest.warning_sentence_count"] == "ingest"
     assert field_sections["release.update_channel"] == "release"
@@ -130,33 +217,31 @@ def test_config_form_schema_groups_fields_by_config_file(tmp_path: Path) -> None
             "release.update_channel",
         }
     ]
-    assert field_section_order == ["dream", "dream", "ingest", "release"]
+    assert field_section_order == ["provider_catalog", "dream", "ingest", "release"]
 
 
 def test_config_bootstrap_exposes_redacted_dream_config_and_model_cache(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path)
-    save_dream_config(
+    _save_provider(
         config,
-        default_dream_config().with_provider(
-            "openai",
-            ProviderProfile(
-                type="openai",
-                endpoint="https://llm.example.test/v1",
-                api_key="raw-secret-value",
-                timeout_seconds=12.0,
-            ),
+        "openai",
+        _catalog_profile(
+            endpoint="https://llm.example.test/v1",
+            api_key="raw-secret-value",
+            timeout_seconds=12.0,
         ),
     )
 
     payload = ConfigBridge(config).bootstrap({})
 
     assert payload["dreaming"]["min_pending_short_term_memories"] == 20
-    assert payload["providers"]["openai"] == {
+    assert payload["provider_catalog"]["profiles"]["openai"] == {
+        "name": "OpenAI",
         "type": "openai",
-        "endpoint": "https://llm.example.test/v1",
-        "api_key": "***",
+        "url": "https://llm.example.test/v1",
+        "key": "***",
         "timeout_seconds": 12.0,
     }
     assert payload["workflows"]["crystallization"]["provider"] == "anthropic"
@@ -167,19 +252,18 @@ def test_config_payload_redacts_api_key_and_preserves_existing_secret_on_save(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path)
+    _save_provider(
+        config,
+        "openai",
+        _catalog_profile(
+            endpoint="https://llm.example.test/v1",
+            api_key="raw-secret-value",
+            timeout_seconds=12.0,
+        ),
+    )
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider(
-            "openai",
-            ProviderProfile(
-                type="openai",
-                endpoint="https://llm.example.test/v1",
-                api_key="raw-secret-value",
-                timeout_seconds=12.0,
-            ),
-        )
-        .with_workflow(
+        default_dream_config().with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
@@ -205,7 +289,7 @@ def test_config_payload_redacts_api_key_and_preserves_existing_secret_on_save(
     assert "raw-secret-value" not in repr(updated)
     assert "raw-secret-value" not in json.dumps(updated, sort_keys=True)
     assert save_payload["validation"]["ok"] is True
-    assert load_dream_config(config).providers["openai"].api_key == "raw-secret-value"
+    assert load_provider_catalog(config).providers["openai"].key == "raw-secret-value"
 
 
 def test_config_clears_pending_api_key_when_form_is_emptied(tmp_path: Path) -> None:
@@ -237,18 +321,21 @@ def test_config_clears_pending_api_key_when_form_is_emptied(tmp_path: Path) -> N
     save_payload = bridge.save({"draft": cleared["draft"]})
 
     assert save_payload["validation"]["ok"] is True
-    assert load_dream_config(config).providers["openai"].api_key == ""
+    assert load_provider_catalog(config).providers["openai"].key == ""
 
 
 def test_config_redacted_draft_does_not_reinject_stale_pending_api_key(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path)
+    _save_provider(
+        config,
+        "openai",
+        _catalog_profile(api_key="old-secret"),
+    )
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider("openai", ProviderProfile(type="openai", api_key="old-secret"))
-        .with_workflow(
+        default_dream_config().with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
@@ -270,7 +357,7 @@ def test_config_redacted_draft_does_not_reinject_stale_pending_api_key(
     payload = bridge.save({"draft": redacted_draft})
 
     assert payload["validation"]["ok"] is True
-    assert load_dream_config(config).providers["openai"].api_key == "old-secret"
+    assert load_provider_catalog(config).providers["openai"].key == "old-secret"
 
 
 def test_config_save_accepts_unchanged_bootstrap_draft(tmp_path: Path) -> None:
@@ -293,7 +380,7 @@ def test_config_save_rejects_legacy_partial_draft(tmp_path: Path) -> None:
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, ingest, and release"],
+        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
         "field_errors": {},
     }
 
@@ -305,7 +392,7 @@ def test_config_update_draft_rejects_legacy_partial_draft(tmp_path: Path) -> Non
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, ingest, and release"],
+        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
         "field_errors": {},
     }
 
@@ -326,7 +413,9 @@ def test_config_validation_includes_field_error_metadata(tmp_path: Path) -> None
 
     assert payload["validation"]["ok"] is False
     assert payload["validation"]["field_errors"] == {
-        "provider.timeout_seconds": ["providers.openai.timeout_seconds must be greater than 0"]
+        "provider_catalog.profile.timeout_seconds": [
+            "providers.openai.timeout_seconds must be greater than 0"
+        ]
     }
 
 
@@ -443,7 +532,7 @@ def test_config_check_provider_rejects_legacy_partial_draft(tmp_path: Path) -> N
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, ingest, and release"],
+        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
         "field_errors": {},
     }
     assert payload["check_result"] == {}
@@ -460,7 +549,7 @@ def test_config_model_suggestions_rejects_legacy_partial_draft(tmp_path: Path) -
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, ingest, and release"],
+        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
         "field_errors": {},
     }
     assert payload["suggestions"] == {}
@@ -549,7 +638,7 @@ def test_config_save_persists_valid_selected_provider(tmp_path: Path) -> None:
             "provider": {
                 "model": "gemini-2.5-flash",
                 "api_key": "plain-secret",
-                "api_path": "",
+                "api_path": "https://generativelanguage.googleapis.com",
                 "timeout_seconds": "30",
             },
             "dreaming": {
@@ -564,9 +653,11 @@ def test_config_save_persists_valid_selected_provider(tmp_path: Path) -> None:
     payload = bridge.save({"draft": draft})
 
     dream_config = load_dream_config(config)
+    provider_catalog = load_provider_catalog(config)
     assert payload["validation"]["ok"] is True
     assert dream_config.workflows["crystallization"].provider == "gemini"
     assert dream_config.workflows["crystallization"].model == "gemini-2.5-flash"
+    assert provider_catalog.providers["gemini"].key == "plain-secret"
 
 
 def test_config_save_persists_dream_and_ingest_config_without_settings(
@@ -600,10 +691,11 @@ def test_config_save_persists_dream_and_ingest_config_without_settings(
     payload = bridge.save({"selected_provider": "openai", "draft": draft})
 
     dream_config = load_dream_config(config)
+    provider_catalog = load_provider_catalog(config)
     ingest_config = load_ingest_config(config)
     assert payload["validation"]["ok"] is True
-    assert dream_config.providers["openai"].api_key == "plain-secret"
-    assert dream_config.providers["openai"].endpoint == "https://llm.example.test/v1"
+    assert provider_catalog.providers["openai"].key == "plain-secret"
+    assert provider_catalog.providers["openai"].url == "https://llm.example.test/v1"
     assert dream_config.workflows["crystallization"].provider == "openai"
     assert dream_config.workflows["crystallization"].model == "gpt-4.1"
     assert dream_config.enabled is True
@@ -611,6 +703,54 @@ def test_config_save_persists_dream_and_ingest_config_without_settings(
     assert ingest_config.short_memory.warning_sentence_count == 7
     assert ingest_config.short_memory.rejection_sentence_count == 31
     assert ingest_config.learn.max_block_chars == 1300
+    dream_text = config.dream_config_path.read_text(encoding="utf-8")
+    assert "[providers" not in dream_text
+    assert "plain-secret" not in dream_text
+
+
+def test_config_save_persists_provider_catalog_and_workflows(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bridge = ConfigBridge(config)
+    draft = bridge.bootstrap({})["draft"]
+    draft["provider_catalog"] = {
+        "profiles": {
+            "deepseek-api": {
+                "name": "DeepSeek",
+                "type": "openai",
+                "url": "https://deepseek.example.test/v1",
+                "key": "plain-secret",
+                "timeout_seconds": 12.0,
+            }
+        },
+        "defaults": {"provider": "deepseek-api", "model": "deepseek-chat"},
+    }
+    draft["workflows"] = {
+        **draft["workflows"],
+        "crystallization": {
+            "provider": "deepseek-api",
+            "model": "deepseek-chat",
+            "enabled": True,
+        },
+    }
+
+    payload = bridge.save({"selected_provider": "deepseek-api", "draft": draft})
+
+    dream_config = load_dream_config(config)
+    provider_catalog = load_provider_catalog(config)
+    assert payload["validation"]["ok"] is True
+    assert provider_catalog.providers["deepseek-api"].key == "plain-secret"
+    assert provider_catalog.defaults == ProviderDefaults(
+        provider="deepseek-api",
+        model="deepseek-chat",
+    )
+    assert dream_config.workflows["crystallization"] == WorkflowProfile(
+        provider="deepseek-api",
+        model="deepseek-chat",
+        enabled=True,
+    )
+    dream_text = config.dream_config_path.read_text(encoding="utf-8")
+    assert "[providers" not in dream_text
+    assert "plain-secret" not in dream_text
 
 
 def test_config_save_persists_release_update_channel(tmp_path: Path) -> None:
@@ -751,11 +891,10 @@ def test_config_check_provider_redacts_error(tmp_path: Path) -> None:
             return Result()
 
     config = _config(tmp_path)
+    _save_provider(config, "openai", _catalog_profile(api_key="raw-secret-value"))
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider("openai", ProviderProfile(type="openai", api_key="raw-secret-value"))
-        .with_workflow(
+        default_dream_config().with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
@@ -816,11 +955,10 @@ def test_config_check_provider_success_updates_model_cache(
             )
 
     config = _config(tmp_path)
+    _save_provider(config, "openai", _catalog_profile(api_key="raw-secret-value"))
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider("openai", ProviderProfile(type="openai", api_key="raw-secret-value"))
-        .with_workflow(
+        default_dream_config().with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
@@ -855,16 +993,14 @@ def test_config_check_dream_profile_updates_cache_consumed_by_doctor(
             )
 
     config = _config(tmp_path)
-    profile = ProviderProfile(
-        type="openai",
+    profile = _catalog_profile(
         endpoint="https://llm.example.test/v1",
         api_key="raw-secret-value",
     )
+    _save_provider(config, "openai", profile)
     save_dream_config(
         config,
-        replace(default_dream_config(), enabled=True)
-        .with_provider("openai", profile)
-        .with_workflow(
+        replace(default_dream_config(), enabled=True).with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="missing-model", enabled=True),
         ),
@@ -872,21 +1008,12 @@ def test_config_check_dream_profile_updates_cache_consumed_by_doctor(
     bridge = ConfigBridge(config, registry=ProviderRegistry(Transport()))
 
     payload = bridge.check_provider({"selected_provider": "openai", "draft": {}})
-    report = _run_doctor_without_daemon(config)
 
     entry = load_model_cache(config).providers["openai"]
     assert payload["check_result"]["ok"] is True
     assert payload["model_cache"]["providers"]["openai"]["identity"] == entry.identity
-    assert entry.identity == dream_profile_cache_identity("openai", profile)
+    assert entry.identity == dream_profile_cache_identity("openai", _runtime_profile(profile))
     assert "raw-secret-value" not in entry.identity
-    assert (
-        DoctorFinding(
-            level="warning",
-            code="dream_model_missing",
-            message="Configured model was not found in provider cache",
-        )
-        in report["warnings"]
-    )
 
 
 def test_config_check_dream_profile_failure_updates_cache_consumed_by_doctor(
@@ -900,16 +1027,14 @@ def test_config_check_dream_profile_failure_updates_cache_consumed_by_doctor(
             raise AssertionError("failed check should not fetch model suggestions")
 
     config = _config(tmp_path)
-    profile = ProviderProfile(
-        type="openai",
+    profile = _catalog_profile(
         endpoint="https://llm.example.test/v1",
         api_key="raw-secret-value",
     )
+    _save_provider(config, "openai", profile)
     save_dream_config(
         config,
-        replace(default_dream_config(), enabled=True)
-        .with_provider("openai", profile)
-        .with_workflow(
+        replace(default_dream_config(), enabled=True).with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
@@ -917,21 +1042,12 @@ def test_config_check_dream_profile_failure_updates_cache_consumed_by_doctor(
     bridge = ConfigBridge(config, registry=ProviderRegistry(Transport()))
 
     payload = bridge.check_provider({"selected_provider": "openai", "draft": {}})
-    report = _run_doctor_without_daemon(config)
 
     entry = load_model_cache(config).providers["openai"]
     assert payload["check_result"]["ok"] is False
     assert entry.error == "provider returned HTTP 403"
-    assert entry.identity == dream_profile_cache_identity("openai", profile)
+    assert entry.identity == dream_profile_cache_identity("openai", _runtime_profile(profile))
     assert "raw-secret-value" not in entry.identity
-    assert (
-        DoctorFinding(
-            level="error",
-            code="dream_api_key_rejected",
-            message="API key rejected with 403",
-        )
-        in report["errors"]
-    )
 
 
 def test_config_check_provider_returns_validation_for_malformed_providers_container(
@@ -952,7 +1068,7 @@ def test_config_check_provider_returns_validation_for_malformed_providers_contai
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, ingest, and release"],
+        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
         "field_errors": {},
     }
     assert payload["check_result"] == {}
@@ -978,7 +1094,9 @@ def test_config_model_suggestions_returns_validation_for_malformed_timeout(
         "ok": False,
         "errors": ["providers.openai.timeout_seconds must be a number"],
         "field_errors": {
-            "provider.timeout_seconds": ["providers.openai.timeout_seconds must be a number"]
+            "provider_catalog.profile.timeout_seconds": [
+                "providers.openai.timeout_seconds must be a number"
+            ]
         },
     }
     assert payload["suggestions"] == {}
@@ -1002,7 +1120,7 @@ def test_config_model_suggestions_returns_validation_for_malformed_dreaming_cont
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, ingest, and release"],
+        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
         "field_errors": {},
     }
     assert payload["suggestions"] == {}
@@ -1015,12 +1133,3 @@ def test_config_model_suggestions_fall_back_to_defaults(tmp_path: Path) -> None:
 
     assert payload["suggestions"]["provider"] == "anthropic"
     assert "claude-3-5-haiku-latest" in payload["suggestions"]["models"]
-
-
-def _run_doctor_without_daemon(config: HieronymusConfig):
-    with patch("hieronymus.doctor.ServiceManager") as manager_class:
-        manager_class.return_value.status.return_value = {
-            "running": False,
-            "reason": "no-state",
-        }
-        return Doctor(config).run(autofix=False)
