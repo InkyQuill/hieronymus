@@ -282,7 +282,6 @@ class ProviderRegistry:
         provider_catalog = load_provider_catalog(config)
         catalog_profile = provider_catalog.providers.get(name)
         if catalog_profile is None:
-            self.metadata(name)
             return ModelSuggestionResult(
                 provider=name,
                 models=_default_model_suggestions(name),
@@ -670,7 +669,7 @@ def _default_model_suggestions(name: str) -> list[str]:
         "deterministic": [""],
         "ollama": ["gemma4-e3b"],
     }
-    return list(defaults[name])
+    return list(defaults.get(name, []))
 
 
 def _parse_model_suggestions(name: str, body: str) -> list[str]:

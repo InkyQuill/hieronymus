@@ -321,6 +321,17 @@ def test_provider_check_reports_missing_catalog_profile(config) -> None:
     assert result.error == "provider profile missing: missing-profile"
 
 
+def test_model_suggestions_report_missing_arbitrary_catalog_profile(config) -> None:
+    result = ProviderRegistry().list_model_suggestions(config, "deepseek-api")
+
+    assert result.to_json_dict() == {
+        "provider": "deepseek-api",
+        "models": [],
+        "source": "defaults",
+        "error": "provider profile missing: deepseek-api",
+    }
+
+
 def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> None:
     class Transport:
         def __init__(self):
