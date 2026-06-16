@@ -95,8 +95,7 @@ def validate_provider_catalog(catalog: ProviderCatalog) -> ProviderCatalog:
     if type(catalog.providers) is not dict:
         raise ProviderCatalogError("providers must be a mapping")
     for name, provider in catalog.providers.items():
-        if type(name) is not str:
-            raise ProviderCatalogError("providers keys must be strings")
+        _validate_provider_id(name)
         if not isinstance(provider, ProviderProfile):
             raise ProviderCatalogError(f"providers.{name} has invalid profile type")
         _validate_provider_profile(name, provider)
@@ -125,8 +124,7 @@ def _provider_catalog_from_payload(payload: dict[str, Any]) -> ProviderCatalog:
 
     providers: dict[str, ProviderProfile] = {}
     for name, raw_provider in providers_payload.items():
-        if type(name) is not str:
-            raise ProviderCatalogError("providers keys must be strings")
+        _validate_provider_id(name)
         provider_payload = _dict_payload(raw_provider, f"providers.{name}")
         _validate_unknown_keys(
             provider_payload,
@@ -135,6 +133,7 @@ def _provider_catalog_from_payload(payload: dict[str, Any]) -> ProviderCatalog:
         )
         _validate_provider_payload(name, provider_payload)
         _require_profile_fields(name, provider_payload)
+        provider_payload.setdefault("name", name)
         providers[name] = replace(ProviderProfile(), **provider_payload)
 
     return ProviderCatalog(
@@ -166,8 +165,6 @@ def _validate_provider_defaults(
     _require_exact_str("defaults.model", defaults.model)
     if defaults.provider and defaults.provider not in providers:
         raise ProviderCatalogError(f"default provider is missing: {defaults.provider}")
-    if defaults.model and not defaults.provider:
-        raise ProviderCatalogError("default model requires a default provider")
 
 
 def _validate_provider_payload(name: str, payload: dict[str, Any]) -> None:
@@ -195,9 +192,16 @@ def _validate_defaults_payload(payload: dict[str, Any]) -> None:
 
 
 def _require_profile_fields(name: str, payload: dict[str, Any]) -> None:
-    for field_name in ("name", "type", "url"):
+    for field_name in ("type", "url"):
         if field_name not in payload:
             raise ProviderCatalogError(f"providers.{name}.{field_name} is required")
+
+
+def _validate_provider_id(name: object) -> None:
+    if type(name) is not str:
+        raise ProviderCatalogError("providers keys must be strings")
+    if not name or name == "defaults":
+        raise ProviderCatalogError(f"invalid provider id: {name}")
 
 
 def _dict_payload(value: object, field_name: str) -> dict[str, Any]:
