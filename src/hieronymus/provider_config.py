@@ -54,7 +54,7 @@ class ProviderCatalog:
 
     def to_payload(self, *, redact: bool = False) -> dict[str, object]:
         return {
-            "providers": {
+            **{
                 name: provider.to_payload(redact=redact)
                 for name, provider in self.providers.items()
             },
@@ -107,13 +107,6 @@ def validate_provider_catalog(catalog: ProviderCatalog) -> ProviderCatalog:
 
 
 def _provider_catalog_from_payload(payload: dict[str, Any]) -> ProviderCatalog:
-    _validate_unknown_keys(
-        payload,
-        allowed=frozenset({"providers", "defaults"}),
-        prefix=None,
-    )
-
-    providers_payload = _dict_payload(payload.get("providers"), "providers")
     defaults_payload = _dict_payload(payload.get("defaults"), "defaults")
     _validate_unknown_keys(
         defaults_payload,
@@ -123,13 +116,15 @@ def _provider_catalog_from_payload(payload: dict[str, Any]) -> ProviderCatalog:
     _validate_defaults_payload(defaults_payload)
 
     providers: dict[str, ProviderProfile] = {}
-    for name, raw_provider in providers_payload.items():
+    for name, raw_provider in payload.items():
+        if name == "defaults":
+            continue
         _validate_provider_id(name)
-        provider_payload = _dict_payload(raw_provider, f"providers.{name}")
+        provider_payload = _dict_payload(raw_provider, name)
         _validate_unknown_keys(
             provider_payload,
             allowed=_field_names(ProviderProfile),
-            prefix=f"providers.{name}",
+            prefix=name,
         )
         _validate_provider_payload(name, provider_payload)
         _require_profile_fields(name, provider_payload)

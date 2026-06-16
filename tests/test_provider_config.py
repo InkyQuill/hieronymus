@@ -1,3 +1,4 @@
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,15 @@ def test_save_and_load_provider_catalog_round_trips_profiles_and_defaults(
         ),
     )
 
+    raw = config.provider_config_path.read_text(encoding="utf-8")
+    assert "[deepseek-api]" in raw
+    assert "[local-ollama]" in raw
+    assert "[defaults]" in raw
+    assert "[providers." not in raw
+    payload = tomllib.loads(raw)
+    assert "providers" not in payload
+    assert payload["deepseek-api"]["key"] == "raw-secret"
+
     assert load_provider_catalog(config) == ProviderCatalog(
         providers={
             "deepseek-api": ProviderProfile(
@@ -116,7 +126,7 @@ def test_load_provider_catalog_defaults_provider_name_to_table_id(
     config = _config(tmp_path)
     _write_provider_config(
         config,
-        "[providers.deepseek]\n"
+        "[deepseek]\n"
         'type = "openai"\n'
         'url = "https://api.deepseek.com"\n',
     )
