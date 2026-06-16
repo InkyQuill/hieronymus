@@ -13,7 +13,11 @@ from hieronymus.dream_locks import read_dream_cycle_state
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dream_workflows import resolve_effective_workflow
 from hieronymus.dreaming import DreamService
-from hieronymus.provider_config import ProviderCatalogError, load_provider_catalog
+from hieronymus.provider_config import (
+    ProviderCatalogError,
+    default_provider_catalog,
+    load_provider_catalog,
+)
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,10 @@ class DreamAutostart:
 
     def status(self) -> dict[str, object]:
         dream_config = load_dream_config(self.config)
+        try:
+            provider_catalog = load_provider_catalog(self.config)
+        except ProviderCatalogError:
+            provider_catalog = default_provider_catalog()
         state = load_autostart_state(self.config)
         pending_completed_sessions, pending_short_term_memories = self._pending_counts()
         active_cycle = read_dream_cycle_state(self.config)
@@ -87,7 +95,7 @@ class DreamAutostart:
         state_payload = state.to_json_dict()
         return {
             "enabled": dream_config.enabled,
-            "active_provider": _active_provider(dream_config, load_provider_catalog(self.config)),
+            "active_provider": _active_provider(dream_config, provider_catalog),
             "schedule_interval_minutes": dream_config.schedule_interval_minutes,
             "min_pending_short_term_memories": dream_config.min_pending_short_term_memories,
             "max_pending_short_term_memories": dream_config.max_pending_short_term_memories,

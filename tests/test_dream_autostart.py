@@ -177,6 +177,36 @@ def test_status_degrades_when_crystallization_provider_default_is_missing(
     assert status["active_provider"] == ""
 
 
+def test_status_degrades_when_provider_catalog_defaults_are_invalid(
+    config: HieronymusConfig,
+) -> None:
+    save_dream_config(
+        config,
+        replace(
+            default_dream_config(),
+            enabled=True,
+            workflows={
+                "crystallization": WorkflowProfile(
+                    provider="",
+                    model="gpt-missing",
+                    enabled=True,
+                ),
+            },
+        ),
+    )
+    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.provider_config_path.write_text(
+        '[defaults]\nprovider = "missing-profile"\nmodel = "gpt-missing"\n',
+        encoding="utf-8",
+    )
+
+    status = DreamAutostart(config).status()
+
+    assert status["enabled"] is True
+    assert status["active_provider"] == ""
+    assert status["last_error"] == ""
+
+
 def test_urgent_trigger_runs_when_max_pending_is_reached(config: HieronymusConfig) -> None:
     _enable_autostart(config, max_pending_short_term_memories=2)
     _completed_session(config, _context(config), memories=2)
