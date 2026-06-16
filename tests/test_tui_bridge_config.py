@@ -139,6 +139,37 @@ def test_config_bootstrap_exposes_provider_catalog_contract(tmp_path: Path) -> N
     assert "provider_catalog" in {group["id"] for group in payload["form_schema"]["groups"]}
 
 
+def test_config_bootstrap_exposes_named_profile_compat_provider_keys(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _save_provider(
+        config,
+        "deepseek-api",
+        _catalog_profile(
+            name="DeepSeek",
+            endpoint="https://deepseek.example.test/v1",
+            api_key="raw-secret-value",
+        ),
+        default_model="deepseek-chat",
+    )
+
+    payload = ConfigBridge(config).bootstrap({})
+
+    provider = payload["providers"]["deepseek-api"]
+    assert provider["name"] == "DeepSeek"
+    assert provider["type"] == "openai"
+    assert provider["url"] == "https://deepseek.example.test/v1"
+    assert provider["endpoint"] == "https://deepseek.example.test/v1"
+    assert provider["base_url"] == "https://deepseek.example.test/v1"
+    assert provider["key"] == "***"
+    assert provider["api_key"] == "***"
+    draft_provider = payload["draft"]["providers"]["deepseek-api"]
+    assert draft_provider["url"] == "https://deepseek.example.test/v1"
+    assert draft_provider["endpoint"] == "https://deepseek.example.test/v1"
+    assert draft_provider["base_url"] == "https://deepseek.example.test/v1"
+    assert draft_provider["key"] == "***"
+    assert draft_provider["api_key"] == "***"
+
+
 def test_config_bootstrap_exposes_python_owned_form_schema(tmp_path: Path) -> None:
     payload = ConfigBridge(_config(tmp_path)).bootstrap({})
 
@@ -360,6 +391,35 @@ def test_config_redacted_draft_does_not_reinject_stale_pending_api_key(
     assert load_provider_catalog(config).providers["openai"].key == "old-secret"
 
 
+def test_config_redaction_sentinel_is_exact_three_asterisks(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _save_provider(config, "openai", _catalog_profile(api_key="old-secret"))
+    save_dream_config(
+        config,
+        default_dream_config().with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        ),
+    )
+    bridge = ConfigBridge(config)
+    draft = bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "**",
+                "api_path": "https://llm.example.test/v1",
+                "timeout_seconds": "12",
+            },
+        }
+    )["draft"]
+
+    payload = bridge.save({"draft": draft})
+
+    assert payload["validation"]["ok"] is True
+    assert load_provider_catalog(config).providers["openai"].key == "**"
+
+
 def test_config_save_accepts_unchanged_bootstrap_draft(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bridge = ConfigBridge(config)
@@ -373,6 +433,58 @@ def test_config_save_accepts_unchanged_bootstrap_draft(tmp_path: Path) -> None:
     assert dream_config.workflows["crystallization"].provider == "anthropic"
 
 
+def test_config_save_accepts_legacy_draft_without_provider_catalog(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bridge = ConfigBridge(config)
+    draft = bridge.bootstrap({})["draft"]
+    draft.pop("provider_catalog")
+    draft["providers"]["openai"] = {
+        **draft["providers"]["openai"],
+        "enabled": True,
+        "model": "gpt-4.1-mini",
+        "api_key": "plain-secret",
+        "base_url": "https://llm.example.test/v1",
+    }
+    draft["workflows"] = {
+        **draft["workflows"],
+        "crystallization": {
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "enabled": True,
+        },
+    }
+
+    payload = bridge.save({"selected_provider": "openai", "draft": draft})
+
+    dream_config = load_dream_config(config)
+    provider_catalog = load_provider_catalog(config)
+    assert payload["validation"]["ok"] is True
+    assert provider_catalog.providers["openai"].key == "plain-secret"
+    assert provider_catalog.providers["openai"].url == "https://llm.example.test/v1"
+    assert dream_config.workflows["crystallization"] == WorkflowProfile(
+        provider="openai",
+        model="gpt-4.1-mini",
+        enabled=True,
+    )
+    dream_text = config.dream_config_path.read_text(encoding="utf-8")
+    assert "[providers" not in dream_text
+    assert "plain-secret" not in dream_text
+
+
+def test_config_update_draft_accepts_legacy_draft_without_provider_catalog(
+    tmp_path: Path,
+) -> None:
+    bridge = ConfigBridge(_config(tmp_path))
+    draft = bridge.bootstrap({})["draft"]
+    draft.pop("provider_catalog")
+
+    payload = bridge.update_draft({"selected_provider": "anthropic", "draft": draft})
+
+    assert payload["validation"]["ok"] is True
+    assert "provider_catalog" in payload["draft"]
+    assert payload["selected_provider"] == "anthropic"
+
+
 def test_config_save_rejects_legacy_partial_draft(tmp_path: Path) -> None:
     payload = ConfigBridge(_config(tmp_path)).save(
         {"draft": {"dreaming": {"active_provider": "openai"}, "providers": {}}}
@@ -380,7 +492,7 @@ def test_config_save_rejects_legacy_partial_draft(tmp_path: Path) -> None:
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
+        "errors": ["draft must include dream, ingest, and release"],
         "field_errors": {},
     }
 
@@ -392,7 +504,7 @@ def test_config_update_draft_rejects_legacy_partial_draft(tmp_path: Path) -> Non
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
+        "errors": ["draft must include dream, ingest, and release"],
         "field_errors": {},
     }
 
@@ -532,10 +644,44 @@ def test_config_check_provider_rejects_legacy_partial_draft(tmp_path: Path) -> N
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
+        "errors": ["draft must include dream, ingest, and release"],
         "field_errors": {},
     }
     assert payload["check_result"] == {}
+
+
+def test_config_check_provider_accepts_legacy_draft_without_provider_catalog(
+    tmp_path: Path,
+) -> None:
+    class Registry:
+        def check_profile(self, *args, **kwargs):
+            return {
+                "name": "openai",
+                "ok": True,
+                "model": "gpt-4.1-mini",
+                "error": "",
+                "latency_ms": 10,
+            }
+
+    bridge = ConfigBridge(_config(tmp_path), registry=Registry())
+    draft = bridge.bootstrap({})["draft"]
+    draft.pop("provider_catalog")
+    draft["providers"]["openai"] = {
+        **draft["providers"]["openai"],
+        "api_key": "plain-secret",
+        "base_url": "https://llm.example.test/v1",
+    }
+    draft["workflows"]["crystallization"] = {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "enabled": True,
+    }
+
+    payload = bridge.check_provider({"selected_provider": "openai", "draft": draft})
+
+    assert payload["validation"]["ok"] is True
+    assert payload["check_result"]["ok"] is True
+    assert payload["suggestions"] == {}
 
 
 def test_config_model_suggestions_rejects_legacy_partial_draft(tmp_path: Path) -> None:
@@ -549,10 +695,42 @@ def test_config_model_suggestions_rejects_legacy_partial_draft(tmp_path: Path) -
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
+        "errors": ["draft must include dream, ingest, and release"],
         "field_errors": {},
     }
     assert payload["suggestions"] == {}
+
+
+def test_config_model_suggestions_accepts_legacy_draft_without_provider_catalog(
+    tmp_path: Path,
+) -> None:
+    class Registry:
+        def list_profile_model_suggestions(self, *args, **kwargs):
+            return {
+                "provider": "openai",
+                "models": ["gpt-4.1-mini"],
+                "source": "test",
+                "error": "",
+            }
+
+    bridge = ConfigBridge(_config(tmp_path), registry=Registry())
+    draft = bridge.bootstrap({})["draft"]
+    draft.pop("provider_catalog")
+    draft["providers"]["openai"] = {
+        **draft["providers"]["openai"],
+        "api_key": "plain-secret",
+        "base_url": "https://llm.example.test/v1",
+    }
+    draft["workflows"]["crystallization"] = {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "enabled": True,
+    }
+
+    payload = bridge.model_suggestions({"selected_provider": "openai", "draft": draft})
+
+    assert payload["validation"]["ok"] is True
+    assert payload["suggestions"]["models"] == ["gpt-4.1-mini"]
 
 
 def test_config_bootstrap_survives_malformed_dream_config(tmp_path: Path) -> None:
@@ -1068,7 +1246,7 @@ def test_config_check_provider_returns_validation_for_malformed_providers_contai
 
     assert payload["validation"] == {
         "ok": False,
-        "errors": ["draft must include dream, provider_catalog, ingest, and release"],
+        "errors": ["draft must include dream, ingest, and release"],
         "field_errors": {},
     }
     assert payload["check_result"] == {}

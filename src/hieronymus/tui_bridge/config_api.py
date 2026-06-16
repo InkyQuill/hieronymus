@@ -359,6 +359,8 @@ class ConfigBridge:
         self._pending_api_keys: dict[str, str] = {}
 
     def bootstrap(self, params: dict[str, object]) -> dict[str, object]:
+        if not params:
+            self._pending_api_keys.clear()
         dream_config, dream_error = self._dream_from_params(params)
         provider_catalog, provider_error = self._provider_catalog_from_params(params)
         ingest_config, ingest_error = self._ingest_from_params(params)
@@ -552,7 +554,10 @@ class ConfigBridge:
             check_result = _result_to_json_dict(result)
             _redact_error(check_result, provider_catalog)
             suggestions = None
-            if check_result.get("ok") is True:
+            if check_result.get("ok") is True and hasattr(
+                self.registry,
+                "list_profile_model_suggestions",
+            ):
                 suggestion_result = self.registry.list_profile_model_suggestions(
                     self.config,
                     selected,
@@ -1126,7 +1131,12 @@ class ConfigBridge:
                 self._pending_api_keys.pop(name, None)
                 continue
             profile = provider_catalog.providers.get(name)
-            if raw_api_key.strip("*") == "" and profile is not None and profile.key:
+            if (
+                raw_api_key == "***"
+                and name not in self._pending_api_keys
+                and profile is not None
+                and profile.key
+            ):
                 self._pending_api_keys.pop(name, None)
 
     def _clear_pending_api_keys_from_compat_draft(
@@ -1358,6 +1368,8 @@ def _compat_provider_payload(provider_catalog: ProviderCatalog) -> dict[str, obj
             "name": profile.name,
             "type": profile.type,
             "url": profile.url,
+            "endpoint": profile.url,
+            "base_url": profile.url,
             "key": _redacted_api_key(profile),
             "api_key": _redacted_api_key(profile),
             "timeout_seconds": profile.timeout_seconds,
@@ -1365,8 +1377,21 @@ def _compat_provider_payload(provider_catalog: ProviderCatalog) -> dict[str, obj
     for name, profile in provider_catalog.providers.items():
         if name in payload:
             continue
-        payload[name] = profile.to_payload(redact=True)
+        payload[name] = _compat_provider_profile_payload(profile)
     return payload
+
+
+def _compat_provider_profile_payload(profile: CatalogProviderProfile) -> dict[str, object]:
+    return {
+        "name": profile.name,
+        "type": profile.type,
+        "url": profile.url,
+        "endpoint": profile.url,
+        "base_url": profile.url,
+        "key": _redacted_api_key(profile),
+        "api_key": _redacted_api_key(profile),
+        "timeout_seconds": profile.timeout_seconds,
+    }
 
 
 def _runtime_provider_profile(
@@ -1472,17 +1497,24 @@ def _canonical_draft_errors(params: dict[str, object]) -> list[str]:
     draft = params.get("draft")
     if type(draft) is not dict or not draft:
         return []
-    missing = [
-        key for key in ("dream", "provider_catalog", "ingest", "release") if key not in draft
-    ]
+    required = ["dream", "ingest", "release"]
+    if "provider_catalog" not in draft and "providers" not in draft:
+        required.append("provider_catalog")
+    missing = [key for key in required if key not in draft]
     if missing:
-        return ["draft must include dream, provider_catalog, ingest, and release"]
+        if "provider_catalog" in required:
+            return ["draft must include dream, provider_catalog, ingest, and release"]
+        return ["draft must include dream, ingest, and release"]
     return []
 
 
 def _has_complete_draft(params: dict[str, object]) -> bool:
     draft = params.get("draft")
-    return type(draft) is dict and all(key in draft for key in ("dream", "ingest", "release"))
+    return (
+        type(draft) is dict
+        and all(key in draft for key in ("dream", "ingest", "release"))
+        and ("provider_catalog" in draft or "providers" in draft)
+    )
 
 
 def _dream_config_from_draft(
@@ -1582,11 +1614,11 @@ def _provider_catalog_from_compat_draft(
             "name": raw_provider.get("name", _default_profile_name(name)),
             "type": raw_provider.get("type", _default_profile_type(name)),
             "url": raw_provider.get(
-                "url",
+                "base_url",
                 raw_provider.get(
                     "endpoint",
                     raw_provider.get(
-                        "base_url",
+                        "url",
                         _default_profile_url(_default_profile_type(name)),
                     ),
                 ),
@@ -1595,7 +1627,7 @@ def _provider_catalog_from_compat_draft(
         }
         if "api_key" in raw_provider:
             profiles[name]["key"] = raw_provider["api_key"]
-        if "key" in raw_provider:
+        elif "key" in raw_provider:
             profiles[name]["key"] = raw_provider["key"]
     return _provider_catalog_from_draft(base, {"profiles": profiles})
 
@@ -1672,7 +1704,12 @@ def _compat_provider_draft(
         payload[name] = {
             "enabled": name == selected,
             "model": _model_for_profile(dream_config, name),
+            "name": profile.name,
+            "type": profile.type,
+            "key": _redacted_api_key(profile),
             "api_key": _redacted_api_key(profile),
+            "url": profile.url,
+            "endpoint": profile.url,
             "base_url": profile.url,
             "timeout_seconds": profile.timeout_seconds,
         }
