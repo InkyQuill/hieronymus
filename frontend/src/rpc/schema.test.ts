@@ -408,43 +408,33 @@ describe("runtime schemas", () => {
   });
 
   it("rejects malformed provider catalog timeout defaults", () => {
-    expect(() =>
-      ConfigBootstrapSchema.parse(
-        configPayload("openai", {
-          provider_catalog: {
-            profiles: {
-              openai: {
-                name: "openai",
-                type: "openai",
-                url: "https://api.openai.com/v1",
-                key: "secret",
-                timeout_seconds: "",
+    for (const timeout_seconds of [
+      "",
+      "not-a-number",
+      0,
+      "0",
+      -1,
+      "-1",
+    ]) {
+      expect(() =>
+        ConfigBootstrapSchema.parse(
+          configPayload("openai", {
+            provider_catalog: {
+              profiles: {
+                openai: {
+                  name: "openai",
+                  type: "openai",
+                  url: "https://api.openai.com/v1",
+                  key: "secret",
+                  timeout_seconds,
+                },
               },
+              defaults: { provider: "openai", model: "gpt-4.1-mini" },
             },
-            defaults: { provider: "openai", model: "gpt-4.1-mini" },
-          },
-        }),
-      ),
-    ).toThrow();
-
-    expect(() =>
-      ConfigBootstrapSchema.parse(
-        configPayload("openai", {
-          provider_catalog: {
-            profiles: {
-              openai: {
-                name: "openai",
-                type: "openai",
-                url: "https://api.openai.com/v1",
-                key: "secret",
-                timeout_seconds: "not-a-number",
-              },
-            },
-            defaults: { provider: "openai", model: "gpt-4.1-mini" },
-          },
-        }),
-      ),
-    ).toThrow();
+          }),
+        ),
+      ).toThrow();
+    }
   });
 
   it("accepts numeric provider catalog timeout strings", () => {

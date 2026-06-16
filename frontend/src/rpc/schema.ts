@@ -2,8 +2,13 @@ import { z } from "zod";
 
 export const ProviderNameSchema = z.string().min(1);
 const ProviderCatalogDefaultProviderSchema = z.string();
+const PositiveTimeoutStringSchema = z
+  .string()
+  .trim()
+  .regex(/^(?:\d+\.?\d*|\.\d+)$/)
+  .refine((value) => Number(value) > 0);
 const TimeoutSecondsSchema = z
-  .union([z.number(), z.string().trim().regex(/^\d+(\.\d+)?$/)])
+  .union([z.number().finite().positive(), PositiveTimeoutStringSchema])
   .default(30);
 
 export const RpcResponseSchema = z.discriminatedUnion("ok", [
