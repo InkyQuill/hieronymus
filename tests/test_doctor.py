@@ -128,6 +128,54 @@ def test_doctor_reports_invalid_dream_conf(config) -> None:
     )
 
 
+def test_doctor_reports_invalid_provider_conf_without_follow_on_readiness_errors(
+    config,
+) -> None:
+    save_dream_config(
+        config,
+        replace(default_dream_config(), enabled=True).with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        ),
+    )
+    config.provider_config_path.write_text("[openai\n", encoding="utf-8")
+
+    report = run_doctor_without_daemon(config)
+
+    assert (
+        DoctorFinding(
+            level="error",
+            code="provider_conf_invalid",
+            message="provider.conf invalid",
+        )
+        in report["errors"]
+    )
+    assert all(error.code != "dream_provider_profile_missing" for error in report["errors"])
+    assert all(error.code != "dream_api_key_missing" for error in report["errors"])
+
+
+def test_doctor_accepts_deterministic_dream_workflow_without_provider_profile(
+    config,
+) -> None:
+    save_dream_config(
+        config,
+        replace(default_dream_config(), enabled=True)
+        .with_workflow(
+            "crystallization",
+            WorkflowProfile(provider="deterministic", model="deterministic", enabled=True),
+        )
+        .with_workflow(
+            "reinforcement_compaction",
+            WorkflowProfile(provider="ollama", model="gemma4-e3b", enabled=False),
+        ),
+    )
+
+    report = run_doctor_without_daemon(config)
+
+    assert all(error.code != "dream_provider_profile_missing" for error in report["errors"])
+    assert all(error.code != "dream_api_key_missing" for error in report["errors"])
+
+
 @pytest.mark.parametrize(
     ("raw_config", "code", "severity", "message"),
     [

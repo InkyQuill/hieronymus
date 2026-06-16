@@ -25,7 +25,6 @@ from hieronymus.memory_migration import MemoryGraphMigrator
 from hieronymus.provider_config import (
     ProviderCatalog,
     ProviderCatalogError,
-    default_provider_catalog,
     load_provider_catalog,
 )
 from hieronymus.provider_config import (
@@ -247,7 +246,11 @@ class Doctor:
             report[f"{config_finding.level}s"].append(config_finding)
         if dream_config is None:
             return
-        provider_catalog = _load_provider_catalog_for_readiness(self.config)
+        provider_catalog, provider_finding = _load_provider_catalog_for_readiness(self.config)
+        if provider_finding is not None:
+            report[f"{provider_finding.level}s"].append(provider_finding)
+        if provider_catalog is None:
+            return
 
         if not dream_config.enabled:
             report["warnings"].append(
@@ -287,6 +290,8 @@ class Doctor:
                         )
                     )
                     missing_profile_reported = True
+                continue
+            if provider_name == "deterministic":
                 continue
             if not model and not missing_model_reported:
                 report["errors"].append(
@@ -461,11 +466,13 @@ def _load_dream_config_without_final_validation(config: HieronymusConfig) -> Dre
     return _dream_config_from_payload(payload)
 
 
-def _load_provider_catalog_for_readiness(config: HieronymusConfig) -> ProviderCatalog:
+def _load_provider_catalog_for_readiness(
+    config: HieronymusConfig,
+) -> tuple[ProviderCatalog | None, DoctorFinding | None]:
     try:
-        return load_provider_catalog(config)
+        return load_provider_catalog(config), None
     except ProviderCatalogError:
-        return default_provider_catalog()
+        return None, _provider_conf_invalid_finding()
 
 
 def _catalog_profile_to_runtime(profile: CatalogProviderProfile) -> RuntimeProviderProfile:
@@ -483,6 +490,14 @@ def _dream_conf_invalid_finding() -> DoctorFinding:
         level="error",
         code="dream_conf_invalid",
         message="dream.conf invalid",
+    )
+
+
+def _provider_conf_invalid_finding() -> DoctorFinding:
+    return DoctorFinding(
+        level="error",
+        code="provider_conf_invalid",
+        message="provider.conf invalid",
     )
 
 
