@@ -742,7 +742,7 @@ class ConfigBridge:
                 {
                     "name": profile_id,
                     "display_name": profile.name,
-                    "requires_api_key": True,
+                    "requires_api_key": _profile_requires_api_key(profile),
                     "supports_api_path": True,
                     "configured": True,
                     "type": profile.type,
@@ -1428,6 +1428,10 @@ def _default_profile_url(provider_type: str) -> str:
     if provider_type == "ollama":
         return "http://localhost:11434"
     return "https://api.openai.com/v1"
+
+
+def _profile_requires_api_key(profile: CatalogProviderProfile) -> bool:
+    return profile.type != "ollama"
 
 
 def _redact_catalog_secret_values(text: str, provider_catalog: ProviderCatalog) -> str:

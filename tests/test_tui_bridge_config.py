@@ -1,8 +1,10 @@
 import json
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.doctor import Doctor, DoctorFinding
 from hieronymus.dream_config import (
     WorkflowProfile,
     default_dream_config,
@@ -168,6 +170,26 @@ def test_config_bootstrap_exposes_named_profile_compat_provider_keys(tmp_path: P
     assert draft_provider["base_url"] == "https://deepseek.example.test/v1"
     assert draft_provider["key"] == "***"
     assert draft_provider["api_key"] == "***"
+
+
+def test_config_bootstrap_marks_custom_ollama_profile_as_not_requiring_api_key(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _save_provider(
+        config,
+        "local-ollama",
+        _catalog_profile(
+            name="Local Ollama",
+            type="ollama",
+            endpoint="http://localhost:11434",
+        ),
+    )
+
+    payload = ConfigBridge(config).bootstrap({})
+
+    choices = {choice["name"]: choice for choice in payload["provider_choices"]}
+    assert choices["local-ollama"]["requires_api_key"] is False
 
 
 def test_config_bootstrap_exposes_python_owned_form_schema(tmp_path: Path) -> None:
@@ -1186,12 +1208,21 @@ def test_config_check_dream_profile_updates_cache_consumed_by_doctor(
     bridge = ConfigBridge(config, registry=ProviderRegistry(Transport()))
 
     payload = bridge.check_provider({"selected_provider": "openai", "draft": {}})
+    report = _run_doctor_without_daemon(config)
 
     entry = load_model_cache(config).providers["openai"]
     assert payload["check_result"]["ok"] is True
     assert payload["model_cache"]["providers"]["openai"]["identity"] == entry.identity
     assert entry.identity == dream_profile_cache_identity("openai", _runtime_profile(profile))
     assert "raw-secret-value" not in entry.identity
+    assert (
+        DoctorFinding(
+            level="warning",
+            code="dream_model_missing",
+            message="Configured model was not found in provider cache",
+        )
+        in report["warnings"]
+    )
 
 
 def test_config_check_dream_profile_failure_updates_cache_consumed_by_doctor(
@@ -1220,12 +1251,21 @@ def test_config_check_dream_profile_failure_updates_cache_consumed_by_doctor(
     bridge = ConfigBridge(config, registry=ProviderRegistry(Transport()))
 
     payload = bridge.check_provider({"selected_provider": "openai", "draft": {}})
+    report = _run_doctor_without_daemon(config)
 
     entry = load_model_cache(config).providers["openai"]
     assert payload["check_result"]["ok"] is False
     assert entry.error == "provider returned HTTP 403"
     assert entry.identity == dream_profile_cache_identity("openai", _runtime_profile(profile))
     assert "raw-secret-value" not in entry.identity
+    assert (
+        DoctorFinding(
+            level="error",
+            code="dream_api_key_rejected",
+            message="API key rejected with 403",
+        )
+        in report["errors"]
+    )
 
 
 def test_config_check_provider_returns_validation_for_malformed_providers_container(
@@ -1311,3 +1351,12 @@ def test_config_model_suggestions_fall_back_to_defaults(tmp_path: Path) -> None:
 
     assert payload["suggestions"]["provider"] == "anthropic"
     assert "claude-3-5-haiku-latest" in payload["suggestions"]["models"]
+
+
+def _run_doctor_without_daemon(config: HieronymusConfig):
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": False,
+            "reason": "no-state",
+        }
+        return Doctor(config).run(autofix=False)

@@ -15,12 +15,22 @@ from hieronymus.dream_config import (
     default_dream_config,
     load_dream_config,
 )
+from hieronymus.dream_providers import ProviderProfile as RuntimeProviderProfile
 from hieronymus.llm_cache import (
     dream_profile_cache_identity,
     load_model_cache,
     model_cache_identity,
 )
 from hieronymus.memory_migration import MemoryGraphMigrator
+from hieronymus.provider_config import (
+    ProviderCatalog,
+    ProviderCatalogError,
+    default_provider_catalog,
+    load_provider_catalog,
+)
+from hieronymus.provider_config import (
+    ProviderProfile as CatalogProviderProfile,
+)
 from hieronymus.service_manager import ServiceManager
 
 
@@ -237,6 +247,7 @@ class Doctor:
             report[f"{config_finding.level}s"].append(config_finding)
         if dream_config is None:
             return
+        provider_catalog = _load_provider_catalog_for_readiness(self.config)
 
         if not dream_config.enabled:
             report["warnings"].append(
@@ -248,13 +259,14 @@ class Doctor:
             )
             return
 
-        self._check_enabled_dream_workflow_profiles(report, dream_config)
-        self._check_dream_model_cache_readiness(report, dream_config)
+        self._check_enabled_dream_workflow_profiles(report, dream_config, provider_catalog)
+        self._check_dream_model_cache_readiness(report, dream_config, provider_catalog)
 
     def _check_enabled_dream_workflow_profiles(
         self,
         report: DoctorReport,
         dream_config: DreamConfig,
+        provider_catalog: ProviderCatalog,
     ) -> None:
         missing_profile_reported = False
         missing_model_reported = False
@@ -262,8 +274,10 @@ class Doctor:
         for workflow in dream_config.workflows.values():
             if not workflow.enabled:
                 continue
-            provider = dream_config.providers.get(workflow.provider)
-            if provider is None:
+            provider_name = workflow.provider.strip() or provider_catalog.defaults.provider.strip()
+            model = workflow.model.strip() or provider_catalog.defaults.model.strip()
+            provider = provider_catalog.providers.get(provider_name)
+            if provider_name != "deterministic" and provider is None:
                 if not missing_profile_reported:
                     report["errors"].append(
                         DoctorFinding(
@@ -274,7 +288,7 @@ class Doctor:
                     )
                     missing_profile_reported = True
                 continue
-            if not workflow.model.strip() and not missing_model_reported:
+            if not model and not missing_model_reported:
                 report["errors"].append(
                     DoctorFinding(
                         level="error",
@@ -285,8 +299,8 @@ class Doctor:
                 missing_model_reported = True
             if (
                 provider.type != "ollama"
-                and not provider.api_key.strip()
-                and workflow.provider not in providers_with_missing_key_reported
+                and not provider.key.strip()
+                and provider_name not in providers_with_missing_key_reported
             ):
                 report["errors"].append(
                     DoctorFinding(
@@ -295,17 +309,18 @@ class Doctor:
                         message="API key missing for provider profile",
                     )
                 )
-                providers_with_missing_key_reported.add(workflow.provider)
+                providers_with_missing_key_reported.add(provider_name)
 
     def _check_dream_model_cache_readiness(
         self,
         report: DoctorReport,
         dream_config: DreamConfig,
+        provider_catalog: ProviderCatalog,
     ) -> None:
         cache = load_model_cache(self.config)
         provider_identities = {
-            name: dream_profile_cache_identity(name, provider)
-            for name, provider in dream_config.providers.items()
+            name: dream_profile_cache_identity(name, _catalog_profile_to_runtime(provider))
+            for name, provider in provider_catalog.providers.items()
         }
         reported_cache_errors: set[tuple[str, str]] = set()
         reported_missing_models: set[tuple[str, str]] = set()
@@ -313,14 +328,16 @@ class Doctor:
         for workflow in dream_config.workflows.values():
             if not workflow.enabled:
                 continue
-            entry = cache.providers.get(workflow.provider)
+            provider_name = workflow.provider.strip() or provider_catalog.defaults.provider.strip()
+            model = workflow.model.strip() or provider_catalog.defaults.model.strip()
+            entry = cache.providers.get(provider_name)
             if entry is None or entry.is_stale():
                 continue
-            if entry.identity != provider_identities.get(workflow.provider):
+            if entry.identity != provider_identities.get(provider_name):
                 continue
             if entry.error:
                 if _is_403_error(entry.error):
-                    key = (workflow.provider, "dream_api_key_rejected")
+                    key = (provider_name, "dream_api_key_rejected")
                     if key not in reported_cache_errors:
                         report["errors"].append(
                             DoctorFinding(
@@ -332,7 +349,7 @@ class Doctor:
                         reported_cache_errors.add(key)
                     continue
 
-                key = (workflow.provider, "dream_provider_unreachable")
+                key = (provider_name, "dream_provider_unreachable")
                 if key not in reported_cache_errors:
                     report["warnings"].append(
                         DoctorFinding(
@@ -344,8 +361,7 @@ class Doctor:
                     reported_cache_errors.add(key)
                 continue
 
-            model = workflow.model.strip()
-            key = (workflow.provider, model)
+            key = (provider_name, model)
             if (
                 model
                 and entry.models
@@ -380,14 +396,17 @@ class Doctor:
     def _current_llm_model_cache_identities(self) -> dict[str, tuple[str, ...]]:
         identities = {"anthropic": ("", model_cache_identity("anthropic"))}
         try:
-            dream_config = load_dream_config(self.config)
-        except DreamConfigError:
+            provider_catalog = load_provider_catalog(self.config)
+        except ProviderCatalogError:
             return identities
 
-        for provider_name, provider in dream_config.providers.items():
+        for provider_name, provider in provider_catalog.providers.items():
             identities[provider_name] = (
                 *identities.get(provider_name, ()),
-                dream_profile_cache_identity(provider_name, provider),
+                dream_profile_cache_identity(
+                    provider_name,
+                    _catalog_profile_to_runtime(provider),
+                ),
             )
         return identities
 
@@ -440,6 +459,23 @@ def _load_dream_config_without_final_validation(config: HieronymusConfig) -> Dre
     except tomllib.TOMLDecodeError as error:
         raise DreamConfigError(f"dream.conf is not valid TOML: {error}") from error
     return _dream_config_from_payload(payload)
+
+
+def _load_provider_catalog_for_readiness(config: HieronymusConfig) -> ProviderCatalog:
+    try:
+        return load_provider_catalog(config)
+    except ProviderCatalogError:
+        return default_provider_catalog()
+
+
+def _catalog_profile_to_runtime(profile: CatalogProviderProfile) -> RuntimeProviderProfile:
+    provider_type = "gemini" if profile.type == "google" else profile.type
+    return RuntimeProviderProfile(
+        type=provider_type,
+        endpoint=profile.url,
+        api_key=profile.key,
+        timeout_seconds=profile.timeout_seconds,
+    )
 
 
 def _dream_conf_invalid_finding() -> DoctorFinding:
