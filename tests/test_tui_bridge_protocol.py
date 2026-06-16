@@ -100,11 +100,8 @@ def test_dataclass_to_json_recurses_without_private_state() -> None:
 
 
 def test_error_payload_redacts_configured_secret_values() -> None:
-    dream_config = default_dream_config()
-
     payload = error_payload(
         ValueError("provider rejected raw-secret-value"),
-        dream_config=dream_config,
         redact=lambda text: text.replace("raw-secret-value", "[redacted]"),
     )
 

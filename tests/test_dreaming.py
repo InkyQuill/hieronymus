@@ -3,12 +3,7 @@ import pytest
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
-from hieronymus.dream_config import (
-    DreamConfigError,
-    ProviderProfile,
-    default_dream_config,
-    save_dream_config,
-)
+from hieronymus.dream_config import DreamConfigError, default_dream_config, save_dream_config
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import (
@@ -20,6 +15,12 @@ from hieronymus.dreaming import (
     _recover_crystal_text,
 )
 from hieronymus.memory_models import TranslationContext
+from hieronymus.provider_config import (
+    ProviderCatalog,
+    ProviderCatalogError,
+    ProviderProfile,
+    save_provider_catalog,
+)
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
@@ -542,20 +543,27 @@ enabled = true
         encoding="utf-8",
     )
 
-    with pytest.raises(DreamConfigError, match="referenced provider profile is missing"):
+    with pytest.raises(ProviderCatalogError, match="provider profile missing: missing"):
         resolve_provider(config)
 
 
 def test_dream_error_records_redact_configured_api_key_value(
     config: HieronymusConfig,
 ) -> None:
-    save_dream_config(
+    save_provider_catalog(
         config,
-        default_dream_config().with_provider(
-            "openai",
-            ProviderProfile(type="openai", api_key="raw-secret-value"),
+        ProviderCatalog(
+            providers={
+                "openai": ProviderProfile(
+                    name="OpenAI",
+                    type="openai",
+                    url="https://api.openai.com/v1",
+                    key="raw-secret-value",
+                ),
+            },
         ),
     )
+    save_dream_config(config, default_dream_config())
 
     class LeakyProvider:
         name = "leaky"

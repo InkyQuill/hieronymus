@@ -13,6 +13,7 @@ from hieronymus.dream_config import default_dream_config
 from hieronymus.dreaming import DreamRunRecord, DreamService
 from hieronymus.llm_cache import CachedModels, ModelCacheEntry, save_model_cache
 from hieronymus.memory_models import TranslationContext
+from hieronymus.provider_config import ProviderCatalog, ProviderProfile, save_provider_catalog
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
 from hieronymus.tui_bridge.admin_api import AdminBridge
@@ -45,6 +46,19 @@ def _active_session(config: HieronymusConfig) -> int:
 def test_memory_contracts_expose_header_status_controls_and_config(
     config: HieronymusConfig,
 ) -> None:
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "anthropic": ProviderProfile(
+                    name="Anthropic",
+                    type="anthropic",
+                    url="https://api.anthropic.com",
+                    key="secret-anthropic",
+                ),
+            },
+        ),
+    )
     stale = (datetime.now(UTC) - timedelta(days=3)).isoformat()
     save_model_cache(
         config,

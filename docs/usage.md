@@ -101,11 +101,12 @@ For machine-readable status, use:
 hiero config --json
 ```
 
-The config interface edits local plaintext config files: `dream.conf` for
-dreaming providers, workflows, prompts, thresholds, caps, and API keys;
-`ingest.conf` for memory ingestion limits; and `release.conf` for update
-channel selection. JSON output, logs, provider checks, doctor output, and dream
-audit payloads redact configured provider API keys.
+The config interface edits local plaintext config files: `provider.conf` for
+provider endpoints, defaults, and API keys; `dream.conf` for workflow model
+assignments, prompts, thresholds, and caps; `ingest.conf` for memory ingestion
+limits; and `release.conf` for update channel selection. JSON output, logs,
+provider checks, doctor output, and dream audit payloads redact configured
+provider API keys.
 
 Edits stay in memory until saved. Reload discards unsaved edits and reads the
 local config files again. Provider checks use the edited profile, refresh model
@@ -121,6 +122,45 @@ Supported dream provider profile types:
 
 In the OpenTUI config TUI, the remote provider selector offers `openai`, `gemini`,
 `anthropic`, and local-compatible profiles as the implementation supports them.
+
+Example provider catalog:
+
+```toml
+# ~/.config/hieronymus/provider.conf
+[defaults]
+provider = "openai"
+model = "gpt-4.1-mini"
+
+[openai]
+name = "OpenAI"
+type = "openai"
+url = "https://api.openai.com/v1"
+key = "sk-local-plaintext-value"
+timeout_seconds = 30.0
+```
+
+Example dreaming workflow assignments:
+
+```toml
+# ~/.config/hieronymus/dream.conf
+[dreaming]
+enabled = true
+schedule_interval_minutes = 30
+min_pending_short_term_memories = 20
+max_pending_short_term_memories = 200
+max_short_term_memories_per_cycle = 50
+not_enough_memories_cycle_threshold = 5
+max_changed_crystals_per_cycle = 200
+max_related_concepts_per_cycle = 80
+max_related_crystals_per_concept = 20
+max_total_affected_crystals = 500
+general_prompt = "Use English as the primary searchable memory language."
+
+[workflows.crystallization]
+provider = "openai"
+model = "gpt-4.1-mini"
+enabled = true
+```
 
 Model suggestions appear when the selected provider API supports listing models
 and the configured profile can be reached. If model listing is unavailable, the

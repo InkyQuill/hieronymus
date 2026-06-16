@@ -5,7 +5,7 @@ import sys
 from collections.abc import Callable
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import DreamConfigError, load_dream_config
+from hieronymus.provider_config import ProviderCatalogError, load_provider_catalog
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.tui_bridge.config_api import ConfigBridge
@@ -152,7 +152,7 @@ def _request_id_from_line(line: str) -> str | None:
 
 def _redactor_or_none(config: HieronymusConfig) -> Callable[[str], str] | None:
     try:
-        dream_config = load_dream_config(config)
-    except (DreamConfigError, OSError):
+        provider_catalog = load_provider_catalog(config)
+    except (ProviderCatalogError, OSError):
         return None
-    return lambda text: redact_configured_secret_values(text, dream_config)
+    return lambda text: redact_configured_secret_values(text, provider_catalog)

@@ -1,23 +1,18 @@
-from hieronymus.dream_config import ProviderProfile, default_dream_config
+from hieronymus.provider_config import ProviderCatalog, ProviderProfile
 from hieronymus.secrets import redact_configured_secret_values
 
 
 def test_redact_configured_secret_values_replaces_longer_prefix_first():
-    dream_config = (
-        default_dream_config()
-        .with_provider(
-            "openai",
-            ProviderProfile(type="openai", api_key="secret"),
-        )
-        .with_provider(
-            "gemini",
-            ProviderProfile(type="gemini", api_key="secret-suffix"),
-        )
+    provider_catalog = ProviderCatalog(
+        providers={
+            "openai": ProviderProfile(type="openai", key="secret"),
+            "gemini": ProviderProfile(type="google", key="secret-suffix"),
+        }
     )
 
     redacted = redact_configured_secret_values(
         "provider returned secret-suffix and secret",
-        dream_config,
+        provider_catalog,
     )
 
     assert redacted == "provider returned [redacted] and [redacted]"
@@ -25,11 +20,12 @@ def test_redact_configured_secret_values_replaces_longer_prefix_first():
 
 
 def test_redact_configured_secret_values_replaces_short_api_keys():
-    dream_config = default_dream_config().with_provider(
-        "openai",
-        ProviderProfile(type="openai", api_key="abc"),
+    provider_catalog = ProviderCatalog(
+        providers={
+            "openai": ProviderProfile(type="openai", key="abc"),
+        }
     )
 
-    redacted = redact_configured_secret_values("provider returned abc", dream_config)
+    redacted = redact_configured_secret_values("provider returned abc", provider_catalog)
 
     assert redacted == "provider returned [redacted]"

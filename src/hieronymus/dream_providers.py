@@ -1110,6 +1110,9 @@ def resolve_provider(
             model = provider_catalog.defaults.model
         return resolve_profile_provider(config, name, model=model, transport=transport)
 
+    if not dream_config.enabled:
+        return DeterministicDreamProvider()
+
     workflow_name = _runtime_workflow_name(dream_config)
     if workflow_name is None:
         return DeterministicDreamProvider()

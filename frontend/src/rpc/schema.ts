@@ -189,14 +189,16 @@ const ProviderCatalogSchema = z
   .passthrough()
   .default({ profiles: {}, defaults: { provider: "", model: "" } });
 
+const ConfigFormValueSchema = z.union([z.string(), z.number(), z.boolean()]);
 const ConfigFormStringRecordSchema = z.record(z.string());
+const ConfigFormValueRecordSchema = z.record(ConfigFormValueSchema);
 const ProviderCatalogFormValuesSchema = z
   .union([
-    ConfigFormStringRecordSchema,
+    ConfigFormValueRecordSchema,
     z
       .object({
-        defaults: ConfigFormStringRecordSchema.default({}),
-        profile: ConfigFormStringRecordSchema.default({}),
+        defaults: ConfigFormValueRecordSchema.default({}),
+        profile: ConfigFormValueRecordSchema.default({}),
       })
       .passthrough(),
   ])
@@ -269,7 +271,7 @@ export const ConfigBootstrapSchema = z
       dream: z
         .object({
           dreaming: z.record(z.unknown()),
-          providers: z.record(z.record(z.unknown())),
+          providers: z.record(z.record(z.unknown())).default({}),
           workflows: z.record(z.record(z.unknown())),
         })
         .passthrough(),

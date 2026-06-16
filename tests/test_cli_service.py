@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,12 +11,17 @@ from click.testing import CliRunner
 from hieronymus.cli import main
 from hieronymus.config import load_config
 from hieronymus.dream_config import (
-    ProviderProfile,
     WorkflowProfile,
     default_dream_config,
     save_dream_config,
 )
 from hieronymus.presentation import GREETING_ICON, display_version, render_greeting
+from hieronymus.provider_config import (
+    ProviderCatalog,
+    ProviderDefaults,
+    ProviderProfile,
+    save_provider_catalog,
+)
 from hieronymus.release_config import ReleaseConfig, save_release_config
 
 
@@ -343,14 +348,26 @@ def test_config_launch_invokes_opentui(tmp_path: Path, monkeypatch) -> None:
     }
 
 
-def test_dream_json_uses_dream_config_provider_profile(tmp_path: Path) -> None:
+def test_dream_json_uses_provider_catalog_profile(tmp_path: Path) -> None:
     data_root = tmp_path / "hieronymus"
     config = load_config(str(data_root))
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "openai": ProviderProfile(
+                    name="OpenAI",
+                    type="openai",
+                    url="https://api.openai.com/v1",
+                    key="secret-openai",
+                ),
+            },
+            defaults=ProviderDefaults(provider="openai", model="gpt-4.1-mini"),
+        ),
+    )
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider("openai", ProviderProfile(type="openai", api_key="secret-openai"))
-        .with_workflow(
+        replace(default_dream_config(), enabled=True).with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
@@ -382,7 +399,7 @@ def test_dream_rejects_disabled_provider(tmp_path: Path) -> None:
     )
 
     assert result.exit_code != 0
-    assert "model must not be empty for provider profile: openai" in result.output
+    assert "referenced provider profile is missing: openai" in result.output
 
 
 def test_admin_json_returns_available_tui_status(tmp_path: Path) -> None:

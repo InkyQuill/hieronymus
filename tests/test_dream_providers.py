@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -73,7 +73,7 @@ def _save_provider_profile(
     )
     save_dream_config(
         config,
-        default_dream_config().with_workflow(
+        replace(default_dream_config(), enabled=True).with_workflow(
             "crystallization",
             WorkflowProfile(provider=name, model=model, enabled=True),
         ),
