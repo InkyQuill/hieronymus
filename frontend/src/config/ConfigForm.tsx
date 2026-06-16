@@ -13,6 +13,8 @@ type ConfigFormProps = {
   fields: ConfigFormField[];
   formValues: {
     provider: Record<string, string>;
+    providerCatalog: Record<string, string>;
+    workflows: Record<string, string>;
     dreaming: Record<string, string>;
     ingest: Record<string, string>;
     release: Record<string, string>;
@@ -39,15 +41,21 @@ export function ConfigForm({
   onSubmitField,
 }: ConfigFormProps) {
   const provider = formValues.provider;
+  const providerCatalog = formValues.providerCatalog;
+  const workflows = formValues.workflows;
   const dreaming = formValues.dreaming;
   const ingest = formValues.ingest;
   const release = formValues.release;
-  const inputWidth = Math.max(12, width - 34);
+  const boundedWidth = Math.max(20, width);
 
   const renderedFields = fields.map((field): RenderedField => {
     let value = "";
     if (field.key.startsWith("provider.")) {
       value = provider[field.key.slice(9)] || "";
+    } else if (field.key.startsWith("provider_catalog.")) {
+      value = providerCatalog[field.key.slice(17)] || "";
+    } else if (field.key.startsWith("workflows.")) {
+      value = workflows[field.key.slice(10)] || "";
     } else if (field.key.startsWith("dreaming.")) {
       value = dreaming[field.key.slice(9)] || "";
     } else if (field.key.startsWith("ingest.")) {
@@ -70,20 +78,22 @@ export function ConfigForm({
     focusedFieldIndex,
     visibleRows,
   );
+  const focusedGroup = renderedFields[focusedFieldIndex]?.group ?? "";
 
   return (
-    <box flexDirection="column" width={width}>
+    <box flexDirection="column" width={boundedWidth}>
       <text>Configuration settings</text>
       <box flexDirection="column" marginTop={1}>
         {renderedGroups.map(({ group, fields: groupFields }) => {
+          if (visibleRows !== undefined && group.id !== focusedGroup) {
+            return null;
+          }
           const visibleGroupFields = groupFields.filter(({ index }) =>
             visibleIndexes.has(index),
           );
-          const activeField =
-            visibleRows === undefined
-              ? groupFields.find(({ index }) => focusedFieldIndex === index)
-                  ?.field
-              : visibleGroupFields[0]?.field;
+          const activeField = groupFields.find(
+            ({ index }) => focusedFieldIndex === index,
+          )?.field;
           const isGroupActive = focused && activeField !== undefined;
 
           if (visibleGroupFields.length === 0 && activeField === undefined) {
@@ -94,6 +104,7 @@ export function ConfigForm({
             <box
               key={group.id}
               flexDirection="column"
+              width={boundedWidth}
               marginTop={1}
               borderStyle="rounded"
               borderColor={isGroupActive ? "cyan" : "gray"}
@@ -113,24 +124,24 @@ export function ConfigForm({
               ) : null}
 
               {visibleGroupFields.map(({ field, index }) => {
-                const isFieldFocused =
-                  focused &&
-                  (visibleRows === undefined
-                    ? focusedFieldIndex === index
-                    : visibleIndexes.has(index));
+                const isFieldFocused = focused && focusedFieldIndex === index;
                 const labelColor = isFieldFocused ? "cyan" : "gray";
+                const fieldInputWidth = Math.max(
+                  12,
+                  boundedWidth - field.label.length - 8,
+                );
 
                 return (
-                  <box key={field.key} flexDirection="row">
+                  <box key={field.key} flexDirection="row" width="100%">
                     <text fg={labelColor}>
                       {isFieldFocused ? "> " : "  "}
                       {field.label}:{" "}
                     </text>
 
                     {field.type === "toggle" || field.type === "choice" ? (
-                      <box flexDirection="row">
+                      <box flexDirection="row" flexGrow={1}>
                         {isFieldFocused && isEditing ? (
-                          <box flexDirection="row">
+                          <box flexDirection="row" flexWrap="wrap" flexGrow={1}>
                             {(field.choices.length
                               ? field.choices
                               : ["yes", "no"]
@@ -156,10 +167,13 @@ export function ConfigForm({
                         onSubmit={() => onSubmitField()}
                         focused={true}
                         placeholder={field.placeholder}
-                        width={inputWidth}
+                        width={fieldInputWidth}
                       />
                     ) : (
-                      <text fg={isFieldFocused ? "cyan" : undefined}>
+                      <text
+                        fg={isFieldFocused ? "cyan" : undefined}
+                        flexGrow={1}
+                      >
                         {field.value || field.placeholder || " "}
                       </text>
                     )}
@@ -181,6 +195,12 @@ export function ConfigForm({
 }
 
 function configFileLabel(group: ConfigFormGroup): string {
+  if (group.section === "providers" || group.section === "provider_catalog") {
+    return "provider.conf";
+  }
+  if (group.section === "workflows") {
+    return "dream.conf";
+  }
   if (group.section === "dream") {
     return "dream.conf";
   }
@@ -194,8 +214,11 @@ function configFileLabel(group: ConfigFormGroup): string {
 }
 
 function displayGroupLabel(group: ConfigFormGroup): string {
-  if (group.id === "provider") {
-    return "Provider/API";
+  if (group.id === "provider" || group.id === "provider_catalog") {
+    return "Providers";
+  }
+  if (group.id === "workflows") {
+    return "Workflows";
   }
   if (group.id === "ingest") {
     return "Ingestion";
@@ -256,15 +279,18 @@ function visibleIndexSet(
   visibleRows: number | undefined,
 ): Set<number> {
   if (visibleRows !== undefined) {
-    if (fieldCount === 0) {
-      return new Set();
+    const fieldWindow = getVisibleFieldWindow(
+      fieldCount,
+      focusedFieldIndex,
+      visibleRows,
+    );
+    const visibleIndexes = new Set<number>();
+
+    for (let index = fieldWindow.start; index < fieldWindow.end; index += 1) {
+      visibleIndexes.add(index);
     }
 
-    const focusedIndex = Math.min(
-      Math.max(focusedFieldIndex, 0),
-      fieldCount - 1,
-    );
-    return new Set([focusedIndex]);
+    return visibleIndexes;
   }
 
   const fieldWindow = getVisibleFieldWindow(

@@ -47,6 +47,8 @@ type Status = {
 
 type ConfigFormValues = {
   provider: Record<string, string>;
+  providerCatalog: Record<string, string>;
+  workflows: Record<string, string>;
   dreaming: Record<string, string>;
   ingest: Record<string, string>;
   release: Record<string, string>;
@@ -86,6 +88,9 @@ export function ConfigScreen({ initial, client }: Props) {
   const formFields = configFieldsWithProviderChoice(payload);
 
   const suggestions = modelSuggestions(payload);
+  const suggestionSource = modelSuggestionSource(payload);
+  const suggestionError = modelSuggestionError(payload);
+  const checkSummary = providerCheckSummary(payload);
   const detailErrors = getDetailErrors(payload);
 
   useEffect(() => {
@@ -131,7 +136,8 @@ export function ConfigScreen({ initial, client }: Props) {
       params: {
         selected_provider: payload.selected_provider,
         draft: payload.draft,
-        provider: draftValues.provider,
+        provider_catalog: draftValues.providerCatalog,
+        workflows: draftValues.workflows,
         dreaming: draftValues.dreaming,
         ingest: draftValues.ingest,
         release: draftValues.release,
@@ -287,10 +293,10 @@ export function ConfigScreen({ initial, client }: Props) {
             focusedField,
           );
           const currentIndex = Math.max(choices.indexOf(currentVal), 0);
-          handleFieldChange(
-            focusedField.key,
-            choices[(currentIndex + 1) % choices.length],
-          );
+          const delta = left ? -1 : 1;
+          const nextIndex =
+            (currentIndex + delta + choices.length) % choices.length;
+          handleFieldChange(focusedField.key, choices[nextIndex]);
         } else if (enter) {
           const currentVal = effectiveValueForField(
             localFormValues,
@@ -373,7 +379,11 @@ export function ConfigScreen({ initial, client }: Props) {
 
   if (layout.kind === "too-small") {
     return (
-      <box flexDirection="column" width={dimensions.width}>
+      <box
+        flexDirection="column"
+        width={dimensions.width}
+        height={dimensions.height}
+      >
         <text>Terminal too small</text>
         <text fg="gray">
           {dimensions.width}x{dimensions.height}; minimum {MIN_TERMINAL_WIDTH}x
@@ -386,7 +396,7 @@ export function ConfigScreen({ initial, client }: Props) {
 
   if (layout.kind !== "wide") {
     const compactHeight = panelHeight(layout, 13);
-    const compactVisibleFormRows = Math.max(0, compactHeight - 4);
+    const compactVisibleFormRows = Math.max(1, compactHeight - 7);
     const compactErrors = [...payload.validation.errors, ...detailErrors].slice(
       0,
       2,
@@ -394,8 +404,10 @@ export function ConfigScreen({ initial, client }: Props) {
 
     return (
       <box flexDirection="column" width={dimensions.width}>
-        <text>Hieronymus Config</text>
-        <text fg="gray">Provider/API | Dreaming | Ingest | Release</text>
+        <ConfigHeader
+          width={dimensions.width}
+          sections={payload.form_schema.sections}
+        />
 
         <box
           flexDirection="column"
@@ -420,9 +432,12 @@ export function ConfigScreen({ initial, client }: Props) {
         </box>
 
         <box marginTop={1} flexDirection="column">
-          <text>
-            Models: {suggestions.length > 0 ? suggestions.join(", ") : "-"}
-          </text>
+          <ConfigDiagnostics
+            models={suggestions}
+            source={suggestionSource}
+            suggestionError={suggestionError}
+            checkSummary={checkSummary}
+          />
           {compactErrors.map((error) => (
             <text key={error} fg="red">
               {error}
@@ -438,22 +453,31 @@ export function ConfigScreen({ initial, client }: Props) {
   }
 
   const widePanelRows = panelHeight(layout, 10);
+  const widePanelWidth = Math.min(96, dimensions.width - 2);
+  const wideFormWidth = Math.max(20, widePanelWidth - 4);
   const wideVisibleFormRows =
     dimensions.height < 44 &&
     estimatedWideFormRows(payload.form_schema.groups, formFields) >
       widePanelRows
-      ? Math.max(1, Math.min(6, widePanelRows - 4))
+      ? Math.max(1, Math.min(6, widePanelRows - 10))
       : undefined;
 
   return (
-    <box flexDirection="column" width={Math.min(100, dimensions.width)}>
-      <text>Hieronymus Config</text>
-      <text fg="gray">Provider/API | Dreaming | Ingest | Release</text>
+    <box
+      flexDirection="column"
+      width={Math.min(100, dimensions.width)}
+      height={dimensions.height}
+    >
+      <ConfigHeader
+        width={Math.min(100, dimensions.width)}
+        sections={payload.form_schema.sections}
+      />
 
       <box
         flexDirection="column"
         marginTop={1}
-        width={Math.min(96, dimensions.width)}
+        width={widePanelWidth}
+        height={widePanelRows}
         borderStyle="rounded"
         borderColor="cyan"
         paddingX={1}
@@ -465,6 +489,7 @@ export function ConfigScreen({ initial, client }: Props) {
           focusedFieldIndex={focusedFieldIndex}
           isEditing={isEditing}
           focused
+          width={wideFormWidth}
           visibleRows={wideVisibleFormRows}
           onFieldChange={handleFieldChange}
           onSubmitField={submitField}
@@ -472,9 +497,12 @@ export function ConfigScreen({ initial, client }: Props) {
       </box>
 
       <box marginTop={1} flexDirection="column">
-        <text>
-          Models: {suggestions.length > 0 ? suggestions.join(", ") : "-"}
-        </text>
+        <ConfigDiagnostics
+          models={suggestions}
+          source={suggestionSource}
+          suggestionError={suggestionError}
+          checkSummary={checkSummary}
+        />
         {payload.validation.errors.map((error) => (
           <text key={error} fg="red">
             {error}
@@ -489,15 +517,58 @@ export function ConfigScreen({ initial, client }: Props) {
 
       <SearchPrompt active={searchActive} query={searchText} />
       <StatusLine message={status.message} error={status.error} busy={busy} />
-      <KeyHelp keys={["↑↓ field", "Enter edit", "/ search", "q quit"]} />
       <KeyHelp
         keys={[
+          "↑↓ field",
+          "Enter edit",
+          "/ search",
+          "q quit",
           `${providerKeyRange(providerChoices)} provider`,
           "s save",
           "r reload",
           "c check",
         ]}
       />
+    </box>
+  );
+}
+
+function ConfigHeader({
+  width,
+  sections,
+}: {
+  width: number;
+  sections: ConfigFormSection[];
+}) {
+  const labels = sectionLabels(sections);
+  return (
+    <box flexDirection="column" width={width} height={2}>
+      <text width={width}>Hieronymus Config</text>
+      <text width={width} fg="gray">
+        {labels.join(" | ")}
+      </text>
+    </box>
+  );
+}
+
+function ConfigDiagnostics({
+  models,
+  source,
+  suggestionError,
+  checkSummary,
+}: {
+  models: string[];
+  source: string;
+  suggestionError: string;
+  checkSummary: { ok: boolean; text: string } | null;
+}) {
+  return (
+    <box flexDirection="column">
+      <text>{modelSummary(models, source)}</text>
+      <text fg="red">{suggestionError || " "}</text>
+      <text fg={checkSummary?.ok ? "green" : "red"}>
+        {checkSummary?.text || " "}
+      </text>
     </box>
   );
 }
@@ -514,10 +585,11 @@ function CompactKeyHelp({
           "↑↓ field",
           "Enter edit",
           "/ search",
+          "q quit",
           `${providerKeyRange(providerChoices)} provider`,
         ]}
       />
-      <KeyHelp keys={["s save", "r reload", "c check", "q quit"]} />
+      <KeyHelp keys={["s save", "r reload", "c check"]} />
     </box>
   );
 }
@@ -589,6 +661,65 @@ function modelSuggestions(payload: ConfigBootstrap): string[] {
   return [];
 }
 
+function modelSuggestionSource(payload: ConfigBootstrap): string {
+  const { suggestions } = payload;
+  if (typeof suggestions === "object" && "source" in suggestions) {
+    return suggestions.source;
+  }
+  return "";
+}
+
+function modelSuggestionError(payload: ConfigBootstrap): string {
+  const { suggestions } = payload;
+  if (typeof suggestions === "object" && "error" in suggestions) {
+    return suggestions.error;
+  }
+  return "";
+}
+
+function modelSummary(models: string[], source: string): string {
+  if (models.length === 0) {
+    return "Models: -";
+  }
+  if (!source || source === "defaults") {
+    return `Models: ${models.join(", ")}`;
+  }
+  return `Models (${source}): ${models.join(", ")}`;
+}
+
+function providerCheckSummary(
+  payload: ConfigBootstrap,
+): { ok: boolean; text: string } | null {
+  const result = payload.check_result;
+  if (typeof result !== "object" || Object.keys(result).length === 0) {
+    return null;
+  }
+  const name =
+    typeof result.name === "string" ? result.name : payload.selected_provider;
+  const model =
+    typeof result.model === "string" && result.model ? ` ${result.model}` : "";
+  const latency =
+    typeof result.latency_ms === "number" ? ` ${result.latency_ms}ms` : "";
+  if (result.ok === true) {
+    return { ok: true, text: `Check: ${name} ok${model}${latency}` };
+  }
+  const error =
+    typeof result.error === "string" && result.error
+      ? ` - ${result.error}`
+      : "";
+  return { ok: false, text: `Check: ${name} failed${model}${latency}${error}` };
+}
+
+function sectionLabels(sections: ConfigFormSection[]): string[] {
+  const labels = sections
+    .map((section) => section.label.trim())
+    .filter((label) => label.length > 0);
+  if (labels.length > 0) {
+    return labels;
+  }
+  return ["Providers", "Workflows", "Dreaming", "Ingest", "Release"];
+}
+
 function getDetailErrors(payload: ConfigBootstrap): string[] {
   const { detail } = payload;
   if (typeof detail === "object" && "errors" in detail) {
@@ -647,7 +778,7 @@ function configFieldsWithProviderChoice(
 }
 
 function formValuesWithSelectedProvider(
-  values: ConfigFormValues,
+  values: ConfigBootstrap["form_values"],
   payload: ConfigBootstrap,
 ): ConfigFormValues {
   return {
@@ -658,6 +789,8 @@ function formValuesWithSelectedProvider(
         payload.selected_provider,
       ),
     },
+    providerCatalog: { ...values.provider_catalog },
+    workflows: { ...values.workflows },
     dreaming: { ...values.dreaming },
     ingest: { ...values.ingest },
     release: { ...values.release },
@@ -670,6 +803,8 @@ function draftFormValues(values: ConfigFormValues): ConfigFormValues {
 
   return {
     provider,
+    providerCatalog: { ...values.providerCatalog },
+    workflows: { ...values.workflows },
     dreaming: { ...values.dreaming },
     ingest: { ...values.ingest },
     release: { ...values.release },
@@ -740,6 +875,12 @@ function valueForField(values: ConfigFormValues, key: string): string {
   if (key.startsWith("provider.")) {
     return values.provider[key.slice(9)] || "";
   }
+  if (key.startsWith("provider_catalog.")) {
+    return values.providerCatalog[key.slice(17)] || "";
+  }
+  if (key.startsWith("workflows.")) {
+    return values.workflows[key.slice(10)] || "";
+  }
   if (key.startsWith("dreaming.")) {
     return values.dreaming[key.slice(9)] || "";
   }
@@ -769,12 +910,18 @@ function withFieldValue(
   value: string,
 ): ConfigFormValues {
   const providerDraft = { ...values.provider };
+  const providerCatalogDraft = { ...values.providerCatalog };
+  const workflowsDraft = { ...values.workflows };
   const dreamingDraft = { ...values.dreaming };
   const ingestDraft = { ...values.ingest };
   const releaseDraft = { ...values.release };
 
   if (key.startsWith("provider.")) {
     providerDraft[key.slice(9)] = value;
+  } else if (key.startsWith("provider_catalog.")) {
+    providerCatalogDraft[key.slice(17)] = value;
+  } else if (key.startsWith("workflows.")) {
+    workflowsDraft[key.slice(10)] = value;
   } else if (key.startsWith("dreaming.")) {
     dreamingDraft[key.slice(9)] = value;
   } else if (key.startsWith("ingest.")) {
@@ -785,6 +932,8 @@ function withFieldValue(
 
   return {
     provider: providerDraft,
+    providerCatalog: providerCatalogDraft,
+    workflows: workflowsDraft,
     dreaming: dreamingDraft,
     ingest: ingestDraft,
     release: releaseDraft,

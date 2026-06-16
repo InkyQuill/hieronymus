@@ -22,6 +22,21 @@ function configDraft(provider: string = "openai") {
     ingest: { short_memory: {}, learn: {} },
     release: { update_channel: "stable" },
     dreaming: { active_provider: provider },
+    provider_catalog: {
+      profiles: {
+        [provider]: {
+          name: provider,
+          type: provider,
+          url: "",
+          key: "",
+          timeout_seconds: 30,
+        },
+      },
+      defaults: {
+        provider,
+        model: provider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
+      },
+    },
     providers: {},
     workflows: {},
   };
@@ -32,13 +47,14 @@ function configPaths() {
     data_root: "/tmp/hieronymus",
     config_root: "/tmp/hieronymus/config",
     dream_config_path: "/tmp/hieronymus/config/dream.conf",
+    provider_config_path: "/tmp/hieronymus/config/provider.conf",
     ingest_config_path: "/tmp/hieronymus/config/ingest.conf",
     release_config_path: "/tmp/hieronymus/config/release.conf",
   };
 }
 
 function configPayload(
-  provider: "openai" | "gemini" | "anthropic" = "openai",
+  provider: string = "openai",
   overrides: Record<string, unknown> = {},
 ) {
   return {
@@ -62,6 +78,8 @@ function configPayload(
       provider: {
         model: provider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
       },
+      provider_catalog: {},
+      workflows: {},
       dreaming: {},
       ingest: {},
       release: {},
@@ -118,6 +136,7 @@ describe("runtime schemas", () => {
         data_root: "/tmp/hieronymus",
         config_root: "/tmp/hieronymus/config",
         dream_config_path: "/tmp/hieronymus/config/dream.conf",
+        provider_config_path: "/tmp/hieronymus/config/provider.conf",
         ingest_config_path: "/tmp/hieronymus/config/ingest.conf",
         release_config_path: "/tmp/hieronymus/config/release.conf",
       },
@@ -152,6 +171,9 @@ describe("runtime schemas", () => {
 
     expect(payload.suggestions).toEqual({});
     expect(payload.detail).toBe("");
+    expect(payload.config_paths.provider_config_path).toBe(
+      "/tmp/hieronymus/config/provider.conf",
+    );
     expect(payload.provider_choices[0].requires_api_key).toBe(true);
   });
 
@@ -457,31 +479,71 @@ describe("runtime schemas", () => {
     expect(payload.ingest.source).toBe("defaults");
   });
 
-  it("rejects config provider choices outside supported families", () => {
-    expect(() =>
-      ConfigBootstrapSchema.parse({
+  it("accepts arbitrary provider ids and provider catalog profiles", () => {
+    const payload = ConfigBootstrapSchema.parse({
         config_paths: configPaths(),
         provider_choices: [
           {
-            name: "deterministic",
-            display_name: "Deterministic",
-            requires_api_key: false,
-            supports_api_path: false,
+            name: "deepseek-api",
+            display_name: "DeepSeek API",
+            requires_api_key: true,
+            supports_api_path: true,
           },
         ],
-        selected_provider: "deterministic",
-        draft: configDraft("deterministic"),
-        form_values: { provider: {}, dreaming: {} },
+        selected_provider: "deepseek-api",
+        draft: configDraft("deepseek-api"),
+        provider_catalog: {
+          profiles: {
+            "deepseek-api": {
+              name: "deepseek-api",
+              type: "openai-compatible",
+              url: "https://api.deepseek.com/v1",
+              key: "secret",
+              timeout_seconds: 45,
+            },
+          },
+          defaults: {
+            provider: "deepseek-api",
+            model: "deepseek-chat",
+          },
+        },
+        form_values: {
+          provider_catalog: {
+            "profiles.deepseek-api.name": "deepseek-api",
+          },
+          workflows: {
+            "crystallization.provider": "deepseek-api",
+          },
+          dreaming: {},
+        },
         validation: { ok: true, errors: [] },
         suggestions: {
-          provider: "deterministic",
-          models: [],
+          provider: "deepseek-api",
+          models: ["deepseek-chat"],
           source: "defaults",
           error: "",
         },
         detail: { title: "", fields: [], errors: [] },
-      }),
-    ).toThrow();
+      });
+
+    expect(payload.selected_provider).toBe("deepseek-api");
+    expect(payload.provider_choices[0].name).toBe("deepseek-api");
+    expect(payload.suggestions).toMatchObject({ provider: "deepseek-api" });
+    expect(payload.provider_catalog.profiles["deepseek-api"]).toMatchObject({
+      name: "deepseek-api",
+      type: "openai-compatible",
+      timeout_seconds: 45,
+    });
+    expect(payload.provider_catalog.defaults).toMatchObject({
+      provider: "deepseek-api",
+      model: "deepseek-chat",
+    });
+    expect(payload.form_values.provider_catalog).toEqual({
+      "profiles.deepseek-api.name": "deepseek-api",
+    });
+    expect(payload.form_values.workflows).toEqual({
+      "crystallization.provider": "deepseek-api",
+    });
   });
 
   it("parses admin snapshots", () => {

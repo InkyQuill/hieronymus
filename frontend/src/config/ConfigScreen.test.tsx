@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { ConfigScreen } from "./ConfigScreen.js";
 import type { RpcClient } from "../rpc/client.js";
-import type { ConfigBootstrap, ProviderName } from "../rpc/schema.js";
+import type { ConfigBootstrap } from "../rpc/schema.js";
 import {
   cleanupOpenTuiHarnesses,
   createOpenTuiHarness,
@@ -49,7 +49,9 @@ function formSchema(
 ) {
   return {
     sections: [
-      { id: "dream", label: "Dream", description: "dream.conf" },
+      { id: "providers", label: "Providers", description: "provider.conf" },
+      { id: "workflows", label: "Workflows", description: "dream.conf" },
+      { id: "dream", label: "Dreaming", description: "dream.conf" },
       { id: "ingest", label: "Ingest", description: "ingest.conf" },
       { id: "release", label: "Release", description: "release.conf" },
     ],
@@ -88,33 +90,36 @@ function formSchema(
 }
 
 function sectionForField(key: string): string {
+  if (key.startsWith("provider_catalog.")) return "providers";
+  if (key.startsWith("workflows.")) return "workflows";
   if (key.startsWith("ingest.")) return "ingest";
   if (key.startsWith("release.")) return "release";
   return "dream";
 }
 
-function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
+function payload(selectedProvider: string = "openai"): ConfigBootstrap {
   return {
     config_paths: {
       dream_config_path: "/tmp/dream.conf",
+      provider_config_path: "/tmp/provider.conf",
       ingest_config_path: "/tmp/ingest.conf",
       release_config_path: "/tmp/release.conf",
     },
     provider_choices: [
       {
-        name: "openai" as const,
+        name: "openai",
         display_name: "OpenAI compatible",
         requires_api_key: true,
         supports_api_path: true,
       },
       {
-        name: "gemini" as const,
+        name: "gemini",
         display_name: "Gemini",
         requires_api_key: true,
         supports_api_path: false,
       },
       {
-        name: "anthropic" as const,
+        name: "anthropic",
         display_name: "Anthropic",
         requires_api_key: true,
         supports_api_path: false,
@@ -131,9 +136,51 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
       },
       ingest: { short_memory: {}, learn: {} },
       dreaming: { active_provider: selectedProvider },
+      provider_catalog: {
+        profiles: {
+          [selectedProvider]: {
+            name: selectedProvider,
+            type: selectedProvider,
+            url:
+              selectedProvider === "openai"
+                ? "https://api.openai.com/v1"
+                : "",
+            key:
+              selectedProvider === "gemini" ? "gemini-secret" : "openai-secret",
+            timeout_seconds: 30,
+          },
+        },
+        defaults: {
+          provider: selectedProvider,
+          model:
+            selectedProvider === "gemini"
+              ? "gemini-2.5-flash"
+              : "gpt-4.1-mini",
+        },
+      },
       providers: {},
       workflows: {},
       release: { update_channel: "stable" },
+    },
+    provider_catalog: {
+      profiles: {
+        [selectedProvider]: {
+          name: selectedProvider,
+          type: selectedProvider,
+          url:
+            selectedProvider === "openai" ? "https://api.openai.com/v1" : "",
+          key:
+            selectedProvider === "gemini" ? "gemini-secret" : "openai-secret",
+          timeout_seconds: 30,
+        },
+      },
+      defaults: {
+        provider: selectedProvider,
+        model:
+          selectedProvider === "gemini"
+            ? "gemini-2.5-flash"
+            : "gpt-4.1-mini",
+      },
     },
     form_values: {
       provider: {
@@ -145,6 +192,16 @@ function payload(selectedProvider: ProviderName = "openai"): ConfigBootstrap {
           selectedProvider === "openai" ? "https://api.openai.com/v1" : "",
         timeout_seconds: "30",
       },
+      provider_catalog: {
+        [`profiles.${selectedProvider}.model`]:
+          selectedProvider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
+        [`profiles.${selectedProvider}.key`]:
+          selectedProvider === "gemini" ? "gemini-secret" : "openai-secret",
+        [`profiles.${selectedProvider}.url`]:
+          selectedProvider === "openai" ? "https://api.openai.com/v1" : "",
+        [`profiles.${selectedProvider}.timeout_seconds`]: "30",
+      },
+      workflows: {},
       dreaming: {
         autostart_enabled: "no",
         min_interval_minutes: "30",
@@ -328,11 +385,13 @@ describe("ConfigScreen", () => {
     await render(<ConfigScreen initial={payload()} client={undefined} />);
 
     const output = await waitForFrame((frame) =>
-      frame.includes("Provider/API | Dreaming | Ingest | Release"),
+      frame.includes("Providers | Workflows | Dreaming | Ingest | Release"),
     );
     expect(output).toContain("Hieronymus Config");
-    expect(output).toContain("Provider/API | Dreaming | Ingest | Release");
-    expect(output).toContain("Provider/API");
+    expect(output).toContain(
+      "Providers | Workflows | Dreaming | Ingest | Release",
+    );
+    expect(output).toContain("Providers");
     expect(output).toContain("OpenAI compatible");
     expect(output).toContain("Model");
     expect(output).not.toContain("Config files:");
@@ -460,7 +519,7 @@ describe("ConfigScreen", () => {
     expect(output).toContain("minimum 60x20");
   });
 
-  it("renders provider choice as the first Provider/API field", async () => {
+  it("renders provider choice as the first Providers field", async () => {
     const { render, waitForFrame } = setupTest();
 
     await render(<ConfigScreen initial={payload()} client={undefined} />);
@@ -468,10 +527,10 @@ describe("ConfigScreen", () => {
     const output = await waitForFrame((frame) =>
       frame.includes("> Provider: OpenAI compatible"),
     );
-    expect(output).toContain("Provider/API");
+    expect(output).toContain("Providers");
     expect(output).toContain("> Provider: OpenAI compatible");
     expect(output).toContain("Model: gpt-4.1-mini");
-    expect(output).not.toContain("Providers");
+    expect(output).not.toContain("Provider/API");
     expect(output).not.toContain("▶ OpenAI compatible");
   });
 
@@ -515,6 +574,98 @@ describe("ConfigScreen", () => {
       frame.includes("Backend Model Label"),
     );
     expect(output).toContain("Backend Model Label");
+  });
+
+  it("renders provider catalog separately from workflow assignments", async () => {
+    const { render, waitForFrame } = setupSizedTest(140, 44);
+    const initial: ConfigBootstrap = {
+      ...payload("deepseek-api"),
+      provider_choices: [
+        {
+          name: "deepseek-api",
+          display_name: "DeepSeek API",
+          requires_api_key: true,
+          supports_api_path: true,
+        },
+      ],
+      selected_provider: "deepseek-api",
+      form_values: {
+        ...payload("deepseek-api").form_values,
+        provider_catalog: {
+          "profiles.deepseek-api.name": "deepseek-api",
+          "profiles.deepseek-api.type": "openai-compatible",
+          "profiles.deepseek-api.url": "https://api.deepseek.com/v1",
+          "profiles.deepseek-api.timeout_seconds": "45",
+          "defaults.provider": "deepseek-api",
+          "defaults.model": "deepseek-chat",
+        },
+        workflows: {
+          "crystallization.provider": "deepseek-api",
+          "crystallization.model": "deepseek-chat",
+        },
+      },
+      form_schema: {
+        sections: [
+          { id: "providers", label: "Providers", description: "provider.conf" },
+          { id: "workflows", label: "Workflows", description: "dream.conf" },
+          { id: "dream", label: "Dreaming", description: "dream.conf" },
+          { id: "ingest", label: "Ingest", description: "ingest.conf" },
+          { id: "release", label: "Release", description: "release.conf" },
+        ],
+        groups: [
+          {
+            id: "provider_catalog",
+            section: "providers",
+            label: "Providers",
+            description: "Provider profiles available to workflows.",
+          },
+          {
+            id: "workflows",
+            section: "workflows",
+            label: "Workflows",
+            description: "Workflow provider assignments.",
+          },
+        ],
+        fields: [
+          {
+            key: "provider_catalog.profiles.deepseek-api.name",
+            group: "provider_catalog",
+            section: "providers",
+            label: "Profile",
+            hint: "Provider profile id.",
+            placeholder: "",
+            type: "text",
+            choices: [],
+            default: "",
+            redacted: false,
+          },
+          {
+            key: "workflows.crystallization.provider",
+            group: "workflows",
+            section: "workflows",
+            label: "Crystallization Provider",
+            hint: "Provider profile used for crystallization.",
+            placeholder: "",
+            type: "text",
+            choices: [],
+            default: "",
+            redacted: false,
+          },
+        ],
+      },
+    };
+
+    await render(<ConfigScreen initial={initial} client={undefined} />);
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Crystallization Provider: deepseek-api"),
+    );
+    expect(output).toContain("Providers");
+    expect(output).toContain("provider.conf");
+    expect(output).toContain("deepseek-api");
+    expect(output).toContain("Workflows");
+    expect(output).toContain("Crystallization Provider: deepseek-api");
+    expect(output).not.toContain("Provider/API");
   });
 
   it("renders grouped config blocks in bridge schema order", async () => {
@@ -576,9 +727,9 @@ describe("ConfigScreen", () => {
     );
 
     const output = await waitForFrame(
-      (frame) => frame.includes("Provider/API") && frame.includes("Dreaming"),
+      (frame) => frame.includes("Providers") && frame.includes("Dreaming"),
     );
-    const providerIndex = output.indexOf("Provider/API");
+    const providerIndex = output.indexOf("Providers");
     const dreamingIndex = output.indexOf("Dreaming");
     const ingestionIndex = output.indexOf("Ingestion");
     const updatesIndex = output.indexOf("Updates");
@@ -592,8 +743,8 @@ describe("ConfigScreen", () => {
     expect(output).toContain("release.conf");
   });
 
-  it("keeps wide default-height footer visible while navigating to the last field", async () => {
-    const { render, mockInput, waitForFrame } = setupSizedTest(136, 36);
+  it("keeps wide default-height footer visible with a full config schema", async () => {
+    const { render, waitForFrame } = setupSizedTest(136, 36);
 
     await render(
       <ConfigScreen
@@ -605,18 +756,62 @@ describe("ConfigScreen", () => {
       />,
     );
 
-    let output = await waitForFrame((frame) =>
-      frame.includes("Hieronymus Config"),
+    const output = await waitForFrame((frame) => frame.includes("[q] quit"));
+    expect(output).toContain("[q] quit");
+  });
+
+  it("keeps the grouped form bounded and footer visible at 106x36", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(106, 36);
+
+    await render(
+      <ConfigScreen
+        initial={{
+          ...payload(),
+          form_schema: formSchema(fullConfigFields()),
+        }}
+        client={undefined}
+      />,
+    );
+
+    await mockInput.press("down");
+    await mockInput.press("enter");
+
+    const output = await waitForFrame(
+      (frame) => frame.includes("Models:") && frame.includes("[q] quit"),
+    );
+    expect(output).toContain("[c] check");
+    expect(output).toContain("[q] quit");
+    expect(output).toContain("> Model:");
+    expect(output).not.toContain(
+      "Whether scheduled dreaming can run automatically.",
+    );
+  });
+
+  it("reflows config layout after terminal resize", async () => {
+    const { render, resize, waitForFrame } = setupSizedTest(136, 36);
+
+    await render(
+      <ConfigScreen
+        initial={{
+          ...payload(),
+          form_schema: formSchema(fullConfigFields()),
+        }}
+        client={undefined}
+      />,
+    );
+
+    await resize(80, 24);
+
+    const output = await waitForFrame(
+      (frame) => frame.includes("Providers") && frame.includes("[q] quit"),
+    );
+    expect(output).toContain(
+      "Providers | Workflows | Dreaming | Ingest | Release",
     );
     expect(output).toContain("[q] quit");
-
-    for (let index = 0; index < 20; index += 1) {
-      await mockInput.press("down");
-    }
-
-    output = await waitForFrame((frame) => frame.includes("> Update Channel"));
-    expect(output).toContain("> Update Channel");
-    expect(output).toContain("[q] quit");
+    expect(output).not.toContain(
+      "Whether scheduled dreaming can run automatically.",
+    );
   });
 
   it("renders a placeholder when model suggestions are absent", async () => {
@@ -689,14 +884,14 @@ describe("ConfigScreen", () => {
   it("changes provider choice while editing the provider field", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
-    const twoProviderPayload = (provider: ProviderName = "openai") => ({
+    const twoProviderPayload = (provider: string = "openai") => ({
       ...payload(provider),
       provider_choices: payload().provider_choices.slice(0, 2),
     });
     const client = fakeClient((method, params) => {
       calls.push({ method, params });
       return Promise.resolve(
-        twoProviderPayload(params.provider as ProviderName),
+        twoProviderPayload(params.provider as string),
       );
     });
     const { render, mockInput, waitForFrame } = setupTest();
@@ -725,6 +920,25 @@ describe("ConfigScreen", () => {
       "gemini",
       "openai",
     ]);
+  });
+
+  it("moves provider choices left instead of always advancing right", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve(payload(params.provider as string));
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload("gemini")} client={client} />);
+
+    await mockInput.press("enter");
+    await mockInput.press("left");
+    await mockInput.press("enter");
+
+    await waitForFrame((frame) => frame.includes("Selected openai"));
+    expect(calls.map((call) => call.params.provider)).toEqual(["openai"]);
   });
 
   it("moves through form fields with j and k like arrow keys", async () => {
@@ -878,6 +1092,41 @@ describe("ConfigScreen", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("renders provider check success, latency, and API model source", async () => {
+    const client = fakeClient((method, params) => {
+      if (method !== "config.check_provider") {
+        return Promise.reject(new Error(`unexpected method: ${method}`));
+      }
+      return Promise.resolve({
+        ...payload(),
+        check_result: {
+          name: params.selected_provider,
+          ok: true,
+          model: "deepseek-v4-flash",
+          error: "",
+          latency_ms: 123,
+        },
+        suggestions: {
+          provider: "openai",
+          models: ["deepseek-v4-flash", "deepseek-v4"],
+          source: "api",
+          error: "",
+        },
+      });
+    });
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={client} />);
+    await mockInput.type("c");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Check: openai ok"),
+    );
+    expect(output).toContain("Check: openai ok");
+    expect(output).toContain("123ms");
+    expect(output).toContain("Models (api): deepseek-v4-flash, deepseek-v4");
+  });
+
   it("updates schema-driven number, toggle, and choice fields from the form panel", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
@@ -885,7 +1134,7 @@ describe("ConfigScreen", () => {
       ...payload(),
       form_schema: formSchema([
         {
-          key: "provider.timeout_seconds",
+          key: "provider_catalog.profiles.openai.timeout_seconds",
           group: "provider",
           label: "Timeout",
           hint: "Request timeout in seconds.",
@@ -957,12 +1206,11 @@ describe("ConfigScreen", () => {
         params: {
           draft: initial.draft,
           selected_provider: "openai",
-          provider: {
-            model: "gpt-4.1-mini",
-            api_key: "openai-secret",
-            api_path: "https://api.openai.com/v1",
-            timeout_seconds: "45",
+          provider_catalog: {
+            ...payload().form_values.provider_catalog,
+            "profiles.openai.timeout_seconds": "45",
           },
+          workflows: {},
           dreaming: {
             autostart_enabled: "no",
             min_interval_minutes: "30",
@@ -983,12 +1231,8 @@ describe("ConfigScreen", () => {
         params: {
           draft: initial.draft,
           selected_provider: "openai",
-          provider: {
-            model: "gpt-4.1-mini",
-            api_key: "openai-secret",
-            api_path: "https://api.openai.com/v1",
-            timeout_seconds: "30",
-          },
+          provider_catalog: payload().form_values.provider_catalog,
+          workflows: {},
           dreaming: {
             autostart_enabled: "yes",
             min_interval_minutes: "30",
@@ -1009,12 +1253,8 @@ describe("ConfigScreen", () => {
         params: {
           draft: initial.draft,
           selected_provider: "openai",
-          provider: {
-            model: "gpt-4.1-mini",
-            api_key: "openai-secret",
-            api_path: "https://api.openai.com/v1",
-            timeout_seconds: "30",
-          },
+          provider_catalog: payload().form_values.provider_catalog,
+          workflows: {},
           dreaming: {
             autostart_enabled: "no",
             min_interval_minutes: "30",
@@ -1036,22 +1276,43 @@ describe("ConfigScreen", () => {
   it("preserves leading characters when editing the model field", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
+    const initial = {
+      ...payload(),
+      form_schema: formSchema([
+        {
+          key: "provider_catalog.profiles.openai.model",
+          group: "provider",
+          label: "Model",
+          hint: "Model name used by the selected dream provider.",
+          placeholder: "gpt-4.1-mini",
+          type: "text" as const,
+          choices: [],
+          default: "",
+          redacted: false,
+        },
+      ]),
+    };
     const client = fakeClient((method, params) => {
       calls.push({ method, params });
       return Promise.resolve({
-        ...payload(),
+        ...initial,
         form_values: {
-          ...payload().form_values,
-          provider: {
-            ...payload().form_values.provider,
-            model: "deepseek",
+          ...initial.form_values,
+          provider_catalog: {
+            ...initial.form_values.provider_catalog,
+            "profiles.openai.model": "deepseek",
           },
         },
       });
     });
     const { render, mockInput, waitFor, waitForFrame } = setupTest();
 
-    await render(<ConfigScreen initial={payload()} client={client} />);
+    await render(
+      <ConfigScreen
+        initial={initial}
+        client={client}
+      />,
+    );
 
     await mockInput.press("down");
     await mockInput.press("enter");
@@ -1064,7 +1325,9 @@ describe("ConfigScreen", () => {
     await waitFor(async () => calls.length >= 1);
     const output = await waitForFrame((frame) => frame.includes("deepseek"));
 
-    expect(calls[0]?.params.provider).toMatchObject({ model: "deepseek" });
+    expect(calls[0]?.params.provider_catalog).toMatchObject({
+      "profiles.openai.model": "deepseek",
+    });
     expect(output).toContain("Model: deepseek");
     expect(output).not.toContain("Model: epseek");
   });
