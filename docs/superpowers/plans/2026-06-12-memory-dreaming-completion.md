@@ -35,12 +35,14 @@ runtime/config callers to `DreamConfig`.
   `ingest.conf` short-memory limits and stores validation metadata.
 - `src/hieronymus/agent_ingestion.py`: `IngestionService.learn()` loads
   `ingest.conf` Learn limits for block splitting.
-- `src/hieronymus/dream_config.py`: canonical `dream.conf` model for provider
-  profiles, workflows, prompts, thresholds, and plaintext local API keys.
+- `src/hieronymus/provider_config.py`: canonical `provider.conf` model for
+  provider profiles and plaintext local API keys.
+- `src/hieronymus/dream_config.py`: canonical `dream.conf` model for workflow
+  assignments, prompts, thresholds, and caps.
 - `src/hieronymus/dream_providers.py`: provider runtime, status, checks, and
-  model suggestions resolve through `dream.conf` profiles.
-- `src/hieronymus/secrets.py`: redacts configured provider API keys from
-  `DreamConfig`.
+  model suggestions resolve through configured provider profiles.
+- `src/hieronymus/secrets.py`: redacts configured provider API keys from the
+  provider catalog.
 - `src/hieronymus/tui_bridge/config_api.py`: config TUI bridge edits
   `dream.conf`, `ingest.conf`, and `release.conf` drafts, redacting provider
   API keys in payloads.
@@ -664,7 +666,7 @@ git commit -m "feat: expose ingest configuration"
 - Test: `tests/test_dream_providers.py`
 - Test: `tests/test_tui_bridge_protocol.py`
 
-- [ ] **Step 1: Write failing provider status/check tests using `dream.conf`**
+- [ ] **Step 1: Write failing provider status/check tests using local config**
 
 In `tests/test_dream_providers.py`, add tests that do not import or save settings:
 
@@ -1014,8 +1016,10 @@ rg -n "hieronymus.settings|load_settings|save_settings|ProviderSettings|Dreaming
 In `docs/roadmap.md`, move these Memory/Dreaming bullets from Remaining to Completed:
 
 ```markdown
-- Keep `dream.conf` as the canonical configuration file for dreaming providers,
-  workflows, prompts, thresholds, caps, and plaintext local API keys.
+- Keep `provider.conf` as the canonical configuration file for provider
+  profiles and plaintext local API keys.
+- Keep `dream.conf` as the canonical configuration file for workflow
+  assignments, prompts, thresholds, and caps.
 - Remove the older `settings.toml` provider model instead of migrating it. The
   project is pre-release, so compatibility migrations are unnecessary.
 - Add `ingest.conf` as a global data-root configuration file for ingestion
@@ -1165,9 +1169,10 @@ In `docs/usage.md`, ensure the config section says:
 
 ```markdown
 The config interface edits local plaintext config files:
-`dream.conf` for dreaming providers/workflows/prompts, `ingest.conf` for memory
-ingestion limits, and `release.conf` for update channel selection. Provider API
-keys are local plaintext fields inside `dream.conf`; JSON output, logs, provider
+`provider.conf` for provider endpoints/defaults/API keys, `dream.conf` for
+workflow model assignments and prompts, `ingest.conf` for memory ingestion
+limits, and `release.conf` for update channel selection. Provider API keys are
+local plaintext fields inside `provider.conf`; JSON output, logs, provider
 checks, doctor output, and dream audit payloads redact those values.
 ```
 
@@ -1215,7 +1220,9 @@ git commit -m "docs: update memory dreaming completion status"
 
 Spec coverage:
 
-- `dream.conf` remains canonical: Tasks 4-6 move provider runtime and config editing to `dream.conf`.
+- Provider configuration remains canonical in local config: ADR 0007 later
+  narrows provider runtime ownership to `provider.conf` while `dream.conf` keeps
+  workflow assignments and dreaming settings.
 - `settings.toml` removed without migration: Task 6 deletes the model and all references.
 - `ingest.conf` added: Tasks 1-3 create the file and expose it.
 - Current default behavior preserved: Task 1 defaults keep 6 sentence warning, 30 sentence rejection, 1200 Learn block chars, and disabled symbol thresholds unless configured.
@@ -1232,4 +1239,5 @@ Type consistency:
 
 - `IngestConfig`, `ShortMemoryLimits`, `LearnLimits`, `load_ingest_config()`, and `save_ingest_config()` are introduced in Task 1 and reused consistently.
 - `warning_symbol_count` and `rejection_symbol_count` use `0` as disabled to preserve current behavior.
-- `api_key` replaces `api_key_env` only after provider runtime is moved to `dream.conf`.
+- `api_key` replaces `api_key_env`; ADR 0007 later moves provider runtime
+  ownership to `provider.conf`.

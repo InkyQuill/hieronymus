@@ -15,8 +15,10 @@ bounded, auditable, and local-first.
 
 Current baseline:
 
-- `dream.conf` is the canonical configuration file for dreaming providers,
-  workflows, prompts, thresholds, caps, and plaintext local API keys.
+- `provider.conf` is the canonical configuration file for provider endpoint
+  profiles and plaintext local API keys.
+- `dream.conf` is the canonical configuration file for dreaming workflow
+  assignments, prompts, thresholds, and caps.
 - The old provider settings file has been removed without migration because the
   project is pre-release.
 - `ingest.conf` is the global data-root configuration file for ingestion policy,

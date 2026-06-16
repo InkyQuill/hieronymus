@@ -34,8 +34,9 @@ root contains the local SQLite store, configuration files, and daemon runtime
 files:
 
 - `hieronymus.sqlite`: the local SQLite database.
-- `dream.conf`: dreaming provider, workflow, prompt, threshold, cap, and local
-  API key configuration.
+- `provider.conf`: provider endpoint profile and local API key configuration.
+- `dream.conf`: dreaming workflow assignment, prompt, threshold, and cap
+  configuration.
 - `ingest.conf`: ingestion policy configuration.
 - `release.conf`: managed update configuration.
 - `server.json`: daemon discovery state, including host, port, token, PID,
