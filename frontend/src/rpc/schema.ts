@@ -189,6 +189,19 @@ const ProviderCatalogSchema = z
   .passthrough()
   .default({ profiles: {}, defaults: { provider: "", model: "" } });
 
+const ConfigFormStringRecordSchema = z.record(z.string());
+const ProviderCatalogFormValuesSchema = z
+  .union([
+    ConfigFormStringRecordSchema,
+    z
+      .object({
+        defaults: ConfigFormStringRecordSchema.default({}),
+        profile: ConfigFormStringRecordSchema.default({}),
+      })
+      .passthrough(),
+  ])
+  .default({});
+
 const ConfigFieldTypeSchema = z.enum([
   "text",
   "secret",
@@ -273,12 +286,12 @@ export const ConfigBootstrapSchema = z
       release: z.record(z.unknown()),
     }),
     form_values: z.object({
-      provider: z.record(z.string()).default({}),
-      provider_catalog: z.record(z.string()).default({}),
-      workflows: z.record(z.string()).default({}),
-      dreaming: z.record(z.string()),
-      ingest: z.record(z.string()).default({}),
-      release: z.record(z.string()).default({}),
+      provider: ConfigFormStringRecordSchema.default({}),
+      provider_catalog: ProviderCatalogFormValuesSchema,
+      workflows: ConfigFormStringRecordSchema.default({}),
+      dreaming: ConfigFormStringRecordSchema,
+      ingest: ConfigFormStringRecordSchema.default({}),
+      release: ConfigFormStringRecordSchema.default({}),
     }),
     provider_catalog: ProviderCatalogSchema,
     release: z

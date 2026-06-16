@@ -137,6 +137,7 @@ export function ConfigScreen({ initial, client }: Props) {
       params: {
         selected_provider: payload.selected_provider,
         draft,
+        provider: draftValues.provider,
         provider_catalog: draftValues.providerCatalog,
         workflows: draftValues.workflows,
         dreaming: draftValues.dreaming,
@@ -790,12 +791,35 @@ function formValuesWithSelectedProvider(
         payload.selected_provider,
       ),
     },
-    providerCatalog: { ...values.provider_catalog },
+    providerCatalog: flattenProviderCatalogFormValues(values.provider_catalog),
     workflows: { ...values.workflows },
     dreaming: { ...values.dreaming },
     ingest: { ...values.ingest },
     release: { ...values.release },
   };
+}
+
+function flattenProviderCatalogFormValues(
+  values: ConfigBootstrap["form_values"]["provider_catalog"],
+): Record<string, string> {
+  const flat: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(values)) {
+    if (typeof value === "string") {
+      flat[key] = value;
+      continue;
+    }
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    for (const [nestedKey, nestedValue] of Object.entries(value)) {
+      if (typeof nestedValue === "string") {
+        flat[`${key}.${nestedKey}`] = nestedValue;
+      }
+    }
+  }
+
+  return flat;
 }
 
 function draftFormValues(values: ConfigFormValues): ConfigFormValues {

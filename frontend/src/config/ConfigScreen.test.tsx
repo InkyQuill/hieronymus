@@ -1373,6 +1373,134 @@ describe("ConfigScreen", () => {
     expect(output).not.toContain("Model: epseek");
   });
 
+  it("normalizes nested provider catalog form values from bootstrap", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const initial = {
+      ...payload(),
+      form_values: {
+        ...payload().form_values,
+        provider_catalog: {
+          defaults: {
+            provider: "openai",
+            model: "gpt-4.1-mini",
+          },
+          profile: {
+            name: "openai",
+            type: "openai",
+            url: "https://api.openai.com/v1",
+            key: "openai-secret",
+            timeout_seconds: "30",
+          },
+        },
+      },
+      form_schema: formSchema([
+        {
+          key: "provider_catalog.profile.timeout_seconds",
+          group: "provider",
+          label: "Timeout",
+          hint: "Request timeout in seconds.",
+          placeholder: "30",
+          type: "number" as const,
+          choices: [],
+          default: "30",
+          minimum: 1,
+          redacted: false,
+        },
+      ]),
+    };
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve({
+        ...initial,
+        form_values: {
+          ...initial.form_values,
+          provider_catalog: {
+            defaults: {
+              provider: "openai",
+              model: "gpt-4.1-mini",
+            },
+            profile: {
+              name: "openai",
+              type: "openai",
+              url: "https://api.openai.com/v1",
+              key: "openai-secret",
+              timeout_seconds: "45",
+            },
+          },
+        },
+      });
+    });
+    const { render, mockInput, waitFor, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={initial} client={client} />);
+
+    let output = await waitForFrame((frame) => frame.includes("Timeout: 30"));
+    expect(output).toContain("Timeout: 30");
+
+    await mockInput.press("down");
+    await mockInput.press("enter");
+    await mockInput.press("backspace");
+    await mockInput.press("backspace");
+    await mockInput.type("45");
+    await mockInput.press("enter");
+
+    await waitFor(async () => calls.length >= 1);
+    output = await waitForFrame((frame) => frame.includes("Timeout: 45"));
+
+    expect(calls[0]?.params.provider_catalog).toMatchObject({
+      "defaults.provider": "openai",
+      "defaults.model": "gpt-4.1-mini",
+      "profile.timeout_seconds": "45",
+    });
+    expect(output).toContain("Timeout: 45");
+  });
+
+  it("submits edited legacy provider fields for backend compatibility", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> =
+      [];
+    const initial = payload();
+    const client = fakeClient((method, params) => {
+      calls.push({ method, params });
+      return Promise.resolve({
+        ...initial,
+        form_values: {
+          ...initial.form_values,
+          provider: {
+            ...initial.form_values.provider,
+            model: "deepseek-chat",
+          },
+        },
+      });
+    });
+    const { render, mockInput, waitFor } = setupTest();
+
+    await render(<ConfigScreen initial={initial} client={client} />);
+
+    await mockInput.press("down");
+    await mockInput.press("enter");
+    for (let index = 0; index < "gpt-4.1-mini".length; index += 1) {
+      await mockInput.press("backspace");
+    }
+    await mockInput.type("deepseek-chat");
+    await mockInput.press("enter");
+
+    await waitFor(async () => calls.length >= 1);
+
+    expect(calls[0]).toMatchObject({
+      method: "config.update_draft",
+      params: {
+        selected_provider: "openai",
+        provider: {
+          model: "deepseek-chat",
+          api_key: "openai-secret",
+          api_path: "https://api.openai.com/v1",
+          timeout_seconds: "30",
+        },
+      },
+    });
+  });
+
   it("submits edited provider catalog and workflows inside draft params", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];

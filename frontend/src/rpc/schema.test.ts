@@ -570,52 +570,68 @@ describe("runtime schemas", () => {
     expect(payload.ingest.source).toBe("defaults");
   });
 
-  it("accepts arbitrary provider ids and provider catalog profiles", () => {
+  it("accepts current Python provider catalog form value shape", () => {
     const payload = ConfigBootstrapSchema.parse({
-        config_paths: configPaths(),
-        provider_choices: [
-          {
+      config_paths: configPaths(),
+      provider_choices: [
+        {
+          name: "deepseek-api",
+          display_name: "DeepSeek API",
+          requires_api_key: true,
+          supports_api_path: true,
+        },
+      ],
+      selected_provider: "deepseek-api",
+      draft: configDraft("deepseek-api"),
+      provider_catalog: {
+        profiles: {
+          "deepseek-api": {
             name: "deepseek-api",
-            display_name: "DeepSeek API",
-            requires_api_key: true,
-            supports_api_path: true,
+            type: "openai-compatible",
+            url: "https://api.deepseek.com/v1",
+            key: "secret",
+            timeout_seconds: 45,
           },
-        ],
-        selected_provider: "deepseek-api",
-        draft: configDraft("deepseek-api"),
+        },
+        defaults: {
+          provider: "deepseek-api",
+          model: "deepseek-chat",
+        },
+      },
+      form_values: {
+        provider: {
+          model: "deepseek-chat",
+          api_key: "secret",
+          api_path: "https://api.deepseek.com/v1",
+          timeout_seconds: "45",
+        },
         provider_catalog: {
-          profiles: {
-            "deepseek-api": {
-              name: "deepseek-api",
-              type: "openai-compatible",
-              url: "https://api.deepseek.com/v1",
-              key: "secret",
-              timeout_seconds: 45,
-            },
-          },
           defaults: {
             provider: "deepseek-api",
             model: "deepseek-chat",
           },
-        },
-        form_values: {
-          provider_catalog: {
-            "profiles.deepseek-api.name": "deepseek-api",
+          profile: {
+            name: "deepseek-api",
+            type: "openai-compatible",
+            url: "https://api.deepseek.com/v1",
+            key: "secret",
+            timeout_seconds: "45",
           },
-          workflows: {
-            "crystallization.provider": "deepseek-api",
-          },
-          dreaming: {},
         },
-        validation: { ok: true, errors: [] },
-        suggestions: {
-          provider: "deepseek-api",
-          models: ["deepseek-chat"],
-          source: "defaults",
-          error: "",
+        workflows: {
+          "crystallization.provider": "deepseek-api",
         },
-        detail: { title: "", fields: [], errors: [] },
-      });
+        dreaming: {},
+      },
+      validation: { ok: true, errors: [] },
+      suggestions: {
+        provider: "deepseek-api",
+        models: ["deepseek-chat"],
+        source: "defaults",
+        error: "",
+      },
+      detail: { title: "", fields: [], errors: [] },
+    });
 
     expect(payload.selected_provider).toBe("deepseek-api");
     expect(payload.provider_choices[0].name).toBe("deepseek-api");
@@ -630,7 +646,17 @@ describe("runtime schemas", () => {
       model: "deepseek-chat",
     });
     expect(payload.form_values.provider_catalog).toEqual({
-      "profiles.deepseek-api.name": "deepseek-api",
+      defaults: {
+        provider: "deepseek-api",
+        model: "deepseek-chat",
+      },
+      profile: {
+        name: "deepseek-api",
+        type: "openai-compatible",
+        url: "https://api.deepseek.com/v1",
+        key: "secret",
+        timeout_seconds: "45",
+      },
     });
     expect(payload.form_values.workflows).toEqual({
       "crystallization.provider": "deepseek-api",
