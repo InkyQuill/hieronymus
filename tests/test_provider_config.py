@@ -415,3 +415,48 @@ def test_migrate_dream_provider_payload_rejects_profile_collision() -> None:
             },
             existing=existing,
         )
+
+
+def test_migrate_dream_provider_payload_rejects_missing_type() -> None:
+    with pytest.raises(ProviderCatalogError, match=r"providers\.openai\.type is required"):
+        migrate_dream_provider_payload(
+            {
+                "openai": {
+                    "endpoint": "https://api.deepseek.com",
+                    "api_key": "secret",
+                }
+            },
+            existing=ProviderCatalog(providers={}, defaults=ProviderDefaults()),
+        )
+
+
+def test_migrate_dream_provider_payload_rejects_type_mismatch() -> None:
+    with pytest.raises(ProviderCatalogError, match=r"providers\.openai\.type must be a string"):
+        migrate_dream_provider_payload(
+            {
+                "openai": {
+                    "type": 123,
+                    "endpoint": "https://api.deepseek.com",
+                    "api_key": "secret",
+                }
+            },
+            existing=ProviderCatalog(providers={}, defaults=ProviderDefaults()),
+        )
+
+
+def test_migrate_dream_provider_payload_rejects_unknown_keys() -> None:
+    with pytest.raises(
+        ProviderCatalogError,
+        match=r"unknown provider config setting: providers\.openai\.extra",
+    ):
+        migrate_dream_provider_payload(
+            {
+                "openai": {
+                    "type": "openai",
+                    "endpoint": "https://api.deepseek.com",
+                    "api_key": "secret",
+                    "extra": "nope",
+                }
+            },
+            existing=ProviderCatalog(providers={}, defaults=ProviderDefaults()),
+        )

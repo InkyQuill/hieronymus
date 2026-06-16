@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import tomllib
 from dataclasses import dataclass, fields, replace
 from typing import Any
@@ -10,27 +9,9 @@ import tomli_w
 from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
 
-SUPPORTED_PROVIDER_TYPES = frozenset({"openai", "anthropic", "gemini", "ollama"})
-
 
 class DreamConfigError(ValueError):
     """Raised when dream.conf cannot be loaded or used."""
-
-
-@dataclass(frozen=True)
-class ProviderProfile:
-    type: str
-    endpoint: str = ""
-    api_key: str = ""
-    timeout_seconds: float = 30.0
-
-    def to_payload(self, *, redact: bool = False) -> dict[str, object]:
-        return {
-            "type": self.type,
-            "endpoint": self.endpoint,
-            "api_key": "***" if redact and self.api_key else self.api_key,
-            "timeout_seconds": self.timeout_seconds,
-        }
 
 
 @dataclass(frozen=True)
@@ -342,21 +323,6 @@ def _validate_dreaming_payload(payload: dict[str, Any]) -> None:
         _require_exact_str("general_prompt", payload["general_prompt"])
 
 
-def _validate_provider_payload(name: str, payload: dict[str, Any]) -> None:
-    prefix = f"providers.{name}"
-    if "type" in payload:
-        _require_exact_str(f"{prefix}.type", payload["type"])
-    if "endpoint" in payload:
-        _require_exact_str(f"{prefix}.endpoint", payload["endpoint"])
-    if "api_key" in payload:
-        _require_exact_str(f"{prefix}.api_key", payload["api_key"])
-    if "timeout_seconds" in payload:
-        payload["timeout_seconds"] = _coerce_positive_float(
-            f"{prefix}.timeout_seconds",
-            payload["timeout_seconds"],
-        )
-
-
 def _validate_workflow_payload(name: str, payload: dict[str, Any]) -> None:
     prefix = f"workflows.{name}"
     if "provider" in payload:
@@ -367,21 +333,13 @@ def _validate_workflow_payload(name: str, payload: dict[str, Any]) -> None:
         _require_exact_bool(f"{prefix}.enabled", payload["enabled"])
 
 
-def _validate_provider_profile(name: str, provider: ProviderProfile) -> None:
-    prefix = f"providers.{name}"
-    _require_exact_str(f"{prefix}.type", provider.type)
-    _require_exact_str(f"{prefix}.endpoint", provider.endpoint)
-    _require_exact_str(f"{prefix}.api_key", provider.api_key)
-    _require_positive_float(f"{prefix}.timeout_seconds", provider.timeout_seconds)
-    if provider.type not in SUPPORTED_PROVIDER_TYPES:
-        raise DreamConfigError(f"unsupported provider type for {name}: {provider.type}")
-
-
 def _validate_workflow_profile(name: str, workflow: WorkflowProfile) -> None:
     prefix = f"workflows.{name}"
     _require_exact_str(f"{prefix}.provider", workflow.provider)
     _require_exact_str(f"{prefix}.model", workflow.model)
     _require_exact_bool(f"{prefix}.enabled", workflow.enabled)
+    if workflow.enabled and not workflow.model:
+        raise DreamConfigError(f"enabled workflow must have a model: {name}")
 
 
 def _dict_payload(value: object, field_name: str) -> dict[str, Any]:
@@ -441,18 +399,3 @@ def _require_exact_bool(field_name: str, value: object) -> None:
 def _require_exact_str(field_name: str, value: object) -> None:
     if type(value) is not str:
         raise DreamConfigError(f"{field_name} must be a string")
-
-
-def _coerce_positive_float(field_name: str, value: object) -> float:
-    if type(value) not in (int, float):
-        raise DreamConfigError(f"{field_name} must be a number")
-    value = float(value)
-    if not math.isfinite(value):
-        raise DreamConfigError(f"{field_name} must be finite and greater than 0")
-    if value <= 0:
-        raise DreamConfigError(f"{field_name} must be greater than 0")
-    return value
-
-
-def _require_positive_float(field_name: str, value: object) -> None:
-    _coerce_positive_float(field_name, value)

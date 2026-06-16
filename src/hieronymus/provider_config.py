@@ -100,11 +100,20 @@ def migrate_dream_provider_payload(
     for profile_id, raw_profile in providers_payload.items():
         _validate_provider_id(profile_id)
         table = _dict_payload(raw_profile, f"providers.{profile_id}")
+        _validate_unknown_keys(
+            table,
+            allowed=frozenset(
+                {"name", "type", "endpoint", "url", "api_key", "key", "timeout_seconds"},
+            ),
+            prefix=f"providers.{profile_id}",
+        )
+        _validate_dream_provider_payload(profile_id, table)
+        _require_migration_profile_fields(profile_id, table)
         profile = ProviderProfile(
-            name=str(table.get("name", profile_id.replace("_", " ").title())),
-            type=str(table["type"]),
-            url=str(table.get("endpoint", table.get("url", ""))),
-            key=str(table.get("api_key", table.get("key", ""))),
+            name=table.get("name", profile_id.replace("_", " ").title()),
+            type=table["type"],
+            url=table.get("endpoint", table.get("url", "")),
+            key=table.get("api_key", table.get("key", "")),
             timeout_seconds=_coerce_positive_float(
                 f"providers.{profile_id}.timeout_seconds",
                 table.get("timeout_seconds", 30.0),
@@ -210,6 +219,27 @@ def _validate_provider_payload(name: str, payload: dict[str, Any]) -> None:
         )
 
 
+def _validate_dream_provider_payload(name: str, payload: dict[str, Any]) -> None:
+    prefix = f"providers.{name}"
+    if "name" in payload:
+        _require_exact_str(f"{prefix}.name", payload["name"])
+    if "type" in payload:
+        _require_exact_str(f"{prefix}.type", payload["type"])
+    if "endpoint" in payload:
+        _require_exact_str(f"{prefix}.endpoint", payload["endpoint"])
+    if "url" in payload:
+        _require_exact_str(f"{prefix}.url", payload["url"])
+    if "api_key" in payload:
+        _require_exact_str(f"{prefix}.api_key", payload["api_key"])
+    if "key" in payload:
+        _require_exact_str(f"{prefix}.key", payload["key"])
+    if "timeout_seconds" in payload:
+        payload["timeout_seconds"] = _coerce_positive_float(
+            f"{prefix}.timeout_seconds",
+            payload["timeout_seconds"],
+        )
+
+
 def _validate_defaults_payload(payload: dict[str, Any]) -> None:
     if "provider" in payload:
         _require_exact_str("defaults.provider", payload["provider"])
@@ -221,6 +251,13 @@ def _require_profile_fields(name: str, payload: dict[str, Any]) -> None:
     for field_name in ("type", "url"):
         if field_name not in payload:
             raise ProviderCatalogError(f"providers.{name}.{field_name} is required")
+
+
+def _require_migration_profile_fields(name: str, payload: dict[str, Any]) -> None:
+    if "type" not in payload:
+        raise ProviderCatalogError(f"providers.{name}.type is required")
+    if "endpoint" not in payload and "url" not in payload:
+        raise ProviderCatalogError(f"providers.{name}.url is required")
 
 
 def _validate_provider_id(name: object) -> None:

@@ -199,7 +199,7 @@ def test_workflow_provider_existence_is_validated_outside_dream_config(
     assert load_dream_config(config).workflows["crystallization"].provider == "missing"
 
 
-def test_enabled_workflow_model_presence_is_validated_outside_dream_config(
+def test_enabled_workflow_rejects_empty_model(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
@@ -208,9 +208,8 @@ def test_enabled_workflow_model_presence_is_validated_outside_dream_config(
         WorkflowProfile(provider="anthropic", model="", enabled=True),
     )
 
-    save_dream_config(config, dream_config)
-
-    assert load_dream_config(config).workflows["crystallization"].model == ""
+    with pytest.raises(DreamConfigError, match="enabled workflow must have a model"):
+        save_dream_config(config, dream_config)
 
 
 @pytest.mark.parametrize(
