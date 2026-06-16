@@ -4,7 +4,15 @@
 
 **Goal:** Finish the next Memory/Dreaming product slice by moving ingestion policy into `ingest.conf`, retiring `settings.toml` provider configuration, and locking dream provider/audit behavior with tests.
 
-**Architecture:** Keep configuration local-first and file-based. `dream.conf` owns dreaming provider profiles, workflows, prompts, thresholds, and plaintext API keys; `ingest.conf` owns ingestion limits; `settings.toml` is removed rather than migrated. Existing domain services remain the mutation boundary: `WorkspaceStore` writes short-term memory, `IngestionService` performs Read/Learn splitting, `DreamService` performs dreaming, and `ConfigBridge` exposes config payloads to OpenTUI.
+**Architecture:** Keep configuration local-first and file-based. Provider
+profiles and local API keys are now owned by `provider.conf` per
+[ADR 0007](../../adr/0007-provider-catalog-and-workflow-assignments.md);
+`dream.conf` owns workflow assignments, prompts, thresholds, and caps;
+`ingest.conf` owns ingestion limits; `settings.toml` is removed rather than
+migrated. Existing domain services remain the mutation boundary:
+`WorkspaceStore` writes short-term memory, `IngestionService` performs
+Read/Learn splitting, `DreamService` performs dreaming, and `ConfigBridge`
+exposes config payloads to OpenTUI.
 
 **Tech Stack:** Python 3.12, TOML via `tomllib`/`tomli_w`, SQLite, pytest, React/OpenTUI on Bun.
 
