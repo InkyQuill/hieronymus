@@ -247,11 +247,14 @@ def _active_provider(dream_config: DreamConfig, provider_catalog) -> str:
         return "deterministic"
     workflow = dream_config.workflows.get("crystallization")
     if workflow is not None and workflow.enabled:
-        return resolve_effective_workflow(
-            dream_config,
-            provider_catalog,
-            "crystallization",
-        ).provider
+        try:
+            return resolve_effective_workflow(
+                dream_config,
+                provider_catalog,
+                "crystallization",
+            ).provider
+        except ProviderCatalogError:
+            return workflow.provider
     for name, workflow in dream_config.workflows.items():
         if workflow.enabled:
             try:

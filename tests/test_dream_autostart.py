@@ -153,6 +153,30 @@ def test_status_reports_enabled_workflow_when_crystallization_is_disabled(
     assert status["active_provider"] == "ollama"
 
 
+def test_status_degrades_when_crystallization_provider_default_is_missing(
+    config: HieronymusConfig,
+) -> None:
+    save_dream_config(
+        config,
+        replace(
+            default_dream_config(),
+            enabled=True,
+            workflows={
+                "crystallization": WorkflowProfile(
+                    provider="",
+                    model="model",
+                    enabled=True,
+                ),
+            },
+        ),
+    )
+
+    status = DreamAutostart(config).status()
+
+    assert status["enabled"] is True
+    assert status["active_provider"] == ""
+
+
 def test_urgent_trigger_runs_when_max_pending_is_reached(config: HieronymusConfig) -> None:
     _enable_autostart(config, max_pending_short_term_memories=2)
     _completed_session(config, _context(config), memories=2)

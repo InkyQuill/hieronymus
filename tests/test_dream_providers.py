@@ -19,7 +19,13 @@ from hieronymus.dream_providers import (
     resolve_profile_provider,
     resolve_provider,
 )
-from hieronymus.llm_cache import CachedModels, ModelCacheEntry, load_model_cache, save_model_cache
+from hieronymus.llm_cache import (
+    CachedModels,
+    ModelCacheEntry,
+    dream_profile_cache_identity,
+    load_model_cache,
+    save_model_cache,
+)
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.provider_config import (
     ProviderCatalog,
@@ -381,7 +387,7 @@ def test_anthropic_model_suggestions_ignore_malformed_dream_config(
 
     result = ProviderRegistry().list_model_suggestions(config, "anthropic")
 
-    assert result.error == ""
+    assert result.error == "provider profile missing: anthropic"
     assert result.source == "defaults"
 
 
@@ -792,6 +798,35 @@ def test_anthropic_model_suggestions_cache_default_hints(tmp_path) -> None:
     assert load_model_cache(config).providers["anthropic"].models == tuple(result.models)
 
 
+def test_missing_catalog_profile_ignores_profile_specific_model_cache(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    cached_profile = ProviderProfile(
+        type="anthropic",
+        endpoint="https://anthropic.example.test",
+        api_key="old-secret",
+    )
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="anthropic",
+                models=("stale-profile-model",),
+                fetched_at=datetime.now(UTC).isoformat(),
+                identity=dream_profile_cache_identity("anthropic", cached_profile),
+            )
+        ),
+    )
+
+    result = ProviderRegistry().list_model_suggestions(config, "anthropic")
+
+    assert result.to_json_dict() == {
+        "provider": "anthropic",
+        "models": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
+        "source": "defaults",
+        "error": "provider profile missing: anthropic",
+    }
+
+
 def test_anthropic_model_suggestions_return_defaults_when_cache_save_fails(
     tmp_path,
     monkeypatch,
@@ -808,7 +843,7 @@ def test_anthropic_model_suggestions_return_defaults_when_cache_save_fails(
         "provider": "anthropic",
         "models": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
         "source": "defaults",
-        "error": "",
+        "error": "provider profile missing: anthropic",
     }
 
 
