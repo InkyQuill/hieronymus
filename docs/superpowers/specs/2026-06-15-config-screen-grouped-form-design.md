@@ -10,7 +10,7 @@ User testing of `hiero config` found these issues:
 - Terminal size is shown during normal use even though it is not actionable.
 - Provider selection feels disconnected on a separate tab/pane.
 - Footer help does not visually distinguish keys from descriptions.
-- Provider/API access, dreaming, ingest, and release settings are mixed together.
+- Provider/API, dreaming, ingest, and release settings are scattered across the form.
 
 The existing bridge already exposes form metadata through `form_schema.sections`,
 `form_schema.groups`, and `form_schema.fields`. The main problem is the
@@ -34,9 +34,9 @@ Make `hiero config` a compact grouped editor:
 
 - Do not redesign the Python config file format.
 - Do not move runtime databases or book project state.
-- Do not introduce fuzzy or semantic behavior into strict configuration rules.
-- Do not build a first-run onboarding wizard.
-- Do not implement a graphical browser UI for configuration.
+- Do not introduce fuzzy or semantic behavior into strict configuration rules; instead, keep all config rules explicit and deterministic.
+- Skip a first-run onboarding wizard.
+- Skip a graphical browser UI for configuration.
 
 ## Proposed Approach
 

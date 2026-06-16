@@ -107,6 +107,7 @@ export function ConfigForm({
                   <text fg="gray"> [{configFileLabel(group)}]</text>
                 ) : null}
               </box>
+              {/* Windowed layouts keep only the active field hint to preserve footer space. */}
               {group.description && visibleRows === undefined ? (
                 <text fg="gray">{group.description}</text>
               ) : null}
@@ -167,9 +168,9 @@ export function ConfigForm({
               })}
 
               {isGroupActive && activeField?.hint ? (
-                <box marginTop={1}>
-                  <text fg="cyan">{activeField.hint}</text>
-                </box>
+                <text fg="cyan" marginTop={1}>
+                  {activeField.hint}
+                </text>
               ) : null}
             </box>
           );
@@ -240,7 +241,7 @@ function groupRenderedFields(
         id: "other",
         section: "",
         label: "Other",
-        description: "",
+        description: "Additional configuration fields.",
       },
       fields: orphanFields,
     });
