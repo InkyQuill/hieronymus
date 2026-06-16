@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from hieronymus.dream_config import DreamConfig, WorkflowProfile
+from hieronymus.provider_config import ProviderCatalog, ProviderCatalogError
 
 CRYSTALLIZATION_PHASE = "crystallization"
 CONCEPT_DISCOVERY_PHASE = "concept_discovery"
@@ -58,6 +59,28 @@ def resolve_enabled_workflows(dream_config: DreamConfig) -> dict[str, WorkflowPr
     return {
         phase: workflow for phase, workflow in dream_config.workflows.items() if workflow.enabled
     }
+
+
+def resolve_effective_workflow(
+    dream_config: DreamConfig,
+    provider_catalog: ProviderCatalog,
+    workflow_name: str,
+) -> WorkflowProfile:
+    workflow = dream_config.workflows.get(workflow_name)
+    if workflow is None:
+        raise ProviderCatalogError(f"workflow is missing: {workflow_name}")
+    if not workflow.enabled:
+        return workflow
+
+    provider = workflow.provider.strip() or provider_catalog.defaults.provider.strip()
+    model = workflow.model.strip() or provider_catalog.defaults.model.strip()
+    if not provider:
+        raise ProviderCatalogError(f"enabled workflow must have a provider: {workflow_name}")
+    if not model:
+        raise ProviderCatalogError(f"enabled workflow must have a model: {workflow_name}")
+    if provider != "deterministic" and provider not in provider_catalog.providers:
+        raise ProviderCatalogError(f"provider profile missing: {provider}")
+    return WorkflowProfile(provider=provider, model=model, enabled=True)
 
 
 def build_phase_prompt(dream_config: DreamConfig, phase: str, phase_input: object) -> str:

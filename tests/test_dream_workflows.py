@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from hieronymus.dream_config import default_dream_config
+from hieronymus.dream_config import WorkflowProfile, default_dream_config
 from hieronymus.dream_workflows import (
     CONCEPT_DISCOVERY_PHASE,
     CONSOLIDATION_COMPACTION_PHASE,
@@ -12,7 +12,14 @@ from hieronymus.dream_workflows import (
     RELATION_DISCOVERY_PHASE,
     RULE_DISCOVERY_PHASE,
     build_phase_prompt,
+    resolve_effective_workflow,
     resolve_enabled_workflows,
+)
+from hieronymus.provider_config import (
+    ProviderCatalog,
+    ProviderCatalogError,
+    ProviderDefaults,
+    ProviderProfile,
 )
 
 
@@ -62,3 +69,83 @@ def test_phase_prompt_includes_general_prompt_format_constraint_and_input() -> N
 def test_unknown_phase_raises() -> None:
     with pytest.raises(ValueError, match="unknown dream workflow phase: missing"):
         build_phase_prompt(default_dream_config(), "missing", "{}")
+
+
+def test_effective_workflow_uses_provider_catalog_defaults() -> None:
+    dream_config = default_dream_config().with_workflow(
+        CRYSTALLIZATION_PHASE,
+        WorkflowProfile(
+            provider="",
+            model="",
+            enabled=True,
+        ),
+    )
+    catalog = ProviderCatalog(
+        providers={
+            "openai": ProviderProfile(
+                name="OpenAI",
+                type="openai",
+                url="https://api.openai.com/v1",
+                key="secret-openai",
+            )
+        },
+        defaults=ProviderDefaults(provider="openai", model="gpt-4.1-mini"),
+    )
+
+    resolved = resolve_effective_workflow(dream_config, catalog, CRYSTALLIZATION_PHASE)
+
+    assert resolved.provider == "openai"
+    assert resolved.model == "gpt-4.1-mini"
+
+
+def test_effective_workflow_requires_enabled_provider() -> None:
+    dream_config = default_dream_config().with_workflow(
+        CRYSTALLIZATION_PHASE,
+        WorkflowProfile(
+            provider="",
+            model="model",
+            enabled=True,
+        ),
+    )
+
+    with pytest.raises(
+        ProviderCatalogError,
+        match="enabled workflow must have a provider: crystallization",
+    ):
+        resolve_effective_workflow(dream_config, ProviderCatalog(), CRYSTALLIZATION_PHASE)
+
+
+def test_effective_workflow_requires_enabled_model() -> None:
+    dream_config = default_dream_config().with_workflow(
+        CRYSTALLIZATION_PHASE,
+        WorkflowProfile(
+            provider="openai",
+            model="",
+            enabled=True,
+        ),
+    )
+    catalog = ProviderCatalog(
+        providers={
+            "openai": ProviderProfile(
+                name="OpenAI",
+                type="openai",
+                url="https://api.openai.com/v1",
+                key="secret-openai",
+            )
+        },
+    )
+
+    with pytest.raises(
+        ProviderCatalogError,
+        match="enabled workflow must have a model: crystallization",
+    ):
+        resolve_effective_workflow(dream_config, catalog, CRYSTALLIZATION_PHASE)
+
+
+def test_effective_workflow_requires_catalog_profile() -> None:
+    with pytest.raises(ProviderCatalogError, match="provider profile missing: anthropic"):
+        resolve_effective_workflow(
+            default_dream_config(),
+            ProviderCatalog(),
+            CRYSTALLIZATION_PHASE,
+        )

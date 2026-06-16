@@ -62,6 +62,13 @@ def _enable_autostart(
             max_pending_short_term_memories=max_pending_short_term_memories,
             max_short_term_memories_per_cycle=max_short_term_memories_per_cycle,
             not_enough_memories_cycle_threshold=not_enough_memories_cycle_threshold,
+            workflows={
+                "crystallization": WorkflowProfile(
+                    provider="deterministic",
+                    model="deterministic",
+                    enabled=True,
+                )
+            },
         ),
     )
 

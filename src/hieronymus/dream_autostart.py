@@ -11,7 +11,9 @@ from hieronymus.db import apply_migration, connect
 from hieronymus.dream_config import DreamConfig, load_dream_config
 from hieronymus.dream_locks import read_dream_cycle_state
 from hieronymus.dream_providers import resolve_provider
+from hieronymus.dream_workflows import resolve_effective_workflow
 from hieronymus.dreaming import DreamService
+from hieronymus.provider_config import ProviderCatalogError, load_provider_catalog
 
 
 @dataclass(frozen=True)
@@ -85,7 +87,7 @@ class DreamAutostart:
         state_payload = state.to_json_dict()
         return {
             "enabled": dream_config.enabled,
-            "active_provider": _active_provider(dream_config),
+            "active_provider": _active_provider(dream_config, load_provider_catalog(self.config)),
             "schedule_interval_minutes": dream_config.schedule_interval_minutes,
             "min_pending_short_term_memories": dream_config.min_pending_short_term_memories,
             "max_pending_short_term_memories": dream_config.max_pending_short_term_memories,
@@ -240,15 +242,22 @@ class DreamAutostart:
         return state.last_started_at
 
 
-def _active_provider(dream_config: DreamConfig) -> str:
+def _active_provider(dream_config: DreamConfig, provider_catalog) -> str:
     if not dream_config.enabled:
         return "deterministic"
     workflow = dream_config.workflows.get("crystallization")
     if workflow is not None and workflow.enabled:
-        return workflow.provider
-    for workflow in dream_config.workflows.values():
+        return resolve_effective_workflow(
+            dream_config,
+            provider_catalog,
+            "crystallization",
+        ).provider
+    for name, workflow in dream_config.workflows.items():
         if workflow.enabled:
-            return workflow.provider
+            try:
+                return resolve_effective_workflow(dream_config, provider_catalog, name).provider
+            except ProviderCatalogError:
+                return workflow.provider
     return "deterministic"
 
 
