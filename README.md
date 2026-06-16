@@ -49,12 +49,12 @@ Dreaming configuration is stored in plaintext local config under the configured
 Hieronymus data root. API key values may be stored locally and are redacted from
 doctor output, JSON bridge responses, logs, provider checks, and audit records.
 
-Supported dream providers:
+Supported provider runtime types for `provider.conf` profiles:
 
 - `deterministic`: offline local fallback.
-- `openai`: OpenAI and OpenAI-compatible endpoints using `OPENAI_API_KEY`.
-- `gemini`: Gemini API using `GEMINI_API_KEY`.
-- `anthropic`: Anthropic Messages API using `ANTHROPIC_API_KEY`.
+- `openai`: OpenAI and OpenAI-compatible endpoints.
+- `gemini`: Gemini API.
+- `anthropic`: Anthropic Messages API.
 
 Dreaming automation is controlled by `autostart_enabled`,
 `min_interval_minutes`, `new_short_term_memory_threshold`, and

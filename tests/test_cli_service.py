@@ -208,9 +208,8 @@ def test_docs_describe_real_config_tui_and_llm_providers() -> None:
         assert phrase not in combined
 
     assert "hiero config" in combined
-    assert "OPENAI_API_KEY" in combined
-    assert "GEMINI_API_KEY" in combined
-    assert "ANTHROPIC_API_KEY" in combined
+    assert "provider.conf" in combined
+    assert "Supported provider runtime types" in combined
     assert "API key values may be stored locally" in combined
     assert "new_short_term_memory_threshold" in combined
     assert "TypeScript React/OpenTUI terminal UI" in combined
