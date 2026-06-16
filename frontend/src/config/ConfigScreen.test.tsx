@@ -1453,6 +1453,26 @@ describe("ConfigScreen", () => {
       "defaults.model": "gpt-4.1-mini",
       "profile.timeout_seconds": "45",
     });
+    expect(calls[0]?.params.draft).toMatchObject({
+      provider_catalog: {
+        defaults: {
+          provider: "openai",
+          model: "gpt-4.1-mini",
+        },
+        profiles: {
+          openai: {
+            timeout_seconds: "45",
+          },
+        },
+      },
+    });
+    expect(
+      (
+        calls[0]?.params.draft as {
+          provider_catalog?: Record<string, unknown>;
+        }
+      )?.provider_catalog?.profile,
+    ).toBeUndefined();
     expect(output).toContain("Timeout: 45");
   });
 

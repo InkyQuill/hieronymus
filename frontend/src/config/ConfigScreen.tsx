@@ -129,7 +129,11 @@ export function ConfigScreen({ initial, client }: Props) {
       return;
     }
     const draftValues = draftFormValues(formValues);
-    const draft = draftWithFormValues(payload.draft, draftValues);
+    const draft = draftWithFormValues(
+      payload.draft,
+      draftValues,
+      payload.selected_provider,
+    );
 
     void runConfigOperation({
       client,
@@ -839,13 +843,15 @@ function draftFormValues(values: ConfigFormValues): ConfigFormValues {
 function draftWithFormValues(
   draft: ConfigBootstrap["draft"],
   values: ConfigFormValues,
+  selectedProvider: string,
 ): ConfigBootstrap["draft"] {
   return {
     ...draft,
-    provider_catalog: sectionDraftWithFormValues(
+    provider_catalog: providerCatalogDraftWithFormValues(
       draft.provider_catalog,
       values.providerCatalog,
-    ) as ConfigBootstrap["draft"]["provider_catalog"],
+      selectedProvider,
+    ),
     workflows: sectionDraftWithFormValues(
       draft.workflows,
       values.workflows,
@@ -857,6 +863,29 @@ function draftWithFormValues(
     ) as ConfigBootstrap["draft"]["ingest"],
     release: sectionDraftWithFormValues(draft.release, values.release),
   };
+}
+
+function providerCatalogDraftWithFormValues(
+  section: ConfigBootstrap["draft"]["provider_catalog"],
+  formValues: Record<string, string>,
+  selectedProvider: string,
+): ConfigBootstrap["draft"]["provider_catalog"] {
+  const canonicalSection: Record<string, unknown> = { ...section };
+  delete canonicalSection.profile;
+  const canonicalFormValues: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(formValues)) {
+    canonicalFormValues[
+      key.startsWith("profile.")
+        ? `profiles.${selectedProvider}.${key.slice(8)}`
+        : key
+    ] = value;
+  }
+
+  return sectionDraftWithFormValues(
+    canonicalSection,
+    canonicalFormValues,
+  ) as ConfigBootstrap["draft"]["provider_catalog"];
 }
 
 function sectionDraftWithFormValues(
