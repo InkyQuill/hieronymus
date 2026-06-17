@@ -260,7 +260,7 @@ LLM-assisted relation discovery is disabled by default and points to the Ollama
 workflow assignment. Reinforcement/compaction points to the Ollama workflow
 assignment.
 
-Dreaming is disabled until required enabled provider-backed workflows are
+Dreaming is disabled until required provider-backed workflows are enabled and
 valid. Disabled optional workflows do not fail doctor checks for missing
 provider/model/API settings, but invalid saved values may still warn.
 

@@ -120,6 +120,46 @@ def test_load_provider_catalog_rejects_invalid_toml(tmp_path: Path) -> None:
         load_provider_catalog(config)
 
 
+def test_load_provider_catalog_reports_unreadable_provider_conf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    _write_provider_config(config, "")
+    original_read_text = Path.read_text
+
+    def unreadable(self: Path, *args, **kwargs):
+        if self == config.provider_config_path:
+            raise OSError("permission denied")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+
+    with pytest.raises(ProviderCatalogError, match="provider.conf could not be read"):
+        load_provider_catalog(config)
+
+
+def test_load_provider_catalog_reports_unreadable_legacy_dream_conf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    _write_provider_config(config, "")
+    config.dream_config_path.parent.mkdir(parents=True, exist_ok=True)
+    config.dream_config_path.write_text("[providers.openai]\n", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def unreadable(self: Path, *args, **kwargs):
+        if self == config.dream_config_path:
+            raise OSError("permission denied")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+
+    with pytest.raises(ProviderCatalogError, match="dream.conf could not be read"):
+        load_provider_catalog(config)
+
+
 def test_save_and_load_provider_catalog_round_trips_profiles_and_defaults(
     tmp_path: Path,
 ) -> None:
@@ -332,7 +372,7 @@ def test_load_provider_catalog_rejects_unknown_keys(
         load_provider_catalog(config)
 
 
-@pytest.mark.parametrize("provider_id", ["", "defaults"])
+@pytest.mark.parametrize("provider_id", ["", "defaults", "deep.seek", "deep seek"])
 def test_provider_catalog_rejects_invalid_provider_ids(provider_id: str) -> None:
     with pytest.raises(ProviderCatalogError, match="invalid provider id"):
         validate_provider_catalog(

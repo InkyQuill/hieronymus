@@ -583,6 +583,23 @@ def test_dream_error_records_redact_configured_api_key_value(
     assert run["error"] == "provider rejected [redacted]"
 
 
+def test_dream_error_redaction_does_not_mask_catalog_load_failure(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "hieronymus.dreaming.load_provider_catalog",
+        lambda config: (_ for _ in ()).throw(OSError("permission denied")),
+    )
+
+    message = DreamService(
+        config,
+        DeterministicDreamProvider(),
+    )._redacted_error_message(RuntimeError("provider rejected raw-secret-value"))
+
+    assert message == "provider rejected raw-secret-value"
+
+
 def test_dreaming_records_failed_run_for_invalid_provider_output(
     config: HieronymusConfig,
 ) -> None:

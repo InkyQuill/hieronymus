@@ -7,7 +7,9 @@ from hieronymus.provider_config import ProviderCatalog
 
 def configured_secret_values(provider_catalog: ProviderCatalog) -> set[str]:
     return {
-        value for provider in provider_catalog.providers.values() if (value := provider.key.strip())
+        value
+        for provider in provider_catalog.providers.values()
+        if (value := provider.key.strip()) and len(value) >= 4
     }
 
 

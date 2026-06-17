@@ -3,6 +3,8 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from hieronymus.config import HieronymusConfig
 from hieronymus.doctor import Doctor, DoctorFinding
 from hieronymus.dream_config import (
@@ -345,6 +347,23 @@ def test_config_payload_redacts_api_key_and_preserves_existing_secret_on_save(
     assert load_provider_catalog(config).providers["openai"].key == "raw-secret-value"
 
 
+def test_config_save_persists_provider_catalog_before_dream_config(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bridge = ConfigBridge(config)
+    draft = bridge.bootstrap({})["draft"]
+    with (
+        patch(
+            "hieronymus.tui_bridge.config_api.save_provider_catalog",
+            side_effect=OSError("provider.conf denied"),
+        ),
+        patch("hieronymus.tui_bridge.config_api.save_dream_config") as save_dream,
+        pytest.raises(OSError, match="provider.conf denied"),
+    ):
+        bridge.save({"draft": draft})
+
+    save_dream.assert_not_called()
+
+
 def test_config_clears_pending_api_key_when_form_is_emptied(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bridge = ConfigBridge(config)
@@ -529,6 +548,14 @@ def test_config_update_draft_rejects_legacy_partial_draft(tmp_path: Path) -> Non
         "errors": ["draft must include dream, ingest, and release"],
         "field_errors": {},
     }
+
+
+def test_config_update_draft_rejects_malformed_provider_catalog_container(
+    tmp_path: Path,
+) -> None:
+    payload = ConfigBridge(_config(tmp_path)).update_draft({"provider_catalog": "bad"})
+
+    assert "provider_catalog must be a table" in payload["validation"]["errors"]
 
 
 def test_config_validation_includes_field_error_metadata(tmp_path: Path) -> None:

@@ -268,4 +268,4 @@ enabled = true
     dream_config = load_dream_config(config)
 
     assert dream_config.workflows["crystallization"].provider == "openai"
-    assert "openai" not in dream_config.to_payload()
+    assert "providers" not in dream_config.to_payload()

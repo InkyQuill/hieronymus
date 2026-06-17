@@ -45,6 +45,7 @@ from hieronymus.release_config import (
     save_release_config,
     validate_release_config,
 )
+from hieronymus.secrets import configured_secret_values
 from hieronymus.tui_bridge.config_state import (
     field_value,
     parse_bool,
@@ -509,8 +510,8 @@ class ConfigBridge:
                 release_config,
                 validation_errors=errors,
             )
-        save_dream_config(self.config, dream_config)
         save_provider_catalog(self.config, provider_catalog)
+        save_dream_config(self.config, dream_config)
         save_ingest_config(self.config, ingest_config)
         save_release_config(self.config, release_config)
         return self._payload(
@@ -860,6 +861,8 @@ class ConfigBridge:
             draft = params
         if type(draft) is dict:
             raw_provider_catalog = draft.get("provider_catalog")
+            if "provider_catalog" in draft and type(raw_provider_catalog) is not dict:
+                return provider_catalog, "provider_catalog must be a table"
             if type(raw_provider_catalog) is dict:
                 self._clear_pending_api_keys_from_provider_draft(
                     provider_catalog,
@@ -1436,12 +1439,7 @@ def _profile_requires_api_key(profile: CatalogProviderProfile) -> bool:
 
 def _redact_catalog_secret_values(text: str, provider_catalog: ProviderCatalog) -> str:
     redacted = text
-    secrets = [
-        profile.key.strip()
-        for profile in provider_catalog.providers.values()
-        if profile.key.strip()
-    ]
-    for value in sorted(secrets, key=len, reverse=True):
+    for value in sorted(configured_secret_values(provider_catalog), key=len, reverse=True):
         redacted = redacted.replace(value, "[redacted]")
     return redacted
 
@@ -1455,7 +1453,8 @@ def _result_to_json_dict(result: object) -> dict[str, object]:
 def _draft_container_errors(params: dict[str, object]) -> list[str]:
     draft = params.get("draft")
     if draft is None and any(
-        key in params for key in ("dream", "dreaming", "providers", "ingest", "release")
+        key in params
+        for key in ("dream", "dreaming", "provider_catalog", "providers", "ingest", "release")
     ):
         draft = params
     if type(draft) is not dict:

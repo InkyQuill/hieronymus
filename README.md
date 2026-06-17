@@ -55,6 +55,8 @@ Supported provider runtime types for `provider.conf` profiles:
 - `openai`: OpenAI and OpenAI-compatible endpoints.
 - `gemini`: Gemini API.
 - `anthropic`: Anthropic Messages API.
+- `ollama`: local Ollama chat/model endpoints without an API key.
+- `google`: provider catalog alias for Gemini-compatible Google API endpoints.
 
 Dreaming automation is controlled by `autostart_enabled`,
 `min_interval_minutes`, `new_short_term_memory_threshold`, and

@@ -142,9 +142,7 @@ function payload(selectedProvider: string = "openai"): ConfigBootstrap {
             name: selectedProvider,
             type: selectedProvider,
             url:
-              selectedProvider === "openai"
-                ? "https://api.openai.com/v1"
-                : "",
+              selectedProvider === "openai" ? "https://api.openai.com/v1" : "",
             key:
               selectedProvider === "gemini" ? "gemini-secret" : "openai-secret",
             timeout_seconds: 30,
@@ -153,9 +151,7 @@ function payload(selectedProvider: string = "openai"): ConfigBootstrap {
         defaults: {
           provider: selectedProvider,
           model:
-            selectedProvider === "gemini"
-              ? "gemini-2.5-flash"
-              : "gpt-4.1-mini",
+            selectedProvider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
         },
       },
       providers: {},
@@ -167,8 +163,7 @@ function payload(selectedProvider: string = "openai"): ConfigBootstrap {
         [selectedProvider]: {
           name: selectedProvider,
           type: selectedProvider,
-          url:
-            selectedProvider === "openai" ? "https://api.openai.com/v1" : "",
+          url: selectedProvider === "openai" ? "https://api.openai.com/v1" : "",
           key:
             selectedProvider === "gemini" ? "gemini-secret" : "openai-secret",
           timeout_seconds: 30,
@@ -177,9 +172,7 @@ function payload(selectedProvider: string = "openai"): ConfigBootstrap {
       defaults: {
         provider: selectedProvider,
         model:
-          selectedProvider === "gemini"
-            ? "gemini-2.5-flash"
-            : "gpt-4.1-mini",
+          selectedProvider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
       },
     },
     form_values: {
@@ -763,8 +756,7 @@ describe("ConfigScreen", () => {
 
     const output = await waitForFrame(
       (frame) =>
-        frame.includes("> Max block chars: 1200") &&
-        frame.includes("[q] quit"),
+        frame.includes("> Max block chars: 1200") && frame.includes("[q] quit"),
     );
     expect(output).toContain("Ingestion");
     expect(output).toContain("> Max block chars: 1200");
@@ -901,9 +893,7 @@ describe("ConfigScreen", () => {
     });
     const client = fakeClient((method, params) => {
       calls.push({ method, params });
-      return Promise.resolve(
-        twoProviderPayload(params.provider as string),
-      );
+      return Promise.resolve(twoProviderPayload(params.provider as string));
     });
     const { render, mockInput, waitForFrame } = setupTest();
 
@@ -1348,12 +1338,7 @@ describe("ConfigScreen", () => {
     });
     const { render, mockInput, waitFor, waitForFrame } = setupTest();
 
-    await render(
-      <ConfigScreen
-        initial={initial}
-        client={client}
-      />,
-    );
+    await render(<ConfigScreen initial={initial} client={client} />);
 
     await mockInput.press("down");
     await mockInput.press("enter");
@@ -1390,7 +1375,8 @@ describe("ConfigScreen", () => {
             type: "openai",
             url: "https://api.openai.com/v1",
             key: "openai-secret",
-            timeout_seconds: "30",
+            timeout_seconds: 30,
+            enabled: true,
           },
         },
       },
@@ -1426,6 +1412,7 @@ describe("ConfigScreen", () => {
               url: "https://api.openai.com/v1",
               key: "openai-secret",
               timeout_seconds: "45",
+              enabled: true,
             },
           },
         },
@@ -1451,6 +1438,7 @@ describe("ConfigScreen", () => {
     expect(calls[0]?.params.provider_catalog).toMatchObject({
       "defaults.provider": "openai",
       "defaults.model": "gpt-4.1-mini",
+      "profile.enabled": "true",
       "profile.timeout_seconds": "45",
     });
     expect(calls[0]?.params.draft).toMatchObject({

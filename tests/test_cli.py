@@ -485,6 +485,19 @@ def test_config_json_does_not_include_raw_api_key_value(tmp_path, monkeypatch):
     assert "raw-secret-value" not in result.output
 
 
+def test_config_json_reports_filesystem_config_read_errors(tmp_path, monkeypatch):
+    data_root = tmp_path / "hieronymus"
+    monkeypatch.setattr(
+        "hieronymus.cli.load_provider_catalog",
+        lambda config: (_ for _ in ()).throw(OSError("provider.conf denied")),
+    )
+
+    result = CliRunner().invoke(main, ["--data-root", str(data_root), "config", "--json"])
+
+    assert result.exit_code != 0
+    assert "provider.conf denied" in result.output
+
+
 def test_recall_outputs_ranked_crystal_results(tmp_path):
     data_root = tmp_path / "hieronymus"
     context = _create_series(data_root)

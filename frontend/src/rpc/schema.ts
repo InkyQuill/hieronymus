@@ -1,7 +1,13 @@
 import { z } from "zod";
 
-export const ProviderNameSchema = z.string().min(1);
-const ProviderCatalogDefaultProviderSchema = z.string();
+export const ProviderNameSchema = z
+  .string()
+  .min(1)
+  .regex(/^[A-Za-z0-9_-]+$/);
+const ProviderCatalogDefaultProviderSchema = z.union([
+  ProviderNameSchema,
+  z.literal(""),
+]);
 const PositiveTimeoutStringSchema = z
   .string()
   .trim()
@@ -177,7 +183,9 @@ const ProviderCatalogProfileSchema = z
 
 const ProviderCatalogSchema = z
   .object({
-    profiles: z.record(ProviderNameSchema, ProviderCatalogProfileSchema).default({}),
+    profiles: z
+      .record(ProviderNameSchema, ProviderCatalogProfileSchema)
+      .default({}),
     defaults: z
       .object({
         provider: ProviderCatalogDefaultProviderSchema.default(""),

@@ -657,11 +657,11 @@ git commit -m "feat: expose ingest configuration"
 
 ---
 
-### Task 4: Move Provider Runtime To `dream.conf`
+### Task 4: Move Provider Runtime To `provider.conf`
 
 **Files:**
 - Modify: `src/hieronymus/dream_providers.py`
-- Modify: `src/hieronymus/dream_config.py`
+- Modify: `src/hieronymus/provider_config.py`
 - Modify: `src/hieronymus/secrets.py`
 - Test: `tests/test_dream_providers.py`
 - Test: `tests/test_tui_bridge_protocol.py`
@@ -671,18 +671,19 @@ git commit -m "feat: expose ingest configuration"
 In `tests/test_dream_providers.py`, add tests that do not import or save settings:
 
 ```python
-def test_provider_status_uses_dream_config_profiles(tmp_path: Path) -> None:
+def test_provider_status_uses_provider_catalog_profiles(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    save_dream_config(
+    save_provider_catalog(
         config,
-        default_dream_config().with_provider(
-            "openai",
-            ProviderProfile(
-                type="openai",
-                endpoint="https://llm.example.test/v1",
-                api_key="",
-                timeout_seconds=12.5,
-            ),
+        ProviderCatalog(
+            providers={
+                "openai": ProviderProfile(
+                    type="openai",
+                    url="https://llm.example.test/v1",
+                    key="",
+                    timeout_seconds=12.5,
+                )
+            }
         ),
     )
 
@@ -700,16 +701,17 @@ Add:
 ```python
 def test_provider_check_uses_plaintext_profile_key(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    save_dream_config(
+    save_provider_catalog(
         config,
-        default_dream_config().with_provider(
-            "openai",
-            ProviderProfile(
-                type="openai",
-                endpoint="https://llm.example.test/v1",
-                api_key="secret-test-key",
-                timeout_seconds=12.5,
-            ),
+        ProviderCatalog(
+            providers={
+                "openai": ProviderProfile(
+                    type="openai",
+                    url="https://llm.example.test/v1",
+                    key="secret-test-key",
+                    timeout_seconds=12.5,
+                )
+            }
         ),
     )
     transport = FakeTransport(HTTPResponse(status=200, body=json.dumps({"id": "ok"})), [])
@@ -724,20 +726,20 @@ def test_provider_check_uses_plaintext_profile_key(tmp_path: Path) -> None:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-uv run pytest tests/test_dream_providers.py::test_provider_status_uses_dream_config_profiles tests/test_dream_providers.py::test_provider_check_uses_plaintext_profile_key -q
+uv run pytest tests/test_dream_providers.py::test_provider_status_uses_provider_catalog_profiles tests/test_dream_providers.py::test_provider_check_uses_plaintext_profile_key -q
 ```
 
 Expected: FAIL because `ProviderRegistry.status_payload()` and `.check()` still use `settings.toml`.
 
-- [ ] **Step 3: Convert ProviderRegistry public methods to dream profiles**
+- [ ] **Step 3: Convert ProviderRegistry public methods to provider catalog profiles**
 
 In `src/hieronymus/dream_providers.py`:
 
 - Keep `ProviderSettings` only if needed internally for HTTP provider classes, but import it from a new internal location or define a private equivalent in this file during Task 6.
-- Change `status_payload(config)` to read `load_dream_config(config)` and map provider names to `ProviderProfile`.
-- Return `api_key_present` from `bool(profile.api_key.strip())`, not environment variables.
-- Change `check(config, name)` to use `dream_config.providers[name]` and `check_profile(config, name, profile)`.
-- Change `list_model_suggestions(config, name)` to use `dream_config.providers[name]` and `list_profile_model_suggestions(config, name, profile)`.
+- Change `status_payload(config)` to read `load_provider_catalog(config)` and map provider names to catalog `ProviderProfile`.
+- Return `api_key_present` from `bool(profile.key.strip())`, not environment variables.
+- Change `check(config, name)` to use `provider_catalog.providers[name]` and `check_profile(config, name, profile)`.
+- Change `list_model_suggestions(config, name)` to use `provider_catalog.providers[name]` and `list_profile_model_suggestions(config, name, profile)`.
 
 The status item for configured remote profiles should have this shape:
 
@@ -746,9 +748,9 @@ The status item for configured remote profiles should have this shape:
     "name": metadata.name,
     "display_name": metadata.display_name,
     "configured": configured,
-    "model": _model_for_profile(dream_config, metadata.name),
-    "api_key_present": bool(profile.api_key.strip()),
-    "base_url": profile.endpoint,
+    "model": _model_for_profile(provider_catalog, metadata.name),
+    "api_key_present": bool(profile.key.strip()),
+    "base_url": profile.url,
     "timeout_seconds": profile.timeout_seconds,
     "error": error,
 }
@@ -756,23 +758,23 @@ The status item for configured remote profiles should have this shape:
 
 - [ ] **Step 4: Update secret redaction**
 
-In `src/hieronymus/secrets.py`, replace settings-based redaction with dream-config values:
+In `src/hieronymus/secrets.py`, replace settings-based redaction with provider-catalog values:
 
 ```python
-from hieronymus.dream_config import DreamConfig
+from hieronymus.provider_config import ProviderCatalog
 
 
-def configured_secret_values(dream_config: DreamConfig) -> set[str]:
+def configured_secret_values(provider_catalog: ProviderCatalog) -> set[str]:
     return {
-        provider.api_key
-        for provider in dream_config.providers.values()
-        if len(provider.api_key.strip()) >= 4
+        provider.key.strip()
+        for provider in provider_catalog.providers.values()
+        if len(provider.key.strip()) >= 4
     }
 
 
-def redact_configured_secret_values(text: str, dream_config: DreamConfig) -> str:
+def redact_configured_secret_values(text: str, provider_catalog: ProviderCatalog) -> str:
     redacted = text
-    for value in sorted(configured_secret_values(dream_config), key=len, reverse=True):
+    for value in sorted(configured_secret_values(provider_catalog), key=len, reverse=True):
         redacted = redacted.replace(value, "[redacted]")
     return redacted
 ```
@@ -816,12 +818,12 @@ git commit -m "feat: use dream config for provider runtime"
 - Test: `tests/test_tui_bridge_config.py`
 - Test: `frontend/src/config/ConfigScreen.test.tsx`
 
-- [ ] **Step 1: Write failing bridge save test for dream profile**
+- [ ] **Step 1: Write failing bridge save test for provider catalog profile**
 
 In `tests/test_tui_bridge_config.py`, add:
 
 ```python
-def test_config_save_persists_provider_profile_to_dream_conf(tmp_path: Path) -> None:
+def test_config_save_persists_provider_profile_to_provider_conf(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bridge = ConfigBridge(config)
     draft = bridge.update_draft(
@@ -849,10 +851,11 @@ def test_config_save_persists_provider_profile_to_dream_conf(tmp_path: Path) -> 
 
     payload = bridge.save({"selected_provider": "openai", "draft": draft})
 
+    provider_catalog = load_provider_catalog(config)
     dream_config = load_dream_config(config)
     assert payload["validation"]["ok"] is True
-    assert dream_config.providers["openai"].api_key == "plain-secret"
-    assert dream_config.providers["openai"].endpoint == "https://llm.example.test/v1"
+    assert provider_catalog.providers["openai"].key == "plain-secret"
+    assert provider_catalog.providers["openai"].url == "https://llm.example.test/v1"
     assert dream_config.workflows["crystallization"].provider == "openai"
     assert not (config.config_root / "settings.toml").exists()
 ```
@@ -860,7 +863,7 @@ def test_config_save_persists_provider_profile_to_dream_conf(tmp_path: Path) -> 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-uv run pytest tests/test_tui_bridge_config.py::test_config_save_persists_provider_profile_to_dream_conf -q
+uv run pytest tests/test_tui_bridge_config.py::test_config_save_persists_provider_profile_to_provider_conf -q
 ```
 
 Expected: FAIL because ConfigBridge still saves provider draft via `save_settings()`.

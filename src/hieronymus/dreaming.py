@@ -798,7 +798,10 @@ class DreamService:
 
     def _redacted_error_message(self, error: Exception) -> str:
         message = str(error)
-        return redact_configured_secret_values(message, load_provider_catalog(self.config))
+        try:
+            return redact_configured_secret_values(message, load_provider_catalog(self.config))
+        except Exception:
+            return message
 
     def _apply_score_maintenance(
         self,

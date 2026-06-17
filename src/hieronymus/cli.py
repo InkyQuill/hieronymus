@@ -321,6 +321,7 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
         ProviderCatalogError,
         IngestConfigError,
         ReleaseConfigError,
+        OSError,
     ) as error:
         raise click.ClickException(str(error)) from error
 

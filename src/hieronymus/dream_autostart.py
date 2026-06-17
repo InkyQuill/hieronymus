@@ -78,7 +78,7 @@ class DreamAutostart:
         dream_config = load_dream_config(self.config)
         try:
             provider_catalog = load_provider_catalog(self.config)
-        except ProviderCatalogError:
+        except (ProviderCatalogError, OSError):
             provider_catalog = default_provider_catalog()
         state = load_autostart_state(self.config)
         pending_completed_sessions, pending_short_term_memories = self._pending_counts()

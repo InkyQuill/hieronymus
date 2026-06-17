@@ -128,7 +128,7 @@ def test_error_response_can_redact_configured_secret_values() -> None:
     }
 
 
-def test_dispatch_error_redacts_secret_from_provider_catalog(tmp_path, monkeypatch) -> None:
+def test_dispatch_error_redacts_secret_from_provider_catalog(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     save_provider_catalog(
         config,
@@ -147,11 +147,6 @@ def test_dispatch_error_redacts_secret_from_provider_catalog(tmp_path, monkeypat
         config,
         default_dream_config(),
     )
-    monkeypatch.setattr(
-        "hieronymus.tui_bridge.server._redactor_or_none",
-        lambda config: lambda text: text.replace("raw-secret-value", "[redacted]"),
-    )
-
     response = dispatch(
         config,
         {"id": "1", "method": "provider rejected raw-secret-value", "params": {}},

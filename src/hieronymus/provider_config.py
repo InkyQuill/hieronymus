@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import tomllib
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
@@ -12,6 +13,7 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.dream_config import DreamConfigError, load_dream_config, save_dream_config
 
 SUPPORTED_PROVIDER_TYPES = frozenset({"anthropic", "google", "ollama", "openai"})
+PROVIDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ProviderCatalogError(ValueError):
@@ -81,6 +83,8 @@ def _load_provider_catalog_file(config: HieronymusConfig) -> ProviderCatalog:
 
     try:
         payload = tomllib.loads(config.provider_config_path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise ProviderCatalogError(f"provider.conf could not be read: {error}") from error
     except tomllib.TOMLDecodeError as error:
         raise ProviderCatalogError(f"provider.conf is not valid TOML: {error}") from error
 
@@ -109,6 +113,8 @@ def _legacy_dream_provider_payload(config: HieronymusConfig) -> dict[str, object
         return {}
     try:
         payload = tomllib.loads(config.dream_config_path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise ProviderCatalogError(f"dream.conf could not be read: {error}") from error
     except tomllib.TOMLDecodeError:
         return {}
     providers = payload.get("providers")
@@ -305,7 +311,7 @@ def _require_migration_profile_fields(name: str, payload: dict[str, Any]) -> Non
 def _validate_provider_id(name: object) -> None:
     if type(name) is not str:
         raise ProviderCatalogError("providers keys must be strings")
-    if not name or name == "defaults":
+    if not name or name == "defaults" or not PROVIDER_ID_PATTERN.fullmatch(name):
         raise ProviderCatalogError(f"invalid provider id: {name}")
 
 

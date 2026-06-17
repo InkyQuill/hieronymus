@@ -809,21 +809,29 @@ function flattenProviderCatalogFormValues(
   const flat: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(values)) {
-    if (typeof value === "string") {
-      flat[key] = value;
+    if (isScalarFormValue(value)) {
+      flat[key] = String(value);
       continue;
     }
     if (value === null || typeof value !== "object" || Array.isArray(value)) {
       continue;
     }
     for (const [nestedKey, nestedValue] of Object.entries(value)) {
-      if (typeof nestedValue === "string") {
-        flat[`${key}.${nestedKey}`] = nestedValue;
+      if (isScalarFormValue(nestedValue)) {
+        flat[`${key}.${nestedKey}`] = String(nestedValue);
       }
     }
   }
 
   return flat;
+}
+
+function isScalarFormValue(value: unknown): value is string | number | boolean {
+  return (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
 }
 
 function draftFormValues(values: ConfigFormValues): ConfigFormValues {

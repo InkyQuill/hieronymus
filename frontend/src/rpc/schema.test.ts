@@ -407,15 +407,51 @@ describe("runtime schemas", () => {
     ).toThrow();
   });
 
+  it.each(["deep.seek", "deep seek"] as const)(
+    "rejects dot-unsafe provider identifier %s",
+    (provider) => {
+      expect(() =>
+        ConfigBootstrapSchema.parse(configPayload(provider)),
+      ).toThrow();
+
+      expect(() =>
+        ConfigBootstrapSchema.parse(
+          configPayload("openai", {
+            provider_choices: [
+              {
+                name: provider,
+                display_name: "Unsafe",
+                requires_api_key: true,
+                supports_api_path: true,
+              },
+            ],
+          }),
+        ),
+      ).toThrow();
+
+      expect(() =>
+        ConfigBootstrapSchema.parse(
+          configPayload("openai", {
+            provider_catalog: {
+              profiles: {
+                [provider]: {
+                  name: provider,
+                  type: "openai",
+                  url: "https://api.openai.com/v1",
+                  key: "secret",
+                  timeout_seconds: 30,
+                },
+              },
+              defaults: { provider: "openai", model: "gpt-4.1-mini" },
+            },
+          }),
+        ),
+      ).toThrow();
+    },
+  );
+
   it("rejects malformed provider catalog timeout defaults", () => {
-    for (const timeout_seconds of [
-      "",
-      "not-a-number",
-      0,
-      "0",
-      -1,
-      "-1",
-    ]) {
+    for (const timeout_seconds of ["", "not-a-number", 0, "0", -1, "-1"]) {
       expect(() =>
         ConfigBootstrapSchema.parse(
           configPayload("openai", {
