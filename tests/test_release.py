@@ -272,7 +272,7 @@ def test_run_update_fetches_checks_out_and_reinstalls_managed_install(
         (["git", "checkout", "--detach", "FETCH_HEAD"], checkout),
         (["bun", "install", "--cwd", "frontend", "--frozen-lockfile"], checkout),
         (["bun", "run", "--cwd", "frontend", "build"], checkout),
-        (["uv", "tool", "install", "--force", str(checkout)], None),
+        (["uv", "tool", "install", "--force", "--reinstall", str(checkout)], None),
     ]
 
 
@@ -310,7 +310,7 @@ def test_run_update_fetches_origin_main_before_checkout(
         (["git", "checkout", "--detach", "FETCH_HEAD"], checkout),
         (["bun", "install", "--cwd", "frontend", "--frozen-lockfile"], checkout),
         (["bun", "run", "--cwd", "frontend", "build"], checkout),
-        (["uv", "tool", "install", "--force", str(checkout)], None),
+        (["uv", "tool", "install", "--force", "--reinstall", str(checkout)], None),
     ]
 
 

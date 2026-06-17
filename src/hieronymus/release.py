@@ -264,6 +264,10 @@ def _build_frontend(checkout: Path) -> None:
     _run(["bun", "run", "--cwd", "frontend", "build"], cwd=checkout)
 
 
+def _install_tool(checkout: Path) -> None:
+    _run(["uv", "tool", "install", "--force", "--reinstall", str(checkout)])
+
+
 def run_update(*, target: str = "latest", allow_dev: bool = False) -> UpdateStatus:
     _validate_target(target)
     _validate_dev_target(target, allow_dev=allow_dev)
@@ -280,5 +284,5 @@ def run_update(*, target: str = "latest", allow_dev: bool = False) -> UpdateStat
     ensure_bun_available_or_raise()
     _checkout_update_target(target, status.latest_tag, checkout)
     _build_frontend(checkout)
-    _run(["uv", "tool", "install", "--force", str(checkout)])
+    _install_tool(checkout)
     return check_update(target=target, allow_dev=allow_dev)

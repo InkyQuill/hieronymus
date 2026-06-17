@@ -32,7 +32,7 @@ def test_install_script_uses_managed_github_checkout() -> None:
 
     assert "https://github.com/InkyQuill/hieronymus.git" in text
     assert "${HOME}/.local/share/hieronymus/app" in text
-    assert "uv tool install --force" in text
+    assert "uv tool install --force --reinstall" in text
     assert "git ls-remote --tags" in text
     assert "remote get-url origin" in text
     assert "require_command mktemp" in text
@@ -41,7 +41,7 @@ def test_install_script_uses_managed_github_checkout() -> None:
     assert "uv installation completed but uv was not found on PATH" in text
     assert "bun install --frozen-lockfile" in text
     assert "bun run build" in text
-    assert 'uv tool install --force "$APP_DIR"' in text
+    assert 'uv tool install --force --reinstall "$APP_DIR"' in text
     assert "Bun >= 1.3" in text
     assert "HIERONYMUS_INSTALL_YES" in text
     assert "HIERONYMUS_INSTALL_CHANNEL" in text
@@ -127,7 +127,7 @@ def test_install_script_builds_frontend_before_tool_install_and_writes_stable_ch
     assert f"bun:{frontend_dir}:install --frozen-lockfile" in commands
     assert f"bun:{frontend_dir}:run build" in commands
     assert commands.index(f"bun:{frontend_dir}:run build") < commands.index(
-        f"uv:{ROOT}:tool install --force {app_dir}"
+        f"uv:{ROOT}:tool install --force --reinstall {app_dir}"
     )
     assert (home / ".config" / "hieronymus" / "release.conf").read_text(
         encoding="utf-8"
