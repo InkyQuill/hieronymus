@@ -622,7 +622,7 @@ describe("runtime schemas", () => {
       provider_catalog: {
         profiles: {
           "deepseek-api": {
-            name: "deepseek-api",
+            name: "DeepSeek API",
             type: "openai-compatible",
             url: "https://api.deepseek.com/v1",
             key: "secret",
@@ -647,7 +647,7 @@ describe("runtime schemas", () => {
             model: "deepseek-chat",
           },
           profile: {
-            name: "deepseek-api",
+            name: "DeepSeek API",
             type: "openai-compatible",
             url: "https://api.deepseek.com/v1",
             key: "secret",
@@ -673,7 +673,7 @@ describe("runtime schemas", () => {
     expect(payload.provider_choices[0].name).toBe("deepseek-api");
     expect(payload.suggestions).toMatchObject({ provider: "deepseek-api" });
     expect(payload.provider_catalog.profiles["deepseek-api"]).toMatchObject({
-      name: "deepseek-api",
+      name: "DeepSeek API",
       type: "openai-compatible",
       timeout_seconds: 45,
     });
@@ -687,7 +687,7 @@ describe("runtime schemas", () => {
         model: "deepseek-chat",
       },
       profile: {
-        name: "deepseek-api",
+        name: "DeepSeek API",
         type: "openai-compatible",
         url: "https://api.deepseek.com/v1",
         key: "secret",

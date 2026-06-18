@@ -173,7 +173,7 @@ export const ConfigPathsSchema = z
 
 const ProviderCatalogProfileSchema = z
   .object({
-    name: ProviderNameSchema.default(""),
+    name: z.string().default(""),
     type: z.string().default(""),
     url: z.string().default(""),
     key: z.string().default(""),

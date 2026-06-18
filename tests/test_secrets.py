@@ -19,7 +19,7 @@ def test_redact_configured_secret_values_replaces_longer_prefix_first():
     assert "suffix" not in redacted
 
 
-def test_redact_configured_secret_values_ignores_short_api_keys():
+def test_redact_configured_secret_values_replaces_short_api_keys():
     provider_catalog = ProviderCatalog(
         providers={
             "openai": ProviderProfile(type="openai", key="abc"),
@@ -28,4 +28,4 @@ def test_redact_configured_secret_values_ignores_short_api_keys():
 
     redacted = redact_configured_secret_values("provider returned abc", provider_catalog)
 
-    assert redacted == "provider returned abc"
+    assert redacted == "provider returned [redacted]"

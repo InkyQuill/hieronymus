@@ -496,6 +496,7 @@ def test_config_json_reports_filesystem_config_read_errors(tmp_path, monkeypatch
 
     assert result.exit_code != 0
     assert "provider.conf denied" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_recall_outputs_ranked_crystal_results(tmp_path):
