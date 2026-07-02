@@ -230,7 +230,7 @@ fi
 write_release_config "$INSTALL_CHANNEL"
 
 build_frontend
-uv tool install --force "$APP_DIR"
+uv tool install --force --reinstall "$APP_DIR"
 
 echo "Hieronymus installed successfully from ${SELECTED_REF} (${INSTALL_CHANNEL})."
 echo "Managed checkout: ${APP_DIR}"

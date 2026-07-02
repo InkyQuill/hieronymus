@@ -101,11 +101,12 @@ events such as `confirmed_by_user`, `used_in_translation`, `passed_review`, or
 `caused_correction`.
 
 Dream cycles process completed sessions. Short-term memories stay pending until
-dreaming processes them or a user removes them. They use the named providers and
-workflow model assignments from `~/.config/hieronymus/dream.conf`. User
-corrections are stored as short-term memories first; through crystallization they
-can become high-confidence rule crystals instead of bypassing the learning
-workflow.
+dreaming processes them or a user removes them. Workflow phases consume provider
+and model assignments from `~/.config/hieronymus/dream.conf`, then resolve the
+provider endpoint profiles, API keys, and defaults from
+`~/.config/hieronymus/provider.conf`. User corrections are stored as short-term
+memories first; through crystallization they can become high-confidence rule
+crystals instead of bypassing the learning workflow.
 
 Dreaming is split into workflow phases. Crystallization converts short-term
 memories into crystals, rule crystals, concepts, facets, semantic tags, story

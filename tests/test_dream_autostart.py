@@ -62,6 +62,13 @@ def _enable_autostart(
             max_pending_short_term_memories=max_pending_short_term_memories,
             max_short_term_memories_per_cycle=max_short_term_memories_per_cycle,
             not_enough_memories_cycle_threshold=not_enough_memories_cycle_threshold,
+            workflows={
+                "crystallization": WorkflowProfile(
+                    provider="deterministic",
+                    model="deterministic",
+                    enabled=True,
+                )
+            },
         ),
     )
 
@@ -144,6 +151,89 @@ def test_status_reports_enabled_workflow_when_crystallization_is_disabled(
     status = DreamAutostart(config).status()
 
     assert status["active_provider"] == "ollama"
+
+
+def test_status_degrades_when_crystallization_provider_default_is_missing(
+    config: HieronymusConfig,
+) -> None:
+    save_dream_config(
+        config,
+        replace(
+            default_dream_config(),
+            enabled=True,
+            workflows={
+                "crystallization": WorkflowProfile(
+                    provider="",
+                    model="model",
+                    enabled=True,
+                ),
+            },
+        ),
+    )
+
+    status = DreamAutostart(config).status()
+
+    assert status["enabled"] is True
+    assert status["active_provider"] == ""
+
+
+def test_status_degrades_when_provider_catalog_defaults_are_invalid(
+    config: HieronymusConfig,
+) -> None:
+    save_dream_config(
+        config,
+        replace(
+            default_dream_config(),
+            enabled=True,
+            workflows={
+                "crystallization": WorkflowProfile(
+                    provider="",
+                    model="gpt-missing",
+                    enabled=True,
+                ),
+            },
+        ),
+    )
+    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.provider_config_path.write_text(
+        '[defaults]\nprovider = "missing-profile"\nmodel = "gpt-missing"\n',
+        encoding="utf-8",
+    )
+
+    status = DreamAutostart(config).status()
+
+    assert status["enabled"] is True
+    assert status["active_provider"] == ""
+    assert status["last_error"] == ""
+
+
+def test_status_degrades_when_provider_catalog_cannot_be_read(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    save_dream_config(
+        config,
+        replace(
+            default_dream_config(),
+            enabled=True,
+            workflows={
+                "crystallization": WorkflowProfile(
+                    provider="",
+                    model="gpt-missing",
+                    enabled=True,
+                ),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "hieronymus.dream_autostart.load_provider_catalog",
+        lambda config: (_ for _ in ()).throw(OSError("permission denied")),
+    )
+
+    status = DreamAutostart(config).status()
+
+    assert status["enabled"] is True
+    assert status["active_provider"] == ""
 
 
 def test_urgent_trigger_runs_when_max_pending_is_reached(config: HieronymusConfig) -> None:

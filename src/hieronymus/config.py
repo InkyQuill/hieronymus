@@ -22,6 +22,10 @@ class HieronymusConfig:
         return self.config_root / "dream.conf"
 
     @property
+    def provider_config_path(self) -> Path:
+        return self.config_root / "provider.conf"
+
+    @property
     def ingest_config_path(self) -> Path:
         return self.config_root / "ingest.conf"
 

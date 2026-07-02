@@ -11,13 +11,18 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_config import (
-    ProviderProfile,
     WorkflowProfile,
     default_dream_config,
     save_dream_config,
 )
 from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.memory_models import TranslationContext
+from hieronymus.provider_config import (
+    ProviderCatalog,
+    ProviderDefaults,
+    ProviderProfile,
+    save_provider_catalog,
+)
 from hieronymus.registry import Registry
 from hieronymus.workspace import WorkspaceStore
 
@@ -450,18 +455,23 @@ def test_dream_runs_true_drain_with_cli_owner(monkeypatch, tmp_path):
 def test_config_json_does_not_include_raw_api_key_value(tmp_path, monkeypatch):
     data_root = tmp_path / "hieronymus"
     config = HieronymusConfig(data_root=data_root)
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "openai": ProviderProfile(
+                    name="OpenAI",
+                    type="openai",
+                    url="https://api.example.test/v1",
+                    key="raw-secret-value",
+                )
+            },
+            defaults=ProviderDefaults(provider="openai", model="gpt-4.1-mini"),
+        ),
+    )
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider(
-            "openai",
-            ProviderProfile(
-                type="openai",
-                endpoint="https://api.example.test/v1",
-                api_key="raw-secret-value",
-            ),
-        )
-        .with_workflow(
+        default_dream_config().with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
@@ -470,8 +480,23 @@ def test_config_json_does_not_include_raw_api_key_value(tmp_path, monkeypatch):
     result = CliRunner().invoke(main, ["--data-root", str(data_root), "config", "--json"])
 
     assert result.exit_code == 0
-    assert '"api_key": "***"' in result.output
+    assert '"key": "***"' in result.output
+    assert '"provider_config_path":' in result.output
     assert "raw-secret-value" not in result.output
+
+
+def test_config_json_reports_filesystem_config_read_errors(tmp_path, monkeypatch):
+    data_root = tmp_path / "hieronymus"
+    monkeypatch.setattr(
+        "hieronymus.cli.load_provider_catalog",
+        lambda config: (_ for _ in ()).throw(OSError("provider.conf denied")),
+    )
+
+    result = CliRunner().invoke(main, ["--data-root", str(data_root), "config", "--json"])
+
+    assert result.exit_code != 0
+    assert "provider.conf denied" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_recall_outputs_ranked_crystal_results(tmp_path):
@@ -822,6 +847,20 @@ def test_dream_unsupported_provider_returns_clean_click_error(tmp_path):
 def test_dream_returns_clean_error_when_cycle_is_active(tmp_path):
     data_root = tmp_path / "hieronymus"
     config = HieronymusConfig(data_root=data_root)
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "anthropic": ProviderProfile(
+                    name="Anthropic",
+                    type="anthropic",
+                    url="https://api.anthropic.com",
+                    key="test-secret",
+                )
+            },
+            defaults=ProviderDefaults(provider="anthropic", model="claude-sonnet-4-6"),
+        ),
+    )
     runner = CliRunner()
 
     with dream_cycle_lock(config, owner="manual"):

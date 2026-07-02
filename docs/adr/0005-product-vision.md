@@ -1,5 +1,10 @@
 # Hieronymus Product Vision
 
+Status: Current product vision, amended by
+[ADR 0007](0007-provider-catalog-and-workflow-assignments.md) for provider
+catalog ownership. `provider.conf` now owns provider profiles and API keys;
+`dream.conf` owns workflow assignments, prompts, trigger settings, and caps.
+
 ## Context
 
 Hieronymus is a local-first translation memory system for long-form literary
@@ -244,22 +249,23 @@ admin-triggered dreaming.
 
 ### Provider Configuration
 
-Dreaming config lives in `~/.config/hieronymus/dream.conf`. It contains
-provider profiles, workflow assignments, prompts, trigger settings, and caps.
-Provider model lists are cached separately in
+Dreaming workflow config lives in `~/.config/hieronymus/dream.conf`. Provider
+profiles and plaintext local API keys live in
+`~/.config/hieronymus/provider.conf`. Provider model lists are cached separately in
 `~/.config/hieronymus/llmcache.tmp`.
 
-First-run defaults create provider stubs for Anthropic, OpenAI, Gemini, and
-Ollama without plaintext API keys. Crystallization points to the Anthropic
-stub. LLM-assisted relation discovery is disabled by default and points to the
-Ollama stub. Reinforcement/compaction points to the Ollama stub.
+First-run defaults keep dreaming disabled until provider profiles are
+configured. Crystallization points to the Anthropic workflow assignment.
+LLM-assisted relation discovery is disabled by default and points to the Ollama
+workflow assignment. Reinforcement/compaction points to the Ollama workflow
+assignment.
 
-Dreaming is disabled until required enabled provider-backed workflows are
+Dreaming is disabled until required provider-backed workflows are enabled and
 valid. Disabled optional workflows do not fail doctor checks for missing
 provider/model/API settings, but invalid saved values may still warn.
 
-API key values are persisted only in local config and must be redacted from
-logs, bridge responses, terminal output, and doctor/config status.
+API key values are persisted only in local provider config and must be redacted
+from logs, bridge responses, terminal output, and doctor/config status.
 
 ### Dream Audit
 
@@ -310,12 +316,12 @@ environment with `python -m hieronymus`.
 
 ### Config TUI
 
-The config UI manages dreaming configuration:
+The config UI manages provider and dreaming configuration:
 
-- provider profiles for OpenAI, Anthropic, Gemini, and OpenAI-compatible local
+- `provider.conf` profiles for OpenAI, Anthropic, Gemini, and OpenAI-compatible local
   endpoints such as Ollama;
 - plaintext local API key storage with redacted display;
-- per-workflow provider/model selection;
+- per-workflow provider/model selection in `dream.conf`;
 - cached model suggestions from `llmcache.tmp`;
 - provider and workflow test actions;
 - dreaming trigger fields and caps;

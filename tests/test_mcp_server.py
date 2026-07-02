@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import tomllib
+from dataclasses import replace
 
 import pytest
 
@@ -11,12 +12,17 @@ from hieronymus.config import load_config
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_config import (
-    ProviderProfile,
     WorkflowProfile,
     default_dream_config,
     save_dream_config,
 )
 from hieronymus.memory_models import TranslationContext
+from hieronymus.provider_config import (
+    ProviderCatalog,
+    ProviderDefaults,
+    ProviderProfile,
+    save_provider_catalog,
+)
 from hieronymus.registry import Registry
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
@@ -1125,14 +1131,26 @@ def test_mcp_dream_rejects_active_cycle(monkeypatch, tmp_path):
             mcp_server.hieronymus_dream()
 
 
-def test_mcp_dream_uses_dream_config_provider_profile(monkeypatch, tmp_path):
+def test_mcp_dream_uses_provider_catalog_profile(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     config = load_config()
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "openai": ProviderProfile(
+                    name="OpenAI",
+                    type="openai",
+                    url="https://api.openai.com/v1",
+                    key="secret-openai",
+                ),
+            },
+            defaults=ProviderDefaults(provider="openai", model="gpt-4.1-mini"),
+        ),
+    )
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider("openai", ProviderProfile(type="openai", api_key="secret-openai"))
-        .with_workflow(
+        replace(default_dream_config(), enabled=True).with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),

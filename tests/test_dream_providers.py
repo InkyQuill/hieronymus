@@ -2,30 +2,40 @@ from __future__ import annotations
 
 import json
 import urllib.error
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import (
-    DreamConfigError,
-    ProviderProfile,
-    WorkflowProfile,
-    default_dream_config,
-    save_dream_config,
-)
+from hieronymus.dream_config import WorkflowProfile, default_dream_config, save_dream_config
 from hieronymus.dream_providers import (
     ANTHROPIC_API_VERSION,
     HTTPResponse,
     ProviderCheckResult,
+    ProviderProfile,
     ProviderRegistry,
     UrllibTransport,
     resolve_profile_provider,
     resolve_provider,
 )
-from hieronymus.llm_cache import CachedModels, ModelCacheEntry, load_model_cache, save_model_cache
+from hieronymus.llm_cache import (
+    CachedModels,
+    ModelCacheEntry,
+    dream_profile_cache_identity,
+    load_model_cache,
+    model_cache_identity,
+    save_model_cache,
+)
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
+from hieronymus.provider_config import (
+    ProviderCatalog,
+    ProviderDefaults,
+    save_provider_catalog,
+)
+from hieronymus.provider_config import (
+    ProviderProfile as CatalogProviderProfile,
+)
 
 
 @dataclass
@@ -54,15 +64,43 @@ def _save_provider_profile(
     *,
     model: str = "model",
 ) -> None:
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={name: _catalog_profile(profile, name)},
+            defaults=ProviderDefaults(provider=name, model=model),
+        ),
+    )
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider(name, profile)
-        .with_workflow(
+        replace(default_dream_config(), enabled=True).with_workflow(
             "crystallization",
             WorkflowProfile(provider=name, model=model, enabled=True),
         ),
     )
+
+
+def _catalog_profile(profile: ProviderProfile, name: str = "Provider") -> CatalogProviderProfile:
+    provider_type = "google" if profile.type == "gemini" else profile.type
+    return CatalogProviderProfile(
+        name=name,
+        type=provider_type,
+        url=profile.endpoint or _default_catalog_url(provider_type),
+        key=profile.api_key,
+        timeout_seconds=profile.timeout_seconds,
+    )
+
+
+def _default_catalog_url(provider_type: str) -> str:
+    if provider_type == "google":
+        return "https://generativelanguage.googleapis.com"
+    if provider_type == "openai":
+        return "https://api.openai.com/v1"
+    if provider_type == "anthropic":
+        return "https://api.anthropic.com"
+    if provider_type == "ollama":
+        return "http://localhost:11434"
+    return "https://llm.example.test"
 
 
 def test_registry_lists_real_providers() -> None:
@@ -80,16 +118,14 @@ def test_registry_lists_real_providers() -> None:
 
 def test_provider_status_uses_dream_config_profiles(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    save_dream_config(
+    _save_provider_profile(
         config,
-        default_dream_config().with_provider(
-            "openai",
-            ProviderProfile(
-                type="openai",
-                endpoint="https://llm.example.test/v1",
-                api_key="",
-                timeout_seconds=12.5,
-            ),
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://llm.example.test/v1",
+            api_key="",
+            timeout_seconds=12.5,
         ),
     )
 
@@ -104,11 +140,20 @@ def test_provider_status_uses_dream_config_profiles(tmp_path) -> None:
 
 def test_provider_status_rejects_whitespace_model(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "openai": _catalog_profile(
+                    ProviderProfile(type="openai", api_key="secret-openai"),
+                    "openai",
+                )
+            },
+        ),
+    )
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider("openai", ProviderProfile(type="openai", api_key="secret-openai"))
-        .with_workflow(
+        default_dream_config().with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="   ", enabled=True),
         ),
@@ -123,14 +168,11 @@ def test_provider_status_rejects_whitespace_model(tmp_path) -> None:
 
 def test_provider_status_rejects_whitespace_api_key(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    save_dream_config(
+    _save_provider_profile(
         config,
-        default_dream_config()
-        .with_provider("openai", ProviderProfile(type="openai", api_key="   "))
-        .with_workflow(
-            "crystallization",
-            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
-        ),
+        "openai",
+        ProviderProfile(type="openai", api_key="   "),
+        model="gpt-4.1-mini",
     )
 
     statuses = ProviderRegistry().status_payload(config)
@@ -142,14 +184,11 @@ def test_provider_status_rejects_whitespace_api_key(tmp_path) -> None:
 
 def test_provider_status_marks_empty_profile_key_missing(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    save_dream_config(
+    _save_provider_profile(
         config,
-        default_dream_config()
-        .with_provider("openai", ProviderProfile(type="openai", api_key=""))
-        .with_workflow(
-            "crystallization",
-            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
-        ),
+        "openai",
+        ProviderProfile(type="openai", api_key=""),
+        model="gpt-4.1-mini",
     )
 
     statuses = ProviderRegistry().status_payload(config)
@@ -160,21 +199,15 @@ def test_provider_status_marks_empty_profile_key_missing(tmp_path) -> None:
 
 
 def test_provider_status_reports_key_presence_without_key_value(config):
-    save_dream_config(
+    _save_provider_profile(
         config,
-        default_dream_config()
-        .with_provider(
-            "openai",
-            ProviderProfile(
-                type="openai",
-                endpoint="https://api.example.test/v1",
-                api_key="sk-live-secret-value",
-            ),
-        )
-        .with_workflow(
-            "crystallization",
-            WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://api.example.test/v1",
+            api_key="sk-live-secret-value",
         ),
+        model="gpt-4.1-mini",
     )
 
     payload = ProviderRegistry().status_payload(config)
@@ -185,21 +218,15 @@ def test_provider_status_reports_key_presence_without_key_value(config):
 
 
 def test_provider_status_uses_saved_dream_config_profile(config):
-    save_dream_config(
+    _save_provider_profile(
         config,
-        default_dream_config()
-        .with_provider(
-            "openai",
-            ProviderProfile(
-                type="openai",
-                endpoint="https://dream.example.test/v1",
-                api_key="dream-secret",
-            ),
-        )
-        .with_workflow(
-            "crystallization",
-            WorkflowProfile(provider="openai", model="dream-model", enabled=True),
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://dream.example.test/v1",
+            api_key="dream-secret",
         ),
+        model="dream-model",
     )
 
     payload = ProviderRegistry().status_payload(config)
@@ -234,22 +261,16 @@ def test_provider_check_uses_plaintext_profile_key(config):
             self.calls.append((url, headers, payload, timeout))
             return type("Response", (), {"status": 200, "body": "{}"})()
 
-    save_dream_config(
+    _save_provider_profile(
         config,
-        default_dream_config()
-        .with_provider(
-            "openai",
-            ProviderProfile(
-                type="openai",
-                endpoint="https://llm.example.test/v1",
-                api_key="secret-test-key",
-                timeout_seconds=12.5,
-            ),
-        )
-        .with_workflow(
-            "crystallization",
-            WorkflowProfile(provider="openai", model="gpt-profile", enabled=True),
+        "openai",
+        ProviderProfile(
+            type="openai",
+            endpoint="https://llm.example.test/v1",
+            api_key="secret-test-key",
+            timeout_seconds=12.5,
         ),
+        model="gpt-profile",
     )
     transport = Transport()
 
@@ -261,6 +282,54 @@ def test_provider_check_uses_plaintext_profile_key(config):
     assert transport.calls[0][1]["Authorization"] == "Bearer secret-test-key"
     assert transport.calls[0][3] == 12.5
     assert "secret-test-key" not in repr(result.to_json_dict())
+
+
+def test_provider_check_uses_catalog_profile_with_explicit_model(config) -> None:
+    class Transport:
+        def post_json(self, url, *, headers, payload, timeout):
+            return HTTPResponse(status=200, body="{}")
+
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "deepseek-api": CatalogProviderProfile(
+                    name="DeepSeek API",
+                    type="openai",
+                    url="https://deepseek.example.test/v1",
+                    key="secret-deepseek",
+                )
+            },
+        ),
+    )
+
+    result = ProviderRegistry(transport=Transport()).check(
+        config,
+        "deepseek-api",
+        model="deepseek-v4-flash",
+    )
+
+    assert result.ok is True
+    assert result.error == ""
+    assert result.model == "deepseek-v4-flash"
+
+
+def test_provider_check_reports_missing_catalog_profile(config) -> None:
+    result = ProviderRegistry().check(config, "missing-profile", model="model")
+
+    assert result.ok is False
+    assert result.error == "provider profile missing: missing-profile"
+
+
+def test_model_suggestions_report_missing_arbitrary_catalog_profile(config) -> None:
+    result = ProviderRegistry().list_model_suggestions(config, "deepseek-api")
+
+    assert result.to_json_dict() == {
+        "provider": "deepseek-api",
+        "models": [],
+        "source": "defaults",
+        "error": "provider profile missing: deepseek-api",
+    }
 
 
 def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> None:
@@ -321,15 +390,17 @@ def test_deterministic_model_suggestions_ignore_malformed_dream_config(tmp_path)
     assert not config.llm_cache_path.exists()
 
 
-def test_anthropic_model_suggestions_reject_malformed_dream_config(
+def test_anthropic_model_suggestions_ignore_malformed_dream_config(
     tmp_path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     config.config_root.mkdir(parents=True)
     config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
 
-    with pytest.raises(DreamConfigError, match="dream.conf is not valid TOML"):
-        ProviderRegistry().list_model_suggestions(config, "anthropic")
+    result = ProviderRegistry().list_model_suggestions(config, "anthropic")
+
+    assert result.error == "provider profile missing: anthropic"
+    assert result.source == "defaults"
 
 
 def test_model_suggestions_use_fresh_cache_without_network(tmp_path, monkeypatch) -> None:
@@ -730,13 +801,67 @@ def test_model_suggestions_refresh_when_gemini_api_key_changes(
     ]
 
 
-def test_anthropic_model_suggestions_cache_default_hints(tmp_path) -> None:
+def test_anthropic_model_suggestions_do_not_cache_missing_profile_defaults(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
     result = ProviderRegistry().list_model_suggestions(config, "anthropic")
 
     assert result.source == "defaults"
-    assert load_model_cache(config).providers["anthropic"].models == tuple(result.models)
+    assert result.error == "provider profile missing: anthropic"
+    assert load_model_cache(config).providers == {}
+
+
+def test_missing_catalog_profile_ignores_profile_specific_model_cache(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    cached_profile = ProviderProfile(
+        type="anthropic",
+        endpoint="https://anthropic.example.test",
+        api_key="old-secret",
+    )
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="anthropic",
+                models=("stale-profile-model",),
+                fetched_at=datetime.now(UTC).isoformat(),
+                identity=dream_profile_cache_identity("anthropic", cached_profile),
+            )
+        ),
+    )
+
+    result = ProviderRegistry().list_model_suggestions(config, "anthropic")
+
+    assert result.to_json_dict() == {
+        "provider": "anthropic",
+        "models": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
+        "source": "defaults",
+        "error": "provider profile missing: anthropic",
+    }
+
+
+def test_missing_catalog_profile_ignores_static_success_model_cache(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_model_cache(
+        config,
+        CachedModels().with_entry(
+            ModelCacheEntry(
+                provider="anthropic",
+                models=("cached-static-model",),
+                fetched_at=datetime.now(UTC).isoformat(),
+                identity=model_cache_identity("anthropic"),
+            )
+        ),
+    )
+
+    result = ProviderRegistry().list_model_suggestions(config, "anthropic")
+
+    assert result.to_json_dict() == {
+        "provider": "anthropic",
+        "models": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
+        "source": "defaults",
+        "error": "provider profile missing: anthropic",
+    }
 
 
 def test_anthropic_model_suggestions_return_defaults_when_cache_save_fails(
@@ -755,7 +880,7 @@ def test_anthropic_model_suggestions_return_defaults_when_cache_save_fails(
         "provider": "anthropic",
         "models": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
         "source": "defaults",
-        "error": "",
+        "error": "provider profile missing: anthropic",
     }
 
 
@@ -774,6 +899,13 @@ def test_deterministic_check_passes_without_network(tmp_path) -> None:
 
 
 def test_status_payload_includes_default_ollama_profile(config: HieronymusConfig) -> None:
+    _save_provider_profile(
+        config,
+        "ollama",
+        ProviderProfile(type="ollama", endpoint="http://localhost:11434"),
+        model="gemma4-e3b",
+    )
+
     payload = ProviderRegistry().status_payload(config)
 
     ollama = next(row for row in payload if row["name"] == "ollama")
@@ -786,6 +918,12 @@ def test_status_payload_includes_default_ollama_profile(config: HieronymusConfig
 def test_ollama_profile_check_uses_dream_config_without_api_key(
     config: HieronymusConfig,
 ) -> None:
+    _save_provider_profile(
+        config,
+        "ollama",
+        ProviderProfile(type="ollama", endpoint="http://localhost:11434"),
+        model="gemma4-e3b",
+    )
     transport = FakeTransport(HTTPResponse(status=200, body=json.dumps({"id": "ok"})), [])
 
     result = ProviderRegistry(transport=transport).check(config, "ollama")
@@ -797,11 +935,20 @@ def test_ollama_profile_check_uses_dream_config_without_api_key(
 
 
 def test_non_ollama_profile_type_requires_api_key(config: HieronymusConfig) -> None:
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "local_openai": _catalog_profile(
+                    ProviderProfile(type="openai", api_key=""),
+                    "local_openai",
+                )
+            },
+        ),
+    )
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider("local_openai", ProviderProfile(type="openai", api_key=""))
-        .with_workflow(
+        default_dream_config().with_workflow(
             "crystallization",
             WorkflowProfile(provider="local_openai", model="gpt-local", enabled=True),
         ),
@@ -892,13 +1039,13 @@ def test_anthropic_check_uses_configured_endpoint(tmp_path) -> None:
     assert transport.requests[0]["headers"]["x-api-key"] == "secret-anthropic"
 
 
-def test_resolve_provider_requires_dream_profile_key(tmp_path) -> None:
+def test_resolve_provider_requires_catalog_profile(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
     try:
         resolve_provider(config, "openai")
     except ValueError as exc:
-        assert str(exc) == "model must not be empty for provider profile: openai"
+        assert str(exc) == "referenced provider profile is missing: openai"
     else:
         raise AssertionError("unconfigured provider profile should fail")
 
@@ -909,6 +1056,17 @@ def test_resolve_profile_provider_rejects_missing_profile(config: HieronymusConf
 
 
 def test_resolve_profile_provider_rejects_missing_model(config: HieronymusConfig) -> None:
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "openai": _catalog_profile(
+                    ProviderProfile(type="openai", api_key="secret-openai"),
+                    "openai",
+                )
+            },
+        ),
+    )
     with pytest.raises(
         ValueError,
         match="model must not be empty for provider profile: openai",
@@ -919,6 +1077,17 @@ def test_resolve_profile_provider_rejects_missing_model(config: HieronymusConfig
 def test_resolve_profile_provider_requires_plaintext_api_key_for_non_ollama(
     config: HieronymusConfig,
 ) -> None:
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "openai": _catalog_profile(
+                    ProviderProfile(type="openai", api_key=""),
+                    "openai",
+                )
+            },
+        ),
+    )
     with pytest.raises(ValueError, match="API key missing for provider profile: openai"):
         resolve_profile_provider(config, "openai", model="gpt-4.1-mini")
 
@@ -986,7 +1155,7 @@ def test_resolve_profile_provider_uses_plaintext_api_key(
     response_body,
     expected: dict[str, str],
 ) -> None:
-    save_dream_config(config, default_dream_config().with_provider(profile_name, profile))
+    _save_provider_profile(config, profile_name, profile, model=model)
     transport = FakeTransport(HTTPResponse(status=200, body=response_body()), [])
 
     provider = resolve_profile_provider(
@@ -1011,16 +1180,15 @@ def test_resolve_profile_provider_uses_plaintext_api_key(
 def test_resolve_profile_provider_supports_native_ollama_without_api_key(
     config: HieronymusConfig,
 ) -> None:
-    save_dream_config(
+    _save_provider_profile(
         config,
-        default_dream_config().with_provider(
-            "ollama",
-            ProviderProfile(
-                type="ollama",
-                endpoint="http://ollama.example.test",
-                timeout_seconds=4.5,
-            ),
+        "ollama",
+        ProviderProfile(
+            type="ollama",
+            endpoint="http://ollama.example.test",
+            timeout_seconds=4.5,
         ),
+        model="gemma4-e3b",
     )
     transport = FakeTransport(
         HTTPResponse(

@@ -104,7 +104,6 @@ def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:
         "openai",
         "gemini",
         "anthropic",
-        "ollama",
     ]
     assert payload["dreaming"]["enabled"] is False
     assert payload["dreaming"]["active_provider"] == "deterministic"

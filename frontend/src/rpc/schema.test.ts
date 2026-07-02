@@ -22,6 +22,21 @@ function configDraft(provider: string = "openai") {
     ingest: { short_memory: {}, learn: {} },
     release: { update_channel: "stable" },
     dreaming: { active_provider: provider },
+    provider_catalog: {
+      profiles: {
+        [provider]: {
+          name: provider,
+          type: provider,
+          url: "",
+          key: "",
+          timeout_seconds: 30,
+        },
+      },
+      defaults: {
+        provider,
+        model: provider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
+      },
+    },
     providers: {},
     workflows: {},
   };
@@ -32,13 +47,14 @@ function configPaths() {
     data_root: "/tmp/hieronymus",
     config_root: "/tmp/hieronymus/config",
     dream_config_path: "/tmp/hieronymus/config/dream.conf",
+    provider_config_path: "/tmp/hieronymus/config/provider.conf",
     ingest_config_path: "/tmp/hieronymus/config/ingest.conf",
     release_config_path: "/tmp/hieronymus/config/release.conf",
   };
 }
 
 function configPayload(
-  provider: "openai" | "gemini" | "anthropic" = "openai",
+  provider: string = "openai",
   overrides: Record<string, unknown> = {},
 ) {
   return {
@@ -62,6 +78,8 @@ function configPayload(
       provider: {
         model: provider === "gemini" ? "gemini-2.5-flash" : "gpt-4.1-mini",
       },
+      provider_catalog: {},
+      workflows: {},
       dreaming: {},
       ingest: {},
       release: {},
@@ -118,6 +136,7 @@ describe("runtime schemas", () => {
         data_root: "/tmp/hieronymus",
         config_root: "/tmp/hieronymus/config",
         dream_config_path: "/tmp/hieronymus/config/dream.conf",
+        provider_config_path: "/tmp/hieronymus/config/provider.conf",
         ingest_config_path: "/tmp/hieronymus/config/ingest.conf",
         release_config_path: "/tmp/hieronymus/config/release.conf",
       },
@@ -152,6 +171,9 @@ describe("runtime schemas", () => {
 
     expect(payload.suggestions).toEqual({});
     expect(payload.detail).toBe("");
+    expect(payload.config_paths.provider_config_path).toBe(
+      "/tmp/hieronymus/config/provider.conf",
+    );
     expect(payload.provider_choices[0].requires_api_key).toBe(true);
   });
 
@@ -345,6 +367,133 @@ describe("runtime schemas", () => {
     ).toThrow();
   });
 
+  it("rejects empty provider identifiers", () => {
+    expect(() =>
+      ConfigBootstrapSchema.parse(configPayload("", { selected_provider: "" })),
+    ).toThrow();
+
+    expect(() =>
+      ConfigBootstrapSchema.parse(
+        configPayload("openai", {
+          provider_choices: [
+            {
+              name: "",
+              display_name: "Empty",
+              requires_api_key: true,
+              supports_api_path: true,
+            },
+          ],
+        }),
+      ),
+    ).toThrow();
+
+    expect(() =>
+      ConfigBootstrapSchema.parse(
+        configPayload("openai", {
+          provider_catalog: {
+            profiles: {
+              "": {
+                name: "openai",
+                type: "openai",
+                url: "https://api.openai.com/v1",
+                key: "secret",
+                timeout_seconds: 30,
+              },
+            },
+            defaults: { provider: "openai", model: "gpt-4.1-mini" },
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it.each(["deep.seek", "deep seek"] as const)(
+    "rejects dot-unsafe provider identifier %s",
+    (provider) => {
+      expect(() =>
+        ConfigBootstrapSchema.parse(configPayload(provider)),
+      ).toThrow();
+
+      expect(() =>
+        ConfigBootstrapSchema.parse(
+          configPayload("openai", {
+            provider_choices: [
+              {
+                name: provider,
+                display_name: "Unsafe",
+                requires_api_key: true,
+                supports_api_path: true,
+              },
+            ],
+          }),
+        ),
+      ).toThrow();
+
+      expect(() =>
+        ConfigBootstrapSchema.parse(
+          configPayload("openai", {
+            provider_catalog: {
+              profiles: {
+                [provider]: {
+                  name: provider,
+                  type: "openai",
+                  url: "https://api.openai.com/v1",
+                  key: "secret",
+                  timeout_seconds: 30,
+                },
+              },
+              defaults: { provider: "openai", model: "gpt-4.1-mini" },
+            },
+          }),
+        ),
+      ).toThrow();
+    },
+  );
+
+  it("rejects malformed provider catalog timeout defaults", () => {
+    for (const timeout_seconds of ["", "not-a-number", 0, "0", -1, "-1"]) {
+      expect(() =>
+        ConfigBootstrapSchema.parse(
+          configPayload("openai", {
+            provider_catalog: {
+              profiles: {
+                openai: {
+                  name: "openai",
+                  type: "openai",
+                  url: "https://api.openai.com/v1",
+                  key: "secret",
+                  timeout_seconds,
+                },
+              },
+              defaults: { provider: "openai", model: "gpt-4.1-mini" },
+            },
+          }),
+        ),
+      ).toThrow();
+    }
+  });
+
+  it("accepts numeric provider catalog timeout strings", () => {
+    const payload = ConfigBootstrapSchema.parse(
+      configPayload("openai", {
+        provider_catalog: {
+          profiles: {
+            openai: {
+              name: "openai",
+              type: "openai",
+              url: "https://api.openai.com/v1",
+              key: "secret",
+              timeout_seconds: "45",
+            },
+          },
+          defaults: { provider: "openai", model: "gpt-4.1-mini" },
+        },
+      }),
+    );
+
+    expect(payload.provider_catalog.profiles.openai.timeout_seconds).toBe("45");
+  });
+
   it("rejects null config form schema payloads", () => {
     expect(() =>
       ConfigBootstrapSchema.parse(
@@ -457,31 +606,97 @@ describe("runtime schemas", () => {
     expect(payload.ingest.source).toBe("defaults");
   });
 
-  it("rejects config provider choices outside supported families", () => {
-    expect(() =>
-      ConfigBootstrapSchema.parse({
-        config_paths: configPaths(),
-        provider_choices: [
-          {
-            name: "deterministic",
-            display_name: "Deterministic",
-            requires_api_key: false,
-            supports_api_path: false,
-          },
-        ],
-        selected_provider: "deterministic",
-        draft: configDraft("deterministic"),
-        form_values: { provider: {}, dreaming: {} },
-        validation: { ok: true, errors: [] },
-        suggestions: {
-          provider: "deterministic",
-          models: [],
-          source: "defaults",
-          error: "",
+  it("accepts current Python provider catalog form value shape", () => {
+    const payload = ConfigBootstrapSchema.parse({
+      config_paths: configPaths(),
+      provider_choices: [
+        {
+          name: "deepseek-api",
+          display_name: "DeepSeek API",
+          requires_api_key: true,
+          supports_api_path: true,
         },
-        detail: { title: "", fields: [], errors: [] },
-      }),
-    ).toThrow();
+      ],
+      selected_provider: "deepseek-api",
+      draft: configDraft("deepseek-api"),
+      provider_catalog: {
+        profiles: {
+          "deepseek-api": {
+            name: "DeepSeek API",
+            type: "openai-compatible",
+            url: "https://api.deepseek.com/v1",
+            key: "secret",
+            timeout_seconds: 45,
+          },
+        },
+        defaults: {
+          provider: "deepseek-api",
+          model: "deepseek-chat",
+        },
+      },
+      form_values: {
+        provider: {
+          model: "deepseek-chat",
+          api_key: "secret",
+          api_path: "https://api.deepseek.com/v1",
+          timeout_seconds: "45",
+        },
+        provider_catalog: {
+          defaults: {
+            provider: "deepseek-api",
+            model: "deepseek-chat",
+          },
+          profile: {
+            name: "DeepSeek API",
+            type: "openai-compatible",
+            url: "https://api.deepseek.com/v1",
+            key: "secret",
+            timeout_seconds: "45",
+          },
+        },
+        workflows: {
+          "crystallization.provider": "deepseek-api",
+        },
+        dreaming: {},
+      },
+      validation: { ok: true, errors: [] },
+      suggestions: {
+        provider: "deepseek-api",
+        models: ["deepseek-chat"],
+        source: "defaults",
+        error: "",
+      },
+      detail: { title: "", fields: [], errors: [] },
+    });
+
+    expect(payload.selected_provider).toBe("deepseek-api");
+    expect(payload.provider_choices[0].name).toBe("deepseek-api");
+    expect(payload.suggestions).toMatchObject({ provider: "deepseek-api" });
+    expect(payload.provider_catalog.profiles["deepseek-api"]).toMatchObject({
+      name: "DeepSeek API",
+      type: "openai-compatible",
+      timeout_seconds: 45,
+    });
+    expect(payload.provider_catalog.defaults).toMatchObject({
+      provider: "deepseek-api",
+      model: "deepseek-chat",
+    });
+    expect(payload.form_values.provider_catalog).toEqual({
+      defaults: {
+        provider: "deepseek-api",
+        model: "deepseek-chat",
+      },
+      profile: {
+        name: "DeepSeek API",
+        type: "openai-compatible",
+        url: "https://api.deepseek.com/v1",
+        key: "secret",
+        timeout_seconds: "45",
+      },
+    });
+    expect(payload.form_values.workflows).toEqual({
+      "crystallization.provider": "deepseek-api",
+    });
   });
 
   it("parses admin snapshots", () => {

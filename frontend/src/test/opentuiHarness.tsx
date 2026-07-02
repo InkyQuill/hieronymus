@@ -24,6 +24,7 @@ type Harness = {
     maxPasses?: number,
   ) => Promise<string>;
   captureCharFrame: () => string;
+  resize: (width: number, height: number) => Promise<void>;
   mockInput: {
     press: (name: string, options?: KeyOptions) => Promise<void>;
     type: (value: string) => Promise<void>;
@@ -166,6 +167,14 @@ export function createOpenTuiHarness(options: TestRendererOptions): Harness {
 
   const captureCharFrame = () => setup?.captureCharFrame() ?? "";
 
+  const resize = async (width: number, height: number) => {
+    const current = ensureSetup();
+    await act(async () => {
+      current.resize(width, height);
+      await current.flush();
+    });
+  };
+
   const cleanup = async () => {
     if (!setup) {
       return;
@@ -185,6 +194,7 @@ export function createOpenTuiHarness(options: TestRendererOptions): Harness {
     waitFor,
     waitForFrame,
     captureCharFrame,
+    resize,
     mockInput: { press, type },
     cleanup,
   };

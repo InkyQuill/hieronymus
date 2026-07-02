@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from hieronymus.admin import ADMIN_VIEWS, AdminStore
@@ -6,7 +8,6 @@ from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_audit import DreamAuditStore
 from hieronymus.dream_config import (
-    ProviderProfile,
     WorkflowProfile,
     default_dream_config,
     save_dream_config,
@@ -14,6 +15,12 @@ from hieronymus.dream_config import (
 from hieronymus.dream_locks import dream_cycle_lock
 from hieronymus.dreaming import DreamRunRecord
 from hieronymus.memory_models import TranslationContext
+from hieronymus.provider_config import (
+    ProviderCatalog,
+    ProviderDefaults,
+    ProviderProfile,
+    save_provider_catalog,
+)
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.workspace import WorkspaceStore
@@ -424,14 +431,26 @@ def test_admin_manual_dreaming_runs_without_completed_pending_memory(
     assert row["input_count"] == 0
 
 
-def test_admin_manual_dreaming_uses_dream_config_provider_profile(
+def test_admin_manual_dreaming_uses_provider_catalog_profile(
     config: HieronymusConfig,
 ) -> None:
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "openai": ProviderProfile(
+                    name="OpenAI",
+                    type="openai",
+                    url="https://api.openai.com/v1",
+                    key="secret-openai",
+                ),
+            },
+            defaults=ProviderDefaults(provider="openai", model="gpt-4.1-mini"),
+        ),
+    )
     save_dream_config(
         config,
-        default_dream_config()
-        .with_provider("openai", ProviderProfile(type="openai", api_key="secret-openai"))
-        .with_workflow(
+        replace(default_dream_config(), enabled=True).with_workflow(
             "crystallization",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),

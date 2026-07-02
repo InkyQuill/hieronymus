@@ -4,11 +4,13 @@ import hashlib
 import json
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import ProviderProfile
+
+if TYPE_CHECKING:
+    from hieronymus.dream_providers import ProviderProfile
 
 CACHE_TTL = timedelta(hours=24)
 

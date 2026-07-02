@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import tomllib
 from dataclasses import dataclass, fields, replace
 from typing import Any
@@ -10,27 +9,9 @@ import tomli_w
 from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
 
-SUPPORTED_PROVIDER_TYPES = frozenset({"openai", "anthropic", "gemini", "ollama"})
-
 
 class DreamConfigError(ValueError):
     """Raised when dream.conf cannot be loaded or used."""
-
-
-@dataclass(frozen=True)
-class ProviderProfile:
-    type: str
-    endpoint: str = ""
-    api_key: str = ""
-    timeout_seconds: float = 30.0
-
-    def to_payload(self, *, redact: bool = False) -> dict[str, object]:
-        return {
-            "type": self.type,
-            "endpoint": self.endpoint,
-            "api_key": "***" if redact and self.api_key else self.api_key,
-            "timeout_seconds": self.timeout_seconds,
-        }
 
 
 @dataclass(frozen=True)
@@ -60,16 +41,13 @@ class DreamConfig:
     max_related_crystals_per_concept: int
     max_total_affected_crystals: int
     general_prompt: str
-    providers: dict[str, ProviderProfile]
     workflows: dict[str, WorkflowProfile]
-
-    def with_provider(self, name: str, provider: ProviderProfile) -> DreamConfig:
-        return replace(self, providers={**self.providers, name: provider})
 
     def with_workflow(self, name: str, workflow: WorkflowProfile) -> DreamConfig:
         return replace(self, workflows={**self.workflows, name: workflow})
 
     def to_payload(self, *, redact: bool = False) -> dict[str, object]:
+        del redact
         dreaming = {
             "enabled": self.enabled,
             "schedule_interval_minutes": self.schedule_interval_minutes,
@@ -83,13 +61,9 @@ class DreamConfig:
             "max_total_affected_crystals": self.max_total_affected_crystals,
             "general_prompt": self.general_prompt,
         }
-        providers = {
-            name: provider.to_payload(redact=redact) for name, provider in self.providers.items()
-        }
         workflows = {name: workflow.to_payload() for name, workflow in self.workflows.items()}
         return {
             "dreaming": dreaming,
-            "providers": providers,
             "workflows": workflows,
         }
 
@@ -112,24 +86,6 @@ def default_dream_config() -> DreamConfig:
             "evidence, or metadata. Long-term crystals must be 1-2 sentences. "
             "Short-term memories must be 1-6 sentences."
         ),
-        providers={
-            "anthropic": ProviderProfile(
-                type="anthropic",
-                endpoint="https://api.anthropic.com",
-            ),
-            "openai": ProviderProfile(
-                type="openai",
-                endpoint="https://api.openai.com/v1",
-            ),
-            "gemini": ProviderProfile(
-                type="gemini",
-                endpoint="https://generativelanguage.googleapis.com",
-            ),
-            "ollama": ProviderProfile(
-                type="ollama",
-                endpoint="http://localhost:11434",
-            ),
-        },
         workflows={
             "crystallization": WorkflowProfile(
                 provider="anthropic",
@@ -227,19 +183,12 @@ def validate_dream_config(dream_config: DreamConfig) -> DreamConfig:
         )
 
     _require_profile_mapping(
-        "providers",
-        dream_config.providers,
-        ProviderProfile,
-    )
-    _require_profile_mapping(
         "workflows",
         dream_config.workflows,
         WorkflowProfile,
     )
-    for name, provider in dream_config.providers.items():
-        _validate_provider_profile(name, provider)
     for name, workflow in dream_config.workflows.items():
-        _validate_workflow_profile(name, workflow, dream_config.providers)
+        _validate_workflow_profile(name, workflow)
 
     return dream_config
 
@@ -253,7 +202,7 @@ def _dream_config_from_payload(payload: dict[str, Any]) -> DreamConfig:
     defaults = default_dream_config()
 
     dreaming = _dict_payload(payload.get("dreaming"), "dreaming")
-    dreaming_keys = _field_names(DreamConfig) - frozenset({"providers", "workflows"})
+    dreaming_keys = _field_names(DreamConfig) - frozenset({"workflows"})
     _validate_unknown_keys(
         dreaming,
         allowed=dreaming_keys,
@@ -261,22 +210,7 @@ def _dream_config_from_payload(payload: dict[str, Any]) -> DreamConfig:
     )
     _validate_dreaming_payload(dreaming)
 
-    providers = dict(defaults.providers)
-    providers_payload = _dict_payload(payload.get("providers"), "providers")
-    for name, raw_provider in providers_payload.items():
-        provider_payload = _dict_payload(raw_provider, f"providers.{name}")
-        _validate_unknown_keys(
-            provider_payload,
-            allowed=_field_names(ProviderProfile),
-            prefix=f"providers.{name}",
-        )
-        _validate_provider_payload(name, provider_payload)
-        provider_default = providers.get(name)
-        if provider_default is None:
-            if "type" not in provider_payload:
-                raise DreamConfigError(f"providers.{name}.type is required")
-            provider_default = ProviderProfile(type=provider_payload["type"])
-        providers[name] = replace(provider_default, **provider_payload)
+    _dict_payload(payload.get("providers"), "providers")
 
     workflows = dict(defaults.workflows)
     workflows_payload = _dict_payload(payload.get("workflows"), "workflows")
@@ -333,7 +267,6 @@ def _dream_config_from_payload(payload: dict[str, Any]) -> DreamConfig:
             defaults.max_total_affected_crystals,
         ),
         general_prompt=dreaming.get("general_prompt", defaults.general_prompt),
-        providers=providers,
         workflows=workflows,
     )
 
@@ -390,21 +323,6 @@ def _validate_dreaming_payload(payload: dict[str, Any]) -> None:
         _require_exact_str("general_prompt", payload["general_prompt"])
 
 
-def _validate_provider_payload(name: str, payload: dict[str, Any]) -> None:
-    prefix = f"providers.{name}"
-    if "type" in payload:
-        _require_exact_str(f"{prefix}.type", payload["type"])
-    if "endpoint" in payload:
-        _require_exact_str(f"{prefix}.endpoint", payload["endpoint"])
-    if "api_key" in payload:
-        _require_exact_str(f"{prefix}.api_key", payload["api_key"])
-    if "timeout_seconds" in payload:
-        payload["timeout_seconds"] = _coerce_positive_float(
-            f"{prefix}.timeout_seconds",
-            payload["timeout_seconds"],
-        )
-
-
 def _validate_workflow_payload(name: str, payload: dict[str, Any]) -> None:
     prefix = f"workflows.{name}"
     if "provider" in payload:
@@ -415,29 +333,11 @@ def _validate_workflow_payload(name: str, payload: dict[str, Any]) -> None:
         _require_exact_bool(f"{prefix}.enabled", payload["enabled"])
 
 
-def _validate_provider_profile(name: str, provider: ProviderProfile) -> None:
-    prefix = f"providers.{name}"
-    _require_exact_str(f"{prefix}.type", provider.type)
-    _require_exact_str(f"{prefix}.endpoint", provider.endpoint)
-    _require_exact_str(f"{prefix}.api_key", provider.api_key)
-    _require_positive_float(f"{prefix}.timeout_seconds", provider.timeout_seconds)
-    if provider.type not in SUPPORTED_PROVIDER_TYPES:
-        raise DreamConfigError(f"unsupported provider type for {name}: {provider.type}")
-
-
-def _validate_workflow_profile(
-    name: str,
-    workflow: WorkflowProfile,
-    providers: dict[str, ProviderProfile],
-) -> None:
+def _validate_workflow_profile(name: str, workflow: WorkflowProfile) -> None:
     prefix = f"workflows.{name}"
     _require_exact_str(f"{prefix}.provider", workflow.provider)
     _require_exact_str(f"{prefix}.model", workflow.model)
     _require_exact_bool(f"{prefix}.enabled", workflow.enabled)
-    if workflow.enabled and workflow.provider not in providers:
-        raise DreamConfigError(
-            f"referenced provider profile is missing: {name}.{workflow.provider}",
-        )
     if workflow.enabled and not workflow.model:
         raise DreamConfigError(f"enabled workflow must have a model: {name}")
 
@@ -499,18 +399,3 @@ def _require_exact_bool(field_name: str, value: object) -> None:
 def _require_exact_str(field_name: str, value: object) -> None:
     if type(value) is not str:
         raise DreamConfigError(f"{field_name} must be a string")
-
-
-def _coerce_positive_float(field_name: str, value: object) -> float:
-    if type(value) not in (int, float):
-        raise DreamConfigError(f"{field_name} must be a number")
-    value = float(value)
-    if not math.isfinite(value):
-        raise DreamConfigError(f"{field_name} must be finite and greater than 0")
-    if value <= 0:
-        raise DreamConfigError(f"{field_name} must be greater than 0")
-    return value
-
-
-def _require_positive_float(field_name: str, value: object) -> None:
-    _coerce_positive_float(field_name, value)

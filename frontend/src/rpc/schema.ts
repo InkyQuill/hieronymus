@@ -1,6 +1,21 @@
 import { z } from "zod";
 
-export const ProviderNameSchema = z.enum(["openai", "gemini", "anthropic"]);
+export const ProviderNameSchema = z
+  .string()
+  .min(1)
+  .regex(/^[A-Za-z0-9_-]+$/);
+const ProviderCatalogDefaultProviderSchema = z.union([
+  ProviderNameSchema,
+  z.literal(""),
+]);
+const PositiveTimeoutStringSchema = z
+  .string()
+  .trim()
+  .regex(/^(?:\d+\.?\d*|\.\d+)$/)
+  .refine((value) => Number(value) > 0);
+const TimeoutSecondsSchema = z
+  .union([z.number().finite().positive(), PositiveTimeoutStringSchema])
+  .default(30);
 
 export const RpcResponseSchema = z.discriminatedUnion("ok", [
   z.object({
@@ -150,10 +165,52 @@ export const AdminBootstrapSchema = z.object({
 export const ConfigPathsSchema = z
   .object({
     dream_config_path: z.string(),
+    provider_config_path: z.string().default(""),
     ingest_config_path: z.string(),
     release_config_path: z.string(),
   })
   .passthrough();
+
+const ProviderCatalogProfileSchema = z
+  .object({
+    name: z.string().default(""),
+    type: z.string().default(""),
+    url: z.string().default(""),
+    key: z.string().default(""),
+    timeout_seconds: TimeoutSecondsSchema,
+  })
+  .passthrough();
+
+const ProviderCatalogSchema = z
+  .object({
+    profiles: z
+      .record(ProviderNameSchema, ProviderCatalogProfileSchema)
+      .default({}),
+    defaults: z
+      .object({
+        provider: ProviderCatalogDefaultProviderSchema.default(""),
+        model: z.string().default(""),
+      })
+      .passthrough()
+      .default({ provider: "", model: "" }),
+  })
+  .passthrough()
+  .default({ profiles: {}, defaults: { provider: "", model: "" } });
+
+const ConfigFormValueSchema = z.union([z.string(), z.number(), z.boolean()]);
+const ConfigFormStringRecordSchema = z.record(z.string());
+const ConfigFormValueRecordSchema = z.record(ConfigFormValueSchema);
+const ProviderCatalogFormValuesSchema = z
+  .union([
+    ConfigFormValueRecordSchema,
+    z
+      .object({
+        defaults: ConfigFormValueRecordSchema.default({}),
+        profile: ConfigFormValueRecordSchema.default({}),
+      })
+      .passthrough(),
+  ])
+  .default({});
 
 const ConfigFieldTypeSchema = z.enum([
   "text",
@@ -222,7 +279,7 @@ export const ConfigBootstrapSchema = z
       dream: z
         .object({
           dreaming: z.record(z.unknown()),
-          providers: z.record(z.record(z.unknown())),
+          providers: z.record(z.record(z.unknown())).default({}),
           workflows: z.record(z.record(z.unknown())),
         })
         .passthrough(),
@@ -233,16 +290,20 @@ export const ConfigBootstrapSchema = z
         })
         .passthrough(),
       dreaming: z.record(z.unknown()),
+      provider_catalog: ProviderCatalogSchema,
       providers: z.record(z.record(z.unknown())),
       workflows: z.record(z.record(z.unknown())).default({}),
       release: z.record(z.unknown()),
     }),
     form_values: z.object({
-      provider: z.record(z.string()),
-      dreaming: z.record(z.string()),
-      ingest: z.record(z.string()).default({}),
-      release: z.record(z.string()).default({}),
+      provider: ConfigFormStringRecordSchema.default({}),
+      provider_catalog: ProviderCatalogFormValuesSchema,
+      workflows: ConfigFormStringRecordSchema.default({}),
+      dreaming: ConfigFormStringRecordSchema,
+      ingest: ConfigFormStringRecordSchema.default({}),
+      release: ConfigFormStringRecordSchema.default({}),
     }),
+    provider_catalog: ProviderCatalogSchema,
     release: z
       .object({
         update_channel: z.string(),

@@ -9,13 +9,8 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.dream_config import (
-    DreamConfig,
-    ProviderProfile,
-    WorkflowProfile,
-    load_dream_config,
-)
-from hieronymus.dream_workflows import CRYSTALLIZATION_PHASE
+from hieronymus.dream_config import DreamConfig, WorkflowProfile, load_dream_config
+from hieronymus.dream_workflows import CRYSTALLIZATION_PHASE, resolve_effective_workflow
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
     DreamConceptProposal,
@@ -28,10 +23,15 @@ from hieronymus.llm_cache import (
     ModelCacheEntry,
     dream_profile_cache_identity,
     load_model_cache,
-    model_cache_identity,
     save_model_cache,
 )
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
+from hieronymus.provider_config import (
+    ProviderProfile as CatalogProviderProfile,
+)
+from hieronymus.provider_config import (
+    load_provider_catalog,
+)
 
 ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_API_BASE_URL = "https://api.anthropic.com"
@@ -121,6 +121,14 @@ class ProviderMetadata:
 
 
 @dataclass(frozen=True)
+class ProviderProfile:
+    type: str
+    endpoint: str = ""
+    api_key: str = ""
+    timeout_seconds: float = 30.0
+
+
+@dataclass(frozen=True)
 class ProviderCheckResult:
     name: str
     ok: bool
@@ -202,10 +210,11 @@ class ProviderRegistry:
 
     def status_payload(self, config: HieronymusConfig) -> list[dict[str, object]]:
         dream_config = load_dream_config(config)
+        provider_catalog = load_provider_catalog(config)
         statuses = []
         profile_names = [metadata.name for metadata in self._providers]
         profile_names.extend(
-            name for name in dream_config.providers if name not in set(profile_names)
+            name for name in provider_catalog.providers if name not in set(profile_names)
         )
         for name in profile_names:
             metadata = self._metadata_or_profile_default(name)
@@ -223,7 +232,12 @@ class ProviderRegistry:
                     }
                 )
                 continue
-            profile = dream_config.providers.get(name)
+            catalog_profile = provider_catalog.providers.get(name)
+            profile = (
+                _catalog_profile_to_runtime(catalog_profile)
+                if catalog_profile is not None
+                else None
+            )
             if profile is None:
                 configured = False
                 error = "provider profile missing"
@@ -233,6 +247,8 @@ class ProviderRegistry:
                 timeout_seconds = 0.0
             else:
                 model = _model_for_profile(dream_config, name)
+                if not model and provider_catalog.defaults.provider == name:
+                    model = provider_catalog.defaults.model
                 api_key_present = bool(profile.api_key.strip())
                 configured, error = _configured_profile_status(profile, model)
                 base_url = profile.endpoint
@@ -263,16 +279,16 @@ class ProviderRegistry:
                 source="defaults",
             )
 
-        dream_config = load_dream_config(config)
-        profile = dream_config.providers.get(name)
-        if profile is None:
-            self.metadata(name)
+        provider_catalog = load_provider_catalog(config)
+        catalog_profile = provider_catalog.providers.get(name)
+        if catalog_profile is None:
             return ModelSuggestionResult(
                 provider=name,
                 models=_default_model_suggestions(name),
                 source="defaults",
-                error="provider profile missing",
+                error=f"provider profile missing: {name}",
             )
+        profile = _catalog_profile_to_runtime(catalog_profile)
         return self.list_profile_model_suggestions(config, name, profile)
 
     def list_profile_model_suggestions(
@@ -307,40 +323,6 @@ class ProviderRegistry:
                     fetched_at=datetime.now(UTC).isoformat(),
                     error=result.error,
                     identity=identity,
-                )
-            ),
-        )
-        return result
-
-    def _list_static_cached_model_suggestions(
-        self,
-        config: HieronymusConfig,
-        name: str,
-    ) -> ModelSuggestionResult:
-        cache = load_model_cache(config)
-        entry = cache.providers.get(name)
-        if entry is not None and not entry.error and not entry.is_stale():
-            return ModelSuggestionResult(
-                provider=name,
-                models=list(entry.models),
-                source=config.llm_cache_path.name,
-                error=entry.error,
-            )
-
-        result = ModelSuggestionResult(
-            provider=name,
-            models=_default_model_suggestions(name),
-            source="defaults",
-        )
-        _save_model_cache_best_effort(
-            config,
-            cache.with_entry(
-                ModelCacheEntry(
-                    provider=name,
-                    models=tuple(result.models),
-                    fetched_at=datetime.now(UTC).isoformat(),
-                    error=result.error,
-                    identity=model_cache_identity(name),
                 )
             ),
         )
@@ -384,22 +366,27 @@ class ProviderRegistry:
         self,
         config: HieronymusConfig,
         name: str,
+        *,
+        model: str | None = None,
     ) -> ProviderCheckResult:
         if name == "deterministic":
             return ProviderCheckResult(name="deterministic", ok=True, model="")
 
         dream_config = load_dream_config(config)
-        profile = dream_config.providers.get(name)
-        model = _model_for_profile(dream_config, name)
-        if profile is None:
-            self.metadata(name)
+        provider_catalog = load_provider_catalog(config)
+        catalog_profile = provider_catalog.providers.get(name)
+        resolved_model = model if model is not None else _model_for_profile(dream_config, name)
+        if not resolved_model and provider_catalog.defaults.provider == name:
+            resolved_model = provider_catalog.defaults.model
+        if catalog_profile is None:
             return ProviderCheckResult(
                 name=name,
                 ok=False,
-                model=model,
-                error="provider profile missing",
+                model=resolved_model,
+                error=f"provider profile missing: {name}",
             )
-        return self.check_profile(config, name, profile, model=model)
+        profile = _catalog_profile_to_runtime(catalog_profile)
+        return self.check_profile(config, name, profile, model=resolved_model)
 
     def _metadata_or_profile_default(self, name: str) -> ProviderMetadata:
         for provider in self._providers:
@@ -682,7 +669,7 @@ def _default_model_suggestions(name: str) -> list[str]:
         "deterministic": [""],
         "ollama": ["gemma4-e3b"],
     }
-    return list(defaults[name])
+    return list(defaults.get(name, []))
 
 
 def _parse_model_suggestions(name: str, body: str) -> list[str]:
@@ -1025,10 +1012,11 @@ def resolve_profile_provider(
     model: str,
     transport: HTTPTransport | None = None,
 ) -> DreamProvider:
-    dream_config = load_dream_config(config)
-    profile = dream_config.providers.get(profile_name)
-    if profile is None:
+    provider_catalog = load_provider_catalog(config)
+    catalog_profile = provider_catalog.providers.get(profile_name)
+    if catalog_profile is None:
         raise ValueError(f"referenced provider profile is missing: {profile_name}")
+    profile = _catalog_profile_to_runtime(catalog_profile)
     return _provider_from_profile(
         profile_name,
         profile,
@@ -1112,19 +1100,29 @@ def resolve_provider(
     dream_config = load_dream_config(config)
     if name == "deterministic":
         return DeterministicDreamProvider()
+    provider_catalog = load_provider_catalog(config)
     if name is not None:
-        if name not in dream_config.providers:
+        if name not in provider_catalog.providers:
             ProviderRegistry(transport=transport).metadata(name)
         workflow = _workflow_for_profile(dream_config, name)
         model = workflow.model if workflow is not None else _model_for_profile(dream_config, name)
+        if not model and provider_catalog.defaults.provider == name:
+            model = provider_catalog.defaults.model
         return resolve_profile_provider(config, name, model=model, transport=transport)
 
-    workflow = _runtime_workflow(dream_config)
-    if workflow is None:
+    if not dream_config.enabled:
         return DeterministicDreamProvider()
-    profile = dream_config.providers.get(workflow.provider)
-    if profile is None:
+
+    workflow_name = _runtime_workflow_name(dream_config)
+    if workflow_name is None:
+        return DeterministicDreamProvider()
+    workflow = resolve_effective_workflow(dream_config, provider_catalog, workflow_name)
+    if workflow.provider == "deterministic":
+        return DeterministicDreamProvider()
+    catalog_profile = provider_catalog.providers.get(workflow.provider)
+    if catalog_profile is None:
         raise ValueError(f"referenced provider profile is missing: {workflow.provider}")
+    profile = _catalog_profile_to_runtime(catalog_profile)
     if not _profile_runtime_configured(profile, workflow.model):
         return DeterministicDreamProvider()
     return _provider_from_profile(
@@ -1163,6 +1161,16 @@ def _runtime_workflow(dream_config: DreamConfig) -> WorkflowProfile | None:
     return None
 
 
+def _runtime_workflow_name(dream_config: DreamConfig) -> str | None:
+    workflow = dream_config.workflows.get(CRYSTALLIZATION_PHASE)
+    if workflow is not None and workflow.enabled:
+        return CRYSTALLIZATION_PHASE
+    for name, workflow in dream_config.workflows.items():
+        if workflow.enabled:
+            return name
+    return None
+
+
 def _workflow_for_profile(
     dream_config: DreamConfig,
     profile_name: str,
@@ -1180,3 +1188,13 @@ def _profile_runtime_configured(profile: ProviderProfile, model: str) -> bool:
     if not model.strip():
         return False
     return profile.type == "ollama" or bool(profile.api_key.strip())
+
+
+def _catalog_profile_to_runtime(profile: CatalogProviderProfile) -> ProviderProfile:
+    provider_type = "gemini" if profile.type == "google" else profile.type
+    return ProviderProfile(
+        type=provider_type,
+        endpoint=profile.url,
+        api_key=profile.key,
+        timeout_seconds=profile.timeout_seconds,
+    )

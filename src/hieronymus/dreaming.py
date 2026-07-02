@@ -14,6 +14,7 @@ from hieronymus.dream_audit import DreamAuditStore
 from hieronymus.dream_config import load_dream_config
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
 from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
+from hieronymus.provider_config import load_provider_catalog
 from hieronymus.scoring import PASSIVE_EVENT_DELTAS, apply_score_delta
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.workspace import WorkspaceStore, short_memory_from_row
@@ -797,7 +798,10 @@ class DreamService:
 
     def _redacted_error_message(self, error: Exception) -> str:
         message = str(error)
-        return redact_configured_secret_values(message, self.dream_config)
+        try:
+            return redact_configured_secret_values(message, load_provider_catalog(self.config))
+        except Exception:
+            return message
 
     def _apply_score_maintenance(
         self,
