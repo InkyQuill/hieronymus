@@ -23,6 +23,7 @@ from hieronymus.memory_models import (
     TranslationContext,
 )
 from hieronymus.rag import RagStore
+from hieronymus.rag_models import RagChunkRecord
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry, Series
 from hieronymus.service_discovery import discover_local_service
@@ -125,6 +126,25 @@ def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str
     }
 
 
+def _rag_chunk_payload(chunk: RagChunkRecord | None) -> dict[str, Any] | None:
+    if chunk is None:
+        return None
+    return {
+        "id": chunk.id,
+        "source_id": chunk.source_id,
+        "series_slug": chunk.series_slug,
+        "source_ref": chunk.source_ref,
+        "chunk_kind": chunk.chunk_kind,
+        "text": chunk.text,
+        "display_text": chunk.display_text,
+        "location": chunk.location,
+        "metadata": chunk.metadata,
+        "language_tags": list(chunk.language_tags),
+        "story_scopes": list(chunk.story_scopes),
+        "semantic_tags": list(chunk.semantic_tags),
+    }
+
+
 def _rag_hit_payload(hit) -> dict[str, Any]:
     chunk = hit.chunk
     return {
@@ -178,6 +198,7 @@ def _recall_payload(result) -> dict[str, Any]:
         "reason": result.reason,
         "crystal": _crystal_payload(result.crystal),
         "short_term_memory": _short_term_memory_payload(result.short_term_memory),
+        "rag_chunk": _rag_chunk_payload(result.rag_chunk),
     }
 
 

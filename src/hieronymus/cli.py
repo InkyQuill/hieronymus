@@ -944,9 +944,9 @@ def recall(
         _raise_click_error(error)
     payload = [
         {
+            **result.enriched_payload(),
             "source": result.source,
             "rank": result.rank,
-            "score": result.score,
             "reason": result.reason,
             "crystal": _crystal_payload(result.crystal),
             "short_term_memory": _short_term_memory_payload(result.short_term_memory),

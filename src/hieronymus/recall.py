@@ -8,7 +8,13 @@ from hieronymus.concepts import ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore, search_expression
 from hieronymus.db import apply_migration, connect
-from hieronymus.memory_models import RecallResult, ShortTermMemoryRecord, TranslationContext
+from hieronymus.memory_models import (
+    CrystalRecord,
+    RecallResult,
+    ShortTermMemoryRecord,
+    TranslationContext,
+)
+from hieronymus.rag import RagStore
 from hieronymus.workspace import short_memory_from_row
 
 _RECALL_REASON = "weighted search match"
@@ -39,6 +45,8 @@ _SQL_METADATA_SCORE = """
   + case when c.scope_type = 'series' then 0.05 else 0 end
 )
 """
+_SOURCE_PREFERENCE = {"long_term": 0, "short_term": 1, "rag": 2}
+_RankedItem = tuple[str, float, int, object, str, tuple[str, ...]]
 
 
 def _now() -> str:
@@ -84,11 +92,82 @@ def _metadata_search_score(strength: float, confidence: float, scope_type: str) 
     return (strength * 0.35) + (confidence * 0.20) + scope_bonus
 
 
+def _ranked_item_sort_key(item: _RankedItem) -> tuple[float, int, int]:
+    return (-item[1], _SOURCE_PREFERENCE[item[0]], item[2])
+
+
+def _recall_budget_split(limit: int) -> tuple[int, int]:
+    memory_budget = (limit + 1) // 2
+    return memory_budget, limit - memory_budget
+
+
+def _is_protected_active_rule(item: _RankedItem) -> bool:
+    source, _score, _item_id, payload, _reason, _labels = item
+    return (
+        source == "long_term"
+        and isinstance(payload, CrystalRecord)
+        and payload.crystal_type == "rule"
+        and payload.status == "active"
+    )
+
+
+def _interleave_ranked_items(
+    memory_items: list[_RankedItem],
+    rag_items: list[_RankedItem],
+) -> list[_RankedItem]:
+    interleaved: list[_RankedItem] = []
+    max_length = max(len(memory_items), len(rag_items))
+    for index in range(max_length):
+        if index < len(memory_items):
+            interleaved.append(memory_items[index])
+        if index < len(rag_items):
+            interleaved.append(rag_items[index])
+    return interleaved
+
+
+def _merge_ranked_items(
+    memory_items: list[_RankedItem],
+    rag_items: list[_RankedItem],
+    *,
+    limit: int,
+) -> list[_RankedItem]:
+    if not rag_items:
+        return memory_items[:limit]
+
+    protected: list[_RankedItem] = []
+    memory_pool: list[_RankedItem] = []
+    for item in memory_items:
+        if _is_protected_active_rule(item):
+            protected.append(item)
+        else:
+            memory_pool.append(item)
+
+    selected = protected[:limit]
+    remaining_limit = limit - len(selected)
+    if remaining_limit <= 0:
+        return selected
+
+    memory_budget, rag_budget = _recall_budget_split(remaining_limit)
+    memory_primary = memory_pool[:memory_budget]
+    rag_primary = rag_items[:rag_budget]
+    selected.extend(_interleave_ranked_items(memory_primary, rag_primary))
+
+    remaining_limit = limit - len(selected)
+    if remaining_limit <= 0:
+        return selected
+
+    overflow = [*memory_pool[memory_budget:], *rag_items[rag_budget:]]
+    overflow.sort(key=_ranked_item_sort_key)
+    selected.extend(overflow[:remaining_limit])
+    return selected
+
+
 class RecallService:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
         self.crystals = CrystalStore(config)
         self.concepts = ConceptStore(config)
+        self.rag = RagStore(config)
         with connect(self.config.database_path) as conn:
             apply_migration(conn, "global.sql")
 
@@ -118,7 +197,7 @@ class RecallService:
             query,
             limit=_long_term_candidate_limit(limit),
         )
-        ranked_items: list[tuple[str, float, int, object, str, tuple[str, ...]]] = []
+        ranked_items: list[_RankedItem] = []
         context_story_scopes = set(context.story_scopes).union(context.tags)
         context_semantic_tags = set(context.semantic_tags).union(context.tags)
         long_term_candidates = {
@@ -171,18 +250,16 @@ class RecallService:
         for memory, score in short_term_memories:
             ranked_items.append(("short_term", score, memory.id, memory, _SHORT_TERM_REASON, ()))
 
-        source_preference = {"long_term": 0, "short_term": 1}
-        ranked_items.sort(
-            key=lambda item: (
-                -item[1],
-                source_preference[item[0]],
-                item[2],
-            )
-        )
+        ranked_items.sort(key=_ranked_item_sort_key)
+        rag_items: list[_RankedItem] = [
+            ("rag", hit.score, hit.chunk.id, hit.chunk, hit.reason, ())
+            for hit in self.rag.search(context.series_slug, query, limit=limit)
+        ]
+        ranked_items = _merge_ranked_items(ranked_items, rag_items, limit=limit)
 
         results: list[RecallResult] = []
         for rank, (source, score, _item_id, payload, reason, labels) in enumerate(
-            ranked_items[:limit],
+            ranked_items,
             start=1,
         ):
             if source == "long_term":
@@ -195,13 +272,22 @@ class RecallService:
                         concept_labels=labels,
                     )
                 )
-            else:
+            elif source == "short_term":
                 results.append(
                     RecallResult.short_term(
                         payload,
                         rank=rank,
                         score=score,
                         reason=_SHORT_TERM_REASON,
+                    )
+                )
+            else:
+                results.append(
+                    RecallResult.rag(
+                        payload,
+                        rank=rank,
+                        score=score,
+                        reason=reason,
                     )
                 )
 
