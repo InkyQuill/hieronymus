@@ -436,3 +436,45 @@ def test_glossary_hits_get_glossary_reason(
     assert hits[0].reason == "rag glossary match"
     assert hits[0].chunk.chunk_kind == "glossary_entry"
     assert hits[0].score > 0
+
+
+def test_default_source_ref_keeps_same_basename_paths_distinct(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    first_path = tmp_path / "first" / "chapter.txt"
+    second_path = tmp_path / "second" / "chapter.txt"
+    first_path.parent.mkdir()
+    second_path.parent.mkdir()
+    first_path.write_text("Alpha Sense note.", encoding="utf-8")
+    second_path.write_text("Beta Cooking Talent note.", encoding="utf-8")
+    store = RagStore(config)
+
+    first = store.import_file(series_slug, first_path, source_type="auto")
+    second = store.import_file(series_slug, second_path, source_type="auto")
+
+    assert first.source.source_ref == str(first_path)
+    assert second.source.source_ref == str(second_path)
+    assert [hit.chunk.text for hit in store.search(series_slug, "Alpha", limit=5)] == [
+        "Alpha Sense note."
+    ]
+    assert [hit.chunk.text for hit in store.search(series_slug, "Beta", limit=5)] == [
+        "Beta Cooking Talent note."
+    ]
+
+
+def test_search_caps_large_limit_at_fifty(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    path = tmp_path / "chapter.txt"
+    path.write_text(
+        "\n\n".join(f"Sense indexed note {index}." for index in range(60)),
+        encoding="utf-8",
+    )
+    store = RagStore(config)
+    store.import_file(series_slug, path, source_type="auto")
+
+    assert len(store.search(series_slug, "Sense", limit=1000)) == 50

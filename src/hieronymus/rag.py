@@ -28,6 +28,7 @@ from hieronymus.rag_models import (
 RagLoadSourceType = Literal["auto", "text", "glossary"]
 
 MAX_RAG_CHUNK_CHARS = 1200
+_MAX_RAG_SEARCH_LIMIT = 50
 
 _MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
@@ -72,7 +73,7 @@ class RagStore:
         semantic_tags: Iterable[str] = (),
     ) -> RagImportResult:
         source_path = Path(path)
-        clean_source_ref = source_ref or source_path.name
+        clean_source_ref = source_ref or str(source_path)
         try:
             parsed = load_rag_file(source_path, source_type=source_type)
         except (ValueError, UnicodeDecodeError, yaml.YAMLError) as exc:
@@ -210,6 +211,7 @@ class RagStore:
         if not expression:
             return []
 
+        bounded_limit = min(limit, _MAX_RAG_SEARCH_LIMIT)
         with connect(self.config.database_path) as conn:
             rows = conn.execute(
                 """
@@ -228,7 +230,7 @@ class RagStore:
                 order by rank, rag_chunks.id
                 limit ?
                 """,
-                (expression, series_slug, limit),
+                (expression, series_slug, bounded_limit),
             ).fetchall()
 
             return [
