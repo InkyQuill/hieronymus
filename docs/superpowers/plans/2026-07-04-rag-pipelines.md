@@ -633,7 +633,7 @@ git commit -m "feat: parse rag source files"
 - Modify: `src/hieronymus/rag.py`
 - Modify: `tests/test_rag_store.py`
 
-- [ ] **Step 1: Write failing RagStore tests**
+- [x] **Step 1: Write failing RagStore tests**
 
 Append these tests to `tests/test_rag_store.py`:
 
@@ -738,13 +738,13 @@ def test_glossary_hits_get_glossary_reason(config: HieronymusConfig, tmp_path: P
     assert hits[0].score > 0
 ```
 
-- [ ] **Step 2: Run RagStore tests and verify they fail**
+- [x] **Step 2: Run RagStore tests and verify they fail**
 
 Run: `uv run pytest tests/test_rag_store.py -q`
 
 Expected: FAIL because `RagStore` is not implemented.
 
-- [ ] **Step 3: Add `RagStore` row hydration and import/search methods**
+- [x] **Step 3: Add `RagStore` row hydration and import/search methods**
 
 Append this implementation to `src/hieronymus/rag.py`:
 
@@ -1001,13 +1001,13 @@ def _rank_reason(chunk: RagChunkRecord) -> str:
     return "rag project text match"
 ```
 
-- [ ] **Step 4: Run RagStore tests and verify import replacement is atomic**
+- [x] **Step 4: Run RagStore tests and verify import replacement is atomic**
 
 Run: `uv run pytest tests/test_rag_store.py -q`
 
 Expected: PASS. The failed-import test proves parsing happens before any replacement write and the previous indexed version remains available.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add src/hieronymus/rag.py tests/test_rag_store.py
