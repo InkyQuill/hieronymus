@@ -272,13 +272,13 @@ git commit -m "feat: add rag schema and models"
 - Modify: `pyproject.toml`
 - Modify: `uv.lock`
 
-- [ ] **Step 1: Add the YAML dependency**
+- [x] **Step 1: Add the YAML dependency**
 
 Run: `uv add pyyaml`
 
 Expected: `pyproject.toml` contains `pyyaml` in `[project].dependencies`, and `uv.lock` is updated.
 
-- [ ] **Step 2: Write failing parser/chunker tests**
+- [x] **Step 2: Write failing parser/chunker tests**
 
 Append these tests to `tests/test_rag_store.py`:
 
@@ -361,13 +361,13 @@ def test_yaml_file_accepts_mapping_entries(tmp_path: Path) -> None:
     }
 ```
 
-- [ ] **Step 3: Run parser tests and verify they fail**
+- [x] **Step 3: Run parser tests and verify they fail**
 
 Run: `uv run pytest tests/test_rag_store.py -q`
 
 Expected: FAIL because `hieronymus.rag` and `load_rag_file` do not exist.
 
-- [ ] **Step 4: Add parser and chunker code**
+- [x] **Step 4: Add parser and chunker code**
 
 Create `src/hieronymus/rag.py` with these definitions first:
 
@@ -614,13 +614,13 @@ def _clean_text_tuple(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(normalized)
 ```
 
-- [ ] **Step 5: Run parser tests and verify they pass**
+- [x] **Step 5: Run parser tests and verify they pass**
 
 Run: `uv run pytest tests/test_rag_store.py -q`
 
 Expected: PASS for schema/model/parser tests.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 ```bash
 git add pyproject.toml uv.lock src/hieronymus/rag.py tests/test_rag_store.py
