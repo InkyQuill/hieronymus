@@ -75,6 +75,35 @@ def test_active_rule_crystal_ranks_above_rag(config: HieronymusConfig, tmp_path:
     assert any(result.source == "rag" for result in results[1:])
 
 
+def test_recall_passes_context_to_rag_ranking(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    context = _context(config)
+    session = WorkspaceStore(config).start_session(context)
+    store = RagStore(config)
+    general_path = tmp_path / "general.txt"
+    scoped_path = tmp_path / "scoped.txt"
+    general_path.write_text("Sense shared evidence.", encoding="utf-8")
+    scoped_path.write_text("Sense shared evidence.", encoding="utf-8")
+    store.import_file(context.series_slug, general_path, source_ref="general.txt")
+    store.import_file(
+        context.series_slug,
+        scoped_path,
+        source_ref="scoped.txt",
+        language_tags=("ru",),
+        story_scopes=("book:5/chapter:5",),
+        semantic_tags=("skill:name",),
+    )
+
+    results = RecallService(config).recall(session.id, context, "Sense shared evidence", limit=2)
+
+    assert [result.rag_chunk.source_ref for result in results if result.rag_chunk] == [
+        "scoped.txt",
+        "general.txt",
+    ]
+
+
 def test_recall_fills_limit_from_memory_when_rag_is_empty(
     config: HieronymusConfig,
 ) -> None:

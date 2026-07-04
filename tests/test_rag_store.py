@@ -473,6 +473,40 @@ def test_glossary_hits_get_glossary_reason(
     assert hits[0].score > 0
 
 
+def test_search_boosts_matching_rag_chunk_metadata(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    store = RagStore(config)
+    general_path = tmp_path / "general.txt"
+    scoped_path = tmp_path / "scoped.txt"
+    general_path.write_text("Sense shared evidence.", encoding="utf-8")
+    scoped_path.write_text("Sense shared evidence.", encoding="utf-8")
+    store.import_file(series_slug, general_path, source_ref="general.txt", source_type="auto")
+    store.import_file(
+        series_slug,
+        scoped_path,
+        source_ref="scoped.txt",
+        source_type="auto",
+        language_tags=("ru",),
+        story_scopes=("book:5/chapter:5",),
+        semantic_tags=("skill:name",),
+    )
+
+    hits = store.search(
+        series_slug,
+        "Sense shared evidence",
+        limit=2,
+        language_tags=("ru",),
+        story_scopes=("book:5/chapter:5",),
+        semantic_tags=("skill:name",),
+    )
+
+    assert [hit.chunk.source_ref for hit in hits] == ["scoped.txt", "general.txt"]
+    assert hits[0].score > hits[1].score
+
+
 def test_default_source_ref_keeps_same_basename_paths_distinct(
     config: HieronymusConfig,
     tmp_path: Path,

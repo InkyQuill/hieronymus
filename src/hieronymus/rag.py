@@ -29,6 +29,10 @@ RagLoadSourceType = Literal["auto", "text", "glossary"]
 
 MAX_RAG_CHUNK_CHARS = 1200
 _MAX_RAG_SEARCH_LIMIT = 50
+_RAG_LANGUAGE_TAG_BOOST = 0.05
+_RAG_STORY_SCOPE_BOOST = 0.10
+_RAG_SEMANTIC_TAG_BOOST = 0.10
+_RAG_GLOSSARY_BOOST = 0.25
 
 _MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
@@ -208,6 +212,9 @@ class RagStore:
         query: str,
         *,
         limit: int = 10,
+        language_tags: Iterable[str] = (),
+        story_scopes: Iterable[str] = (),
+        semantic_tags: Iterable[str] = (),
     ) -> list[RagSearchResult]:
         if limit < 1:
             raise ValueError("limit must be at least 1")
@@ -217,6 +224,13 @@ class RagStore:
             return []
 
         bounded_limit = min(limit, _MAX_RAG_SEARCH_LIMIT)
+        candidate_limit = min(
+            max(bounded_limit * 4, bounded_limit + 10),
+            _MAX_RAG_SEARCH_LIMIT,
+        )
+        clean_language_tags = _clean_text_tuple(language_tags)
+        clean_story_scopes = _clean_text_tuple(story_scopes)
+        clean_semantic_tags = _clean_text_tuple(semantic_tags)
         with connect(self.config.database_path) as conn:
             rows = conn.execute(
                 """
@@ -235,17 +249,25 @@ class RagStore:
                 order by rank, rag_chunks.id
                 limit ?
                 """,
-                (expression, series_slug, bounded_limit),
+                (expression, series_slug, candidate_limit),
             ).fetchall()
 
-            return [
+            results = [
                 RagSearchResult(
-                    chunk=self._chunk_from_row(conn, row),
-                    score=max(-float(row["rank"]), 0.000001),
+                    chunk=chunk,
+                    score=_rag_search_score(
+                        float(row["rank"]),
+                        chunk,
+                        language_tags=clean_language_tags,
+                        story_scopes=clean_story_scopes,
+                        semantic_tags=clean_semantic_tags,
+                    ),
                     reason=_reason_for_chunk_kind(row["chunk_kind"]),
                 )
                 for row in rows
+                for chunk in (self._chunk_from_row(conn, row),)
             ]
+            return sorted(results, key=lambda hit: (-hit.score, hit.chunk.id))[:bounded_limit]
 
     def _source_row(
         self,
@@ -766,6 +788,34 @@ def _text_values(
         (chunk_id,),
     ).fetchall()
     return tuple(row[value_column] for row in rows)
+
+
+def _rag_search_score(
+    rank: float,
+    chunk: RagChunkRecord,
+    *,
+    language_tags: Iterable[str],
+    story_scopes: Iterable[str],
+    semantic_tags: Iterable[str],
+) -> float:
+    score = max(-rank, 0.000001)
+    if chunk.chunk_kind == "glossary_entry":
+        score += _RAG_GLOSSARY_BOOST
+    if _has_casefold_intersection(language_tags, chunk.language_tags):
+        score += _RAG_LANGUAGE_TAG_BOOST
+    if _has_casefold_intersection(story_scopes, chunk.story_scopes):
+        score += _RAG_STORY_SCOPE_BOOST
+    if _has_casefold_intersection(semantic_tags, chunk.semantic_tags):
+        score += _RAG_SEMANTIC_TAG_BOOST
+    return score
+
+
+def _has_casefold_intersection(
+    left: Iterable[str],
+    right: Iterable[str],
+) -> bool:
+    left_values = {value.casefold() for value in left}
+    return any(value.casefold() in left_values for value in right)
 
 
 def _reason_for_chunk_kind(chunk_kind: str) -> str:

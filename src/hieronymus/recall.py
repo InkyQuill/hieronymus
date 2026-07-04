@@ -253,7 +253,14 @@ class RecallService:
         ranked_items.sort(key=_ranked_item_sort_key)
         rag_items: list[_RankedItem] = [
             ("rag", hit.score, hit.chunk.id, hit.chunk, hit.reason, ())
-            for hit in self.rag.search(context.series_slug, query, limit=limit)
+            for hit in self.rag.search(
+                context.series_slug,
+                query,
+                limit=limit,
+                language_tags=context.language_tags,
+                story_scopes=context_story_scopes,
+                semantic_tags=context_semantic_tags,
+            )
         ]
         ranked_items = _merge_ranked_items(ranked_items, rag_items, limit=limit)
 
