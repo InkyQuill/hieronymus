@@ -1585,7 +1585,7 @@ git commit -m "feat: add rag recall payloads"
 - Modify: `src/hieronymus/mcp_server.py`
 - Create: `tests/test_recall_rag.py`
 
-- [ ] **Step 1: Write failing mixed recall tests**
+- [x] **Step 1: Write failing mixed recall tests**
 
 Create `tests/test_recall_rag.py`:
 
@@ -1685,13 +1685,13 @@ def test_recall_fills_limit_from_memory_when_rag_is_empty(config: HieronymusConf
     assert {result.source for result in results} == {"long_term"}
 ```
 
-- [ ] **Step 2: Run mixed recall tests and verify they fail**
+- [x] **Step 2: Run mixed recall tests and verify they fail**
 
 Run: `uv run pytest tests/test_recall_rag.py -q`
 
 Expected: FAIL because `RecallService` does not include RAG results.
 
-- [ ] **Step 3: Add RAG search and merge helpers to `RecallService`**
+- [x] **Step 3: Add RAG search and merge helpers to `RecallService`**
 
 In `src/hieronymus/recall.py`, import `RagStore`:
 
@@ -1815,7 +1815,7 @@ Replace the result-building loop with this version:
                 )
 ```
 
-- [ ] **Step 4: Update CLI recall payload**
+- [x] **Step 4: Update CLI recall payload**
 
 In `src/hieronymus/cli.py`, change the recall JSON payload loop to use enriched payloads, matching MCP:
 
@@ -1837,7 +1837,7 @@ In `src/hieronymus/cli.py`, change the recall JSON payload loop to use enriched 
         )
 ```
 
-- [ ] **Step 5: Update MCP recall payload for RAG**
+- [x] **Step 5: Update MCP recall payload for RAG**
 
 In `src/hieronymus/mcp_server.py`, update `_recall_payload` to include a RAG chunk payload:
 
@@ -1863,13 +1863,13 @@ In `src/hieronymus/mcp_server.py`, update `_recall_payload` to include a RAG chu
     }
 ```
 
-- [ ] **Step 6: Run recall tests**
+- [x] **Step 6: Run recall tests**
 
 Run: `uv run pytest tests/test_recall_rag.py tests/test_recall_enriched_memory.py tests/test_combined_recall.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 6**
+- [x] **Step 7: Commit Task 6**
 
 ```bash
 git add src/hieronymus/recall.py src/hieronymus/cli.py src/hieronymus/mcp_server.py tests/test_recall_rag.py tests/test_recall_enriched_memory.py
