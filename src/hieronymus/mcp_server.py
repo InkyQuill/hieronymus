@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -21,6 +22,7 @@ from hieronymus.memory_models import (
     TaskSessionRecord,
     TranslationContext,
 )
+from hieronymus.rag import RagStore
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry, Series
 from hieronymus.service_discovery import discover_local_service
@@ -120,6 +122,42 @@ def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str
         "source_credibility": memory.source_credibility,
         "rule_intent": memory.rule_intent,
         "soft_origin": memory.soft_origin,
+    }
+
+
+def _rag_hit_payload(hit) -> dict[str, Any]:
+    chunk = hit.chunk
+    return {
+        "source": "rag",
+        "id": chunk.id,
+        "title": chunk.title,
+        "kind": chunk.kind,
+        "text": chunk.text,
+        "display_text": chunk.display_text,
+        "source_ref": chunk.source_ref,
+        "chunk_kind": chunk.chunk_kind,
+        "location": chunk.location,
+        "metadata": chunk.metadata,
+        "language_tags": list(chunk.language_tags),
+        "story_scopes": list(chunk.story_scopes),
+        "semantic_tags": list(chunk.semantic_tags),
+        "score": hit.score,
+        "rank_reason": hit.reason,
+    }
+
+
+def _rag_import_payload(result) -> dict[str, Any]:
+    return {
+        "source": asdict(result.source),
+        "source_id": result.source.id,
+        "series_slug": result.source.series_slug,
+        "source_ref": result.source.source_ref,
+        "source_type": result.source.source_type,
+        "content_type": result.source.content_type,
+        "checksum": result.source.checksum,
+        "metadata": result.source.metadata,
+        "chunk_count": result.chunk_count,
+        "skipped": result.skipped,
     }
 
 
@@ -797,6 +835,42 @@ def hieronymus_memory_search(
     )
     memories = _memory(config, series, context).search(query, limit=limit)
     return [asdict(memory) for memory in memories]
+
+
+@server.tool()
+def hieronymus_rag_import(
+    series_slug: str,
+    path: str,
+    source_ref: str | None = None,
+    source_type: str = "auto",
+    language_tags: list[str] | None = None,
+    story_scopes: list[str] | None = None,
+    semantic_tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Import a text, markdown, or glossary file into the project RAG store."""
+    config, _series = _series_context(series_slug)
+    result = RagStore(config).import_file(
+        series_slug,
+        Path(path),
+        source_ref=source_ref,
+        source_type=source_type,
+        language_tags=language_tags or (),
+        story_scopes=story_scopes or (),
+        semantic_tags=semantic_tags or (),
+    )
+    return _rag_import_payload(result)
+
+
+@server.tool()
+def hieronymus_rag_search(
+    series_slug: str,
+    query: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Search project RAG chunks for a series."""
+    config, _series = _series_context(series_slug)
+    hits = RagStore(config).search(series_slug, query, limit=limit)
+    return [_rag_hit_payload(hit) for hit in hits]
 
 
 @server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)

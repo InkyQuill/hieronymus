@@ -32,6 +32,7 @@ from hieronymus.provider_config import (
     load_provider_catalog,
     redacted_provider_catalog_payload,
 )
+from hieronymus.rag import RagStore
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.release import check_update, run_update
@@ -99,6 +100,42 @@ def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str
         "kind": memory.kind,
         "text": memory.text,
         "metadata": memory.metadata,
+    }
+
+
+def _rag_hit_payload(hit) -> dict[str, object]:
+    chunk = hit.chunk
+    return {
+        "source": "rag",
+        "id": chunk.id,
+        "title": chunk.title,
+        "kind": chunk.kind,
+        "text": chunk.text,
+        "display_text": chunk.display_text,
+        "source_ref": chunk.source_ref,
+        "chunk_kind": chunk.chunk_kind,
+        "location": chunk.location,
+        "metadata": chunk.metadata,
+        "language_tags": list(chunk.language_tags),
+        "story_scopes": list(chunk.story_scopes),
+        "semantic_tags": list(chunk.semantic_tags),
+        "score": hit.score,
+        "rank_reason": hit.reason,
+    }
+
+
+def _rag_import_payload(result) -> dict[str, object]:
+    return {
+        "source": asdict(result.source),
+        "source_id": result.source.id,
+        "series_slug": result.source.series_slug,
+        "source_ref": result.source.source_ref,
+        "source_type": result.source.source_type,
+        "content_type": result.source.content_type,
+        "checksum": result.source.checksum,
+        "metadata": result.source.metadata,
+        "chunk_count": result.chunk_count,
+        "skipped": result.skipped,
     }
 
 
@@ -669,6 +706,87 @@ def remember(
         {"memory_id": memory_id},
         json_output=json_output,
         line=f"Memory {memory_id} stored",
+    )
+
+
+@main.group("rag")
+def rag() -> None:
+    pass
+
+
+@rag.command("import")
+@click.argument("series_slug")
+@click.argument("path", type=click.Path(exists=True, dir_okay=False, readable=True))
+@click.option(
+    "--type",
+    "source_type",
+    type=click.Choice(["auto", "text", "glossary"]),
+    default="auto",
+)
+@click.option("--source-ref", default=None)
+@click.option("--language-tag", "language_tags", multiple=True)
+@click.option("--story-scope", "story_scopes", multiple=True)
+@click.option("--semantic-tag", "semantic_tags", multiple=True)
+@click.option("--json", "json_output", is_flag=True)
+@click.pass_context
+def rag_import(
+    ctx: click.Context,
+    series_slug: str,
+    path: str,
+    source_type: str,
+    source_ref: str | None,
+    language_tags: tuple[str, ...],
+    story_scopes: tuple[str, ...],
+    semantic_tags: tuple[str, ...],
+    json_output: bool,
+) -> None:
+    try:
+        Registry(ctx.obj["config"]).get_series(series_slug)
+        result = RagStore(ctx.obj["config"]).import_file(
+            series_slug,
+            Path(path),
+            source_ref=source_ref,
+            source_type=source_type,
+            language_tags=language_tags,
+            story_scopes=story_scopes,
+            semantic_tags=semantic_tags,
+        )
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+
+    payload = _rag_import_payload(result)
+    line = (
+        f"RAG source unchanged: {result.source.source_ref}"
+        if result.skipped
+        else f"Imported {result.chunk_count} RAG chunk(s) from {result.source.source_ref}"
+    )
+    _echo_json_or_line(payload, json_output=json_output, line=line)
+
+
+@rag.command("search")
+@click.argument("series_slug")
+@click.argument("query")
+@click.option("--limit", default=10, type=int)
+@click.option("--json", "json_output", is_flag=True)
+@click.pass_context
+def rag_search(
+    ctx: click.Context,
+    series_slug: str,
+    query: str,
+    limit: int,
+    json_output: bool,
+) -> None:
+    try:
+        Registry(ctx.obj["config"]).get_series(series_slug)
+        hits = RagStore(ctx.obj["config"]).search(series_slug, query, limit=limit)
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+
+    payload = [_rag_hit_payload(hit) for hit in hits]
+    _echo_json_or_line(
+        payload,
+        json_output=json_output,
+        line="No RAG results." if not payload else f"{len(payload)} RAG result(s).",
     )
 
 
