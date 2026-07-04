@@ -209,6 +209,16 @@ def test_text_file_is_chunked_by_paragraph(tmp_path: Path) -> None:
     assert [chunk.location for chunk in parsed.chunks] == ["paragraph 1", "paragraph 2"]
 
 
+def test_text_file_splits_oversized_paragraphs(tmp_path: Path) -> None:
+    path = tmp_path / "chapter.txt"
+    path.write_text(("Sense " * 230).strip(), encoding="utf-8")
+
+    parsed = load_rag_file(path, source_type="auto")
+
+    assert len(parsed.chunks) > 1
+    assert all(len(chunk.text) <= 1200 for chunk in parsed.chunks)
+
+
 def test_markdown_file_preserves_heading_location(tmp_path: Path) -> None:
     path = tmp_path / "notes.md"
     path.write_text(
@@ -224,6 +234,28 @@ def test_markdown_file_preserves_heading_location(tmp_path: Path) -> None:
         ("Glossary paragraph 1", "Sense stays untranslated."),
         ("Glossary > Skills paragraph 2", "Enchant is a skill."),
     ]
+
+
+def test_markdown_file_splits_oversized_paragraphs(tmp_path: Path) -> None:
+    path = tmp_path / "notes.md"
+    path.write_text("# Glossary\n\n" + ("Sense " * 230).strip(), encoding="utf-8")
+
+    parsed = load_rag_file(path, source_type="auto")
+
+    assert len(parsed.chunks) > 1
+    assert all(len(chunk.text) <= 1200 for chunk in parsed.chunks)
+
+
+def test_markdown_split_paragraphs_do_not_shift_following_locations(tmp_path: Path) -> None:
+    path = tmp_path / "notes.md"
+    path.write_text(
+        "# Glossary\n\n" + ("Sense " * 230).strip() + "\n\nNext paragraph.",
+        encoding="utf-8",
+    )
+
+    parsed = load_rag_file(path, source_type="auto")
+
+    assert parsed.chunks[-1].location == "Glossary paragraph 2"
 
 
 def test_csv_file_turns_rows_into_glossary_chunks(tmp_path: Path) -> None:
@@ -246,6 +278,22 @@ def test_csv_file_turns_rows_into_glossary_chunks(tmp_path: Path) -> None:
     }
     assert "Sense" in parsed.chunks[0].text
     assert "Сенс" in parsed.chunks[0].text
+
+
+def test_csv_file_rejects_rows_with_extra_fields(tmp_path: Path) -> None:
+    path = tmp_path / "glossary.csv"
+    path.write_text("source,target\nSense,Сенс,extra\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        load_rag_file(path, source_type="auto")
+
+
+def test_glossary_file_rejects_invalid_source_type(tmp_path: Path) -> None:
+    path = tmp_path / "glossary.csv"
+    path.write_text("source,target\nSense,Сенс\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        load_rag_file(path, source_type="bad")
 
 
 def test_json_file_accepts_list_of_glossary_entries(tmp_path: Path) -> None:

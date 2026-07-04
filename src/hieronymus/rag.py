@@ -16,7 +16,10 @@ from hieronymus.rag_models import RagChunkKind, RagSourceType
 
 RagLoadSourceType = Literal["auto", "text", "glossary"]
 
+MAX_RAG_CHUNK_CHARS = 1200
+
 _MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 _GLOSSARY_EXTENSIONS = {".csv", ".tsv", ".json", ".yaml", ".yml"}
 _TEXT_EXTENSIONS = {".txt", ".md"}
 
@@ -40,7 +43,7 @@ class ParsedRagFile:
     metadata: dict[str, object] = field(default_factory=dict)
 
 
-def load_rag_file(path: Path, *, source_type: RagLoadSourceType) -> ParsedRagFile:
+def load_rag_file(path: Path, *, source_type: RagLoadSourceType | str) -> ParsedRagFile:
     if not path.exists():
         raise FileNotFoundError(path)
     if not path.is_file():
@@ -83,7 +86,7 @@ def load_rag_file(path: Path, *, source_type: RagLoadSourceType) -> ParsedRagFil
     )
 
 
-def _resolve_source_type(suffix: str, source_type: RagLoadSourceType) -> RagSourceType:
+def _resolve_source_type(suffix: str, source_type: RagLoadSourceType | str) -> RagSourceType:
     if suffix not in _TEXT_EXTENSIONS | _GLOSSARY_EXTENSIONS:
         raise ValueError(f"Unsupported RAG source extension: {suffix}")
 
@@ -101,50 +104,61 @@ def _resolve_source_type(suffix: str, source_type: RagLoadSourceType) -> RagSour
             return "markdown"
         raise ValueError(f"Text RAG sources do not support {suffix} files")
 
-    if suffix in _GLOSSARY_EXTENSIONS:
-        return "glossary"
-    raise ValueError(f"Glossary RAG sources do not support {suffix} files")
+    if source_type == "glossary":
+        if suffix in _GLOSSARY_EXTENSIONS:
+            return "glossary"
+        raise ValueError(f"Glossary RAG sources do not support {suffix} files")
+
+    raise ValueError(f"Unsupported RAG source type: {source_type}")
 
 
 def _parse_text(path: Path) -> list[ParsedRagChunk]:
     paragraphs = _paragraphs(path.read_text(encoding="utf-8"))
-    return [
-        ParsedRagChunk(
-            chunk_kind="text",
-            text=paragraph,
-            display_text=paragraph,
-            location=f"paragraph {index}",
-        )
-        for index, paragraph in enumerate(paragraphs, start=1)
-    ]
+    chunks: list[ParsedRagChunk] = []
+    for paragraph_index, paragraph in enumerate(paragraphs, start=1):
+        for location, text in _located_chunk_texts(
+            paragraph,
+            base_location=f"paragraph {paragraph_index}",
+        ):
+            chunks.append(
+                ParsedRagChunk(
+                    chunk_kind="text",
+                    text=text,
+                    display_text=text,
+                    location=location,
+                )
+            )
+    return chunks
 
 
 def _parse_markdown(path: Path) -> list[ParsedRagChunk]:
     chunks: list[ParsedRagChunk] = []
     heading_stack: list[tuple[int, str]] = []
     paragraph_lines: list[str] = []
+    paragraph_count = 0
 
     def flush_paragraph() -> None:
-        nonlocal paragraph_lines
+        nonlocal paragraph_count, paragraph_lines
         paragraph = " ".join(line.strip() for line in paragraph_lines if line.strip()).strip()
         paragraph_lines = []
         if not paragraph:
             return
 
         heading_path = " > ".join(heading for _, heading in heading_stack)
-        paragraph_number = len(chunks) + 1
+        paragraph_count += 1
         if heading_path:
-            location = f"{heading_path} paragraph {paragraph_number}"
+            location = f"{heading_path} paragraph {paragraph_count}"
         else:
-            location = f"paragraph {paragraph_number}"
-        chunks.append(
-            ParsedRagChunk(
-                chunk_kind="markdown_section",
-                text=paragraph,
-                display_text=paragraph,
-                location=location,
+            location = f"paragraph {paragraph_count}"
+        for chunk_location, text in _located_chunk_texts(paragraph, base_location=location):
+            chunks.append(
+                ParsedRagChunk(
+                    chunk_kind="markdown_section",
+                    text=text,
+                    display_text=text,
+                    location=chunk_location,
+                )
             )
-        )
 
     for line in path.read_text(encoding="utf-8").splitlines():
         heading_match = _MARKDOWN_HEADING_RE.match(line.strip())
@@ -175,6 +189,8 @@ def _parse_delimited_glossary(path: Path, *, delimiter: str) -> list[ParsedRagCh
     with path.open(encoding="utf-8", newline="") as file:
         reader = csv.DictReader(file, delimiter=delimiter)
         for row_number, row in enumerate(reader, start=2):
+            if None in row:
+                raise ValueError(f"Malformed delimited row {row_number}: extra fields")
             metadata = {
                 str(key).strip(): value.strip()
                 for key, value in row.items()
@@ -251,6 +267,80 @@ def _paragraphs(text: str) -> tuple[str, ...]:
         " ".join(line.strip() for line in block.splitlines() if line.strip())
         for block in re.split(r"\n\s*\n", text)
         if block.strip()
+    )
+
+
+def _located_chunk_texts(text: str, *, base_location: str) -> tuple[tuple[str, str], ...]:
+    parts = _split_chunk_text(text)
+    if len(parts) == 1:
+        return ((base_location, parts[0]),)
+    return tuple(
+        (f"{base_location} part {index}", part) for index, part in enumerate(parts, start=1)
+    )
+
+
+def _split_chunk_text(text: str) -> tuple[str, ...]:
+    stripped = text.strip()
+    if len(stripped) <= MAX_RAG_CHUNK_CHARS:
+        return (stripped,)
+
+    chunks: list[str] = []
+    current = ""
+    for segment in _sentence_segments(stripped):
+        if len(segment) > MAX_RAG_CHUNK_CHARS:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(_word_chunks(segment))
+            continue
+
+        candidate = f"{current} {segment}".strip()
+        if len(candidate) <= MAX_RAG_CHUNK_CHARS:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            current = segment
+
+    if current:
+        chunks.append(current)
+    return tuple(chunks)
+
+
+def _sentence_segments(text: str) -> tuple[str, ...]:
+    return tuple(
+        segment.strip() for segment in _SENTENCE_BOUNDARY_RE.split(text) if segment.strip()
+    )
+
+
+def _word_chunks(text: str) -> tuple[str, ...]:
+    chunks: list[str] = []
+    current = ""
+    for word in text.split():
+        if len(word) > MAX_RAG_CHUNK_CHARS:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(_hard_chunks(word))
+            continue
+
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= MAX_RAG_CHUNK_CHARS:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            current = word
+
+    if current:
+        chunks.append(current)
+    return tuple(chunks)
+
+
+def _hard_chunks(text: str) -> tuple[str, ...]:
+    return tuple(
+        text[index : index + MAX_RAG_CHUNK_CHARS]
+        for index in range(0, len(text), MAX_RAG_CHUNK_CHARS)
     )
 
 
