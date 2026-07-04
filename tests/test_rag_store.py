@@ -384,6 +384,41 @@ def test_import_file_skips_unchanged_checksum(
     assert second.chunk_count == first.chunk_count
 
 
+def test_reimport_with_same_checksum_refreshes_chunk_tags(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    path = tmp_path / "chapter.txt"
+    path.write_text("Sense menu note.", encoding="utf-8")
+    store = RagStore(config)
+    store.import_file(
+        series_slug,
+        path,
+        source_ref="chapter.txt",
+        source_type="auto",
+        language_tags=("ja",),
+        story_scopes=("book:5/chapter:1",),
+        semantic_tags=("draft",),
+    )
+
+    result = store.import_file(
+        series_slug,
+        path,
+        source_ref="chapter.txt",
+        source_type="auto",
+        language_tags=("ru",),
+        story_scopes=("book:5/chapter:2",),
+        semantic_tags=("approved",),
+    )
+    hit = store.search(series_slug, "Sense", limit=5)[0]
+
+    assert result.skipped is True
+    assert hit.chunk.language_tags == ("ru",)
+    assert hit.chunk.story_scopes == ("book:5/chapter:2",)
+    assert hit.chunk.semantic_tags == ("approved",)
+
+
 def test_changed_import_replaces_old_chunks(
     config: HieronymusConfig,
     tmp_path: Path,

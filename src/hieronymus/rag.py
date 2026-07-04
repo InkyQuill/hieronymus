@@ -86,13 +86,18 @@ class RagStore:
         with connect(self.config.database_path) as conn:
             existing = self._source_row(conn, series_slug, clean_source_ref)
             if existing is not None and existing["checksum"] == parsed.checksum:
+                chunk_count = self._refresh_source_chunk_tags(
+                    conn,
+                    source_id=int(existing["id"]),
+                    series_slug=series_slug,
+                    language_tags=clean_language_tags,
+                    story_scopes=clean_story_scopes,
+                    semantic_tags=clean_semantic_tags,
+                )
+                conn.commit()
                 return RagImportResult(
                     source=_source_from_row(existing),
-                    chunk_count=self._source_chunk_count(
-                        conn,
-                        source_id=int(existing["id"]),
-                        series_slug=series_slug,
-                    ),
+                    chunk_count=chunk_count,
                     skipped=True,
                 )
 
@@ -275,6 +280,51 @@ class RagStore:
             (source_id, series_slug),
         ).fetchone()
         return int(row["count"])
+
+    def _refresh_source_chunk_tags(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_id: int,
+        series_slug: str,
+        language_tags: Iterable[str],
+        story_scopes: Iterable[str],
+        semantic_tags: Iterable[str],
+    ) -> int:
+        rows = conn.execute(
+            """
+            select id
+            from rag_chunks
+            where source_id = ?
+              and series_slug = ?
+            order by id
+            """,
+            (source_id, series_slug),
+        ).fetchall()
+        chunk_ids = tuple(int(row["id"]) for row in rows)
+        for chunk_id in chunk_ids:
+            _replace_text_values(
+                conn,
+                table="rag_chunk_language_tags",
+                value_column="language_tag",
+                chunk_id=chunk_id,
+                values=language_tags,
+            )
+            _replace_text_values(
+                conn,
+                table="rag_chunk_story_scopes",
+                value_column="story_scope",
+                chunk_id=chunk_id,
+                values=story_scopes,
+            )
+            _replace_text_values(
+                conn,
+                table="rag_chunk_semantic_tags",
+                value_column="semantic_tag",
+                chunk_id=chunk_id,
+                values=semantic_tags,
+            )
+        return len(chunk_ids)
 
     def _chunk_from_row(self, conn: sqlite3.Connection, row: sqlite3.Row) -> RagChunkRecord:
         chunk_id = int(row["id"])
@@ -656,6 +706,37 @@ def _insert_text_values(
         values (?, ?)
         """,
         [(chunk_id, value) for value in values],
+    )
+
+
+def _replace_text_values(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    value_column: str,
+    chunk_id: int,
+    values: Iterable[str],
+) -> None:
+    if table not in {
+        "rag_chunk_language_tags",
+        "rag_chunk_story_scopes",
+        "rag_chunk_semantic_tags",
+    }:
+        raise ValueError(f"unsupported RAG tag table: {table}")
+
+    conn.execute(
+        f"""
+        delete from {table}
+        where chunk_id = ?
+        """,
+        (chunk_id,),
+    )
+    _insert_text_values(
+        conn,
+        table=table,
+        value_column=value_column,
+        chunk_id=chunk_id,
+        values=values,
     )
 
 
