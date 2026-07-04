@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import csv
+import json
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Literal
+
+import yaml
+
+from hieronymus.rag_models import RagChunkKind, RagSourceType
+
+RagLoadSourceType = Literal["auto", "text", "glossary"]
+
+_MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+_GLOSSARY_EXTENSIONS = {".csv", ".tsv", ".json", ".yaml", ".yml"}
+_TEXT_EXTENSIONS = {".txt", ".md"}
+
+
+@dataclass(frozen=True)
+class ParsedRagChunk:
+    chunk_kind: RagChunkKind
+    text: str
+    display_text: str
+    location: str
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ParsedRagFile:
+    path: Path
+    source_type: RagSourceType
+    content_type: str
+    chunks: tuple[ParsedRagChunk, ...]
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+def load_rag_file(path: Path, *, source_type: RagLoadSourceType) -> ParsedRagFile:
+    if not path.exists():
+        raise FileNotFoundError(path)
+    if not path.is_file():
+        raise ValueError(f"RAG source is not a file: {path}")
+
+    content_type = path.suffix.lower().removeprefix(".")
+    if not content_type:
+        raise ValueError(f"Unsupported RAG source extension: {path}")
+
+    suffix = f".{content_type}"
+    resolved_source_type = _resolve_source_type(suffix, source_type)
+
+    match suffix:
+        case ".txt":
+            chunks = _parse_text(path)
+        case ".md":
+            chunks = _parse_markdown(path)
+        case ".csv":
+            chunks = _parse_delimited_glossary(path, delimiter=",")
+        case ".tsv":
+            chunks = _parse_delimited_glossary(path, delimiter="\t")
+        case ".json":
+            chunks = _parse_json_glossary(path)
+        case ".yaml" | ".yml":
+            chunks = _parse_yaml_glossary(path)
+        case _:
+            raise ValueError(f"Unsupported RAG source extension: {path.suffix}")
+
+    if not chunks:
+        raise ValueError(f"RAG source produced no chunks: {path}")
+
+    return ParsedRagFile(
+        path=path,
+        source_type=resolved_source_type,
+        content_type=content_type,
+        chunks=tuple(chunks),
+    )
+
+
+def _resolve_source_type(suffix: str, source_type: RagLoadSourceType) -> RagSourceType:
+    if suffix not in _TEXT_EXTENSIONS | _GLOSSARY_EXTENSIONS:
+        raise ValueError(f"Unsupported RAG source extension: {suffix}")
+
+    if source_type == "auto":
+        if suffix == ".txt":
+            return "text"
+        if suffix == ".md":
+            return "markdown"
+        return "glossary"
+
+    if source_type == "text":
+        if suffix == ".txt":
+            return "text"
+        if suffix == ".md":
+            return "markdown"
+        raise ValueError(f"Text RAG sources do not support {suffix} files")
+
+    if suffix in _GLOSSARY_EXTENSIONS:
+        return "glossary"
+    raise ValueError(f"Glossary RAG sources do not support {suffix} files")
+
+
+def _parse_text(path: Path) -> list[ParsedRagChunk]:
+    paragraphs = _paragraphs(path.read_text(encoding="utf-8"))
+    return [
+        ParsedRagChunk(
+            chunk_kind="text",
+            text=paragraph,
+            display_text=paragraph,
+            location=f"paragraph {index}",
+        )
+        for index, paragraph in enumerate(paragraphs, start=1)
+    ]
+
+
+def _parse_markdown(path: Path) -> list[ParsedRagChunk]:
+    chunks: list[ParsedRagChunk] = []
+    heading_stack: list[tuple[int, str]] = []
+    paragraph_lines: list[str] = []
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph_lines
+        paragraph = " ".join(line.strip() for line in paragraph_lines if line.strip()).strip()
+        paragraph_lines = []
+        if not paragraph:
+            return
+
+        heading_path = " > ".join(heading for _, heading in heading_stack)
+        paragraph_number = len(chunks) + 1
+        if heading_path:
+            location = f"{heading_path} paragraph {paragraph_number}"
+        else:
+            location = f"paragraph {paragraph_number}"
+        chunks.append(
+            ParsedRagChunk(
+                chunk_kind="markdown_section",
+                text=paragraph,
+                display_text=paragraph,
+                location=location,
+            )
+        )
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        heading_match = _MARKDOWN_HEADING_RE.match(line.strip())
+        if heading_match:
+            flush_paragraph()
+            level = len(heading_match.group(1))
+            heading = heading_match.group(2).strip()
+            heading_stack = [
+                (old_level, old_heading)
+                for old_level, old_heading in heading_stack
+                if old_level < level
+            ]
+            heading_stack.append((level, heading))
+            continue
+
+        if not line.strip():
+            flush_paragraph()
+            continue
+
+        paragraph_lines.append(line)
+
+    flush_paragraph()
+    return chunks
+
+
+def _parse_delimited_glossary(path: Path, *, delimiter: str) -> list[ParsedRagChunk]:
+    chunks: list[ParsedRagChunk] = []
+    with path.open(encoding="utf-8", newline="") as file:
+        reader = csv.DictReader(file, delimiter=delimiter)
+        for row_number, row in enumerate(reader, start=2):
+            metadata = {
+                str(key).strip(): value.strip()
+                for key, value in row.items()
+                if key is not None and value is not None and value.strip()
+            }
+            if not metadata:
+                continue
+            chunks.append(_glossary_chunk(metadata, location=f"row {row_number}"))
+    return chunks
+
+
+def _parse_json_glossary(path: Path) -> list[ParsedRagChunk]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return _parse_structured_glossary(data)
+
+
+def _parse_yaml_glossary(path: Path) -> list[ParsedRagChunk]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return _parse_structured_glossary(data)
+
+
+def _parse_structured_glossary(data: Any) -> list[ParsedRagChunk]:
+    chunks: list[ParsedRagChunk] = []
+    for index, metadata in enumerate(_glossary_entries(data), start=1):
+        chunks.append(_glossary_chunk(metadata, location=f"entry {index}"))
+    return chunks
+
+
+def _glossary_entries(data: Any) -> list[dict[str, object]]:
+    if isinstance(data, list):
+        return [_metadata_from_value(item) for item in data]
+
+    if isinstance(data, dict):
+        entries: list[dict[str, object]] = []
+        for key, value in data.items():
+            metadata = _metadata_from_value(value)
+            metadata = {"key": str(key), **metadata}
+            entries.append(metadata)
+        return entries
+
+    if data is None:
+        return []
+
+    raise ValueError("Glossary data must be a list or mapping")
+
+
+def _metadata_from_value(value: Any) -> dict[str, object]:
+    if isinstance(value, dict):
+        return {
+            str(key): nested_value
+            for key, nested_value in value.items()
+            if nested_value is not None
+        }
+    return {"value": value}
+
+
+def _glossary_chunk(metadata: dict[str, object], *, location: str) -> ParsedRagChunk:
+    text = _glossary_text(metadata)
+    return ParsedRagChunk(
+        chunk_kind="glossary_entry",
+        text=text,
+        display_text=text,
+        location=location,
+        metadata=metadata,
+    )
+
+
+def _glossary_text(metadata: dict[str, object]) -> str:
+    return "\n".join(f"{key}: {value}" for key, value in metadata.items())
+
+
+def _paragraphs(text: str) -> tuple[str, ...]:
+    return tuple(
+        " ".join(line.strip() for line in block.splitlines() if line.strip())
+        for block in re.split(r"\n\s*\n", text)
+        if block.strip()
+    )
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _clean_text_tuple(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(value.strip() for value in values if value.strip())

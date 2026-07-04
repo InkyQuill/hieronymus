@@ -8,6 +8,7 @@ authors = [{ name = "Pavel Obruchnikov", email = "me@inkyquill.net" }]
 dependencies = [
   "click>=8.1.8",
   "mcp>=1.2.0",
+  "pyyaml>=6.0.3",
   "tomli-w>=1.2.0",
 ]
 
