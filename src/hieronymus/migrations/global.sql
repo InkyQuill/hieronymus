@@ -438,6 +438,7 @@ create table if not exists rag_sources (
   metadata_json text not null default '{}',
   created_at text not null,
   updated_at text not null,
+  unique(id, series_slug),
   unique(series_slug, source_ref)
 );
 
@@ -450,7 +451,9 @@ create table if not exists rag_chunks (
   display_text text not null,
   location text not null default '',
   metadata_json text not null default '{}',
-  created_at text not null
+  created_at text not null,
+  foreign key (source_id, series_slug) references rag_sources(id, series_slug)
+    on delete cascade
 );
 
 create table if not exists rag_chunk_language_tags (
