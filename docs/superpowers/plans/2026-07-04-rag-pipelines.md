@@ -1022,7 +1022,7 @@ git commit -m "feat: index and search rag sources"
 - Create: `tests/test_rag_cli.py`
 - Create: `tests/test_mcp_rag.py`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 Create `tests/test_rag_cli.py`:
 
@@ -1109,7 +1109,7 @@ def test_rag_import_rejects_unknown_series(tmp_path: Path) -> None:
     assert "unknown series: missing" in result.output
 ```
 
-- [ ] **Step 2: Write failing MCP tests**
+- [x] **Step 2: Write failing MCP tests**
 
 Create `tests/test_mcp_rag.py`:
 
@@ -1147,13 +1147,13 @@ def test_mcp_rag_import_and_search(monkeypatch, tmp_path: Path) -> None:
     assert hits[0]["rank_reason"] == "rag project text match"
 ```
 
-- [ ] **Step 3: Run interface tests and verify they fail**
+- [x] **Step 3: Run interface tests and verify they fail**
 
 Run: `uv run pytest tests/test_rag_cli.py tests/test_mcp_rag.py -q`
 
 Expected: FAIL because CLI/MCP RAG interfaces do not exist.
 
-- [ ] **Step 4: Add payload helper and CLI group**
+- [x] **Step 4: Add payload helper and CLI group**
 
 In `src/hieronymus/cli.py`, import `RagStore`:
 
@@ -1273,7 +1273,7 @@ def rag_search(
     )
 ```
 
-- [ ] **Step 5: Add MCP tools**
+- [x] **Step 5: Add MCP tools**
 
 In `src/hieronymus/mcp_server.py`, import `Path` and `RagStore`:
 
@@ -1352,13 +1352,13 @@ def hieronymus_rag_search(
     return [_rag_hit_payload(hit) for hit in RagStore(config).search(series_slug, query, limit=limit)]
 ```
 
-- [ ] **Step 6: Run interface tests**
+- [x] **Step 6: Run interface tests**
 
 Run: `uv run pytest tests/test_rag_cli.py tests/test_mcp_rag.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 4**
+- [x] **Step 7: Commit Task 4**
 
 ```bash
 git add src/hieronymus/cli.py src/hieronymus/mcp_server.py tests/test_rag_cli.py tests/test_mcp_rag.py
