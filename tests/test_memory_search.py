@@ -4,7 +4,9 @@ from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import TranslationContext
+from hieronymus.rag import RagStore
 from hieronymus.registry import Registry
+from hieronymus.workspace import WorkspaceStore
 
 
 def _create_memory_store(config) -> MemoryStore:
@@ -210,6 +212,19 @@ def test_memory_search_encodes_colliding_ids_in_active_recall_results(config):
     results = store.search("Yun", limit=10)
 
     assert [result.id for result in results] == [short_id, -crystal_id]
+
+
+def test_memory_search_ignores_rag_only_active_recall_results(config, tmp_path):
+    store = _create_memory_store(config)
+    assert store.context is not None
+    WorkspaceStore(config).start_session(store.context)
+    source = tmp_path / "glossary.csv"
+    source.write_text("source,target\nYun,Юн\n", encoding="utf-8")
+    RagStore(config).import_file(store.context.series_slug, source, source_ref="glossary.csv")
+
+    results = store.search("Yun", limit=5)
+
+    assert results == []
 
 
 @pytest.mark.parametrize("query", ["game-like", "Satou's", "system OR"])

@@ -130,7 +130,11 @@ class MemoryStore:
                 limit=bounded_limit,
             )
             entries = self._disambiguate_entry_ids(
-                [self._entry_from_recall_result(result) for result in results]
+                [
+                    self._entry_from_recall_result(result)
+                    for result in results
+                    if result.source != "rag"
+                ]
             )
             return self._sort_legacy_entries(entries)[:bounded_limit]
 
