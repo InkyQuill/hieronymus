@@ -427,3 +427,77 @@ create table if not exists memory_graph_migration_ledger (
   created_at text not null default (datetime('now')),
   primary key (source_table, source_id, target_table)
 );
+
+create table if not exists rag_sources (
+  id integer primary key,
+  series_slug text not null references series(slug) on delete cascade,
+  source_ref text not null,
+  source_type text not null,
+  content_type text not null,
+  checksum text not null,
+  metadata_json text not null default '{}',
+  created_at text not null,
+  updated_at text not null,
+  unique(series_slug, source_ref)
+);
+
+create table if not exists rag_chunks (
+  id integer primary key,
+  source_id integer not null references rag_sources(id) on delete cascade,
+  series_slug text not null references series(slug) on delete cascade,
+  chunk_kind text not null,
+  text text not null,
+  display_text text not null,
+  location text not null default '',
+  metadata_json text not null default '{}',
+  created_at text not null
+);
+
+create table if not exists rag_chunk_language_tags (
+  chunk_id integer not null references rag_chunks(id) on delete cascade,
+  language_tag text not null,
+  primary key (chunk_id, language_tag)
+);
+
+create table if not exists rag_chunk_story_scopes (
+  chunk_id integer not null references rag_chunks(id) on delete cascade,
+  story_scope text not null,
+  primary key (chunk_id, story_scope)
+);
+
+create table if not exists rag_chunk_semantic_tags (
+  chunk_id integer not null references rag_chunks(id) on delete cascade,
+  semantic_tag text not null,
+  primary key (chunk_id, semantic_tag)
+);
+
+create virtual table if not exists rag_chunks_fts using fts5(
+  text,
+  display_text,
+  location,
+  content='rag_chunks',
+  content_rowid='id'
+);
+
+create trigger if not exists rag_chunks_ai
+after insert on rag_chunks
+begin
+  insert into rag_chunks_fts(rowid, text, display_text, location)
+  values (new.id, new.text, new.display_text, new.location);
+end;
+
+create trigger if not exists rag_chunks_ad
+after delete on rag_chunks
+begin
+  insert into rag_chunks_fts(rag_chunks_fts, rowid, text, display_text, location)
+  values ('delete', old.id, old.text, old.display_text, old.location);
+end;
+
+create trigger if not exists rag_chunks_au
+after update on rag_chunks
+begin
+  insert into rag_chunks_fts(rag_chunks_fts, rowid, text, display_text, location)
+  values ('delete', old.id, old.text, old.display_text, old.location);
+  insert into rag_chunks_fts(rowid, text, display_text, location)
+  values (new.id, new.text, new.display_text, new.location);
+end;
