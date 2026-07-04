@@ -33,7 +33,7 @@
 - Create: `src/hieronymus/rag_models.py`
 - Test: `tests/test_rag_store.py`
 
-- [ ] **Step 1: Write the failing schema/model test**
+- [x] **Step 1: Write the failing schema/model test**
 
 Add this test file:
 
@@ -100,13 +100,13 @@ def test_rag_dataclasses_expose_payload_fields() -> None:
     assert chunk.kind == "glossary_entry"
 ```
 
-- [ ] **Step 2: Run the schema/model test and verify it fails**
+- [x] **Step 2: Run the schema/model test and verify it fails**
 
 Run: `uv run pytest tests/test_rag_store.py -q`
 
 Expected: FAIL because `hieronymus.rag_models` does not exist and the schema tables do not exist.
 
-- [ ] **Step 3: Add the RAG tables to the global migration**
+- [x] **Step 3: Add the RAG tables to the global migration**
 
 Append this SQL to `src/hieronymus/migrations/global.sql`:
 
@@ -186,7 +186,7 @@ begin
 end;
 ```
 
-- [ ] **Step 4: Add the model dataclasses**
+- [x] **Step 4: Add the model dataclasses**
 
 Create `src/hieronymus/rag_models.py`:
 
@@ -251,13 +251,13 @@ class RagImportResult:
     skipped: bool
 ```
 
-- [ ] **Step 5: Run the task test and verify it passes**
+- [x] **Step 5: Run the task test and verify it passes**
 
 Run: `uv run pytest tests/test_rag_store.py::test_rag_schema_is_created_idempotently tests/test_rag_store.py::test_rag_dataclasses_expose_payload_fields -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 ```bash
 git add src/hieronymus/migrations/global.sql src/hieronymus/rag_models.py tests/test_rag_store.py
