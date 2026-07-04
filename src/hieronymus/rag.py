@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import re
 from collections.abc import Iterable
@@ -34,6 +35,7 @@ class ParsedRagFile:
     path: Path
     source_type: RagSourceType
     content_type: str
+    checksum: str
     chunks: tuple[ParsedRagChunk, ...]
     metadata: dict[str, object] = field(default_factory=dict)
 
@@ -44,6 +46,8 @@ def load_rag_file(path: Path, *, source_type: RagLoadSourceType) -> ParsedRagFil
     if not path.is_file():
         raise ValueError(f"RAG source is not a file: {path}")
 
+    raw_bytes = path.read_bytes()
+    checksum = hashlib.sha256(raw_bytes).hexdigest()
     content_type = path.suffix.lower().removeprefix(".")
     if not content_type:
         raise ValueError(f"Unsupported RAG source extension: {path}")
@@ -74,6 +78,7 @@ def load_rag_file(path: Path, *, source_type: RagLoadSourceType) -> ParsedRagFil
         path=path,
         source_type=resolved_source_type,
         content_type=content_type,
+        checksum=checksum,
         chunks=tuple(chunks),
     )
 

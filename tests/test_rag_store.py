@@ -1,3 +1,4 @@
+import hashlib
 import sqlite3
 from pathlib import Path
 
@@ -198,6 +199,7 @@ def test_text_file_is_chunked_by_paragraph(tmp_path: Path) -> None:
 
     parsed = load_rag_file(path, source_type="auto")
 
+    assert parsed.checksum == hashlib.sha256(path.read_bytes()).hexdigest()
     assert parsed.content_type == "txt"
     assert parsed.source_type == "text"
     assert [chunk.text for chunk in parsed.chunks] == [
