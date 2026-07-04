@@ -6,8 +6,9 @@ import pytest
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
-from hieronymus.rag import load_rag_file
+from hieronymus.rag import RagStore, load_rag_file
 from hieronymus.rag_models import RagChunkRecord, RagImportResult, RagSourceRecord
+from hieronymus.registry import Registry
 
 NOW = "2026-01-01T00:00:00Z"
 
@@ -322,3 +323,116 @@ def test_yaml_file_accepts_mapping_entries(tmp_path: Path) -> None:
         "target": "Сенс",
         "category": "skill",
     }
+
+
+def _series(config: HieronymusConfig) -> str:
+    return (
+        Registry(config)
+        .create_series(
+            slug="only-sense-online",
+            title="Only Sense Online",
+            source_language="ja",
+            target_language="ru",
+        )
+        .slug
+    )
+
+
+def test_import_file_indexes_chunks_and_searches(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    path = tmp_path / "chapter.txt"
+    path.write_text("Sense menu note.\n\nCooking Talent appears here.", encoding="utf-8")
+
+    result = RagStore(config).import_file(
+        series_slug,
+        path,
+        source_ref="chapter-5.txt",
+        source_type="auto",
+        language_tags=("ja", "ru"),
+        story_scopes=("book:5/chapter:5",),
+        semantic_tags=("chapter:source",),
+    )
+    hits = RagStore(config).search(series_slug, "Cooking Talent", limit=5)
+
+    assert result.chunk_count == 2
+    assert result.skipped is False
+    assert [hit.chunk.text for hit in hits] == ["Cooking Talent appears here."]
+    assert hits[0].reason == "rag project text match"
+    assert hits[0].chunk.source_ref == "chapter-5.txt"
+    assert hits[0].chunk.language_tags == ("ja", "ru")
+    assert hits[0].chunk.story_scopes == ("book:5/chapter:5",)
+    assert hits[0].chunk.semantic_tags == ("chapter:source",)
+
+
+def test_import_file_skips_unchanged_checksum(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    path = tmp_path / "chapter.txt"
+    path.write_text("Sense menu note.", encoding="utf-8")
+    store = RagStore(config)
+
+    first = store.import_file(series_slug, path, source_ref="chapter.txt", source_type="auto")
+    second = store.import_file(series_slug, path, source_ref="chapter.txt", source_type="auto")
+
+    assert first.skipped is False
+    assert second.skipped is True
+    assert second.chunk_count == first.chunk_count
+
+
+def test_changed_import_replaces_old_chunks(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    path = tmp_path / "chapter.txt"
+    store = RagStore(config)
+    path.write_text("Old Sense note.", encoding="utf-8")
+    store.import_file(series_slug, path, source_ref="chapter.txt", source_type="auto")
+
+    path.write_text("New Cooking Talent note.", encoding="utf-8")
+    store.import_file(series_slug, path, source_ref="chapter.txt", source_type="auto")
+
+    assert store.search(series_slug, "Old", limit=5) == []
+    assert [hit.chunk.text for hit in store.search(series_slug, "Cooking Talent", limit=5)] == [
+        "New Cooking Talent note."
+    ]
+
+
+def test_failed_changed_import_preserves_old_chunks(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    good_path = tmp_path / "glossary.json"
+    store = RagStore(config)
+    good_path.write_text('[{"source": "Sense", "target": "Сенс"}]', encoding="utf-8")
+    store.import_file(series_slug, good_path, source_ref="glossary.json", source_type="auto")
+
+    good_path.write_text("{broken json", encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid RAG source"):
+        store.import_file(series_slug, good_path, source_ref="glossary.json", source_type="auto")
+
+    assert [
+        hit.chunk.metadata["source"] for hit in store.search(series_slug, "Sense", limit=5)
+    ] == ["Sense"]
+
+
+def test_glossary_hits_get_glossary_reason(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    path = tmp_path / "glossary.csv"
+    path.write_text("source,target\nSense,Сенс\n", encoding="utf-8")
+
+    RagStore(config).import_file(series_slug, path, source_ref="glossary.csv", source_type="auto")
+    hits = RagStore(config).search(series_slug, "Sense", limit=5)
+
+    assert hits[0].reason == "rag glossary match"
+    assert hits[0].chunk.chunk_kind == "glossary_entry"
+    assert hits[0].score > 0
