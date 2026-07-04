@@ -1371,7 +1371,7 @@ git commit -m "feat: expose rag import and search"
 - Modify: `src/hieronymus/memory_models.py`
 - Modify: `tests/test_recall_enriched_memory.py`
 
-- [ ] **Step 1: Write failing enriched payload test**
+- [x] **Step 1: Write failing enriched payload test**
 
 Append this test to `tests/test_recall_enriched_memory.py`:
 
@@ -1408,13 +1408,13 @@ def test_rag_recall_result_enriched_payload_contains_citation_fields() -> None:
     assert payload["rank_reason"] == "rag glossary match"
 ```
 
-- [ ] **Step 2: Run the enriched payload test and verify it fails**
+- [x] **Step 2: Run the enriched payload test and verify it fails**
 
 Run: `uv run pytest tests/test_recall_enriched_memory.py::test_rag_recall_result_enriched_payload_contains_citation_fields -q`
 
 Expected: FAIL because `RecallResult.rag` does not exist.
 
-- [ ] **Step 3: Modify `RecallResult` to support RAG**
+- [x] **Step 3: Modify `RecallResult` to support RAG**
 
 In `src/hieronymus/memory_models.py`, import `RagChunkRecord`:
 
@@ -1564,13 +1564,13 @@ Add RAG citation fields to `enriched_payload`:
             "metadata": self.rag_chunk.metadata if self.rag_chunk is not None else {},
 ```
 
-- [ ] **Step 4: Run enriched payload tests**
+- [x] **Step 4: Run enriched payload tests**
 
 Run: `uv run pytest tests/test_recall_enriched_memory.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 5**
+- [x] **Step 5: Commit Task 5**
 
 ```bash
 git add src/hieronymus/memory_models.py tests/test_recall_enriched_memory.py
