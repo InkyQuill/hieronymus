@@ -249,6 +249,33 @@ Use rule-crystal admin actions only to inspect, validate, archive, or otherwise
 manage existing long-term rules. User corrections should enter as short-term
 memory and be crystallized by dreaming.
 
+## Import Project RAG Sources
+
+RAG sources are explicit project text and glossary files. They are advisory
+evidence for recall; active rule crystals remain mandatory.
+
+Import a text or Markdown file:
+
+```bash
+hiero rag import only-sense-online ./chapter-005.txt --source-ref book:5/chapter:5/source.txt
+```
+
+Import a glossary:
+
+```bash
+hiero rag import only-sense-online ./glossary.csv --type glossary --source-ref glossary/main.csv
+```
+
+Search RAG evidence directly:
+
+```bash
+hiero rag search only-sense-online "Cooking Talent" --json
+```
+
+Ordinary recall includes both memory results and RAG evidence. RAG entries include
+their source reference, chunk kind, location, score, and rank reason so agents can
+cite where evidence came from.
+
 ## Compatibility Term Proposal
 
 The term proposal command remains available for older translation workflows, but
