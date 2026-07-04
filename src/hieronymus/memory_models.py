@@ -4,6 +4,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
+from hieronymus.rag_models import RagChunkRecord
+
 
 def normalize_string_tuple(
     values: Iterable[str],
@@ -125,12 +127,13 @@ class CrystalRecord:
 
 @dataclass(frozen=True)
 class RecallResult:
-    source: Literal["long_term", "short_term"]
+    source: Literal["long_term", "short_term", "rag"]
     rank: int
     score: float
     reason: str
     crystal: CrystalRecord | None = None
     short_term_memory: ShortTermMemoryRecord | None = None
+    rag_chunk: RagChunkRecord | None = None
     concept_labels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -139,6 +142,8 @@ class RecallResult:
                 raise ValueError("long_term recall results require a crystal")
             if self.short_term_memory is not None:
                 raise ValueError("long_term recall results must not include short-term memory")
+            if self.rag_chunk is not None:
+                raise ValueError("long_term recall results must not include a RAG chunk")
             return
 
         if self.source == "short_term":
@@ -146,6 +151,17 @@ class RecallResult:
                 raise ValueError("short_term recall results must not include a crystal")
             if self.short_term_memory is None:
                 raise ValueError("short_term recall results require short-term memory")
+            if self.rag_chunk is not None:
+                raise ValueError("short_term recall results must not include a RAG chunk")
+            return
+
+        if self.source == "rag":
+            if self.crystal is not None:
+                raise ValueError("rag recall results must not include a crystal")
+            if self.short_term_memory is not None:
+                raise ValueError("rag recall results must not include short-term memory")
+            if self.rag_chunk is None:
+                raise ValueError("rag recall results require a RAG chunk")
             return
 
         raise ValueError(f"unknown recall source: {self.source}")
@@ -186,14 +202,33 @@ class RecallResult:
             short_term_memory=short_term_memory,
         )
 
+    @classmethod
+    def rag(
+        cls,
+        chunk: RagChunkRecord,
+        *,
+        rank: int,
+        score: float,
+        reason: str,
+    ) -> RecallResult:
+        return cls(
+            source="rag",
+            rank=rank,
+            score=score,
+            reason=reason,
+            rag_chunk=chunk,
+        )
+
     @property
-    def tier(self) -> Literal["short_term", "long_term"]:
+    def tier(self) -> Literal["short_term", "long_term", "rag"]:
         return self.source
 
     @property
     def id(self) -> int:
         if self.crystal is not None:
             return self.crystal.id
+        if self.rag_chunk is not None:
+            return self.rag_chunk.id
         assert self.short_term_memory is not None
         return self.short_term_memory.id
 
@@ -201,6 +236,8 @@ class RecallResult:
     def title(self) -> str:
         if self.crystal is not None:
             return self.crystal.title
+        if self.rag_chunk is not None:
+            return self.rag_chunk.title
         assert self.short_term_memory is not None
         return self.short_term_memory.kind
 
@@ -208,6 +245,8 @@ class RecallResult:
     def kind(self) -> str:
         if self.crystal is not None:
             return self.crystal.crystal_type
+        if self.rag_chunk is not None:
+            return self.rag_chunk.kind
         assert self.short_term_memory is not None
         return self.short_term_memory.kind
 
@@ -215,6 +254,8 @@ class RecallResult:
     def text(self) -> str:
         if self.crystal is not None:
             return self.crystal.text
+        if self.rag_chunk is not None:
+            return self.rag_chunk.text
         assert self.short_term_memory is not None
         return self.short_term_memory.text
 
@@ -230,6 +271,8 @@ class RecallResult:
     def language_tags(self) -> tuple[str, ...]:
         if self.crystal is not None:
             return self.crystal.language_tags
+        if self.rag_chunk is not None:
+            return self.rag_chunk.language_tags
         assert self.short_term_memory is not None
         return self.short_term_memory.language_tags
 
@@ -237,6 +280,8 @@ class RecallResult:
     def story_scopes(self) -> tuple[str, ...]:
         if self.crystal is not None:
             return self.crystal.story_scopes
+        if self.rag_chunk is not None:
+            return self.rag_chunk.story_scopes
         assert self.short_term_memory is not None
         return self.short_term_memory.story_scopes
 
@@ -244,11 +289,15 @@ class RecallResult:
     def semantic_tags(self) -> tuple[str, ...]:
         if self.crystal is not None:
             return self.crystal.semantic_tags
+        if self.rag_chunk is not None:
+            return self.rag_chunk.semantic_tags
         assert self.short_term_memory is not None
         return self.short_term_memory.semantic_tags
 
     @property
     def source_credibility(self) -> str:
+        if self.rag_chunk is not None:
+            return ""
         if self.crystal is not None:
             return self.crystal.source_credibility
         assert self.short_term_memory is not None
@@ -264,6 +313,8 @@ class RecallResult:
 
     @property
     def soft_origin(self) -> str:
+        if self.rag_chunk is not None:
+            return ""
         if self.crystal is not None:
             return self.crystal.soft_origin
         assert self.short_term_memory is not None
@@ -271,6 +322,8 @@ class RecallResult:
 
     @property
     def is_rule(self) -> bool:
+        if self.rag_chunk is not None:
+            return False
         if self.crystal is not None:
             return self.crystal.crystal_type == "rule" and self.crystal.status == "active"
         assert self.short_term_memory is not None
@@ -278,6 +331,8 @@ class RecallResult:
 
     @property
     def is_thought(self) -> bool:
+        if self.rag_chunk is not None:
+            return False
         if self.crystal is not None:
             return self.crystal.crystal_type == "thought" or self.crystal.is_inferred
         assert self.short_term_memory is not None
@@ -286,6 +341,22 @@ class RecallResult:
     @property
     def rank_reason(self) -> str:
         return self.reason
+
+    @property
+    def source_ref(self) -> str:
+        return self.rag_chunk.source_ref if self.rag_chunk is not None else ""
+
+    @property
+    def chunk_kind(self) -> str:
+        return self.rag_chunk.chunk_kind if self.rag_chunk is not None else ""
+
+    @property
+    def location(self) -> str:
+        return self.rag_chunk.location if self.rag_chunk is not None else ""
+
+    @property
+    def metadata(self) -> dict[str, object]:
+        return self.rag_chunk.metadata if self.rag_chunk is not None else {}
 
     def enriched_payload(self) -> dict[str, object]:
         return {
@@ -308,4 +379,8 @@ class RecallResult:
             "is_thought": self.is_thought,
             "score": self.score,
             "rank_reason": self.rank_reason,
+            "source_ref": self.source_ref,
+            "chunk_kind": self.chunk_kind,
+            "location": self.location,
+            "metadata": self.metadata,
         }

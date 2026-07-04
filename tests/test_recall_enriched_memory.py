@@ -4,7 +4,8 @@ from hieronymus.concepts import ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
-from hieronymus.memory_models import TranslationContext
+from hieronymus.memory_models import RecallResult, TranslationContext
+from hieronymus.rag_models import RagChunkRecord
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.workspace import WorkspaceStore
@@ -883,3 +884,31 @@ def test_low_confidence_thought_memory_is_recallable_but_ranks_below_evidence(
     assert thought.is_thought
     assert thought.confidence == pytest.approx(0.2)
     assert thought.score < results[0].score
+
+
+def test_rag_recall_result_enriched_payload_contains_citation_fields() -> None:
+    chunk = RagChunkRecord(
+        id=12,
+        source_id=3,
+        series_slug="only-sense-online",
+        source_ref="glossary.csv",
+        chunk_kind="glossary_entry",
+        text="source: Sense\ntarget: Сенс",
+        display_text="source: Sense\ntarget: Сенс",
+        location="row 2",
+        metadata={"source": "Sense", "target": "Сенс"},
+        language_tags=("ja", "ru"),
+        story_scopes=("book:5/chapter:5",),
+        semantic_tags=("skill:name",),
+    )
+
+    result = RecallResult.rag(chunk, rank=1, score=0.75, reason="rag glossary match")
+    payload = result.enriched_payload()
+
+    assert payload["tier"] == "rag"
+    assert payload["source_ref"] == "glossary.csv"
+    assert payload["chunk_kind"] == "glossary_entry"
+    assert payload["location"] == "row 2"
+    assert payload["metadata"] == {"source": "Sense", "target": "Сенс"}
+    assert payload["language_tags"] == ("ja", "ru")
+    assert payload["rank_reason"] == "rag glossary match"
