@@ -905,10 +905,12 @@ def test_rag_recall_result_enriched_payload_contains_citation_fields() -> None:
     result = RecallResult.rag(chunk, rank=1, score=0.75, reason="rag glossary match")
     payload = result.enriched_payload()
 
+    assert result.rank == 1
     assert payload["tier"] == "rag"
     assert payload["source_ref"] == "glossary.csv"
     assert payload["chunk_kind"] == "glossary_entry"
     assert payload["location"] == "row 2"
     assert payload["metadata"] == {"source": "Sense", "target": "Сенс"}
     assert payload["language_tags"] == ("ja", "ru")
+    assert payload["score"] == 0.75
     assert payload["rank_reason"] == "rag glossary match"

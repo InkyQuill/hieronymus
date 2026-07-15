@@ -434,7 +434,7 @@ git commit -m "test: split rag coverage by component"
 - Consumes: `RecallResult.rag(..., rank=1, score=0.75, ...)` and `enriched_payload()`.
 - Produces: explicit regression assertions without changing the payload contract.
 
-- [ ] **Step 1: Extend the existing payload test**
+- [x] **Step 1: Extend the existing payload test**
 
 Add beside its existing assertions:
 
@@ -443,7 +443,7 @@ Add beside its existing assertions:
     assert payload["score"] == 0.75
 ```
 
-- [ ] **Step 2: Run the payload test**
+- [x] **Step 2: Run the payload test**
 
 Run:
 
@@ -453,7 +453,7 @@ uv run pytest tests/test_recall_enriched_memory.py::test_rag_recall_result_enric
 
 Expected: PASS; this is coverage of already implemented behavior, not a production change.
 
-- [ ] **Step 3: Confirm documentation content exists**
+- [x] **Step 3: Confirm documentation content exists**
 
 Run:
 
@@ -463,7 +463,7 @@ rg -n "Import Project RAG Sources|dual-lane strategy" docs/usage.md docs/memory-
 
 Expected: both original Task 7 documentation additions are present.
 
-- [ ] **Step 4: Run the original focused RAG verification**
+- [x] **Step 4: Run the original focused RAG verification**
 
 ```bash
 uv run pytest tests/test_rag_schema.py tests/test_rag_parsing.py tests/test_rag_store.py tests/test_rag_cli.py tests/test_mcp_rag.py tests/test_recall_rag.py tests/test_recall_enriched_memory.py tests/test_combined_recall.py
@@ -471,7 +471,7 @@ uv run pytest tests/test_rag_schema.py tests/test_rag_parsing.py tests/test_rag_
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit payload coverage**
+- [x] **Step 5: Commit payload coverage**
 
 ```bash
 git add tests/test_recall_enriched_memory.py
