@@ -160,6 +160,38 @@ describe("AdminTable", () => {
     expect(stringWidth(line!)).toBeLessThanOrEqual(24);
   });
 
+  it("collapses rows to the supplied width when fewer than four cells are available", async () => {
+    const expectedRows = new Map([
+      [1, ">"],
+      [2, ">…"],
+      [3, ">G…"],
+    ]);
+
+    for (const [width, expected] of expectedRows) {
+      const { render, waitForFrame } = createOpenTuiHarness({
+        width: 10,
+        height: 4,
+      });
+
+      await render(
+        <AdminTable
+          rows={[row({ label: "Guild Ledger" })]}
+          selectedId={1}
+          width={width}
+          height={2}
+        />,
+      );
+
+      const output = await waitForFrame((frame) => frame.includes(">"));
+      const line = output
+        .split("\n")
+        .find((candidate) => candidate.includes(">"));
+      expect(line?.trimEnd()).toBe(expected);
+      expect(stringWidth(line?.trimEnd() ?? "")).toBeLessThanOrEqual(width);
+      await cleanupOpenTuiHarnesses();
+    }
+  });
+
   it("truncates a label that exceeds the column width with an ellipsis", async () => {
     const rows = [
       row({

@@ -7,6 +7,7 @@ const COLUMN_GAP = 1;
 const STATUS_COLUMN_WIDTH = 10;
 const QUALITY_COLUMN_WIDTH = 10;
 const MIN_LABEL_COLUMN_WIDTH = 4;
+const MIN_COLUMN_LAYOUT_WIDTH = 4;
 const ELLIPSIS = "…";
 const ELLIPSIS_WIDTH = stringWidth(ELLIPSIS);
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, {
@@ -26,7 +27,7 @@ export function AdminTable({
   width?: number;
   height?: number;
 }) {
-  const { labelWidth, statusWidth, qualityWidth } = columnWidths(width);
+  const layout = width >= MIN_COLUMN_LAYOUT_WIDTH ? columnWidths(width) : null;
 
   return (
     <scrollbox flexDirection="column" width={width} height={height}>
@@ -35,14 +36,27 @@ export function AdminTable({
           key={String(row.id)}
           fg={row.id === selectedId ? (focused ? "cyan" : "white") : undefined}
         >
-          {row.id === selectedId ? "> " : "  "}
-          {padColumn(row.label, labelWidth)}{" "}
-          {padColumn(row.status, statusWidth)}{" "}
-          {padColumn(row.quality_label, qualityWidth)}
+          {layout === null ? (
+            tinyRow(row.label, row.id === selectedId, width)
+          ) : (
+            <>
+              {row.id === selectedId ? "> " : "  "}
+              {padColumn(row.label, layout.labelWidth)}{" "}
+              {padColumn(row.status, layout.statusWidth)}{" "}
+              {padColumn(row.quality_label, layout.qualityWidth)}
+            </>
+          )}
         </text>
       ))}
     </scrollbox>
   );
+}
+
+function tinyRow(label: string, selected: boolean, width: number): string {
+  if (width <= 0) {
+    return "";
+  }
+  return `${selected ? ">" : " "}${padColumn(label, width - 1)}`;
 }
 
 function columnWidths(width: number): {
