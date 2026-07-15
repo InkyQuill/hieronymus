@@ -1,6 +1,8 @@
 # TUI Design Improvements Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Status:** Complete (2026-07-15). All tasks and final verification passed; review-driven deviations and hardening are recorded in the branch history.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Implement the fixes and improvements from `docs/tui-design-improvements.md` for the OpenTUI admin/config screens: a mislabeled-panel bug fix, progress gauges, aligned table columns, a non-destructive dialog overlay, deduplicated dialog focus logic, visible scrollbars, a header service indicator, clearer disabled-command styling, and a semantic color theme applied across the touched files.
 
@@ -44,7 +46,7 @@
 
 **Problem:** In the compact/narrow layout branch of `AdminScreen`, the panel header text is hardcoded to `"Detail Inspector"` whenever the help overlay or command palette is open, even if `activePanel` is `"views"` or `"table"`. The default `activePanel` on mount is `"views"`, so opening the command palette immediately after mount (no `Tab` needed) shows a "Detail Inspector" header while displaying the Views/Table overlay context.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add this test inside the `describe("AdminScreen", ...)` block in `frontend/src/admin/AdminScreen.test.tsx`, right after the `"renders help in compact admin layout"` test (after line 289):
 
@@ -63,12 +65,12 @@ Add this test inside the `describe("AdminScreen", ...)` block in `frontend/src/a
   });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx -t "labels the compact overlay pane"`
 Expected: FAIL — `expect(output).not.toContain("Detail Inspector")` fails because the frame contains `"Detail Inspector"`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `frontend/src/admin/AdminScreen.tsx`, add a helper function near the other free functions at the bottom of the file (e.g. right after `serviceStatus`):
 
@@ -139,17 +141,17 @@ Change it to:
           ) : activePanel === "views" ? (
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx -t "labels the compact overlay pane"`
 Expected: PASS
 
-- [ ] **Step 5: Run the full AdminScreen test file to check for regressions**
+- [x] **Step 5: Run the full AdminScreen test file to check for regressions**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx`
 Expected: All tests pass, including `"cycles compact admin panes with tab"`, `"renders command palette in compact admin layout"`, and `"renders help in compact admin layout"`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/admin/AdminScreen.tsx frontend/src/admin/AdminScreen.test.tsx
@@ -168,7 +170,7 @@ git commit -m "fix: label compact admin overlay pane after the active panel"
 
 **Problem:** `StatusPanels` in `AdminScreen.tsx` renders short-term pending/drain and dream progress as long concatenated text strings. There is no at-a-glance visual indicator of how full/complete these values are.
 
-- [ ] **Step 1: Write the failing Gauge unit tests**
+- [x] **Step 1: Write the failing Gauge unit tests**
 
 Create `frontend/src/ui/Gauge.test.tsx`:
 
@@ -252,12 +254,12 @@ describe("Gauge", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/ui/Gauge.test.tsx`
 Expected: FAIL — `Cannot find module './Gauge.js'` (or equivalent resolution error), since `Gauge.tsx` does not exist yet.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `frontend/src/ui/Gauge.tsx`:
 
@@ -310,19 +312,19 @@ export function Gauge({
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/ui/Gauge.test.tsx`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit the Gauge component**
+- [x] **Step 5: Commit the Gauge component**
 
 ```bash
 git add frontend/src/ui/Gauge.tsx frontend/src/ui/Gauge.test.tsx
 git commit -m "feat: add Gauge bar component"
 ```
 
-- [ ] **Step 6: Write the failing AdminScreen integration test**
+- [x] **Step 6: Write the failing AdminScreen integration test**
 
 In `frontend/src/admin/AdminScreen.test.tsx`, add one assertion to the existing `"renders views, stats, table row, and detail"` test (after the line `expect(output).toContain("Dream DISABLED");`, around line 404):
 
@@ -338,13 +340,13 @@ Then extend the existing `"reinforces the selected crystal and refreshes from ne
     expect(output).toContain("Dream [████████░░] 75/100");
 ```
 
-- [ ] **Step 7: Run test to verify it fails**
+- [x] **Step 7: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx -t "renders views, stats, table row, and detail"`
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx -t "reinforces the selected crystal"`
 Expected: Both FAIL — the gauge text is not present yet.
 
-- [ ] **Step 8: Write minimal implementation**
+- [x] **Step 8: Write minimal implementation**
 
 In `frontend/src/admin/AdminScreen.tsx`, add the import:
 
@@ -430,12 +432,12 @@ function StatusPanels({
 }
 ```
 
-- [ ] **Step 9: Run test to verify it passes**
+- [x] **Step 9: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx`
 Expected: PASS — all tests including the two extended in Step 6.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add frontend/src/admin/AdminScreen.tsx frontend/src/admin/AdminScreen.test.tsx
@@ -452,7 +454,7 @@ git commit -m "feat: render short-term/drain/dream status as gauge bars"
 
 **Problem:** `AdminTable` renders `{label} [{status}] {quality_label}` as one concatenated string per row with no column alignment, making status/quality hard to scan across rows.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/admin/AdminTable.test.tsx`:
 
@@ -556,12 +558,12 @@ describe("AdminTable", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/admin/AdminTable.test.tsx`
 Expected: FAIL — the first test fails because `indexOf("pending")` does not equal `indexOf("active")` under the current concatenated, unaligned format.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Replace `frontend/src/admin/AdminTable.tsx` with:
 
@@ -626,17 +628,17 @@ function padColumn(value: string, columnWidth: number): string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/admin/AdminTable.test.tsx`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Run the AdminScreen test file to check for regressions**
+- [x] **Step 5: Run the AdminScreen test file to check for regressions**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx`
 Expected: PASS — no test asserts the old `[status]` bracket format (verified: only `Guild Ledger`, row labels, and `quality_label` values like `"reinforced"`/`"draft"` are checked as substrings, which remain present under column formatting).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/admin/AdminTable.tsx frontend/src/admin/AdminTable.test.tsx
@@ -654,7 +656,7 @@ git commit -m "feat: align AdminTable rows into fixed-width columns"
 
 **Problem:** When a dialog is open, `AdminScreen` returns a completely different render tree (`if (dialog.kind !== "none") { return (...) }`), so the header, stat panels, and status line are unmounted while the dialog is shown. Verified via a live probe (see Task 6) that OpenTUI's `scrollbox`/box compositing does support `position: "absolute"` overlays with computed offsets, so the dialog can be layered on top of the existing tree instead of replacing it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add this test inside the `describe("AdminScreen", ...)` block in `frontend/src/admin/AdminScreen.test.tsx`, after the `"reinforces the selected crystal and refreshes from nested snapshot"` test:
 
@@ -674,12 +676,12 @@ Add this test inside the `describe("AdminScreen", ...)` block in `frontend/src/a
   });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx -t "keeps the admin header visible"`
 Expected: FAIL — `expect(output).toContain("H Hieronymus Admin 0.1.0")` fails because the dialog branch fully replaces the header.
 
-- [ ] **Step 3: Write minimal implementation — update `DialogOverlay` sizing/positioning**
+- [x] **Step 3: Write minimal implementation — update `DialogOverlay` sizing/positioning**
 
 In `frontend/src/admin/dialogs.tsx`, add the `useTerminalDimensions` import:
 
@@ -737,7 +739,7 @@ export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
 
 (The hook call is moved above the `state.kind === "none"` early return because React hooks must run unconditionally on every render. The opaque `backgroundColor: "#000000"` is dropped so content outside the modal's bounded footprint remains visible; the modal card itself still has its own `backgroundColor: "#141414"` via `modalStyle`.)
 
-- [ ] **Step 4: Write minimal implementation — mount `DialogOverlay` inside the main tree**
+- [x] **Step 4: Write minimal implementation — mount `DialogOverlay` inside the main tree**
 
 In `frontend/src/admin/AdminScreen.tsx`, delete the standalone early-return block:
 
@@ -819,17 +821,17 @@ and add, right before the closing `</box>` of that return block (after `<KeyHelp
       />
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx -t "keeps the admin header visible"`
 Expected: PASS
 
-- [ ] **Step 6: Run the full AdminScreen test file to check for regressions**
+- [x] **Step 6: Run the full AdminScreen test file to check for regressions**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx`
 Expected: PASS — including the `"does not open hidden dialogs below the minimum terminal size"` test (still guarded by the existing `useEffect` that force-closes dialogs when `layout.kind === "too-small"`) and all dialog interaction tests (Add/Edit/Merge/Split/Delete/Rename keyboard flows).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add frontend/src/admin/AdminScreen.tsx frontend/src/admin/dialogs.tsx frontend/src/admin/AdminScreen.test.tsx
@@ -847,7 +849,7 @@ git commit -m "fix: render admin dialogs as a centered overlay instead of replac
 
 **Problem:** `AddDialog`, `EditDialog`, `MergeDialog`, and `SplitDialog` each reimplement clamped up/down focus-index navigation with slightly different inline `Math.max`/`Math.min` logic.
 
-- [ ] **Step 1: Write the failing hook test**
+- [x] **Step 1: Write the failing hook test**
 
 Create `frontend/src/ui/useFieldFocus.test.tsx`:
 
@@ -922,12 +924,12 @@ describe("useFieldFocus", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/ui/useFieldFocus.test.tsx`
 Expected: FAIL — `Cannot find module './useFieldFocus.js'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `frontend/src/ui/useFieldFocus.ts`:
 
@@ -958,19 +960,19 @@ export function useFieldFocus(fieldCount: number): FieldFocus {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/ui/useFieldFocus.test.tsx`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit the hook**
+- [x] **Step 5: Commit the hook**
 
 ```bash
 git add frontend/src/ui/useFieldFocus.ts frontend/src/ui/useFieldFocus.test.tsx
 git commit -m "feat: add useFieldFocus hook for dialog field navigation"
 ```
 
-- [ ] **Step 6: Apply the hook to `AddDialog`**
+- [x] **Step 6: Apply the hook to `AddDialog`**
 
 In `frontend/src/admin/dialogs.tsx`, add the import:
 
@@ -1010,7 +1012,7 @@ with:
     } else if (focusedIndex === 0) {
 ```
 
-- [ ] **Step 7: Apply the hook to `EditDialog`**
+- [x] **Step 7: Apply the hook to `EditDialog`**
 
 Replace:
 
@@ -1048,7 +1050,7 @@ with:
     }
 ```
 
-- [ ] **Step 8: Apply the hook to `MergeDialog`**
+- [x] **Step 8: Apply the hook to `MergeDialog`**
 
 Replace:
 
@@ -1087,7 +1089,7 @@ with:
     }
 ```
 
-- [ ] **Step 9: Apply the hook to `SplitDialog`**
+- [x] **Step 9: Apply the hook to `SplitDialog`**
 
 Replace:
 
@@ -1121,12 +1123,12 @@ with:
     }
 ```
 
-- [ ] **Step 10: Run the full AdminScreen test file to confirm dialog behavior is unchanged**
+- [x] **Step 10: Run the full AdminScreen test file to confirm dialog behavior is unchanged**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx`
 Expected: PASS — all existing Add/Edit/Merge/Split dialog keyboard tests pass unmodified, since `useFieldFocus`'s clamped increment/decrement is behaviorally identical to the inline logic it replaces.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add frontend/src/admin/dialogs.tsx
@@ -1145,7 +1147,7 @@ git commit -m "refactor: dedupe dialog field-focus navigation with useFieldFocus
 
 **Problem:** `scrollbox` renders only a single `▀` thumb glyph by default when content overflows (verified via a live probe render: default `scrollbox` output showed a lone `▀` character in the last column and nothing else; no up/down arrows). This is easy to miss. Setting `scrollbarOptions: { showArrows: true }` renders `▲`/`▼` arrow glyphs in addition to the thumb (also verified via a live probe render), which is a much clearer affordance — and both glyphs are absent entirely when content fits without overflow.
 
-- [ ] **Step 1: Write the failing AdminTable scrollbar test**
+- [x] **Step 1: Write the failing AdminTable scrollbar test**
 
 Add this test to the `describe("AdminTable", ...)` block in `frontend/src/admin/AdminTable.test.tsx`:
 
@@ -1183,12 +1185,12 @@ Add this test to the `describe("AdminTable", ...)` block in `frontend/src/admin/
   });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/admin/AdminTable.test.tsx -t "shows scrollbar arrows"`
 Expected: FAIL — `expect(output).toContain("▲")` fails because `AdminTable`'s `scrollbox` has no `scrollbarOptions` set.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `frontend/src/admin/AdminTable.tsx`, update the `scrollbox` element:
 
@@ -1201,19 +1203,19 @@ In `frontend/src/admin/AdminTable.tsx`, update the `scrollbox` element:
     >
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/admin/AdminTable.test.tsx`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit AdminTable scrollbar change**
+- [x] **Step 5: Commit AdminTable scrollbar change**
 
 ```bash
 git add frontend/src/admin/AdminTable.tsx frontend/src/admin/AdminTable.test.tsx
 git commit -m "feat: show scrollbar arrows on AdminTable when rows overflow"
 ```
 
-- [ ] **Step 6: Write the failing DetailPane scrollbar test**
+- [x] **Step 6: Write the failing DetailPane scrollbar test**
 
 Create `frontend/src/admin/DetailPane.test.tsx`:
 
@@ -1281,12 +1283,12 @@ describe("DetailPane", () => {
 });
 ```
 
-- [ ] **Step 7: Run test to verify it fails**
+- [x] **Step 7: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/admin/DetailPane.test.tsx -t "shows scrollbar arrows"`
 Expected: FAIL — `DetailPane`'s `scrollbox` has no `scrollbarOptions` set yet.
 
-- [ ] **Step 8: Write minimal implementation**
+- [x] **Step 8: Write minimal implementation**
 
 In `frontend/src/admin/DetailPane.tsx`, update the `scrollbox` element:
 
@@ -1299,12 +1301,12 @@ In `frontend/src/admin/DetailPane.tsx`, update the `scrollbox` element:
     >
 ```
 
-- [ ] **Step 9: Run test to verify it passes**
+- [x] **Step 9: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/admin/DetailPane.test.tsx`
 Expected: PASS (2 tests)
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add frontend/src/admin/DetailPane.tsx frontend/src/admin/DetailPane.test.tsx
@@ -1321,7 +1323,7 @@ git commit -m "feat: show scrollbar arrows on DetailPane when content overflows"
 
 **Problem:** The wide-layout `Header` component shows product/version/tagline but no service running/stopped state; that state is only visible transiently in the status line at the bottom.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add one assertion to the existing `"renders views, stats, table row, and detail"` test in `frontend/src/admin/AdminScreen.test.tsx` (bootstrap's `service.running` is `false`), right after `expect(output).toContain("H Hieronymus Admin 0.1.0");`:
 
@@ -1349,13 +1351,13 @@ Then add a new test after it, inside the `describe("AdminScreen", ...)` block:
   });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx -t "service status indicator"`
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx -t "renders views, stats, table row, and detail"`
 Expected: Both FAIL — neither `"○ Service stopped"` nor `"● Service running"` is rendered yet.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `frontend/src/admin/AdminScreen.tsx`, replace the `Header` function:
 
@@ -1410,12 +1412,12 @@ to:
         <Header header={initial.header} serviceRunning={initial.service.running} />
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx`
 Expected: PASS — all tests including the two updated/added in Step 1.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/admin/AdminScreen.tsx frontend/src/admin/AdminScreen.test.tsx
@@ -1432,7 +1434,7 @@ git commit -m "feat: show live service status indicator in the admin header"
 
 **Problem:** Disabled commands render at `fg="gray"` with an inline `(unavailable)` suffix, which is easy to miss (dimmed text next to unselected-but-enabled rows looks similar) and relies on color+text glued onto every row instead of a distinct marker plus a highlighted-state reason.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/admin/CommandPalette.test.tsx`:
 
@@ -1518,12 +1520,12 @@ describe("CommandPalette", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/admin/CommandPalette.test.tsx`
 Expected: FAIL — the current output contains `"(unavailable)"` and no `"✕ Edit Memory"` or `"needs a selected row"` text.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `frontend/src/admin/CommandPalette.tsx`, replace the command rows and hint block:
 
@@ -1583,17 +1585,17 @@ with:
       ) : null}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/admin/CommandPalette.test.tsx`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Run the full AdminScreen test file to check for regressions**
+- [x] **Step 5: Run the full AdminScreen test file to check for regressions**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx`
 Expected: PASS — no existing test asserts the removed `"(unavailable)"` string (verified by inspection of `AdminScreen.test.tsx`).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/admin/CommandPalette.tsx frontend/src/admin/CommandPalette.test.tsx
@@ -1619,7 +1621,7 @@ git commit -m "feat: mark disabled command-palette entries with a symbol instead
 
 **Problem:** Named color strings (`"cyan"`, `"gray"`, `"red"`, `"green"`, `"yellow"`) are hardcoded inline throughout the codebase, including in the code just added by Tasks 1-8. There is no single place defining what a color means.
 
-- [ ] **Step 1: Write the failing theme test**
+- [x] **Step 1: Write the failing theme test**
 
 Create `frontend/src/ui/theme.test.ts`:
 
@@ -1642,12 +1644,12 @@ describe("theme", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && bun test src/ui/theme.test.ts`
 Expected: FAIL — `Cannot find module './theme.js'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `frontend/src/ui/theme.ts`:
 
@@ -1661,19 +1663,19 @@ export const theme = Object.freeze({
 });
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && bun test src/ui/theme.test.ts`
 Expected: PASS (2 tests)
 
-- [ ] **Step 5: Commit the theme module**
+- [x] **Step 5: Commit the theme module**
 
 ```bash
 git add frontend/src/ui/theme.ts frontend/src/ui/theme.test.ts
 git commit -m "feat: add semantic color theme module"
 ```
 
-- [ ] **Step 6: Apply the theme to `StatusLine.tsx` as the worked example**
+- [x] **Step 6: Apply the theme to `StatusLine.tsx` as the worked example**
 
 In `frontend/src/ui/StatusLine.tsx`, add the import:
 
@@ -1702,19 +1704,19 @@ Verify no literal color strings remain:
 Run: `grep -n 'fg="cyan"\|fg="gray"\|fg="red"\|fg="green"\|fg="yellow"\|borderColor="cyan"\|borderColor="gray"\|borderColor="red"\|"cyan"\|"gray"\|"red"\|"green"\|"yellow"' frontend/src/ui/StatusLine.tsx`
 Expected: no output.
 
-- [ ] **Step 7: Run the StatusLine-dependent tests to check for regressions**
+- [x] **Step 7: Run the StatusLine-dependent tests to check for regressions**
 
 Run: `cd frontend && bun test src/admin/AdminScreen.test.tsx src/config/ConfigScreen.test.tsx`
 Expected: PASS — `theme.statusError`/`theme.accentPrimary`/`theme.statusSuccess` resolve to the same string values (`"red"`/`"cyan"`/`"green"`) as before, so rendered output is unchanged.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add frontend/src/ui/StatusLine.tsx
 git commit -m "refactor: use theme constants in StatusLine"
 ```
 
-- [ ] **Step 9: Apply the same substitution pattern to the remaining files**
+- [x] **Step 9: Apply the same substitution pattern to the remaining files**
 
 For each file below, add `import { theme } from "../ui/theme.js";` (or `"./theme.js"` for files already inside `frontend/src/ui/`), then apply this exact, deterministic substitution to every occurrence in the file:
 
@@ -1752,17 +1754,17 @@ Expected: no output (the grep exits with status 1).
 
 Note: `AdminScreen.tsx`'s `Gauge` integration (Task 2) passes `fg="yellow"`/`fg="cyan"` as literal strings to the `Gauge` component's `fg` prop — these are matched by the same grep pattern's `fg="cyan"` and `fg="yellow"` cases and must be converted the same way (`fg={theme.accentPrimary}`, `fg={theme.statusWarning}`).
 
-- [ ] **Step 10: Run the full frontend test suite**
+- [x] **Step 10: Run the full frontend test suite**
 
 Run: `cd frontend && bun test`
 Expected: PASS — every test file passes. Since `theme.ts` maps each slot to the exact same string value the code used before (`accentPrimary` → `"cyan"`, etc.), no rendered output changes, so no test assertions need to change.
 
-- [ ] **Step 11: Run typecheck**
+- [x] **Step 11: Run typecheck**
 
 Run: `cd frontend && bun run typecheck`
 Expected: no errors — `fg`/`borderColor` props accept `string`, and `theme.*` values are typed as string literals from the frozen `theme` object.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add frontend/src/admin/CommandPalette.tsx frontend/src/admin/AdminTable.tsx frontend/src/admin/DetailPane.tsx frontend/src/admin/HelpOverlay.tsx frontend/src/admin/dialogs.tsx frontend/src/admin/AdminScreen.tsx frontend/src/config/ConfigScreen.tsx frontend/src/config/ConfigForm.tsx
@@ -1773,12 +1775,12 @@ git commit -m "refactor: use theme constants instead of hardcoded color literals
 
 ## Final Verification
 
-- [ ] **Run the entire frontend test suite one more time**
+- [x] **Run the entire frontend test suite one more time**
 
 Run: `cd frontend && bun test`
 Expected: PASS — all test files, including the five new ones (`Gauge.test.tsx`, `AdminTable.test.tsx`, `DetailPane.test.tsx`, `CommandPalette.test.tsx`, `useFieldFocus.test.tsx`, `theme.test.ts`) and all modified ones (`AdminScreen.test.tsx`).
 
-- [ ] **Run typecheck and format check**
+- [x] **Run typecheck and format check**
 
 Run: `cd frontend && bun run typecheck && bun run format`
 Expected: no errors.
