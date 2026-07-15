@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { TextAreaInput, TextInput } from "../ui/TextInput.js";
+import { useFieldFocus } from "../ui/useFieldFocus.js";
 
 export type DialogKind =
   | "add"
@@ -207,7 +208,7 @@ function AddDialog({
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [tags, setTags] = useState("");
-  const [focusedIndex, setFocusedIndex] = useState(0); // 0 = type, 1 = title, 2 = text, 3 = tags
+  const { focusedIndex, moveUp, moveDown } = useFieldFocus(4); // 0 = type, 1 = title, 2 = text, 3 = tags
 
   const handleSubmit = () => {
     onSubmit({
@@ -234,9 +235,9 @@ function AddDialog({
       return;
     }
     if (key.name === "up") {
-      setFocusedIndex((prev) => Math.max(0, prev - 1));
+      moveUp();
     } else if (key.name === "down") {
-      setFocusedIndex((prev) => Math.min(3, prev + 1));
+      moveDown();
     } else if (focusedIndex === 0) {
       if (
         key.name === "left" ||
@@ -352,7 +353,7 @@ function EditDialog({
 }) {
   const [title, setTitle] = useState(state.initialTitle || "");
   const [text, setText] = useState(state.initialText || "");
-  const [focusedIndex, setFocusedIndex] = useState(0); // 0 = title, 1 = text
+  const { focusedIndex, moveUp, moveDown } = useFieldFocus(2); // 0 = title, 1 = text
 
   const handleSubmit = () => {
     onSubmit({
@@ -372,9 +373,9 @@ function EditDialog({
       return;
     }
     if (key.name === "up") {
-      setFocusedIndex(0);
+      moveUp();
     } else if (key.name === "down") {
-      setFocusedIndex(1);
+      moveDown();
     }
   });
 
@@ -494,10 +495,9 @@ function MergeDialog({
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [evidence, setEvidence] = useState("");
-  const [focusedIndex, setFocusedIndex] = useState(0);
-  const [localError, setLocalError] = useState("");
-
   const maxIndex = isConcept ? 1 : 2; // concept: 0=targetId, 1=evidence. crystal: 0=targetId, 1=title, 2=text.
+  const { focusedIndex, moveUp, moveDown } = useFieldFocus(maxIndex + 1);
+  const [localError, setLocalError] = useState("");
 
   const handleSubmit = () => {
     const parsedTarget = parseInt(targetId, 10);
@@ -532,9 +532,9 @@ function MergeDialog({
       return;
     }
     if (key.name === "up") {
-      setFocusedIndex((prev) => Math.max(0, prev - 1));
+      moveUp();
     } else if (key.name === "down") {
-      setFocusedIndex((prev) => Math.min(maxIndex, prev + 1));
+      moveDown();
     }
   });
 
@@ -624,7 +624,7 @@ function SplitDialog({
   const [partOneText, setPartOneText] = useState("");
   const [partTwoTitle, setPartTwoTitle] = useState("");
   const [partTwoText, setPartTwoText] = useState("");
-  const [focusedIndex, setFocusedIndex] = useState(0); // 0=p1 title, 1=p1 text, 2=p2 title, 3=p2 text
+  const { focusedIndex, moveUp, moveDown } = useFieldFocus(4); // 0=p1 title, 1=p1 text, 2=p2 title, 3=p2 text
 
   const handleSubmit = () => {
     onSubmit({
@@ -646,9 +646,9 @@ function SplitDialog({
       return;
     }
     if (key.name === "up") {
-      setFocusedIndex((prev) => Math.max(0, prev - 1));
+      moveUp();
     } else if (key.name === "down") {
-      setFocusedIndex((prev) => Math.min(3, prev + 1));
+      moveDown();
     }
   });
 
