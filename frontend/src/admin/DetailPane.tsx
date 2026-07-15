@@ -1,6 +1,7 @@
-import React from "react";
-import { SyntaxStyle } from "@opentui/core";
+import React, { useImperativeHandle, useRef } from "react";
+import { SyntaxStyle, type ScrollBoxRenderable } from "@opentui/core";
 import type { AdminSnapshot } from "../rpc/schema.js";
+import { theme } from "../ui/theme.js";
 import { MarkdownBody } from "./markdown.js";
 
 const codeSyntaxStyle = SyntaxStyle.fromStyles({
@@ -41,50 +42,85 @@ const isJson = (text: string) => {
   }
 };
 
-export function DetailPane({
-  detail,
-  width = 56,
-  height = 14,
-}: {
+export type DetailPaneHandle = {
+  scrollByRows: (delta: number) => void;
+};
+
+type DetailPaneProps = {
   detail: AdminSnapshot["detail"];
   width?: number;
   height?: number;
-}) {
-  const renderBody = () => {
-    if (!detail.body) return null;
-    if (isDiff(detail.body)) {
-      return (
-        <diff
-          diff={detail.body}
-          filetype="diff"
-          syntaxStyle={codeSyntaxStyle}
-        />
-      );
-    }
-    if (isJson(detail.body)) {
-      return (
-        <code
-          content={detail.body}
-          filetype="json"
-          syntaxStyle={codeSyntaxStyle}
-        />
-      );
-    }
-    return <MarkdownBody content={detail.body} />;
-  };
+};
 
-  return (
-    <scrollbox flexDirection="column" width={width} height={height}>
-      <text>{detail.title}</text>
-      <text fg="gray">{detail.subtitle}</text>
-      <box flexDirection="column" marginTop={1} marginBottom={1}>
-        {renderBody()}
-      </box>
-      {detail.fields.map(([name, value], index) => (
-        <text key={`${name}-${index}`}>
-          {name}: {value}
+export const DetailPane = React.forwardRef<DetailPaneHandle, DetailPaneProps>(
+  function DetailPane({ detail, width = 56, height = 14 }, ref) {
+    const scrollboxRef = useRef<ScrollBoxRenderable>(null);
+
+    useImperativeHandle(ref, () => ({
+      scrollByRows(delta: number) {
+        scrollboxRef.current?.scrollBy(delta, "absolute");
+      },
+    }));
+
+    const renderBody = () => {
+      if (!detail.body) return null;
+      if (isDiff(detail.body)) {
+        return (
+          <diff
+            diff={detail.body}
+            filetype="diff"
+            syntaxStyle={codeSyntaxStyle}
+          />
+        );
+      }
+      if (isJson(detail.body)) {
+        return (
+          <code
+            content={detail.body}
+            filetype="json"
+            syntaxStyle={codeSyntaxStyle}
+          />
+        );
+      }
+      return <MarkdownBody content={detail.body} />;
+    };
+
+    return (
+      <scrollbox
+        key={height < 3 ? "scrollbar-hidden" : "scrollbar-auto"}
+        ref={scrollboxRef}
+        width={width}
+        height={height}
+        style={{
+          verticalScrollbarOptions: {
+            showArrows: height >= 3,
+            ...(height < 3 ? { visible: false } : {}),
+            width: 1,
+            position: "absolute",
+            right: 0,
+            top: 0,
+            bottom: 0,
+          },
+        }}
+      >
+        <text flexShrink={0}>{detail.title}</text>
+        <text flexShrink={0} fg={theme.accentMuted}>
+          {detail.subtitle}
         </text>
-      ))}
-    </scrollbox>
-  );
-}
+        <box
+          flexDirection="column"
+          flexShrink={0}
+          marginTop={1}
+          marginBottom={1}
+        >
+          {renderBody()}
+        </box>
+        {detail.fields.map(([name, value], index) => (
+          <text key={`${name}-${index}`} flexShrink={0}>
+            {name}: {value}
+          </text>
+        ))}
+      </scrollbox>
+    );
+  },
+);

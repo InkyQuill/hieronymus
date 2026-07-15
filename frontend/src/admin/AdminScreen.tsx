@@ -21,6 +21,7 @@ import {
 import type { RpcClient } from "../rpc/client.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
+import { theme } from "../ui/theme.js";
 import { FocusableList } from "../ui/FocusableList.js";
 import {
   classifyTerminalLayout,
@@ -30,10 +31,11 @@ import {
   panelWidth,
 } from "../ui/responsive.js";
 import { AdminTable } from "./AdminTable.js";
-import { DetailPane } from "./DetailPane.js";
+import { DetailPane, type DetailPaneHandle } from "./DetailPane.js";
 import { CommandPalette, commandsForView } from "./CommandPalette.js";
 import { HelpOverlay } from "./HelpOverlay.js";
 import { Spinner } from "../ui/Spinner.js";
+import { Gauge } from "../ui/Gauge.js";
 import { type DialogState, closedDialog, DialogOverlay } from "./dialogs.js";
 import {
   isConfirmKey,
@@ -93,6 +95,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     error: false,
   });
   const operationInFlight = useRef(false);
+  const detailPaneRef = useRef<DetailPaneHandle>(null);
 
   useEffect(() => {
     if (layout.kind === "too-small" && dialog.kind !== "none") {
@@ -689,6 +692,14 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     }
 
     if (activePanel === "detail") {
+      if (up) {
+        detailPaneRef.current?.scrollByRows(-1);
+        return;
+      }
+      if (down) {
+        detailPaneRef.current?.scrollByRows(1);
+        return;
+      }
       if (left) {
         setActivePanel("table");
         return;
@@ -795,29 +806,13 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     return (
       <box flexDirection="column" width={dimensions.width}>
         <text>Terminal too small</text>
-        <text fg="gray">
+        <text fg={theme.accentMuted}>
           {dimensions.width}x{dimensions.height}; minimum {MIN_TERMINAL_WIDTH}x
           {MIN_TERMINAL_HEIGHT}
         </text>
-        <text fg="gray">Resize terminal to use Hieronymus admin.</text>
-      </box>
-    );
-  }
-
-  if (dialog.kind !== "none") {
-    return (
-      <box
-        flexDirection="column"
-        width={Math.min(136, dimensions.width)}
-        height={Math.min(20, dimensions.height)}
-        alignItems="center"
-        justifyContent="center"
-      >
-        <DialogOverlay
-          state={dialog}
-          onClose={() => setDialog(closedDialog)}
-          onSubmit={handleDialogSubmit}
-        />
+        <text fg={theme.accentMuted}>
+          Resize terminal to use Hieronymus admin.
+        </text>
       </box>
     );
   }
@@ -830,12 +825,16 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     const compactScrollHeight = Math.max(4, compactPaneHeight - 2);
 
     return (
-      <box flexDirection="column" width={dimensions.width}>
+      <box
+        flexDirection="column"
+        width={dimensions.width}
+        height={dimensions.height}
+      >
         <text>
           {initial.header.logo.text} {initial.header.product} Admin{" "}
           {initial.header.version}
         </text>
-        <text fg="gray">
+        <text fg={theme.accentMuted}>
           {snapshot.view} · {layout.kind} {dimensions.width}x{dimensions.height}
         </text>
         <text>{formatStats(stats)}</text>
@@ -849,12 +848,16 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           marginTop={1}
           height={compactPaneHeight}
           borderStyle="rounded"
-          borderColor="cyan"
+          borderColor={theme.accentPrimary}
+          title={
+            helpOpen || commandsOpen
+              ? compactPanelLabel(activePanel, snapshot.view)
+              : undefined
+          }
           paddingX={1}
         >
           {helpOpen ? (
             <>
-              <text fg="cyan">Detail Inspector</text>
               <HelpOverlay
                 commands={initial.command_options}
                 view={snapshot.view}
@@ -863,7 +866,6 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
             </>
           ) : commandsOpen ? (
             <>
-              <text fg="cyan">Detail Inspector</text>
               <CommandPalette
                 commands={paletteCommands}
                 selectedIndex={clampCommandIndex(selectedCommandIndex)}
@@ -872,7 +874,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
             </>
           ) : activePanel === "views" ? (
             <>
-              <text fg="cyan">Views</text>
+              <text fg={theme.accentPrimary}>Views</text>
               <FocusableList
                 items={initial.views}
                 selectedIndex={selectedViewIndex}
@@ -882,7 +884,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
             </>
           ) : activePanel === "table" ? (
             <>
-              <text fg="cyan">{snapshot.view}</text>
+              <text fg={theme.accentPrimary}>{snapshot.view}</text>
               <box marginTop={1}>
                 <AdminTable
                   rows={snapshot.rows}
@@ -895,9 +897,10 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
             </>
           ) : (
             <>
-              <text fg="cyan">Detail Inspector</text>
+              <text fg={theme.accentPrimary}>Detail Inspector</text>
               <box marginTop={1}>
                 <DetailPane
+                  ref={detailPaneRef}
                   detail={snapshot.detail}
                   width={compactDetailWidth}
                   height={Math.max(4, compactScrollHeight - 1)}
@@ -909,7 +912,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
 
         <SearchPrompt active={searchActive} query={searchText} />
         <box flexDirection="row" marginTop={1}>
-          <text fg="gray">
+          <text fg={theme.accentMuted}>
             {footerText(
               footerKeys({
                 commandsOpen,
@@ -921,20 +924,32 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           </text>
         </box>
         <StatusLine message={status.message} error={status.error} />
+        <DialogOverlay
+          state={dialog}
+          onClose={() => setDialog(closedDialog)}
+          onSubmit={handleDialogSubmit}
+        />
       </box>
     );
   }
 
   return (
-    <box flexDirection="column" width={Math.min(136, dimensions.width)}>
+    <box
+      flexDirection="column"
+      width={Math.min(136, dimensions.width)}
+      height={dimensions.height}
+    >
       <box
         flexDirection="column"
         borderStyle="rounded"
-        borderColor="gray"
+        borderColor={theme.accentMuted}
         paddingX={1}
         paddingY={1}
       >
-        <Header header={initial.header} />
+        <Header
+          header={initial.header}
+          serviceRunning={initial.service.running}
+        />
         <text>{formatStats(stats)}</text>
         <StatusPanels
           shortTermStatus={shortTermStatus}
@@ -949,10 +964,14 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           flexDirection="column"
           width={28}
           borderStyle="rounded"
-          borderColor={activePanel === "views" ? "cyan" : "gray"}
+          borderColor={
+            activePanel === "views" ? theme.accentPrimary : theme.accentMuted
+          }
           paddingX={1}
         >
-          <text fg={activePanel === "views" ? "cyan" : undefined}>Views</text>
+          <text fg={activePanel === "views" ? theme.accentPrimary : undefined}>
+            Views
+          </text>
           <FocusableList
             items={initial.views}
             selectedIndex={selectedViewIndex}
@@ -966,10 +985,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           flexDirection="column"
           width={50}
           borderStyle="rounded"
-          borderColor={activePanel === "table" ? "cyan" : "gray"}
+          borderColor={
+            activePanel === "table" ? theme.accentPrimary : theme.accentMuted
+          }
           paddingX={1}
         >
-          <text fg={activePanel === "table" ? "cyan" : undefined}>
+          <text fg={activePanel === "table" ? theme.accentPrimary : undefined}>
             {snapshot.view}
           </text>
           <AdminTable
@@ -984,10 +1005,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           flexDirection="column"
           width={58}
           borderStyle="rounded"
-          borderColor={activePanel === "detail" ? "cyan" : "gray"}
+          borderColor={
+            activePanel === "detail" ? theme.accentPrimary : theme.accentMuted
+          }
           paddingX={1}
         >
-          <text fg={activePanel === "detail" ? "cyan" : undefined}>
+          <text fg={activePanel === "detail" ? theme.accentPrimary : undefined}>
             Detail Inspector
           </text>
           {helpOpen ? (
@@ -1001,7 +1024,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
               selectedIndex={clampCommandIndex(selectedCommandIndex)}
             />
           ) : (
-            <DetailPane detail={snapshot.detail} />
+            <DetailPane ref={detailPaneRef} detail={snapshot.detail} />
           )}
         </box>
       </box>
@@ -1015,6 +1038,11 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           searchActive,
           viewKeyLimit,
         })}
+      />
+      <DialogOverlay
+        state={dialog}
+        onClose={() => setDialog(closedDialog)}
+        onSubmit={handleDialogSubmit}
       />
     </box>
   );
@@ -1099,7 +1127,7 @@ function SearchPrompt({ active, query }: { active: boolean; query: string }) {
 
   return (
     <box marginTop={1}>
-      <text fg="cyan">Search: {query}</text>
+      <text fg={theme.accentPrimary}>Search: {query}</text>
     </box>
   );
 }
@@ -1226,13 +1254,24 @@ function inspectionDetail(method: string, response: Record<string, unknown>) {
   };
 }
 
-function Header({ header }: { header: AdminHeader }) {
+function Header({
+  header,
+  serviceRunning,
+}: {
+  header: AdminHeader;
+  serviceRunning: boolean;
+}) {
   return (
     <>
-      <text>
-        {header.logo.text} {header.product} Admin {header.version}
-      </text>
-      <text fg="gray">{header.tagline}</text>
+      <box flexDirection="row" justifyContent="space-between">
+        <text>
+          {header.logo.text} {header.product} Admin {header.version}
+        </text>
+        <text fg={serviceRunning ? theme.statusSuccess : theme.accentMuted}>
+          {serviceRunning ? "● Service running" : "○ Service stopped"}
+        </text>
+      </box>
+      <text fg={theme.accentMuted}>{header.tagline}</text>
     </>
   );
 }
@@ -1277,6 +1316,20 @@ function StatusPanels({
           {drain}
         </text>
       </box>
+      <Gauge
+        label="Short-term"
+        value={shortTermStatus.pending_count}
+        max={shortTermStatus.max_pending_short_term_memories}
+        fg={shortTermStatus.urgent ? theme.statusWarning : theme.accentPrimary}
+      />
+      {shortTermStatus.drain_in_progress ? (
+        <Gauge
+          label="Drain"
+          value={shortTermStatus.drain_completed}
+          max={shortTermStatus.drain_total}
+          fg={theme.accentPrimary}
+        />
+      ) : null}
       <box flexDirection="row" marginTop={0}>
         {dreamStatus.state !== "idle" && dreamStatus.state !== "DISABLED" && (
           <box marginRight={1}>
@@ -1285,6 +1338,14 @@ function StatusPanels({
         )}
         <text>{dream}</text>
       </box>
+      {dreamStatus.progress > 0 ? (
+        <Gauge
+          label="Dream"
+          value={Math.round(dreamStatus.progress * 100)}
+          max={100}
+          fg={theme.accentPrimary}
+        />
+      ) : null}
     </box>
   );
 }
@@ -1309,7 +1370,9 @@ function ConfigSummary({ configEditor }: { configEditor: AdminConfigEditor }) {
         {thresholdNames.length}
         {"  "}model cache warnings {warnings.length}
       </text>
-      {warnings[0] ? <text fg="yellow">{warnings[0].message}</text> : null}
+      {warnings[0] ? (
+        <text fg={theme.statusWarning}>{warnings[0].message}</text>
+      ) : null}
     </box>
   );
 }
@@ -1326,4 +1389,17 @@ function formatPercent(value: number) {
 
 function serviceStatus(running: boolean) {
   return running ? "Service running" : "Service stopped";
+}
+
+function compactPanelLabel(
+  activePanel: "views" | "table" | "detail",
+  view: string,
+): string {
+  if (activePanel === "views") {
+    return "Views";
+  }
+  if (activePanel === "table") {
+    return view;
+  }
+  return "Detail Inspector";
 }

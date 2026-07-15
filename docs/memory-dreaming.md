@@ -93,6 +93,13 @@ Most crystals are advisory. Active rule crystals are mandatory translation
 rules; they do not decay while active, but they may be superseded or combined by
 later higher-confidence rules.
 
+Recall uses a dual-lane strategy. The memory lane searches active short-term
+memories, crystals, concepts, facets, metadata, and protected rule crystals. The
+RAG lane searches imported project text and glossary chunks. Active rule crystals
+rank above RAG evidence, while ordinary memory and RAG results share the remaining
+limit through a budgeted merge. RAG evidence is advisory and does not create or
+activate rule crystals by itself.
+
 Recall and reinforcement are separate. Recall protects a crystal from immediate
 decay in the dream cycle that processes the active session, but it does not
 strengthen the crystal. Reinforcement comes from explicit feedback, evidence of

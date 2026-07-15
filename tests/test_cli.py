@@ -589,26 +589,37 @@ def test_recall_outputs_short_term_results(tmp_path):
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload[0]["score"] > 0
-    assert payload == [
-        {
-            "source": "short_term",
-            "rank": 1,
-            "score": payload[0]["score"],
-            "reason": "active session short-term memory match",
-            "crystal": None,
-            "short_term_memory": {
-                "id": memory_id,
-                "source_role": "mentor",
-                "kind": "note",
-                "text": "Keep Sense as Sense in menu labels.",
-                "metadata": {
-                    "sentence_count": 1,
-                    "source": "review",
-                    "symbol_count": 35,
-                },
+    assert len(payload) == 1
+    assert {
+        key: payload[0][key]
+        for key in (
+            "source",
+            "rank",
+            "score",
+            "reason",
+            "crystal",
+            "short_term_memory",
+        )
+    } == {
+        "source": "short_term",
+        "rank": 1,
+        "score": payload[0]["score"],
+        "reason": "active session short-term memory match",
+        "crystal": None,
+        "short_term_memory": {
+            "id": memory_id,
+            "source_role": "mentor",
+            "kind": "note",
+            "text": "Keep Sense as Sense in menu labels.",
+            "metadata": {
+                "sentence_count": 1,
+                "source": "review",
+                "symbol_count": 35,
             },
-        }
-    ]
+        },
+    }
+    assert payload[0]["tier"] == "short_term"
+    assert payload[0]["rank_reason"] == "active session short-term memory match"
 
 
 def test_recall_human_output_is_not_json(tmp_path):

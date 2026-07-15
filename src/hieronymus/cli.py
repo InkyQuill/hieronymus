@@ -32,6 +32,13 @@ from hieronymus.provider_config import (
     load_provider_catalog,
     redacted_provider_catalog_payload,
 )
+from hieronymus.rag import RagStore
+from hieronymus.rag_payloads import (
+    rag_hit_payload as _rag_hit_payload,
+)
+from hieronymus.rag_payloads import (
+    rag_import_payload as _rag_import_payload,
+)
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.release import check_update, run_update
@@ -672,6 +679,87 @@ def remember(
     )
 
 
+@main.group("rag")
+def rag() -> None:
+    pass
+
+
+@rag.command("import")
+@click.argument("series_slug")
+@click.argument("path", type=click.Path(exists=True, dir_okay=False, readable=True))
+@click.option(
+    "--type",
+    "source_type",
+    type=click.Choice(["auto", "text", "glossary"]),
+    default="auto",
+)
+@click.option("--source-ref", default=None)
+@click.option("--language-tag", "language_tags", multiple=True)
+@click.option("--story-scope", "story_scopes", multiple=True)
+@click.option("--semantic-tag", "semantic_tags", multiple=True)
+@click.option("--json", "json_output", is_flag=True)
+@click.pass_context
+def rag_import(
+    ctx: click.Context,
+    series_slug: str,
+    path: str,
+    source_type: str,
+    source_ref: str | None,
+    language_tags: tuple[str, ...],
+    story_scopes: tuple[str, ...],
+    semantic_tags: tuple[str, ...],
+    json_output: bool,
+) -> None:
+    try:
+        Registry(ctx.obj["config"]).get_series(series_slug)
+        result = RagStore(ctx.obj["config"]).import_file(
+            series_slug,
+            Path(path),
+            source_ref=source_ref,
+            source_type=source_type,
+            language_tags=language_tags,
+            story_scopes=story_scopes,
+            semantic_tags=semantic_tags,
+        )
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+
+    payload = _rag_import_payload(result)
+    line = (
+        f"RAG source unchanged: {result.source.source_ref}"
+        if result.skipped
+        else f"Imported {result.chunk_count} RAG chunk(s) from {result.source.source_ref}"
+    )
+    _echo_json_or_line(payload, json_output=json_output, line=line)
+
+
+@rag.command("search")
+@click.argument("series_slug")
+@click.argument("query")
+@click.option("--limit", default=10, type=int)
+@click.option("--json", "json_output", is_flag=True)
+@click.pass_context
+def rag_search(
+    ctx: click.Context,
+    series_slug: str,
+    query: str,
+    limit: int,
+    json_output: bool,
+) -> None:
+    try:
+        Registry(ctx.obj["config"]).get_series(series_slug)
+        hits = RagStore(ctx.obj["config"]).search(series_slug, query, limit=limit)
+    except (KeyError, ValueError) as error:
+        _raise_click_error(error)
+
+    payload = [_rag_hit_payload(hit) for hit in hits]
+    _echo_json_or_line(
+        payload,
+        json_output=json_output,
+        line="No RAG results." if not payload else f"{len(payload)} RAG result(s).",
+    )
+
+
 @main.command("session-start")
 @click.argument("series_slug")
 @click.option("--source-language", default=None)
@@ -826,9 +914,9 @@ def recall(
         _raise_click_error(error)
     payload = [
         {
+            **result.enriched_payload(),
             "source": result.source,
             "rank": result.rank,
-            "score": result.score,
             "reason": result.reason,
             "crystal": _crystal_payload(result.crystal),
             "short_term_memory": _short_term_memory_payload(result.short_term_memory),

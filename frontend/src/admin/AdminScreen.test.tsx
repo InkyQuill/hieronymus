@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { RpcClient } from "../rpc/client.js";
+import type { AdminBootstrap } from "../rpc/schema.js";
 import {
   cleanupOpenTuiHarnesses,
   createOpenTuiHarness,
@@ -264,6 +265,38 @@ describe("AdminScreen", () => {
     expect(detailOutput).toContain("Guild ledger detail marker.");
   });
 
+  it("scrolls overflowing detail content with arrow keys while the detail pane is active", async () => {
+    const data: AdminBootstrap = bootstrap();
+    data.snapshot.detail = {
+      ...data.snapshot.detail,
+      body: Array.from(
+        { length: 30 },
+        (_, index) => `Detail Line ${index}`,
+      ).join("\n"),
+      fields: [["Deep Field", "visible after scrolling"]],
+    };
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={data} client={undefined} />);
+    await mockInput.press("tab");
+    await mockInput.press("tab");
+    const initial = await waitForFrame((frame) =>
+      frame.includes("Detail Line 0"),
+    );
+    expect(initial).not.toContain("Deep Field");
+
+    for (let index = 0; index < 40; index += 1) {
+      await mockInput.press("down");
+    }
+
+    const scrolled = await waitForFrame(
+      (frame) => frame.includes("Detail Line 29") && frame.includes("Deep"),
+    );
+    expect(scrolled).toContain("Detail Line 29");
+    expect(scrolled).toContain("visible");
+    expect(scrolled).not.toContain("Detail Line 0");
+  });
+
   it("renders command palette in compact admin layout", async () => {
     const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
 
@@ -286,6 +319,19 @@ describe("AdminScreen", () => {
     const output = await waitForFrame((frame) => frame.includes("Help"));
     expect(output).toContain("Help");
     expect(output).toContain("Esc/? close");
+  });
+
+  it("labels the compact overlay pane after the active panel, not always Detail Inspector", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.press("p", { ctrl: true });
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Command Palette"),
+    );
+    expect(output).toContain("Views");
+    expect(output).not.toContain("Detail Inspector");
   });
 
   it("keeps command palette inside the narrow admin viewport", async () => {
@@ -398,10 +444,12 @@ describe("AdminScreen", () => {
     const output = await waitForFrame((frame) => frame.includes("Crystals"));
     expect(output).toContain("Crystals");
     expect(output).toContain("H Hieronymus Admin 0.1.0");
+    expect(output).toContain("○ Service stopped");
     expect(output).toContain("Local translation memory.");
     expect(output).toContain("series 1");
     expect(output).toContain("Short-term pending 0");
     expect(output).toContain("Dream DISABLED");
+    expect(output).toContain("Short-term [░░░░░░░░░░] 0/200");
     expect(output).toContain("Config providers anthropic");
     expect(output).toContain(
       "workflows crystallization:claude-sonnet-4-20250514",
@@ -410,6 +458,22 @@ describe("AdminScreen", () => {
     expect(output).toContain("model cache has not been fetched for provider");
     expect(output).toContain("Guild Ledger");
     expect(output).toContain("Guild ledger detail marker.");
+  });
+
+  it("shows a live service status indicator in the header", async () => {
+    const { render, waitForFrame } = setupTest();
+
+    await render(
+      <AdminScreen
+        initial={{ ...bootstrap(), service: { running: true } }}
+        client={undefined}
+      />,
+    );
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Hieronymus Admin"),
+    );
+    expect(output).toContain("● Service running");
   });
 
   it("opens a keyboard command palette with context commands", async () => {
@@ -1038,6 +1102,23 @@ describe("AdminScreen", () => {
     expect(output).toContain("Dream WORKING");
     expect(output).toContain("phase maintenance");
     expect(output).toContain("progress 75%");
+    expect(output).toContain("Short-term [░░░░░░░░░░] 3/200");
+    expect(output).toContain("Drain [███████░░░] 7/10");
+    expect(output).toContain("Dream [████████░░] 75/100");
+  });
+
+  it("keeps the admin header visible behind an open add-memory dialog", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.type("a");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Add New Crystal / Lesson / Rule"),
+    );
+
+    expect(output).toContain("Add New Crystal / Lesson / Rule");
+    expect(output).toContain("H Hieronymus Admin 0.1.0");
   });
 
   it("does not send crystal mutations from proposals", async () => {

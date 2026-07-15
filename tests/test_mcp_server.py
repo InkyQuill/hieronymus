@@ -339,6 +339,8 @@ def test_mcp_server_registers_expected_tool_names():
         "hieronymus_termbase_approve",
         "hieronymus_memory_search",
         "hieronymus_memory_add",
+        "hieronymus_rag_import",
+        "hieronymus_rag_search",
         "hieronymus_session_start",
         "hieronymus_session_complete",
         "hieronymus_short_term_add",

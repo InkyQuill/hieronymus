@@ -33,7 +33,7 @@
 - Create: `src/hieronymus/rag_models.py`
 - Test: `tests/test_rag_store.py`
 
-- [ ] **Step 1: Write the failing schema/model test**
+- [x] **Step 1: Write the failing schema/model test**
 
 Add this test file:
 
@@ -100,13 +100,13 @@ def test_rag_dataclasses_expose_payload_fields() -> None:
     assert chunk.kind == "glossary_entry"
 ```
 
-- [ ] **Step 2: Run the schema/model test and verify it fails**
+- [x] **Step 2: Run the schema/model test and verify it fails**
 
 Run: `uv run pytest tests/test_rag_store.py -q`
 
 Expected: FAIL because `hieronymus.rag_models` does not exist and the schema tables do not exist.
 
-- [ ] **Step 3: Add the RAG tables to the global migration**
+- [x] **Step 3: Add the RAG tables to the global migration**
 
 Append this SQL to `src/hieronymus/migrations/global.sql`:
 
@@ -186,7 +186,7 @@ begin
 end;
 ```
 
-- [ ] **Step 4: Add the model dataclasses**
+- [x] **Step 4: Add the model dataclasses**
 
 Create `src/hieronymus/rag_models.py`:
 
@@ -251,13 +251,13 @@ class RagImportResult:
     skipped: bool
 ```
 
-- [ ] **Step 5: Run the task test and verify it passes**
+- [x] **Step 5: Run the task test and verify it passes**
 
 Run: `uv run pytest tests/test_rag_store.py::test_rag_schema_is_created_idempotently tests/test_rag_store.py::test_rag_dataclasses_expose_payload_fields -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 ```bash
 git add src/hieronymus/migrations/global.sql src/hieronymus/rag_models.py tests/test_rag_store.py
@@ -272,13 +272,13 @@ git commit -m "feat: add rag schema and models"
 - Modify: `pyproject.toml`
 - Modify: `uv.lock`
 
-- [ ] **Step 1: Add the YAML dependency**
+- [x] **Step 1: Add the YAML dependency**
 
 Run: `uv add pyyaml`
 
 Expected: `pyproject.toml` contains `pyyaml` in `[project].dependencies`, and `uv.lock` is updated.
 
-- [ ] **Step 2: Write failing parser/chunker tests**
+- [x] **Step 2: Write failing parser/chunker tests**
 
 Append these tests to `tests/test_rag_store.py`:
 
@@ -361,13 +361,13 @@ def test_yaml_file_accepts_mapping_entries(tmp_path: Path) -> None:
     }
 ```
 
-- [ ] **Step 3: Run parser tests and verify they fail**
+- [x] **Step 3: Run parser tests and verify they fail**
 
 Run: `uv run pytest tests/test_rag_store.py -q`
 
 Expected: FAIL because `hieronymus.rag` and `load_rag_file` do not exist.
 
-- [ ] **Step 4: Add parser and chunker code**
+- [x] **Step 4: Add parser and chunker code**
 
 Create `src/hieronymus/rag.py` with these definitions first:
 
@@ -614,13 +614,13 @@ def _clean_text_tuple(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(normalized)
 ```
 
-- [ ] **Step 5: Run parser tests and verify they pass**
+- [x] **Step 5: Run parser tests and verify they pass**
 
 Run: `uv run pytest tests/test_rag_store.py -q`
 
 Expected: PASS for schema/model/parser tests.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 ```bash
 git add pyproject.toml uv.lock src/hieronymus/rag.py tests/test_rag_store.py
@@ -633,7 +633,7 @@ git commit -m "feat: parse rag source files"
 - Modify: `src/hieronymus/rag.py`
 - Modify: `tests/test_rag_store.py`
 
-- [ ] **Step 1: Write failing RagStore tests**
+- [x] **Step 1: Write failing RagStore tests**
 
 Append these tests to `tests/test_rag_store.py`:
 
@@ -738,13 +738,13 @@ def test_glossary_hits_get_glossary_reason(config: HieronymusConfig, tmp_path: P
     assert hits[0].score > 0
 ```
 
-- [ ] **Step 2: Run RagStore tests and verify they fail**
+- [x] **Step 2: Run RagStore tests and verify they fail**
 
 Run: `uv run pytest tests/test_rag_store.py -q`
 
 Expected: FAIL because `RagStore` is not implemented.
 
-- [ ] **Step 3: Add `RagStore` row hydration and import/search methods**
+- [x] **Step 3: Add `RagStore` row hydration and import/search methods**
 
 Append this implementation to `src/hieronymus/rag.py`:
 
@@ -1001,13 +1001,13 @@ def _rank_reason(chunk: RagChunkRecord) -> str:
     return "rag project text match"
 ```
 
-- [ ] **Step 4: Run RagStore tests and verify import replacement is atomic**
+- [x] **Step 4: Run RagStore tests and verify import replacement is atomic**
 
 Run: `uv run pytest tests/test_rag_store.py -q`
 
 Expected: PASS. The failed-import test proves parsing happens before any replacement write and the previous indexed version remains available.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add src/hieronymus/rag.py tests/test_rag_store.py
@@ -1022,7 +1022,7 @@ git commit -m "feat: index and search rag sources"
 - Create: `tests/test_rag_cli.py`
 - Create: `tests/test_mcp_rag.py`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 Create `tests/test_rag_cli.py`:
 
@@ -1109,7 +1109,7 @@ def test_rag_import_rejects_unknown_series(tmp_path: Path) -> None:
     assert "unknown series: missing" in result.output
 ```
 
-- [ ] **Step 2: Write failing MCP tests**
+- [x] **Step 2: Write failing MCP tests**
 
 Create `tests/test_mcp_rag.py`:
 
@@ -1147,13 +1147,13 @@ def test_mcp_rag_import_and_search(monkeypatch, tmp_path: Path) -> None:
     assert hits[0]["rank_reason"] == "rag project text match"
 ```
 
-- [ ] **Step 3: Run interface tests and verify they fail**
+- [x] **Step 3: Run interface tests and verify they fail**
 
 Run: `uv run pytest tests/test_rag_cli.py tests/test_mcp_rag.py -q`
 
 Expected: FAIL because CLI/MCP RAG interfaces do not exist.
 
-- [ ] **Step 4: Add payload helper and CLI group**
+- [x] **Step 4: Add payload helper and CLI group**
 
 In `src/hieronymus/cli.py`, import `RagStore`:
 
@@ -1273,7 +1273,7 @@ def rag_search(
     )
 ```
 
-- [ ] **Step 5: Add MCP tools**
+- [x] **Step 5: Add MCP tools**
 
 In `src/hieronymus/mcp_server.py`, import `Path` and `RagStore`:
 
@@ -1352,13 +1352,13 @@ def hieronymus_rag_search(
     return [_rag_hit_payload(hit) for hit in RagStore(config).search(series_slug, query, limit=limit)]
 ```
 
-- [ ] **Step 6: Run interface tests**
+- [x] **Step 6: Run interface tests**
 
 Run: `uv run pytest tests/test_rag_cli.py tests/test_mcp_rag.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 4**
+- [x] **Step 7: Commit Task 4**
 
 ```bash
 git add src/hieronymus/cli.py src/hieronymus/mcp_server.py tests/test_rag_cli.py tests/test_mcp_rag.py
@@ -1371,7 +1371,7 @@ git commit -m "feat: expose rag import and search"
 - Modify: `src/hieronymus/memory_models.py`
 - Modify: `tests/test_recall_enriched_memory.py`
 
-- [ ] **Step 1: Write failing enriched payload test**
+- [x] **Step 1: Write failing enriched payload test**
 
 Append this test to `tests/test_recall_enriched_memory.py`:
 
@@ -1408,13 +1408,13 @@ def test_rag_recall_result_enriched_payload_contains_citation_fields() -> None:
     assert payload["rank_reason"] == "rag glossary match"
 ```
 
-- [ ] **Step 2: Run the enriched payload test and verify it fails**
+- [x] **Step 2: Run the enriched payload test and verify it fails**
 
 Run: `uv run pytest tests/test_recall_enriched_memory.py::test_rag_recall_result_enriched_payload_contains_citation_fields -q`
 
 Expected: FAIL because `RecallResult.rag` does not exist.
 
-- [ ] **Step 3: Modify `RecallResult` to support RAG**
+- [x] **Step 3: Modify `RecallResult` to support RAG**
 
 In `src/hieronymus/memory_models.py`, import `RagChunkRecord`:
 
@@ -1564,13 +1564,13 @@ Add RAG citation fields to `enriched_payload`:
             "metadata": self.rag_chunk.metadata if self.rag_chunk is not None else {},
 ```
 
-- [ ] **Step 4: Run enriched payload tests**
+- [x] **Step 4: Run enriched payload tests**
 
 Run: `uv run pytest tests/test_recall_enriched_memory.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 5**
+- [x] **Step 5: Commit Task 5**
 
 ```bash
 git add src/hieronymus/memory_models.py tests/test_recall_enriched_memory.py
@@ -1585,7 +1585,7 @@ git commit -m "feat: add rag recall payloads"
 - Modify: `src/hieronymus/mcp_server.py`
 - Create: `tests/test_recall_rag.py`
 
-- [ ] **Step 1: Write failing mixed recall tests**
+- [x] **Step 1: Write failing mixed recall tests**
 
 Create `tests/test_recall_rag.py`:
 
@@ -1685,13 +1685,13 @@ def test_recall_fills_limit_from_memory_when_rag_is_empty(config: HieronymusConf
     assert {result.source for result in results} == {"long_term"}
 ```
 
-- [ ] **Step 2: Run mixed recall tests and verify they fail**
+- [x] **Step 2: Run mixed recall tests and verify they fail**
 
 Run: `uv run pytest tests/test_recall_rag.py -q`
 
 Expected: FAIL because `RecallService` does not include RAG results.
 
-- [ ] **Step 3: Add RAG search and merge helpers to `RecallService`**
+- [x] **Step 3: Add RAG search and merge helpers to `RecallService`**
 
 In `src/hieronymus/recall.py`, import `RagStore`:
 
@@ -1815,7 +1815,7 @@ Replace the result-building loop with this version:
                 )
 ```
 
-- [ ] **Step 4: Update CLI recall payload**
+- [x] **Step 4: Update CLI recall payload**
 
 In `src/hieronymus/cli.py`, change the recall JSON payload loop to use enriched payloads, matching MCP:
 
@@ -1837,7 +1837,7 @@ In `src/hieronymus/cli.py`, change the recall JSON payload loop to use enriched 
         )
 ```
 
-- [ ] **Step 5: Update MCP recall payload for RAG**
+- [x] **Step 5: Update MCP recall payload for RAG**
 
 In `src/hieronymus/mcp_server.py`, update `_recall_payload` to include a RAG chunk payload:
 
@@ -1863,13 +1863,13 @@ In `src/hieronymus/mcp_server.py`, update `_recall_payload` to include a RAG chu
     }
 ```
 
-- [ ] **Step 6: Run recall tests**
+- [x] **Step 6: Run recall tests**
 
 Run: `uv run pytest tests/test_recall_rag.py tests/test_recall_enriched_memory.py tests/test_combined_recall.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 6**
+- [x] **Step 7: Commit Task 6**
 
 ```bash
 git add src/hieronymus/recall.py src/hieronymus/cli.py src/hieronymus/mcp_server.py tests/test_recall_rag.py tests/test_recall_enriched_memory.py
@@ -1882,7 +1882,7 @@ git commit -m "feat: merge rag evidence into recall"
 - Modify: `docs/usage.md`
 - Modify: `docs/memory-dreaming.md`
 
-- [ ] **Step 1: Add user-facing RAG usage docs**
+- [x] **Step 1: Add user-facing RAG usage docs**
 
 In `docs/usage.md`, add this section after "Store a Concept With Facets":
 
@@ -1915,7 +1915,7 @@ their source reference, chunk kind, location, score, and rank reason so agents c
 cite where evidence came from.
 ```
 
-- [ ] **Step 2: Document memory/RAG priority**
+- [x] **Step 2: Document memory/RAG priority**
 
 In `docs/memory-dreaming.md`, add this paragraph near the recall explanation:
 
@@ -1928,7 +1928,7 @@ limit through a budgeted merge. RAG evidence is advisory and does not create or
 activate rule crystals by itself.
 ```
 
-- [ ] **Step 3: Run focused tests**
+- [x] **Step 3: Run focused tests**
 
 Run:
 
@@ -1938,7 +1938,7 @@ uv run pytest tests/test_rag_store.py tests/test_rag_cli.py tests/test_mcp_rag.p
 
 Expected: PASS.
 
-- [ ] **Step 4: Run project verification**
+- [x] **Step 4: Run project verification**
 
 Run:
 
@@ -1950,7 +1950,7 @@ uv run ruff format --check .
 
 Expected: all commands PASS.
 
-- [ ] **Step 5: Commit Task 7**
+- [x] **Step 5: Commit Task 7**
 
 ```bash
 git add docs/usage.md docs/memory-dreaming.md

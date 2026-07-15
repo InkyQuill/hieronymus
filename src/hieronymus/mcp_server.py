@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -20,6 +21,16 @@ from hieronymus.memory_models import (
     ShortTermMemoryRecord,
     TaskSessionRecord,
     TranslationContext,
+)
+from hieronymus.rag import RagStore
+from hieronymus.rag_payloads import (
+    rag_chunk_payload as _rag_chunk_payload,
+)
+from hieronymus.rag_payloads import (
+    rag_hit_payload as _rag_hit_payload,
+)
+from hieronymus.rag_payloads import (
+    rag_import_payload as _rag_import_payload,
 )
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry, Series
@@ -140,6 +151,7 @@ def _recall_payload(result) -> dict[str, Any]:
         "reason": result.reason,
         "crystal": _crystal_payload(result.crystal),
         "short_term_memory": _short_term_memory_payload(result.short_term_memory),
+        "rag_chunk": _rag_chunk_payload(result.rag_chunk),
     }
 
 
@@ -797,6 +809,42 @@ def hieronymus_memory_search(
     )
     memories = _memory(config, series, context).search(query, limit=limit)
     return [asdict(memory) for memory in memories]
+
+
+@server.tool()
+def hieronymus_rag_import(
+    series_slug: str,
+    path: str,
+    source_ref: str | None = None,
+    source_type: str = "auto",
+    language_tags: list[str] | None = None,
+    story_scopes: list[str] | None = None,
+    semantic_tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Import a text, markdown, or glossary file into the project RAG store."""
+    config, _series = _series_context(series_slug)
+    result = RagStore(config).import_file(
+        series_slug,
+        Path(path),
+        source_ref=source_ref,
+        source_type=source_type,
+        language_tags=language_tags or (),
+        story_scopes=story_scopes or (),
+        semantic_tags=semantic_tags or (),
+    )
+    return _rag_import_payload(result)
+
+
+@server.tool()
+def hieronymus_rag_search(
+    series_slug: str,
+    query: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Search project RAG chunks for a series."""
+    config, _series = _series_context(series_slug)
+    hits = RagStore(config).search(series_slug, query, limit=limit)
+    return [_rag_hit_payload(hit) for hit in hits]
 
 
 @server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)

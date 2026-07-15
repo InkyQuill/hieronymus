@@ -15,6 +15,7 @@ from hieronymus.workspace import WorkspaceStore
 _DEFAULT_SOURCE_LANGUAGE = "ja"
 _DEFAULT_TARGET_LANGUAGE = "en"
 _MAX_SEARCH_LIMIT = 50
+_LEGACY_RECALL_OVERFETCH_FACTOR = 2
 
 
 class _CompatibleMemoryEntry(MemoryEntry):
@@ -127,10 +128,14 @@ class MemoryStore:
                 session["id"],
                 context,
                 query,
-                limit=bounded_limit,
+                limit=bounded_limit * _LEGACY_RECALL_OVERFETCH_FACTOR,
             )
             entries = self._disambiguate_entry_ids(
-                [self._entry_from_recall_result(result) for result in results]
+                [
+                    self._entry_from_recall_result(result)
+                    for result in results
+                    if result.source != "rag"
+                ]
             )
             return self._sort_legacy_entries(entries)[:bounded_limit]
 

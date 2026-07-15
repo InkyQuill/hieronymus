@@ -1,5 +1,6 @@
 import React from "react";
 import type { AdminCommand } from "../rpc/schema.js";
+import { theme } from "../ui/theme.js";
 
 export function commandsForView(
   commands: AdminCommand[],
@@ -32,44 +33,54 @@ export function CommandPalette({
     <box
       flexDirection="column"
       borderStyle="rounded"
-      borderColor="cyan"
+      borderColor={theme.accentPrimary}
       paddingX={1}
       paddingY={1}
       width={width}
       height={height}
     >
       <box height={1}>
-        <text fg="cyan">Command Palette</text>
+        <text fg={theme.accentPrimary}>Command Palette</text>
       </box>
       {commands.length === 0 ? (
         <box height={1}>
-          <text fg="gray">No commands for this view</text>
+          <text fg={theme.accentMuted}>No commands for this view</text>
         </box>
       ) : null}
       {commands.map((command, index) => (
         <box key={command.id} height={1}>
           <text
             fg={
-              command.disabled
-                ? "gray"
-                : index === selectedIndex
-                  ? "cyan"
-                  : undefined
+              index === selectedIndex
+                ? command.disabled
+                  ? theme.statusWarning
+                  : theme.accentPrimary
+                : undefined
             }
           >
             {index === selectedIndex ? "> " : "  "}
-            {command.label} [{command.key}]{" "}
-            {command.disabled ? "(unavailable)" : ""}
+            {command.disabled ? "✕ " : ""}
+            {command.label} [{command.key}]
           </text>
         </box>
       ))}
       {commands[selectedIndex] ? (
         <box height={1}>
-          <text fg="gray">{commands[selectedIndex].hint}</text>
+          <text
+            fg={
+              commands[selectedIndex].disabled
+                ? theme.statusWarning
+                : theme.accentMuted
+            }
+          >
+            {commands[selectedIndex].disabled
+              ? `${commands[selectedIndex].label} needs a selected row`
+              : commands[selectedIndex].hint}
+          </text>
         </box>
       ) : null}
       <box height={1}>
-        <text fg="gray">Enter run Esc close ↑/↓ or j/k move</text>
+        <text fg={theme.accentMuted}>Enter run Esc close ↑/↓ or j/k move</text>
       </box>
     </box>
   );
