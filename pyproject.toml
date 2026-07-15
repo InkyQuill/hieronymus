@@ -6,8 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Pavel Obruchnikov", email = "me@inkyquill.net" }]
 dependencies = [
+  "anthropic>=0.85.0",
   "click>=8.1.8",
+  "google-genai>=1.0.0",
   "mcp>=1.2.0",
+  "ollama>=0.6.0",
+  "openai>=2.0.0",
   "pyyaml>=6.0.3",
   "tomli-w>=1.2.0",
 ]

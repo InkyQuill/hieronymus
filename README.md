@@ -52,11 +52,17 @@ doctor output, JSON bridge responses, logs, provider checks, and audit records.
 Supported provider runtime types for `provider.conf` profiles:
 
 - `deterministic`: offline local fallback.
-- `openai`: OpenAI and OpenAI-compatible endpoints.
-- `gemini`: Gemini API.
-- `anthropic`: Anthropic Messages API.
-- `ollama`: local Ollama chat/model endpoints without an API key.
-- `google`: provider catalog alias for Gemini-compatible Google API endpoints.
+- `openai`: OpenAI and OpenAI-compatible endpoints, through the official `openai` SDK.
+- `google`: Gemini API, through the official `google-genai` SDK. Legacy `gemini`
+  configuration is migrated to this canonical type on load.
+- `anthropic`: Anthropic Messages and Models APIs, through the official `anthropic` SDK.
+- `ollama`: local Ollama chat/model endpoints, through the official `ollama` SDK;
+  an API key is optional for local servers.
+
+When a remote provider profile has an API key, Config queries its official SDK's
+model-list API and caches the result. If lookup is unavailable, the configured
+model and provider defaults remain usable. Ollama also lists models from a
+configured local endpoint without a key.
 
 Dreaming automation is controlled by `autostart_enabled`,
 `min_interval_minutes`, `new_short_term_memory_threshold`, and

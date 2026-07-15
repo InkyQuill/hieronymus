@@ -74,7 +74,10 @@ def default_provider_catalog() -> ProviderCatalog:
 
 def load_provider_catalog(config: HieronymusConfig) -> ProviderCatalog:
     catalog = _load_provider_catalog_file(config)
-    return _migrate_legacy_dream_providers(config, catalog)
+    catalog = _migrate_legacy_dream_providers(config, catalog)
+    if _provider_config_uses_legacy_gemini_type(config):
+        save_provider_catalog(config, catalog)
+    return catalog
 
 
 def _load_provider_catalog_file(config: HieronymusConfig) -> ProviderCatalog:
@@ -217,11 +220,28 @@ def _provider_catalog_from_payload(payload: dict[str, Any]) -> ProviderCatalog:
         _validate_provider_payload(name, provider_payload)
         _require_profile_fields(name, provider_payload)
         provider_payload.setdefault("name", name)
-        providers[name] = replace(ProviderProfile(), **provider_payload)
+        profile = replace(ProviderProfile(), **provider_payload)
+        if profile.type == "gemini":
+            profile = replace(profile, type="google")
+        providers[name] = profile
 
     return ProviderCatalog(
         providers=providers,
         defaults=replace(ProviderDefaults(), **defaults_payload),
+    )
+
+
+def _provider_config_uses_legacy_gemini_type(config: HieronymusConfig) -> bool:
+    if not config.provider_config_path.exists():
+        return False
+    try:
+        payload = tomllib.loads(config.provider_config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    return any(
+        type(profile) is dict and profile.get("type") == "gemini"
+        for name, profile in payload.items()
+        if name != "defaults"
     )
 
 

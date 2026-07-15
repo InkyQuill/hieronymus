@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from anthropic import Anthropic
+from google import genai
+from google.genai import types as google_types
+from ollama import Client as OllamaClient
+from openai import OpenAI
+
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_config import DreamConfig, WorkflowProfile, load_dream_config
 from hieronymus.dream_workflows import CRYSTALLIZATION_PHASE, resolve_effective_workflow
@@ -112,6 +118,18 @@ class UrllibTransport:
             return HTTPResponse(status=0, body="network error")
 
 
+class ProviderClient(Protocol):
+    def list_models(self) -> list[str]: ...
+
+    def check(self, model: str) -> None: ...
+
+    def generate_dream(self, model: str, prompt: str) -> str: ...
+
+
+class ProviderClientFactory(Protocol):
+    def create(self, profile: ProviderProfile) -> ProviderClient: ...
+
+
 @dataclass(frozen=True)
 class ProviderMetadata:
     name: str
@@ -153,6 +171,172 @@ class ProviderRuntimeSettings:
     timeout_seconds: float
 
 
+class OpenAIProviderClient:
+    def __init__(self, profile: ProviderProfile) -> None:
+        self._client = OpenAI(
+            api_key=profile.api_key,
+            base_url=profile.endpoint or None,
+            timeout=profile.timeout_seconds,
+        )
+
+    def list_models(self) -> list[str]:
+        return [model.id for model in self._client.models.list().data]
+
+    def check(self, model: str) -> None:
+        self._client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "Reply with ok."}],
+            max_tokens=1,
+        )
+
+    def generate_dream(self, model: str, prompt: str) -> str:
+        response = self._client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            response_format={"type": "json_object"},
+        )
+        text = response.choices[0].message.content
+        if not isinstance(text, str):
+            raise ValueError("openai response did not match provider envelope")
+        return text
+
+
+class GoogleProviderClient:
+    def __init__(self, profile: ProviderProfile) -> None:
+        http_options = (
+            google_types.HttpOptions(base_url=profile.endpoint) if profile.endpoint else None
+        )
+        self._client = genai.Client(api_key=profile.api_key, http_options=http_options)
+
+    def list_models(self) -> list[str]:
+        return [
+            model.name.removeprefix("models/")
+            for model in self._client.models.list()
+            if model.name and "generateContent" in (model.supported_actions or [])
+        ]
+
+    def check(self, model: str) -> None:
+        self._client.models.generate_content(
+            model=model,
+            contents="Reply with ok.",
+            config=google_types.GenerateContentConfig(max_output_tokens=1),
+        )
+
+    def generate_dream(self, model: str, prompt: str) -> str:
+        response = self._client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=google_types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type="application/json",
+            ),
+        )
+        if not isinstance(response.text, str):
+            raise ValueError("gemini response did not match provider envelope")
+        return response.text
+
+
+class AnthropicProviderClient:
+    def __init__(self, profile: ProviderProfile) -> None:
+        self._client = Anthropic(
+            api_key=profile.api_key,
+            base_url=profile.endpoint or None,
+            timeout=profile.timeout_seconds,
+        )
+
+    def list_models(self) -> list[str]:
+        return [model.id for model in self._client.models.list()]
+
+    def check(self, model: str) -> None:
+        self._client.messages.create(
+            model=model,
+            max_tokens=1,
+            messages=[{"role": "user", "content": "Reply with ok."}],
+        )
+
+    def generate_dream(self, model: str, prompt: str) -> str:
+        response = self._client.messages.create(
+            model=model,
+            max_tokens=2000,
+            temperature=0.1,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        for block in response.content:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                return text
+        raise ValueError("anthropic response did not match provider envelope")
+
+
+class OllamaProviderClient:
+    def __init__(self, profile: ProviderProfile) -> None:
+        headers = {"Authorization": f"Bearer {profile.api_key}"} if profile.api_key else None
+        self._client = OllamaClient(host=profile.endpoint or None, headers=headers)
+
+    def list_models(self) -> list[str]:
+        return [model.model for model in self._client.list().models]
+
+    def check(self, model: str) -> None:
+        self._client.chat(
+            model=model,
+            messages=[{"role": "user", "content": "Reply with ok."}],
+            stream=False,
+            options={"num_predict": 1},
+        )
+
+    def generate_dream(self, model: str, prompt: str) -> str:
+        response = self._client.chat(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            stream=False,
+            format="json",
+            options={"temperature": 0.1},
+        )
+        text = response.message.content
+        if not isinstance(text, str):
+            raise ValueError("ollama response did not match provider envelope")
+        return text
+
+
+class DefaultProviderClientFactory:
+    def create(self, profile: ProviderProfile) -> ProviderClient:
+        match profile.type:
+            case "openai":
+                return OpenAIProviderClient(profile)
+            case "google" | "gemini":
+                return GoogleProviderClient(profile)
+            case "anthropic":
+                return AnthropicProviderClient(profile)
+            case "ollama":
+                return OllamaProviderClient(profile)
+            case _:
+                raise ValueError(f"unsupported provider type: {profile.type}")
+
+
+class SdkDreamProvider:
+    def __init__(
+        self,
+        name: str,
+        settings: ProviderRuntimeSettings,
+        client: ProviderClient,
+    ) -> None:
+        self.name = name
+        self.settings = settings
+        self._client = client
+
+    def crystallize(
+        self,
+        context: TranslationContext,
+        memories: list[ShortTermMemoryRecord],
+    ) -> DreamOutput:
+        raw_text = self._client.generate_dream(
+            self.settings.model,
+            _dream_prompt(context, memories),
+        )
+        return _parse_dream_json(self.name, raw_text)
+
+
 @dataclass(frozen=True)
 class ModelSuggestionResult:
     provider: str
@@ -170,8 +354,16 @@ class ModelSuggestionResult:
 
 
 class ProviderRegistry:
-    def __init__(self, transport: HTTPTransport | None = None) -> None:
+    def __init__(
+        self,
+        transport: HTTPTransport | None = None,
+        *,
+        client_factory: ProviderClientFactory | None = None,
+    ) -> None:
         self._transport = transport or UrllibTransport()
+        self._client_factory = client_factory or (
+            DefaultProviderClientFactory() if transport is None else None
+        )
         self._providers = (
             ProviderMetadata(
                 name="deterministic",
@@ -334,10 +526,8 @@ class ProviderRegistry:
         profile: ProviderProfile,
     ) -> ModelSuggestionResult:
         defaults = _default_model_suggestions(profile.type)
-        if profile.type in {"anthropic", "ollama"}:
-            return ModelSuggestionResult(provider=profile_name, models=defaults, source="defaults")
         api_key = profile.api_key.strip()
-        if not api_key:
+        if profile.type != "ollama" and not api_key:
             return ModelSuggestionResult(
                 provider=profile_name,
                 models=defaults,
@@ -347,10 +537,13 @@ class ProviderRegistry:
 
         settings = _profile_provider_settings(profile, model=defaults[0])
         try:
-            response = self._list_remote_models(profile.type, settings, api_key)
-            if not 200 <= response.status < 300:
-                raise ValueError("model suggestions request failed")
-            models = _parse_model_suggestions(profile.type, response.body)
+            if self._client_factory is not None:
+                models = sorted(set(self._client_factory.create(profile).list_models()))
+            else:
+                response = self._list_remote_models(profile.type, settings, api_key)
+                if not 200 <= response.status < 300:
+                    raise ValueError("model suggestions request failed")
+                models = _parse_model_suggestions(profile.type, response.body)
             if not models:
                 raise ValueError("empty model suggestions")
         except Exception:
@@ -431,7 +624,11 @@ class ProviderRegistry:
         settings = _profile_provider_settings(profile, resolved_model)
         started = time.perf_counter()
         try:
-            response = self._check_profile_remote(profile, settings, api_key=api_key)
+            if self._client_factory is not None:
+                self._client_factory.create(profile).check(resolved_model)
+                response = None
+            else:
+                response = self._check_profile_remote(profile, settings, api_key=api_key)
         except Exception:
             latency_ms = round((time.perf_counter() - started) * 1000)
             result = ProviderCheckResult(
@@ -445,7 +642,7 @@ class ProviderRegistry:
             return result
 
         latency_ms = round((time.perf_counter() - started) * 1000)
-        if 200 <= response.status < 300:
+        if response is None or 200 <= response.status < 300:
             return ProviderCheckResult(
                 name=profile_name,
                 ok=True,
@@ -493,8 +690,9 @@ class ProviderRegistry:
         *,
         api_key: str,
     ) -> HTTPResponse:
-        if profile.type in {"openai", "gemini", "anthropic"}:
-            return self._check_remote(profile.type, provider, api_key)
+        if profile.type in {"openai", "google", "gemini", "anthropic"}:
+            name = "gemini" if profile.type == "google" else profile.type
+            return self._check_remote(name, provider, api_key)
         if profile.type == "ollama":
             if _is_openai_compatible_ollama_endpoint(profile.endpoint):
                 return self._check_remote("openai", provider, api_key or "ollama")
@@ -529,7 +727,7 @@ class ProviderRegistry:
                 },
                 timeout=provider.timeout_seconds,
             )
-        if name == "gemini":
+        if name in {"google", "gemini"}:
             base_url = (provider.base_url or "https://generativelanguage.googleapis.com").rstrip(
                 "/"
             )
@@ -576,7 +774,7 @@ class ProviderRegistry:
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=provider.timeout_seconds,
             )
-        if name == "gemini":
+        if name in {"google", "gemini"}:
             base_url = (provider.base_url or "https://generativelanguage.googleapis.com").rstrip(
                 "/"
             )
@@ -664,6 +862,7 @@ def _dream_prompt(
 def _default_model_suggestions(name: str) -> list[str]:
     defaults = {
         "openai": ["gpt-4.1-mini", "gpt-4.1", "o4-mini"],
+        "google": ["gemini-2.5-flash", "gemini-2.5-pro"],
         "gemini": ["gemini-2.5-flash", "gemini-2.5-pro"],
         "anthropic": ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"],
         "deterministic": [""],
@@ -683,7 +882,7 @@ def _parse_model_suggestions(name: str, body: str) -> list[str]:
         return sorted(
             item["id"] for item in data if type(item) is dict and type(item.get("id")) is str
         )
-    if name == "gemini":
+    if name in {"google", "gemini"}:
         data = payload.get("models")
         if type(data) is not list:
             return []
@@ -1011,6 +1210,7 @@ def resolve_profile_provider(
     *,
     model: str,
     transport: HTTPTransport | None = None,
+    client_factory: ProviderClientFactory | None = None,
 ) -> DreamProvider:
     provider_catalog = load_provider_catalog(config)
     catalog_profile = provider_catalog.providers.get(profile_name)
@@ -1022,6 +1222,7 @@ def resolve_profile_provider(
         profile,
         model=model,
         transport=transport,
+        client_factory=client_factory,
     )
 
 
@@ -1031,6 +1232,7 @@ def _provider_from_profile(
     *,
     model: str,
     transport: HTTPTransport | None = None,
+    client_factory: ProviderClientFactory | None = None,
 ) -> DreamProvider:
     resolved_model = model.strip()
     api_key = profile.api_key.strip()
@@ -1039,11 +1241,20 @@ def _provider_from_profile(
     if profile.type != "ollama" and not api_key:
         raise ValueError(f"API key missing for provider profile: {profile_name}")
 
+    if client_factory is None and transport is None:
+        client_factory = DefaultProviderClientFactory()
+    if client_factory is not None:
+        return SdkDreamProvider(
+            "gemini" if profile.type == "gemini" else profile.type,
+            _profile_provider_settings(profile, resolved_model),
+            client_factory.create(profile),
+        )
+
     active_transport = transport or UrllibTransport()
     settings = _profile_provider_settings(profile, resolved_model)
     if profile.type == "openai":
         return OpenAIDreamProvider(settings, api_key, active_transport)
-    if profile.type == "gemini":
+    if profile.type in {"google", "gemini"}:
         return GeminiDreamProvider(
             settings,
             api_key,
@@ -1078,7 +1289,7 @@ def _profile_provider_settings(profile: ProviderProfile, model: str) -> Provider
 def _default_profile_endpoint(provider_type: str) -> str:
     if provider_type == "openai":
         return "https://api.openai.com/v1"
-    if provider_type == "gemini":
+    if provider_type in {"google", "gemini"}:
         return "https://generativelanguage.googleapis.com"
     if provider_type == "anthropic":
         return "https://api.anthropic.com"
@@ -1096,6 +1307,7 @@ def resolve_provider(
     name: str | None = None,
     *,
     transport: HTTPTransport | None = None,
+    client_factory: ProviderClientFactory | None = None,
 ) -> DreamProvider:
     dream_config = load_dream_config(config)
     if name == "deterministic":
@@ -1103,12 +1315,18 @@ def resolve_provider(
     provider_catalog = load_provider_catalog(config)
     if name is not None:
         if name not in provider_catalog.providers:
-            ProviderRegistry(transport=transport).metadata(name)
+            ProviderRegistry(transport=transport, client_factory=client_factory).metadata(name)
         workflow = _workflow_for_profile(dream_config, name)
         model = workflow.model if workflow is not None else _model_for_profile(dream_config, name)
         if not model and provider_catalog.defaults.provider == name:
             model = provider_catalog.defaults.model
-        return resolve_profile_provider(config, name, model=model, transport=transport)
+        return resolve_profile_provider(
+            config,
+            name,
+            model=model,
+            transport=transport,
+            client_factory=client_factory,
+        )
 
     if not dream_config.enabled:
         return DeterministicDreamProvider()
@@ -1130,6 +1348,7 @@ def resolve_provider(
         profile,
         model=workflow.model,
         transport=transport,
+        client_factory=client_factory,
     )
 
 
@@ -1191,9 +1410,8 @@ def _profile_runtime_configured(profile: ProviderProfile, model: str) -> bool:
 
 
 def _catalog_profile_to_runtime(profile: CatalogProviderProfile) -> ProviderProfile:
-    provider_type = "gemini" if profile.type == "google" else profile.type
     return ProviderProfile(
-        type=provider_type,
+        type=profile.type,
         endpoint=profile.url,
         api_key=profile.key,
         timeout_seconds=profile.timeout_seconds,

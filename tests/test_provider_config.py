@@ -312,6 +312,19 @@ def test_provider_catalog_rejects_unknown_provider_type() -> None:
         )
 
 
+def test_load_provider_catalog_canonicalizes_legacy_gemini_type(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _write_provider_config(
+        config,
+        '[gemini]\ntype = "gemini"\nurl = "https://generativelanguage.googleapis.com"\n',
+    )
+
+    catalog = load_provider_catalog(config)
+
+    assert catalog.providers["gemini"].type == "google"
+    assert 'type = "google"' in config.provider_config_path.read_text(encoding="utf-8")
+
+
 def test_load_provider_catalog_defaults_provider_name_to_table_id(
     tmp_path: Path,
 ) -> None:

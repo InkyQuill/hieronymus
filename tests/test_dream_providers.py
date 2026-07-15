@@ -11,10 +11,17 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.dream_config import WorkflowProfile, default_dream_config, save_dream_config
 from hieronymus.dream_providers import (
     ANTHROPIC_API_VERSION,
+    AnthropicProviderClient,
+    DefaultProviderClientFactory,
+    GoogleProviderClient,
     HTTPResponse,
+    OllamaProviderClient,
+    OpenAIProviderClient,
     ProviderCheckResult,
     ProviderProfile,
     ProviderRegistry,
+    ProviderRuntimeSettings,
+    SdkDreamProvider,
     UrllibTransport,
     resolve_profile_provider,
     resolve_provider,
@@ -114,6 +121,265 @@ def test_registry_lists_real_providers() -> None:
     ]
     openai = next(provider for provider in registry.list() if provider.name == "openai")
     assert openai.display_name == "OpenAI compatible"
+
+
+def test_model_suggestions_use_injected_provider_client_factory(tmp_path) -> None:
+    class Client:
+        def list_models(self) -> list[str]:
+            return ["gpt-sdk-b", "gpt-sdk-a"]
+
+    class Factory:
+        def __init__(self) -> None:
+            self.profiles: list[ProviderProfile] = []
+
+        def create(self, profile: ProviderProfile) -> Client:
+            self.profiles.append(profile)
+            return Client()
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    profile = ProviderProfile(
+        type="openai",
+        endpoint="https://llm.example.test/v1",
+        api_key="secret-openai",
+    )
+    _save_provider_profile(config, "openai", profile)
+    factory = Factory()
+
+    result = ProviderRegistry(client_factory=factory).list_model_suggestions(config, "openai")
+
+    assert result.to_json_dict() == {
+        "provider": "openai",
+        "models": ["gpt-sdk-a", "gpt-sdk-b"],
+        "source": "api",
+        "error": "",
+    }
+    assert factory.profiles == [profile]
+
+
+def test_anthropic_model_suggestions_use_injected_provider_client(tmp_path) -> None:
+    class Client:
+        def list_models(self) -> list[str]:
+            return ["claude-sdk"]
+
+    class Factory:
+        def create(self, profile: ProviderProfile) -> Client:
+            assert profile.type == "anthropic"
+            return Client()
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    _save_provider_profile(
+        config,
+        "anthropic",
+        ProviderProfile(type="anthropic", api_key="secret-anthropic"),
+    )
+
+    result = ProviderRegistry(client_factory=Factory()).list_model_suggestions(config, "anthropic")
+
+    assert result.models == ["claude-sdk"]
+    assert result.source == "api"
+
+
+def test_ollama_model_suggestions_use_local_client_without_api_key(tmp_path) -> None:
+    class Client:
+        def list_models(self) -> list[str]:
+            return ["gemma-local"]
+
+    class Factory:
+        def create(self, profile: ProviderProfile) -> Client:
+            assert profile.type == "ollama"
+            assert profile.api_key == ""
+            return Client()
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    _save_provider_profile(
+        config,
+        "ollama",
+        ProviderProfile(type="ollama", endpoint="http://localhost:11434"),
+    )
+
+    result = ProviderRegistry(client_factory=Factory()).list_model_suggestions(config, "ollama")
+
+    assert result.models == ["gemma-local"]
+    assert result.source == "api"
+
+
+def test_provider_check_uses_injected_provider_client(config) -> None:
+    class Client:
+        def check(self, model: str) -> None:
+            assert model == "gpt-sdk"
+
+    class Factory:
+        def create(self, profile: ProviderProfile) -> Client:
+            assert profile.type == "openai"
+            return Client()
+
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(type="openai", api_key="secret-openai"),
+        model="gpt-sdk",
+    )
+
+    result = ProviderRegistry(client_factory=Factory()).check(config, "openai")
+
+    assert result.ok is True
+    assert result.model == "gpt-sdk"
+
+
+def test_openai_sdk_adapter_uses_official_client_for_check(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeCompletions:
+        def create(self, **kwargs) -> None:
+            calls.append(kwargs)
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs) -> None:
+            assert kwargs["api_key"] == "secret-openai"
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+    monkeypatch.setattr("hieronymus.dream_providers.OpenAI", FakeOpenAI)
+    client = OpenAIProviderClient(ProviderProfile(type="openai", api_key="secret-openai"))
+
+    client.check("gpt-sdk")
+
+    assert calls == [
+        {
+            "model": "gpt-sdk",
+            "messages": [{"role": "user", "content": "Reply with ok."}],
+            "max_tokens": 1,
+        }
+    ]
+
+
+def test_sdk_dream_provider_parses_validated_client_output() -> None:
+    class Client:
+        def generate_dream(self, model: str, prompt: str) -> str:
+            assert model == "gpt-sdk"
+            assert '"instruction"' in prompt
+            return json.dumps(_llm_payload())
+
+    provider = SdkDreamProvider(
+        "openai",
+        ProviderRuntimeSettings(model="gpt-sdk", base_url="", timeout_seconds=30),
+        Client(),
+    )
+
+    output = provider.crystallize(_context(), [_memory()])
+
+    assert output.crystals[0].title == "Compact UI Labels"
+
+
+def test_resolve_profile_provider_uses_sdk_client_factory(config) -> None:
+    class Client:
+        def generate_dream(self, model: str, prompt: str) -> str:
+            return json.dumps(_llm_payload())
+
+    class Factory:
+        def create(self, profile: ProviderProfile) -> Client:
+            assert profile.type == "openai"
+            return Client()
+
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(type="openai", api_key="secret-openai"),
+        model="gpt-sdk",
+    )
+
+    provider = resolve_profile_provider(
+        config,
+        "openai",
+        model="gpt-sdk",
+        client_factory=Factory(),
+    )
+
+    assert isinstance(provider, SdkDreamProvider)
+    assert provider.crystallize(_context(), [_memory()]).crystals
+
+
+def test_resolve_profile_provider_uses_default_sdk_factory(config) -> None:
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(type="openai", api_key="secret-openai"),
+        model="gpt-sdk",
+    )
+
+    provider = resolve_profile_provider(config, "openai", model="gpt-sdk")
+
+    assert isinstance(provider, SdkDreamProvider)
+
+
+def test_registry_uses_default_sdk_factory_for_keyed_model_discovery(tmp_path, monkeypatch) -> None:
+    class Client:
+        def list_models(self) -> list[str]:
+            return ["gpt-default-sdk"]
+
+    monkeypatch.setattr(
+        "hieronymus.dream_providers.DefaultProviderClientFactory.create",
+        lambda self, profile: Client(),
+    )
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    _save_provider_profile(
+        config,
+        "openai",
+        ProviderProfile(type="openai", api_key="secret-openai"),
+    )
+
+    result = ProviderRegistry().list_model_suggestions(config, "openai")
+
+    assert result.models == ["gpt-default-sdk"]
+    assert result.source == "api"
+
+
+def test_catalog_google_profile_stays_google_for_sdk_factory(config) -> None:
+    class Client:
+        def list_models(self) -> list[str]:
+            return ["gemini-sdk"]
+
+    class Factory:
+        def create(self, profile: ProviderProfile) -> Client:
+            assert profile.type == "google"
+            return Client()
+
+    save_provider_catalog(
+        config,
+        ProviderCatalog(
+            providers={
+                "gemini": CatalogProviderProfile(
+                    name="Gemini",
+                    type="google",
+                    url="https://generativelanguage.googleapis.com",
+                    key="secret-google",
+                )
+            }
+        ),
+    )
+
+    result = ProviderRegistry(client_factory=Factory()).list_model_suggestions(config, "gemini")
+
+    assert result.models == ["gemini-sdk"]
+
+
+@pytest.mark.parametrize(
+    ("profile_type", "client_type"),
+    [
+        ("openai", OpenAIProviderClient),
+        ("google", GoogleProviderClient),
+        ("anthropic", AnthropicProviderClient),
+        ("ollama", OllamaProviderClient),
+    ],
+)
+def test_default_provider_client_factory_selects_official_sdk_adapter(
+    profile_type: str,
+    client_type: type[object],
+) -> None:
+    client = DefaultProviderClientFactory().create(
+        ProviderProfile(type=profile_type, api_key="secret")
+    )
+
+    assert isinstance(client, client_type)
 
 
 def test_provider_status_uses_dream_config_profiles(tmp_path) -> None:
