@@ -48,10 +48,20 @@ describe("AdminTable", () => {
 
     const output = await waitForFrame((frame) => frame.includes("Row 0"));
     expect(output).toContain("▲");
+    expect(output).toContain("▼");
+    const arrowLines = output
+      .split("\n")
+      .filter((line) => line.includes("▲") || line.includes("▼"));
+    expect(arrowLines).toHaveLength(2);
+    for (const line of arrowLines) {
+      expect(displayColumnOf(line, line.includes("▲") ? "▲" : "▼")).toBe(39);
+    }
   });
 
-  it("shows no scrollbar arrows when rows fit within the visible height", async () => {
-    const rows = [row({ id: 1, label: "Only Row" })];
+  it("preserves the full content area when rows exactly fit the visible height", async () => {
+    const rows = Array.from({ length: 5 }, (_, index) =>
+      row({ id: index, label: `Exact Row ${index}` }),
+    );
     const { render, waitForFrame } = createOpenTuiHarness({
       width: 60,
       height: 10,
@@ -61,8 +71,50 @@ describe("AdminTable", () => {
       <AdminTable rows={rows} selectedId={null} width={40} height={5} />,
     );
 
-    const output = await waitForFrame((frame) => frame.includes("Only Row"));
+    const output = await waitForFrame((frame) => frame.includes("Exact Row 4"));
     expect(output).not.toContain("▲");
+    expect(output).not.toContain("▼");
+    for (const index of rows.keys()) {
+      expect(output).toContain(`Exact Row ${index}`);
+    }
+  });
+
+  it("scrolls the selected row into view", async () => {
+    const rows = Array.from({ length: 30 }, (_, index) =>
+      row({ id: index, label: `Selected Row ${index}` }),
+    );
+    const { render, waitForFrame } = createOpenTuiHarness({
+      width: 60,
+      height: 10,
+    });
+
+    await render(
+      <AdminTable rows={rows} selectedId={20} width={40} height={5} />,
+    );
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Selected Row 20"),
+    );
+    expect(output).toContain("> Selected Row 20");
+  });
+
+  it("keeps rows visible at heights too small for arrow controls", async () => {
+    const rows = Array.from({ length: 3 }, (_, index) =>
+      row({ id: index, label: `Tiny Row ${index}` }),
+    );
+    const { render, waitForFrame } = createOpenTuiHarness({
+      width: 60,
+      height: 4,
+    });
+
+    await render(
+      <AdminTable rows={rows} selectedId={null} width={40} height={2} />,
+    );
+
+    const output = await waitForFrame((frame) => frame.includes("Tiny Row 0"));
+    expect(output).toContain("Tiny Row 1");
+    expect(output).not.toContain("▲");
+    expect(output).not.toContain("▼");
   });
 
   it("aligns the status column at the same position across rows regardless of label length", async () => {

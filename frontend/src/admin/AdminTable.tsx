@@ -1,4 +1,6 @@
-import React from "react";
+import { CliRenderEvents, type ScrollBoxRenderable } from "@opentui/core";
+import { useRenderer } from "@opentui/react";
+import React, { useCallback, useEffect, useRef } from "react";
 import stringWidth from "string-width";
 import type { AdminRow } from "../rpc/schema.js";
 
@@ -27,18 +29,48 @@ export function AdminTable({
   width?: number;
   height?: number;
 }) {
+  const renderer = useRenderer();
+  const scrollboxRef = useRef<ScrollBoxRenderable>(null);
   const layout = width >= MIN_COLUMN_LAYOUT_WIDTH ? columnWidths(width) : null;
+  const selectedIndex = rows.findIndex((row) => row.id === selectedId);
+  const scrollSelectedRowIntoView = useCallback(() => {
+    if (selectedIndex >= 0) {
+      scrollboxRef.current?.scrollChildIntoView(rowId(selectedIndex));
+    }
+  }, [selectedIndex]);
+
+  useEffect(() => {
+    if (selectedIndex < 0) {
+      return;
+    }
+
+    renderer.once(CliRenderEvents.FRAME, scrollSelectedRowIntoView);
+    return () => {
+      renderer.off(CliRenderEvents.FRAME, scrollSelectedRowIntoView);
+    };
+  }, [renderer, scrollSelectedRowIntoView, selectedIndex]);
 
   return (
     <scrollbox
-      flexDirection="column"
+      ref={scrollboxRef}
       width={width}
       height={height}
-      style={{ scrollbarOptions: { showArrows: true } }}
+      style={{
+        verticalScrollbarOptions: {
+          showArrows: height >= 3,
+          ...(height < 3 ? { visible: false } : {}),
+          width: 1,
+          position: "absolute",
+          right: 0,
+          top: 0,
+          bottom: 0,
+        },
+      }}
     >
-      {rows.map((row) => (
+      {rows.map((row, index) => (
         <text
           key={String(row.id)}
+          id={rowId(index)}
           fg={row.id === selectedId ? (focused ? "cyan" : "white") : undefined}
         >
           {layout === null ? (
@@ -55,6 +87,10 @@ export function AdminTable({
       ))}
     </scrollbox>
   );
+}
+
+function rowId(index: number): string {
+  return `admin-table-row-${index}`;
 }
 
 function tinyRow(label: string, selected: boolean, width: number): string {
