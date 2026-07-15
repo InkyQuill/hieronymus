@@ -25,6 +25,7 @@ _RAG_STORY_SCOPE_BOOST = 0.10
 _RAG_SEMANTIC_TAG_BOOST = 0.10
 _RAG_GLOSSARY_BOOST = 0.25
 
+
 class RagStore:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config

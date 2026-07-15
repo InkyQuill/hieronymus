@@ -156,5 +156,3 @@ def test_rag_chunk_fts_triggers_sync_insert_update_and_delete(
         conn.execute("delete from rag_chunks where id = 1")
 
         assert _fts_match_count(conn, "sunstone") == 0
-
-

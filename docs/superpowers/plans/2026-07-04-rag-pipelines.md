@@ -1882,7 +1882,7 @@ git commit -m "feat: merge rag evidence into recall"
 - Modify: `docs/usage.md`
 - Modify: `docs/memory-dreaming.md`
 
-- [ ] **Step 1: Add user-facing RAG usage docs**
+- [x] **Step 1: Add user-facing RAG usage docs**
 
 In `docs/usage.md`, add this section after "Store a Concept With Facets":
 
@@ -1915,7 +1915,7 @@ their source reference, chunk kind, location, score, and rank reason so agents c
 cite where evidence came from.
 ```
 
-- [ ] **Step 2: Document memory/RAG priority**
+- [x] **Step 2: Document memory/RAG priority**
 
 In `docs/memory-dreaming.md`, add this paragraph near the recall explanation:
 
@@ -1928,7 +1928,7 @@ limit through a budgeted merge. RAG evidence is advisory and does not create or
 activate rule crystals by itself.
 ```
 
-- [ ] **Step 3: Run focused tests**
+- [x] **Step 3: Run focused tests**
 
 Run:
 
@@ -1938,7 +1938,7 @@ uv run pytest tests/test_rag_store.py tests/test_rag_cli.py tests/test_mcp_rag.p
 
 Expected: PASS.
 
-- [ ] **Step 4: Run project verification**
+- [x] **Step 4: Run project verification**
 
 Run:
 
@@ -1950,7 +1950,7 @@ uv run ruff format --check .
 
 Expected: all commands PASS.
 
-- [ ] **Step 5: Commit Task 7**
+- [x] **Step 5: Commit Task 7**
 
 ```bash
 git add docs/usage.md docs/memory-dreaming.md

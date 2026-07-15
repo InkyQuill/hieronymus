@@ -486,7 +486,7 @@ git commit -m "test: complete rag payload coverage"
 
 **Interfaces:** None; this task records verified completion only.
 
-- [ ] **Step 1: Run the required full verification**
+- [x] **Step 1: Run the required full verification**
 
 Run each command to completion:
 
@@ -498,16 +498,16 @@ uv run ruff format --check .
 
 Expected: 0 test failures, Ruff reports no lint errors, and every file is formatted.
 
-- [ ] **Step 2: Mark original Task 7 complete**
+- [x] **Step 2: Mark original Task 7 complete**
 
 Change its five checkboxes to `[x]` only after Step 1 succeeds and confirm the
 documentation commit `e9ba18d` remains in branch history.
 
-- [ ] **Step 3: Mark this completion plan complete**
+- [x] **Step 3: Mark this completion plan complete**
 
 Change every successfully executed checkbox in this file to `[x]`.
 
-- [ ] **Step 4: Re-run documentation and diff checks**
+- [x] **Step 4: Re-run documentation and diff checks**
 
 ```bash
 git diff --check
@@ -518,7 +518,7 @@ git status --short
 Expected: no whitespace errors, no unchecked plan steps, and only the intentional
 plan-status edits remain unstaged.
 
-- [ ] **Step 5: Commit verified plan closure**
+- [x] **Step 5: Commit verified plan closure**
 
 ```bash
 git add docs/superpowers/plans/2026-07-04-rag-pipelines.md docs/superpowers/plans/2026-07-15-rag-pipelines-completion.md
