@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
 import {
   AdminBootstrapSchema,
-  ConfigBootstrapSchema,
+  ProviderListSchema,
   type AdminBootstrap,
-  type ConfigBootstrap,
+  type ProviderList,
 } from "../rpc/schema.js";
 import { AdminScreen } from "../admin/AdminScreen.js";
 import { ConfigScreen } from "../config/ConfigScreen.js";
@@ -17,9 +17,7 @@ type Props = {
 
 export function App({ mode, client }: Props) {
   const [adminInitial, setAdminInitial] = useState<AdminBootstrap | null>(null);
-  const [configInitial, setConfigInitial] = useState<ConfigBootstrap | null>(
-    null,
-  );
+  const [configInitial, setConfigInitial] = useState<ProviderList | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -47,10 +45,10 @@ export function App({ mode, client }: Props) {
       setAdminInitial(null);
       setConfigInitial(null);
       client
-        .request("config.bootstrap", {})
+        .request("config.provider_list", {})
         .then((payload) => {
           if (active) {
-            setConfigInitial(ConfigBootstrapSchema.parse(payload));
+            setConfigInitial(ProviderListSchema.parse(payload));
           }
         })
         .catch((err: unknown) => {

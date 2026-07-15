@@ -103,6 +103,59 @@ def test_config_bootstrap_returns_one_remote_provider_selector(tmp_path: Path) -
     assert choices["anthropic"]["supports_api_path"] is True
 
 
+def test_provider_editor_reads_and_saves_one_profile_without_touching_dream_config(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _save_provider(
+        config,
+        "openai",
+        _catalog_profile(api_key="old-key", name="OpenAI"),
+        default_model="gpt-4.1-mini",
+    )
+    dream_before = (
+        config.dream_config_path.read_bytes() if config.dream_config_path.exists() else b""
+    )
+    bridge = ConfigBridge(config)
+
+    detail = bridge.provider_detail({"provider_id": "openai"})
+
+    assert detail["provider"] == {
+        "id": "openai",
+        "name": "OpenAI",
+        "type": "openai",
+        "url": "https://api.example.test/v1",
+        "key_configured": True,
+        "model": "gpt-4.1-mini",
+        "timeout_seconds": 30.0,
+    }
+
+    saved = bridge.save_provider(
+        {
+            "provider": {
+                "id": "openai",
+                "name": "OpenAI",
+                "type": "openai",
+                "url": "https://api.example.test/v1",
+                "key": "new-key",
+                "model": "gpt-4.1",
+                "timeout_seconds": "45",
+            }
+        }
+    )
+
+    assert saved["provider"]["key_configured"] is True
+    catalog = load_provider_catalog(config)
+    assert catalog.providers["openai"].key == "new-key"
+    assert catalog.providers["openai"].timeout_seconds == 45.0
+    assert catalog.defaults.model == "gpt-4.1"
+    assert (
+        config.dream_config_path.read_bytes()
+        if config.dream_config_path.exists()
+        else b"" == dream_before
+    )
+
+
 def test_config_bootstrap_exposes_ingest_config_defaults(tmp_path: Path) -> None:
     payload = ConfigBridge(_config(tmp_path)).bootstrap({})
 

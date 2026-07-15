@@ -171,6 +171,26 @@ export const ConfigPathsSchema = z
   })
   .passthrough();
 
+export const ProviderEditorSchema = z.object({
+  id: ProviderNameSchema,
+  name: z.string(),
+  type: z.string(),
+  url: z.string(),
+  key_configured: z.boolean(),
+  model: z.string(),
+  timeout_seconds: TimeoutSecondsSchema,
+});
+
+export const ProviderListSchema = z.object({
+  providers: z.array(ProviderEditorSchema),
+  error: z.string().default(""),
+});
+
+export const ProviderDetailSchema = z.object({
+  provider: ProviderEditorSchema,
+  error: z.string().default(""),
+});
+
 const ProviderCatalogProfileSchema = z
   .object({
     name: z.string().default(""),
@@ -351,3 +371,5 @@ export type AdminDreamStatus = z.infer<typeof AdminDreamStatusSchema>;
 export type AdminConfigEditor = z.infer<typeof AdminConfigEditorSchema>;
 export type AdminBootstrap = z.infer<typeof AdminBootstrapSchema>;
 export type ConfigBootstrap = z.infer<typeof ConfigBootstrapSchema>;
+export type ProviderEditor = z.infer<typeof ProviderEditorSchema>;
+export type ProviderList = z.infer<typeof ProviderListSchema>;

@@ -348,6 +348,28 @@ def _field(
     return payload
 
 
+def _required_text(payload: dict[str, object], field_name: str) -> str:
+    value = payload.get(field_name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} is required")
+    return value.strip()
+
+
+def _optional_text(payload: dict[str, object], field_name: str) -> str:
+    value = payload.get(field_name, "")
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be text")
+    return value.strip()
+
+
+def _positive_timeout(payload: dict[str, object]) -> float:
+    value = _required_text(payload, "timeout_seconds")
+    timeout = parse_float("timeout_seconds", value)
+    if timeout <= 0:
+        raise ValueError("timeout_seconds must be greater than zero")
+    return timeout
+
+
 class ConfigBridge:
     def __init__(
         self,
@@ -384,6 +406,59 @@ class ConfigBridge:
 
     def reload(self, params: dict[str, object]) -> dict[str, object]:
         return self.bootstrap(params)
+
+    def provider_list(self, params: dict[str, object]) -> dict[str, object]:
+        """Return the compact data needed by the provider chooser."""
+        provider_catalog, load_error = self._provider_catalog_from_params({})
+        providers = [
+            self._provider_editor_payload(provider_catalog, str(choice["name"]))
+            for choice in self._provider_choices(provider_catalog)
+        ]
+        return {"providers": providers, "error": load_error}
+
+    def provider_detail(self, params: dict[str, object]) -> dict[str, object]:
+        """Return one profile for the provider editor modal."""
+        provider_catalog, load_error = self._provider_catalog_from_params({})
+        provider_id = self._require_provider_id(params.get("provider_id"))
+        return {
+            "provider": self._provider_editor_payload(provider_catalog, provider_id),
+            "error": load_error,
+        }
+
+    def save_provider(self, params: dict[str, object]) -> dict[str, object]:
+        """Persist one provider profile without reading or writing dream.conf."""
+        raw_provider = params.get("provider")
+        if type(raw_provider) is not dict:
+            raise ValueError("provider must be an object")
+        provider_id = self._require_provider_id(raw_provider.get("id"))
+        provider_catalog, load_error = self._provider_catalog_from_params({})
+        if load_error:
+            return {"error": load_error}
+        try:
+            profile = CatalogProviderProfile(
+                name=_required_text(raw_provider, "name"),
+                type=(
+                    "google"
+                    if _required_text(raw_provider, "type") == "gemini"
+                    else _required_text(raw_provider, "type")
+                ),
+                url=_required_text(raw_provider, "url"),
+                key=_optional_text(raw_provider, "key"),
+                timeout_seconds=_positive_timeout(raw_provider),
+            )
+            model = _required_text(raw_provider, "model")
+            updated_catalog = replace(
+                provider_catalog.with_provider(provider_id, profile),
+                defaults=ProviderDefaults(provider=provider_id, model=model),
+            )
+            validate_provider_catalog(updated_catalog)
+        except (ProviderCatalogError, ValueError) as error:
+            return {"error": str(error)}
+        save_provider_catalog(self.config, updated_catalog)
+        return {
+            "provider": self._provider_editor_payload(updated_catalog, provider_id),
+            "error": "",
+        }
 
     def select_provider(self, params: dict[str, object]) -> dict[str, object]:
         dream_config, dream_error = self._dream_from_params(params)
@@ -750,6 +825,33 @@ class ConfigBridge:
                 }
             )
         return choices
+
+    def _provider_editor_payload(
+        self,
+        provider_catalog: ProviderCatalog,
+        provider_id: str,
+    ) -> dict[str, object]:
+        profile = provider_catalog.providers.get(provider_id)
+        if profile is None:
+            metadata = self.registry.metadata(provider_id)
+            profile = CatalogProviderProfile(
+                name=metadata.display_name,
+                type="google" if provider_id == "gemini" else provider_id,
+            )
+        model = (
+            provider_catalog.defaults.model
+            if provider_catalog.defaults.provider == provider_id
+            else ""
+        )
+        return {
+            "id": provider_id,
+            "name": profile.name,
+            "type": profile.type,
+            "url": profile.url,
+            "key_configured": bool(profile.key),
+            "model": model,
+            "timeout_seconds": profile.timeout_seconds,
+        }
 
     def _draft_payload(
         self,
