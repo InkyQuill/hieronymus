@@ -25,8 +25,6 @@ type ConfigFormProps = {
   focused?: boolean;
   width?: number;
   visibleRows?: number;
-  onFieldChange: (key: string, value: string) => void;
-  onSubmitField: () => void;
 };
 
 export function ConfigForm({
@@ -38,8 +36,6 @@ export function ConfigForm({
   focused = true,
   width = 68,
   visibleRows,
-  onFieldChange,
-  onSubmitField,
 }: ConfigFormProps) {
   const provider = formValues.provider;
   const providerCatalog = formValues.providerCatalog;
@@ -136,11 +132,6 @@ export function ConfigForm({
                 const labelColor = isFieldFocused
                   ? theme.accentPrimary
                   : theme.accentMuted;
-                const fieldInputWidth = Math.max(
-                  12,
-                  boundedWidth - field.label.length - 8,
-                );
-
                 return (
                   <box key={field.key} flexDirection="row" width="100%">
                     <text fg={labelColor}>
@@ -179,14 +170,13 @@ export function ConfigForm({
                         )}
                       </box>
                     ) : (
-                      <input
-                        value={field.value}
-                        onInput={(val) => onFieldChange(field.key, val)}
-                        onSubmit={() => onSubmitField()}
-                        focused={isFieldFocused && isEditing}
-                        placeholder={field.placeholder}
-                        width={fieldInputWidth}
-                      />
+                      <text
+                        fg={isFieldFocused ? theme.accentPrimary : undefined}
+                        flexGrow={1}
+                      >
+                        {field.value || field.placeholder || " "}
+                        {isFieldFocused && isEditing ? "▏" : ""}
+                      </text>
                     )}
                   </box>
                 );

@@ -78,12 +78,22 @@ export function ConfigScreen({ initial, client }: Props) {
     formValuesWithSelectedProvider(payload.form_values, payload),
   );
   const localFormValuesRef = useRef(localFormValues);
+  const synchronizedPayload = useRef(payload);
 
-  // Keep local values in sync when payload changes
+  // Refresh the draft only after an actual bootstrap response. OpenTUI may
+  // render several times for one keyboard event; resetting it on those renders
+  // loses all but the last typed character.
   useEffect(() => {
-    const next = formValuesWithSelectedProvider(payload.form_values, payload);
-    localFormValuesRef.current = next;
-    setLocalFormValues(next);
+    if (synchronizedPayload.current === payload) {
+      return;
+    }
+    synchronizedPayload.current = payload;
+    const nextValues = formValuesWithSelectedProvider(
+      payload.form_values,
+      payload,
+    );
+    localFormValuesRef.current = nextValues;
+    setLocalFormValues(nextValues);
   }, [payload]);
 
   const providerChoices = payload.provider_choices;
@@ -122,15 +132,14 @@ export function ConfigScreen({ initial, client }: Props) {
   };
 
   const handleFieldChange = (key: string, value: string) => {
-    const next = withFieldValue(localFormValuesRef.current, key, value);
-    localFormValuesRef.current = next;
-    const field = formFields.find((candidate) => candidate.key === key);
-    if (field?.type === "toggle" || field?.type === "choice") {
-      setLocalFormValues(next);
-    }
+    const nextValues = withFieldValue(localFormValuesRef.current, key, value);
+    localFormValuesRef.current = nextValues;
+    setLocalFormValues(nextValues);
   };
 
-  const submitField = (formValues: ConfigFormValues = localFormValuesRef.current) => {
+  const submitField = (
+    formValues: ConfigFormValues = localFormValuesRef.current,
+  ) => {
     setIsEditing(false);
     if (!client || busy || operationInFlight.current) {
       return;
@@ -283,9 +292,12 @@ export function ConfigScreen({ initial, client }: Props) {
     if (isEditing) {
       if (escape) {
         // Discard edits
-        const next = formValuesWithSelectedProvider(payload.form_values, payload);
-        localFormValuesRef.current = next;
-        setLocalFormValues(next);
+        const resetValues = formValuesWithSelectedProvider(
+          payload.form_values,
+          payload,
+        );
+        localFormValuesRef.current = resetValues;
+        setLocalFormValues(resetValues);
         setIsEditing(false);
         return;
       }
@@ -302,7 +314,7 @@ export function ConfigScreen({ initial, client }: Props) {
             ? focusedField.choices
             : ["yes", "no"];
           const currentVal = effectiveValueForField(
-            localFormValues,
+            localFormValuesRef.current,
             focusedField,
           );
           const currentIndex = Math.max(choices.indexOf(currentVal), 0);
@@ -312,7 +324,7 @@ export function ConfigScreen({ initial, client }: Props) {
           handleFieldChange(focusedField.key, choices[nextIndex]);
         } else if (enter) {
           const currentVal = effectiveValueForField(
-            localFormValues,
+            localFormValuesRef.current,
             focusedField,
           );
           if (focusedField.key === SYNTHETIC_PROVIDER_KEY) {
@@ -330,8 +342,27 @@ export function ConfigScreen({ initial, client }: Props) {
             return;
           }
           submitField(
-            withFieldValue(localFormValues, focusedField.key, currentVal),
+            withFieldValue(
+              localFormValuesRef.current,
+              focusedField.key,
+              currentVal,
+            ),
           );
+        }
+      } else {
+        const currentVal = effectiveValueForField(
+          localFormValuesRef.current,
+          focusedField,
+        );
+        if (keyboardKey.name === "backspace") {
+          handleFieldChange(focusedField.key, currentVal.slice(0, -1));
+        } else if (enter) {
+          submitField();
+        } else {
+          const char = printableSearchChar(keyboardKey);
+          if (char !== null) {
+            handleFieldChange(focusedField.key, currentVal + char);
+          }
         }
       }
       return;
@@ -441,8 +472,6 @@ export function ConfigScreen({ initial, client }: Props) {
             focused
             width={contentWidth}
             visibleRows={compactVisibleFormRows}
-            onFieldChange={handleFieldChange}
-            onSubmitField={submitField}
           />
         </box>
 
@@ -506,8 +535,6 @@ export function ConfigScreen({ initial, client }: Props) {
           focused
           width={wideFormWidth}
           visibleRows={wideVisibleFormRows}
-          onFieldChange={handleFieldChange}
-          onSubmitField={submitField}
         />
       </box>
 

@@ -1386,6 +1386,20 @@ describe("ConfigScreen", () => {
     expect(output).toContain("new-key");
   });
 
+  it("renders a text cursor while editing a provider API key", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={payload()} client={undefined} />);
+    await mockInput.press("down");
+    await mockInput.press("down");
+    await mockInput.press("enter");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("API Key: openai-secret▏"),
+    );
+    expect(output).toContain("API Key: openai-secret▏");
+  });
+
   it("explains that an edited API key still requires save", async () => {
     const initial = payload();
     const client = fakeClient(() => Promise.resolve(initial));
