@@ -267,7 +267,7 @@ git commit -m "test: isolate uninstall script from installed tool"
 - Produces in `rag_store.py`: `RagStore`.
 - Preserves in `rag.py`: re-exports of all six public names.
 
-- [ ] **Step 1: Record the pre-refactor focused baseline**
+- [x] **Step 1: Record the pre-refactor focused baseline**
 
 Run:
 
@@ -277,7 +277,7 @@ uv run pytest tests/test_rag_store.py tests/test_rag_cli.py tests/test_mcp_rag.p
 
 Expected: PASS.
 
-- [ ] **Step 2: Extract parsing and chunking without behavior changes**
+- [x] **Step 2: Extract parsing and chunking without behavior changes**
 
 Move these definitions and their direct dependencies to `rag_parsing.py`:
 
@@ -310,7 +310,7 @@ _hard_chunks
 `re`, dataclasses, `Path`, typing, `yaml`, and RAG model literals). It contains no
 database, config, crystal-search, or store imports.
 
-- [ ] **Step 3: Extract store and ranking without behavior changes**
+- [x] **Step 3: Extract store and ranking without behavior changes**
 
 Move `RagStore` and all remaining private storage/ranking helpers to
 `rag_store.py`. Import the parser API explicitly:
@@ -322,7 +322,7 @@ from hieronymus.rag_parsing import RagLoadSourceType, load_rag_file
 `rag_store.py` contains database/config/model imports but no CSV, hashing,
 regular-expression, or YAML imports.
 
-- [ ] **Step 4: Replace `rag.py` with the compatibility facade**
+- [x] **Step 4: Replace `rag.py` with the compatibility facade**
 
 ```python
 from hieronymus.rag_parsing import (
@@ -344,7 +344,7 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 5: Run focused tests after extraction**
+- [x] **Step 5: Run focused tests after extraction**
 
 Run:
 
@@ -355,7 +355,7 @@ uv run ruff check src/hieronymus/rag.py src/hieronymus/rag_parsing.py src/hieron
 
 Expected: all tests and lint checks pass with unchanged caller imports.
 
-- [ ] **Step 6: Commit the production module split**
+- [x] **Step 6: Commit the production module split**
 
 ```bash
 git add src/hieronymus/rag.py src/hieronymus/rag_parsing.py src/hieronymus/rag_store.py
