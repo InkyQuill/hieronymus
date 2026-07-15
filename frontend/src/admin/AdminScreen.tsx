@@ -31,7 +31,7 @@ import {
   panelWidth,
 } from "../ui/responsive.js";
 import { AdminTable } from "./AdminTable.js";
-import { DetailPane } from "./DetailPane.js";
+import { DetailPane, type DetailPaneHandle } from "./DetailPane.js";
 import { CommandPalette, commandsForView } from "./CommandPalette.js";
 import { HelpOverlay } from "./HelpOverlay.js";
 import { Spinner } from "../ui/Spinner.js";
@@ -95,6 +95,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     error: false,
   });
   const operationInFlight = useRef(false);
+  const detailPaneRef = useRef<DetailPaneHandle>(null);
 
   useEffect(() => {
     if (layout.kind === "too-small" && dialog.kind !== "none") {
@@ -691,6 +692,14 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     }
 
     if (activePanel === "detail") {
+      if (up) {
+        detailPaneRef.current?.scrollByRows(-1);
+        return;
+      }
+      if (down) {
+        detailPaneRef.current?.scrollByRows(1);
+        return;
+      }
       if (left) {
         setActivePanel("table");
         return;
@@ -891,6 +900,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
               <text fg={theme.accentPrimary}>Detail Inspector</text>
               <box marginTop={1}>
                 <DetailPane
+                  ref={detailPaneRef}
                   detail={snapshot.detail}
                   width={compactDetailWidth}
                   height={Math.max(4, compactScrollHeight - 1)}
@@ -1014,7 +1024,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
               selectedIndex={clampCommandIndex(selectedCommandIndex)}
             />
           ) : (
-            <DetailPane detail={snapshot.detail} />
+            <DetailPane ref={detailPaneRef} detail={snapshot.detail} />
           )}
         </box>
       </box>

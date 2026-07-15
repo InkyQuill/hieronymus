@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { RpcClient } from "../rpc/client.js";
+import type { AdminBootstrap } from "../rpc/schema.js";
 import {
   cleanupOpenTuiHarnesses,
   createOpenTuiHarness,
@@ -262,6 +263,38 @@ describe("AdminScreen", () => {
     );
     expect(detailOutput).toContain("Detail Inspector");
     expect(detailOutput).toContain("Guild ledger detail marker.");
+  });
+
+  it("scrolls overflowing detail content with arrow keys while the detail pane is active", async () => {
+    const data: AdminBootstrap = bootstrap();
+    data.snapshot.detail = {
+      ...data.snapshot.detail,
+      body: Array.from(
+        { length: 30 },
+        (_, index) => `Detail Line ${index}`,
+      ).join("\n"),
+      fields: [["Deep Field", "visible after scrolling"]],
+    };
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={data} client={undefined} />);
+    await mockInput.press("tab");
+    await mockInput.press("tab");
+    const initial = await waitForFrame((frame) =>
+      frame.includes("Detail Line 0"),
+    );
+    expect(initial).not.toContain("Deep Field");
+
+    for (let index = 0; index < 40; index += 1) {
+      await mockInput.press("down");
+    }
+
+    const scrolled = await waitForFrame(
+      (frame) => frame.includes("Detail Line 29") && frame.includes("Deep"),
+    );
+    expect(scrolled).toContain("Detail Line 29");
+    expect(scrolled).toContain("visible");
+    expect(scrolled).not.toContain("Detail Line 0");
   });
 
   it("renders command palette in compact admin layout", async () => {
