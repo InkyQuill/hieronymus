@@ -526,6 +526,12 @@ def _parse_delimited_glossary(path: Path, *, delimiter: str) -> list[ParsedRagCh
     chunks: list[ParsedRagChunk] = []
     with path.open(encoding="utf-8", newline="") as file:
         reader = csv.DictReader(file, delimiter=delimiter)
+        headers = [header.strip() for header in reader.fieldnames or ()]
+        if not headers or any(not header for header in headers):
+            raise ValueError("Delimited glossary requires non-empty headers")
+        if len(headers) != len(set(headers)):
+            raise ValueError("Delimited glossary contains duplicate headers")
+        reader.fieldnames = headers
         for row_number, row in enumerate(reader, start=2):
             if None in row:
                 raise ValueError(f"Malformed delimited row {row_number}: extra fields")

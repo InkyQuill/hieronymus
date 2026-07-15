@@ -289,6 +289,25 @@ def test_csv_file_rejects_rows_with_extra_fields(tmp_path: Path) -> None:
         load_rag_file(path, source_type="auto")
 
 
+@pytest.mark.parametrize(
+    ("header", "message"),
+    [
+        ("source,,target", "non-empty headers"),
+        ("source, source ,target", "duplicate headers"),
+    ],
+)
+def test_csv_file_rejects_invalid_headers(
+    tmp_path: Path,
+    header: str,
+    message: str,
+) -> None:
+    path = tmp_path / "glossary.csv"
+    path.write_text(f"{header}\nSense,alias,Сенс\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_rag_file(path, source_type="auto")
+
+
 def test_glossary_file_rejects_invalid_source_type(tmp_path: Path) -> None:
     path = tmp_path / "glossary.csv"
     path.write_text("source,target\nSense,Сенс\n", encoding="utf-8")

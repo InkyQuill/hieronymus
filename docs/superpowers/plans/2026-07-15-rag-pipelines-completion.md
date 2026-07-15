@@ -41,7 +41,7 @@
 - Consumes: `load_rag_file(path: Path, *, source_type: str) -> ParsedRagFile`
 - Produces: the same API with deterministic blank/duplicate header rejection.
 
-- [ ] **Step 1: Add failing parser tests**
+- [x] **Step 1: Add failing parser tests**
 
 Add next to the existing CSV parser tests:
 
@@ -65,7 +65,7 @@ def test_csv_file_rejects_invalid_headers(
         load_rag_file(path, source_type="auto")
 ```
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -75,7 +75,7 @@ uv run pytest tests/test_rag_store.py::test_csv_file_rejects_invalid_headers -q
 
 Expected: both cases fail because `csv.DictReader` currently accepts the headers.
 
-- [ ] **Step 3: Normalize and validate the header row before reading data rows**
+- [x] **Step 3: Normalize and validate the header row before reading data rows**
 
 At the start of `_parse_delimited_glossary` after constructing `DictReader`, add:
 
@@ -90,7 +90,7 @@ At the start of `_parse_delimited_glossary` after constructing `DictReader`, add
 
 Keep the current extra-field detection and metadata construction unchanged.
 
-- [ ] **Step 4: Run parser tests and verify GREEN**
+- [x] **Step 4: Run parser tests and verify GREEN**
 
 Run:
 
@@ -100,7 +100,7 @@ uv run pytest tests/test_rag_store.py -q
 
 Expected: all RAG store/parser tests pass.
 
-- [ ] **Step 5: Commit the validation fix**
+- [x] **Step 5: Commit the validation fix**
 
 ```bash
 git add src/hieronymus/rag.py tests/test_rag_store.py
@@ -524,4 +524,3 @@ plan-status edits remain unstaged.
 git add docs/superpowers/plans/2026-07-04-rag-pipelines.md docs/superpowers/plans/2026-07-15-rag-pipelines-completion.md
 git commit -m "docs: complete rag pipelines plan"
 ```
-
