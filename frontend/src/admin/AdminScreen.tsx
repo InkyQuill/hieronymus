@@ -805,24 +805,6 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     );
   }
 
-  if (dialog.kind !== "none") {
-    return (
-      <box
-        flexDirection="column"
-        width={Math.min(136, dimensions.width)}
-        height={Math.min(20, dimensions.height)}
-        alignItems="center"
-        justifyContent="center"
-      >
-        <DialogOverlay
-          state={dialog}
-          onClose={() => setDialog(closedDialog)}
-          onSubmit={handleDialogSubmit}
-        />
-      </box>
-    );
-  }
-
   if (layout.kind !== "wide") {
     const compactPaneHeight = panelHeight(layout, 11);
     const compactScrollWidth = Math.max(20, contentWidth - 2);
@@ -831,7 +813,11 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     const compactScrollHeight = Math.max(4, compactPaneHeight - 2);
 
     return (
-      <box flexDirection="column" width={dimensions.width}>
+      <box
+        flexDirection="column"
+        width={dimensions.width}
+        height={dimensions.height}
+      >
         <text>
           {initial.header.logo.text} {initial.header.product} Admin{" "}
           {initial.header.version}
@@ -925,12 +911,21 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           </text>
         </box>
         <StatusLine message={status.message} error={status.error} />
+        <DialogOverlay
+          state={dialog}
+          onClose={() => setDialog(closedDialog)}
+          onSubmit={handleDialogSubmit}
+        />
       </box>
     );
   }
 
   return (
-    <box flexDirection="column" width={Math.min(136, dimensions.width)}>
+    <box
+      flexDirection="column"
+      width={Math.min(136, dimensions.width)}
+      height={dimensions.height}
+    >
       <box
         flexDirection="column"
         borderStyle="rounded"
@@ -1019,6 +1014,11 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           searchActive,
           viewKeyLimit,
         })}
+      />
+      <DialogOverlay
+        state={dialog}
+        onClose={() => setDialog(closedDialog)}
+        onSubmit={handleDialogSubmit}
       />
     </box>
   );

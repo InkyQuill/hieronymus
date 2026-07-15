@@ -1057,6 +1057,20 @@ describe("AdminScreen", () => {
     expect(output).toContain("Dream [████████░░] 75/100");
   });
 
+  it("keeps the admin header visible behind an open add-memory dialog", async () => {
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.type("a");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Add New Crystal / Lesson / Rule"),
+    );
+
+    expect(output).toContain("Add New Crystal / Lesson / Rule");
+    expect(output).toContain("H Hieronymus Admin 0.1.0");
+  });
+
   it("does not send crystal mutations from proposals", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useKeyboard } from "@opentui/react";
+import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { TextAreaInput, TextInput } from "../ui/TextInput.js";
 
 export type DialogKind =
@@ -29,20 +29,26 @@ type DialogProps = {
 };
 
 export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
+  const dimensions = useTerminalDimensions();
+
   if (state.kind === "none") {
     return null;
   }
 
+  const modalWidth = Math.min(136, dimensions.width);
+  const modalHeight = Math.min(24, dimensions.height);
+  const top = Math.max(0, Math.floor((dimensions.height - modalHeight) / 2));
+  const left = Math.max(0, Math.floor((dimensions.width - modalWidth) / 2));
+
   // Common styles
   const overlayStyle: any = {
     position: "absolute",
-    top: 0,
-    left: 0,
-    width: "100%",
-    height: "100%",
+    top,
+    left,
+    width: modalWidth,
+    height: modalHeight,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#000000",
   };
 
   const modalStyle: any = {
