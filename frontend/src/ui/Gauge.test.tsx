@@ -29,10 +29,10 @@ describe("Gauge", () => {
       height: 5,
     });
 
-    await render(<Gauge label="Drain" value={1} max={3} barWidth={9} />);
+    await render(<Gauge label="Drain" value={1} max={4} barWidth={9} />);
 
     const output = await waitForFrame((frame) => frame.includes("Drain"));
-    expect(output).toContain("Drain [███░░░░░░] 1/3");
+    expect(output).toContain("Drain [██░░░░░░░] 1/4");
   });
 
   it("renders a full bar at 100%", async () => {
@@ -73,5 +73,17 @@ describe("Gauge", () => {
     const output = await waitForFrame((frame) => frame.includes("Q "));
     expect(output).toContain("Q 2/4");
     expect(output).not.toContain("[");
+  });
+
+  it("normalizes a negative bar width before rendering", async () => {
+    const { render, waitForFrame } = createOpenTuiHarness({
+      width: 40,
+      height: 5,
+    });
+
+    await render(<Gauge label="Negative" value={1} max={2} barWidth={-1} />);
+
+    const output = await waitForFrame((frame) => frame.includes("Negative"));
+    expect(output).toContain("Negative [] 1/2");
   });
 });

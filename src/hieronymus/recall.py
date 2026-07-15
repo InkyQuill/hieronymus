@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Literal
 
 from hieronymus.concepts import ConceptStore
 from hieronymus.config import HieronymusConfig
@@ -15,6 +17,7 @@ from hieronymus.memory_models import (
     TranslationContext,
 )
 from hieronymus.rag import RagStore
+from hieronymus.rag_models import RagChunkRecord
 from hieronymus.workspace import short_memory_from_row
 
 _RECALL_REASON = "weighted search match"
@@ -46,7 +49,39 @@ _SQL_METADATA_SCORE = """
 )
 """
 _SOURCE_PREFERENCE = {"long_term": 0, "short_term": 1, "rag": 2}
-_RankedItem = tuple[str, float, int, object, str, tuple[str, ...]]
+
+
+@dataclass(frozen=True, slots=True)
+class _LongTermRankedItem:
+    score: float
+    item_id: int
+    payload: CrystalRecord
+    reason: str
+    labels: tuple[str, ...] = ()
+    source: Literal["long_term"] = field(default="long_term", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _ShortTermRankedItem:
+    score: float
+    item_id: int
+    payload: ShortTermMemoryRecord
+    reason: str
+    labels: tuple[str, ...] = ()
+    source: Literal["short_term"] = field(default="short_term", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _RagRankedItem:
+    score: float
+    item_id: int
+    payload: RagChunkRecord
+    reason: str
+    labels: tuple[str, ...] = ()
+    source: Literal["rag"] = field(default="rag", init=False)
+
+
+type _RankedItem = _LongTermRankedItem | _ShortTermRankedItem | _RagRankedItem
 
 
 def _now() -> str:
@@ -93,7 +128,7 @@ def _metadata_search_score(strength: float, confidence: float, scope_type: str) 
 
 
 def _ranked_item_sort_key(item: _RankedItem) -> tuple[float, int, int]:
-    return (-item[1], _SOURCE_PREFERENCE[item[0]], item[2])
+    return (-item.score, _SOURCE_PREFERENCE[item.source], item.item_id)
 
 
 def _recall_budget_split(limit: int) -> tuple[int, int]:
@@ -102,12 +137,10 @@ def _recall_budget_split(limit: int) -> tuple[int, int]:
 
 
 def _is_protected_active_rule(item: _RankedItem) -> bool:
-    source, _score, _item_id, payload, _reason, _labels = item
     return (
-        source == "long_term"
-        and isinstance(payload, CrystalRecord)
-        and payload.crystal_type == "rule"
-        and payload.status == "active"
+        isinstance(item, _LongTermRankedItem)
+        and item.payload.crystal_type == "rule"
+        and item.payload.status == "active"
     )
 
 
@@ -238,21 +271,32 @@ class RecallService:
             ) and crystal.confidence < 0.5:
                 ranked_score = max(0.0, ranked_score - _LOW_CONFIDENCE_THOUGHT_PENALTY)
             ranked_items.append(
-                (
-                    "long_term",
-                    ranked_score,
-                    crystal.id,
-                    crystal,
-                    str(reason),
-                    concept_labels.get(crystal.id, ()),
+                _LongTermRankedItem(
+                    score=ranked_score,
+                    item_id=crystal.id,
+                    payload=crystal,
+                    reason=str(reason),
+                    labels=concept_labels.get(crystal.id, ()),
                 )
             )
         for memory, score in short_term_memories:
-            ranked_items.append(("short_term", score, memory.id, memory, _SHORT_TERM_REASON, ()))
+            ranked_items.append(
+                _ShortTermRankedItem(
+                    score=score,
+                    item_id=memory.id,
+                    payload=memory,
+                    reason=_SHORT_TERM_REASON,
+                )
+            )
 
         ranked_items.sort(key=_ranked_item_sort_key)
         rag_items: list[_RankedItem] = [
-            ("rag", hit.score, hit.chunk.id, hit.chunk, hit.reason, ())
+            _RagRankedItem(
+                score=hit.score,
+                item_id=hit.chunk.id,
+                payload=hit.chunk,
+                reason=hit.reason,
+            )
             for hit in self.rag.search(
                 context.series_slug,
                 query,
@@ -265,36 +309,33 @@ class RecallService:
         ranked_items = _merge_ranked_items(ranked_items, rag_items, limit=limit)
 
         results: list[RecallResult] = []
-        for rank, (source, score, _item_id, payload, reason, labels) in enumerate(
-            ranked_items,
-            start=1,
-        ):
-            if source == "long_term":
+        for rank, item in enumerate(ranked_items, start=1):
+            if isinstance(item, _LongTermRankedItem):
                 results.append(
                     RecallResult.long_term(
-                        payload,
+                        item.payload,
                         rank=rank,
-                        score=score,
-                        reason=reason,
-                        concept_labels=labels,
+                        score=item.score,
+                        reason=item.reason,
+                        concept_labels=item.labels,
                     )
                 )
-            elif source == "short_term":
+            elif isinstance(item, _ShortTermRankedItem):
                 results.append(
                     RecallResult.short_term(
-                        payload,
+                        item.payload,
                         rank=rank,
-                        score=score,
+                        score=item.score,
                         reason=_SHORT_TERM_REASON,
                     )
                 )
             else:
                 results.append(
                     RecallResult.rag(
-                        payload,
+                        item.payload,
                         rank=rank,
-                        score=score,
-                        reason=reason,
+                        score=item.score,
+                        reason=item.reason,
                     )
                 )
 

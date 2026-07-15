@@ -6,8 +6,6 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
-import yaml
-
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import search_expression
 from hieronymus.db import apply_migration, connect
@@ -47,7 +45,7 @@ class RagStore:
         clean_source_ref = source_ref or str(source_path)
         try:
             parsed = load_rag_file(source_path, source_type=source_type)
-        except (ValueError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        except (ValueError, UnicodeDecodeError) as exc:
             raise ValueError(f"invalid RAG source: {exc}") from exc
 
         clean_language_tags = _clean_text_tuple(language_tags)
@@ -200,12 +198,40 @@ class RagStore:
         clean_story_scopes = _clean_text_tuple(story_scopes)
         clean_semantic_tags = _clean_text_tuple(semantic_tags)
         with connect(self.config.database_path) as conn:
+            conn.create_function("casefold", 1, _sqlite_casefold, deterministic=True)
+            language_score, language_params = _tag_boost_sql(
+                table="rag_chunk_language_tags",
+                value_column="language_tag",
+                values=clean_language_tags,
+                boost=_RAG_LANGUAGE_TAG_BOOST,
+            )
+            story_score, story_params = _tag_boost_sql(
+                table="rag_chunk_story_scopes",
+                value_column="story_scope",
+                values=clean_story_scopes,
+                boost=_RAG_STORY_SCOPE_BOOST,
+            )
+            semantic_score, semantic_params = _tag_boost_sql(
+                table="rag_chunk_semantic_tags",
+                value_column="semantic_tag",
+                values=clean_semantic_tags,
+                boost=_RAG_SEMANTIC_TAG_BOOST,
+            )
             rows = conn.execute(
-                """
+                f"""
                 select
                   rag_chunks.*,
                   rag_sources.source_ref,
-                  bm25(rag_chunks_fts) as rank
+                  (
+                    max(-bm25(rag_chunks_fts), 0.000001)
+                    + case
+                        when rag_chunks.chunk_kind = 'glossary_entry' then ?
+                        else 0.0
+                      end
+                    + {language_score}
+                    + {story_score}
+                    + {semantic_score}
+                  ) as score
                 from rag_chunks_fts
                 join rag_chunks
                   on rag_chunks.id = rag_chunks_fts.rowid
@@ -214,27 +240,29 @@ class RagStore:
                  and rag_sources.series_slug = rag_chunks.series_slug
                 where rag_chunks_fts match ?
                   and rag_chunks.series_slug = ?
-                order by rank, rag_chunks.id
+                order by score desc, rag_chunks.id
+                limit ?
                 """,
-                (expression, series_slug),
+                (
+                    _RAG_GLOSSARY_BOOST,
+                    *language_params,
+                    *story_params,
+                    *semantic_params,
+                    expression,
+                    series_slug,
+                    bounded_limit,
+                ),
             ).fetchall()
 
-            results = [
+            chunks = self._chunks_from_rows(conn, rows)
+            return [
                 RagSearchResult(
                     chunk=chunk,
-                    score=_rag_search_score(
-                        float(row["rank"]),
-                        chunk,
-                        language_tags=clean_language_tags,
-                        story_scopes=clean_story_scopes,
-                        semantic_tags=clean_semantic_tags,
-                    ),
+                    score=float(row["score"]),
                     reason=_reason_for_chunk_kind(row["chunk_kind"]),
                 )
-                for row in rows
-                for chunk in (self._chunk_from_row(conn, row),)
+                for row, chunk in zip(rows, chunks, strict=True)
             ]
-            return sorted(results, key=lambda hit: (-hit.score, hit.chunk.id))[:bounded_limit]
 
     def _source_row(
         self,
@@ -315,37 +343,48 @@ class RagStore:
             )
         return len(chunk_ids)
 
-    def _chunk_from_row(self, conn: sqlite3.Connection, row: sqlite3.Row) -> RagChunkRecord:
-        chunk_id = int(row["id"])
-        return RagChunkRecord(
-            id=chunk_id,
-            source_id=int(row["source_id"]),
-            series_slug=row["series_slug"],
-            source_ref=row["source_ref"],
-            chunk_kind=row["chunk_kind"],
-            text=row["text"],
-            display_text=row["display_text"],
-            location=row["location"],
-            metadata=_json_loads_object(row["metadata_json"]),
-            language_tags=_text_values(
-                conn,
-                table="rag_chunk_language_tags",
-                value_column="language_tag",
-                chunk_id=chunk_id,
-            ),
-            story_scopes=_text_values(
-                conn,
-                table="rag_chunk_story_scopes",
-                value_column="story_scope",
-                chunk_id=chunk_id,
-            ),
-            semantic_tags=_text_values(
-                conn,
-                table="rag_chunk_semantic_tags",
-                value_column="semantic_tag",
-                chunk_id=chunk_id,
-            ),
+    def _chunks_from_rows(
+        self,
+        conn: sqlite3.Connection,
+        rows: list[sqlite3.Row],
+    ) -> list[RagChunkRecord]:
+        chunk_ids = tuple(int(row["id"]) for row in rows)
+        language_tags = _text_values_for_chunks(
+            conn,
+            table="rag_chunk_language_tags",
+            value_column="language_tag",
+            chunk_ids=chunk_ids,
         )
+        story_scopes = _text_values_for_chunks(
+            conn,
+            table="rag_chunk_story_scopes",
+            value_column="story_scope",
+            chunk_ids=chunk_ids,
+        )
+        semantic_tags = _text_values_for_chunks(
+            conn,
+            table="rag_chunk_semantic_tags",
+            value_column="semantic_tag",
+            chunk_ids=chunk_ids,
+        )
+        return [
+            RagChunkRecord(
+                id=chunk_id,
+                source_id=int(row["source_id"]),
+                series_slug=row["series_slug"],
+                source_ref=row["source_ref"],
+                chunk_kind=row["chunk_kind"],
+                text=row["text"],
+                display_text=row["display_text"],
+                location=row["location"],
+                metadata=_json_loads_object(row["metadata_json"]),
+                language_tags=language_tags.get(chunk_id, ()),
+                story_scopes=story_scopes.get(chunk_id, ()),
+                semantic_tags=semantic_tags.get(chunk_id, ()),
+            )
+            for row in rows
+            for chunk_id in (int(row["id"]),)
+        ]
 
 
 def _source_from_row(row: sqlite3.Row) -> RagSourceRecord:
@@ -428,13 +467,13 @@ def _replace_text_values(
     )
 
 
-def _text_values(
+def _text_values_for_chunks(
     conn: sqlite3.Connection,
     *,
     table: str,
     value_column: str,
-    chunk_id: int,
-) -> tuple[str, ...]:
+    chunk_ids: tuple[int, ...],
+) -> dict[int, tuple[str, ...]]:
     if table not in {
         "rag_chunk_language_tags",
         "rag_chunk_story_scopes",
@@ -443,45 +482,59 @@ def _text_values(
         raise ValueError(f"unsupported RAG tag table: {table}")
     if value_column not in {"language_tag", "story_scope", "semantic_tag"}:
         raise ValueError(f"unsupported RAG tag column: {value_column}")
+    if not chunk_ids:
+        return {}
 
+    placeholders = ", ".join("?" for _ in chunk_ids)
     rows = conn.execute(
         f"""
-        select {value_column}
+        select chunk_id, {value_column}
         from {table}
-        where chunk_id = ?
-        order by {value_column}
+        where chunk_id in ({placeholders})
+        order by chunk_id, {value_column}
         """,
-        (chunk_id,),
+        chunk_ids,
     ).fetchall()
-    return tuple(row[value_column] for row in rows)
+    values: dict[int, list[str]] = {}
+    for row in rows:
+        values.setdefault(int(row["chunk_id"]), []).append(row[value_column])
+    return {chunk_id: tuple(chunk_values) for chunk_id, chunk_values in values.items()}
 
 
-def _rag_search_score(
-    rank: float,
-    chunk: RagChunkRecord,
+def _tag_boost_sql(
     *,
-    language_tags: Iterable[str],
-    story_scopes: Iterable[str],
-    semantic_tags: Iterable[str],
-) -> float:
-    score = max(-rank, 0.000001)
-    if chunk.chunk_kind == "glossary_entry":
-        score += _RAG_GLOSSARY_BOOST
-    if _has_casefold_intersection(language_tags, chunk.language_tags):
-        score += _RAG_LANGUAGE_TAG_BOOST
-    if _has_casefold_intersection(story_scopes, chunk.story_scopes):
-        score += _RAG_STORY_SCOPE_BOOST
-    if _has_casefold_intersection(semantic_tags, chunk.semantic_tags):
-        score += _RAG_SEMANTIC_TAG_BOOST
-    return score
+    table: str,
+    value_column: str,
+    values: tuple[str, ...],
+    boost: float,
+) -> tuple[str, tuple[object, ...]]:
+    if table not in {
+        "rag_chunk_language_tags",
+        "rag_chunk_story_scopes",
+        "rag_chunk_semantic_tags",
+    }:
+        raise ValueError(f"unsupported RAG tag table: {table}")
+    if value_column not in {"language_tag", "story_scope", "semantic_tag"}:
+        raise ValueError(f"unsupported RAG tag column: {value_column}")
+    if not values:
+        return "0.0", ()
+
+    placeholders = ", ".join("?" for _ in values)
+    return (
+        f"""
+        case when exists (
+          select 1
+          from {table} tag_values
+          where tag_values.chunk_id = rag_chunks.id
+            and casefold(tag_values.{value_column}) in ({placeholders})
+        ) then ? else 0.0 end
+        """,
+        (*[value.casefold() for value in values], boost),
+    )
 
 
-def _has_casefold_intersection(
-    left: Iterable[str],
-    right: Iterable[str],
-) -> bool:
-    left_values = {value.casefold() for value in left}
-    return any(value.casefold() in left_values for value in right)
+def _sqlite_casefold(value: object) -> str:
+    return str(value).casefold()
 
 
 def _reason_for_chunk_kind(chunk_kind: str) -> str:

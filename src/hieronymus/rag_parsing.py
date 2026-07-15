@@ -17,6 +17,8 @@ RagLoadSourceType = Literal["auto", "text", "glossary"]
 MAX_RAG_CHUNK_CHARS = 1200
 
 _MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+_MARKDOWN_FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,}).*$")
+_MARKDOWN_INDENTED_CODE_RE = re.compile(r"^(?: {4}|\t)")
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 _GLOSSARY_EXTENSIONS = {".csv", ".tsv", ".json", ".yaml", ".yml"}
 _TEXT_EXTENSIONS = {".txt", ".md"}
@@ -134,6 +136,7 @@ def _parse_markdown(path: Path) -> list[ParsedRagChunk]:
     heading_stack: list[tuple[int, str]] = []
     paragraph_lines: list[str] = []
     paragraph_count = 0
+    fence: tuple[str, int] | None = None
 
     def flush_paragraph() -> None:
         nonlocal paragraph_count, paragraph_lines
@@ -159,6 +162,27 @@ def _parse_markdown(path: Path) -> list[ParsedRagChunk]:
             )
 
     for line in path.read_text(encoding="utf-8").splitlines():
+        if fence is not None:
+            paragraph_lines.append(line)
+            fence_character, minimum_length = fence
+            if re.fullmatch(
+                rf" {{0,3}}{re.escape(fence_character)}{{{minimum_length},}}\s*",
+                line,
+            ):
+                fence = None
+            continue
+
+        fence_match = _MARKDOWN_FENCE_RE.match(line)
+        if fence_match:
+            marker = fence_match.group("fence")
+            fence = (marker[0], len(marker))
+            paragraph_lines.append(line)
+            continue
+
+        if _MARKDOWN_INDENTED_CODE_RE.match(line):
+            paragraph_lines.append(line)
+            continue
+
         heading_match = _MARKDOWN_HEADING_RE.match(line.strip())
         if heading_match:
             flush_paragraph()
@@ -212,7 +236,10 @@ def _parse_json_glossary(path: Path) -> list[ParsedRagChunk]:
 
 
 def _parse_yaml_glossary(path: Path) -> list[ParsedRagChunk]:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid YAML glossary: {exc}") from exc
     return _parse_structured_glossary(data)
 
 

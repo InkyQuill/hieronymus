@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import hieronymus.rag_store as rag_store_module
 from hieronymus.config import HieronymusConfig
 from hieronymus.rag import RagStore
 from hieronymus.registry import Registry
@@ -285,3 +286,40 @@ def test_search_caps_large_limit_at_fifty(
     store.import_file(series_slug, path, source_type="auto")
 
     assert len(store.search(series_slug, "Sense", limit=1000)) == 50
+
+
+def test_search_limits_tag_hydration_to_returned_candidates(
+    config: HieronymusConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    series_slug = _series(config)
+    path = tmp_path / "chapter.txt"
+    path.write_text(
+        "\n\n".join(f"Sense indexed note {index}." for index in range(60)),
+        encoding="utf-8",
+    )
+    store = RagStore(config)
+    store.import_file(series_slug, path, source_type="auto")
+    statements: list[str] = []
+    original_connect = rag_store_module.connect
+
+    def traced_connect(database_path: Path):
+        connection = original_connect(database_path)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(rag_store_module, "connect", traced_connect)
+
+    hits = store.search(series_slug, "Sense", limit=1)
+
+    tag_tables = (
+        "rag_chunk_language_tags",
+        "rag_chunk_story_scopes",
+        "rag_chunk_semantic_tags",
+    )
+    tag_queries = [
+        statement for statement in statements if any(table in statement for table in tag_tables)
+    ]
+    assert len(hits) == 1
+    assert len(tag_queries) <= 3

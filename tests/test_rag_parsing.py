@@ -81,6 +81,31 @@ def test_markdown_file_preserves_heading_location(tmp_path: Path) -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "code_block",
+    [
+        "```python\n# example\nvalue = 1\n```",
+        "    # example\n    value = 1",
+    ],
+    ids=["fenced", "indented"],
+)
+def test_markdown_code_blocks_do_not_create_headings(
+    tmp_path: Path,
+    code_block: str,
+) -> None:
+    path = tmp_path / "notes.md"
+    path.write_text(
+        f"# Before\n\n{code_block}\n\n## After\n\nFollowing text.",
+        encoding="utf-8",
+    )
+
+    parsed = load_rag_file(path, source_type="auto")
+
+    assert "# example" in parsed.chunks[0].text
+    assert parsed.chunks[0].location == "Before paragraph 1"
+    assert parsed.chunks[-1].location == "Before > After paragraph 2"
+
+
 def test_markdown_file_splits_oversized_paragraphs(tmp_path: Path) -> None:
     path = tmp_path / "notes.md"
     path.write_text("# Glossary\n\n" + ("Sense " * 230).strip(), encoding="utf-8")
@@ -201,3 +226,11 @@ def test_yaml_mapping_outer_key_overrides_nested_key(tmp_path: Path) -> None:
         "key": "Sense",
         "target": "Сенс",
     }
+
+
+def test_yaml_file_normalizes_parser_errors(tmp_path: Path) -> None:
+    path = tmp_path / "glossary.yaml"
+    path.write_text("Sense: [unterminated", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid YAML glossary"):
+        load_rag_file(path, source_type="auto")

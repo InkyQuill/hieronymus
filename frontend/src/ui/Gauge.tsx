@@ -34,9 +34,12 @@ export function Gauge({
   }
 
   const ratio = Math.min(Math.max(value / safeMax, 0), 1);
-  const filled = Math.round(ratio * barWidth);
+  const safeBarWidth = Number.isFinite(barWidth)
+    ? Math.max(0, Math.floor(barWidth))
+    : 0;
+  const filled = Math.round(ratio * safeBarWidth);
   const bar =
-    FILLED_BLOCK.repeat(filled) + EMPTY_BLOCK.repeat(barWidth - filled);
+    FILLED_BLOCK.repeat(filled) + EMPTY_BLOCK.repeat(safeBarWidth - filled);
 
   return (
     <text fg={fg}>
