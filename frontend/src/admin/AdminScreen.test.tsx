@@ -411,6 +411,7 @@ describe("AdminScreen", () => {
     const output = await waitForFrame((frame) => frame.includes("Crystals"));
     expect(output).toContain("Crystals");
     expect(output).toContain("H Hieronymus Admin 0.1.0");
+    expect(output).toContain("○ Service stopped");
     expect(output).toContain("Local translation memory.");
     expect(output).toContain("series 1");
     expect(output).toContain("Short-term pending 0");
@@ -424,6 +425,22 @@ describe("AdminScreen", () => {
     expect(output).toContain("model cache has not been fetched for provider");
     expect(output).toContain("Guild Ledger");
     expect(output).toContain("Guild ledger detail marker.");
+  });
+
+  it("shows a live service status indicator in the header", async () => {
+    const { render, waitForFrame } = setupTest();
+
+    await render(
+      <AdminScreen
+        initial={{ ...bootstrap(), service: { running: true } }}
+        client={undefined}
+      />,
+    );
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Hieronymus Admin"),
+    );
+    expect(output).toContain("● Service running");
   });
 
   it("opens a keyboard command palette with context commands", async () => {

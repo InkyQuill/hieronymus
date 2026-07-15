@@ -933,7 +933,10 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
         paddingX={1}
         paddingY={1}
       >
-        <Header header={initial.header} />
+        <Header
+          header={initial.header}
+          serviceRunning={initial.service.running}
+        />
         <text>{formatStats(stats)}</text>
         <StatusPanels
           shortTermStatus={shortTermStatus}
@@ -1230,12 +1233,23 @@ function inspectionDetail(method: string, response: Record<string, unknown>) {
   };
 }
 
-function Header({ header }: { header: AdminHeader }) {
+function Header({
+  header,
+  serviceRunning,
+}: {
+  header: AdminHeader;
+  serviceRunning: boolean;
+}) {
   return (
     <>
-      <text>
-        {header.logo.text} {header.product} Admin {header.version}
-      </text>
+      <box flexDirection="row" justifyContent="space-between">
+        <text>
+          {header.logo.text} {header.product} Admin {header.version}
+        </text>
+        <text fg={serviceRunning ? "green" : "gray"}>
+          {serviceRunning ? "● Service running" : "○ Service stopped"}
+        </text>
+      </box>
       <text fg="gray">{header.tagline}</text>
     </>
   );
