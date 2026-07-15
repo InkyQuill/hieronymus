@@ -403,7 +403,7 @@ be direction-first.
 
 - The ADR set now contains both implementation decisions and durable product
   vision. Old execution specs/plans can be removed after their implemented and
-  remaining parts are reflected here and in the continuation spec.
+  remaining parts are reflected here and in the current baseline documentation.
 - Future work should update this ADR only when the product model changes. Task
   tracking belongs in `docs/roadmap.md` or issue/PR workflows.
 - Tests should protect these boundaries: local-first storage, primitive MCP

@@ -129,4 +129,5 @@ management app. No 1.x release is approved yet.
 - [Management TUI usage](docs/usage.md#management-tui)
 - [Agent workflows](docs/agent-workflows.md)
 - [Service toolkit](docs/service-toolkit.md)
+- [Current baseline](docs/current-baseline.md)
 - [Roadmap](docs/roadmap.md)
