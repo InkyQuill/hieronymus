@@ -150,7 +150,7 @@ export function ConfigScreen({ initial, client }: Props) {
         release: draftValues.release,
       },
       pendingMessage: "Updating draft settings",
-      successMessage: "Draft settings updated",
+      successMessage: "Draft settings updated — press s to save",
       setBusy,
       setPayload,
       setStatus,

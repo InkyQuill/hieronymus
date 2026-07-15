@@ -364,6 +364,28 @@ def test_config_save_persists_provider_catalog_before_dream_config(tmp_path: Pat
     save_dream.assert_not_called()
 
 
+def test_api_key_draft_is_persisted_to_provider_conf_after_save(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bridge = ConfigBridge(config)
+    draft = bridge.bootstrap({})["draft"]
+
+    updated = bridge.update_draft(
+        {
+            "selected_provider": "openai",
+            "draft": draft,
+            "provider": {
+                "model": "gpt-4.1-mini",
+                "api_key": "new-provider-secret",
+                "api_path": "https://api.openai.com/v1",
+                "timeout_seconds": "30",
+            },
+        }
+    )
+    bridge.save({"draft": updated["draft"]})
+
+    assert load_provider_catalog(config).providers["openai"].key == "new-provider-secret"
+
+
 def test_config_clears_pending_api_key_when_form_is_emptied(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bridge = ConfigBridge(config)

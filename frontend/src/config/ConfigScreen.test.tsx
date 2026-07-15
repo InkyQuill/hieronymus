@@ -1386,6 +1386,24 @@ describe("ConfigScreen", () => {
     expect(output).toContain("new-key");
   });
 
+  it("explains that an edited API key still requires save", async () => {
+    const initial = payload();
+    const client = fakeClient(() => Promise.resolve(initial));
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={initial} client={client} />);
+    await mockInput.press("down");
+    await mockInput.press("down");
+    await mockInput.press("enter");
+    await mockInput.type("new-key");
+    await mockInput.press("enter");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("press s to save"),
+    );
+    expect(output).toContain("press s to save");
+  });
+
   it("normalizes nested provider catalog form values from bootstrap", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
