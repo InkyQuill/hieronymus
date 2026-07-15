@@ -33,6 +33,12 @@ from hieronymus.provider_config import (
     redacted_provider_catalog_payload,
 )
 from hieronymus.rag import RagStore
+from hieronymus.rag_payloads import (
+    rag_hit_payload as _rag_hit_payload,
+)
+from hieronymus.rag_payloads import (
+    rag_import_payload as _rag_import_payload,
+)
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
 from hieronymus.release import check_update, run_update
@@ -100,42 +106,6 @@ def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str
         "kind": memory.kind,
         "text": memory.text,
         "metadata": memory.metadata,
-    }
-
-
-def _rag_hit_payload(hit) -> dict[str, object]:
-    chunk = hit.chunk
-    return {
-        "source": "rag",
-        "id": chunk.id,
-        "title": chunk.title,
-        "kind": chunk.kind,
-        "text": chunk.text,
-        "display_text": chunk.display_text,
-        "source_ref": chunk.source_ref,
-        "chunk_kind": chunk.chunk_kind,
-        "location": chunk.location,
-        "metadata": chunk.metadata,
-        "language_tags": list(chunk.language_tags),
-        "story_scopes": list(chunk.story_scopes),
-        "semantic_tags": list(chunk.semantic_tags),
-        "score": hit.score,
-        "rank_reason": hit.reason,
-    }
-
-
-def _rag_import_payload(result) -> dict[str, object]:
-    return {
-        "source": asdict(result.source),
-        "source_id": result.source.id,
-        "series_slug": result.source.series_slug,
-        "source_ref": result.source.source_ref,
-        "source_type": result.source.source_type,
-        "content_type": result.source.content_type,
-        "checksum": result.source.checksum,
-        "metadata": result.source.metadata,
-        "chunk_count": result.chunk_count,
-        "skipped": result.skipped,
     }
 
 

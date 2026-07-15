@@ -524,3 +524,44 @@ plan-status edits remain unstaged.
 git add docs/superpowers/plans/2026-07-04-rag-pipelines.md docs/superpowers/plans/2026-07-15-rag-pipelines-completion.md
 git commit -m "docs: complete rag pipelines plan"
 ```
+
+## Task 8: Address Final Review Findings
+
+**Files:**
+- Modify: `src/hieronymus/rag_parsing.py`
+- Modify: `src/hieronymus/rag_store.py`
+- Modify: `src/hieronymus/migrations/global.sql`
+- Create: `src/hieronymus/rag_payloads.py`
+- Modify: `src/hieronymus/cli.py`
+- Modify: `src/hieronymus/mcp_server.py`
+- Modify: `tests/test_rag_parsing.py`
+- Modify: `tests/test_rag_store.py`
+- Modify: `tests/test_rag_schema.py`
+- Create: `tests/test_rag_payloads.py`
+
+- [x] **Step 1: Preserve canonical outer glossary keys**
+
+Add a failing YAML regression test, then construct mapping metadata as
+`{**metadata, "key": str(key)}` so nested fields cannot override the canonical
+outer key.
+
+- [x] **Step 2: Apply RAG boosts before result truncation**
+
+Add a regression with more than 50 equal FTS matches and one tagged final
+candidate, then score all matching rows before applying the public result limit.
+
+- [x] **Step 3: Add RAG lookup indexes**
+
+Assert and create idempotent indexes for `rag_chunks.source_id` and
+`rag_chunks.series_slug`.
+
+- [x] **Step 4: Share RAG payload serializers**
+
+Add typed serializer tests, create `rag_payloads.py`, update CLI and MCP callers,
+and retain the original flat import contract without a duplicate nested source.
+
+- [ ] **Step 5: Re-run full verification and review**
+
+Run all AGENTS.md checks and confirm the final review has no unresolved RAG
+findings. The suggestion to score-sort the primary recall merge is intentionally
+rejected because the approved RAG design requires lane interleaving.

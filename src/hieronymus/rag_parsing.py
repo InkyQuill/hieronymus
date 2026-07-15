@@ -231,7 +231,7 @@ def _glossary_entries(data: Any) -> list[dict[str, object]]:
         entries: list[dict[str, object]] = []
         for key, value in data.items():
             metadata = _metadata_from_value(value)
-            metadata = {"key": str(key), **metadata}
+            metadata = {**metadata, "key": str(key)}
             entries.append(metadata)
         return entries
 

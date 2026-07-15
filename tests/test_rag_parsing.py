@@ -186,3 +186,18 @@ def test_yaml_file_accepts_mapping_entries(tmp_path: Path) -> None:
         "target": "Сенс",
         "category": "skill",
     }
+
+
+def test_yaml_mapping_outer_key_overrides_nested_key(tmp_path: Path) -> None:
+    path = tmp_path / "glossary.yaml"
+    path.write_text(
+        "Sense:\n  key: Wrong\n  target: Сенс\n",
+        encoding="utf-8",
+    )
+
+    parsed = load_rag_file(path, source_type="auto")
+
+    assert parsed.chunks[0].metadata == {
+        "key": "Sense",
+        "target": "Сенс",
+    }

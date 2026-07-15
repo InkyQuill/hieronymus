@@ -105,6 +105,17 @@ def test_rag_schema_is_created_idempotently(config: HieronymusConfig) -> None:
                 """
             ).fetchall()
         }
+        index_names = {
+            row["name"]
+            for row in conn.execute(
+                """
+                select name
+                from sqlite_master
+                where type = 'index'
+                  and name like 'rag_%'
+                """
+            ).fetchall()
+        }
 
     assert {
         "rag_sources",
@@ -114,6 +125,10 @@ def test_rag_schema_is_created_idempotently(config: HieronymusConfig) -> None:
         "rag_chunk_semantic_tags",
         "rag_chunks_fts",
     } <= table_names
+    assert {
+        "rag_chunks_source_id_idx",
+        "rag_chunks_series_slug_idx",
+    } <= index_names
 
 
 def test_rag_chunk_series_must_match_source_series(

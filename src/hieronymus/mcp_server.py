@@ -23,7 +23,15 @@ from hieronymus.memory_models import (
     TranslationContext,
 )
 from hieronymus.rag import RagStore
-from hieronymus.rag_models import RagChunkRecord
+from hieronymus.rag_payloads import (
+    rag_chunk_payload as _rag_chunk_payload,
+)
+from hieronymus.rag_payloads import (
+    rag_hit_payload as _rag_hit_payload,
+)
+from hieronymus.rag_payloads import (
+    rag_import_payload as _rag_import_payload,
+)
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry, Series
 from hieronymus.service_discovery import discover_local_service
@@ -123,61 +131,6 @@ def _short_term_memory_payload(memory: ShortTermMemoryRecord | None) -> dict[str
         "source_credibility": memory.source_credibility,
         "rule_intent": memory.rule_intent,
         "soft_origin": memory.soft_origin,
-    }
-
-
-def _rag_chunk_payload(chunk: RagChunkRecord | None) -> dict[str, Any] | None:
-    if chunk is None:
-        return None
-    return {
-        "id": chunk.id,
-        "source_id": chunk.source_id,
-        "series_slug": chunk.series_slug,
-        "source_ref": chunk.source_ref,
-        "chunk_kind": chunk.chunk_kind,
-        "text": chunk.text,
-        "display_text": chunk.display_text,
-        "location": chunk.location,
-        "metadata": chunk.metadata,
-        "language_tags": list(chunk.language_tags),
-        "story_scopes": list(chunk.story_scopes),
-        "semantic_tags": list(chunk.semantic_tags),
-    }
-
-
-def _rag_hit_payload(hit) -> dict[str, Any]:
-    chunk = hit.chunk
-    return {
-        "source": "rag",
-        "id": chunk.id,
-        "title": chunk.title,
-        "kind": chunk.kind,
-        "text": chunk.text,
-        "display_text": chunk.display_text,
-        "source_ref": chunk.source_ref,
-        "chunk_kind": chunk.chunk_kind,
-        "location": chunk.location,
-        "metadata": chunk.metadata,
-        "language_tags": list(chunk.language_tags),
-        "story_scopes": list(chunk.story_scopes),
-        "semantic_tags": list(chunk.semantic_tags),
-        "score": hit.score,
-        "rank_reason": hit.reason,
-    }
-
-
-def _rag_import_payload(result) -> dict[str, Any]:
-    return {
-        "source": asdict(result.source),
-        "source_id": result.source.id,
-        "series_slug": result.source.series_slug,
-        "source_ref": result.source.source_ref,
-        "source_type": result.source.source_type,
-        "content_type": result.source.content_type,
-        "checksum": result.source.checksum,
-        "metadata": result.source.metadata,
-        "chunk_count": result.chunk_count,
-        "skipped": result.skipped,
     }
 
 

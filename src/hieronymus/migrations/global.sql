@@ -456,6 +456,12 @@ create table if not exists rag_chunks (
     on delete cascade
 );
 
+create index if not exists rag_chunks_source_id_idx
+on rag_chunks(source_id);
+
+create index if not exists rag_chunks_series_slug_idx
+on rag_chunks(series_slug);
+
 create table if not exists rag_chunk_language_tags (
   chunk_id integer not null references rag_chunks(id) on delete cascade,
   language_tag text not null,

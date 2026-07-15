@@ -196,10 +196,6 @@ class RagStore:
             return []
 
         bounded_limit = min(limit, _MAX_RAG_SEARCH_LIMIT)
-        candidate_limit = min(
-            max(bounded_limit * 4, bounded_limit + 10),
-            _MAX_RAG_SEARCH_LIMIT,
-        )
         clean_language_tags = _clean_text_tuple(language_tags)
         clean_story_scopes = _clean_text_tuple(story_scopes)
         clean_semantic_tags = _clean_text_tuple(semantic_tags)
@@ -219,9 +215,8 @@ class RagStore:
                 where rag_chunks_fts match ?
                   and rag_chunks.series_slug = ?
                 order by rank, rag_chunks.id
-                limit ?
                 """,
-                (expression, series_slug, candidate_limit),
+                (expression, series_slug),
             ).fetchall()
 
             results = [

@@ -218,6 +218,33 @@ def test_search_boosts_matching_rag_chunk_metadata(
     assert hits[0].score > hits[1].score
 
 
+def test_search_applies_metadata_boost_before_candidate_truncation(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    store = RagStore(config)
+    for index in range(51):
+        path = tmp_path / f"source-{index}.txt"
+        path.write_text("Sense shared evidence.", encoding="utf-8")
+        store.import_file(
+            series_slug,
+            path,
+            source_ref=path.name,
+            source_type="auto",
+            semantic_tags=("skill:name",) if index == 50 else (),
+        )
+
+    hits = store.search(
+        series_slug,
+        "Sense shared evidence",
+        limit=50,
+        semantic_tags=("skill:name",),
+    )
+
+    assert hits[0].chunk.source_ref == "source-50.txt"
+
+
 def test_default_source_ref_keeps_same_basename_paths_distinct(
     config: HieronymusConfig,
     tmp_path: Path,
