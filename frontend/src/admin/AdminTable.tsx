@@ -30,7 +30,12 @@ export function AdminTable({
   const layout = width >= MIN_COLUMN_LAYOUT_WIDTH ? columnWidths(width) : null;
 
   return (
-    <scrollbox flexDirection="column" width={width} height={height}>
+    <scrollbox
+      flexDirection="column"
+      width={width}
+      height={height}
+      style={{ scrollbarOptions: { showArrows: true } }}
+    >
       {rows.map((row) => (
         <text
           key={String(row.id)}

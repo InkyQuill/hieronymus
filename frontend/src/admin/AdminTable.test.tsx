@@ -33,6 +33,38 @@ afterEach(async () => {
 });
 
 describe("AdminTable", () => {
+  it("shows scrollbar arrows when rows overflow the visible height", async () => {
+    const rows = Array.from({ length: 30 }, (_, index) =>
+      row({ id: index, label: `Row ${index}` }),
+    );
+    const { render, waitForFrame } = createOpenTuiHarness({
+      width: 60,
+      height: 10,
+    });
+
+    await render(
+      <AdminTable rows={rows} selectedId={null} width={40} height={5} />,
+    );
+
+    const output = await waitForFrame((frame) => frame.includes("Row 0"));
+    expect(output).toContain("▲");
+  });
+
+  it("shows no scrollbar arrows when rows fit within the visible height", async () => {
+    const rows = [row({ id: 1, label: "Only Row" })];
+    const { render, waitForFrame } = createOpenTuiHarness({
+      width: 60,
+      height: 10,
+    });
+
+    await render(
+      <AdminTable rows={rows} selectedId={null} width={40} height={5} />,
+    );
+
+    const output = await waitForFrame((frame) => frame.includes("Only Row"));
+    expect(output).not.toContain("▲");
+  });
+
   it("aligns the status column at the same position across rows regardless of label length", async () => {
     const rows = [
       row({ id: 1, label: "Short", status: "active", quality_label: "high" }),
