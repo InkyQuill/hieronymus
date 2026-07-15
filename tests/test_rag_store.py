@@ -403,6 +403,35 @@ def test_import_file_skips_unchanged_checksum(
     assert second.chunk_count == first.chunk_count
 
 
+def test_same_checksum_with_changed_format_reindexes_source(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    text_path = tmp_path / "source.txt"
+    markdown_path = tmp_path / "source.md"
+    content = "# Sense\n\nSense menu note."
+    text_path.write_text(content, encoding="utf-8")
+    markdown_path.write_text(content, encoding="utf-8")
+    store = RagStore(config)
+
+    first = store.import_file(series_slug, text_path, source_ref="source", source_type="auto")
+    second = store.import_file(
+        series_slug,
+        markdown_path,
+        source_ref="source",
+        source_type="auto",
+    )
+    hit = store.search(series_slug, "Sense menu", limit=1)[0]
+
+    assert first.source.content_type == "txt"
+    assert second.skipped is False
+    assert second.source.source_type == "markdown"
+    assert second.source.content_type == "md"
+    assert hit.chunk.chunk_kind == "markdown_section"
+    assert hit.chunk.location == "Sense paragraph 1"
+
+
 def test_reimport_with_same_checksum_refreshes_chunk_tags(
     config: HieronymusConfig,
     tmp_path: Path,

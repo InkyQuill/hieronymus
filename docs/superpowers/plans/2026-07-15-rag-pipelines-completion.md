@@ -117,7 +117,7 @@ git commit -m "fix: validate rag glossary headers"
 - Consumes: `RagStore.import_file(..., source_ref: str, source_type: str = "auto")`.
 - Produces: checksum fast path keyed by checksum plus parsed source/content types.
 
-- [ ] **Step 1: Add a failing format-change regression test**
+- [x] **Step 1: Add a failing format-change regression test**
 
 ```python
 def test_same_checksum_with_changed_format_reindexes_source(
@@ -149,7 +149,7 @@ def test_same_checksum_with_changed_format_reindexes_source(
     assert hit.chunk.location == "Sense paragraph 1"
 ```
 
-- [ ] **Step 2: Run the regression test and verify RED**
+- [x] **Step 2: Run the regression test and verify RED**
 
 Run:
 
@@ -159,7 +159,7 @@ uv run pytest tests/test_rag_store.py::test_same_checksum_with_changed_format_re
 
 Expected: FAIL because the second import returns the stored TXT source with `skipped=True`.
 
-- [ ] **Step 3: Make the fast path format-aware**
+- [x] **Step 3: Make the fast path format-aware**
 
 Replace its condition with:
 
@@ -174,7 +174,7 @@ Replace its condition with:
 
 Keep tag refresh and normal replacement behavior unchanged.
 
-- [ ] **Step 4: Run store tests and verify GREEN**
+- [x] **Step 4: Run store tests and verify GREEN**
 
 Run:
 
@@ -184,7 +184,7 @@ uv run pytest tests/test_rag_store.py -q
 
 Expected: all tests pass, including unchanged-checksum tag refresh.
 
-- [ ] **Step 5: Commit the format-aware import fix**
+- [x] **Step 5: Commit the format-aware import fix**
 
 ```bash
 git add src/hieronymus/rag.py tests/test_rag_store.py

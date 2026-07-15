@@ -89,7 +89,12 @@ class RagStore:
 
         with connect(self.config.database_path) as conn:
             existing = self._source_row(conn, series_slug, clean_source_ref)
-            if existing is not None and existing["checksum"] == parsed.checksum:
+            if (
+                existing is not None
+                and existing["checksum"] == parsed.checksum
+                and existing["source_type"] == parsed.source_type
+                and existing["content_type"] == parsed.content_type
+            ):
                 chunk_count = self._refresh_source_chunk_tags(
                     conn,
                     source_id=int(existing["id"]),
