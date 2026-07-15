@@ -374,7 +374,7 @@ git commit -m "refactor: split rag parsing and storage"
 - Parsing tests import parsed records and `load_rag_file` through the public `hieronymus.rag` facade.
 - Store tests import only `RagStore`, config, registry, and path/test helpers.
 
-- [ ] **Step 1: Move schema tests and their SQL helpers**
+- [x] **Step 1: Move schema tests and their SQL helpers**
 
 Move `_insert_series`, `_insert_rag_source`, `_insert_rag_chunk`,
 `_fts_match_count`, and these tests to `test_rag_schema.py`:
@@ -385,14 +385,14 @@ test_rag_chunk_series_must_match_source_series
 test_rag_chunk_fts_triggers_sync_insert_update_and_delete
 ```
 
-- [ ] **Step 2: Move parsing/model tests**
+- [x] **Step 2: Move parsing/model tests**
 
 Move `test_rag_dataclasses_expose_payload_fields` and all tests from
 `test_text_file_is_chunked_by_paragraph` through
 `test_yaml_file_accepts_mapping_entries` to `test_rag_parsing.py`, including the
 new invalid-header parameterization. Keep their assertions unchanged.
 
-- [ ] **Step 3: Remove unused imports and keep store helpers local**
+- [x] **Step 3: Remove unused imports and keep store helpers local**
 
 The remaining `test_rag_store.py` begins with `_series` and imports only:
 
@@ -406,7 +406,7 @@ from hieronymus.rag import RagStore
 from hieronymus.registry import Registry
 ```
 
-- [ ] **Step 4: Run the three component suites**
+- [x] **Step 4: Run the three component suites**
 
 Run:
 
@@ -417,7 +417,7 @@ uv run ruff check tests/test_rag_schema.py tests/test_rag_parsing.py tests/test_
 
 Expected: all moved tests pass and collection has no duplicate test names.
 
-- [ ] **Step 5: Commit the test split**
+- [x] **Step 5: Commit the test split**
 
 ```bash
 git add tests/test_rag_schema.py tests/test_rag_parsing.py tests/test_rag_store.py
