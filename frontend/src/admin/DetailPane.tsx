@@ -75,6 +75,7 @@ export function DetailPane({
 
   return (
     <scrollbox
+      key={height < 3 ? "scrollbar-hidden" : "scrollbar-auto"}
       width={width}
       height={height}
       style={{

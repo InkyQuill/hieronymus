@@ -33,6 +33,7 @@ export function AdminTable({
   const scrollboxRef = useRef<ScrollBoxRenderable>(null);
   const layout = width >= MIN_COLUMN_LAYOUT_WIDTH ? columnWidths(width) : null;
   const selectedIndex = rows.findIndex((row) => row.id === selectedId);
+  const scrollbarMode = height < 3 ? "hidden" : "auto";
   const scrollSelectedRowIntoView = useCallback(() => {
     if (selectedIndex >= 0) {
       scrollboxRef.current?.scrollChildIntoView(rowId(selectedIndex));
@@ -48,17 +49,18 @@ export function AdminTable({
     return () => {
       renderer.off(CliRenderEvents.FRAME, scrollSelectedRowIntoView);
     };
-  }, [renderer, scrollSelectedRowIntoView, selectedIndex]);
+  }, [renderer, scrollSelectedRowIntoView, scrollbarMode, selectedIndex]);
 
   return (
     <scrollbox
+      key={scrollbarMode}
       ref={scrollboxRef}
       width={width}
       height={height}
       style={{
         verticalScrollbarOptions: {
-          showArrows: height >= 3,
-          ...(height < 3 ? { visible: false } : {}),
+          showArrows: scrollbarMode === "auto",
+          ...(scrollbarMode === "hidden" ? { visible: false } : {}),
           width: 1,
           position: "absolute",
           right: 0,

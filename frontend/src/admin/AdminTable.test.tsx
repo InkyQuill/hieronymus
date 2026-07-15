@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import React from "react";
+import { useKeyboard } from "@opentui/react";
+import React, { useState } from "react";
 import stringWidth from "string-width";
 import type { AdminRow } from "../rpc/schema.js";
 import {
@@ -26,6 +27,30 @@ function displayColumnOf(line: string, value: string): number {
   const index = line.indexOf(value);
   expect(index).toBeGreaterThanOrEqual(0);
   return stringWidth(line.slice(0, index));
+}
+
+function ResizableAdminTable({ rows }: { rows: AdminRow[] }) {
+  const [height, setHeight] = useState(2);
+  useKeyboard((key) => {
+    if (key.name === "r") {
+      setHeight(5);
+    }
+  });
+  return (
+    <AdminTable rows={rows} selectedId={null} width={40} height={height} />
+  );
+}
+
+function SelectableAdminTable({ rows }: { rows: AdminRow[] }) {
+  const [selectedId, setSelectedId] = useState<number>(0);
+  useKeyboard((key) => {
+    if (key.name === "s") {
+      setSelectedId(20);
+    }
+  });
+  return (
+    <AdminTable rows={rows} selectedId={selectedId} width={40} height={5} />
+  );
 }
 
 afterEach(async () => {
@@ -98,23 +123,97 @@ describe("AdminTable", () => {
     expect(output).toContain("> Selected Row 20");
   });
 
-  it("keeps rows visible at heights too small for arrow controls", async () => {
+  it("scrolls a newly selected row into view after mount", async () => {
+    const rows = Array.from({ length: 30 }, (_, index) =>
+      row({ id: index, label: `Changed Row ${index}` }),
+    );
+    const { render, waitForFrame, mockInput } = createOpenTuiHarness({
+      width: 60,
+      height: 10,
+    });
+
+    await render(<SelectableAdminTable rows={rows} />);
+    await waitForFrame((frame) => frame.includes("> Changed Row 0"));
+    await mockInput.press("s");
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("> Changed Row 20"),
+    );
+    expect(output).not.toContain("> Changed Row 0");
+  });
+
+  it("restores automatic scrollbar visibility after growing from height two", async () => {
+    const rows = Array.from({ length: 30 }, (_, index) =>
+      row({ id: index, label: `Resized Row ${index}` }),
+    );
+    const { render, waitForFrame, mockInput } = createOpenTuiHarness({
+      width: 60,
+      height: 10,
+    });
+
+    await render(<ResizableAdminTable rows={rows} />);
+    const small = await waitForFrame((frame) =>
+      frame.includes("Resized Row 0"),
+    );
+    expect(small).not.toContain("▲");
+    await mockInput.press("r");
+
+    const grown = await waitForFrame((frame) =>
+      frame.includes("Resized Row 4"),
+    );
+    expect(grown).toContain("▲");
+    expect(grown).toContain("▼");
+  });
+
+  it("keeps rows visible at heights one and two without arrow controls", async () => {
     const rows = Array.from({ length: 3 }, (_, index) =>
       row({ id: index, label: `Tiny Row ${index}` }),
     );
+
+    for (const height of [1, 2]) {
+      const { render, waitForFrame } = createOpenTuiHarness({
+        width: 60,
+        height: 4,
+      });
+      await render(
+        <AdminTable rows={rows} selectedId={null} width={40} height={height} />,
+      );
+
+      const output = await waitForFrame((frame) =>
+        frame.includes("Tiny Row 0"),
+      );
+      if (height === 2) {
+        expect(output).toContain("Tiny Row 1");
+      }
+      expect(output).not.toContain("▲");
+      expect(output).not.toContain("▼");
+      await cleanupOpenTuiHarnesses();
+    }
+  });
+
+  it("shows right-edge arrows at the minimum three-row control height", async () => {
+    const rows = Array.from({ length: 4 }, (_, index) =>
+      row({ id: index, label: `Three High ${index}` }),
+    );
     const { render, waitForFrame } = createOpenTuiHarness({
       width: 60,
-      height: 4,
+      height: 5,
     });
 
     await render(
-      <AdminTable rows={rows} selectedId={null} width={40} height={2} />,
+      <AdminTable rows={rows} selectedId={null} width={40} height={3} />,
     );
 
-    const output = await waitForFrame((frame) => frame.includes("Tiny Row 0"));
-    expect(output).toContain("Tiny Row 1");
-    expect(output).not.toContain("▲");
-    expect(output).not.toContain("▼");
+    const output = await waitForFrame((frame) =>
+      frame.includes("Three High 2"),
+    );
+    for (const glyph of ["▲", "▼"]) {
+      const line = output
+        .split("\n")
+        .find((candidate) => candidate.includes(glyph));
+      expect(line).toBeDefined();
+      expect(displayColumnOf(line!, glyph)).toBe(39);
+    }
   });
 
   it("aligns the status column at the same position across rows regardless of label length", async () => {
