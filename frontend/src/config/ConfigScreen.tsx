@@ -77,12 +77,13 @@ export function ConfigScreen({ initial, client }: Props) {
   const [localFormValues, setLocalFormValues] = useState(() =>
     formValuesWithSelectedProvider(payload.form_values, payload),
   );
+  const localFormValuesRef = useRef(localFormValues);
 
   // Keep local values in sync when payload changes
   useEffect(() => {
-    setLocalFormValues(
-      formValuesWithSelectedProvider(payload.form_values, payload),
-    );
+    const next = formValuesWithSelectedProvider(payload.form_values, payload);
+    localFormValuesRef.current = next;
+    setLocalFormValues(next);
   }, [payload]);
 
   const providerChoices = payload.provider_choices;
@@ -121,10 +122,15 @@ export function ConfigScreen({ initial, client }: Props) {
   };
 
   const handleFieldChange = (key: string, value: string) => {
-    setLocalFormValues((prev) => withFieldValue(prev, key, value));
+    const next = withFieldValue(localFormValuesRef.current, key, value);
+    localFormValuesRef.current = next;
+    const field = formFields.find((candidate) => candidate.key === key);
+    if (field?.type === "toggle" || field?.type === "choice") {
+      setLocalFormValues(next);
+    }
   };
 
-  const submitField = (formValues: ConfigFormValues = localFormValues) => {
+  const submitField = (formValues: ConfigFormValues = localFormValuesRef.current) => {
     setIsEditing(false);
     if (!client || busy || operationInFlight.current) {
       return;
@@ -277,9 +283,9 @@ export function ConfigScreen({ initial, client }: Props) {
     if (isEditing) {
       if (escape) {
         // Discard edits
-        setLocalFormValues(
-          formValuesWithSelectedProvider(payload.form_values, payload),
-        );
+        const next = formValuesWithSelectedProvider(payload.form_values, payload);
+        localFormValuesRef.current = next;
+        setLocalFormValues(next);
         setIsEditing(false);
         return;
       }
