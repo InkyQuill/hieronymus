@@ -3,6 +3,7 @@ import { useRenderer } from "@opentui/react";
 import React, { useCallback, useEffect, useRef } from "react";
 import stringWidth from "string-width";
 import type { AdminRow } from "../rpc/schema.js";
+import { theme } from "../ui/theme.js";
 
 const MARKER_WIDTH = 2;
 const COLUMN_GAP = 1;
@@ -73,7 +74,13 @@ export function AdminTable({
         <text
           key={String(row.id)}
           id={rowId(index)}
-          fg={row.id === selectedId ? (focused ? "cyan" : "white") : undefined}
+          fg={
+            row.id === selectedId
+              ? focused
+                ? theme.accentPrimary
+                : "white"
+              : undefined
+          }
         >
           {layout === null ? (
             tinyRow(row.label, row.id === selectedId, width)

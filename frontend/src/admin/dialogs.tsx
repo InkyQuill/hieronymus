@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { TextAreaInput, TextInput } from "../ui/TextInput.js";
+import { theme } from "../ui/theme.js";
 import { useFieldFocus } from "../ui/useFieldFocus.js";
 
 export type DialogKind =
@@ -54,7 +55,7 @@ export function DialogOverlay({ state, onClose, onSubmit }: DialogProps) {
 
   const modalStyle: any = {
     borderStyle: "double",
-    borderColor: "cyan",
+    borderColor: theme.accentPrimary,
     flexDirection: "column",
     padding: 1,
     minWidth: 60,
@@ -165,25 +166,25 @@ function DeleteDialog({
 
   return (
     <box {...overlayStyle}>
-      <box {...modalStyle} borderColor="red">
-        <text fg="red">Confirm Deletion</text>
+      <box {...modalStyle} borderColor={theme.statusError}>
+        <text fg={theme.statusError}>Confirm Deletion</text>
         <box marginTop={1}>
           <text>
             Are you sure you want to delete this {state.entityType || "item"}?
           </text>
         </box>
         <box marginTop={1} flexDirection="row">
-          <text fg="gray">ID: </text>
+          <text fg={theme.accentMuted}>ID: </text>
           <text>{state.entityId}</text>
         </box>
         {state.error ? (
           <box marginTop={1}>
-            <text fg="red">{state.error}</text>
+            <text fg={theme.statusError}>{state.error}</text>
           </box>
         ) : null}
         <box marginTop={1} justifyContent="space-between">
-          <text fg="gray">[Y] Yes, Delete</text>
-          <text fg="gray">[Esc/N] Cancel</text>
+          <text fg={theme.accentMuted}>[Y] Yes, Delete</text>
+          <text fg={theme.accentMuted}>[Esc/N] Cancel</text>
         </box>
       </box>
     </box>
@@ -257,17 +258,21 @@ function AddDialog({
   return (
     <box {...overlayStyle}>
       <box {...modalStyle}>
-        <text fg="cyan">Add New Crystal / Lesson / Rule</text>
+        <text fg={theme.accentPrimary}>Add New Crystal / Lesson / Rule</text>
         <box marginTop={1} flexDirection="column">
           <box flexDirection="row">
-            <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Type: </text>
+            <text
+              fg={focusedIndex === 0 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Type:{" "}
+            </text>
             <select
               width={18}
               height={3}
               focused={focusedIndex === 0}
               selectedIndex={["crystal", "lesson", "rule"].indexOf(type)}
               showDescription={false}
-              selectedTextColor="cyan"
+              selectedTextColor={theme.accentPrimary}
               selectedBackgroundColor="transparent"
               focusedBackgroundColor="transparent"
               options={[
@@ -297,7 +302,11 @@ function AddDialog({
           </box>
 
           <box flexDirection="row" marginTop={1}>
-            <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Title: </text>
+            <text
+              fg={focusedIndex === 1 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Title:{" "}
+            </text>
             <TextInput
               value={title}
               onChange={setTitle}
@@ -307,7 +316,11 @@ function AddDialog({
           </box>
 
           <box flexDirection="row" marginTop={1}>
-            <text fg={focusedIndex === 2 ? "cyan" : "gray"}>Text: </text>
+            <text
+              fg={focusedIndex === 2 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Text:{" "}
+            </text>
             <TextAreaInput
               value={text}
               onChange={setText}
@@ -318,7 +331,11 @@ function AddDialog({
           </box>
 
           <box flexDirection="row" marginTop={1}>
-            <text fg={focusedIndex === 3 ? "cyan" : "gray"}>Tags: </text>
+            <text
+              fg={focusedIndex === 3 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Tags:{" "}
+            </text>
             <TextInput
               value={tags}
               onChange={setTags}
@@ -329,8 +346,8 @@ function AddDialog({
           </box>
         </box>
         <box marginTop={1} justifyContent="space-between">
-          <text fg="gray">[Enter] Submit</text>
-          <text fg="gray">[Esc] Cancel</text>
+          <text fg={theme.accentMuted}>[Enter] Submit</text>
+          <text fg={theme.accentMuted}>[Esc] Cancel</text>
         </box>
       </box>
     </box>
@@ -382,10 +399,14 @@ function EditDialog({
   return (
     <box {...overlayStyle}>
       <box {...modalStyle}>
-        <text fg="cyan">Edit Memory</text>
+        <text fg={theme.accentPrimary}>Edit Memory</text>
         <box marginTop={1} flexDirection="column">
           <box flexDirection="row">
-            <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Title: </text>
+            <text
+              fg={focusedIndex === 0 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Title:{" "}
+            </text>
             <TextInput
               value={title}
               onChange={setTitle}
@@ -395,7 +416,11 @@ function EditDialog({
           </box>
 
           <box flexDirection="row" marginTop={1}>
-            <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Text: </text>
+            <text
+              fg={focusedIndex === 1 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Text:{" "}
+            </text>
             <TextAreaInput
               value={text}
               onChange={setText}
@@ -407,12 +432,12 @@ function EditDialog({
         </box>
         {state.error ? (
           <box marginTop={1}>
-            <text fg="red">{state.error}</text>
+            <text fg={theme.statusError}>{state.error}</text>
           </box>
         ) : null}
         <box marginTop={1} justifyContent="space-between">
-          <text fg="gray">[Enter] Submit</text>
-          <text fg="gray">[Esc] Cancel</text>
+          <text fg={theme.accentMuted}>[Enter] Submit</text>
+          <text fg={theme.accentMuted}>[Esc] Cancel</text>
         </box>
       </box>
     </box>
@@ -451,9 +476,9 @@ function RenameDialog({
   return (
     <box {...overlayStyle}>
       <box {...modalStyle}>
-        <text fg="cyan">Rename Concept</text>
+        <text fg={theme.accentPrimary}>Rename Concept</text>
         <box marginTop={1} flexDirection="row">
-          <text fg="cyan">Name: </text>
+          <text fg={theme.accentPrimary}>Name: </text>
           <TextInput
             value={name}
             onChange={setName}
@@ -464,12 +489,12 @@ function RenameDialog({
         </box>
         {state.error ? (
           <box marginTop={1}>
-            <text fg="red">{state.error}</text>
+            <text fg={theme.statusError}>{state.error}</text>
           </box>
         ) : null}
         <box marginTop={1} justifyContent="space-between">
-          <text fg="gray">[Enter] Submit</text>
-          <text fg="gray">[Esc] Cancel</text>
+          <text fg={theme.accentMuted}>[Enter] Submit</text>
+          <text fg={theme.accentMuted}>[Esc] Cancel</text>
         </box>
       </box>
     </box>
@@ -541,14 +566,20 @@ function MergeDialog({
   return (
     <box {...overlayStyle}>
       <box {...modalStyle}>
-        <text fg="cyan">Merge {isConcept ? "Concepts" : "Crystals"}</text>
+        <text fg={theme.accentPrimary}>
+          Merge {isConcept ? "Concepts" : "Crystals"}
+        </text>
         <box marginTop={1} flexDirection="column">
           <text>
             Merging source {isConcept ? "Concept" : "Crystal"} ID:{" "}
             {state.entityId}
           </text>
           <box flexDirection="row" marginTop={1}>
-            <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Target ID: </text>
+            <text
+              fg={focusedIndex === 0 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Target ID:{" "}
+            </text>
             <TextInput
               value={targetId}
               onChange={setTargetId}
@@ -559,7 +590,13 @@ function MergeDialog({
 
           {isConcept ? (
             <box flexDirection="row" marginTop={1}>
-              <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Reason: </text>
+              <text
+                fg={
+                  focusedIndex === 1 ? theme.accentPrimary : theme.accentMuted
+                }
+              >
+                Reason:{" "}
+              </text>
               <TextInput
                 value={evidence}
                 onChange={setEvidence}
@@ -571,7 +608,13 @@ function MergeDialog({
           ) : (
             <>
               <box flexDirection="row" marginTop={1}>
-                <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Title: </text>
+                <text
+                  fg={
+                    focusedIndex === 1 ? theme.accentPrimary : theme.accentMuted
+                  }
+                >
+                  Title:{" "}
+                </text>
                 <TextInput
                   value={title}
                   onChange={setTitle}
@@ -580,7 +623,13 @@ function MergeDialog({
                 />
               </box>
               <box flexDirection="row" marginTop={1}>
-                <text fg={focusedIndex === 2 ? "cyan" : "gray"}>Text: </text>
+                <text
+                  fg={
+                    focusedIndex === 2 ? theme.accentPrimary : theme.accentMuted
+                  }
+                >
+                  Text:{" "}
+                </text>
                 <TextAreaInput
                   value={text}
                   onChange={setText}
@@ -594,12 +643,12 @@ function MergeDialog({
         </box>
         {localError || state.error ? (
           <box marginTop={1}>
-            <text fg="red">{localError || state.error}</text>
+            <text fg={theme.statusError}>{localError || state.error}</text>
           </box>
         ) : null}
         <box marginTop={1} justifyContent="space-between">
-          <text fg="gray">[Enter] Submit</text>
-          <text fg="gray">[Esc] Cancel</text>
+          <text fg={theme.accentMuted}>[Enter] Submit</text>
+          <text fg={theme.accentMuted}>[Esc] Cancel</text>
         </box>
       </box>
     </box>
@@ -655,14 +704,18 @@ function SplitDialog({
   return (
     <box {...overlayStyle}>
       <box {...modalStyle}>
-        <text fg="cyan">Split Crystal</text>
+        <text fg={theme.accentPrimary}>Split Crystal</text>
         <box marginTop={1} flexDirection="column">
           <text>Splitting Crystal ID: {state.entityId}</text>
           <box marginTop={1}>
             <text>Part 1</text>
           </box>
           <box flexDirection="row">
-            <text fg={focusedIndex === 0 ? "cyan" : "gray"}>Title: </text>
+            <text
+              fg={focusedIndex === 0 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Title:{" "}
+            </text>
             <TextInput
               value={partOneTitle}
               onChange={setPartOneTitle}
@@ -671,7 +724,11 @@ function SplitDialog({
             />
           </box>
           <box flexDirection="row" marginTop={1}>
-            <text fg={focusedIndex === 1 ? "cyan" : "gray"}>Text: </text>
+            <text
+              fg={focusedIndex === 1 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Text:{" "}
+            </text>
             <TextAreaInput
               value={partOneText}
               onChange={setPartOneText}
@@ -685,7 +742,11 @@ function SplitDialog({
             <text>Part 2</text>
           </box>
           <box flexDirection="row">
-            <text fg={focusedIndex === 2 ? "cyan" : "gray"}>Title: </text>
+            <text
+              fg={focusedIndex === 2 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Title:{" "}
+            </text>
             <TextInput
               value={partTwoTitle}
               onChange={setPartTwoTitle}
@@ -694,7 +755,11 @@ function SplitDialog({
             />
           </box>
           <box flexDirection="row" marginTop={1}>
-            <text fg={focusedIndex === 3 ? "cyan" : "gray"}>Text: </text>
+            <text
+              fg={focusedIndex === 3 ? theme.accentPrimary : theme.accentMuted}
+            >
+              Text:{" "}
+            </text>
             <TextAreaInput
               value={partTwoText}
               onChange={setPartTwoText}
@@ -706,12 +771,12 @@ function SplitDialog({
         </box>
         {state.error ? (
           <box marginTop={1}>
-            <text fg="red">{state.error}</text>
+            <text fg={theme.statusError}>{state.error}</text>
           </box>
         ) : null}
         <box marginTop={1} justifyContent="space-between">
-          <text fg="gray">[Enter] Submit</text>
-          <text fg="gray">[Esc] Cancel</text>
+          <text fg={theme.accentMuted}>[Enter] Submit</text>
+          <text fg={theme.accentMuted}>[Esc] Cancel</text>
         </box>
       </box>
     </box>

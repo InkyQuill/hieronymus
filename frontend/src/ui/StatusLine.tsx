@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useTimeline } from "@opentui/react";
 import { Spinner } from "./Spinner.js";
+import { theme } from "./theme.js";
 
 type Props = {
   message: string;
@@ -41,7 +42,11 @@ export function StatusLine({ message, error = false, busy = false }: Props) {
     timeline.restart();
   }, [busy, timeline]);
 
-  const fg = error ? "red" : busy && pulse > 0.5 ? "cyan" : "green";
+  const fg = error
+    ? theme.statusError
+    : busy && pulse > 0.5
+      ? theme.accentPrimary
+      : theme.statusSuccess;
   return (
     <box flexDirection="row" marginTop={1}>
       {busy && (

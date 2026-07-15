@@ -1,5 +1,6 @@
 import React from "react";
 import type { AdminCommand } from "../rpc/schema.js";
+import { theme } from "../ui/theme.js";
 
 export function HelpOverlay({
   commands,
@@ -17,20 +18,20 @@ export function HelpOverlay({
     <box
       flexDirection="column"
       borderStyle="rounded"
-      borderColor="cyan"
+      borderColor={theme.accentPrimary}
       paddingX={1}
       paddingY={1}
       width={width}
     >
-      <text fg="cyan">Help</text>
+      <text fg={theme.accentPrimary}>Help</text>
       <text>Navigation</text>
-      <text fg="gray">
+      <text fg={theme.accentMuted}>
         Tab/Shift+Tab focus panels ↑/↓ or hjkl move 1-9 switch views
       </text>
-      <text fg="gray">/ search Esc/? close Ctrl+P commands</text>
+      <text fg={theme.accentMuted}>/ search Esc/? close Ctrl+P commands</text>
       <text>Commands for {view}</text>
       {visibleCommands.length === 0 ? (
-        <text fg="gray">No commands for this view</text>
+        <text fg={theme.accentMuted}>No commands for this view</text>
       ) : null}
       {visibleCommands.map((command) => (
         <text key={command.id}>

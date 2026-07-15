@@ -15,6 +15,7 @@ import type { RpcClient } from "../rpc/client.js";
 import { ConfigForm } from "./ConfigForm.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
+import { theme } from "../ui/theme.js";
 import {
   classifyTerminalLayout,
   MIN_TERMINAL_HEIGHT,
@@ -391,11 +392,13 @@ export function ConfigScreen({ initial, client }: Props) {
         height={dimensions.height}
       >
         <text>Terminal too small</text>
-        <text fg="gray">
+        <text fg={theme.accentMuted}>
           {dimensions.width}x{dimensions.height}; minimum {MIN_TERMINAL_WIDTH}x
           {MIN_TERMINAL_HEIGHT}
         </text>
-        <text fg="gray">Resize terminal to edit Hieronymus config.</text>
+        <text fg={theme.accentMuted}>
+          Resize terminal to edit Hieronymus config.
+        </text>
       </box>
     );
   }
@@ -420,7 +423,7 @@ export function ConfigScreen({ initial, client }: Props) {
           marginTop={1}
           height={compactHeight}
           borderStyle="rounded"
-          borderColor="cyan"
+          borderColor={theme.accentPrimary}
           paddingX={1}
         >
           <ConfigForm
@@ -445,7 +448,7 @@ export function ConfigScreen({ initial, client }: Props) {
             checkSummary={checkSummary}
           />
           {compactErrors.map((error) => (
-            <text key={error} fg="red">
+            <text key={error} fg={theme.statusError}>
               {error}
             </text>
           ))}
@@ -485,7 +488,7 @@ export function ConfigScreen({ initial, client }: Props) {
         width={widePanelWidth}
         height={widePanelRows}
         borderStyle="rounded"
-        borderColor="cyan"
+        borderColor={theme.accentPrimary}
         paddingX={1}
       >
         <ConfigForm
@@ -510,12 +513,12 @@ export function ConfigScreen({ initial, client }: Props) {
           checkSummary={checkSummary}
         />
         {payload.validation.errors.map((error) => (
-          <text key={error} fg="red">
+          <text key={error} fg={theme.statusError}>
             {error}
           </text>
         ))}
         {detailErrors.map((error) => (
-          <text key={error} fg="red">
+          <text key={error} fg={theme.statusError}>
             {error}
           </text>
         ))}
@@ -550,7 +553,7 @@ function ConfigHeader({
   return (
     <box flexDirection="column" width={width} height={2}>
       <text width={width}>Hieronymus Config</text>
-      <text width={width} fg="gray">
+      <text width={width} fg={theme.accentMuted}>
         {labels.join(" | ")}
       </text>
     </box>
@@ -571,8 +574,8 @@ function ConfigDiagnostics({
   return (
     <box flexDirection="column">
       <text>{modelSummary(models, source)}</text>
-      <text fg="red">{suggestionError || " "}</text>
-      <text fg={checkSummary?.ok ? "green" : "red"}>
+      <text fg={theme.statusError}>{suggestionError || " "}</text>
+      <text fg={checkSummary?.ok ? theme.statusSuccess : theme.statusError}>
         {checkSummary?.text || " "}
       </text>
     </box>
@@ -607,7 +610,7 @@ function SearchPrompt({ active, query }: { active: boolean; query: string }) {
 
   return (
     <box marginTop={1}>
-      <text fg="cyan">Search: {query}</text>
+      <text fg={theme.accentPrimary}>Search: {query}</text>
     </box>
   );
 }

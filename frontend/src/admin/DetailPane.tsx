@@ -1,6 +1,7 @@
 import React from "react";
 import { SyntaxStyle } from "@opentui/core";
 import type { AdminSnapshot } from "../rpc/schema.js";
+import { theme } from "../ui/theme.js";
 import { MarkdownBody } from "./markdown.js";
 
 const codeSyntaxStyle = SyntaxStyle.fromStyles({
@@ -91,7 +92,7 @@ export function DetailPane({
       }}
     >
       <text flexShrink={0}>{detail.title}</text>
-      <text flexShrink={0} fg="gray">
+      <text flexShrink={0} fg={theme.accentMuted}>
         {detail.subtitle}
       </text>
       <box flexDirection="column" flexShrink={0} marginTop={1} marginBottom={1}>

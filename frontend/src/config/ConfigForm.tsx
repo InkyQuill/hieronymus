@@ -1,5 +1,6 @@
 import React from "react";
 import type { ConfigFormField, ConfigFormGroup } from "../rpc/schema.js";
+import { theme } from "../ui/theme.js";
 
 type RenderedField = ConfigFormField & { value: string };
 
@@ -107,25 +108,34 @@ export function ConfigForm({
               width={boundedWidth}
               marginTop={1}
               borderStyle="rounded"
-              borderColor={isGroupActive ? "cyan" : "gray"}
+              borderColor={
+                isGroupActive ? theme.accentPrimary : theme.accentMuted
+              }
               paddingX={1}
             >
               <box flexDirection="row">
-                <text fg={isGroupActive ? "cyan" : "gray"}>
+                <text
+                  fg={isGroupActive ? theme.accentPrimary : theme.accentMuted}
+                >
                   {displayGroupLabel(group)}
                 </text>
                 {configFileLabel(group) ? (
-                  <text fg="gray"> [{configFileLabel(group)}]</text>
+                  <text fg={theme.accentMuted}>
+                    {" "}
+                    [{configFileLabel(group)}]
+                  </text>
                 ) : null}
               </box>
               {/* Windowed layouts keep only the active field hint to preserve footer space. */}
               {group.description && visibleRows === undefined ? (
-                <text fg="gray">{group.description}</text>
+                <text fg={theme.accentMuted}>{group.description}</text>
               ) : null}
 
               {visibleGroupFields.map(({ field, index }) => {
                 const isFieldFocused = focused && focusedFieldIndex === index;
-                const labelColor = isFieldFocused ? "cyan" : "gray";
+                const labelColor = isFieldFocused
+                  ? theme.accentPrimary
+                  : theme.accentMuted;
                 const fieldInputWidth = Math.max(
                   12,
                   boundedWidth - field.label.length - 8,
@@ -148,14 +158,22 @@ export function ConfigForm({
                             ).map((choice) => (
                               <text
                                 key={choice}
-                                fg={field.value === choice ? "cyan" : "gray"}
+                                fg={
+                                  field.value === choice
+                                    ? theme.accentPrimary
+                                    : theme.accentMuted
+                                }
                               >
                                 [{choice}]{" "}
                               </text>
                             ))}
                           </box>
                         ) : (
-                          <text fg={isFieldFocused ? "cyan" : undefined}>
+                          <text
+                            fg={
+                              isFieldFocused ? theme.accentPrimary : undefined
+                            }
+                          >
                             {field.value}
                           </text>
                         )}
@@ -171,7 +189,7 @@ export function ConfigForm({
                       />
                     ) : (
                       <text
-                        fg={isFieldFocused ? "cyan" : undefined}
+                        fg={isFieldFocused ? theme.accentPrimary : undefined}
                         flexGrow={1}
                       >
                         {field.value || field.placeholder || " "}
@@ -182,7 +200,7 @@ export function ConfigForm({
               })}
 
               {isGroupActive && activeField?.hint ? (
-                <text fg="cyan" marginTop={1}>
+                <text fg={theme.accentPrimary} marginTop={1}>
                   {activeField.hint}
                 </text>
               ) : null}

@@ -21,6 +21,7 @@ import {
 import type { RpcClient } from "../rpc/client.js";
 import { KeyHelp } from "../ui/KeyHelp.js";
 import { StatusLine } from "../ui/StatusLine.js";
+import { theme } from "../ui/theme.js";
 import { FocusableList } from "../ui/FocusableList.js";
 import {
   classifyTerminalLayout,
@@ -796,11 +797,13 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
     return (
       <box flexDirection="column" width={dimensions.width}>
         <text>Terminal too small</text>
-        <text fg="gray">
+        <text fg={theme.accentMuted}>
           {dimensions.width}x{dimensions.height}; minimum {MIN_TERMINAL_WIDTH}x
           {MIN_TERMINAL_HEIGHT}
         </text>
-        <text fg="gray">Resize terminal to use Hieronymus admin.</text>
+        <text fg={theme.accentMuted}>
+          Resize terminal to use Hieronymus admin.
+        </text>
       </box>
     );
   }
@@ -822,7 +825,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           {initial.header.logo.text} {initial.header.product} Admin{" "}
           {initial.header.version}
         </text>
-        <text fg="gray">
+        <text fg={theme.accentMuted}>
           {snapshot.view} · {layout.kind} {dimensions.width}x{dimensions.height}
         </text>
         <text>{formatStats(stats)}</text>
@@ -836,7 +839,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           marginTop={1}
           height={compactPaneHeight}
           borderStyle="rounded"
-          borderColor="cyan"
+          borderColor={theme.accentPrimary}
           title={
             helpOpen || commandsOpen
               ? compactPanelLabel(activePanel, snapshot.view)
@@ -862,7 +865,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
             </>
           ) : activePanel === "views" ? (
             <>
-              <text fg="cyan">Views</text>
+              <text fg={theme.accentPrimary}>Views</text>
               <FocusableList
                 items={initial.views}
                 selectedIndex={selectedViewIndex}
@@ -872,7 +875,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
             </>
           ) : activePanel === "table" ? (
             <>
-              <text fg="cyan">{snapshot.view}</text>
+              <text fg={theme.accentPrimary}>{snapshot.view}</text>
               <box marginTop={1}>
                 <AdminTable
                   rows={snapshot.rows}
@@ -885,7 +888,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
             </>
           ) : (
             <>
-              <text fg="cyan">Detail Inspector</text>
+              <text fg={theme.accentPrimary}>Detail Inspector</text>
               <box marginTop={1}>
                 <DetailPane
                   detail={snapshot.detail}
@@ -899,7 +902,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
 
         <SearchPrompt active={searchActive} query={searchText} />
         <box flexDirection="row" marginTop={1}>
-          <text fg="gray">
+          <text fg={theme.accentMuted}>
             {footerText(
               footerKeys({
                 commandsOpen,
@@ -929,7 +932,7 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
       <box
         flexDirection="column"
         borderStyle="rounded"
-        borderColor="gray"
+        borderColor={theme.accentMuted}
         paddingX={1}
         paddingY={1}
       >
@@ -951,10 +954,14 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           flexDirection="column"
           width={28}
           borderStyle="rounded"
-          borderColor={activePanel === "views" ? "cyan" : "gray"}
+          borderColor={
+            activePanel === "views" ? theme.accentPrimary : theme.accentMuted
+          }
           paddingX={1}
         >
-          <text fg={activePanel === "views" ? "cyan" : undefined}>Views</text>
+          <text fg={activePanel === "views" ? theme.accentPrimary : undefined}>
+            Views
+          </text>
           <FocusableList
             items={initial.views}
             selectedIndex={selectedViewIndex}
@@ -968,10 +975,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           flexDirection="column"
           width={50}
           borderStyle="rounded"
-          borderColor={activePanel === "table" ? "cyan" : "gray"}
+          borderColor={
+            activePanel === "table" ? theme.accentPrimary : theme.accentMuted
+          }
           paddingX={1}
         >
-          <text fg={activePanel === "table" ? "cyan" : undefined}>
+          <text fg={activePanel === "table" ? theme.accentPrimary : undefined}>
             {snapshot.view}
           </text>
           <AdminTable
@@ -986,10 +995,12 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           flexDirection="column"
           width={58}
           borderStyle="rounded"
-          borderColor={activePanel === "detail" ? "cyan" : "gray"}
+          borderColor={
+            activePanel === "detail" ? theme.accentPrimary : theme.accentMuted
+          }
           paddingX={1}
         >
-          <text fg={activePanel === "detail" ? "cyan" : undefined}>
+          <text fg={activePanel === "detail" ? theme.accentPrimary : undefined}>
             Detail Inspector
           </text>
           {helpOpen ? (
@@ -1106,7 +1117,7 @@ function SearchPrompt({ active, query }: { active: boolean; query: string }) {
 
   return (
     <box marginTop={1}>
-      <text fg="cyan">Search: {query}</text>
+      <text fg={theme.accentPrimary}>Search: {query}</text>
     </box>
   );
 }
@@ -1246,11 +1257,11 @@ function Header({
         <text>
           {header.logo.text} {header.product} Admin {header.version}
         </text>
-        <text fg={serviceRunning ? "green" : "gray"}>
+        <text fg={serviceRunning ? theme.statusSuccess : theme.accentMuted}>
           {serviceRunning ? "● Service running" : "○ Service stopped"}
         </text>
       </box>
-      <text fg="gray">{header.tagline}</text>
+      <text fg={theme.accentMuted}>{header.tagline}</text>
     </>
   );
 }
@@ -1299,14 +1310,14 @@ function StatusPanels({
         label="Short-term"
         value={shortTermStatus.pending_count}
         max={shortTermStatus.max_pending_short_term_memories}
-        fg={shortTermStatus.urgent ? "yellow" : "cyan"}
+        fg={shortTermStatus.urgent ? theme.statusWarning : theme.accentPrimary}
       />
       {shortTermStatus.drain_in_progress ? (
         <Gauge
           label="Drain"
           value={shortTermStatus.drain_completed}
           max={shortTermStatus.drain_total}
-          fg="cyan"
+          fg={theme.accentPrimary}
         />
       ) : null}
       <box flexDirection="row" marginTop={0}>
@@ -1322,7 +1333,7 @@ function StatusPanels({
           label="Dream"
           value={Math.round(dreamStatus.progress * 100)}
           max={100}
-          fg="cyan"
+          fg={theme.accentPrimary}
         />
       ) : null}
     </box>
@@ -1349,7 +1360,9 @@ function ConfigSummary({ configEditor }: { configEditor: AdminConfigEditor }) {
         {thresholdNames.length}
         {"  "}model cache warnings {warnings.length}
       </text>
-      {warnings[0] ? <text fg="yellow">{warnings[0].message}</text> : null}
+      {warnings[0] ? (
+        <text fg={theme.statusWarning}>{warnings[0].message}</text>
+      ) : null}
     </box>
   );
 }
