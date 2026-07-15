@@ -850,11 +850,15 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
           height={compactPaneHeight}
           borderStyle="rounded"
           borderColor="cyan"
+          title={
+            helpOpen || commandsOpen
+              ? compactPanelLabel(activePanel, snapshot.view)
+              : undefined
+          }
           paddingX={1}
         >
           {helpOpen ? (
             <>
-              <text fg="cyan">Detail Inspector</text>
               <HelpOverlay
                 commands={initial.command_options}
                 view={snapshot.view}
@@ -863,7 +867,6 @@ export function AdminScreen({ initial, client, showCommands = false }: Props) {
             </>
           ) : commandsOpen ? (
             <>
-              <text fg="cyan">Detail Inspector</text>
               <CommandPalette
                 commands={paletteCommands}
                 selectedIndex={clampCommandIndex(selectedCommandIndex)}
@@ -1326,4 +1329,17 @@ function formatPercent(value: number) {
 
 function serviceStatus(running: boolean) {
   return running ? "Service running" : "Service stopped";
+}
+
+function compactPanelLabel(
+  activePanel: "views" | "table" | "detail",
+  view: string,
+): string {
+  if (activePanel === "views") {
+    return "Views";
+  }
+  if (activePanel === "table") {
+    return view;
+  }
+  return "Detail Inspector";
 }

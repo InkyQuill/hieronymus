@@ -288,6 +288,19 @@ describe("AdminScreen", () => {
     expect(output).toContain("Esc/? close");
   });
 
+  it("labels the compact overlay pane after the active panel, not always Detail Inspector", async () => {
+    const { render, mockInput, waitForFrame } = setupSizedTest(80, 24);
+
+    await render(<AdminScreen initial={bootstrap()} client={undefined} />);
+    await mockInput.press("p", { ctrl: true });
+
+    const output = await waitForFrame((frame) =>
+      frame.includes("Command Palette"),
+    );
+    expect(output).toContain("Views");
+    expect(output).not.toContain("Detail Inspector");
+  });
+
   it("keeps command palette inside the narrow admin viewport", async () => {
     const { render, mockInput, waitForFrame } = setupSizedTest(60, 20);
 
