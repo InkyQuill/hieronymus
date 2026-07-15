@@ -48,6 +48,8 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.semantic_release]
+allow_zero_version = true
+major_on_zero = false
 version_toml = ["pyproject.toml:project.version"]
 version_variables = ["src/hieronymus/__init__.py:__version__"]
 tag_format = "v{version}"
