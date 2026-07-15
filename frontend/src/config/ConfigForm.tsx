@@ -178,22 +178,15 @@ export function ConfigForm({
                           </text>
                         )}
                       </box>
-                    ) : isFieldFocused && isEditing ? (
+                    ) : (
                       <input
                         value={field.value}
                         onInput={(val) => onFieldChange(field.key, val)}
                         onSubmit={() => onSubmitField()}
-                        focused={true}
+                        focused={isFieldFocused && isEditing}
                         placeholder={field.placeholder}
                         width={fieldInputWidth}
                       />
-                    ) : (
-                      <text
-                        fg={isFieldFocused ? theme.accentPrimary : undefined}
-                        flexGrow={1}
-                      >
-                        {field.value || field.placeholder || " "}
-                      </text>
                     )}
                   </box>
                 );

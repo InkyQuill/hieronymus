@@ -1358,6 +1358,34 @@ describe("ConfigScreen", () => {
     expect(output).not.toContain("Model: epseek");
   });
 
+  it("edits a provider API key without entering an update loop", async () => {
+    const initial = {
+      ...payload(),
+      form_schema: formSchema([
+        {
+          key: "provider.api_key",
+          group: "provider",
+          label: "API Key",
+          hint: "Provider credential.",
+          placeholder: "stored in provider.conf",
+          type: "secret" as const,
+          choices: [],
+          default: "",
+          redacted: true,
+        },
+      ]),
+    };
+    const { render, mockInput, waitForFrame } = setupTest();
+
+    await render(<ConfigScreen initial={initial} client={undefined} />);
+    await mockInput.press("down");
+    await mockInput.press("enter");
+    await mockInput.type("new-key");
+
+    const output = await waitForFrame((frame) => frame.includes("new-key"));
+    expect(output).toContain("new-key");
+  });
+
   it("normalizes nested provider catalog form values from bootstrap", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> =
       [];
