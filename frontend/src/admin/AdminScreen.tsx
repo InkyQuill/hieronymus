@@ -34,6 +34,7 @@ import { DetailPane } from "./DetailPane.js";
 import { CommandPalette, commandsForView } from "./CommandPalette.js";
 import { HelpOverlay } from "./HelpOverlay.js";
 import { Spinner } from "../ui/Spinner.js";
+import { Gauge } from "../ui/Gauge.js";
 import { type DialogState, closedDialog, DialogOverlay } from "./dialogs.js";
 import {
   isConfirmKey,
@@ -1280,6 +1281,20 @@ function StatusPanels({
           {drain}
         </text>
       </box>
+      <Gauge
+        label="Short-term"
+        value={shortTermStatus.pending_count}
+        max={shortTermStatus.max_pending_short_term_memories}
+        fg={shortTermStatus.urgent ? "yellow" : "cyan"}
+      />
+      {shortTermStatus.drain_in_progress ? (
+        <Gauge
+          label="Drain"
+          value={shortTermStatus.drain_completed}
+          max={shortTermStatus.drain_total}
+          fg="cyan"
+        />
+      ) : null}
       <box flexDirection="row" marginTop={0}>
         {dreamStatus.state !== "idle" && dreamStatus.state !== "DISABLED" && (
           <box marginRight={1}>
@@ -1288,6 +1303,14 @@ function StatusPanels({
         )}
         <text>{dream}</text>
       </box>
+      {dreamStatus.progress > 0 ? (
+        <Gauge
+          label="Dream"
+          value={Math.round(dreamStatus.progress * 100)}
+          max={100}
+          fg="cyan"
+        />
+      ) : null}
     </box>
   );
 }

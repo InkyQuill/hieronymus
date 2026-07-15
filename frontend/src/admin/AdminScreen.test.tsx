@@ -415,6 +415,7 @@ describe("AdminScreen", () => {
     expect(output).toContain("series 1");
     expect(output).toContain("Short-term pending 0");
     expect(output).toContain("Dream DISABLED");
+    expect(output).toContain("Short-term [░░░░░░░░░░] 0/200");
     expect(output).toContain("Config providers anthropic");
     expect(output).toContain(
       "workflows crystallization:claude-sonnet-4-20250514",
@@ -1051,6 +1052,9 @@ describe("AdminScreen", () => {
     expect(output).toContain("Dream WORKING");
     expect(output).toContain("phase maintenance");
     expect(output).toContain("progress 75%");
+    expect(output).toContain("Short-term [░░░░░░░░░░] 3/200");
+    expect(output).toContain("Drain [███████░░░] 7/10");
+    expect(output).toContain("Dream [████████░░] 75/100");
   });
 
   it("does not send crystal mutations from proposals", async () => {
