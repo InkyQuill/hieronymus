@@ -200,7 +200,7 @@ git commit -m "fix: refresh rag source when format changes"
 - Consumes: `script_env(tmp_path, *, home=None) -> dict[str, str]`.
 - Produces: a temporary PATH that always contains a harmless fake `uv`, unless a test already provided its own fake executable.
 
-- [ ] **Step 1: Use the existing successful uninstall test as the RED reproduction**
+- [x] **Step 1: Use the existing successful uninstall test as the RED reproduction**
 
 Run with a short external timeout:
 
@@ -210,7 +210,7 @@ timeout 10s uv run pytest tests/test_release_scripts.py::test_uninstall_keep_dat
 
 Expected before the fix in the current developer environment: exit 124 because the test reaches the real `uv tool uninstall hieronymus`.
 
-- [ ] **Step 2: Add a default fake `uv` to `script_env`**
+- [x] **Step 2: Add a default fake `uv` to `script_env`**
 
 After `fake_bin.mkdir(exist_ok=True)`, add:
 
@@ -228,7 +228,7 @@ After `fake_bin.mkdir(exist_ok=True)`, add:
 
 The existence guard preserves specialized fake `uv` scripts installed by other tests before they call `script_env`.
 
-- [ ] **Step 3: Verify the isolated test is GREEN**
+- [x] **Step 3: Verify the isolated test is GREEN**
 
 Run:
 
@@ -238,7 +238,7 @@ timeout 10s uv run pytest tests/test_release_scripts.py::test_uninstall_keep_dat
 
 Expected: PASS without touching the real installed tool.
 
-- [ ] **Step 4: Run the entire release-script module**
+- [x] **Step 4: Run the entire release-script module**
 
 Run:
 
@@ -248,7 +248,7 @@ uv run pytest tests/test_release_scripts.py -q
 
 Expected: all release-script tests pass without network calls.
 
-- [ ] **Step 5: Commit test isolation**
+- [x] **Step 5: Commit test isolation**
 
 ```bash
 git add tests/test_release_scripts.py

@@ -20,6 +20,15 @@ def write_executable(path: Path, text: str) -> None:
 def script_env(tmp_path: Path, *, home: Path | None = None) -> dict[str, str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
+    fake_uv = fake_bin / "uv"
+    if not fake_uv.exists():
+        write_executable(
+            fake_uv,
+            """
+            #!/bin/sh
+            exit 0
+            """,
+        )
     env = os.environ.copy()
     env["HOME"] = str(home or tmp_path / "home")
     env["PATH"] = f"{fake_bin}:{os.environ['PATH']}"
