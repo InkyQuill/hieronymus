@@ -50,22 +50,26 @@ export function CommandPalette({
         <box key={command.id} height={1}>
           <text
             fg={
-              command.disabled
-                ? "gray"
-                : index === selectedIndex
-                  ? "cyan"
-                  : undefined
+              index === selectedIndex
+                ? command.disabled
+                  ? "yellow"
+                  : "cyan"
+                : undefined
             }
           >
             {index === selectedIndex ? "> " : "  "}
-            {command.label} [{command.key}]{" "}
-            {command.disabled ? "(unavailable)" : ""}
+            {command.disabled ? "✕ " : ""}
+            {command.label} [{command.key}]
           </text>
         </box>
       ))}
       {commands[selectedIndex] ? (
         <box height={1}>
-          <text fg="gray">{commands[selectedIndex].hint}</text>
+          <text fg={commands[selectedIndex].disabled ? "yellow" : "gray"}>
+            {commands[selectedIndex].disabled
+              ? `${commands[selectedIndex].label} needs a selected row`
+              : commands[selectedIndex].hint}
+          </text>
         </box>
       ) : null}
       <box height={1}>
