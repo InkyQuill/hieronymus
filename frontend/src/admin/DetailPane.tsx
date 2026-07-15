@@ -74,7 +74,12 @@ export function DetailPane({
   };
 
   return (
-    <scrollbox flexDirection="column" width={width} height={height}>
+    <scrollbox
+      flexDirection="column"
+      width={width}
+      height={height}
+      style={{ scrollbarOptions: { showArrows: true } }}
+    >
       <text>{detail.title}</text>
       <text fg="gray">{detail.subtitle}</text>
       <box flexDirection="column" marginTop={1} marginBottom={1}>
