@@ -37,9 +37,17 @@ describe("DetailPane", () => {
 
     const output = await waitForFrame((frame) => frame.includes("Line 0"));
     expect(output).toContain("▲");
+    expect(output).toContain("▼");
+    for (const glyph of ["▲", "▼"]) {
+      const line = output
+        .split("\n")
+        .find((candidate) => candidate.includes(glyph));
+      expect(line).toBeDefined();
+      expect(line!.indexOf(glyph)).toBe(39);
+    }
   });
 
-  it("shows no scrollbar arrows when the body fits within the visible height", async () => {
+  it("preserves the full content area when the body exactly fits", async () => {
     const { render, waitForFrame } = createOpenTuiHarness({
       width: 60,
       height: 10,
@@ -49,11 +57,29 @@ describe("DetailPane", () => {
       <DetailPane
         detail={detail({ body: "Short body." })}
         width={40}
-        height={10}
+        height={5}
       />,
     );
 
     const output = await waitForFrame((frame) => frame.includes("Short body."));
     expect(output).not.toContain("▲");
+    expect(output).not.toContain("▼");
+    expect(output).toContain("Guild Ledger");
+    expect(output).toContain("concept");
+  });
+
+  it("keeps header content visible at heights too small for arrow controls", async () => {
+    const { render, waitForFrame } = createOpenTuiHarness({
+      width: 60,
+      height: 4,
+    });
+
+    await render(<DetailPane detail={detail()} width={40} height={2} />);
+
+    const output = await waitForFrame(() => true);
+    expect(output).toContain("Guild Ledger");
+    expect(output).toContain("concept");
+    expect(output).not.toContain("▲");
+    expect(output).not.toContain("▼");
   });
 });

@@ -75,18 +75,29 @@ export function DetailPane({
 
   return (
     <scrollbox
-      flexDirection="column"
       width={width}
       height={height}
-      style={{ scrollbarOptions: { showArrows: true } }}
+      style={{
+        verticalScrollbarOptions: {
+          showArrows: height >= 3,
+          ...(height < 3 ? { visible: false } : {}),
+          width: 1,
+          position: "absolute",
+          right: 0,
+          top: 0,
+          bottom: 0,
+        },
+      }}
     >
-      <text>{detail.title}</text>
-      <text fg="gray">{detail.subtitle}</text>
-      <box flexDirection="column" marginTop={1} marginBottom={1}>
+      <text flexShrink={0}>{detail.title}</text>
+      <text flexShrink={0} fg="gray">
+        {detail.subtitle}
+      </text>
+      <box flexDirection="column" flexShrink={0} marginTop={1} marginBottom={1}>
         {renderBody()}
       </box>
       {detail.fields.map(([name, value], index) => (
-        <text key={`${name}-${index}`}>
+        <text key={`${name}-${index}`} flexShrink={0}>
           {name}: {value}
         </text>
       ))}
