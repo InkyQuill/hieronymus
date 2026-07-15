@@ -244,6 +244,12 @@ def test_pyproject_configures_semantic_release() -> None:
     assert semantic_release["changelog"]["default_templates"]["changelog_file"] == "CHANGELOG.md"
 
 
+def test_project_ignores_local_agent_config() -> None:
+    gitignore_lines = (ROOT / ".gitignore").read_text().splitlines()
+
+    assert ".agents/" in gitignore_lines
+
+
 def test_project_metadata_stays_on_alpha_version_line() -> None:
     pyproject_text = (ROOT / "pyproject.toml").read_text()
     pyproject = tomllib.loads(pyproject_text)

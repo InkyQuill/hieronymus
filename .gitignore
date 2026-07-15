@@ -27,6 +27,7 @@ frontend/coverage/
 *.tsbuildinfo
 
 # Local editor and workspace state
+.agents/
 .vscode/
 .idea/
 *.swp
