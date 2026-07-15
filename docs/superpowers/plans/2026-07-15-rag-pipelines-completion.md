@@ -560,7 +560,7 @@ Assert and create idempotent indexes for `rag_chunks.source_id` and
 Add typed serializer tests, create `rag_payloads.py`, update CLI and MCP callers,
 and retain the original flat import contract without a duplicate nested source.
 
-- [ ] **Step 5: Re-run full verification and review**
+- [x] **Step 5: Re-run full verification and review**
 
 Run all AGENTS.md checks and confirm the final review has no unresolved RAG
 findings. The suggestion to score-sort the primary recall merge is intentionally
