@@ -74,6 +74,31 @@ uncertainty, conflicts, and supporting evidence, then leave approval to the huma
 
 ## Installing Agent Integrations
 
+### Project-local workflow skills
+
+Use project-local skills when a repository should carry the Hieronymus workflow instructions for
+agents that discover skills in the workspace:
+
+```bash
+hiero skills install --target agents --target claude
+```
+
+This writes the bundled skills into the current workspace's `.agents/skills` and `.claude/skills`
+directories. It is deliberately separate from `hiero install <agent>`: project-skill installation
+does not register MCP. It also does not install a plugin, patch a host configuration file, or write
+outside the current workspace.
+
+Use `hiero skills install --target agents --dry-run` or
+`hiero skills uninstall --target agents --dry-run` to inspect the affected paths without changing
+the workspace. `hiero skills uninstall --target agents --target claude` removes the bundled skills
+from those targets.
+
+Installing unconditionally overwrites existing Hieronymus-owned skill files so a project can be
+updated noninteractively. Uninstalling removes only owned `hieronymus-*` skill directories that
+contain a regular `SKILL.md`; unrelated skills and the parent skill directories are preserved.
+
+### Global agent integrations
+
 Use `hiero install --json` or `hiero install list` to see detected agent hosts and whether the
 Hieronymus plugin is installed.
 

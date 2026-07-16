@@ -567,6 +567,7 @@ def help_command() -> None:
     click.echo("      --source-language <src> --target-language <dst>")
     click.echo("      --task-type <type> --json")
     click.echo("  hiero feedback <crystal-id> --event confirmed_by_user --role user --json")
+    click.echo("  hiero skills install --target agents --target claude")
     click.echo()
     click.echo(f"{GUIDE_ICON} Maintenance")
     click.echo("  hiero install codex --dry-run")

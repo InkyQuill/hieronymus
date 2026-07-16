@@ -305,6 +305,21 @@ judgment-heavy wrappers are no longer exposed as the current MCP workflow. See
 [Read, Learn, And Remember Skills](skills/read-learn-remember.md) and
 [Agent workflows](agent-workflows.md).
 
+## Project-Local Agent Skills
+
+To install the bundled Hieronymus workflow skills into the current project for both supported
+workspace conventions, run:
+
+```bash
+hiero skills install --target agents --target claude
+```
+
+This installs into `.agents/skills` and `.claude/skills`. It is distinct from the global
+`hiero install <agent>` integration: project-local skills do not register MCP or modify host
+configuration. Use `--dry-run` with either `hiero skills install` or `hiero skills uninstall` to
+preview affected paths. Installation overwrites owned Hieronymus skill files; uninstallation removes
+only the owned `hieronymus-*` skill directories and leaves unrelated project skills in place.
+
 For a high-credibility correction, Remember should store a short memory like:
 
 ```text
@@ -366,6 +381,7 @@ hiero doctor
 hiero admin
 hiero admin --json
 hiero install codex --dry-run
+hiero skills install --target agents --target claude
 hiero stop
 ```
 

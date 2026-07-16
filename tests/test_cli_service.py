@@ -25,6 +25,8 @@ from hieronymus.provider_config import (
 )
 from hieronymus.release_config import ReleaseConfig, save_release_config
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 @dataclass(frozen=True)
 class CliUpdateStatus:
@@ -121,6 +123,14 @@ def test_cli_help_mentions_service_commands() -> None:
     ) in result.output
     assert "Open the memory management TUI" not in result.output
     assert "Show config paths" not in result.output
+
+
+def test_agent_workflows_documents_project_local_skills() -> None:
+    text = (ROOT / "docs" / "agent-workflows.md").read_text(encoding="utf-8")
+
+    assert "hiero skills install --target agents --target claude" in text
+    assert ".agents/skills" in text
+    assert "does not register MCP" in text
 
 
 def test_click_help_describes_config_command() -> None:
