@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import os
 import subprocess
-import sys
+import webbrowser
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -11,7 +10,7 @@ import click
 
 from hieronymus.admin import AdminStore
 from hieronymus.agent_plugins import resolve_plugin
-from hieronymus.config import load_config
+from hieronymus.config import HieronymusConfig, load_config
 from hieronymus.doctor import Doctor, report_to_json
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_config import (
@@ -45,6 +44,7 @@ from hieronymus.release import check_update, run_update
 from hieronymus.release_config import ReleaseConfigError, load_release_config
 from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
+from hieronymus.service_state import read_server_state
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
@@ -184,39 +184,17 @@ def _update_status_target_display(status) -> str:
     return str(status.latest_tag or "unknown")
 
 
-def _frontend_entrypoint() -> str:
-    candidate = Path(__file__).resolve().parent / "frontend" / "dist" / "main.js"
-    searched = [candidate]
-    if candidate.exists():
-        return str(candidate)
-    for ancestor in Path(__file__).resolve().parents[:5]:
-        repo_candidate = ancestor / "frontend" / "dist" / "main.js"
-        searched.append(repo_candidate)
-        if repo_candidate.exists():
-            return str(repo_candidate)
-    searched_paths = ", ".join(str(path) for path in searched)
-    raise FileNotFoundError(f"OpenTUI frontend bundle not found; looked for: {searched_paths}")
-
-
-def _launch_opentui(mode: str, *, data_root: Path) -> None:
-    command = [
-        "bun",
-        _frontend_entrypoint(),
-        mode,
-        "--bridge-command",
-        sys.executable,
-        "--bridge-arg",
-        "-m",
-        "--bridge-arg",
-        "hieronymus",
-    ]
-    env = {**os.environ, "HIERONYMUS_DATA_ROOT": str(data_root)}
+def _launch_web_console(route: str, *, config: HieronymusConfig) -> None:
     try:
-        subprocess.run(command, check=True, env=env)
-    except FileNotFoundError as error:
-        raise click.ClickException("OpenTUI launch failed: bun executable not found") from error
-    except subprocess.CalledProcessError as error:
-        raise click.ClickException(f"OpenTUI exited with code {error.returncode}") from error
+        ServiceManager(config).ensure_running()
+    except RuntimeError as error:
+        raise click.ClickException(str(error)) from error
+    state = read_server_state(config)
+    if state is None:
+        raise click.ClickException("local service did not publish its web-console address")
+    url = f"http://{state.host}:{state.port}{route}?token={state.token}"
+    if not webbrowser.open(url):
+        click.echo(f"Open this local address in a browser: {url}")
 
 
 @click.group(invoke_without_command=True)
@@ -233,14 +211,6 @@ def main(ctx: click.Context, data_root: str | None) -> None:
         click.echo(render_greeting())
         click.echo()
         _echo_status_lines(status)
-
-
-@main.command("tui-bridge", hidden=True)
-@click.pass_context
-def tui_bridge_command(ctx: click.Context) -> None:
-    from hieronymus.tui_bridge.server import run_stdio
-
-    run_stdio(ctx.obj["config"])
 
 
 @main.command("status")
@@ -285,13 +255,13 @@ def restart(ctx: click.Context, json_output: bool) -> None:
     _echo_status_lines(payload["status"])
 
 
-@main.command("config", help="Open the configuration TUI.")
+@main.command("config", help="Open the configuration web console.")
 @click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def config_command(ctx: click.Context, json_output: bool) -> None:
     config = ctx.obj["config"]
     if not json_output:
-        _launch_opentui("config", data_root=config.data_root)
+        _launch_web_console("/config", config=config)
         return
 
     try:
@@ -463,7 +433,7 @@ def admin(ctx: click.Context, json_output: bool) -> None:
         click.echo(render_json(payload))
         return
 
-    _launch_opentui("admin", data_root=config.data_root)
+    _launch_web_console("/admin", config=config)
 
 
 @main.command("doctor")
@@ -505,11 +475,11 @@ def help_command() -> None:
     click.echo("  hiero restart          Restart the local daemon")
     click.echo()
     click.echo(f"{GUIDE_ICON} Management")
-    click.echo("  hiero config           Open the configuration TUI")
+    click.echo("  hiero config           Open the configuration web console")
     click.echo(
         "  hiero config --json    Emit config, provider, dreaming, ingest, and release state"
     )
-    click.echo("  hiero admin            Open the local management TUI")
+    click.echo("  hiero admin            Open the local management web console")
     click.echo("  hiero admin --json     Emit management counts and available views")
     click.echo("  hiero doctor           Check configuration and service health")
     click.echo("  hiero doctor --json    Emit configuration and service diagnostics")

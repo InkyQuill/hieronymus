@@ -1,4 +1,6 @@
 import type {
+  AdminDashboard,
+  AdminSnapshot,
   DreamSettings,
   IngestSettings,
   ModelCache,
@@ -98,4 +100,12 @@ export async function saveReleaseSettings(
       body: JSON.stringify({ release }),
     })
   ).release;
+}
+
+export async function loadAdminDashboard(): Promise<AdminDashboard> {
+  return request("/api/admin/dashboard");
+}
+
+export async function loadAdminSnapshot(view: string): Promise<AdminSnapshot> {
+  return request(`/api/admin/snapshot?view=${encodeURIComponent(view)}`);
 }

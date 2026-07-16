@@ -127,7 +127,7 @@ def test_click_help_describes_config_command() -> None:
 
     assert result.exit_code == 0
     assert "config" in result.output
-    assert "Open the configuration TUI." in result.output
+    assert "Open the configuration web console." in result.output
 
 
 def test_readme_documents_production_install_update_and_uninstall() -> None:
@@ -186,7 +186,7 @@ def test_usage_documents_uninstall_data_modes_and_workspace_warning() -> None:
     assert "If HIERONYMUS_DATA_ROOT is set, check it before purging." in normalized_usage
 
 
-def test_docs_describe_real_config_tui_and_llm_providers() -> None:
+def test_docs_describe_local_web_config_and_llm_providers() -> None:
     combined = "\n".join(
         Path(path).read_text(encoding="utf-8")
         for path in [
@@ -212,9 +212,10 @@ def test_docs_describe_real_config_tui_and_llm_providers() -> None:
     assert "Supported provider runtime types" in combined
     assert "API key values may be stored locally" in combined
     assert "new_short_term_memory_threshold" in combined
-    assert "TypeScript React/OpenTUI terminal UI" in combined
+    assert "Svelte web console" in combined
     assert "Bun >=1.3" in combined
     assert "bun install --cwd frontend --frozen-lockfile" in combined
+    assert "React/OpenTUI terminal UI" not in combined
     assert "React/Ink" not in combined
     assert "Node.js >=22" not in combined
     assert "pnpm --dir frontend" not in combined
@@ -328,23 +329,20 @@ def test_config_json_reports_invalid_ingest_config(tmp_path: Path) -> None:
     assert "ingest.conf is not valid TOML" in result.output
 
 
-def test_config_launch_invokes_opentui(tmp_path: Path, monkeypatch) -> None:
+def test_config_launch_opens_local_web_console(tmp_path: Path, monkeypatch) -> None:
     data_root = tmp_path / "hieronymus"
     launched = {}
 
-    def fake_launch_opentui(mode, *, data_root):
-        launched["mode"] = mode
-        launched["data_root"] = data_root
+    def fake_launch_web_console(route, *, config):
+        launched["route"] = route
+        launched["data_root"] = config.data_root
 
-    monkeypatch.setattr("hieronymus.cli._launch_opentui", fake_launch_opentui)
+    monkeypatch.setattr("hieronymus.cli._launch_web_console", fake_launch_web_console)
 
     result = CliRunner().invoke(main, ["--data-root", str(data_root), "config"])
 
     assert result.exit_code == 0
-    assert launched == {
-        "mode": "config",
-        "data_root": data_root,
-    }
+    assert launched == {"route": "/config", "data_root": data_root}
 
 
 def test_dream_json_uses_provider_catalog_profile(tmp_path: Path) -> None:

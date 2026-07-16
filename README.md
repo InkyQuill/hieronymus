@@ -36,8 +36,8 @@ Open the local configuration TUI with:
 hiero config
 ```
 
-The TUI uses a TypeScript React/OpenTUI terminal UI. See the
-[usage guide](docs/usage.md) for details, runtime requirements, and keys.
+`hiero config` starts the local service when needed and opens its Svelte web
+console in the default browser. See the [usage guide](docs/usage.md) for details.
 
 For scripts and health checks, use machine-readable status:
 
@@ -70,8 +70,7 @@ Dreaming automation is controlled by `autostart_enabled`,
 
 ## Frontend Development
 
-The React/OpenTUI frontend lives under `frontend/`. Use Bun >=1.3 from the repository
-root:
+The Svelte web console lives under `frontend/`. Use Bun >=1.3 from the repository root:
 
 ```bash
 bun install --cwd frontend --frozen-lockfile
@@ -126,8 +125,8 @@ Repository: <https://github.com/InkyQuill/hieronymus>
 ## Status
 
 Alpha implementation exists for local series setup, rule-crystal validation,
-memory import/search, MCP/CLI workflows, dreaming, and the React/OpenTUI
-management app. No 1.x release is approved yet.
+memory import/search, MCP/CLI workflows, dreaming, and the local web management
+console. No 1.x release is approved yet.
 
 ## Documents
 

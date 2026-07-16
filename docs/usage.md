@@ -89,11 +89,9 @@ Open the local configuration TUI:
 hiero config
 ```
 
-The TUI uses a TypeScript React/OpenTUI terminal UI. This requires Bun >=1.3 installed:
-
-```bash
-hiero config
-```
+The command starts the loopback-only service when needed and opens the local Svelte
+web console in the default browser. The bootstrap token is exchanged for an HttpOnly
+local-session cookie before the app loads.
 
 For machine-readable status, use:
 
@@ -120,8 +118,8 @@ Supported dream provider profile types:
 - `anthropic`: Anthropic Messages API.
 - `ollama`: local Ollama chat/model endpoints.
 
-In the OpenTUI config TUI, the remote provider selector offers `openai`, `gemini`,
-`anthropic`, and local-compatible profiles as the implementation supports them.
+The Providers page supports any number of named profiles. Dreaming uses a discovered
+model select when the profile exposes models and a model-ID field otherwise.
 
 Example provider catalog:
 
@@ -381,11 +379,7 @@ Open the local admin interface with:
 hiero admin
 ```
 
-The admin interface uses a TypeScript React/OpenTUI terminal UI. This requires Bun >=1.3 installed:
-
-```bash
-hiero admin
-```
+The admin command opens the same local web console at its administration route.
 
 The TUI is a local-first management surface for reviewing and controlling
 Hieronymus memory data. It shows global status and statistics, then lets an
@@ -405,31 +399,14 @@ For scripts and health checks, use:
 hiero admin --json
 ```
 
-This prints management counts and available TUI views without opening the
+This prints management counts and available views without opening the
 interactive app.
 
-## TUI Requirements and Keys
+## Local Web Console
 
-The React/OpenTUI TUI requires Bun >=1.3 to run. `hiero doctor` reports Bun runtime availability.
-
-### Config TUI Keys
-
-- `1` / `2` / `3`: select `openai`, `gemini`, or `anthropic`
-- `s`: save
-- `r`: reload
-- `c`: check the selected provider
-- `q`: quit
-
-### Admin TUI Keys
-
-- `Tab` / `Shift+Tab`: cycle focus between views, table, and detail
-- `1`-`9`: switch views
-- arrows or `j` / `k`: move within the focused list or command palette
-- `ctrl+p`: open the command palette
-- `?`: open contextual help
-- `Enter`: run the selected command while the command palette is open
-- `Esc`: close help, command palette, or dialogs
-- `q`: quit
+The configuration and administration pages are served by the loopback-only
+Hieronymus service. `hiero config` and `hiero admin` open the relevant page in a
+browser; the bootstrap URL is converted to an HttpOnly local-session cookie.
 
 ### Frontend Development
 
@@ -440,4 +417,4 @@ bun install --cwd frontend --frozen-lockfile
 bun run --cwd frontend build
 ```
 
-After that build, the CLI uses the fallback to `frontend/dist/main.js` from the current working directory.
+The wheel packages the resulting `frontend/dist` assets for the local service.

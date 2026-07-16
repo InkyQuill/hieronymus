@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import AdminDashboard from "./components/AdminDashboard.svelte";
   import DreamingEditor from "./components/DreamingEditor.svelte";
   import IngestEditor from "./components/IngestEditor.svelte";
   import ProviderEditor from "./components/ProviderEditor.svelte";
@@ -7,6 +8,7 @@
   import {
     deleteProvider,
     listProviders,
+    loadAdminDashboard,
     loadDreamSettings,
     loadIngestSettings,
     loadReleaseSettings,
@@ -17,6 +19,7 @@
     saveReleaseSettings,
   } from "./lib/api";
   import type {
+    AdminDashboard as AdminDashboardPayload,
     DreamSettings,
     IngestSettings,
     ModelCache,
@@ -26,7 +29,9 @@
   } from "./lib/types";
 
   const path = window.location.pathname;
-  const section = path.endsWith("/dreaming")
+  const section = path.startsWith("/admin")
+    ? "admin"
+    : path.endsWith("/dreaming")
     ? "dreaming"
     : path.endsWith("/ingest")
       ? "ingest"
@@ -44,6 +49,7 @@
   let modelCache = $state.raw<ModelCache>({ providers: {} });
   let ingestSettings = $state.raw<IngestSettings | null>(null);
   let releaseSettings = $state.raw<ReleaseSettings | null>(null);
+  let adminDashboard = $state.raw<AdminDashboardPayload | null>(null);
 
   async function loadProviders() {
     busy = true; error = "";
@@ -97,6 +103,7 @@
       }
       if (section === "ingest") ingestSettings = await loadIngestSettings();
       if (section === "release") releaseSettings = await loadReleaseSettings();
+      if (section === "admin") adminDashboard = await loadAdminDashboard();
     } catch (reason) {
       error = reason instanceof Error ? reason.message : String(reason);
     } finally {
@@ -132,9 +139,11 @@
 </script>
 
 <main>
-  <aside class="sidebar"><h1>Hieronymus</h1><p>local configuration</p><nav><a href="/admin">Overview</a><a class:active={path.startsWith("/config")} href="/config">Providers</a><a href="/config/dreaming">Dreaming</a><a href="/config/ingest">Ingest</a><a href="/config/release">Release</a></nav><footer>All data is local.<br />No cloud. No tracking.</footer></aside>
+  <aside class="sidebar"><h1>Hieronymus</h1><p>{section === "admin" ? "local administration" : "local configuration"}</p><nav><a class:active={section === "admin"} href="/admin">Overview</a><a class:active={section === "providers"} href="/config">Providers</a><a class:active={section === "dreaming"} href="/config/dreaming">Dreaming</a><a class:active={section === "ingest"} href="/config/ingest">Ingest</a><a class:active={section === "release"} href="/config/release">Release</a></nav><footer>All data is local.<br />No cloud. No tracking.</footer></aside>
   <section class="content">
-    {#if section === "providers"}
+    {#if section === "admin" && adminDashboard}
+      <AdminDashboard dashboard={adminDashboard} {error} />
+    {:else if section === "providers"}
       <header class="page-header"><div><h2>Providers</h2><p>Manage custom model-provider profiles.</p></div><button class="primary" onclick={() => { createOpen = true; selected = null; models = []; }}>New provider</button></header>
       {#if error}<p class="error">{error}</p>{/if}
       {#if busy && providers.length === 0}<p>Loading profiles…</p>{:else if providers.length === 0}<div class="empty"><h3>No provider profiles yet</h3><p>Create a profile for OpenAI, DeepSeek, Z.ai, or any compatible endpoint.</p></div>{:else}<table><thead><tr><th>Display name</th><th>Type</th><th>Endpoint</th><th>Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class:selected={selected?.id === provider.id} onclick={() => { selected = provider; createOpen = false; models = []; }}><td>{provider.name}</td><td>{provider.type}</td><td>{provider.url}</td><td>{provider.key_configured ? "Configured" : "Missing"}</td></tr>{/each}</tbody></table>{/if}

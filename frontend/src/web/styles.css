@@ -274,3 +274,87 @@ legend {
   color: #63d8ff;
   padding: 0 6px;
 }
+
+.eyebrow {
+  color: #63d8ff;
+  font-size: 12px;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+.stats {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 28px;
+}
+
+.stats article,
+.admin-status {
+  background: #11161c;
+  border: 1px solid #29313a;
+  padding: 18px;
+}
+
+.stats strong {
+  color: #63d8ff;
+  display: block;
+  font-size: 28px;
+  font-weight: 500;
+}
+
+.stats span {
+  color: #9ba8b8;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.admin-status {
+  margin-top: 18px;
+}
+
+.admin-status h3 {
+  margin-top: 0;
+}
+
+.admin-status dl {
+  display: flex;
+  gap: 52px;
+}
+
+.admin-status dt {
+  color: #9ba8b8;
+  font-size: 12px;
+}
+
+.admin-status dd {
+  margin: 5px 0 0;
+}
+
+.view-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.view-tabs button.active {
+  border-color: #63d8ff;
+  color: #63d8ff;
+}
+
+.admin-rows {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.admin-rows article {
+  border-top: 1px solid #29313a;
+  display: grid;
+  gap: 4px;
+  padding-top: 12px;
+}
+
+.admin-rows span {
+  overflow-wrap: anywhere;
+}

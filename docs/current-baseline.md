@@ -122,24 +122,18 @@ Xiaomi MiMo, Pi, and Hermes are detectable reserved targets. They appear in
 status and doctor output, but Hieronymus does not write host configuration for
 them until a safe noninteractive protocol exists.
 
-## OpenTUI Baseline
+## Local Web Console Baseline
 
-The terminal UI is a TypeScript React/OpenTUI app under `frontend/`, built to
-`frontend/dist/main.js` with Bun. Python launches the built bundle and the
-frontend talks to Python through the TUI bridge.
+The local web console is a Svelte application under `frontend/`, built by Vite
+into `frontend/dist`. Python serves those assets from the loopback service.
 
-The config UI renders backend-owned form schemas for sections, groups, labels,
-hints, input types, choices, defaults, redaction, and field validation. It edits
-`provider.conf`, `dream.conf`, `ingest.conf`, and `release.conf` through
-`ConfigBridge`.
+The config UI provides provider CRUD and edits `dream.conf`, `ingest.conf`, and
+`release.conf` through narrowly scoped HTTP APIs backed by `ConfigBridge`.
 
-The admin UI renders backend-owned views and command metadata, supports a
-keyboard command palette, contextual help, filters, dialogs, detail panes, and
-bridge-backed actions through `AdminBridge`.
+The admin UI displays local statistics and backend-owned memory views through
+`AdminBridge` HTTP endpoints.
 
-Both config and admin UIs have compact layouts for 80x24 terminals and narrow
-splits, keyboard-first navigation, active-mode footer hints, and frontend tests
-using the shared OpenTUI harness.
+Both routes use the same local-session model and avoid terminal-renderer state.
 
 ## Release And Quality Baseline
 
@@ -148,8 +142,8 @@ The project is on the alpha `0.x` version line. Package metadata and
 adds the alpha marker.
 
 Release and managed-install paths install frontend dependencies and build the
-OpenTUI bundle before packaging or reinstalling. The wheel includes
-`frontend/dist/main.js`.
+Svelte assets before packaging or reinstalling. The wheel includes
+`frontend/dist`.
 
 Before claiming implementation work complete, run:
 

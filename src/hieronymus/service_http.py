@@ -14,6 +14,7 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.service_state import ServerState
+from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.tui_bridge.config_api import ConfigBridge
 
 
@@ -77,6 +78,19 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             self._send_config_result(_SETTINGS_GET_METHODS[path], {})
+            return
+        if path == "/api/admin/dashboard":
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self._send_admin_result("dashboard", {})
+            return
+        if path == "/api/admin/snapshot":
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            view = parse_qs(request_url.query).get("view", [""])[0]
+            self._send_admin_result("snapshot", {"view": view})
             return
         if path == "/health":
             if not self._is_authorized():
@@ -171,6 +185,16 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             return
         status = HTTPStatus.BAD_REQUEST if payload.get("error") else HTTPStatus.OK
         self._send_json(payload, status=status)
+
+    def _send_admin_result(self, method: str, params: dict[str, object]) -> None:
+        bridge = AdminBridge(self.server.config)
+        handler = getattr(bridge, method)
+        try:
+            payload = handler(params)
+        except ValueError as error:
+            self._send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        self._send_json(payload)
 
     def _request_json(self) -> dict[str, object]:
         try:

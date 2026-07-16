@@ -57,3 +57,19 @@ export type IngestSettings = {
 };
 
 export type ReleaseSettings = { update_channel: "stable" | "dev" };
+
+export type AdminDashboard = {
+  header: { product: string; version: string; tagline: string };
+  stats: Record<string, number>;
+  views: string[];
+  short_term_status: Record<string, unknown>;
+  dream_status: Record<string, unknown>;
+};
+
+export type AdminSnapshot = {
+  snapshot: {
+    view: string;
+    rows: Array<Record<string, unknown>>;
+    detail: { title: string; subtitle: string; body: string };
+  };
+};

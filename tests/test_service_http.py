@@ -214,6 +214,31 @@ def test_settings_apis_are_scoped_to_their_configuration_files(tmp_path: Path) -
     assert saved["dream"]["dreaming"]["schedule_interval_minutes"] == 45
 
 
+def test_admin_dashboard_api_returns_local_admin_snapshot(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        dashboard = _request_json(f"{base_url}/api/admin/dashboard")
+    finally:
+        _stop_server(server, thread)
+
+    assert dashboard["default_view"] == "Crystals"
+    assert dashboard["views"]
+
+
+def test_admin_snapshot_api_accepts_a_view_parameter(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        snapshot = _request_json(f"{base_url}/api/admin/snapshot?view=Concepts")
+    finally:
+        _stop_server(server, thread)
+
+    assert snapshot["snapshot"]["view"] == "Concepts"
+
+
 def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     state = _make_state(config)

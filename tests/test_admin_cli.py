@@ -60,20 +60,17 @@ def test_admin_json_survives_malformed_dream_config(tmp_path: Path) -> None:
     assert "dream.conf is not valid TOML" in payload["dream_config_error"]
 
 
-def test_admin_launch_invokes_opentui(monkeypatch, tmp_path: Path) -> None:
+def test_admin_launch_opens_local_web_console(monkeypatch, tmp_path: Path) -> None:
     launched: dict[str, object] = {}
 
-    def fake_launch_opentui(mode, *, data_root):
-        launched["mode"] = mode
-        launched["data_root"] = data_root
+    def fake_launch_web_console(route, *, config):
+        launched["route"] = route
+        launched["data_root"] = config.data_root
 
-    monkeypatch.setattr("hieronymus.cli._launch_opentui", fake_launch_opentui)
+    monkeypatch.setattr("hieronymus.cli._launch_web_console", fake_launch_web_console)
     runner = CliRunner()
 
     result = runner.invoke(main, ["--data-root", str(tmp_path), "admin"])
 
     assert result.exit_code == 0
-    assert launched == {
-        "mode": "admin",
-        "data_root": tmp_path,
-    }
+    assert launched == {"route": "/admin", "data_root": tmp_path}
