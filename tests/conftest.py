@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.service_manager import ServiceManager
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -23,3 +24,10 @@ def setup_path():
 @pytest.fixture
 def config(tmp_path: Path) -> HieronymusConfig:
     return HieronymusConfig(data_root=tmp_path / "memory")
+
+
+@pytest.fixture(autouse=True)
+def stop_daemons_started_for_test(tmp_path_factory: pytest.TempPathFactory):
+    yield
+    for state_path in tmp_path_factory.getbasetemp().rglob("server.json"):
+        ServiceManager(HieronymusConfig(data_root=state_path.parent)).stop()

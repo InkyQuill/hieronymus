@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol
+from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.service_client import ServiceClient
+from hieronymus.service_client import ServiceClient, ServiceClientError
 from hieronymus.service_manager import ServiceManager
 from hieronymus.service_state import ServerState, read_server_state
 
@@ -37,9 +37,17 @@ class DaemonMcpClient:
         self.client = client if client is not None else ServiceClient()
         self.state_reader = state_reader
 
-    def invoke(self, operation: str, params: dict[str, object]) -> dict[str, object]:
+    def invoke(self, operation: str, params: dict[str, object]) -> Any:
         self.manager.ensure_running()
         state = self.state_reader(self.config)
         if state is None:
             raise RuntimeError("Hieronymus daemon did not publish state")
-        return self.client.request_json("POST", state, f"/api/mcp/{operation}", params)
+        try:
+            payload = self.client.request_json("POST", state, f"/api/mcp/{operation}", params)
+        except ServiceClientError as error:
+            if error.status == 400:
+                raise ValueError(str(error)) from error
+            raise RuntimeError(f"Hieronymus daemon MCP request failed: {error}") from error
+        if "result" not in payload:
+            raise RuntimeError("Hieronymus daemon returned no MCP result")
+        return payload["result"]

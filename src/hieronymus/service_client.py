@@ -9,7 +9,9 @@ from hieronymus.service_state import ServerState
 
 
 class ServiceClientError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class ServiceClient:
@@ -43,7 +45,14 @@ class ServiceClient:
         try:
             response_context = urllib.request.urlopen(request, timeout=self.timeout)
         except urllib.error.HTTPError as exc:
-            raise ServiceClientError(f"HTTP {exc.code} response from {path}") from exc
+            try:
+                error_payload = json.loads(exc.read().decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                error_payload = {}
+            message = error_payload.get("error") if isinstance(error_payload, dict) else None
+            raise ServiceClientError(
+                str(message or f"HTTP {exc.code} response from {path}"), status=exc.code
+            ) from exc
         with response_context as response:
             try:
                 payload = json.loads(response.read().decode("utf-8"))

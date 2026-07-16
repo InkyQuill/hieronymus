@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import inspect
 from dataclasses import asdict
+from contextvars import ContextVar
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from hieronymus.daemon_mcp_client import DaemonMcpClient
 from hieronymus.cli_boundaries import DIRECT_STORE_MCP_ADAPTER
 from hieronymus.concept_models import ConceptFacetRecord, ConceptRecord
 from hieronymus.concepts import CONCEPT_CANDIDATE, ConceptProposalStore, ConceptStore
@@ -38,7 +42,33 @@ from hieronymus.service_discovery import discover_local_service
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
-server = FastMCP("hieronymus")
+_daemon_config: ContextVar[HieronymusConfig | None] = ContextVar("daemon_config", default=None)
+_DIRECT_MCP_OPERATIONS: dict[str, Any] = {}
+
+
+class DaemonMcpServer(FastMCP):
+    def tool(self, *args: Any, **kwargs: Any):
+        register = super().tool(*args, **kwargs)
+
+        def decorate(function: Any) -> Any:
+            operation = function.__name__.removeprefix("hieronymus_")
+            _DIRECT_MCP_OPERATIONS[operation] = function
+            signature = inspect.signature(function)
+
+            @wraps(function)
+            def invoke_via_daemon(*function_args: Any, **function_kwargs: Any) -> Any:
+                if _daemon_config.get() is not None:
+                    return function(*function_args, **function_kwargs)
+                bound = signature.bind(*function_args, **function_kwargs)
+                bound.apply_defaults()
+                return _daemon_client().invoke(operation, dict(bound.arguments))
+
+            return register(invoke_via_daemon)
+
+        return decorate
+
+
+server = DaemonMcpServer("hieronymus")
 _MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION = (
     "Compatibility wrapper. New workflows should use concept, facet, short-term memory, "
     "and rule-crystal primitives."
@@ -46,10 +76,34 @@ _MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION = (
 
 
 def _load_validated_config() -> HieronymusConfig:
-    config = load_config()
+    config = _daemon_config.get() or load_config()
     if config.data_root.exists() and not config.data_root.is_dir():
         raise ValueError(f"data root is not a directory: {config.data_root}")
     return config
+
+
+def _daemon_client() -> DaemonMcpClient:
+    return DaemonMcpClient(_load_validated_config())
+
+
+def invoke_daemon_operation(
+    config: HieronymusConfig,
+    operation: str,
+    params: dict[str, object],
+) -> object:
+    function = _DIRECT_MCP_OPERATIONS.get(operation)
+    if function is None:
+        raise KeyError(operation)
+    try:
+        bound = inspect.signature(function).bind(**params)
+    except TypeError as error:
+        raise ValueError(str(error)) from error
+    bound.apply_defaults()
+    token = _daemon_config.set(config)
+    try:
+        return function(*bound.args, **bound.kwargs)
+    finally:
+        _daemon_config.reset(token)
 
 
 def _series_context(series_slug: str) -> tuple[HieronymusConfig, Series]:
@@ -322,17 +376,7 @@ def _recent_dream_audit_proposal_payloads(config: HieronymusConfig) -> list[dict
 @server.tool()
 def hieronymus_status() -> dict[str, Any]:
     """Report MCP adapter mode and discovered local service status."""
-    config = _load_validated_config()
-    return {
-        "adapter": {
-            "name": DIRECT_STORE_MCP_ADAPTER.name,
-            "mode": "stdio-direct-store",
-            "reason": DIRECT_STORE_MCP_ADAPTER.reason,
-        },
-        "service": discover_local_service(config),
-        "data_root": str(config.data_root),
-        "database_path": str(config.database_path),
-    }
+    return _daemon_client().invoke("status", {})
 
 
 @server.tool()

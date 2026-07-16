@@ -334,6 +334,30 @@ def test_mcp_route_rejects_unknown_operation(tmp_path: Path) -> None:
     assert payload == {"error": "unknown_mcp_operation"}
 
 
+def test_mcp_route_executes_series_operation_in_daemon(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        payload = _post_json(
+            f"{base_url}/api/mcp/series_create",
+            {"slug": "oso", "title": "Only Sense Online"},
+        )
+    finally:
+        _stop_server(server, thread)
+
+    assert payload == {
+        "result": {
+            "id": 1,
+            "language_tags": [],
+            "slug": "oso",
+            "source_language": "",
+            "target_language": "",
+            "title": "Only Sense Online",
+        }
+    }
+
+
 def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     state = _make_state(config)

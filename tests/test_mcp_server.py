@@ -28,35 +28,19 @@ from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
 
-def test_mcp_status_reports_direct_adapter_and_service_discovery(monkeypatch, tmp_path):
+def test_mcp_status_delegates_to_daemon_client(monkeypatch, tmp_path):
     data_root = tmp_path / "hieronymus"
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(data_root))
-    monkeypatch.setattr(
-        "hieronymus.mcp_server.discover_local_service",
-        lambda config: {
-            "available": False,
-            "mode": "direct-local",
-            "reason": "no running local service discovered",
-        },
-    )
+    class FakeDaemonClient:
+        def invoke(self, operation: str, params: dict[str, object]) -> dict[str, object]:
+            assert operation == "status"
+            assert params == {}
+            return {"service": {"available": True, "mode": "local-http"}}
 
-    from hieronymus.cli_boundaries import DIRECT_STORE_MCP_ADAPTER
+    monkeypatch.setattr("hieronymus.mcp_server._daemon_client", lambda: FakeDaemonClient())
     from hieronymus.mcp_server import hieronymus_status
 
-    assert hieronymus_status() == {
-        "adapter": {
-            "name": "hieronymus-mcp",
-            "mode": "stdio-direct-store",
-            "reason": DIRECT_STORE_MCP_ADAPTER.reason,
-        },
-        "service": {
-            "available": False,
-            "mode": "direct-local",
-            "reason": "no running local service discovered",
-        },
-        "data_root": str(data_root),
-        "database_path": str(data_root / "hieronymus.sqlite"),
-    }
+    assert hieronymus_status() == {"service": {"available": True, "mode": "local-http"}}
 
 
 def test_mcp_tools_wrap_core_services(monkeypatch, tmp_path):
