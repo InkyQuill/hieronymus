@@ -2,6 +2,55 @@
 
 <!-- version list -->
 
+## v0.4.0 (2026-07-16)
+
+### Bug Fixes
+
+- Contain project skill installation
+  ([`6aae564`](https://github.com/InkyQuill/hieronymus/commit/6aae564d4fdcba80d60c580fc2f1ac836065979c))
+
+- Refine project skills selector
+  ([`c856646`](https://github.com/InkyQuill/hieronymus/commit/c856646f95ce2a31691c8f06829069f68eaf8e6e))
+
+- Replace project skill directories atomically
+  ([`bbafc7d`](https://github.com/InkyQuill/hieronymus/commit/bbafc7d58485581a35387453310ce7eb32c92030))
+
+### Chores
+
+- Align lockfile with release version
+  ([`3d3edb5`](https://github.com/InkyQuill/hieronymus/commit/3d3edb5794fe84ef2f6a588e6ae516ed4866fe08))
+
+### Code Style
+
+- Format project skills service
+  ([`4941e8a`](https://github.com/InkyQuill/hieronymus/commit/4941e8a132363d521891d1c904868bd426f24f28))
+
+### Documentation
+
+- Clarify project skills overwrite behavior
+  ([`d119802`](https://github.com/InkyQuill/hieronymus/commit/d119802752be0aa48d6bf76cd05198e9849d6882))
+
+- Describe project-local skill workflow
+  ([`5fafc95`](https://github.com/InkyQuill/hieronymus/commit/5fafc95598b8fa66f1f74cb36f79f8c9ccab6671))
+
+- Design project skills installation
+  ([`0253d27`](https://github.com/InkyQuill/hieronymus/commit/0253d27b6ee8dd9212998377c742baf8abd125e6))
+
+- Plan project-local skills installation
+  ([`f2faa61`](https://github.com/InkyQuill/hieronymus/commit/f2faa610bb3e42fe11ab198718632bf173d1af29))
+
+- Refine read skill memory workflow
+  ([`85c8e03`](https://github.com/InkyQuill/hieronymus/commit/85c8e0318266984a9b349e9c0b0ab806cf00601f))
+
+### Features
+
+- Add project skills install commands
+  ([`1b27982`](https://github.com/InkyQuill/hieronymus/commit/1b279821db3fb11dab935f34dc55ce73ccbd732a))
+
+- Add project-local skills bundle service
+  ([`521dfab`](https://github.com/InkyQuill/hieronymus/commit/521dfabeca256a8d8d66e162da39a14a4c95d01a))
+
+
 ## v0.3.0 (2026-07-16)
 
 ### Bug Fixes
