@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
+from hieronymus import __version__
 from hieronymus.cli import main
 from hieronymus.config import load_config
 from hieronymus.dream_config import (
@@ -99,7 +100,7 @@ def test_cli_help_mentions_service_commands() -> None:
 
     assert result.exit_code == 0
     assert all(len(line) <= 100 for line in result.output.splitlines())
-    assert "Hieronymus v0.2.0α" in result.output
+    assert f"Hieronymus {display_version(__version__)}" in result.output
     assert "Alpha software: local-first, usable at your own risk." in result.output
     assert "Service" in result.output
     assert "Management" in result.output
