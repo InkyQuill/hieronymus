@@ -71,16 +71,10 @@ def plan_project_skills(
     normalized_targets = _normalize_targets(targets)
     roots = target_roots(workspace, normalized_targets)
     if action == "install":
-        paths = tuple(
-            root / relative_path
-            for root in roots
-            for relative_path in skill_assets()
-        )
+        paths = tuple(root / relative_path for root in roots for relative_path in skill_assets())
     else:
         paths = tuple(
-            skill_directory
-            for root in roots
-            for skill_directory in _owned_skill_directories(root)
+            skill_directory for root in roots for skill_directory in _owned_skill_directories(root)
         )
     return ProjectSkillPlan(action, normalized_targets, dry_run, paths)
 
@@ -115,9 +109,7 @@ def _validate_target_root(root: Path) -> None:
         raise ValueError(f"target root must be a directory: {root}")
 
 
-def _validate_install_destinations(
-    roots: tuple[Path, ...], assets: dict[str, str]
-) -> None:
+def _validate_install_destinations(roots: tuple[Path, ...], assets: dict[str, str]) -> None:
     """Reject symlinks in every bundled destination before writing anything."""
     for root in roots:
         for relative_path in assets:
@@ -126,8 +118,7 @@ def _validate_install_destinations(
                 destination /= component
                 if destination.is_symlink():
                     raise ValueError(
-                        "project skill destination must not contain a symlink: "
-                        f"{destination}"
+                        f"project skill destination must not contain a symlink: {destination}"
                     )
 
 
