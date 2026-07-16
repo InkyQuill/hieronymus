@@ -229,16 +229,11 @@ def _project_skill_targets(targets: tuple[str, ...], *, assume_yes: bool) -> tup
     if not click.get_text_stream("stdin").isatty():
         raise click.UsageError("supply at least one --target: agents or claude")
 
-    response = click.prompt(
-        "Select project skill targets (comma-separated: agents, claude)", default="agents, claude"
+    selected = tuple(
+        target
+        for target in _PROJECT_SKILL_TARGET_ORDER
+        if click.confirm(f"Select .{target}?", default=True)
     )
-    requested = tuple(target.strip() for target in response.split(",") if target.strip())
-    unknown_targets = set(requested).difference(_PROJECT_SKILL_TARGET_ORDER)
-    if unknown_targets:
-        unknown = ", ".join(sorted(unknown_targets))
-        raise click.UsageError(f"unsupported project skill target: {unknown}")
-
-    selected = tuple(target for target in _PROJECT_SKILL_TARGET_ORDER if target in requested)
     if not selected:
         raise click.UsageError("supply at least one --target: agents or claude")
     if not assume_yes:
