@@ -54,11 +54,32 @@ class ServiceManager:
             return {"running": False, "reason": "unreachable"}
 
     def ensure_running(self) -> dict[str, Any]:
-        current = self._health_status()
-        if current.get("running") is True:
-            return {"started": False, "status": current}
+        state, started = self._ensure_running_state()
+        return {
+            "started": started,
+            "status": {
+                "running": True,
+                "pid": state.pid,
+                "host": state.host,
+                "port": state.port,
+                "version": state.version,
+                "data_root": state.data_root,
+                "database_path": state.database_path,
+            },
+        }
+
+    def ensure_running_state(self) -> ServerState:
+        return self._ensure_running_state()[0]
+
+    def _ensure_running_state(self) -> tuple[ServerState, bool]:
+        state = self._healthy_state()
+        if state is not None:
+            return state, False
         self.start()
-        return {"started": True, "status": self._health_status()}
+        state = self._healthy_state()
+        if state is None:
+            raise RuntimeError("hieronymus service daemon did not publish state")
+        return state, True
 
     def start(self) -> None:
         current = self._health_status()
@@ -117,6 +138,18 @@ class ServiceManager:
             "data_root": state.data_root,
             "database_path": state.database_path,
         }
+
+    def _healthy_state(self) -> ServerState | None:
+        cleanup_stale_state(self.config)
+        state = read_server_state(self.config)
+        if state is None:
+            return None
+        try:
+            self.client.health(state)
+        except (OSError, ServiceClientError):
+            remove_server_state(self.config, expected_state=state)
+            return None
+        return state
 
     def stop(self) -> dict[str, Any]:
         state = read_server_state(self.config)

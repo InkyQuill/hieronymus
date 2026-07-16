@@ -149,6 +149,15 @@ def test_ensure_running_uses_health_without_requesting_full_status(tmp_path: Pat
     assert client.status_calls == 0
 
 
+def test_ensure_running_state_returns_the_healthy_state(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config, pid=os.getpid())
+    write_server_state(config, state)
+    manager = ServiceManager(config, client=FakeClient(healthy=True))
+
+    assert manager.ensure_running_state() == state
+
+
 def test_start_rechecks_status_after_acquiring_start_lock(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     state = server_state(config, pid=os.getpid())

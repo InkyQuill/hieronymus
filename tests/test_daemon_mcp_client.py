@@ -19,6 +19,16 @@ class FakeManager:
 
 
 @dataclass
+class StateManager:
+    state: ServerState
+    ensure_state_calls: int = 0
+
+    def ensure_running_state(self) -> ServerState:
+        self.ensure_state_calls += 1
+        return self.state
+
+
+@dataclass
 class FakeClient:
     calls: list[tuple[str, str, dict[str, object]]]
 
@@ -64,6 +74,32 @@ def test_daemon_mcp_client_starts_service_then_posts_operation(tmp_path: Path) -
             {"slug": "oso", "title": "Only Sense Online"},
         )
     ]
+
+
+def test_daemon_mcp_client_uses_manager_state_without_rereading_file(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "data")
+    state = ServerState(
+        pid=1,
+        host="127.0.0.1",
+        port=8765,
+        version="0.1.0",
+        started_at="2026-07-16T00:00:00Z",
+        data_root=str(config.data_root),
+        database_path=str(config.database_path),
+        token="test-token",
+    )
+    manager = StateManager(state)
+    client = FakeClient(calls=[])
+
+    result = DaemonMcpClient(
+        config,
+        manager=manager,
+        client=client,
+        state_reader=lambda _: None,
+    ).invoke("series_list", {})
+
+    assert result == {"slug": "oso"}
+    assert manager.ensure_state_calls == 1
 
 
 def test_daemon_mcp_client_reuses_one_daemon_for_multiple_operations(tmp_path: Path) -> None:

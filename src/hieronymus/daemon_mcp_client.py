@@ -12,6 +12,8 @@ from hieronymus.service_state import ServerState, read_server_state
 class _Manager(Protocol):
     def ensure_running(self) -> dict[str, object]: ...
 
+    def ensure_running_state(self) -> ServerState: ...
+
 
 class _Client(Protocol):
     def request_json(
@@ -38,8 +40,12 @@ class DaemonMcpClient:
         self.state_reader = state_reader
 
     def invoke(self, operation: str, params: dict[str, object]) -> Any:
-        self.manager.ensure_running()
-        state = self.state_reader(self.config)
+        ensure_state = getattr(self.manager, "ensure_running_state", None)
+        if callable(ensure_state):
+            state = ensure_state()
+        else:
+            self.manager.ensure_running()
+            state = self.state_reader(self.config)
         if state is None:
             raise RuntimeError("Hieronymus daemon did not publish state")
         try:
