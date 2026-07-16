@@ -4,8 +4,8 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from hieronymus.cli import main
 from hieronymus import cli_boundaries
+from hieronymus.cli import main
 from hieronymus.cli_boundaries import DIRECT_STORE_COMMANDS
 
 

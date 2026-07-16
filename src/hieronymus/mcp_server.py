@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-import json
 import inspect
-from dataclasses import asdict
+import json
 from contextvars import ContextVar
+from dataclasses import asdict
 from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from hieronymus.daemon_mcp_client import DaemonMcpClient
 from hieronymus.concept_models import ConceptFacetRecord, ConceptRecord
 from hieronymus.concepts import CONCEPT_CANDIDATE, ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig, load_config
 from hieronymus.crystals import CrystalStore
+from hieronymus.daemon_mcp_client import DaemonMcpClient
 from hieronymus.db import connect
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamService
@@ -37,7 +37,6 @@ from hieronymus.rag_payloads import (
 )
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry, Series
-from hieronymus.service_discovery import discover_local_service
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
