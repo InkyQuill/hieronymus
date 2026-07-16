@@ -2,6 +2,62 @@
 
 <!-- version list -->
 
+## v0.3.0 (2026-07-16)
+
+### Bug Fixes
+
+- Allow daemon additional startup time
+  ([`1789627`](https://github.com/InkyQuill/hieronymus/commit/17896270b5e0ea8843d4fbd109619bdfe7200b09))
+
+- Avoid full status request before MCP operations
+  ([`b660553`](https://github.com/InkyQuill/hieronymus/commit/b66055393a2c984dbed6c4b0db227441eb02fd1f))
+
+- Preserve MCP domain validation errors
+  ([`e8f4f06`](https://github.com/InkyQuill/hieronymus/commit/e8f4f064dfb8f68f5cc756840b2a3b0dacd3c038))
+
+- Report unified daemon lifecycle accurately
+  ([`46e4c2e`](https://github.com/InkyQuill/hieronymus/commit/46e4c2e25009765cc6dbbcadedfd387f76eb34e5))
+
+- Reuse confirmed daemon state for MCP calls
+  ([`dd5a2c3`](https://github.com/InkyQuill/hieronymus/commit/dd5a2c3d999c0b77eb30dd13136a7c73f58ae9fa))
+
+### Chores
+
+- Align lockfile with release version
+  ([`3b3306f`](https://github.com/InkyQuill/hieronymus/commit/3b3306f533af5e1f0ee030e3f18714b9dbbec222))
+
+### Code Style
+
+- Format daemon MCP migration
+  ([`7105ca5`](https://github.com/InkyQuill/hieronymus/commit/7105ca523a4dab5b27f1d0346c089af1ef9cb3c2))
+
+### Documentation
+
+- Design unified daemon MCP boundary
+  ([`438db4d`](https://github.com/InkyQuill/hieronymus/commit/438db4d9380fb1d80213f9df7eeb1277e5e67b82))
+
+- Plan unified daemon MCP migration
+  ([`dcf7e67`](https://github.com/InkyQuill/hieronymus/commit/dcf7e6794226d4bc9a3585ae66394adbfd36c208))
+
+### Features
+
+- Add authenticated daemon MCP transport
+  ([`d15a5be`](https://github.com/InkyQuill/hieronymus/commit/d15a5be1a840af9cb26980a759cd1b03676d5f94))
+
+### Refactoring
+
+- Route stdio MCP tools through daemon
+  ([`4fd01b3`](https://github.com/InkyQuill/hieronymus/commit/4fd01b3680589f41da79e1cb003e3e83a10c3b8d))
+
+### Testing
+
+- Include daemon info in doctor JSON contract
+  ([`517c6c7`](https://github.com/InkyQuill/hieronymus/commit/517c6c78a180eb65fcdfb068eb3f4d65528c405d))
+
+- Verify MCP reuses unified daemon
+  ([`f4c5589`](https://github.com/InkyQuill/hieronymus/commit/f4c5589af37d5ff05acd4975ccdd90842f967b66))
+
+
 ## v0.2.0 (2026-07-16)
 
 ### Bug Fixes
