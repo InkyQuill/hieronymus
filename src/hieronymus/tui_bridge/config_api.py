@@ -513,6 +513,72 @@ class ConfigBridge:
             "error": payload.get("error", ""),
         }
 
+    def dream_settings(self, _params: dict[str, object]) -> dict[str, object]:
+        dream_config, dream_error = self._dream_from_params({})
+        provider_catalog, provider_error = self._provider_catalog_from_params({})
+        model_cache = load_model_cache(self.config).to_payload()
+        return {
+            "dream": dream_config.to_payload(),
+            "providers": [
+                self._provider_editor_payload(provider_catalog, provider_id)
+                for provider_id in sorted(provider_catalog.providers)
+            ],
+            "model_cache": model_cache,
+            "error": dream_error or provider_error,
+        }
+
+    def save_dream_settings(self, params: dict[str, object]) -> dict[str, object]:
+        raw_dream = params.get("dream")
+        if type(raw_dream) is not dict:
+            raise ValueError("dream must be an object")
+        dream_config, load_error = self._dream_from_params({})
+        if load_error:
+            return {"error": load_error}
+        try:
+            dream_config = validate_dream_config(_dream_config_from_draft(dream_config, raw_dream))
+        except DreamConfigError as error:
+            return {"error": str(error)}
+        save_dream_config(self.config, dream_config)
+        return {"dream": dream_config.to_payload(), "error": ""}
+
+    def ingest_settings(self, _params: dict[str, object]) -> dict[str, object]:
+        ingest_config, load_error = self._ingest_from_params({})
+        return {"ingest": ingest_config.to_payload(), "error": load_error}
+
+    def save_ingest_settings(self, params: dict[str, object]) -> dict[str, object]:
+        raw_ingest = params.get("ingest")
+        if type(raw_ingest) is not dict:
+            raise ValueError("ingest must be an object")
+        ingest_config, load_error = self._ingest_from_params({})
+        if load_error:
+            return {"error": load_error}
+        try:
+            ingest_config = validate_ingest_config(
+                _ingest_config_from_draft(ingest_config, raw_ingest)
+            )
+        except IngestConfigError as error:
+            return {"error": str(error)}
+        save_ingest_config(self.config, ingest_config)
+        return {"ingest": ingest_config.to_payload(), "error": ""}
+
+    def release_settings(self, _params: dict[str, object]) -> dict[str, object]:
+        release_config, load_error = self._release_from_params({})
+        return {"release": _release_draft(release_config), "error": load_error}
+
+    def save_release_settings(self, params: dict[str, object]) -> dict[str, object]:
+        raw_release = params.get("release")
+        if type(raw_release) is not dict:
+            raise ValueError("release must be an object")
+        release_config, load_error = self._release_from_params({})
+        if load_error:
+            return {"error": load_error}
+        try:
+            release_config = self._release_form(raw_release, release_config)
+        except ReleaseConfigError as error:
+            return {"error": str(error)}
+        save_release_config(self.config, release_config)
+        return {"release": _release_draft(release_config), "error": ""}
+
     def select_provider(self, params: dict[str, object]) -> dict[str, object]:
         dream_config, dream_error = self._dream_from_params(params)
         provider_catalog, provider_error = self._provider_catalog_from_params(params)

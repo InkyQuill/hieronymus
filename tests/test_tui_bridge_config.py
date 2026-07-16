@@ -431,6 +431,59 @@ def test_provider_editor_save_preserves_existing_secret_when_key_is_blank(
     assert profile.key == "existing-secret"
 
 
+def test_web_dream_settings_save_only_updates_dream_config(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bridge = ConfigBridge(config)
+
+    saved = bridge.save_dream_settings(
+        {
+            "dream": {
+                "dreaming": {
+                    "enabled": True,
+                    "schedule_interval_minutes": 45,
+                    "min_pending_short_term_memories": 24,
+                },
+                "workflows": {
+                    "crystallization": {
+                        "provider": "deepseek",
+                        "model": "deepseek-chat",
+                        "enabled": True,
+                    }
+                },
+            }
+        }
+    )
+
+    assert saved["error"] == ""
+    assert saved["dream"]["dreaming"]["schedule_interval_minutes"] == 45
+    assert load_dream_config(config).workflows["crystallization"].provider == "deepseek"
+    assert not config.provider_config_path.exists()
+
+
+def test_web_ingest_and_release_settings_save_their_own_files(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    bridge = ConfigBridge(config)
+
+    ingest = bridge.save_ingest_settings(
+        {
+            "ingest": {
+                "short_memory": {
+                    "warning_sentence_count": 8,
+                    "rejection_sentence_count": 32,
+                },
+                "learn": {"max_block_chars": 1600},
+            }
+        }
+    )
+    release = bridge.save_release_settings({"release": {"update_channel": "dev"}})
+
+    assert ingest["error"] == ""
+    assert ingest["ingest"]["learn"]["max_block_chars"] == 1600
+    assert release == {"release": {"update_channel": "dev"}, "error": ""}
+    assert config.ingest_config_path.exists()
+    assert config.release_config_path.exists()
+
+
 def test_config_save_persists_provider_catalog_before_dream_config(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bridge = ConfigBridge(config)

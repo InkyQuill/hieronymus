@@ -38,7 +38,7 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         request_url = urlparse(self.path)
         path = request_url.path
-        if path in {"/config", "/admin"}:
+        if _is_web_route(path):
             token = parse_qs(request_url.query).get("token", [""])[0]
             if token and secrets.compare_digest(token, self.server.state.token):
                 self.send_response(HTTPStatus.FOUND.value)
@@ -71,6 +71,12 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             self._handle_provider_get(path)
+            return
+        if path in _SETTINGS_GET_METHODS:
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self._send_config_result(_SETTINGS_GET_METHODS[path], {})
             return
         if path == "/health":
             if not self._is_authorized():
@@ -106,6 +112,12 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             self._send_config_result("save_provider", self._request_json())
+            return
+        if path in _SETTINGS_SAVE_METHODS:
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self._send_config_result(_SETTINGS_SAVE_METHODS[path], self._request_json())
             return
         self._send_json({"error": "not_found", "path": path}, status=HTTPStatus.NOT_FOUND)
 
@@ -213,6 +225,23 @@ def _session_token(cookie_header: str) -> str:
         if separator and name == "hieronymus_token":
             return value
     return ""
+
+
+def _is_web_route(path: str) -> bool:
+    return path in {"/config", "/admin"} or path.startswith(("/config/", "/admin/"))
+
+
+_SETTINGS_GET_METHODS = {
+    "/api/settings/dream": "dream_settings",
+    "/api/settings/ingest": "ingest_settings",
+    "/api/settings/release": "release_settings",
+}
+
+_SETTINGS_SAVE_METHODS = {
+    "/api/settings/dream": "save_dream_settings",
+    "/api/settings/ingest": "save_ingest_settings",
+    "/api/settings/release": "save_release_settings",
+}
 
 
 def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, Any]:

@@ -186,3 +186,91 @@ select {
   font-size: 24px;
   padding: 0 8px;
 }
+
+.settings {
+  max-width: 980px;
+}
+
+.settings-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 28px;
+}
+
+.settings-grid.compact {
+  margin-top: 14px;
+}
+
+.settings label,
+.prompt {
+  color: #c8d3df;
+  display: grid;
+  font-size: 13px;
+  gap: 7px;
+}
+
+.settings .toggle,
+.workflow .toggle,
+fieldset label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.settings input[type="checkbox"],
+.settings input[type="radio"] {
+  accent-color: #63d8ff;
+}
+
+.workflows {
+  border-top: 1px solid #29313a;
+  margin-top: 36px;
+  padding-top: 22px;
+}
+
+.workflow {
+  background: #11161c;
+  border: 1px solid #29313a;
+  margin-top: 14px;
+  padding: 18px;
+}
+
+.workflow header > div {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.workflow h4 {
+  margin: 0;
+  text-transform: capitalize;
+}
+
+.prompt {
+  margin-top: 28px;
+}
+
+textarea {
+  background: #0d1014;
+  border: 1px solid #40515f;
+  border-radius: 4px;
+  color: #e9edf2;
+  font: inherit;
+  padding: 10px;
+  resize: vertical;
+}
+
+fieldset {
+  border: 1px solid #40515f;
+  display: grid;
+  gap: 14px;
+  margin: 28px 0;
+  max-width: 560px;
+  padding: 20px;
+}
+
+legend {
+  color: #63d8ff;
+  padding: 0 6px;
+}

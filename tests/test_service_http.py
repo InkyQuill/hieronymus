@@ -116,6 +116,21 @@ def test_config_page_requires_token_then_redirects_to_cookie_session(tmp_path: P
     assert any(cookie.name == "hieronymus_token" for cookie in cookies)
 
 
+def test_config_routes_serve_the_web_application_after_session_setup(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        request = urllib.request.Request(f"{base_url}/config/dreaming")
+        request.add_header("X-Hieronymus-Token", "local-test-token")
+        with urllib.request.urlopen(request, timeout=2) as response:
+            page = response.read().decode("utf-8")
+    finally:
+        _stop_server(server, thread)
+
+    assert "Hieronymus Web Console" in page
+
+
 def test_web_assets_require_the_same_local_session(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     server = build_server(config, _make_state(config))
@@ -174,6 +189,29 @@ def test_provider_api_creates_and_lists_custom_profiles(tmp_path: Path) -> None:
             "url": "https://api.deepseek.com/v1",
         }
     ]
+
+
+def test_settings_apis_are_scoped_to_their_configuration_files(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        loaded = _request_json(f"{base_url}/api/settings/dream")
+        saved = _post_json(
+            f"{base_url}/api/settings/dream",
+            {
+                "dream": {
+                    "dreaming": {"enabled": True, "schedule_interval_minutes": 45},
+                    "workflows": {},
+                }
+            },
+        )
+    finally:
+        _stop_server(server, thread)
+
+    assert "dream" in loaded
+    assert saved["dream"]["dreaming"]["enabled"] is True
+    assert saved["dream"]["dreaming"]["schedule_interval_minutes"] == 45
 
 
 def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:

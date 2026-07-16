@@ -1,4 +1,11 @@
-import type { ProviderDraft, ProviderProfile } from "./types";
+import type {
+  DreamSettings,
+  IngestSettings,
+  ModelCache,
+  ProviderDraft,
+  ProviderProfile,
+  ReleaseSettings,
+} from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -40,4 +47,55 @@ export async function refreshModels(providerId: string): Promise<string[]> {
       `/api/providers/${encodeURIComponent(providerId)}/models`,
     )
   ).models;
+}
+
+export async function loadDreamSettings(): Promise<{
+  dream: DreamSettings;
+  providers: ProviderProfile[];
+  model_cache: ModelCache;
+}> {
+  return request("/api/settings/dream");
+}
+
+export async function saveDreamSettings(
+  dream: DreamSettings,
+): Promise<DreamSettings> {
+  return (
+    await request<{ dream: DreamSettings }>("/api/settings/dream", {
+      method: "POST",
+      body: JSON.stringify({ dream }),
+    })
+  ).dream;
+}
+
+export async function loadIngestSettings(): Promise<IngestSettings> {
+  return (await request<{ ingest: IngestSettings }>("/api/settings/ingest"))
+    .ingest;
+}
+
+export async function saveIngestSettings(
+  ingest: IngestSettings,
+): Promise<IngestSettings> {
+  return (
+    await request<{ ingest: IngestSettings }>("/api/settings/ingest", {
+      method: "POST",
+      body: JSON.stringify({ ingest }),
+    })
+  ).ingest;
+}
+
+export async function loadReleaseSettings(): Promise<ReleaseSettings> {
+  return (await request<{ release: ReleaseSettings }>("/api/settings/release"))
+    .release;
+}
+
+export async function saveReleaseSettings(
+  release: ReleaseSettings,
+): Promise<ReleaseSettings> {
+  return (
+    await request<{ release: ReleaseSettings }>("/api/settings/release", {
+      method: "POST",
+      body: JSON.stringify({ release }),
+    })
+  ).release;
 }
