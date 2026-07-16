@@ -450,6 +450,7 @@ def doctor_command(ctx: click.Context, autofix: bool, as_json: bool) -> None:
     click.echo(render_greeting())
     click.echo()
     for title, key in (
+        ("Doctor info", "info"),
         ("Autofixed", "autofixed"),
         ("Doctor warnings", "warnings"),
         ("Doctor errors", "errors"),

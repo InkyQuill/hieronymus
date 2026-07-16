@@ -79,6 +79,23 @@ def run_doctor_without_daemon(config: HieronymusConfig):
         return Doctor(config).run(autofix=False)
 
 
+def test_doctor_reports_running_daemon_as_information(config) -> None:
+    with patch("hieronymus.doctor.ServiceManager") as manager_class:
+        manager_class.return_value.status.return_value = {
+            "running": True,
+            "pid": 12,
+            "port": 8765,
+            "data_root": str(config.data_root),
+        }
+        report = Doctor(config).run(autofix=False)
+
+    finding = next(item for item in report["info"] if item.code == "daemon-running")
+    assert finding.autofixed is False
+    assert "pid 12" in finding.message
+    assert "port 8765" in finding.message
+    assert str(config.data_root) in finding.message
+
+
 def test_doctor_reports_missing_config_root_as_autofixable(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 

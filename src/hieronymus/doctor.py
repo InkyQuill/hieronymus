@@ -52,7 +52,7 @@ class Doctor:
         self.config = config
 
     def run(self, autofix: bool = False) -> DoctorReport:
-        report: DoctorReport = {"autofixed": [], "warnings": [], "errors": []}
+        report: DoctorReport = {"info": [], "autofixed": [], "warnings": [], "errors": []}
 
         self._check_config_root(report, autofix=autofix)
         self._check_database(report)
@@ -140,11 +140,16 @@ class Doctor:
     def _check_daemon(self, report: DoctorReport) -> None:
         status = ServiceManager(self.config).status()
         if status.get("running") is True:
-            report["autofixed"].append(
+            report["info"].append(
                 DoctorFinding(
                     level="info",
                     code="daemon-running",
-                    message="Hieronymus daemon is reachable.",
+                    message=(
+                        "Hieronymus daemon is reachable: "
+                        f"pid {status.get('pid', 'unknown')}, "
+                        f"port {status.get('port', 'unknown')}, "
+                        f"data root {status.get('data_root', self.config.data_root)}."
+                    ),
                 )
             )
             return

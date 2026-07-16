@@ -81,12 +81,3 @@ DIRECT_STORE_COMMANDS: tuple[DirectStoreCommand, ...] = (
         ),
     ),
 )
-
-DIRECT_STORE_MCP_ADAPTER = DirectStoreCommand(
-    name="hieronymus-mcp",
-    consumer="agent-automation",
-    reason=(
-        "stdio MCP adapter uses Python domain stores directly because the local daemon currently "
-        "exposes lifecycle and status HTTP only; it does not parse person-facing CLI output"
-    ),
-)

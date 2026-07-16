@@ -29,7 +29,7 @@ class FakeClient:
         payload: dict[str, object],
     ) -> dict[str, object]:
         self.calls.append((method, path, payload))
-        return {"slug": "oso"}
+        return {"result": {"slug": "oso"}}
 
 
 def test_daemon_mcp_client_starts_service_then_posts_operation(tmp_path: Path) -> None:

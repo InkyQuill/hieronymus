@@ -5,7 +5,8 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from hieronymus.cli import main
-from hieronymus.cli_boundaries import DIRECT_STORE_COMMANDS, DIRECT_STORE_MCP_ADAPTER
+from hieronymus import cli_boundaries
+from hieronymus.cli_boundaries import DIRECT_STORE_COMMANDS
 
 
 def _normalize_whitespace(value: str) -> str:
@@ -34,11 +35,8 @@ def test_direct_store_cli_commands_are_documented() -> None:
     )
 
 
-def test_mcp_direct_store_adapter_boundary_is_explicit() -> None:
-    assert DIRECT_STORE_MCP_ADAPTER.name == "hieronymus-mcp"
-    assert DIRECT_STORE_MCP_ADAPTER.consumer == "agent-automation"
-    assert "stdio MCP adapter" in DIRECT_STORE_MCP_ADAPTER.reason
-    assert "human CLI output" not in DIRECT_STORE_MCP_ADAPTER.reason
+def test_mcp_is_not_a_direct_store_boundary() -> None:
+    assert not hasattr(cli_boundaries, "DIRECT_STORE_MCP_ADAPTER")
 
 
 def test_service_toolkit_mentions_every_direct_store_command() -> None:
@@ -48,7 +46,7 @@ def test_service_toolkit_mentions_every_direct_store_command() -> None:
     for entry in DIRECT_STORE_COMMANDS:
         assert f"`hiero {entry.name}`" in docs
         assert _normalize_whitespace(entry.reason) in normalized_docs
-    assert _normalize_whitespace(DIRECT_STORE_MCP_ADAPTER.reason) in normalized_docs
+    assert "hieronymus-mcp` is also a direct-store boundary" not in normalized_docs
 
 
 def test_service_toolkit_session_complete_example_matches_click_options() -> None:

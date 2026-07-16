@@ -108,9 +108,9 @@ reason strings are part of the current boundary catalog.
 - `hiero dream`: maintenance command that invokes DreamService directly so
   local dreaming works without a daemon
 
-`hieronymus-mcp` is also a direct-store boundary: stdio MCP adapter uses Python
-domain stores directly because the local daemon currently exposes lifecycle and
-status HTTP only; it does not parse person-facing CLI output.
+`hieronymus-mcp` is a stdio adapter for the authenticated local daemon. It
+starts or reuses the daemon for its data root and does not access SQLite stores
+directly.
 
 MCP/storage primitives still use domain stores directly where the boundary
 catalog says they do. Agent hooks and the `hieronymus_status` MCP tool report

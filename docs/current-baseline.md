@@ -15,7 +15,7 @@ The current implemented surfaces are:
 - Python CLI commands through `hiero` and `hieronymus`.
 - A stdio MCP server through `hieronymus-mcp`.
 - Generated agent integration assets and host installers.
-- A local HTTP daemon for lifecycle and status.
+- A local HTTP daemon for lifecycle, status, web administration, dreaming, and MCP operations.
 - A React/OpenTUI management app launched by Python and running on Bun.
 - Local SQLite storage with FTS5-backed recall and explicit migrations.
 
@@ -103,10 +103,10 @@ decision context.
 Human CLI output is allowed to be readable and alpha-branded. Automation uses
 `--json` and should not parse human text.
 
-The local daemon exposes lifecycle and status HTTP endpoints on loopback with a
-token from `server.json`. Mutation-heavy commands and the MCP stdio adapter
-still call Python domain stores directly where the boundary catalog documents
-that choice.
+The local daemon exposes authenticated loopback HTTP endpoints using the token
+from `server.json`. The stdio MCP adapter starts or reuses that daemon and
+invokes its bounded internal MCP operations; it does not access domain stores
+directly.
 
 MCP exposes primitive storage, recall, dreaming, concept, facet, feedback, and
 rule-crystal operations. Read, Learn, and Remember are generated agent skill

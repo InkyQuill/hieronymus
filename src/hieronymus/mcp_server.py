@@ -11,7 +11,6 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from hieronymus.daemon_mcp_client import DaemonMcpClient
-from hieronymus.cli_boundaries import DIRECT_STORE_MCP_ADAPTER
 from hieronymus.concept_models import ConceptFacetRecord, ConceptRecord
 from hieronymus.concepts import CONCEPT_CANDIDATE, ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig, load_config
