@@ -520,6 +520,29 @@ class ProviderRegistry:
         )
         return result
 
+    def check_profile_connection(
+        self,
+        config: HieronymusConfig,
+        profile_name: str,
+        profile: ProviderProfile,
+    ) -> ModelSuggestionResult:
+        """Probe a live endpoint and refresh its cached model metadata."""
+        result = self._list_uncached_profile_model_suggestions(profile_name, profile)
+        cache = load_model_cache(config)
+        _save_model_cache_best_effort(
+            config,
+            cache.with_entry(
+                ModelCacheEntry(
+                    provider=profile_name,
+                    models=tuple(result.models),
+                    fetched_at=datetime.now(UTC).isoformat(),
+                    error=result.error,
+                    identity=dream_profile_cache_identity(profile_name, profile),
+                )
+            ),
+        )
+        return result
+
     def _list_uncached_profile_model_suggestions(
         self,
         profile_name: str,

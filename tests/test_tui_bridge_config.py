@@ -486,7 +486,7 @@ def test_web_ingest_and_release_settings_save_their_own_files(tmp_path: Path) ->
 
 def test_saved_provider_check_uses_model_discovery_for_ollama_health(tmp_path: Path) -> None:
     class Registry:
-        def list_profile_model_suggestions(self, config, profile_name, profile):
+        def check_profile_connection(self, config, profile_name, profile):
             assert profile_name == "local-ollama"
             assert profile.type == "ollama"
             return {"provider": profile_name, "models": ["qwen3"], "source": "api", "error": ""}

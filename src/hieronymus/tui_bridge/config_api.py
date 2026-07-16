@@ -521,7 +521,7 @@ class ConfigBridge:
         catalog_profile = provider_catalog.providers.get(provider_id)
         if catalog_profile is None:
             return {"check": {}, "error": f"provider profile not found: {provider_id}"}
-        result = self.registry.list_profile_model_suggestions(
+        result = self.registry.check_profile_connection(
             self.config,
             provider_id,
             _runtime_provider_profile(catalog_profile),
