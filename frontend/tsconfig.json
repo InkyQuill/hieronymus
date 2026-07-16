@@ -3,14 +3,12 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/react",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "rootDir": "src",
     "outDir": "dist",
-    "types": ["bun-types"]
+    "types": ["vite/client"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/web/**/*.ts", "src/web/**/*.svelte", "vite.config.ts"]
 }

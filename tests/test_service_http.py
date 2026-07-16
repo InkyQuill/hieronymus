@@ -4,6 +4,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -78,6 +79,43 @@ def test_health_endpoint_returns_daemon_identity(tmp_path: Path) -> None:
     assert payload["ok"] is True
     assert payload["service"] == "hieronymus"
     assert payload["version"] == "0.1.0"
+
+
+def test_config_page_requires_token_then_redirects_to_cookie_session(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        request = urllib.request.Request(f"{base_url}/config?token=local-test-token")
+        cookies = CookieJar()
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(cookies),
+            urllib.request.HTTPRedirectHandler(),
+        )
+        with opener.open(request, timeout=2) as response:
+            page = response.read().decode("utf-8")
+    finally:
+        _stop_server(server, thread)
+
+    assert "Hieronymus Web Console" in page
+    assert any(cookie.name == "hieronymus_token" for cookie in cookies)
+
+
+def test_web_assets_require_the_same_local_session(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        request = urllib.request.Request(f"{base_url}/assets/index-BcM3GI4E.js")
+        request.add_header("X-Hieronymus-Token", "local-test-token")
+        with urllib.request.urlopen(request, timeout=2) as response:
+            content_type = response.headers["Content-Type"]
+            asset = response.read().decode("utf-8")
+    finally:
+        _stop_server(server, thread)
+
+    assert content_type.startswith("text/javascript")
+    assert "Hieronymus" in asset
 
 
 def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:

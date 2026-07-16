@@ -1,0 +1,11 @@
+:root { color: #e9edf2; background: #0d1014; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 720px; }
+main { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+aside { border-right: 1px solid #29313a; padding: 32px; }
+h1, h2 { margin: 0; font-size: 24px; }
+p { color: #9ba8b8; }
+nav { display: grid; gap: 8px; margin-top: 36px; }
+a { color: #dce5ef; padding: 10px 12px; text-decoration: none; }
+a.active, a:hover { background: #17242d; color: #63d8ff; }
+section { padding: 48px; }
