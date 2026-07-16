@@ -283,9 +283,7 @@ def test_admin_memory_actions_are_explicitly_allowlisted(tmp_path: Path) -> None
     thread, base_url = _serve(server)
     try:
         with patch("hieronymus.service_http.AdminBridge", FakeAdminBridge):
-            reinforced = _post_json(
-                f"{base_url}/api/admin/actions/reinforce_crystal", {"id": 7}
-            )
+            reinforced = _post_json(f"{base_url}/api/admin/actions/reinforce_crystal", {"id": 7})
             request = urllib.request.Request(
                 f"{base_url}/api/admin/actions/not_a_method",
                 data=b"{}",

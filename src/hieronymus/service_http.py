@@ -151,9 +151,7 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             action = path.removeprefix("/api/admin/actions/").strip("/")
             method = _ADMIN_ACTION_METHODS.get(action)
             if method is None:
-                self._send_json(
-                    {"error": "unknown_admin_action"}, status=HTTPStatus.NOT_FOUND
-                )
+                self._send_json({"error": "unknown_admin_action"}, status=HTTPStatus.NOT_FOUND)
                 return
             self._send_admin_result(method, self._request_json())
             return
