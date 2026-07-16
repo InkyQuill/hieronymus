@@ -53,6 +53,20 @@ def test_noninteractive_install_without_target_is_usage_error(
     assert "supply at least one --target" in result.output
 
 
+@pytest.mark.parametrize("command", ["install", "uninstall"])
+def test_project_skills_help_explains_target_selection_and_options(
+    runner: CliRunner, command: str
+) -> None:
+    result = runner.invoke(main, ["skills", command, "--help"])
+
+    assert result.exit_code == 0
+    assert "May be repeated" in result.output
+    assert "interactive multi-select" in result.output
+    assert "non-TTY" in result.output
+    assert "without modifying the workspace" in result.output
+    assert "interactive selection confirmation" in result.output
+
+
 def test_install_dry_run_does_not_modify_workspace(
     runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

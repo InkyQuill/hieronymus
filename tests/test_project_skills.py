@@ -18,18 +18,25 @@ def test_install_writes_every_skill_to_both_targets(tmp_path: Path) -> None:
             assert installed_path.read_text(encoding="utf-8") == text
 
 
-def test_overwrite_owned_skill_preserves_custom_skill(tmp_path: Path) -> None:
-    owned = tmp_path / ".agents/skills/hieronymus-read/SKILL.md"
-    custom = tmp_path / ".agents/skills/custom/SKILL.md"
-    owned.parent.mkdir(parents=True)
-    custom.parent.mkdir(parents=True)
-    owned.write_text("old", encoding="utf-8")
-    custom.write_text("custom", encoding="utf-8")
+def test_overwrite_owned_skills_replaces_complete_directories_in_both_targets(
+    tmp_path: Path,
+) -> None:
+    for target in (".agents/skills", ".claude/skills"):
+        owned = tmp_path / target / "hieronymus-read"
+        custom = tmp_path / target / "custom/SKILL.md"
+        owned.mkdir(parents=True)
+        (owned / "SKILL.md").write_text("old", encoding="utf-8")
+        (owned / "stale-helper.py").write_text("stale", encoding="utf-8")
+        custom.parent.mkdir(parents=True)
+        custom.write_text("custom", encoding="utf-8")
 
-    install_project_skills(tmp_path, ("agents",))
+    install_project_skills(tmp_path, ("agents", "claude"))
 
-    assert owned.read_text(encoding="utf-8") != "old"
-    assert custom.read_text(encoding="utf-8") == "custom"
+    for target in (".agents/skills", ".claude/skills"):
+        owned = tmp_path / target / "hieronymus-read"
+        assert (owned / "SKILL.md").read_text(encoding="utf-8") != "old"
+        assert not (owned / "stale-helper.py").exists()
+        assert (tmp_path / target / "custom/SKILL.md").read_text(encoding="utf-8") == "custom"
 
 
 def test_uninstall_removes_only_owned_skill_directories(tmp_path: Path) -> None:

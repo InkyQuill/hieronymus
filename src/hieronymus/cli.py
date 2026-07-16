@@ -260,9 +260,23 @@ def skills_group() -> None:
 
 
 @skills_group.command("install")
-@click.option("--target", "targets", type=click.Choice(_PROJECT_SKILL_TARGET_ORDER), multiple=True)
-@click.option("--dry-run", is_flag=True)
-@click.option("--yes", "assume_yes", is_flag=True)
+@click.option(
+    "--target",
+    "targets",
+    type=click.Choice(_PROJECT_SKILL_TARGET_ORDER),
+    multiple=True,
+    help=(
+        "Target to update. May be repeated. Omit only for interactive multi-select; "
+        "non-TTY calls require a target."
+    ),
+)
+@click.option("--dry-run", is_flag=True, help="Report actions without modifying the workspace.")
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    help="Accept only the interactive selection confirmation; ignored with explicit targets.",
+)
 def skills_install(targets: tuple[str, ...], dry_run: bool, assume_yes: bool) -> None:
     """Install bundled skills in selected project agent directories."""
     selected = _project_skill_targets(targets, assume_yes=assume_yes)
@@ -274,9 +288,23 @@ def skills_install(targets: tuple[str, ...], dry_run: bool, assume_yes: bool) ->
 
 
 @skills_group.command("uninstall")
-@click.option("--target", "targets", type=click.Choice(_PROJECT_SKILL_TARGET_ORDER), multiple=True)
-@click.option("--dry-run", is_flag=True)
-@click.option("--yes", "assume_yes", is_flag=True)
+@click.option(
+    "--target",
+    "targets",
+    type=click.Choice(_PROJECT_SKILL_TARGET_ORDER),
+    multiple=True,
+    help=(
+        "Target to update. May be repeated. Omit only for interactive multi-select; "
+        "non-TTY calls require a target."
+    ),
+)
+@click.option("--dry-run", is_flag=True, help="Report actions without modifying the workspace.")
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    help="Accept only the interactive selection confirmation; ignored with explicit targets.",
+)
 def skills_uninstall(targets: tuple[str, ...], dry_run: bool, assume_yes: bool) -> None:
     """Remove only bundled skills from selected project agent directories."""
     selected = _project_skill_targets(targets, assume_yes=assume_yes)
