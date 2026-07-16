@@ -399,6 +399,38 @@ def test_config_payload_redacts_api_key_and_preserves_existing_secret_on_save(
     assert load_provider_catalog(config).providers["openai"].key == "raw-secret-value"
 
 
+def test_provider_editor_save_preserves_existing_secret_when_key_is_blank(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _save_provider(
+        config,
+        "deepseek",
+        _catalog_profile(
+            name="DeepSeek",
+            endpoint="https://api.deepseek.com/v1",
+            api_key="existing-secret",
+        ),
+    )
+
+    ConfigBridge(config).save_provider(
+        {
+            "provider": {
+                "id": "deepseek",
+                "name": "DeepSeek API",
+                "type": "openai",
+                "url": "https://api.deepseek.com/v1",
+                "key": "",
+                "timeout_seconds": "30",
+            }
+        }
+    )
+
+    profile = load_provider_catalog(config).providers["deepseek"]
+    assert profile.name == "DeepSeek API"
+    assert profile.key == "existing-secret"
+
+
 def test_config_save_persists_provider_catalog_before_dream_config(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bridge = ConfigBridge(config)

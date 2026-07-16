@@ -437,6 +437,8 @@ class ConfigBridge:
         if load_error:
             return {"error": load_error}
         try:
+            existing_profile = provider_catalog.providers.get(provider_id)
+            submitted_key = _optional_text(raw_provider, "key")
             profile = CatalogProviderProfile(
                 name=_required_text(raw_provider, "name"),
                 type=(
@@ -445,7 +447,11 @@ class ConfigBridge:
                     else _required_text(raw_provider, "type")
                 ),
                 url=_required_text(raw_provider, "url"),
-                key=_optional_text(raw_provider, "key"),
+                key=(
+                    submitted_key
+                    if submitted_key or existing_profile is None
+                    else existing_profile.key
+                ),
                 timeout_seconds=_positive_timeout(raw_provider),
             )
             updated_catalog = provider_catalog.with_provider(provider_id, profile)

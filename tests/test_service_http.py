@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -120,7 +121,13 @@ def test_web_assets_require_the_same_local_session(tmp_path: Path) -> None:
     server = build_server(config, _make_state(config))
     thread, base_url = _serve(server)
     try:
-        request = urllib.request.Request(f"{base_url}/assets/index-BcM3GI4E.js")
+        page_request = urllib.request.Request(f"{base_url}/config")
+        page_request.add_header("X-Hieronymus-Token", "local-test-token")
+        with urllib.request.urlopen(page_request, timeout=2) as response:
+            page = response.read().decode("utf-8")
+        asset_path = re.search(r'src="(/assets/[^\"]+\.js)"', page)
+        assert asset_path is not None
+        request = urllib.request.Request(f"{base_url}{asset_path.group(1)}")
         request.add_header("X-Hieronymus-Token", "local-test-token")
         with urllib.request.urlopen(request, timeout=2) as response:
             content_type = response.headers["Content-Type"]
