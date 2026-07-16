@@ -272,7 +272,11 @@ class AnthropicProviderClient:
 class OllamaProviderClient:
     def __init__(self, profile: ProviderProfile) -> None:
         headers = {"Authorization": f"Bearer {profile.api_key}"} if profile.api_key else None
-        self._client = OllamaClient(host=profile.endpoint or None, headers=headers)
+        self._client = OllamaClient(
+            host=profile.endpoint or None,
+            headers=headers,
+            timeout=profile.timeout_seconds,
+        )
 
     def list_models(self) -> list[str]:
         return [model.model for model in self._client.list().models]
