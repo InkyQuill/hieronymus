@@ -9,9 +9,16 @@ from hieronymus.service_state import ServerState
 
 
 class ServiceClientError(RuntimeError):
-    def __init__(self, message: str, *, status: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        error_type: str = "",
+    ) -> None:
         super().__init__(message)
         self.status = status
+        self.error_type = error_type
 
 
 class ServiceClient:
@@ -50,8 +57,15 @@ class ServiceClient:
             except (json.JSONDecodeError, UnicodeDecodeError):
                 error_payload = {}
             message = error_payload.get("error") if isinstance(error_payload, dict) else None
+            error_type = (
+                str(error_payload.get("error_type", ""))
+                if isinstance(error_payload, dict)
+                else ""
+            )
             raise ServiceClientError(
-                str(message or f"HTTP {exc.code} response from {path}"), status=exc.code
+                str(message or f"HTTP {exc.code} response from {path}"),
+                status=exc.code,
+                error_type=error_type,
             ) from exc
         with response_context as response:
             try:

@@ -46,6 +46,8 @@ class DaemonMcpClient:
             payload = self.client.request_json("POST", state, f"/api/mcp/{operation}", params)
         except ServiceClientError as error:
             if error.status == 400:
+                if error.error_type == "KeyError":
+                    raise KeyError(str(error)) from error
                 raise ValueError(str(error)) from error
             raise RuntimeError(f"Hieronymus daemon MCP request failed: {error}") from error
         if "result" not in payload:

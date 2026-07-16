@@ -170,6 +170,12 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             except ValueError as error:
                 self._send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
                 return
+            except KeyError as error:
+                self._send_json(
+                    {"error": str(error), "error_type": "KeyError"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
             self._send_json({"result": payload})
             return
         self._send_json({"error": "not_found", "path": path}, status=HTTPStatus.NOT_FOUND)
