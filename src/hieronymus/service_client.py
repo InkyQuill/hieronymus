@@ -17,20 +17,29 @@ class ServiceClient:
         self.timeout = timeout
 
     def health(self, state: ServerState) -> dict[str, Any]:
-        payload = self._json("GET", state, "/health")
+        payload = self.request_json("GET", state, "/health")
         if payload.get("ok") is not True or payload.get("service") != "hieronymus":
             raise ServiceClientError("unexpected health response from service")
         return payload
 
     def status(self, state: ServerState) -> dict[str, Any]:
-        return self._json("GET", state, "/status")
+        return self.request_json("GET", state, "/status")
 
     def shutdown(self, state: ServerState) -> dict[str, Any]:
-        return self._json("POST", state, "/shutdown")
+        return self.request_json("POST", state, "/shutdown")
 
-    def _json(self, method: str, state: ServerState, path: str) -> dict[str, Any]:
-        request = urllib.request.Request(f"{state.base_url}{path}", method=method)
+    def request_json(
+        self,
+        method: str,
+        state: ServerState,
+        path: str,
+        payload: dict[str, object] | None = None,
+    ) -> dict[str, Any]:
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(f"{state.base_url}{path}", data=data, method=method)
         request.add_header("X-Hieronymus-Token", state.token)
+        if data is not None:
+            request.add_header("Content-Type", "application/json")
         try:
             response_context = urllib.request.urlopen(request, timeout=self.timeout)
         except urllib.error.HTTPError as exc:

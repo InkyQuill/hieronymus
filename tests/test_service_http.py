@@ -307,6 +307,33 @@ def test_admin_memory_actions_are_explicitly_allowlisted(tmp_path: Path) -> None
     assert unknown == {"error": "unknown_admin_action"}
 
 
+def test_mcp_route_rejects_unknown_operation(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        request = urllib.request.Request(
+            f"{base_url}/api/mcp/not-real",
+            data=b"{}",
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Hieronymus-Token": "local-test-token",
+            },
+        )
+        try:
+            urllib.request.urlopen(request, timeout=2)
+        except urllib.error.HTTPError as error:
+            assert error.code == 404
+            payload = json.loads(error.read().decode("utf-8"))
+        else:
+            raise AssertionError("unknown MCP operation should be rejected")
+    finally:
+        _stop_server(server, thread)
+
+    assert payload == {"error": "unknown_mcp_operation"}
+
+
 def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     state = _make_state(config)

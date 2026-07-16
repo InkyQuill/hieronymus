@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_providers import ProviderRegistry
+from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS
 from hieronymus.service_state import ServerState
 from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.tui_bridge.config_api import ConfigBridge
@@ -154,6 +155,24 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "unknown_admin_action"}, status=HTTPStatus.NOT_FOUND)
                 return
             self._send_admin_result(method, self._request_json())
+            return
+        if path.startswith("/api/mcp/"):
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            operation = path.removeprefix("/api/mcp/").strip("/")
+            handler = MCP_OPERATION_HANDLERS.get(operation)
+            if handler is None:
+                self._send_json(
+                    {"error": "unknown_mcp_operation"}, status=HTTPStatus.NOT_FOUND
+                )
+                return
+            try:
+                payload = handler(self.server.config, self._request_json())
+            except ValueError as error:
+                self._send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json({"result": payload})
             return
         self._send_json({"error": "not_found", "path": path}, status=HTTPStatus.NOT_FOUND)
 
