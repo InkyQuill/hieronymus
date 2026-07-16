@@ -484,6 +484,30 @@ def test_web_ingest_and_release_settings_save_their_own_files(tmp_path: Path) ->
     assert config.release_config_path.exists()
 
 
+def test_saved_provider_check_uses_model_discovery_for_ollama_health(tmp_path: Path) -> None:
+    class Registry:
+        def list_profile_model_suggestions(self, config, profile_name, profile):
+            assert profile_name == "local-ollama"
+            assert profile.type == "ollama"
+            return {"provider": profile_name, "models": ["qwen3"], "source": "api", "error": ""}
+
+    config = _config(tmp_path)
+    _save_provider(
+        config,
+        "local-ollama",
+        _catalog_profile(type="ollama", endpoint="http://localhost:11434"),
+    )
+
+    payload = ConfigBridge(config, registry=Registry()).check_saved_provider(
+        {"provider_id": "local-ollama"}
+    )
+
+    assert payload == {
+        "check": {"ok": True, "models": ["qwen3"], "source": "api", "error": ""},
+        "error": "",
+    }
+
+
 def test_config_save_persists_provider_catalog_before_dream_config(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bridge = ConfigBridge(config)

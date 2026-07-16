@@ -5,8 +5,10 @@
   import IngestEditor from "./components/IngestEditor.svelte";
   import ProviderEditor from "./components/ProviderEditor.svelte";
   import ReleaseEditor from "./components/ReleaseEditor.svelte";
+  import Toast from "./components/Toast.svelte";
   import {
     deleteProvider,
+    checkProvider,
     listProviders,
     loadAdminDashboard,
     loadDreamSettings,
@@ -50,6 +52,11 @@
   let ingestSettings = $state.raw<IngestSettings | null>(null);
   let releaseSettings = $state.raw<ReleaseSettings | null>(null);
   let adminDashboard = $state.raw<AdminDashboardPayload | null>(null);
+  let notice = $state.raw<{ message: string; tone: "success" | "error" } | null>(null);
+
+  function showNotice(message: string, tone: "success" | "error" = "success") {
+    notice = { message, tone };
+  }
 
   async function loadProviders() {
     busy = true; error = "";
@@ -70,6 +77,7 @@
       } catch {
         models = [];
       }
+      showNotice(`Saved ${saved.name}.`);
     } catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
     finally { busy = false; }
   }
@@ -77,15 +85,33 @@
   async function refresh() {
     if (!selected) return;
     busy = true; error = "";
-    try { models = await refreshModels(selected.id); }
+    try { models = await refreshModels(selected.id); showNotice("Model list refreshed."); }
     catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
     finally { busy = false; }
+  }
+
+  async function check() {
+    if (!selected) return;
+    busy = true;
+    error = "";
+    try {
+      const result = await checkProvider(selected.id);
+      models = result.models;
+      showNotice(
+        result.ok ? "Connection verified." : `Connection check failed: ${result.error}`,
+        result.ok ? "success" : "error",
+      );
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      error = message;
+      showNotice(`Connection check failed: ${message}`, "error");
+    } finally { busy = false; }
   }
 
   async function remove() {
     if (!selected || !confirm(`Delete ${selected.name}?`)) return;
     busy = true; error = "";
-    try { await deleteProvider(selected.id); selected = null; models = []; await loadProviders(); }
+    try { await deleteProvider(selected.id); selected = null; models = []; await loadProviders(); showNotice("Provider deleted."); }
     catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
     finally { busy = false; }
   }
@@ -114,7 +140,7 @@
   async function saveDream(settings: DreamSettings) {
     busy = true;
     error = "";
-    try { dreamSettings = await saveDreamSettings(settings); }
+    try { dreamSettings = await saveDreamSettings(settings); showNotice("Dreaming settings saved."); }
     catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
     finally { busy = false; }
   }
@@ -122,7 +148,7 @@
   async function saveIngest(settings: IngestSettings) {
     busy = true;
     error = "";
-    try { ingestSettings = await saveIngestSettings(settings); }
+    try { ingestSettings = await saveIngestSettings(settings); showNotice("Ingest settings saved."); }
     catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
     finally { busy = false; }
   }
@@ -130,7 +156,7 @@
   async function saveRelease(settings: ReleaseSettings) {
     busy = true;
     error = "";
-    try { releaseSettings = await saveReleaseSettings(settings); }
+    try { releaseSettings = await saveReleaseSettings(settings); showNotice("Release settings saved."); }
     catch (reason) { error = reason instanceof Error ? reason.message : String(reason); }
     finally { busy = false; }
   }
@@ -156,5 +182,6 @@
     {:else if error}<p class="error">{error}</p>
     {:else}<p>Loading settings…</p>{/if}
   </section>
-  {#if section === "providers" && (selected || createOpen)}{#key selected?.id ?? "new"}<ProviderEditor provider={selected} {models} {busy} {error} onSave={save} onDelete={remove} onRefreshModels={refresh} onClose={() => { selected = null; createOpen = false; error = ""; }} />{/key}{/if}
+  {#if section === "providers" && (selected || createOpen)}{#key selected?.id ?? "new"}<ProviderEditor provider={selected} {models} {busy} {error} onSave={save} onDelete={remove} onCheck={check} onRefreshModels={refresh} onClose={() => { selected = null; createOpen = false; error = ""; }} />{/key}{/if}
+  {#if notice}<Toast message={notice.message} tone={notice.tone} onDismiss={() => { notice = null; }} />{/if}
 </main>

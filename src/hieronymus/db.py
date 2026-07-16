@@ -18,6 +18,10 @@ GLOBAL_COMPATIBILITY_COLUMNS = {
         "soft_origin": "text",
     },
     "crystals": {
+        "source_credibility": "text not null default 'observation'",
+        "rule_intent": "text not null default ''",
+        "malformed_penalty": "real not null default 0",
+        "supersedes_crystal_id": "integer references crystals(id)",
         "soft_origin": "text",
         "is_inferred": "integer not null default 0",
     },

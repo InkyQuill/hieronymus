@@ -127,6 +127,13 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_config_result("save_provider", self._request_json())
             return
+        if path.startswith("/api/providers/") and path.endswith("/check"):
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            provider_id = path.removeprefix("/api/providers/").removesuffix("/check").rstrip("/")
+            self._send_config_result("check_saved_provider", {"provider_id": provider_id})
+            return
         if path in _SETTINGS_SAVE_METHODS:
             if not self._is_authorized():
                 self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)

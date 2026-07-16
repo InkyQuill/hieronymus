@@ -358,3 +358,28 @@ legend {
 .admin-rows span {
   overflow-wrap: anywhere;
 }
+
+.toast {
+  align-items: center;
+  background: #132920;
+  border: 1px solid #6fe4a8;
+  bottom: 24px;
+  color: #dfffea;
+  display: flex;
+  gap: 18px;
+  max-width: 480px;
+  padding: 12px 14px;
+  position: fixed;
+  right: 24px;
+}
+
+.toast-error {
+  background: #341b22;
+  border-color: #ff8585;
+  color: #ffe1e1;
+}
+
+.toast button {
+  border: 0;
+  padding: 0 4px;
+}

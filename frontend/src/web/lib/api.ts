@@ -5,6 +5,7 @@ import type {
   IngestSettings,
   ModelCache,
   ProviderDraft,
+  ProviderCheck,
   ProviderProfile,
   ReleaseSettings,
 } from "./types";
@@ -49,6 +50,17 @@ export async function refreshModels(providerId: string): Promise<string[]> {
       `/api/providers/${encodeURIComponent(providerId)}/models`,
     )
   ).models;
+}
+
+export async function checkProvider(
+  providerId: string,
+): Promise<ProviderCheck> {
+  return (
+    await request<{ check: ProviderCheck }>(
+      `/api/providers/${encodeURIComponent(providerId)}/check`,
+      { method: "POST", body: "{}" },
+    )
+  ).check;
 }
 
 export async function loadDreamSettings(): Promise<{

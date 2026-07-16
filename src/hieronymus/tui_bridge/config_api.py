@@ -513,6 +513,32 @@ class ConfigBridge:
             "error": payload.get("error", ""),
         }
 
+    def check_saved_provider(self, params: dict[str, object]) -> dict[str, object]:
+        provider_id = self._require_provider_id(params.get("provider_id"))
+        provider_catalog, load_error = self._provider_catalog_from_params({})
+        if load_error:
+            return {"check": {}, "error": load_error}
+        catalog_profile = provider_catalog.providers.get(provider_id)
+        if catalog_profile is None:
+            return {"check": {}, "error": f"provider profile not found: {provider_id}"}
+        result = self.registry.list_profile_model_suggestions(
+            self.config,
+            provider_id,
+            _runtime_provider_profile(catalog_profile),
+        )
+        payload = _result_to_json_dict(result)
+        _redact_error(payload, provider_catalog)
+        error = str(payload.get("error", ""))
+        return {
+            "check": {
+                "ok": not error,
+                "models": payload.get("models", []),
+                "source": payload.get("source", ""),
+                "error": error,
+            },
+            "error": "",
+        }
+
     def dream_settings(self, _params: dict[str, object]) -> dict[str, object]:
         dream_config, dream_error = self._dream_from_params({})
         provider_catalog, provider_error = self._provider_catalog_from_params({})

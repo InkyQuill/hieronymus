@@ -191,6 +191,32 @@ def test_provider_api_creates_and_lists_custom_profiles(tmp_path: Path) -> None:
     ]
 
 
+def test_provider_check_api_returns_a_structured_failure(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        _post_json(
+            f"{base_url}/api/providers",
+            {
+                "provider": {
+                    "id": "local-ollama",
+                    "name": "Local Ollama",
+                    "type": "ollama",
+                    "url": "http://127.0.0.1:9",
+                    "key": "",
+                    "timeout_seconds": "1",
+                }
+            },
+        )
+        payload = _post_json(f"{base_url}/api/providers/local-ollama/check", {})
+    finally:
+        _stop_server(server, thread)
+
+    assert payload["check"]["ok"] is False
+    assert payload["check"]["error"] == "model suggestions unavailable"
+
+
 def test_settings_apis_are_scoped_to_their_configuration_files(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     server = build_server(config, _make_state(config))

@@ -10,6 +10,7 @@
     onSave: (draft: ProviderDraft) => void;
     onDelete: () => void;
     onRefreshModels: () => void;
+    onCheck: () => void;
     onClose: () => void;
   };
 
@@ -21,6 +22,7 @@
     onSave,
     onDelete,
     onRefreshModels,
+    onCheck,
     onClose,
   }: Props = $props();
 
@@ -54,7 +56,7 @@
     <label>API key<input bind:value={draft.key} type="password" placeholder={provider?.key_configured ? "Stored key (leave blank to keep)" : "Required for remote providers"} /></label>
     <label>Timeout (seconds)<input bind:value={draft.timeout_seconds} inputmode="numeric" required /></label>
     {#if error}<p class="error">{error}</p>{/if}
-    <footer><button class="primary" disabled={busy}>Save profile</button>{#if provider}<button type="button" onclick={onRefreshModels} disabled={busy}>Refresh models</button>{/if}</footer>
+    <footer><button class="primary" disabled={busy}>Save profile</button>{#if provider}<button type="button" onclick={onCheck} disabled={busy}>Check connection</button><button type="button" onclick={onRefreshModels} disabled={busy}>Refresh models</button>{/if}</footer>
   </form>
   {#if provider}<section class="models"><h3>Discovered models</h3>{#if models.length}<ul>{#each models as model (model)}<li>{model}</li>{/each}</ul>{:else}<p>No cached models. Refresh after testing the connection.</p>{/if}</section><button class="danger" onclick={onDelete} disabled={busy}>Delete provider</button>{/if}
 </aside>

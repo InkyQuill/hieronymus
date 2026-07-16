@@ -17,6 +17,13 @@ export type ProviderDraft = {
   timeout_seconds: string;
 };
 
+export type ProviderCheck = {
+  ok: boolean;
+  models: string[];
+  source: string;
+  error: string;
+};
+
 export type Workflow = {
   provider: string;
   model: string;
