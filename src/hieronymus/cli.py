@@ -26,6 +26,11 @@ from hieronymus.install import agent_install_candidates
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import CrystalRecord, ShortTermMemoryRecord, TranslationContext
 from hieronymus.presentation import GUIDE_ICON, display_version, render_greeting, render_json
+from hieronymus.project_skills import (
+    ProjectSkillPlan,
+    install_project_skills,
+    uninstall_project_skills,
+)
 from hieronymus.provider_config import (
     ProviderCatalogError,
     load_provider_catalog,
@@ -211,6 +216,80 @@ def main(ctx: click.Context, data_root: str | None) -> None:
         click.echo(render_greeting())
         click.echo()
         _echo_status_lines(status)
+
+
+_PROJECT_SKILL_TARGET_ORDER = ("agents", "claude")
+
+
+def _project_skill_targets(targets: tuple[str, ...], *, assume_yes: bool) -> tuple[str, ...]:
+    selected = tuple(target for target in _PROJECT_SKILL_TARGET_ORDER if target in targets)
+    if selected:
+        return selected
+
+    if not click.get_text_stream("stdin").isatty():
+        raise click.UsageError("supply at least one --target: agents or claude")
+
+    response = click.prompt(
+        "Select project skill targets (comma-separated: agents, claude)", default="agents, claude"
+    )
+    requested = tuple(target.strip() for target in response.split(",") if target.strip())
+    unknown_targets = set(requested).difference(_PROJECT_SKILL_TARGET_ORDER)
+    if unknown_targets:
+        unknown = ", ".join(sorted(unknown_targets))
+        raise click.UsageError(f"unsupported project skill target: {unknown}")
+
+    selected = tuple(target for target in _PROJECT_SKILL_TARGET_ORDER if target in requested)
+    if not selected:
+        raise click.UsageError("supply at least one --target: agents or claude")
+    if not assume_yes:
+        destinations = ", ".join(f".{target}" for target in selected)
+        click.confirm(f"Continue with {destinations}?", abort=True)
+    return selected
+
+
+def _echo_project_skill_plan(plan: ProjectSkillPlan) -> None:
+    action = "install" if plan.action == "install" else "remove"
+    prefix = "Dry run: " if plan.dry_run else ""
+    destinations = ", ".join(f".{target}" for target in plan.targets)
+    click.echo(f"{prefix}{action.title()} project skills in {destinations}:")
+    if not plan.paths:
+        click.echo("- no Hieronymus skills found")
+        return
+    for path in plan.paths:
+        click.echo(f"- {action}: {path.parent}")
+
+
+@main.group("skills")
+def skills_group() -> None:
+    """Install the full Hieronymus workflow skill bundle in this project."""
+
+
+@skills_group.command("install")
+@click.option("--target", "targets", type=click.Choice(_PROJECT_SKILL_TARGET_ORDER), multiple=True)
+@click.option("--dry-run", is_flag=True)
+@click.option("--yes", "assume_yes", is_flag=True)
+def skills_install(targets: tuple[str, ...], dry_run: bool, assume_yes: bool) -> None:
+    """Install bundled skills in selected project agent directories."""
+    selected = _project_skill_targets(targets, assume_yes=assume_yes)
+    try:
+        plan = install_project_skills(Path.cwd(), selected, dry_run=dry_run)
+    except ValueError as error:
+        _raise_click_error(error)
+    _echo_project_skill_plan(plan)
+
+
+@skills_group.command("uninstall")
+@click.option("--target", "targets", type=click.Choice(_PROJECT_SKILL_TARGET_ORDER), multiple=True)
+@click.option("--dry-run", is_flag=True)
+@click.option("--yes", "assume_yes", is_flag=True)
+def skills_uninstall(targets: tuple[str, ...], dry_run: bool, assume_yes: bool) -> None:
+    """Remove only bundled skills from selected project agent directories."""
+    selected = _project_skill_targets(targets, assume_yes=assume_yes)
+    try:
+        plan = uninstall_project_skills(Path.cwd(), selected, dry_run=dry_run)
+    except ValueError as error:
+        _raise_click_error(error)
+    _echo_project_skill_plan(plan)
 
 
 @main.command("status")
