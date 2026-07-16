@@ -408,11 +408,11 @@ class ConfigBridge:
         return self.bootstrap(params)
 
     def provider_list(self, params: dict[str, object]) -> dict[str, object]:
-        """Return the compact data needed by the provider chooser."""
+        """Return only user-created provider profiles for the web console."""
         provider_catalog, load_error = self._provider_catalog_from_params({})
         providers = [
-            self._provider_editor_payload(provider_catalog, str(choice["name"]))
-            for choice in self._provider_choices(provider_catalog)
+            self._provider_editor_payload(provider_catalog, provider_id)
+            for provider_id in sorted(provider_catalog.providers)
         ]
         return {"providers": providers, "error": load_error}
 
@@ -420,6 +420,8 @@ class ConfigBridge:
         """Return one profile for the provider editor modal."""
         provider_catalog, load_error = self._provider_catalog_from_params({})
         provider_id = self._require_provider_id(params.get("provider_id"))
+        if provider_id not in provider_catalog.providers:
+            return {"error": f"provider profile not found: {provider_id}"}
         return {
             "provider": self._provider_editor_payload(provider_catalog, provider_id),
             "error": load_error,
@@ -446,11 +448,7 @@ class ConfigBridge:
                 key=_optional_text(raw_provider, "key"),
                 timeout_seconds=_positive_timeout(raw_provider),
             )
-            model = _required_text(raw_provider, "model")
-            updated_catalog = replace(
-                provider_catalog.with_provider(provider_id, profile),
-                defaults=ProviderDefaults(provider=provider_id, model=model),
-            )
+            updated_catalog = provider_catalog.with_provider(provider_id, profile)
             validate_provider_catalog(updated_catalog)
         except (ProviderCatalogError, ValueError) as error:
             return {"error": str(error)}
@@ -458,6 +456,55 @@ class ConfigBridge:
         return {
             "provider": self._provider_editor_payload(updated_catalog, provider_id),
             "error": "",
+        }
+
+    def delete_provider(self, params: dict[str, object]) -> dict[str, object]:
+        provider_id = self._require_provider_id(params.get("provider_id"))
+        provider_catalog, load_error = self._provider_catalog_from_params({})
+        if load_error:
+            return {"error": load_error}
+        if provider_id not in provider_catalog.providers:
+            return {"error": f"provider profile not found: {provider_id}"}
+        dream_config, dream_error = self._dream_from_params({})
+        if dream_error:
+            return {"error": dream_error}
+        used_by = [
+            name
+            for name, workflow in dream_config.workflows.items()
+            if workflow.provider == provider_id
+        ]
+        if used_by:
+            return {"error": f"provider profile is used by: {', '.join(sorted(used_by))}"}
+        providers = {
+            name: profile
+            for name, profile in provider_catalog.providers.items()
+            if name != provider_id
+        }
+        defaults = provider_catalog.defaults
+        if defaults.provider == provider_id:
+            defaults = ProviderDefaults()
+        updated_catalog = ProviderCatalog(providers=providers, defaults=defaults)
+        save_provider_catalog(self.config, updated_catalog)
+        return {"deleted": provider_id, "error": ""}
+
+    def provider_models(self, params: dict[str, object]) -> dict[str, object]:
+        provider_id = self._require_provider_id(params.get("provider_id"))
+        provider_catalog, load_error = self._provider_catalog_from_params({})
+        if load_error:
+            return {"models": [], "source": "", "error": load_error}
+        if provider_id not in provider_catalog.providers:
+            return {
+                "models": [],
+                "source": "",
+                "error": f"provider profile not found: {provider_id}",
+            }
+        result = self.registry.list_model_suggestions(self.config, provider_id)
+        payload = _result_to_json_dict(result)
+        _redact_error(payload, provider_catalog)
+        return {
+            "models": payload.get("models", []),
+            "source": payload.get("source", ""),
+            "error": payload.get("error", ""),
         }
 
     def select_provider(self, params: dict[str, object]) -> dict[str, object]:

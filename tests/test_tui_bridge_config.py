@@ -138,7 +138,6 @@ def test_provider_editor_reads_and_saves_one_profile_without_touching_dream_conf
                 "type": "openai",
                 "url": "https://api.example.test/v1",
                 "key": "new-key",
-                "model": "gpt-4.1",
                 "timeout_seconds": "45",
             }
         }
@@ -148,7 +147,7 @@ def test_provider_editor_reads_and_saves_one_profile_without_touching_dream_conf
     catalog = load_provider_catalog(config)
     assert catalog.providers["openai"].key == "new-key"
     assert catalog.providers["openai"].timeout_seconds == 45.0
-    assert catalog.defaults.model == "gpt-4.1"
+    assert catalog.defaults.model == "gpt-4.1-mini"
     assert (
         config.dream_config_path.read_bytes()
         if config.dream_config_path.exists()

@@ -14,6 +14,7 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.service_state import ServerState
+from hieronymus.tui_bridge.config_api import ConfigBridge
 
 
 class HieronymusHTTPServer(ThreadingHTTPServer):
@@ -59,6 +60,18 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_web_asset(path)
             return
+        if path == "/api/providers":
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self._send_json(ConfigBridge(self.server.config).provider_list({}))
+            return
+        if path.startswith("/api/providers/"):
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self._handle_provider_get(path)
+            return
         if path == "/health":
             if not self._is_authorized():
                 self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
@@ -80,14 +93,32 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "not_found", "path": path}, status=HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
-        if self.path == "/shutdown":
+        path = urlparse(self.path).path
+        if path == "/shutdown":
             if not self._is_authorized():
                 self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             self._send_json({"ok": True, "stopping": True})
             self.server.shutdown()
             return
-        self._send_json({"error": "not_found", "path": self.path}, status=HTTPStatus.NOT_FOUND)
+        if path == "/api/providers":
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self._send_config_result("save_provider", self._request_json())
+            return
+        self._send_json({"error": "not_found", "path": path}, status=HTTPStatus.NOT_FOUND)
+
+    def do_DELETE(self) -> None:
+        path = urlparse(self.path).path
+        if not path.startswith("/api/providers/"):
+            self._send_json({"error": "not_found", "path": path}, status=HTTPStatus.NOT_FOUND)
+            return
+        if not self._is_authorized():
+            self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+        provider_id = path.removeprefix("/api/providers/")
+        self._send_config_result("delete_provider", {"provider_id": provider_id})
 
     def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -109,6 +140,38 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
                 return
         self._send_json({"error": "web_console_not_built"}, status=HTTPStatus.NOT_FOUND)
+
+    def _handle_provider_get(self, path: str) -> None:
+        suffix = path.removeprefix("/api/providers/")
+        if suffix.endswith("/models"):
+            provider_id = suffix.removesuffix("/models").rstrip("/")
+            self._send_config_result("provider_models", {"provider_id": provider_id})
+            return
+        self._send_config_result("provider_detail", {"provider_id": suffix})
+
+    def _send_config_result(self, method: str, params: dict[str, object]) -> None:
+        bridge = ConfigBridge(self.server.config)
+        handler = getattr(bridge, method)
+        try:
+            payload = handler(params)
+        except ValueError as error:
+            self._send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        status = HTTPStatus.BAD_REQUEST if payload.get("error") else HTTPStatus.OK
+        self._send_json(payload, status=status)
+
+    def _request_json(self) -> dict[str, object]:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return {}
+        if content_length <= 0 or content_length > 1_000_000:
+            return {}
+        try:
+            payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        return payload if type(payload) is dict else {}
 
     def _send_web_asset(self, request_path: str) -> None:
         relative_path = Path(request_path.lstrip("/"))

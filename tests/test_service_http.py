@@ -27,6 +27,20 @@ def _request_json(
         return json.loads(response.read().decode("utf-8"))
 
 
+def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Hieronymus-Token": "local-test-token",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=2) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def _assert_unauthorized(url: str, *, method: str = "GET", token: str | None = None) -> None:
     request = urllib.request.Request(url, method=method)
     if token is not None:
@@ -116,6 +130,43 @@ def test_web_assets_require_the_same_local_session(tmp_path: Path) -> None:
 
     assert content_type.startswith("text/javascript")
     assert "Hieronymus" in asset
+
+
+def test_provider_api_creates_and_lists_custom_profiles(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        created = _post_json(
+            f"{base_url}/api/providers",
+            {
+                "provider": {
+                    "id": "deepseek",
+                    "name": "DeepSeek",
+                    "type": "openai",
+                    "url": "https://api.deepseek.com/v1",
+                    "key": "test-key",
+                    "timeout_seconds": "30",
+                }
+            },
+        )
+        listed = _request_json(f"{base_url}/api/providers")
+    finally:
+        _stop_server(server, thread)
+
+    assert created["provider"]["id"] == "deepseek"
+    assert created["provider"]["key_configured"] is True
+    assert listed["providers"] == [
+        {
+            "id": "deepseek",
+            "key_configured": True,
+            "model": "",
+            "name": "DeepSeek",
+            "timeout_seconds": 30.0,
+            "type": "openai",
+            "url": "https://api.deepseek.com/v1",
+        }
+    ]
 
 
 def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:
