@@ -59,7 +59,10 @@ def test_read_learn_remember_skills_keep_judgment_out_of_mcp() -> None:
     assert "language tags" in learn
     assert "story scopes" in learn
     assert "semantic tags" in learn
-    assert "small short-term extracts" in read
+    assert "RAG retains the source material itself" in read
+    assert "agent's own conclusions" in read
+    assert "1–6 sentences" in read
+    assert "as many separate blocks as necessary" in read
     assert "User told me to ..." in remember
     assert "source_credibility `user_rule`" in remember
 

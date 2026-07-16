@@ -7,9 +7,15 @@ they become long-term crystals.
 
 ## Read
 
-Use Read for casual inspection, lookup, and temporary understanding. Summarize source text into small
-short-term extracts only when an extract is useful for the current task. Do not store the whole source
-by default.
+Use Read for file inspection, lookup, and temporary understanding. Import each source file into RAG
+so direct source content remains retrievable. Do not store source text or long extracts in
+short-term memory. Instead, record the agent's own conclusions: terms, concepts, significant facts,
+implications, uncertainties, and useful connections.
+
+Each short-term-memory block contains 1–6 sentences. Create as many separate blocks as necessary to
+cover every important term, concept, and detail; the limit applies to a block, not to the total
+amount remembered. RAG stores the direct source, while short-term memory stores indirect
+understanding of it.
 
 Preferred storage primitive:
 

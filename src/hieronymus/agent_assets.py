@@ -64,19 +64,26 @@ terminology directly; dreaming can produce crystals, lessons, erudition, and pro
 
 READ_SKILL = f"""---
 name: hieronymus-read
-description: Inspect material for the current task without committing the whole source to memory.
+description: >
+  Read source material into RAG and preserve concise agent conclusions in short-term memory.
 ---
 
 # Hieronymus Read
 
-Use for casual lookup, extraction, summaries, or temporary understanding. The agent summarizes
-source text into small short-term extracts only when an extract is useful for the current task.
-Store those extracts with `hieronymus_short_term_add`.
+Use for reading files, lookup, summaries, or temporary understanding. First import each source file
+into project RAG with `hieronymus_rag_import`: RAG retains the source material itself for later
+retrieval.
+
+Do not copy file text or long extracts into short-term memory. Instead, after reading, record the
+agent's own conclusions with `hieronymus_short_term_add`: learned terminology, concepts, important
+facts, implications, uncertainties, and connections to the current work. Each short-term memory
+block must contain 1–6 sentences. Create as many separate blocks as necessary to cover every
+important term, concept, and detail; the size limit applies to each block, never to the total set.
 
 MCP tools are storage and retrieval primitives, not judgment engines. There is no supported Read
 judgment MCP tool; use this skill workflow plus `hieronymus_short_term_add`.
 
-Do not store the whole source by default.
+RAG stores the direct source; short-term memory stores the agent's indirect understanding of it.
 
 {BOUNDARY_TEXT}
 """

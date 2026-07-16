@@ -45,9 +45,13 @@ short-term memory would otherwise share the same legacy `id`, the crystal is ret
 compatibility ID. Vague concept suggestions in proposal lists also use negative compatibility IDs;
 only positive proposal IDs are actionable legacy compatibility proposals.
 
-`read` is temporary inspection. The agent summarizes source text into small short-term extracts only
-when an extract is useful for the current task. Agents should use `read` for casual lookup,
-summaries, and one-off context unless the user asks Hieronymus to learn the material.
+`read` is source ingestion plus temporary understanding. The agent imports each read file into RAG,
+where its direct content remains available for retrieval. It must not copy source text into
+short-term memory. Instead, it records its own conclusions—terms, concepts, significant facts,
+implications, uncertainties, and useful connections—as separate short-term blocks of 1–6 sentences.
+There is no total block limit: every important term, concept, and detail needs coverage in one or
+more compact blocks. Agents should use `read` for casual lookup, summaries, and one-off context
+unless the user asks Hieronymus to learn the material.
 
 Read, Learn, and Remember are agent judgment workflows. MCP tools are storage and retrieval
 primitives, not judgment engines. Read and Learn are no longer exposed as judgment-heavy MCP tools;
