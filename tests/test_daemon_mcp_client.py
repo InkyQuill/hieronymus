@@ -5,7 +5,8 @@ from pathlib import Path
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.daemon_mcp_client import DaemonMcpClient
-from hieronymus.service_state import ServerState
+from hieronymus.service_manager import ServiceManager
+from hieronymus.service_state import ServerState, read_server_state
 
 
 @dataclass
@@ -63,3 +64,20 @@ def test_daemon_mcp_client_starts_service_then_posts_operation(tmp_path: Path) -
             {"slug": "oso", "title": "Only Sense Online"},
         )
     ]
+
+
+def test_daemon_mcp_client_reuses_one_daemon_for_multiple_operations(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "data")
+    client = DaemonMcpClient(config)
+
+    created = client.invoke("series_create", {"slug": "oso", "title": "Only Sense Online"})
+    first_state = read_server_state(config)
+    listed = client.invoke("series_list", {})
+    second_state = read_server_state(config)
+
+    assert created["slug"] == "oso"
+    assert listed[0]["slug"] == "oso"
+    assert first_state is not None
+    assert second_state is not None
+    assert first_state.pid == second_state.pid
+    assert ServiceManager(config).status()["pid"] == first_state.pid

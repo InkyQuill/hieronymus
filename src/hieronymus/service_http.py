@@ -163,9 +163,7 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             operation = path.removeprefix("/api/mcp/").strip("/")
             handler = MCP_OPERATION_HANDLERS.get(operation)
             if handler is None:
-                self._send_json(
-                    {"error": "unknown_mcp_operation"}, status=HTTPStatus.NOT_FOUND
-                )
+                self._send_json({"error": "unknown_mcp_operation"}, status=HTTPStatus.NOT_FOUND)
                 return
             try:
                 payload = handler(self.server.config, self._request_json())

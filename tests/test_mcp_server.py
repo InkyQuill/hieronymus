@@ -31,6 +31,7 @@ from hieronymus.workspace import WorkspaceStore
 def test_mcp_status_delegates_to_daemon_client(monkeypatch, tmp_path):
     data_root = tmp_path / "hieronymus"
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(data_root))
+
     class FakeDaemonClient:
         def invoke(self, operation: str, params: dict[str, object]) -> dict[str, object]:
             assert operation == "status"
