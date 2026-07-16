@@ -41,7 +41,8 @@ remains portable and can pin the workflow text it contains.
 Ownership is determined by the `hieronymus-` directory prefix and an expected
 `SKILL.md` file. Uninstall never removes `.agents`, `.claude`, their `skills`
 parents, or non-Hieronymus directories. Existing owned skill directories are
-replaced atomically during install so updates cannot leave mixed content.
+replaced atomically during install without prompting so updates cannot leave
+mixed content.
 
 ## User experience and failure handling
 
