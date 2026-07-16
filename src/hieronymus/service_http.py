@@ -90,7 +90,11 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             view = parse_qs(request_url.query).get("view", [""])[0]
-            self._send_admin_result("snapshot", {"view": view})
+            selected_id = parse_qs(request_url.query).get("selected_id", [""])[0]
+            self._send_admin_result(
+                "snapshot",
+                {"view": view, "selected_id": selected_id},
+            )
             return
         if path == "/health":
             if not self._is_authorized():
@@ -139,6 +143,19 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             self._send_config_result(_SETTINGS_SAVE_METHODS[path], self._request_json())
+            return
+        if path.startswith("/api/admin/actions/"):
+            if not self._is_authorized():
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            action = path.removeprefix("/api/admin/actions/").strip("/")
+            method = _ADMIN_ACTION_METHODS.get(action)
+            if method is None:
+                self._send_json(
+                    {"error": "unknown_admin_action"}, status=HTTPStatus.NOT_FOUND
+                )
+                return
+            self._send_admin_result(method, self._request_json())
             return
         self._send_json({"error": "not_found", "path": path}, status=HTTPStatus.NOT_FOUND)
 
@@ -272,6 +289,19 @@ _SETTINGS_SAVE_METHODS = {
     "/api/settings/dream": "save_dream_settings",
     "/api/settings/ingest": "save_ingest_settings",
     "/api/settings/release": "save_release_settings",
+}
+
+_ADMIN_ACTION_METHODS = {
+    "reinforce_crystal": "reinforce_crystal",
+    "decay_crystal": "decay_crystal",
+    "deprecate_crystal": "deprecate_crystal",
+    "delete_crystal": "delete_crystal",
+    "approve_proposal": "approve_proposal",
+    "reject_proposal": "reject_proposal",
+    "reinforce_concept": "reinforce_concept",
+    "decay_concept": "decay_concept",
+    "archive_concept": "archive_concept",
+    "remove_short_term_memory": "remove_short_term_memory",
 }
 
 

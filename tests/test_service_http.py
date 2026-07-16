@@ -265,6 +265,46 @@ def test_admin_snapshot_api_accepts_a_view_parameter(tmp_path: Path) -> None:
     assert snapshot["snapshot"]["view"] == "Concepts"
 
 
+def test_admin_memory_actions_are_explicitly_allowlisted(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+
+    class FakeAdminBridge:
+        def __init__(self, _: HieronymusConfig) -> None:
+            pass
+
+        def reinforce_crystal(self, params: dict[str, object]) -> dict[str, object]:
+            return {"ok": True, "received": params}
+
+    thread, base_url = _serve(server)
+    try:
+        with patch("hieronymus.service_http.AdminBridge", FakeAdminBridge):
+            reinforced = _post_json(
+                f"{base_url}/api/admin/actions/reinforce_crystal", {"id": 7}
+            )
+            request = urllib.request.Request(
+                f"{base_url}/api/admin/actions/not_a_method",
+                data=b"{}",
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Hieronymus-Token": "local-test-token",
+                },
+            )
+            try:
+                urllib.request.urlopen(request, timeout=2)
+            except urllib.error.HTTPError as error:
+                assert error.code == 404
+                unknown = json.loads(error.read().decode("utf-8"))
+            else:
+                raise AssertionError("unknown action should be rejected")
+    finally:
+        _stop_server(server, thread)
+
+    assert reinforced == {"ok": True, "received": {"id": 7}}
+    assert unknown == {"error": "unknown_admin_action"}
+
+
 def test_status_endpoint_returns_paths_and_pid(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     state = _make_state(config)
