@@ -1,5 +1,6 @@
 import type {
   AdminDashboard,
+  AdminActionResult,
   AdminSnapshot,
   DreamSettings,
   IngestSettings,
@@ -118,6 +119,21 @@ export async function loadAdminDashboard(): Promise<AdminDashboard> {
   return request("/api/admin/dashboard");
 }
 
-export async function loadAdminSnapshot(view: string): Promise<AdminSnapshot> {
-  return request(`/api/admin/snapshot?view=${encodeURIComponent(view)}`);
+export async function loadAdminSnapshot(
+  view: string,
+  selectedId?: string | number,
+): Promise<AdminSnapshot> {
+  const query = new URLSearchParams({ view });
+  if (selectedId !== undefined) query.set("selected_id", String(selectedId));
+  return request(`/api/admin/snapshot?${query}`);
+}
+
+export async function runAdminAction(
+  action: string,
+  params: { id: string | number; confirmed?: boolean },
+): Promise<AdminActionResult> {
+  return request(`/api/admin/actions/${encodeURIComponent(action)}`, {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
 }

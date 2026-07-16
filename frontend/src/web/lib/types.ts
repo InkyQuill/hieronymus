@@ -73,10 +73,34 @@ export type AdminDashboard = {
   dream_status: Record<string, unknown>;
 };
 
+export type AdminRow = {
+  id: string | number;
+  kind: string;
+  label: string;
+  status: string;
+  scope: string;
+  language_pair: string;
+  quality_label: string;
+  tags: string[];
+};
+
+export type AdminDetail = {
+  title: string;
+  subtitle: string;
+  body: string;
+  fields: Array<[string, string]>;
+};
+
 export type AdminSnapshot = {
   snapshot: {
     view: string;
-    rows: Array<Record<string, unknown>>;
-    detail: { title: string; subtitle: string; body: string };
+    rows: AdminRow[];
+    selected: AdminRow | null;
+    detail: AdminDetail;
   };
+};
+
+export type AdminActionResult = {
+  result: { message: string };
+  snapshot: AdminSnapshot["snapshot"];
 };

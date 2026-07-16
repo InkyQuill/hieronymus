@@ -63,6 +63,14 @@ main {
   border-bottom: 1px solid #29313a;
   padding-bottom: 26px;
 }
+.header-actions {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+}
+.header-actions a:not(.primary) {
+  color: #dce5ef;
+}
 .page-header p {
   margin-bottom: 0;
 }
@@ -357,6 +365,102 @@ legend {
 
 .admin-rows span {
   overflow-wrap: anywhere;
+}
+
+.memory-workspace {
+  max-width: 1440px;
+}
+.memory-count {
+  color: #9ba8b8;
+  font-size: 13px;
+  padding-top: 10px;
+}
+.memory-workspace > .view-tabs {
+  border-bottom: 1px solid #29313a;
+  padding: 22px 0;
+}
+.memory-split {
+  display: grid;
+  gap: 22px;
+  grid-template-columns: minmax(480px, 1.45fr) minmax(320px, 0.8fr);
+  margin-top: 22px;
+}
+.memory-table-panel,
+.memory-detail {
+  background: #11161c;
+  border: 1px solid #29313a;
+}
+.memory-table {
+  margin: 0;
+}
+.memory-table td,
+.memory-table th {
+  padding: 13px 14px;
+}
+.memory-table small {
+  color: #9ba8b8;
+  display: block;
+  margin-top: 4px;
+}
+.memory-detail {
+  min-height: 360px;
+  padding: 22px;
+}
+.memory-detail h3 {
+  margin: 4px 0 0;
+}
+.memory-subtitle {
+  color: #9ba8b8;
+}
+.memory-detail pre {
+  background: #0d1014;
+  border-left: 2px solid #63d8ff;
+  margin: 20px 0;
+  overflow: auto;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+.memory-detail dl {
+  display: grid;
+  gap: 10px;
+}
+.memory-detail dl div {
+  border-top: 1px solid #29313a;
+  padding-top: 10px;
+}
+.memory-detail dt {
+  color: #9ba8b8;
+  font-size: 12px;
+}
+.memory-detail dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.memory-actions {
+  border-top: 1px solid #29313a;
+  margin-top: 24px;
+  padding-top: 18px;
+}
+.memory-actions h4 {
+  margin: 0 0 10px;
+}
+.memory-actions > div,
+.confirm-action > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.confirm-action {
+  background: #271c21;
+  border: 1px solid #87505b;
+  margin-top: 16px;
+  padding: 14px;
+}
+.confirm-action p {
+  margin-top: 0;
+}
+@media (max-width: 1050px) {
+  .memory-split { grid-template-columns: 1fr; }
 }
 
 .toast {

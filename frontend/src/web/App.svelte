@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import AdminDashboard from "./components/AdminDashboard.svelte";
+  import MemoryViews from "./components/MemoryViews.svelte";
   import DreamingEditor from "./components/DreamingEditor.svelte";
   import IngestEditor from "./components/IngestEditor.svelte";
   import ProviderEditor from "./components/ProviderEditor.svelte";
@@ -31,7 +32,9 @@
   } from "./lib/types";
 
   const path = window.location.pathname;
-  const section = path.startsWith("/admin")
+  const section = path === "/admin/memory"
+    ? "memory"
+    : path.startsWith("/admin")
     ? "admin"
     : path.endsWith("/dreaming")
     ? "dreaming"
@@ -129,7 +132,7 @@
       }
       if (section === "ingest") ingestSettings = await loadIngestSettings();
       if (section === "release") releaseSettings = await loadReleaseSettings();
-      if (section === "admin") adminDashboard = await loadAdminDashboard();
+      if (section === "admin" || section === "memory") adminDashboard = await loadAdminDashboard();
     } catch (reason) {
       error = reason instanceof Error ? reason.message : String(reason);
     } finally {
@@ -165,10 +168,12 @@
 </script>
 
 <main>
-  <aside class="sidebar"><h1>Hieronymus</h1><p>{section === "admin" ? "local administration" : "local configuration"}</p><nav><a class:active={section === "admin"} href="/admin">Overview</a><a class:active={section === "providers"} href="/config">Providers</a><a class:active={section === "dreaming"} href="/config/dreaming">Dreaming</a><a class:active={section === "ingest"} href="/config/ingest">Ingest</a><a class:active={section === "release"} href="/config/release">Release</a></nav><footer>All data is local.<br />No cloud. No tracking.</footer></aside>
+  <aside class="sidebar"><h1>Hieronymus</h1><p>{section === "admin" || section === "memory" ? "local administration" : "local configuration"}</p><nav><a class:active={section === "admin"} href="/admin">Overview</a><a class:active={section === "memory"} href="/admin/memory">Memory views</a><a class:active={section === "providers"} href="/config">Providers</a><a class:active={section === "dreaming"} href="/config/dreaming">Dreaming</a><a class:active={section === "ingest"} href="/config/ingest">Ingest</a><a class:active={section === "release"} href="/config/release">Release</a></nav><footer>All data is local.<br />No cloud. No tracking.</footer></aside>
   <section class="content">
     {#if section === "admin" && adminDashboard}
       <AdminDashboard dashboard={adminDashboard} {error} />
+    {:else if section === "memory" && adminDashboard}
+      <MemoryViews dashboard={adminDashboard} onNotice={({ message, tone }) => showNotice(message, tone)} />
     {:else if section === "providers"}
       <header class="page-header"><div><h2>Providers</h2><p>Manage custom model-provider profiles.</p></div><button class="primary" onclick={() => { createOpen = true; selected = null; models = []; }}>New provider</button></header>
       {#if error}<p class="error">{error}</p>{/if}
