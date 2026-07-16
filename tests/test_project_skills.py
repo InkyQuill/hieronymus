@@ -4,6 +4,7 @@ import pytest
 
 from hieronymus.project_skills import (
     install_project_skills,
+    skill_assets,
     uninstall_project_skills,
 )
 
@@ -11,8 +12,10 @@ from hieronymus.project_skills import (
 def test_install_writes_every_skill_to_both_targets(tmp_path: Path) -> None:
     install_project_skills(tmp_path, ("agents", "claude"))
 
-    assert (tmp_path / ".agents/skills/hieronymus-recall/SKILL.md").is_file()
-    assert (tmp_path / ".claude/skills/hieronymus-recall/SKILL.md").is_file()
+    for target in (".agents/skills", ".claude/skills"):
+        for relative_path, text in skill_assets().items():
+            installed_path = tmp_path / target / relative_path
+            assert installed_path.read_text(encoding="utf-8") == text
 
 
 def test_overwrite_owned_skill_preserves_custom_skill(tmp_path: Path) -> None:
@@ -78,3 +81,30 @@ def test_rejects_symlinked_target_root(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="target root must not be a symlink"):
         install_project_skills(tmp_path, ("agents",))
+
+
+@pytest.mark.parametrize("symlinked_destination", ["directory", "skill_file"])
+def test_install_rejects_symlinked_owned_destinations_before_writing(
+    tmp_path: Path, symlinked_destination: str
+) -> None:
+    skills_root = tmp_path / ".agents/skills"
+    already_owned = skills_root / "hieronymus-recall/SKILL.md"
+    already_owned.parent.mkdir(parents=True)
+    already_owned.write_text("old bundled content", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_skill = outside / "SKILL.md"
+    outside_skill.write_text("outside content", encoding="utf-8")
+
+    malicious_directory = skills_root / "hieronymus-read"
+    if symlinked_destination == "directory":
+        malicious_directory.symlink_to(outside, target_is_directory=True)
+    else:
+        malicious_directory.mkdir()
+        (malicious_directory / "SKILL.md").symlink_to(outside_skill)
+
+    with pytest.raises(ValueError, match="must not contain a symlink"):
+        install_project_skills(tmp_path, ("agents",))
+
+    assert already_owned.read_text(encoding="utf-8") == "old bundled content"
+    assert outside_skill.read_text(encoding="utf-8") == "outside content"

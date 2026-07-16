@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
-import shutil
 
 from hieronymus.agent_assets import asset_map
 from hieronymus.agent_plugins.base import atomic_write_text
-
 
 _TARGET_DIRECTORIES = {
     "agents": ".agents/skills",
@@ -42,8 +41,11 @@ def install_project_skills(
     """Install every bundled skill into each selected project target."""
     plan = plan_project_skills(workspace, "install", targets, dry_run=dry_run)
     if not dry_run:
-        for root in target_roots(workspace, plan.targets):
-            for relative_path, text in skill_assets().items():
+        assets = skill_assets()
+        roots = target_roots(workspace, plan.targets)
+        _validate_install_destinations(roots, assets)
+        for root in roots:
+            for relative_path, text in assets.items():
                 atomic_write_text(root / relative_path, text)
     return plan
 
@@ -111,6 +113,22 @@ def _validate_target_root(root: Path) -> None:
         raise ValueError(f"target parent must be a directory: {root.parent}")
     if root.exists() and not root.is_dir():
         raise ValueError(f"target root must be a directory: {root}")
+
+
+def _validate_install_destinations(
+    roots: tuple[Path, ...], assets: dict[str, str]
+) -> None:
+    """Reject symlinks in every bundled destination before writing anything."""
+    for root in roots:
+        for relative_path in assets:
+            destination = root
+            for component in Path(relative_path).parts:
+                destination /= component
+                if destination.is_symlink():
+                    raise ValueError(
+                        "project skill destination must not contain a symlink: "
+                        f"{destination}"
+                    )
 
 
 def _owned_skill_directories(root: Path) -> tuple[Path, ...]:
