@@ -34,6 +34,7 @@ class FakeClient:
     def __init__(self, healthy: bool) -> None:
         self.healthy = healthy
         self.shutdown_called = False
+        self.status_calls = 0
 
     def health(self, state: ServerState) -> dict[str, object]:
         if not self.healthy:
@@ -41,6 +42,7 @@ class FakeClient:
         return {"ok": True, "service": "hieronymus"}
 
     def status(self, state: ServerState) -> dict[str, object]:
+        self.status_calls += 1
         if not self.healthy:
             raise OSError("connection refused")
         return {"running": True, "pid": state.pid}
@@ -131,6 +133,20 @@ def test_start_returns_without_spawning_when_service_is_healthy(tmp_path: Path) 
         manager.start()
 
     popen.assert_not_called()
+
+
+def test_ensure_running_uses_health_without_requesting_full_status(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config, pid=os.getpid())
+    write_server_state(config, state)
+    client = FakeClient(healthy=True)
+    manager = ServiceManager(config, client=client)
+
+    result = manager.ensure_running()
+
+    assert result["started"] is False
+    assert result["status"]["pid"] == os.getpid()
+    assert client.status_calls == 0
 
 
 def test_start_rechecks_status_after_acquiring_start_lock(tmp_path: Path) -> None:

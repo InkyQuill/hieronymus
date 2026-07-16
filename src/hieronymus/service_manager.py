@@ -54,18 +54,18 @@ class ServiceManager:
             return {"running": False, "reason": "unreachable"}
 
     def ensure_running(self) -> dict[str, Any]:
-        current = self.status()
+        current = self._health_status()
         if current.get("running") is True:
             return {"started": False, "status": current}
         self.start()
-        return {"started": True, "status": self.status()}
+        return {"started": True, "status": self._health_status()}
 
     def start(self) -> None:
-        current = self.status()
+        current = self._health_status()
         if current.get("running") is True:
             return
         with server_start_lock(self.config):
-            current = self.status()
+            current = self._health_status()
             if current.get("running") is True:
                 return
             self.config.data_root.mkdir(parents=True, exist_ok=True)
@@ -97,6 +97,26 @@ class ServiceManager:
             if last_state is not None:
                 remove_server_state(self.config, expected_state=last_state)
             raise RuntimeError("hieronymus service daemon did not become healthy")
+
+    def _health_status(self) -> dict[str, Any]:
+        cleanup_stale_state(self.config)
+        state = read_server_state(self.config)
+        if state is None:
+            return {"running": False, "reason": "no-state"}
+        try:
+            self.client.health(state)
+        except (OSError, ServiceClientError):
+            remove_server_state(self.config, expected_state=state)
+            return {"running": False, "reason": "unreachable"}
+        return {
+            "running": True,
+            "pid": state.pid,
+            "host": state.host,
+            "port": state.port,
+            "version": state.version,
+            "data_root": state.data_root,
+            "database_path": state.database_path,
+        }
 
     def stop(self) -> dict[str, Any]:
         state = read_server_state(self.config)

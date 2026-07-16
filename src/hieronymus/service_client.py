@@ -58,9 +58,7 @@ class ServiceClient:
                 error_payload = {}
             message = error_payload.get("error") if isinstance(error_payload, dict) else None
             error_type = (
-                str(error_payload.get("error_type", ""))
-                if isinstance(error_payload, dict)
-                else ""
+                str(error_payload.get("error_type", "")) if isinstance(error_payload, dict) else ""
             )
             raise ServiceClientError(
                 str(message or f"HTTP {exc.code} response from {path}"),
