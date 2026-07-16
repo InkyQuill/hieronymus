@@ -2,6 +2,101 @@
 
 <!-- version list -->
 
+## v0.2.0 (2026-07-16)
+
+### Bug Fixes
+
+- Avoid config rerenders while typing
+  ([`2dd1a2c`](https://github.com/InkyQuill/hieronymus/commit/2dd1a2c7159e433a8bcd573a46a832bd82ea3e7f))
+
+- Bound ollama sdk connection checks
+  ([`ef36bb1`](https://github.com/InkyQuill/hieronymus/commit/ef36bb115b5214ac71545c6799f271f707338d9e))
+
+- Clarify config draft save flow
+  ([`7c923e6`](https://github.com/InkyQuill/hieronymus/commit/7c923e677b7291dcba3cafdd425293d332bd29f4))
+
+- Keep config text inputs mounted
+  ([`e009787`](https://github.com/InkyQuill/hieronymus/commit/e009787fcbb42d5f4f92d2dc58eaa5aa6fb597cc))
+
+- Probe live provider endpoints on check
+  ([`ace2eee`](https://github.com/InkyQuill/hieronymus/commit/ace2eeeb57bfa7af7daf0c1c1d939d44f1a79c19))
+
+- Stabilize opentui bootstrap
+  ([`2a4cb32`](https://github.com/InkyQuill/hieronymus/commit/2a4cb32bc492bcaf8b829786432187f101f74e84))
+
+- Verify provider connections in web console
+  ([`4e05978`](https://github.com/InkyQuill/hieronymus/commit/4e059789042caddd90ba91a7411d2a19a544a5d4))
+
+### Chores
+
+- Sync lockfile release version
+  ([`3e3bbcb`](https://github.com/InkyQuill/hieronymus/commit/3e3bbcb0b96c427f04ca24833e16e6a66dd81610))
+
+### Code Style
+
+- Format admin memory endpoint tests
+  ([`4a418dd`](https://github.com/InkyQuill/hieronymus/commit/4a418dd6170a026f4843fb97f1f8d77f45e11a4e))
+
+### Documentation
+
+- Add admin memory views plan
+  ([`ed6a0c4`](https://github.com/InkyQuill/hieronymus/commit/ed6a0c45949c6272fa90ed0c03f3373346d11953))
+
+- Design admin memory views page
+  ([`e9df6d9`](https://github.com/InkyQuill/hieronymus/commit/e9df6d9770d31dcfa997e760b03e4b89a616b49e))
+
+- Plan local web console
+  ([`ed1cdeb`](https://github.com/InkyQuill/hieronymus/commit/ed1cdeb22a521729e2c3f7f1a2ada3b2599b2294))
+
+- Plan official provider sdk migration
+  ([`df881aa`](https://github.com/InkyQuill/hieronymus/commit/df881aa41a41161328cce4f1dee6230ff206a9ad))
+
+### Features
+
+- Add dedicated memory administration page
+  ([`9f4c4df`](https://github.com/InkyQuill/hieronymus/commit/9f4c4df466dd9097ef43ce6f755b7b8497df1025))
+
+- Add web provider api
+  ([`3b68fab`](https://github.com/InkyQuill/hieronymus/commit/3b68fab555116e8e9099bcb035b1e813e46e8146))
+
+- Add web provider editor
+  ([`3e684a3`](https://github.com/InkyQuill/hieronymus/commit/3e684a34ef8d48523205c58fc0212a38dab22ba7))
+
+- Add web settings editors
+  ([`33fc0c5`](https://github.com/InkyQuill/hieronymus/commit/33fc0c50b521e1302fafc6d8710b8ffd09801282))
+
+- Expose bounded admin memory actions
+  ([`8cade45`](https://github.com/InkyQuill/hieronymus/commit/8cade45008fe90afd1076393a31a5c100f1a03b5))
+
+- Replace opentui with local web console
+  ([`272294a`](https://github.com/InkyQuill/hieronymus/commit/272294a91ace4a1ff253c9b4dbe050fba9d192d2))
+
+- Serve local svelte console
+  ([`3e76c88`](https://github.com/InkyQuill/hieronymus/commit/3e76c88016531ce9dffaaf6096850a8837ab80ef))
+
+- Use official sdks for dream providers
+  ([`6df14da`](https://github.com/InkyQuill/hieronymus/commit/6df14da093f09496b520f62802d0e8d7bd63d3f9))
+
+### Refactoring
+
+- Replace config form with provider modals
+  ([`734581b`](https://github.com/InkyQuill/hieronymus/commit/734581bee1b81245d692cefc5bf6c41b6ec95b90))
+
+- Replace config inputs with keyboard editor
+  ([`ccdffb4`](https://github.com/InkyQuill/hieronymus/commit/ccdffb4db7335814d46b5d49e00b0d8bd33d089a))
+
+### Testing
+
+- Cover admin memory web route
+  ([`d9b4312`](https://github.com/InkyQuill/hieronymus/commit/d9b4312e462acce1282769c171d2f3ff38ac6cb1))
+
+- Derive CLI help version from package metadata
+  ([`2921367`](https://github.com/InkyQuill/hieronymus/commit/2921367620e2b89561e1cfdf9ee6f82bea9a59f9))
+
+- Remove obsolete opentui coverage
+  ([`0b2021e`](https://github.com/InkyQuill/hieronymus/commit/0b2021e617bc99fcda0529631cf6a79d8af88f34))
+
+
 ## v0.1.0 (2026-07-15)
 
 - Initial Release
