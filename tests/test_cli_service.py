@@ -699,7 +699,7 @@ def test_doctor_json_has_expected_sections(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert sorted(payload.keys()) == ["autofixed", "errors", "warnings"]
+    assert sorted(payload.keys()) == ["autofixed", "errors", "info", "warnings"]
 
 
 def test_no_subcommand_ensures_service_and_prints_greeting(tmp_path: Path) -> None:
