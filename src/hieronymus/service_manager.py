@@ -33,7 +33,7 @@ class ServiceManager:
         config: HieronymusConfig,
         *,
         client: ClientProtocol | None = None,
-        startup_timeout: float = 5.0,
+        startup_timeout: float = 10.0,
         poll_interval: float = 0.1,
     ) -> None:
         self.config = config
