@@ -58,3 +58,17 @@ test("memory rows keep keyboard activation after Tailwind migration", async () =
   expect(memoryView).toContain("event.preventDefault()");
   expect(memoryView).toContain("overflow-x-auto");
 });
+
+test("editor controls preserve native dialog and accessible toggle markup", async () => {
+  const providerEditor = await Bun.file(
+    new URL("./components/ProviderEditor.svelte", import.meta.url),
+  ).text();
+  const dreamingEditor = await Bun.file(
+    new URL("./components/DreamingEditor.svelte", import.meta.url),
+  ).text();
+
+  expect(providerEditor).toContain("<dialog");
+  expect(providerEditor).toContain("aria-labelledby");
+  expect(dreamingEditor).toContain("peer");
+  expect(dreamingEditor).toContain("min-h-11");
+});
