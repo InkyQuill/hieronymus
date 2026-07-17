@@ -71,4 +71,6 @@ test("editor controls preserve native dialog and accessible toggle markup", asyn
   expect(providerEditor).toContain("aria-labelledby");
   expect(dreamingEditor).toContain("peer");
   expect(dreamingEditor).toContain("min-h-11");
+  expect(dreamingEditor).toContain("peer-checked:[&>span]:translate-x-[18px]");
+  expect(dreamingEditor).toContain("peer-checked:[&>span]:bg-accent");
 });
