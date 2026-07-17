@@ -96,12 +96,12 @@ def test_health_endpoint_returns_daemon_identity(tmp_path: Path) -> None:
     assert payload["version"] == "0.1.0"
 
 
-def test_config_page_requires_token_then_redirects_to_cookie_session(tmp_path: Path) -> None:
+def test_config_page_is_available_without_a_browser_token(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     server = build_server(config, _make_state(config))
     thread, base_url = _serve(server)
     try:
-        request = urllib.request.Request(f"{base_url}/config?token=local-test-token")
+        request = urllib.request.Request(f"{base_url}/config")
         cookies = CookieJar()
         opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(cookies),
@@ -113,7 +113,7 @@ def test_config_page_requires_token_then_redirects_to_cookie_session(tmp_path: P
         _stop_server(server, thread)
 
     assert "Hieronymus Web Console" in page
-    assert any(cookie.name == "hieronymus_token" for cookie in cookies)
+    assert not list(cookies)
 
 
 def test_config_and_admin_memory_routes_serve_the_web_application_after_session_setup(

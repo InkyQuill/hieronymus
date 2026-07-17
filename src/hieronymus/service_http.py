@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import secrets
+import struct
 from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +14,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.daemon_events import AdminEventHub
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS
@@ -29,6 +33,7 @@ class HieronymusHTTPServer(ThreadingHTTPServer):
         super().__init__(server_address, HieronymusRequestHandler)
         self.config = config
         self.state = state
+        self.events = AdminEventHub()
 
 
 class HieronymusRequestHandler(BaseHTTPRequestHandler):
@@ -40,6 +45,9 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         request_url = urlparse(self.path)
         path = request_url.path
+        if path == "/ws/admin":
+            self._handle_admin_websocket()
+            return
         if _is_web_route(path):
             self._send_web_app()
             return
@@ -268,6 +276,53 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin", "")
         expected = f"http://{self.server.state.host}:{self.server.state.port}"
         return bool(origin) and secrets.compare_digest(origin, expected)
+
+    def _handle_admin_websocket(self) -> None:
+        if not self._is_browser_authorized():
+            self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
+            return
+        key = self.headers.get("Sec-WebSocket-Key", "")
+        if self.headers.get("Upgrade", "").lower() != "websocket" or not key:
+            self._send_json({"error": "websocket_upgrade_required"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        accept = base64.b64encode(
+            hashlib.sha1(f"{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11".encode()).digest()
+        ).decode()
+        self.send_response(HTTPStatus.SWITCHING_PROTOCOLS.value)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        self.end_headers()
+
+        def send_event(event: dict[str, object]) -> None:
+            body = json.dumps(event, ensure_ascii=False).encode("utf-8")
+            header = bytes([0x81])
+            if len(body) < 126:
+                header += bytes([len(body)])
+            elif len(body) <= 0xFFFF:
+                header += bytes([126]) + struct.pack("!H", len(body))
+            else:
+                header += bytes([127]) + struct.pack("!Q", len(body))
+            self.connection.sendall(header + body)
+
+        unsubscribe = self.server.events.subscribe(send_event)
+        try:
+            self.connection.settimeout(1)
+            while self.connection.recv(2):
+                pass
+        except TimeoutError:
+            while True:
+                try:
+                    if not self.connection.recv(2):
+                        break
+                except TimeoutError:
+                    continue
+                except OSError:
+                    break
+        except OSError:
+            pass
+        finally:
+            unsubscribe()
 
 
 def _web_asset_roots() -> list[Path]:
