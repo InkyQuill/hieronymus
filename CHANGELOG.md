@@ -2,6 +2,69 @@
 
 <!-- version list -->
 
+## v0.5.0 (2026-07-17)
+
+### Bug Fixes
+
+- Keep service status available on invalid dream config
+  ([`8b6c24c`](https://github.com/InkyQuill/hieronymus/commit/8b6c24c82f7d135271a4f10de772d53c05a66773))
+
+### Build System
+
+- Synchronize lockfile version
+  ([`ae52515`](https://github.com/InkyQuill/hieronymus/commit/ae525152796944a3e8eb590e1dba7babee07c7a9))
+
+### Documentation
+
+- Add frontend redesign DESIGN.md (Editorial Codex)
+  ([`0378a37`](https://github.com/InkyQuill/hieronymus/commit/0378a375fd6537fc4951f92866aaedea045832a9))
+
+- Add frontend redesign implementation plan (15 tasks)
+  ([`7cc7e1c`](https://github.com/InkyQuill/hieronymus/commit/7cc7e1c58f3c83c89523945b425e7738fdfc9811))
+
+- Design deep reading and dream coverage
+  ([`3a245d5`](https://github.com/InkyQuill/hieronymus/commit/3a245d53dee2407f9b82e6d88d1d1aa7e9f75b52))
+
+- Fix contrast violations, touch targets, iOS input zoom, aria-label gaps
+  ([`390e6c9`](https://github.com/InkyQuill/hieronymus/commit/390e6c90813279f8b3b9516cdd370947a852e01f))
+
+- Plan deep reading and dream coverage
+  ([`03d95fc`](https://github.com/InkyQuill/hieronymus/commit/03d95fcb90061eb68b94f0f9bc92d6954d6d7d2d))
+
+- Specify dream architecture replacement
+  ([`4488115`](https://github.com/InkyQuill/hieronymus/commit/4488115880c86c77e2ec10bf463e3b3939e8d2bc))
+
+### Features
+
+- Add atomic batch short-term memory ingestion
+  ([`1110615`](https://github.com/InkyQuill/hieronymus/commit/11106150c3f213ed6d5d1d50251373846a793573))
+
+- Apply evidence-backed dream reinforcement
+  ([`076ed90`](https://github.com/InkyQuill/hieronymus/commit/076ed9099ada0e2d1c3b5ebdae9f18fb560d810e))
+
+- Approve proposals as advisory concepts
+  ([`a602e2a`](https://github.com/InkyQuill/hieronymus/commit/a602e2a2403502eb85c709c767f1b36d11da78bf))
+
+- Normalize supported RAG sources to markdown
+  ([`b6d158c`](https://github.com/InkyQuill/hieronymus/commit/b6d158cdf5dafde491609aa2d164aae824f435b6))
+
+### Refactoring
+
+- Replace dreaming with evidence passes
+  ([`8853ff6`](https://github.com/InkyQuill/hieronymus/commit/8853ff652c4ac3350dbe2e6d5800d6bc6cc38035))
+
+### Testing
+
+- Cover book-scale dream ingestion
+  ([`69d428b`](https://github.com/InkyQuill/hieronymus/commit/69d428b70904abd222041daeaa92085ddd74da9a))
+
+- Cover RAG normalization provenance
+  ([`bfabf94`](https://github.com/InkyQuill/hieronymus/commit/bfabf94769ff750a97e98e57fb39ca8b9debb257))
+
+- Retain legacy workflow helper aliases
+  ([`a32cdb3`](https://github.com/InkyQuill/hieronymus/commit/a32cdb3fbe7ff0ab8f1e8ac9f930571b644c159c))
+
+
 ## v0.4.0 (2026-07-16)
 
 ### Bug Fixes
