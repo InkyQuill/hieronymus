@@ -17,6 +17,7 @@
   --color-danger: var(--hiero-danger);
   --color-success: var(--hiero-success);
   --color-default: var(--hiero-border-default);
+  --color-strong: var(--hiero-border-strong);
   --breakpoint-xs: 30rem;
   --breakpoint-sm: 45rem;
   --breakpoint-md: 60rem;

@@ -27,6 +27,7 @@ test("the semantic theme preserves both runtime modes and editorial utilities", 
     expect(css).toContain(token);
   }
   expect(css).toContain("@utility text-display");
+  expect(css).toContain("--color-strong: var(--hiero-border-strong)");
   expect(css).toContain("--animate-toast-in");
   expect(css).toContain("--breakpoint-sm: 45rem");
   expect(css).toMatch(/\[data-theme="light"\]\s*\{[\s\S]*?--hiero-bg-root:/);
