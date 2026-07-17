@@ -393,6 +393,42 @@ git add -A frontend/src/web frontend/dist frontend/package.json frontend/bun.loc
 git commit -m "refactor: complete Tailwind web console migration"
 ```
 
+### Task 7: Build and package frontend assets from a clean checkout
+
+**Files:**
+- Create: `hatch_build.py`
+- Modify: `pyproject.toml`
+- Modify: focused packaging contract test under `tests/`
+
+**Interfaces:**
+- Consumes: the Vite build configured in `frontend/package.json` and the existing Hatch source mapping for `frontend/dist`.
+- Produces: wheels and source distributions whose frontend assets are generated during `uv build`, even when `frontend/dist` is absent before the build.
+
+- [ ] **Step 1: Add a failing packaging-contract test**
+
+Add a focused test that asserts the package build configuration invokes a project-local Hatch build hook responsible for the frontend build. Keep the test deterministic; artifact-level verification remains part of Step 4.
+
+- [ ] **Step 2: Verify the test fails**
+
+Run: `uv run pytest tests/test_release_workflow.py -q`
+
+Expected: FAIL because no Hatch build hook is configured.
+
+- [ ] **Step 3: Generate the Vite bundle from a Hatch build hook**
+
+Add a project-local `CustomBuildHook` that runs `mise exec bun@1.3.14 -- bun install --frozen-lockfile` and `mise exec bun@1.3.14 -- bun run build` in `frontend/`. Configure it for Hatch builds in `pyproject.toml`. Preserve the existing wheel source mapping and artifact rules; a normal `uv build` must now work without a pre-existing `frontend/dist` directory.
+
+- [ ] **Step 4: Verify clean artifacts contain the bundle**
+
+Build from a clean detached worktree with no ignored `frontend/dist`, then inspect the wheel and sdist contents. Confirm they both contain the Vite `index.html` and generated assets.
+
+- [ ] **Step 5: Commit the packaging fix**
+
+```bash
+git add hatch_build.py pyproject.toml tests/
+git commit -m "build: bundle frontend assets during package builds"
+```
+
 ## Plan Self-Review
 
 - Spec coverage: Task 1 covers Bun/Vite/Tailwind wiring; Task 2 covers selector dark mode, all semantic runtime token families, typography, breakpoints, animation, and reduced motion; Tasks 3–5 migrate each listed interface while preserving behavior; Task 6 removes legacy CSS, checks responsive and accessibility states, and verifies the package build coupling.
