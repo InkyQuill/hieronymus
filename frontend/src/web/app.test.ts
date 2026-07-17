@@ -48,3 +48,13 @@ test("the web entry module imports the Tailwind stylesheet", async () => {
 
   expect(entryModule).toContain('import "./app.css";');
 });
+
+test("memory rows keep keyboard activation after Tailwind migration", async () => {
+  const memoryView = await Bun.file(
+    new URL("./components/MemoryViews.svelte", import.meta.url),
+  ).text();
+
+  expect(memoryView).toContain('event.key === "Enter"');
+  expect(memoryView).toContain("event.preventDefault()");
+  expect(memoryView).toContain("overflow-x-auto");
+});
