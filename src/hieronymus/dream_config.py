@@ -145,9 +145,6 @@ def _migrate_workflow_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
     """Expand pre-seven-pass workflow configurations before strict validation."""
     raw_workflows = payload.get("workflows")
     expected = tuple(default_dream_config().workflows)
-    if type(raw_workflows) is not dict or set(raw_workflows) == set(expected):
-        return payload, False
-
     legacy_sources = {
         "concepts": "crystallization",
         "terminology_candidates": "crystallization",
@@ -157,12 +154,20 @@ def _migrate_workflow_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
         "reinforcement": "reinforcement_compaction",
         "coverage_audit": "reinforcement_compaction",
     }
+    if type(raw_workflows) is not dict or not set(raw_workflows) & set(legacy_sources.values()):
+        return payload, False
+
     migrated_workflows = {
-        name: raw_workflows[name]
-        if name in raw_workflows
-        else raw_workflows.get(legacy_sources[name], {})
-        for name in expected
+        name: value for name, value in raw_workflows.items() if name not in legacy_sources.values()
     }
+    migrated_workflows.update(
+        {
+            name: raw_workflows[name]
+            if name in raw_workflows
+            else raw_workflows.get(legacy_sources[name], {})
+            for name in expected
+        }
+    )
     return {**payload, "workflows": migrated_workflows}, True
 
 

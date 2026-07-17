@@ -273,6 +273,16 @@ def test_complete_session_marks_session_completed(config: HieronymusConfig) -> N
     assert row["completed_at"]
 
 
+def test_complete_session_returns_false_for_already_completed_session(
+    config: HieronymusConfig,
+) -> None:
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    assert store.complete_session(session.id) is True
+    assert store.complete_session(session.id) is False
+
+
 def test_short_term_memory_write_updates_session_activity(config: HieronymusConfig) -> None:
     store = WorkspaceStore(config)
     session = store.start_session(_context(config))

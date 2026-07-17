@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
-  <head><meta charset="UTF-8" /><title>Hieronymus Web Console</title></head>
+<html lang="en">
+  <head><meta charset="UTF-8" /><script>document.documentElement.setAttribute("data-theme", (() => { try { const theme = localStorage.getItem("hiero-theme"); if (theme === "dark" || theme === "light") return theme; } catch {} return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"; })());</script><title>Hieronymus Web Console</title></head>
   <body><div id="app"></div><script type="module" src="/src/web/main.ts"></script></body>
 </html>

@@ -274,7 +274,7 @@ class WorkspaceStore:
                 update task_sessions
                 set status = 'completed',
                     completed_at = ?
-                where id = ?
+                where id = ? and status = 'active'
                 """,
                 (_now(), session_id),
             )
@@ -290,20 +290,17 @@ class WorkspaceStore:
 
     def complete_inactive_sessions(self, cutoff) -> tuple[int, ...]:
         with connect(self.config.database_path) as conn:
+            conn.execute("begin immediate")
             rows = conn.execute(
-                "select id from task_sessions where status = 'active' and last_activity_at < ?",
-                (cutoff.isoformat(),),
+                """
+                update task_sessions
+                set status = 'completed', completed_at = ?
+                where status = 'active' and last_activity_at < ?
+                returning id
+                """,
+                (_now(), cutoff.isoformat()),
             ).fetchall()
             session_ids = tuple(int(row["id"]) for row in rows)
-            if session_ids:
-                conn.execute(
-                    """
-                    update task_sessions
-                    set status = 'completed', completed_at = ?
-                    where status = 'active' and last_activity_at < ?
-                    """,
-                    (_now(), cutoff.isoformat()),
-                )
             conn.commit()
         return session_ids
 

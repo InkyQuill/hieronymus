@@ -21,6 +21,8 @@ from hieronymus.db import connect
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS
+from hieronymus.provider_config import load_provider_catalog
+from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_state import ServerState
 from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.tui_bridge.config_api import ConfigBridge
@@ -310,16 +312,19 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Sec-WebSocket-Accept", accept)
         self.end_headers()
 
+        send_lock = threading.Lock()
+
         def send_event(event: dict[str, object]) -> None:
-            body = json.dumps(event, ensure_ascii=False).encode("utf-8")
-            header = bytes([0x81])
-            if len(body) < 126:
-                header += bytes([len(body)])
-            elif len(body) <= 0xFFFF:
-                header += bytes([126]) + struct.pack("!H", len(body))
-            else:
-                header += bytes([127]) + struct.pack("!Q", len(body))
-            self.connection.sendall(header + body)
+            with send_lock:
+                body = json.dumps(event, ensure_ascii=False).encode("utf-8")
+                header = bytes([0x81])
+                if len(body) < 126:
+                    header += bytes([len(body)])
+                elif len(body) <= 0xFFFF:
+                    header += bytes([126]) + struct.pack("!H", len(body))
+                else:
+                    header += bytes([127]) + struct.pack("!Q", len(body))
+                self.connection.sendall(header + body)
 
         unsubscribe = self.server.events.subscribe(send_event)
         try:
@@ -384,9 +389,10 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                     "dream_completed", {"trigger": "manual", "result": result}
                 )
             except Exception as error:
-                self.server.events.publish(
-                    "dream_failed", {"trigger": "manual", "error": str(error)}
+                message = redact_configured_secret_values(
+                    str(error), load_provider_catalog(self.server.config)
                 )
+                self.server.events.publish("dream_failed", {"trigger": "manual", "error": message})
             finally:
                 with self.server.dream_lock:
                     self.server.dream_running = False

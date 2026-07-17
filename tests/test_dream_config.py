@@ -123,6 +123,18 @@ enabled = true
     assert "[workflows.crystallization]" not in saved
 
 
+def test_load_dream_config_rejects_unknown_workflow_without_migrating(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    config.dream_config_path.write_text(
+        "[workflows.unknown]\nprovider = 'openai'\nmodel = 'gpt-4.1-mini'\nenabled = true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DreamConfigError, match="workflows must contain exactly"):
+        load_dream_config(config)
+
+
 def test_load_dream_config_rejects_invalid_threshold_order(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     write_dream_config(

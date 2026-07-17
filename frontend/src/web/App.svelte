@@ -59,6 +59,8 @@
   let releaseSettings = $state.raw<ReleaseSettings | null>(null);
   let adminDashboard = $state.raw<AdminDashboardPayload | null>(null);
   let notice = $state.raw<{ message: string; tone: "success" | "error" } | null>(null);
+  let sectionRefresh: Promise<void> | null = null;
+  let refreshQueued = false;
   const themeToggle = createThemeToggle();
 
   function showNotice(message: string, tone: "success" | "error" = "success") {
@@ -144,6 +146,20 @@
     }
   }
 
+  function refreshSection() {
+    if (sectionRefresh) {
+      refreshQueued = true;
+      return sectionRefresh;
+    }
+    sectionRefresh = (async () => {
+      do {
+        refreshQueued = false;
+        await loadSection();
+      } while (refreshQueued);
+    })().finally(() => { sectionRefresh = null; });
+    return sectionRefresh;
+  }
+
   async function saveDream(settings: DreamSettings) {
     busy = true;
     error = "";
@@ -183,10 +199,9 @@
   }
 
   onMount(() => {
-    void loadSection();
-    return connectAdminEvents(() => {
-      if (section === "admin" || section === "memory") void loadSection();
-    });
+    void refreshSection();
+    if (section !== "admin" && section !== "memory") return;
+    return connectAdminEvents(() => { void refreshSection(); });
   });
 </script>
 
@@ -225,7 +240,7 @@
         {:else if providers.length === 0}
           <div class="table-wrap"><table><tbody><tr><td class="empty-cell">No provider profiles yet. Create one to connect an LLM.</td></tr></tbody></table></div>
         {:else}
-          <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Type</th><th>Endpoint</th><th>Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class:selected={selected?.id === provider.id} role="button" tabindex="0" onclick={() => { selected = provider; createOpen = false; models = []; }} onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") { selected = provider; createOpen = false; models = []; } }}><td>{provider.name}</td><td>{provider.type}</td><td>{provider.url}</td><td>{provider.key_configured ? "Configured" : "Missing"}</td></tr>{/each}</tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Type</th><th>Endpoint</th><th>Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class:selected={selected?.id === provider.id} role="button" tabindex="0" onclick={() => { selected = provider; createOpen = false; models = []; }} onkeydown={(event) => { if (event.key === " ") event.preventDefault(); if (event.key === "Enter" || event.key === " ") { selected = provider; createOpen = false; models = []; } }}><td>{provider.name}</td><td>{provider.type}</td><td>{provider.url}</td><td>{provider.key_configured ? "Configured" : "Missing"}</td></tr>{/each}</tbody></table></div>
         {/if}
       </div>
     {:else if section === "dreaming" && dreamSettings}
@@ -249,6 +264,6 @@
     {:else if error}<p class="error-msg">{error}</p>
     {:else}<p class="loading">Loading settings…</p>{/if}
   </section>
-  {#if section === "providers" && (selected || createOpen)}{#key selected?.id ?? "new"}<div class="editor-backdrop" onclick={() => { selected = null; createOpen = false; error = ""; }} role="presentation"></div><ProviderEditor provider={selected} {models} {busy} {error} onSave={save} onDelete={remove} onCheck={check} onRefreshModels={refresh} onClose={() => { selected = null; createOpen = false; error = ""; }} />{/key}{/if}
+  {#if section === "providers" && (selected || createOpen)}{#key selected?.id ?? "new"}<ProviderEditor provider={selected} {models} {busy} {error} onSave={save} onDelete={remove} onCheck={check} onRefreshModels={refresh} onClose={() => { selected = null; createOpen = false; error = ""; }} />{/key}{/if}
   {#if notice}<Toast message={notice.message} tone={notice.tone} onDismiss={() => { notice = null; }} />{/if}
 </main>

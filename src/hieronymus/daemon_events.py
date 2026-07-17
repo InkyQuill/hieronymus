@@ -30,4 +30,9 @@ class AdminEventHub:
         with self._lock:
             subscribers = tuple(self._subscribers)
         for subscriber in subscribers:
-            subscriber(event)
+            try:
+                subscriber(event)
+            except Exception:
+                with self._lock:
+                    if subscriber in self._subscribers:
+                        self._subscribers.remove(subscriber)

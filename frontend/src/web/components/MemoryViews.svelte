@@ -141,7 +141,7 @@
           {#if snapshot.rows.length}
             <table class="memory-table"><thead><tr><th>Record</th><th>Kind</th><th>Status</th><th>Scope</th></tr></thead><tbody>
               {#each snapshot.rows as row (row.id)}
-                <tr class:selected={snapshot.selected?.id === row.id} role="button" tabindex="0" onclick={() => void load(selectedView, row.id)} onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") void load(selectedView, row.id); }}><td><strong>{row.label}</strong><small>{row.language_pair}</small></td><td>{row.kind}</td><td>{row.status}</td><td>{row.scope}</td></tr>
+                <tr class:selected={snapshot.selected?.id === row.id} role="button" tabindex="0" onclick={() => void load(selectedView, row.id)} onkeydown={(event) => { if (event.key === " ") event.preventDefault(); if (event.key === "Enter" || event.key === " ") void load(selectedView, row.id); }}><td><strong>{row.label}</strong><small>{row.language_pair}</small></td><td>{row.kind}</td><td>{row.status}</td><td>{row.scope}</td></tr>
               {/each}
             </tbody></table>
           {:else}

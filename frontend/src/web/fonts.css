@@ -1,5 +1,5 @@
 @font-face {
-  font-family: "Literata";
+  font-family: Literata;
   font-style: normal;
   font-weight: 300 700;
   font-display: swap;
@@ -7,7 +7,7 @@
 }
 
 @font-face {
-  font-family: "Geist";
+  font-family: Geist;
   font-style: normal;
   font-weight: 300 700;
   font-display: swap;
