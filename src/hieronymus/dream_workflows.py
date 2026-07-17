@@ -47,7 +47,8 @@ PHASE_PROMPTS = {
     ),
     "reinforcement": (
         f"{_ENGLISH_MEMORY_PROSE} Identify referenced long-term memory to reinforce, with "
-        "source_memory_ids. Return JSON."
+        "source_memory_ids. Return reinforce as objects with crystal_id, strength_delta, and "
+        "confidence_delta. Return JSON."
     ),
     "coverage_audit": (
         f"{_ENGLISH_MEMORY_PROSE} Account for every selected short-term memory ID. "

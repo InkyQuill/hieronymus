@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_workflows import DREAM_PASS_NAMES
 from hieronymus.dreaming import DreamService
@@ -37,6 +38,28 @@ class EvidenceProvider:
                 ]
             }
         return {}
+
+
+class ReinforcingEvidenceProvider(EvidenceProvider):
+    def __init__(self, crystal_id: int) -> None:
+        super().__init__()
+        self.crystal_id = crystal_id
+
+    def run_pass(self, pass_name: str, context, memories):
+        if pass_name == "reinforcement":
+            memory_ids = tuple(memory.id for memory in memories)
+            self.calls.append((pass_name, memory_ids))
+            return {
+                "reinforce": [
+                    {
+                        "crystal_id": self.crystal_id,
+                        "strength_delta": 0.1,
+                        "confidence_delta": 0.1,
+                        "source_memory_ids": list(memory_ids),
+                    }
+                ]
+            }
+        return super().run_pass(pass_name, context, memories)
 
 
 def _completed_session(config: HieronymusConfig, count: int = 2) -> int:
@@ -125,3 +148,24 @@ def test_book_scale_batch_is_covered_by_every_dream_pass(tmp_path) -> None:
     assert run.status == "completed"
     assert all(ids == tuple(memory_ids) for _pass_name, ids in provider.calls)
     assert workspace.list_short_term_memories(session.id) == []
+
+
+def test_reinforcement_pass_applies_each_crystal_action_once(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    session_id = _completed_session(config, count=1)
+    context = TranslationContext("book", "en", "ru", task_type="reading")
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="observation",
+        text="Established long-term evidence.",
+        strength=0.5,
+        confidence=0.5,
+    )
+
+    DreamService(config, ReinforcingEvidenceProvider(crystal_id)).run_cycle()
+
+    crystal = CrystalStore(config).get(crystal_id)
+    assert crystal is not None
+    assert crystal.strength == pytest.approx(0.57)
+    assert crystal.confidence == pytest.approx(0.6)
+    assert WorkspaceStore(config).list_short_term_memories(session_id) == []

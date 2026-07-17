@@ -239,6 +239,7 @@ class _NormalizedDreamOutput:
     concepts: list[_NormalizedDreamConcept] = field(default_factory=list)
     facets: list[_NormalizedDreamFacet] = field(default_factory=list)
     supersede_actions: list[_DreamSupersedeAction] = field(default_factory=list)
+    reinforce_actions: list[tuple[int, float, float]] = field(default_factory=list)
     warnings: list[DreamParseWarning] = field(default_factory=list)
     rejected_entries: list[dict[str, object]] = field(default_factory=list)
     skipped_candidates: list[dict[str, object]] = field(default_factory=list)
@@ -1538,6 +1539,8 @@ class DreamService:
         created_facet_ids: list[int] = []
         created_links: list[dict[str, int | str]] = []
         superseded_crystal_ids: list[int] = []
+        reinforced_crystal_ids: list[int] = []
+        reinforced_action_ids: set[int] = set()
         now = _now()
         with connect(self.config.database_path) as conn:
             try:
@@ -1607,6 +1610,22 @@ class DreamService:
                             for concept_id in candidate.concept_ids
                         )
                     self._insert_concept_proposals(conn, run_id, output.concept_proposals)
+                    for crystal_id, strength_delta, confidence_delta in output.reinforce_actions:
+                        if crystal_id in reinforced_action_ids:
+                            continue
+                        reinforced_action_ids.add(crystal_id)
+                        reinforced_crystal_ids.extend(
+                            self._apply_score_maintenance_with_connection(
+                                conn,
+                                crystal_ids=(crystal_id,),
+                                strength_delta=strength_delta,
+                                confidence_delta=confidence_delta,
+                                reason="dream reinforcement",
+                                event_type="dream_reinforce",
+                                cycle_id=cycle_id,
+                                skip_active_rules=False,
+                            )
+                        )
                     for action in output.supersede_actions:
                         self.crystals._supersede_with_connection(
                             conn,
@@ -1643,6 +1662,7 @@ class DreamService:
             created_facet_ids=tuple(created_facet_ids),
             created_links=tuple(created_links),
             superseded_crystal_ids=tuple(superseded_crystal_ids),
+            reinforced_crystal_ids=tuple(reinforced_crystal_ids),
             rejected_entries=tuple(_output_rejected_entries(outputs)),
             skipped_candidates=tuple(_output_skipped_candidates(outputs)),
             searched_related_candidates=related_candidates,
@@ -2771,11 +2791,28 @@ class DreamService:
                 )
                 continue
             supersede_actions.append(action)
+        reinforce_actions = []
+        for item in _list_from_payload(payload.get("reinforce")):
+            if type(item) is not dict:
+                raise ValueError("reinforce actions must be objects")
+            source_memory_ids = item.get("source_memory_ids")
+            if (
+                type(source_memory_ids) is not list
+                or not source_memory_ids
+                or not all(type(memory_id) is int for memory_id in source_memory_ids)
+                or not set(source_memory_ids).issubset(allowed_memory_ids)
+            ):
+                raise ValueError("reinforce actions require selected source_memory_ids")
+            action = _normalize_score_action(item)
+            if action is None:
+                raise ValueError("reinforce actions must contain crystal_id and numeric deltas")
+            reinforce_actions.append(action)
         return _NormalizedDreamOutput(
             crystals=crystals,
             concepts=concepts,
             facets=facets,
             supersede_actions=supersede_actions,
+            reinforce_actions=reinforce_actions,
             warnings=warnings,
             skipped_candidates=skipped_candidates,
         )
@@ -3663,6 +3700,7 @@ def _normalized_output_count(output: _NormalizedDreamOutput) -> int:
         + len(output.concepts)
         + len(output.facets)
         + len(output.supersede_actions)
+        + len(output.reinforce_actions)
     )
 
 
