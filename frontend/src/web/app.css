@@ -217,7 +217,7 @@ body {
     position: fixed;
     top: 0;
     right: 0;
-    width: 420px;
+    width: min(420px, 100%);
     height: 100dvh;
     margin: 0;
     padding: 24px;
