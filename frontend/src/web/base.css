@@ -36,10 +36,25 @@ main {
   gap: var(--space-2xl);
   padding: var(--space-md) var(--space-4xl);
 }
-.topbar .brand { color: var(--color-text-primary); font: var(--text-display); font-size: 20px; margin-right: auto; text-decoration: none; }
-.topbar nav { display: flex; gap: var(--space-lg); }
-.topbar nav a { color: var(--color-text-secondary); font: var(--text-body-sm); text-decoration: none; }
-.topbar nav a.active { color: var(--color-accent-text); }
+.topbar .brand {
+  color: var(--color-text-primary);
+  font: var(--text-display);
+  font-size: 20px;
+  margin-right: auto;
+  text-decoration: none;
+}
+.topbar nav {
+  display: flex;
+  gap: var(--space-lg);
+}
+.topbar nav a {
+  color: var(--color-text-secondary);
+  font: var(--text-body-sm);
+  text-decoration: none;
+}
+.topbar nav a.active {
+  color: var(--color-accent-text);
+}
 
 .sidebar h1 {
   font: var(--text-display);
@@ -207,9 +222,16 @@ main {
   main {
     grid-template-rows: auto minmax(0, 1fr);
   }
-  .topbar { gap: var(--space-md); padding: var(--space-md) var(--space-lg); }
-  .topbar .brand { font-size: 18px; }
-  .topbar nav { gap: var(--space-md); }
+  .topbar {
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-lg);
+  }
+  .topbar .brand {
+    font-size: 18px;
+  }
+  .topbar nav {
+    gap: var(--space-md);
+  }
   .sidebar {
     padding: var(--space-lg);
   }

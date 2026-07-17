@@ -17,6 +17,7 @@ from hieronymus.dreaming import (
 from hieronymus.memory_models import TranslationContext
 from hieronymus.provider_config import (
     ProviderCatalog,
+    ProviderCatalogError,
     ProviderProfile,
     save_provider_catalog,
 )
@@ -546,7 +547,7 @@ enabled = true
         encoding="utf-8",
     )
 
-    with pytest.raises(DreamConfigError, match="seven Dream passes"):
+    with pytest.raises(ProviderCatalogError, match="provider profile missing: missing"):
         resolve_provider(config)
 
 

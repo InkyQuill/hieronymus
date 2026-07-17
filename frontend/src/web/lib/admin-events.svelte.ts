@@ -6,7 +6,10 @@ export function connectAdminEvents(onEvent: () => void): () => void {
     if (stopped) return;
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     socket = new WebSocket(`${scheme}//${location.host}/ws/admin`);
-    socket.onopen = () => { retry = 250; onEvent(); };
+    socket.onopen = () => {
+      retry = 250;
+      onEvent();
+    };
     socket.onmessage = () => onEvent();
     socket.onclose = () => {
       if (!stopped) setTimeout(connect, retry);
@@ -14,5 +17,8 @@ export function connectAdminEvents(onEvent: () => void): () => void {
     };
   }
   connect();
-  return () => { stopped = true; socket?.close(); };
+  return () => {
+    stopped = true;
+    socket?.close();
+  };
 }

@@ -35,7 +35,9 @@
   color: inherit;
   display: block;
   text-decoration: none;
-  transition: border-color var(--duration-fast) var(--ease-smooth), transform var(--duration-fast) var(--ease-smooth);
+  transition:
+    border-color var(--duration-fast) var(--ease-smooth),
+    transform var(--duration-fast) var(--ease-smooth);
 }
 .stat-card:hover {
   border-color: var(--color-accent);
@@ -82,11 +84,23 @@
   margin-bottom: var(--space-sm);
   width: 100%;
 }
-.workflow-line li.complete { color: var(--color-text-secondary); }
-.workflow-line li.complete .workflow-marker { background: var(--color-accent); }
-.workflow-line li.active { color: var(--color-accent-text); }
-.workflow-line li.active .workflow-marker { background: var(--color-accent-text); height: 5px; }
-.workflow-detail { margin: var(--space-md) 0 0; text-transform: capitalize; }
+.workflow-line li.complete {
+  color: var(--color-text-secondary);
+}
+.workflow-line li.complete .workflow-marker {
+  background: var(--color-accent);
+}
+.workflow-line li.active {
+  color: var(--color-accent-text);
+}
+.workflow-line li.active .workflow-marker {
+  background: var(--color-accent-text);
+  height: 5px;
+}
+.workflow-detail {
+  margin: var(--space-md) 0 0;
+  text-transform: capitalize;
+}
 .status-card h3 {
   font: var(--text-h3);
   margin: 0 0 var(--space-md);
@@ -360,7 +374,9 @@ button:disabled,
 }
 
 @media (max-width: 720px) {
-  .workflow-line { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workflow-line {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .editor-backdrop {

@@ -50,23 +50,28 @@ def apply_migration(conn: sqlite3.Connection, name: str) -> None:
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-    rows = conn.execute(f"pragma table_info({table})").fetchall()
-    names = {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
-    if column not in names:
+    if column not in _column_names(conn, table):
         conn.execute(f"alter table {table} add column {column} {definition}")
+
+
+def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"pragma table_info({table})").fetchall()
+    return {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
 
 
 def ensure_global_compatibility_columns(conn: sqlite3.Connection) -> None:
     for table, columns in GLOBAL_COMPATIBILITY_COLUMNS.items():
         for column, definition in columns.items():
             ensure_column(conn, table, column, definition)
-    conn.execute(
-        """
-        update task_sessions
-        set last_activity_at = created_at
-        where last_activity_at = ''
-        """
-    )
+    task_session_columns = _column_names(conn, "task_sessions")
+    if {"created_at", "last_activity_at"} <= task_session_columns:
+        conn.execute(
+            """
+            update task_sessions
+            set last_activity_at = created_at
+            where last_activity_at = ''
+            """
+        )
     conn.commit()
     ensure_concepts_allow_duplicate_names(conn)
     ensure_concept_facet_compatibility(conn)

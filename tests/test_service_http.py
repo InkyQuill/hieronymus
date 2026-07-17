@@ -499,8 +499,13 @@ def test_status_endpoint_survives_an_obsolete_dream_workflow_config(tmp_path: Pa
         _stop_server(server, thread)
 
     assert payload["running"] is True
-    assert payload["providers"] == []
-    assert payload["providers_error"] == "workflows must contain exactly the seven Dream passes"
+    assert {provider["name"] for provider in payload["providers"]} == {
+        "deterministic",
+        "openai",
+        "gemini",
+        "anthropic",
+    }
+    assert payload["providers_error"] == ""
 
 
 def test_shutdown_endpoint_stops_server(tmp_path: Path) -> None:

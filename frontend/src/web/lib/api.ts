@@ -138,7 +138,10 @@ export async function runAdminAction(
   });
 }
 
-export async function startAdminDreaming(): Promise<{ started: boolean; status: string }> {
+export async function startAdminDreaming(): Promise<{
+  started: boolean;
+  status: string;
+}> {
   return request("/api/admin/actions/run_manual_dreaming", {
     method: "POST",
     body: "{}",
