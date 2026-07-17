@@ -244,6 +244,17 @@ def test_pyproject_configures_semantic_release() -> None:
     assert semantic_release["changelog"]["default_templates"]["changelog_file"] == "CHANGELOG.md"
 
 
+def test_pyproject_configures_local_frontend_build_hook() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+
+    assert pyproject["tool"]["hatch"]["build"]["hooks"]["custom"] == {"path": "hatch_build.py"}
+
+    build_hook = (ROOT / "hatch_build.py").read_text()
+    assert "BuildHookInterface" in build_hook
+    assert "mise exec bun@1.3.14 -- bun install --frozen-lockfile" in build_hook
+    assert "mise exec bun@1.3.14 -- bun run build" in build_hook
+
+
 def test_project_ignores_local_agent_config() -> None:
     gitignore_lines = (ROOT / ".gitignore").read_text().splitlines()
 

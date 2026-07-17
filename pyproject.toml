@@ -36,6 +36,9 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 only-include = ["src/hieronymus", "frontend/dist"]
 artifacts = ["frontend/dist/**"]
