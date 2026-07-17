@@ -5,6 +5,7 @@ import hashlib
 import json
 import secrets
 import struct
+import threading
 from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,6 +35,8 @@ class HieronymusHTTPServer(ThreadingHTTPServer):
         self.config = config
         self.state = state
         self.events = AdminEventHub()
+        self.dream_lock = threading.Lock()
+        self.dream_running = False
 
 
 class HieronymusRequestHandler(BaseHTTPRequestHandler):
@@ -145,6 +148,9 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             method = _ADMIN_ACTION_METHODS.get(action)
             if method is None:
                 self._send_json({"error": "unknown_admin_action"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if method == "run_manual_dreaming":
+                self._start_manual_dreaming()
                 return
             self._send_admin_result(method, self._request_json())
             return
@@ -323,6 +329,32 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             pass
         finally:
             unsubscribe()
+
+    def _start_manual_dreaming(self) -> None:
+        with self.server.dream_lock:
+            if self.server.dream_running:
+                self._send_json({"started": False, "status": "running"})
+                return
+            self.server.dream_running = True
+        self.server.events.publish("dream_started", {"trigger": "manual"})
+
+        def run() -> None:
+            try:
+                payload = AdminBridge(self.server.config).run_manual_dreaming({})
+                result = payload["result"]
+                self.server.events.publish(
+                    "dream_completed", {"trigger": "manual", "result": result}
+                )
+            except Exception as error:
+                self.server.events.publish(
+                    "dream_failed", {"trigger": "manual", "error": str(error)}
+                )
+            finally:
+                with self.server.dream_lock:
+                    self.server.dream_running = False
+
+        threading.Thread(target=run, name="hieronymus-manual-dream", daemon=True).start()
+        self._send_json({"started": True, "status": "running"})
 
 
 def _web_asset_roots() -> list[Path]:

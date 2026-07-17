@@ -172,7 +172,7 @@
     error = "";
     try {
       const result = await startAdminDreaming();
-      showNotice(`Dreaming run ${result.result.id} is ${result.result.status}.`);
+      showNotice(result.started ? "Dreaming started." : "Dreaming is already running.");
       adminDashboard = await loadAdminDashboard();
     } catch (reason) {
       error = reason instanceof Error ? reason.message : String(reason);

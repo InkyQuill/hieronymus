@@ -138,8 +138,9 @@ export async function runAdminAction(
   });
 }
 
-export async function startAdminDreaming(): Promise<
-  Omit<AdminActionResult, "result"> & { result: { id: number; status: string } }
-> {
-  return runAdminAction("run_manual_dreaming", { id: 0 });
+export async function startAdminDreaming(): Promise<{ started: boolean; status: string }> {
+  return request("/api/admin/actions/run_manual_dreaming", {
+    method: "POST",
+    body: "{}",
+  });
 }
