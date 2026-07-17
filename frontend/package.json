@@ -14,9 +14,12 @@
   "dependencies": {},
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@tailwindcss/vite": "^4",
     "@types/bun": "^1.3.0",
     "prettier": "^3.3.0",
+    "prettier-plugin-tailwindcss": "^0.8.1",
     "svelte": "^5.0.0",
+    "tailwindcss": "^4",
     "typescript": "^5.5.0",
     "vite": "^6.0.0"
   }
