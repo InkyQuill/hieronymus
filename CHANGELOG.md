@@ -2,6 +2,144 @@
 
 <!-- version list -->
 
+## v0.6.0 (2026-07-17)
+
+### Bug Fixes
+
+- Accept same-origin admin browser requests
+  ([`b275796`](https://github.com/InkyQuill/hieronymus/commit/b275796dd0e611d6b51cad7d4a0489f369e103a1))
+
+- Avoid stale theme state capture
+  ([`7499eee`](https://github.com/InkyQuill/hieronymus/commit/7499eeef0eaf2221d91557fe3c2baac618c321ef))
+
+- Migrate incomplete dream workflows
+  ([`58da38b`](https://github.com/InkyQuill/hieronymus/commit/58da38b97aad4273d25f3172eb3eac66d65809fc))
+
+- Migrate legacy dream workflow profiles
+  ([`a329d7e`](https://github.com/InkyQuill/hieronymus/commit/a329d7e133e62c9952377906a08ed9020d864b9e))
+
+- Preserve session activity during migration
+  ([`ec18e1a`](https://github.com/InkyQuill/hieronymus/commit/ec18e1a6713989026e3b2f7fce52c83460fbbc45))
+
+- Restore CI compatibility checks
+  ([`aaf966d`](https://github.com/InkyQuill/hieronymus/commit/aaf966d659ac69fbbf19646ae44d7137236787f6))
+
+- Use a valid dialog container for provider editor
+  ([`6411010`](https://github.com/InkyQuill/hieronymus/commit/6411010daa2d0ebc4b42933784b6b5f77b2c0db6))
+
+### Chores
+
+- Remove legacy stylesheet and typecheck Bun tests
+  ([`9b7e51b`](https://github.com/InkyQuill/hieronymus/commit/9b7e51b48e7868396ac4770bf586436e32ef8bfb))
+
+### Code Style
+
+- Format migration regression test
+  ([`d58a9f2`](https://github.com/InkyQuill/hieronymus/commit/d58a9f2a699aaeff93b3c3df742e729f8dd923fc))
+
+### Documentation
+
+- Plan daemon session lifecycle
+  ([`3e762be`](https://github.com/InkyQuill/hieronymus/commit/3e762be14f7bf22532b52c5e217b3839e9ef4314))
+
+- Secure local admin lifecycle design
+  ([`ae2f477`](https://github.com/InkyQuill/hieronymus/commit/ae2f4777f44a7eed2667b73b142d1a9d715d81ef))
+
+- Specify daemon session lifecycle
+  ([`4a7ad3b`](https://github.com/InkyQuill/hieronymus/commit/4a7ad3b07768b4a3de4962fb64fb839f5ba01882))
+
+### Features
+
+- Add base CSS with editorial shell and responsive layout
+  ([`0e9c2d8`](https://github.com/InkyQuill/hieronymus/commit/0e9c2d89c959efececda83b6674a0daedf4cc991))
+
+- Add component patterns for editorial web console
+  ([`9dbe224`](https://github.com/InkyQuill/hieronymus/commit/9dbe224598520549d31bb80b2af6186b17ee56b6))
+
+- Add design tokens CSS with dark and light theme custom properties
+  ([`b761c57`](https://github.com/InkyQuill/hieronymus/commit/b761c577288ed86cef0efb3489669f7e73c3dd9c))
+
+- Add font-face declarations for Literata, Geist, Inconsolata LGC
+  ([`bc1b645`](https://github.com/InkyQuill/hieronymus/commit/bc1b645b8da97edbc0e88cf80997b27e50393558))
+
+- Add Literata, Geist, Inconsolata LGC font files
+  ([`ddfd637`](https://github.com/InkyQuill/hieronymus/commit/ddfd6373c68e1b74d7886e94b7d3192946b93355))
+
+- Add local admin websocket endpoint
+  ([`e3402a7`](https://github.com/InkyQuill/hieronymus/commit/e3402a72e55509ecb95b6dd8239b0528ae616ded))
+
+- Add manual dreaming control to web admin
+  ([`32322c8`](https://github.com/InkyQuill/hieronymus/commit/32322c8bb6174501706ed030ad036c18e62b3418))
+
+- Add persisted theme toggle module
+  ([`4e794c9`](https://github.com/InkyQuill/hieronymus/commit/4e794c98f73024aac78d1d05181c40e82374fd4a))
+
+- Authorize local admin by origin
+  ([`eace612`](https://github.com/InkyQuill/hieronymus/commit/eace612730d19897d837fe82a5791d245c7c726c))
+
+- Automate session closure and dream runs
+  ([`451c53c`](https://github.com/InkyQuill/hieronymus/commit/451c53c23c38113931843e9ac05648074359c261))
+
+- Expose short-term memory in admin
+  ([`2955cd6`](https://github.com/InkyQuill/hieronymus/commit/2955cd6d572d6d7700b9b015632c8095c85ce13e))
+
+- Let admins close short-term sessions
+  ([`8b154c8`](https://github.com/InkyQuill/hieronymus/commit/8b154c8da65b9581c444cc0ab46b0f560de9b572))
+
+- Make source roles freeform provenance
+  ([`72e0c0f`](https://github.com/InkyQuill/hieronymus/commit/72e0c0ff07336c2cf562975adebb0aa626623602))
+
+- Publish daemon admin events
+  ([`27631d7`](https://github.com/InkyQuill/hieronymus/commit/27631d79fe3d4f69e9857072be3df9fa79c15f1a))
+
+- Publish live dreaming phase progress
+  ([`93979ba`](https://github.com/InkyQuill/hieronymus/commit/93979bab8c698a62fb3a263fe713b4e48a2a574a))
+
+- Redesign administration overview with editorial split
+  ([`8ad82d9`](https://github.com/InkyQuill/hieronymus/commit/8ad82d9d9cfb97092a9ada68173b06df08a7bacc))
+
+- Redesign application shell with editorial navigation
+  ([`385829e`](https://github.com/InkyQuill/hieronymus/commit/385829ee633e7998f214982c9694cdc55fd3bd41))
+
+- Redesign dreaming and configuration form pages
+  ([`9a4be87`](https://github.com/InkyQuill/hieronymus/commit/9a4be87de7128771840ff57cc5b0b74d0e146ca1))
+
+- Redesign memory views around a record detail workflow
+  ([`276c37d`](https://github.com/InkyQuill/hieronymus/commit/276c37d1a1e3412922be184d739bdf44f036c8ae))
+
+- Redesign provider editor as a focused drawer
+  ([`f505a58`](https://github.com/InkyQuill/hieronymus/commit/f505a58f4dcc8b71101f7e396b3f4041b26eee71))
+
+- Redesign toast notifications
+  ([`583b0db`](https://github.com/InkyQuill/hieronymus/commit/583b0db844ec0eb84ed19ac30094710d3ec8a90b))
+
+- Refresh web admin from daemon events
+  ([`5592262`](https://github.com/InkyQuill/hieronymus/commit/5592262b99103e968c8cceb299d18965cf5f206a))
+
+- Run manual dreaming in background
+  ([`f5d2dff`](https://github.com/InkyQuill/hieronymus/commit/f5d2dffd402c301146ac477349079d899c105c99))
+
+- Show live dreaming phase progress
+  ([`b4b4ae6`](https://github.com/InkyQuill/hieronymus/commit/b4b4ae6b51a7e9cafd2b45d24c8a1ace52a374bc))
+
+- Streamline web admin navigation
+  ([`a239894`](https://github.com/InkyQuill/hieronymus/commit/a23989440dd309050ac1b4e02b7b8308003119ea))
+
+- Track and expire inactive sessions
+  ([`5e6052a`](https://github.com/InkyQuill/hieronymus/commit/5e6052aff09539f7a958224126e615fefb90a070))
+
+- Trigger threshold dreaming after session close
+  ([`054f0ef`](https://github.com/InkyQuill/hieronymus/commit/054f0efb3dc8f8a9d7c13c4666552f0604cdd0f2))
+
+- Wire modular CSS and default dark theme
+  ([`d1862af`](https://github.com/InkyQuill/hieronymus/commit/d1862afef44bdfad25eed5090bcf81a33340aa0e))
+
+### Testing
+
+- Protect local admin websocket origin
+  ([`7eba799`](https://github.com/InkyQuill/hieronymus/commit/7eba799c5f6dc50d3dc49ec38dbd281347c1e123))
+
+
 ## v0.5.0 (2026-07-17)
 
 ### Bug Fixes
