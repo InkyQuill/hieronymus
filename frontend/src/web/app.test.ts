@@ -7,3 +7,11 @@ test("the web stylesheet defines the data-theme Tailwind dark variant", async ()
   );
   expect(css).toContain('@import "tailwindcss";');
 });
+
+test("the web entry module imports the Tailwind stylesheet", async () => {
+  const entryModule = await Bun.file(
+    new URL("./main.ts", import.meta.url),
+  ).text();
+
+  expect(entryModule).toContain('import "./app.css";');
+});
