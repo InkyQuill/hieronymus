@@ -6,6 +6,7 @@ import json
 import secrets
 import struct
 import threading
+import time
 from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.daemon_events import AdminEventHub
+from hieronymus.db import connect
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS
@@ -338,6 +340,34 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             self.server.dream_running = True
         self.server.events.publish("dream_started", {"trigger": "manual"})
 
+        def monitor() -> None:
+            seen_phase_id = 0
+            while self.server.dream_running:
+                try:
+                    with connect(self.server.config.database_path) as conn:
+                        row = conn.execute(
+                            """
+                            select p.id, p.phase, p.dream_run_id, r.cycle_id
+                            from dream_phase_runs as p
+                            join dream_runs as r on r.id = p.dream_run_id
+                            where p.status = 'running'
+                            order by p.id desc limit 1
+                            """
+                        ).fetchone()
+                except Exception:
+                    row = None
+                if row is not None and int(row["id"]) != seen_phase_id:
+                    seen_phase_id = int(row["id"])
+                    self.server.events.publish(
+                        "dream_phase_progress",
+                        {
+                            "run_id": int(row["dream_run_id"]),
+                            "cycle_id": int(row["cycle_id"]),
+                            "phase": row["phase"],
+                        },
+                    )
+                time.sleep(0.2)
+
         def run() -> None:
             try:
                 payload = AdminBridge(self.server.config).run_manual_dreaming({})
@@ -354,6 +384,7 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                     self.server.dream_running = False
 
         threading.Thread(target=run, name="hieronymus-manual-dream", daemon=True).start()
+        threading.Thread(target=monitor, name="hieronymus-dream-progress", daemon=True).start()
         self._send_json({"started": True, "status": "running"})
 
 
