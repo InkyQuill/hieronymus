@@ -49,6 +49,13 @@ class DreamConfig:
     workflows: dict[str, WorkflowProfile]
 
     def with_workflow(self, name: str, workflow: WorkflowProfile) -> DreamConfig:
+        # This programmatic convenience is intentionally not part of the persisted
+        # schema: `_dream_config_from_payload` rejects the removed alpha name.
+        name = {
+            "crystallization": "knowledge_crystals",
+            "relation_discovery": "relations",
+            "reinforcement_compaction": "reinforcement",
+        }.get(name, name)
         return replace(self, workflows={**self.workflows, name: workflow})
 
     def to_payload(self, *, redact: bool = False) -> dict[str, object]:
