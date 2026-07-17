@@ -26,7 +26,7 @@ Both routes use the same idempotent completion operation; a completed,
 dreamed, or missing session produces a clear no-op/error response rather than
 mutating another record.
 
-After automatic closure, the daemon evaluates the existing
+After either automatic or manual closure, the daemon evaluates the existing
 `min_pending_short_term_memories` setting across all completed, unarchived
 short-term memories. If the threshold is met and no dream cycle is active, it
 starts one Dreaming run immediately. It does not introduce a second threshold
@@ -36,11 +36,18 @@ bypasses the minimum threshold.
 ## One daemon and local access
 
 The existing loopback HTTP daemon remains the only process and address for the
-web app, admin APIs, WebSocket endpoint, MCP bridge, and scheduler. Admin and
-configuration browser routes are trusted local UI routes: they do not require a
-token. The server must remain bound to loopback only. Internal `/api/mcp/*`,
-daemon lifecycle, and other non-browser service routes continue to require the
-daemon token.
+web app, admin APIs, WebSocket endpoint, MCP bridge, and scheduler. Browser
+admin and configuration routes do not use a token, but loopback binding alone
+is not authorization: a hostile website could otherwise issue same-browser
+requests to the local service.
+
+Static app navigation and assets remain available without an Origin header.
+Every browser admin/configuration API request and the `/ws/admin` upgrade must
+have an `Origin` equal to the daemon's own local HTTP origin (scheme, loopback
+host, and bound port); a missing or mismatched Origin is rejected. This blocks
+cross-origin fetch, DNS rebinding, CSRF, and WebSocket connections. The server
+remains bound to loopback only. Internal `/api/mcp/*`, daemon lifecycle, and
+other non-browser service routes continue to require the daemon token.
 
 ## Live Dreaming transport
 
@@ -61,9 +68,11 @@ Events have a stable `type`, timestamp, and payload. The initial event set is:
 - `dream_failed` — run/cycle IDs and a safe error message.
 
 The HTTP request that starts a manual run returns immediately with the run
-identifier and `running` status. The UI disables duplicate starts while a run
-is active. Completion/failure is published from the Dreaming worker, so the
-request thread never waits for an LLM call.
+identifier and `running` status. If a run is already active, it returns HTTP
+200 with that existing run and `started: false`; it never creates a duplicate.
+The UI disables duplicate starts while a run is active. Completion/failure is
+published from the Dreaming worker, so the request thread never waits for an
+LLM call.
 
 ## Web UX
 
@@ -80,9 +89,10 @@ read-first view; it is not used as a proxy for closing a whole session.
 
 All mounted admin pages maintain one WebSocket connection. On each relevant
 event they reload their dashboard; Memory Views also reloads the current
-snapshot. If the socket disconnects, the UI shows a non-blocking reconnecting
-state and retries with bounded backoff. API mutations still display explicit
-error toasts.
+snapshot. A successful reconnect immediately reloads the dashboard and current
+snapshot before waiting for another event, closing the missed-event gap. If the
+socket disconnects, the UI shows a non-blocking reconnecting state and retries
+with bounded backoff. API mutations still display explicit error toasts.
 
 ## Error handling and safety
 
@@ -96,8 +106,9 @@ scheduler tick may launch an eligible run if the first launch failed.
 ## Validation
 
 Backend tests cover activity timestamp updates, timeout closure, manual close,
-threshold-based launch, minimum bypass for manual launch, duplicate-run
-protection, route authorization boundaries, and emitted event payloads.
+threshold-based launch after either close mode, minimum bypass for manual
+launch, duplicate-run protection, route Origin/token authorization boundaries,
+and emitted event payloads.
 Frontend tests cover run/close controls, live progress, reconnect behaviour,
 and refreshes caused by WebSocket events. Browser-level tests verify a local
 admin page works without a token and reflects a completed manual run.
