@@ -134,7 +134,11 @@ def load_dream_config(config: HieronymusConfig) -> DreamConfig:
     except tomllib.TOMLDecodeError as error:
         raise DreamConfigError(f"dream.conf is not valid TOML: {error}") from error
 
-    return validate_dream_config(_dream_config_from_payload(payload))
+    dream_config = validate_dream_config(_dream_config_from_payload(payload))
+    raw_workflows = payload.get("workflows")
+    if type(raw_workflows) is dict and set(raw_workflows) != set(dream_config.workflows):
+        save_dream_config(config, dream_config)
+    return dream_config
 
 
 def save_dream_config(config: HieronymusConfig, dream_config: DreamConfig) -> None:

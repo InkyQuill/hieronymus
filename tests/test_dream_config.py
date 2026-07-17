@@ -87,6 +87,27 @@ def test_load_save_dream_config_round_trips_workflows_without_providers(
     assert "providers" not in loaded.to_payload()
 
 
+def test_load_dream_config_migrates_missing_workflows_to_disk(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    write_dream_config(
+        config,
+        """
+[dreaming]
+enabled = false
+
+[workflows.knowledge_crystals]
+provider = ""
+model = ""
+enabled = false
+""",
+    )
+
+    loaded = load_dream_config(config)
+
+    assert set(loaded.workflows) == set(default_dream_config().workflows)
+    assert "[workflows.coverage_audit]" in config.dream_config_path.read_text(encoding="utf-8")
+
+
 def test_load_dream_config_rejects_invalid_threshold_order(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     write_dream_config(
