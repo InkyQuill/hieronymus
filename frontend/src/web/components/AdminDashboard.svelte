@@ -19,7 +19,7 @@
         <article class="card stat-card"><div><strong>{value}</strong><span>{label(name)}</span></div></article>
       {/each}
     </div>
-    <section class="card status-card"><div><h3>Local service</h3><dl><div><dt>Dreaming</dt><dd>{String(dashboard.dream_status.state ?? "unknown")}</dd></div><div><dt>Short-term memory</dt><dd>{String(dashboard.short_term_status.state ?? "unknown")}</dd></div></dl></div></section>
+    <section class="card status-card"><div><h3>Local service</h3><dl><div><dt>Dreaming</dt><dd>{String(dashboard.dream_status.state ?? "unknown")}</dd></div>{#if dashboard.dream_status.current_phase}<div><dt>Phase</dt><dd>{String(dashboard.dream_status.current_phase)} · {Math.round(Number(dashboard.dream_status.progress ?? 0) * 100)}%</dd></div>{/if}<div><dt>Short-term memory</dt><dd>{String(dashboard.short_term_status.state ?? "unknown")}</dd></div></dl></div></section>
     {#if error}<p class="error-msg">{error}</p>{/if}
   </div>
 </section>
