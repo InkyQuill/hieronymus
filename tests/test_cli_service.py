@@ -376,7 +376,7 @@ def test_dream_json_uses_provider_catalog_profile(tmp_path: Path) -> None:
     save_dream_config(
         config,
         replace(default_dream_config(), enabled=True).with_workflow(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )

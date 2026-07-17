@@ -427,6 +427,28 @@ def test_status_payload_degrades_when_dreaming_status_fails(tmp_path: Path) -> N
     assert payload["housekeeping"] == {"last_cycle": None, "pending": False}
 
 
+def test_status_endpoint_survives_an_obsolete_dream_workflow_config(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    config.dream_config_path.write_text(
+        "[workflows.crystallization]\n"
+        "provider = 'openai'\n"
+        "model = 'gpt-4.1-mini'\n"
+        "enabled = true\n",
+        encoding="utf-8",
+    )
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        payload = _request_json(f"{base_url}/status")
+    finally:
+        _stop_server(server, thread)
+
+    assert payload["running"] is True
+    assert payload["providers"] == []
+    assert payload["providers_error"] == "workflows must contain exactly the seven Dream passes"
+
+
 def test_shutdown_endpoint_stops_server(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     state = _make_state(config)

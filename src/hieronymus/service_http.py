@@ -335,6 +335,12 @@ def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, An
             "pending_short_term_memories": 0,
             "error": str(error),
         }
+    try:
+        provider_statuses = ProviderRegistry().status_payload(config)
+        provider_status_error = ""
+    except Exception as error:
+        provider_statuses = []
+        provider_status_error = str(error)
     return {
         "running": True,
         "pid": state.pid,
@@ -345,7 +351,8 @@ def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, An
         "data_root": str(config.data_root),
         "database_path": str(config.database_path),
         "config_path": str(config.config_root),
-        "providers": ProviderRegistry().status_payload(config),
+        "providers": provider_statuses,
+        "providers_error": provider_status_error,
         "dreaming": dreaming_status,
         "mcp_adapter": {"available": True, "mode": "local-http"},
         "housekeeping": {
