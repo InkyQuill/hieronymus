@@ -257,6 +257,27 @@ def test_admin_dashboard_api_returns_local_admin_snapshot(tmp_path: Path) -> Non
     assert dashboard["views"]
 
 
+def test_local_origin_can_use_admin_api_without_token(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        request = urllib.request.Request(f"{base_url}/api/admin/dashboard")
+        request.add_header("Origin", base_url)
+        with urllib.request.urlopen(request, timeout=2) as response:
+            assert response.status == 200
+        request = urllib.request.Request(f"{base_url}/api/admin/dashboard")
+        request.add_header("Origin", "https://evil.example")
+        try:
+            urllib.request.urlopen(request, timeout=2)
+        except urllib.error.HTTPError as error:
+            assert error.code == 403
+        else:
+            raise AssertionError("foreign Origin must be rejected")
+    finally:
+        _stop_server(server, thread)
+
+
 def test_admin_snapshot_api_accepts_a_view_parameter(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     server = build_server(config, _make_state(config))

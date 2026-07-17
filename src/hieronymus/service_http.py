@@ -41,54 +41,38 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
         request_url = urlparse(self.path)
         path = request_url.path
         if _is_web_route(path):
-            token = parse_qs(request_url.query).get("token", [""])[0]
-            if token and secrets.compare_digest(token, self.server.state.token):
-                self.send_response(HTTPStatus.FOUND.value)
-                self.send_header(
-                    "Set-Cookie",
-                    f"hieronymus_token={token}; HttpOnly; SameSite=Strict; Path=/",
-                )
-                self.send_header("Location", path)
-                self.end_headers()
-                return
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
-                return
             self._send_web_app()
             return
         if path.startswith("/assets/"):
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
-                return
             self._send_web_asset(path)
             return
         if path == "/api/providers":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._send_json(ConfigBridge(self.server.config).provider_list({}))
             return
         if path.startswith("/api/providers/"):
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._handle_provider_get(path)
             return
         if path in _SETTINGS_GET_METHODS:
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._send_config_result(_SETTINGS_GET_METHODS[path], {})
             return
         if path == "/api/admin/dashboard":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._send_admin_result("dashboard", {})
             return
         if path == "/api/admin/snapshot":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             view = parse_qs(request_url.query).get("view", [""])[0]
             selected_id = parse_qs(request_url.query).get("selected_id", [""])[0]
@@ -127,27 +111,27 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             self.server.shutdown()
             return
         if path == "/api/providers":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._send_config_result("save_provider", self._request_json())
             return
         if path.startswith("/api/providers/") and path.endswith("/check"):
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             provider_id = path.removeprefix("/api/providers/").removesuffix("/check").rstrip("/")
             self._send_config_result("check_saved_provider", {"provider_id": provider_id})
             return
         if path in _SETTINGS_SAVE_METHODS:
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._send_config_result(_SETTINGS_SAVE_METHODS[path], self._request_json())
             return
         if path.startswith("/api/admin/actions/"):
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             action = path.removeprefix("/api/admin/actions/").strip("/")
             method = _ADMIN_ACTION_METHODS.get(action)
@@ -185,8 +169,8 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
         if not path.startswith("/api/providers/"):
             self._send_json({"error": "not_found", "path": path}, status=HTTPStatus.NOT_FOUND)
             return
-        if not self._is_authorized():
-            self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+        if not self._is_browser_authorized():
+            self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
             return
         provider_id = path.removeprefix("/api/providers/")
         self._send_config_result("delete_provider", {"provider_id": provider_id})
@@ -277,6 +261,13 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             self.headers.get("Cookie", "")
         )
         return secrets.compare_digest(token, self.server.state.token)
+
+    def _is_browser_authorized(self) -> bool:
+        if self._is_authorized():
+            return True
+        origin = self.headers.get("Origin", "")
+        expected = f"http://{self.server.state.host}:{self.server.state.port}"
+        return bool(origin) and secrets.compare_digest(origin, expected)
 
 
 def _web_asset_roots() -> list[Path]:
