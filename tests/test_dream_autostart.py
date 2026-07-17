@@ -463,6 +463,17 @@ def test_autostart_state_round_trips(config: HieronymusConfig) -> None:
     assert load_autostart_state(config) == state
 
 
+def test_threshold_run_ignores_schedule_when_minimum_is_met(config: HieronymusConfig) -> None:
+    _enable_autostart(config, min_pending_short_term_memories=1)
+    _completed_session(config, _context(config), memories=1)
+
+    assert DreamAutostart(config).run_threshold_now() == {
+        "ran": True,
+        "reason": "threshold",
+        "cycles": 1,
+    }
+
+
 def test_autostart_state_loads_legacy_payload(config: HieronymusConfig) -> None:
     last_started_at = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
     state_path = config.config_root / "dream-autostart.json"

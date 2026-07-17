@@ -222,7 +222,7 @@ class WorkspaceStore:
                 """
                 select *
                 from task_sessions
-                where id = ? and status = 'active'
+                where id = ?
                 """,
                 (session_id,),
             ).fetchone()
