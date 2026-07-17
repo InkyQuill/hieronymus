@@ -49,6 +49,14 @@ test("the web entry module imports the Tailwind stylesheet", async () => {
   expect(entryModule).toContain('import "./app.css";');
 });
 
+test("the legacy stylesheets have been retired", async () => {
+  for (const filename of ["tokens.css", "base.css", "components.css"]) {
+    expect(
+      await Bun.file(new URL(`./${filename}`, import.meta.url)).exists(),
+    ).toBe(false);
+  }
+});
+
 test("memory rows keep keyboard activation after Tailwind migration", async () => {
   const memoryView = await Bun.file(
     new URL("./components/MemoryViews.svelte", import.meta.url),
