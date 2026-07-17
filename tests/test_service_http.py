@@ -278,6 +278,25 @@ def test_local_origin_can_use_admin_api_without_token(tmp_path: Path) -> None:
         _stop_server(server, thread)
 
 
+def test_admin_websocket_rejects_foreign_origin(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        request = urllib.request.Request(f"{base_url}/ws/admin")
+        request.add_header("Origin", "https://evil.example")
+        request.add_header("Upgrade", "websocket")
+        request.add_header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+        try:
+            urllib.request.urlopen(request, timeout=2)
+        except urllib.error.HTTPError as error:
+            assert error.code == 403
+        else:
+            raise AssertionError("foreign websocket Origin must be rejected")
+    finally:
+        _stop_server(server, thread)
+
+
 def test_admin_snapshot_api_accepts_a_view_parameter(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     server = build_server(config, _make_state(config))
