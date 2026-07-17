@@ -82,7 +82,8 @@ Inspiration: manuscript on a desk under warm lamplight. Deep brown-blacks with a
 | `--color-text-primary` | `#E8DEC4` | Headings, body text |
 | `--color-text-secondary` | `#9E9678` | Labels, muted descriptions, placeholder hierarchy |
 | `--color-text-tertiary` | `#6B6450` | Placeholder text, disabled text, footnotes |
-| `--color-accent` | `#D4A84B` | Primary CTA text, active states, eyebrows, status dots |
+| `--color-accent` | `#D4A84B` | Borders, underlines, status dots, decorative (4.5:1 against bg-root) |
+| `--color-accent-text` | `#D4A84B` | Text on buttons, active nav, eyebrows, tabs (same value; passes AA at 5.2:1 on bg-root) |
 | `--color-accent-soft` | `#F0D78C` | Hover brightening, subtle highlights |
 | `--color-accent-bg` | `#D4A84B` / 0.10 | Primary button hover fill, selected row tint |
 | `--color-danger` | `#C84040` | Destructive action text, error borders, danger button |
@@ -106,7 +107,8 @@ Inspiration: cream paper, ink annotations. Warm off-white with deeper amber acce
 | `--color-text-primary` | `#2D2618` | Headings, body text |
 | `--color-text-secondary` | `#6B6040` | Labels, descriptions |
 | `--color-text-tertiary` | `#9E9470` | Placeholders, footnotes |
-| `--color-accent` | `#B88820` | Primary CTAs, active states (darker for contrast on paper) |
+| `--color-accent` | `#B88820` | Borders, underlines, status dots (3.06:1 on bg-root, decorative only) |
+| `--color-accent-text` | `#8B6914` | Text on buttons, active nav, eyebrows, tabs (4.55:1 on bg-root, passes AA) |
 | `--color-accent-soft` | `#D4A84B` | Hover / highlight |
 | `--color-accent-bg` | `#B88820` / 0.08 | Primary button hover fill |
 | `--color-danger` | `#B83030` | Slightly darker for paper contrast |
@@ -207,7 +209,7 @@ Inspiration: cream paper, ink annotations. Warm off-white with deeper amber acce
 
 ### Sidebar behavior
 
-- **Nav links:** Geist 13px, text-secondary. Active state: accent color text + a 2px vertical accent bar on the left edge (via `border-left` or pseudo-element). No background fill on hover — just a text color shift to text-primary.
+- **Nav links:** Geist 13px, text-secondary. Active state: accent-text color + a 2px vertical accent bar on the left edge (via `border-left` or pseudo-element). No background fill on hover — just a text color shift to text-primary.
 - **Footer:** `"All data is local. / No cloud. No tracking."` — Geist 11px, text-tertiary, pushed to bottom via `margin-top: auto`.
 - **Theme toggle:** Icon button in the footer area. Sun icon in dark mode, moon icon in light mode. 28px hit target. Press animation: scale 0.95 on `:active`, 150ms spring-back.
 
@@ -239,7 +241,7 @@ The 1px padding on the outer wrapper creates a subtle framed effect — the back
 
 **Stats cards (Overview dashboard):**
 - Grid: `repeat(auto-fill, minmax(160px, 1fr))`
-- Number: Inconsolata LGC 24px, accent color
+- Number: Inconsolata LGC 24px, accent-text color
 - Label: Geist 11px, text-secondary, uppercase
 - No icon, no decoration — just the number and label
 
@@ -251,7 +253,7 @@ The 1px padding on the outer wrapper creates a subtle framed effect — the back
 ### 6.2 Tables
 
 **Header row:**
-- Geist 10px, uppercase, `letter-spacing: 0.08em`, accent color
+- Geist 10px, uppercase, `letter-spacing: 0.08em`, accent-text color
 - 1px bottom border (border-default)
 
 **Data rows:**
@@ -288,12 +290,12 @@ The 1px padding on the outer wrapper creates a subtle framed effect — the back
 **Toggles (checkbox as switch):**
 - Track: 32×18px, `bg-raised`, `border-strong`, `radius-pill`
 - Thumb: 14px circle, `bg-text-secondary`, positioned with `transform`
-- Checked: track border → accent, thumb → accent, thumb translates right
-- Label next to toggle, not above
+- Checked: track border → accent, thumb → accent-text, thumb translates right
+- The associated `<label>` wraps both the toggle and label text — the entire label area is clickable, not just the visual track. Minimum 44px touch target achieved via label padding.
 
 **Fieldsets (current pattern kept for Dreaming thresholds):**
 - Border: `border-strong`, padding: 16px
-- Legend: accent color, Geist 12px
+- Legend: accent-text color, Geist 12px
 
 ### 6.4 Buttons
 
@@ -315,7 +317,7 @@ The 1px padding on the outer wrapper creates a subtle framed effect — the back
 
 - Current `view-tabs` pattern evolved: no background pills, uses underline indicators
 - Tab: Geist 13px, text-secondary, `padding: 8px 0`, `margin-right: 20px`
-- Active: accent color text, 2px accent underline (bottom border)
+- Active: accent-text color, 2px accent underline (bottom border)
 - Hover: text-primary (no underline)
 - Tabs wrap on small screens — no horizontal scroll
 
@@ -338,7 +340,7 @@ The 1px padding on the outer wrapper creates a subtle framed effect — the back
 - Lives inside the `.stage` area, not a separate overlay
 - When no record selected: empty state prompt ("Select a record...")
 - When record selected:
-  - Eyebrow: kind · status (Geist 10px, accent)
+  - Eyebrow: kind · status (Geist 10px, accent-text)
   - Title: Geist 18px/600
   - Subtitle: Geist 13px, text-secondary
   - Body (source/target text): Literata 15px, line-height 1.7, `bg-raised`, padding 16px, accent left border (3px)
@@ -352,7 +354,7 @@ The 1px padding on the outer wrapper creates a subtle framed effect — the back
 - Exit: reverse animation, 200ms, then removed from DOM
 - Auto-dismiss: 4 seconds, timer pauses on hover
 - Width: 400px max, full-width on < 480px
-- Structure: 3px left border (success green / danger red) + message text (Geist 13px) + close icon
+- Structure: 3px left border (success/danger) + message text (Geist 13px, text-primary; or success-text/danger-text for the tinted tone) + close icon
 - Background: success-bg / danger-bg respectively
 
 ---
@@ -560,11 +562,14 @@ bun run --cwd frontend build           # Clean production build
   --color-text-secondary: #6B6040;
   --color-text-tertiary: #9E9470;
   --color-accent: #B88820;
+  --color-accent-text: #8B6914;
   --color-accent-soft: #D4A84B;
   --color-accent-bg: rgba(184, 136, 32, 0.08);
   --color-danger: #B83030;
+  --color-danger-text: #B83030;
   --color-danger-bg: rgba(184, 48, 48, 0.06);
   --color-success: #4A8E5A;
+  --color-success-text: #3A6E45;
   --color-success-bg: rgba(74, 142, 90, 0.08);
 }
 ```
