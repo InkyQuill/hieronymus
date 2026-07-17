@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
 
+test("the app shell uses the semantic Tailwind surface utilities", async () => {
+  const app = await Bun.file(new URL("./App.svelte", import.meta.url)).text();
+
+  expect(app).toContain("min-h-dvh");
+  expect(app).toContain("bg-root");
+  expect(app).toContain("border-default");
+});
+
 test("the web stylesheet defines the data-theme Tailwind dark variant", async () => {
   const css = await Bun.file(new URL("./app.css", import.meta.url)).text();
   expect(css).toContain(
