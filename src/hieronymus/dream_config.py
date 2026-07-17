@@ -134,11 +134,36 @@ def load_dream_config(config: HieronymusConfig) -> DreamConfig:
     except tomllib.TOMLDecodeError as error:
         raise DreamConfigError(f"dream.conf is not valid TOML: {error}") from error
 
+    payload, migrated = _migrate_workflow_payload(payload)
     dream_config = validate_dream_config(_dream_config_from_payload(payload))
-    raw_workflows = payload.get("workflows")
-    if type(raw_workflows) is dict and set(raw_workflows) != set(dream_config.workflows):
+    if migrated:
         save_dream_config(config, dream_config)
     return dream_config
+
+
+def _migrate_workflow_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Expand pre-seven-pass workflow configurations before strict validation."""
+    raw_workflows = payload.get("workflows")
+    expected = tuple(default_dream_config().workflows)
+    if type(raw_workflows) is not dict or set(raw_workflows) == set(expected):
+        return payload, False
+
+    legacy_sources = {
+        "concepts": "crystallization",
+        "terminology_candidates": "crystallization",
+        "rule_crystals": "crystallization",
+        "knowledge_crystals": "crystallization",
+        "relations": "relation_discovery",
+        "reinforcement": "reinforcement_compaction",
+        "coverage_audit": "reinforcement_compaction",
+    }
+    migrated_workflows = {
+        name: raw_workflows[name]
+        if name in raw_workflows
+        else raw_workflows.get(legacy_sources[name], {})
+        for name in expected
+    }
+    return {**payload, "workflows": migrated_workflows}, True
 
 
 def save_dream_config(config: HieronymusConfig, dream_config: DreamConfig) -> None:

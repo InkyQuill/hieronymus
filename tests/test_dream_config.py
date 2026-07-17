@@ -87,7 +87,7 @@ def test_load_save_dream_config_round_trips_workflows_without_providers(
     assert "providers" not in loaded.to_payload()
 
 
-def test_load_dream_config_migrates_missing_workflows_to_disk(tmp_path: Path) -> None:
+def test_load_dream_config_migrates_legacy_workflows_to_disk(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     write_dream_config(
         config,
@@ -95,17 +95,32 @@ def test_load_dream_config_migrates_missing_workflows_to_disk(tmp_path: Path) ->
 [dreaming]
 enabled = false
 
-[workflows.knowledge_crystals]
-provider = ""
-model = ""
-enabled = false
+[workflows.crystallization]
+provider = "legacy_provider"
+model = "legacy-model"
+enabled = true
+
+[workflows.relation_discovery]
+provider = "relations_provider"
+model = "relations-model"
+enabled = true
+
+[workflows.reinforcement_compaction]
+provider = "maintenance_provider"
+model = "maintenance-model"
+enabled = true
 """,
     )
 
     loaded = load_dream_config(config)
 
     assert set(loaded.workflows) == set(default_dream_config().workflows)
-    assert "[workflows.coverage_audit]" in config.dream_config_path.read_text(encoding="utf-8")
+    assert loaded.workflows["knowledge_crystals"].provider == "legacy_provider"
+    assert loaded.workflows["relations"].model == "relations-model"
+    assert loaded.workflows["coverage_audit"].provider == "maintenance_provider"
+    saved = config.dream_config_path.read_text(encoding="utf-8")
+    assert "[workflows.coverage_audit]" in saved
+    assert "[workflows.crystallization]" not in saved
 
 
 def test_load_dream_config_rejects_invalid_threshold_order(tmp_path: Path) -> None:
@@ -274,7 +289,7 @@ def test_load_dream_config_rejects_toml_type_mismatches(
         load_dream_config(config)
 
 
-def test_load_dream_config_rejects_removed_workflow_names(
+def test_load_dream_config_migrates_removed_workflow_names(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
@@ -294,5 +309,6 @@ enabled = true
         encoding="utf-8",
     )
 
-    with pytest.raises(DreamConfigError, match="seven Dream passes"):
-        load_dream_config(config)
+    loaded = load_dream_config(config)
+
+    assert loaded.workflows["knowledge_crystals"].provider == "openai"
