@@ -21,7 +21,7 @@ _MARKDOWN_FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,}).*$")
 _MARKDOWN_INDENTED_CODE_RE = re.compile(r"^(?: {4}|\t)")
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 _GLOSSARY_EXTENSIONS = {".csv", ".tsv", ".json", ".yaml", ".yml"}
-_TEXT_EXTENSIONS = {".txt", ".md"}
+_TEXT_EXTENSIONS = {".txt", ".md", ".markdown"}
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ def load_rag_file(path: Path, *, source_type: RagLoadSourceType | str) -> Parsed
     match suffix:
         case ".txt":
             chunks = _parse_text(path)
-        case ".md":
+        case ".md" | ".markdown":
             chunks = _parse_markdown(path)
         case ".csv":
             chunks = _parse_delimited_glossary(path, delimiter=",")
@@ -93,14 +93,14 @@ def _resolve_source_type(suffix: str, source_type: RagLoadSourceType | str) -> R
     if source_type == "auto":
         if suffix == ".txt":
             return "text"
-        if suffix == ".md":
+        if suffix in {".md", ".markdown"}:
             return "markdown"
         return "glossary"
 
     if source_type == "text":
         if suffix == ".txt":
             return "text"
-        if suffix == ".md":
+        if suffix in {".md", ".markdown"}:
             return "markdown"
         raise ValueError(f"Text RAG sources do not support {suffix} files")
 

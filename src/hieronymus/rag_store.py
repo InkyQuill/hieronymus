@@ -9,6 +9,7 @@ from pathlib import Path
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import search_expression
 from hieronymus.db import apply_migration, connect
+from hieronymus.rag_conversion import normalize_rag_source
 from hieronymus.rag_models import (
     RagChunkRecord,
     RagImportResult,
@@ -44,9 +45,19 @@ class RagStore:
         source_path = Path(path)
         clean_source_ref = source_ref or str(source_path)
         try:
-            parsed = load_rag_file(source_path, source_type=source_type)
+            normalized = normalize_rag_source(source_path, self.config.data_root / "rag-normalized")
+            parsed = load_rag_file(
+                normalized.path,
+                source_type="auto" if normalized.path != source_path else source_type,
+            )
         except (ValueError, UnicodeDecodeError) as exc:
             raise ValueError(f"invalid RAG source: {exc}") from exc
+        parsed_metadata = {
+            **parsed.metadata,
+            "original_path": str(normalized.original_path),
+            "normalized_path": str(normalized.path),
+            "normalized_format": normalized.format,
+        }
 
         clean_language_tags = _clean_text_tuple(language_tags)
         clean_story_scopes = _clean_text_tuple(story_scopes)
@@ -73,6 +84,8 @@ class RagStore:
                     source=_source_from_row(existing),
                     chunk_count=chunk_count,
                     skipped=True,
+                    normalized_path=str(normalized.path),
+                    normalized_format=normalized.format,
                 )
 
             if existing is not None:
@@ -106,7 +119,7 @@ class RagStore:
                     parsed.source_type,
                     parsed.content_type,
                     parsed.checksum,
-                    _json_dumps(parsed.metadata),
+                    _json_dumps(parsed_metadata),
                     now,
                     now,
                 ),
@@ -170,10 +183,12 @@ class RagStore:
                 source_type=parsed.source_type,
                 content_type=parsed.content_type,
                 checksum=parsed.checksum,
-                metadata=parsed.metadata,
+                metadata=parsed_metadata,
             ),
             chunk_count=len(parsed.chunks),
             skipped=False,
+            normalized_path=str(normalized.path),
+            normalized_format=normalized.format,
         )
 
     def search(

@@ -56,3 +56,5 @@ class RagImportResult:
     source: RagSourceRecord
     chunk_count: int
     skipped: bool
+    normalized_path: str = ""
+    normalized_format: str = ""

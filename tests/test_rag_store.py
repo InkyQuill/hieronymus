@@ -50,6 +50,22 @@ def test_import_file_indexes_chunks_and_searches(
     assert hits[0].chunk.semantic_tags == ("chapter:source",)
 
 
+def test_import_html_records_normalized_markdown_provenance(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    path = tmp_path / "chapter.html"
+    path.write_text("<h1>Sense</h1><p>Sense menu note.</p>", encoding="utf-8")
+
+    result = RagStore(config).import_file(series_slug, path, source_type="auto")
+
+    assert result.normalized_format == "markdown"
+    assert result.normalized_path.endswith(".md")
+    assert result.source.metadata["original_path"] == str(path)
+    assert result.source.metadata["normalized_path"] == result.normalized_path
+
+
 def test_import_file_skips_unchanged_checksum(
     config: HieronymusConfig,
     tmp_path: Path,

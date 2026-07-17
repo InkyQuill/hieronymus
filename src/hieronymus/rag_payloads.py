@@ -58,4 +58,6 @@ def rag_import_payload(result: RagImportResult) -> dict[str, object]:
         "metadata": result.source.metadata,
         "chunk_count": result.chunk_count,
         "skipped": result.skipped,
+        "normalized_path": result.normalized_path,
+        "normalized_format": result.normalized_format,
     }
