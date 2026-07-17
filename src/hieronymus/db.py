@@ -17,6 +17,9 @@ GLOBAL_COMPATIBILITY_COLUMNS = {
         "rule_intent": "text",
         "soft_origin": "text",
     },
+    "task_sessions": {
+        "last_activity_at": "text not null default ''",
+    },
     "crystals": {
         "source_credibility": "text not null default 'observation'",
         "rule_intent": "text not null default ''",

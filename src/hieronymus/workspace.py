@@ -167,9 +167,10 @@ class WorkspaceStore:
                   volume,
                   chapter,
                   status,
-                  created_at
+                  created_at,
+                  last_activity_at
                 )
-                values (?, ?, ?, ?, ?, ?, 'active', ?)
+                values (?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
                 (
                     context.series_slug,
@@ -178,6 +179,7 @@ class WorkspaceStore:
                     context.task_type,
                     context.volume,
                     context.chapter,
+                    now,
                     now,
                 ),
             )
@@ -220,7 +222,7 @@ class WorkspaceStore:
                 """
                 select *
                 from task_sessions
-                where id = ?
+                where id = ? and status = 'active'
                 """,
                 (session_id,),
             ).fetchone()
@@ -279,6 +281,25 @@ class WorkspaceStore:
             if cursor.rowcount == 0:
                 raise KeyError(f"unknown session: {session_id}")
             conn.commit()
+
+    def complete_inactive_sessions(self, cutoff) -> tuple[int, ...]:
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute(
+                "select id from task_sessions where status = 'active' and last_activity_at < ?",
+                (cutoff.isoformat(),),
+            ).fetchall()
+            session_ids = tuple(int(row["id"]) for row in rows)
+            if session_ids:
+                conn.execute(
+                    """
+                    update task_sessions
+                    set status = 'completed', completed_at = ?
+                    where status = 'active' and last_activity_at < ?
+                    """,
+                    (_now(), cutoff.isoformat()),
+                )
+            conn.commit()
+        return session_ids
 
     def add_short_term_memory(
         self,
@@ -396,6 +417,10 @@ class WorkspaceStore:
                     "insert into short_term_memories_fts(rowid, text) values (?, ?)",
                     (memory_id, memory["text"]),
                 )
+            conn.execute(
+                "update task_sessions set last_activity_at = ? where id = ?",
+                (_now(), session_id),
+            )
             conn.commit()
         return memory_ids
 

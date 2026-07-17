@@ -26,6 +26,7 @@ create table if not exists task_sessions (
   status text not null,
   cycle_id integer,
   created_at text not null,
+  last_activity_at text not null,
   completed_at text
 );
 
