@@ -21,6 +21,7 @@
     saveIngestSettings,
     saveProvider,
     saveReleaseSettings,
+    startAdminDreaming,
   } from "./lib/api";
   import type {
     AdminDashboard as AdminDashboardPayload,
@@ -166,6 +167,20 @@
     finally { busy = false; }
   }
 
+  async function runDreaming() {
+    busy = true;
+    error = "";
+    try {
+      const result = await startAdminDreaming();
+      showNotice(`Dreaming run ${result.result.id} is ${result.result.status}.`);
+      adminDashboard = await loadAdminDashboard();
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      busy = false;
+    }
+  }
+
   onMount(loadSection);
 </script>
 
@@ -195,7 +210,7 @@
   </aside>
   <section class="workspace">
     {#if section === "admin" && adminDashboard}
-      <AdminDashboard dashboard={adminDashboard} {error} />
+      <AdminDashboard dashboard={adminDashboard} {error} onDream={runDreaming} />
     {:else if section === "memory" && adminDashboard}
       <MemoryViews dashboard={adminDashboard} onNotice={({ message, tone }) => showNotice(message, tone)} />
     {:else if section === "providers"}

@@ -137,3 +137,9 @@ export async function runAdminAction(
     body: JSON.stringify(params),
   });
 }
+
+export async function startAdminDreaming(): Promise<
+  Omit<AdminActionResult, "result"> & { result: { id: number; status: string } }
+> {
+  return runAdminAction("run_manual_dreaming", { id: 0 });
+}

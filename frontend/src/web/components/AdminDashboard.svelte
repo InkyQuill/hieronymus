@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { AdminDashboard } from "../lib/types";
 
-  type Props = { dashboard: AdminDashboard; error?: string };
-  let { dashboard, error = "" }: Props = $props();
+  type Props = { dashboard: AdminDashboard; error?: string; onDream: () => void };
+  let { dashboard, error = "", onDream }: Props = $props();
   const label = (key: string) => key.replaceAll("_", " ");
 </script>
 
@@ -11,7 +11,7 @@
     <p class="eyebrow">{dashboard.header.version}</p>
     <h2>{dashboard.header.product}</h2>
     <p>{dashboard.header.tagline}</p>
-    <div class="lead-meta"><a class="btn-primary" href="/admin/memory">Open memory views</a> <a class="btn-secondary" href="/config">Open configuration</a></div>
+    <div class="lead-meta"><button class="btn-primary" onclick={onDream}>Run Dreaming now</button> <a class="btn-secondary" href="/admin/memory">Open memory views</a> <a class="btn-secondary" href="/config">Open configuration</a></div>
   </div>
   <div class="stage">
     <div class="stats" aria-label="Memory statistics">
