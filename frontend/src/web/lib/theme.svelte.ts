@@ -19,13 +19,17 @@ function applyTheme(theme: Theme): void {
 
 let current = $state<Theme>(storedTheme() ?? systemPreference());
 
-applyTheme(current);
+function applyCurrentTheme(): void {
+  applyTheme(current);
+}
+
+applyCurrentTheme();
 
 export function createThemeToggle() {
   function toggle(): void {
     current = current === "dark" ? "light" : "dark";
     localStorage.setItem(STORAGE_KEY, current);
-    applyTheme(current);
+    applyCurrentTheme();
   }
 
   return {
