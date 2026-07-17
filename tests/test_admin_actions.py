@@ -73,25 +73,6 @@ def _create_proposal(config: HieronymusConfig, context: TranslationContext) -> i
     )
 
 
-def _assert_proposal_approval_rejected_atomically(
-    config: HieronymusConfig,
-    proposal_id: int,
-) -> None:
-    with connect(config.database_path) as conn:
-        proposal = conn.execute(
-            "select status from strict_concept_proposals where id = ?",
-            (proposal_id,),
-        ).fetchone()
-        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
-        term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
-        audit_count = conn.execute("select count(*) from audit_log").fetchone()[0]
-
-    assert proposal["status"] == "pending"
-    assert crystal_count == 0
-    assert term_count == 0
-    assert audit_count == 0
-
-
 def test_reinforce_and_decay_crystal_update_scores_and_audit(
     config: HieronymusConfig,
 ) -> None:
@@ -160,48 +141,37 @@ def test_edit_deprecate_and_delete_crystal_refresh_status_fts_scores_and_audit(
     assert [row.id for row in CrystalStore(config).search(context, "Updated")] == [edit_id]
 
 
-def test_approve_proposal_creates_rule_crystal_and_audit(
+def test_approve_proposal_creates_advisory_concept_and_audit(
     config: HieronymusConfig,
 ) -> None:
     context = _context(config)
     proposal_id = _create_proposal(config, context)
 
-    crystal_id = AdminStore(config).approve_proposal(proposal_id)
+    concept_id = AdminStore(config).approve_proposal(proposal_id)
 
     with connect(config.database_path) as conn:
         term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
-        crystal = conn.execute("select * from crystals where id = ?", (crystal_id,)).fetchone()
-        fts = conn.execute("select * from crystals_fts where rowid = ?", (crystal_id,)).fetchone()
-        tags = conn.execute(
-            "select tag from crystal_semantic_tags where crystal_id = ? order by tag",
-            (crystal_id,),
+        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
+        concept = conn.execute("select * from concepts where id = ?", (concept_id,)).fetchone()
+        facets = conn.execute(
+            "select value from concept_facets where concept_id = ? order by id", (concept_id,)
         ).fetchall()
         proposal = conn.execute(
             "select * from strict_concept_proposals where id = ?",
             (proposal_id,),
         ).fetchone()
-        fts_hits = conn.execute(
-            "select rowid from crystals_fts where crystals_fts match ?",
-            ("сенс",),
-        ).fetchall()
         audits = conn.execute("select * from audit_log").fetchall()
 
     assert term_count == 0
-    assert crystal["crystal_type"] == "rule"
-    assert crystal["text"] == "センス is translated as сенс, not sense."
-    assert crystal["status"] == "active"
-    assert crystal["source_credibility"] == "user_rule"
-    assert crystal["confidence"] == 0.95
-    assert fts["text"] == "センス is translated as сенс, not sense."
-    assert [tag["tag"] for tag in tags] == ["strict-concept", "translation-rule"]
+    assert crystal_count == 0
+    assert concept["canonical_name"] == "センス"
+    assert concept["description"] == "Use the established Russian rendering."
+    assert [facet["value"] for facet in facets] == ["センス", "сенс", "sense"]
     assert proposal["status"] == "approved"
     assert [audit["action"] for audit in audits] == ["approve"]
     assert audits[0]["entity_type"] == "strict_concept_proposal"
     assert audits[0]["entity_id"] == str(proposal_id)
-    assert [row["rowid"] for row in fts_hits] == [crystal_id]
-    assert [term.id for term in Termbase(config, context).contract("センス appears.")] == [
-        crystal_id
-    ]
+    assert Termbase(config, context).contract("センス appears.") == []
 
 
 def test_approve_proposal_creates_new_concept_when_duplicate_name_has_no_tag_match(
@@ -227,17 +197,9 @@ def test_approve_proposal_creates_new_concept_when_duplicate_name_has_no_tag_mat
     )
     proposal_id = _create_proposal(config, context)
 
-    crystal_id = AdminStore(config).approve_proposal(proposal_id)
+    concept_id = AdminStore(config).approve_proposal(proposal_id)
 
     with connect(config.database_path) as conn:
-        linked = conn.execute(
-            """
-            select concept_id
-            from crystal_concepts
-            where crystal_id = ?
-            """,
-            (crystal_id,),
-        ).fetchone()
         concept_count = conn.execute(
             """
             select count(*) as concept_count
@@ -248,23 +210,23 @@ def test_approve_proposal_creates_new_concept_when_duplicate_name_has_no_tag_mat
             (context.scope_key,),
         ).fetchone()
 
-    assert linked["concept_id"] not in {first.id, second.id}
+    assert concept_id not in {first.id, second.id}
     assert concept_count["concept_count"] == 3
 
 
-def test_approve_proposal_requires_pending_and_does_not_duplicate_crystals(
+def test_approve_proposal_requires_pending_and_does_not_duplicate_concepts(
     config: HieronymusConfig,
 ) -> None:
     context = _context(config)
     proposal_id = _create_proposal(config, context)
     admin = AdminStore(config)
 
-    crystal_id = admin.approve_proposal(proposal_id)
+    concept_id = admin.approve_proposal(proposal_id)
     with pytest.raises(ValueError, match="proposal must be pending"):
         admin.approve_proposal(proposal_id)
 
     with connect(config.database_path) as conn:
-        crystals = conn.execute("select id from crystals order by id").fetchall()
+        concepts = conn.execute("select id from concepts order by id").fetchall()
         term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
         proposal = conn.execute(
             "select status from strict_concept_proposals where id = ?",
@@ -272,13 +234,13 @@ def test_approve_proposal_requires_pending_and_does_not_duplicate_crystals(
         ).fetchone()
         audits = conn.execute("select action from audit_log order by id").fetchall()
 
-    assert [row["id"] for row in crystals] == [crystal_id]
+    assert [row["id"] for row in concepts] == [concept_id]
     assert term_count == 0
     assert proposal["status"] == "approved"
     assert [row["action"] for row in audits] == ["approve"]
 
 
-def test_approve_proposal_rejects_multiple_forbidden_variants_atomically(
+def test_approve_proposal_keeps_all_variant_forms_advisory(
     config: HieronymusConfig,
 ) -> None:
     context = _context(config)
@@ -295,82 +257,20 @@ def test_approve_proposal_rejects_multiple_forbidden_variants_atomically(
         rationale="Use the established Russian rendering.",
     )
 
-    with pytest.raises(ValueError, match="rule crystals support at most one forbidden variant"):
-        AdminStore(config).approve_proposal(proposal_id)
+    concept_id = AdminStore(config).approve_proposal(proposal_id)
 
-    _assert_proposal_approval_rejected_atomically(config, proposal_id)
+    with connect(config.database_path) as conn:
+        proposal = conn.execute(
+            "select status from strict_concept_proposals where id = ?", (proposal_id,)
+        ).fetchone()
+        facets = conn.execute(
+            "select value from concept_facets where concept_id = ? order by id", (concept_id,)
+        ).fetchall()
+        crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
 
-
-def test_approve_proposal_rejects_noncanonical_approved_variant_atomically(
-    config: HieronymusConfig,
-) -> None:
-    context = _context(config)
-    proposal_id = ConceptProposalStore(config).create(
-        dream_run_id=None,
-        series_slug=context.series_slug,
-        source_language=context.source_language,
-        target_language=context.target_language,
-        concept_text="センス",
-        source_form="センス",
-        canonical_rendering="сенс",
-        approved_variants=["сенсы"],
-        forbidden_variants=["sense"],
-        rationale="Use the established Russian rendering.",
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="approved variants that differ from canonical rendering are unsupported",
-    ):
-        AdminStore(config).approve_proposal(proposal_id)
-
-    _assert_proposal_approval_rejected_atomically(config, proposal_id)
-
-
-def test_approve_proposal_rejects_canonical_with_rule_delimiter_atomically(
-    config: HieronymusConfig,
-) -> None:
-    context = _context(config)
-    proposal_id = ConceptProposalStore(config).create(
-        dream_run_id=None,
-        series_slug=context.series_slug,
-        source_language=context.source_language,
-        target_language=context.target_language,
-        concept_text="センス",
-        source_form="センス",
-        canonical_rendering="сенс, not sense",
-        approved_variants=[],
-        forbidden_variants=[],
-        rationale="Use the established Russian rendering.",
-    )
-
-    with pytest.raises(ValueError, match="rule crystal text cannot round-trip parsed fields"):
-        AdminStore(config).approve_proposal(proposal_id)
-
-    _assert_proposal_approval_rejected_atomically(config, proposal_id)
-
-
-def test_approve_proposal_rejects_source_with_rule_delimiter_atomically(
-    config: HieronymusConfig,
-) -> None:
-    context = _context(config)
-    proposal_id = ConceptProposalStore(config).create(
-        dream_run_id=None,
-        series_slug=context.series_slug,
-        source_language=context.source_language,
-        target_language=context.target_language,
-        concept_text="センス",
-        source_form="Sense is translated as Ability",
-        canonical_rendering="сенс",
-        approved_variants=[],
-        forbidden_variants=[],
-        rationale="Use the established Russian rendering.",
-    )
-
-    with pytest.raises(ValueError, match="rule crystal text cannot round-trip parsed fields"):
-        AdminStore(config).approve_proposal(proposal_id)
-
-    _assert_proposal_approval_rejected_atomically(config, proposal_id)
+    assert proposal["status"] == "approved"
+    assert [facet["value"] for facet in facets] == ["センス", "сенс", "sense", "Сенс"]
+    assert crystal_count == 0
 
 
 def test_rejecting_approved_proposal_raises_without_mutating(

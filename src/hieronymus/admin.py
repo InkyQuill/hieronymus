@@ -40,7 +40,6 @@ from hieronymus.provider_config import (
     load_provider_catalog,
     redacted_provider_catalog_payload,
 )
-from hieronymus.rule_crystals import parse_rule_crystal
 from hieronymus.service_manager import ServiceManager
 from hieronymus.workspace import WorkspaceStore
 
@@ -236,38 +235,6 @@ def _safe_provider_catalog(config: HieronymusConfig):
         return load_provider_catalog(config), ""
     except (OSError, ProviderCatalogError) as error:
         return default_provider_catalog(), str(error)
-
-
-def _rule_crystal_text(
-    source_form: str,
-    canonical_rendering: str,
-    forbidden_variants: list[str],
-) -> str:
-    if forbidden_variants:
-        return f"{source_form} is translated as {canonical_rendering}, not {forbidden_variants[0]}."
-    return f"{source_form} is translated as {canonical_rendering}."
-
-
-def _validate_rule_crystal_shape(
-    *,
-    source_form: str,
-    canonical_rendering: str,
-    approved_variants: list[str],
-    forbidden_variants: list[str],
-) -> None:
-    if len(forbidden_variants) > 1:
-        raise ValueError("rule crystals support at most one forbidden variant")
-    if any(variant != canonical_rendering for variant in approved_variants):
-        raise ValueError("approved variants that differ from canonical rendering are unsupported")
-    text = _rule_crystal_text(source_form, canonical_rendering, forbidden_variants)
-    parsed = parse_rule_crystal(text)
-    if (
-        parsed is None
-        or parsed.source_text != source_form
-        or parsed.canonical_translation != canonical_rendering
-        or parsed.forbidden_variants != forbidden_variants
-    ):
-        raise ValueError("rule crystal text cannot round-trip parsed fields")
 
 
 def _proposal_match_tags(proposal: sqlite3.Row, semantic_tags: tuple[str, ...]) -> tuple[str, ...]:
@@ -1417,7 +1384,7 @@ class AdminStore:
             proposal = self._get_proposal(conn, proposal_id)
             if proposal["status"] != "pending":
                 raise ValueError("proposal must be pending")
-            crystal_id = self._insert_rule_crystal_for_proposal(conn, proposal, now=now)
+            concept_id = self._approve_advisory_concept_proposal(conn, proposal, now=now)
             conn.execute(
                 """
                 update strict_concept_proposals
@@ -1433,10 +1400,10 @@ class AdminStore:
                 "strict_concept_proposal",
                 proposal_id,
                 before_json=self._row_json(proposal),
-                after_json=json.dumps({"crystal_id": crystal_id}, sort_keys=True),
+                after_json=json.dumps({"concept_id": concept_id}, sort_keys=True),
             )
             conn.commit()
-        return crystal_id
+        return concept_id
 
     def reject_proposal(self, proposal_id: int, *, evidence: str) -> ActionResult:
         with connect(self.config.database_path) as conn:
@@ -2206,105 +2173,39 @@ class AdminStore:
             (crystal_id, title, text),
         )
 
-    def _insert_rule_crystal_for_proposal(
+    def _approve_advisory_concept_proposal(
         self,
         conn: sqlite3.Connection,
         proposal: sqlite3.Row,
         *,
         now: str,
     ) -> int:
-        approved_variants = [
-            variant.strip()
-            for variant in json.loads(proposal["approved_variants_json"])
-            if isinstance(variant, str) and variant.strip()
-        ]
-        forbidden_variants = [
-            variant.strip()
-            for variant in json.loads(proposal["forbidden_variants_json"])
-            if isinstance(variant, str) and variant.strip()
-        ]
         source_form = proposal["source_form"].strip() or proposal["concept_text"]
-        _validate_rule_crystal_shape(
-            source_form=source_form,
-            canonical_rendering=proposal["canonical_rendering"],
-            approved_variants=approved_variants,
-            forbidden_variants=forbidden_variants,
-        )
-        text = _rule_crystal_text(source_form, proposal["canonical_rendering"], forbidden_variants)
-        semantic_tags = ("strict-concept", "translation-rule")
-        cursor = conn.execute(
-            """
-            insert into crystals(
-              crystal_type,
-              text,
-              title,
-              scope_type,
-              scope_key,
-              series_slug,
-              source_language,
-              target_language,
-              tags_json,
-              strength,
-              confidence,
-              source_credibility,
-              rule_intent,
-              malformed_penalty,
-              supersedes_crystal_id,
-              status,
-              created_at,
-              updated_at
-            )
-            values ('rule', ?, ?, 'series', ?, ?, ?, ?, ?, 0.8, 0.95,
-                    'user_rule', '', 0.0, null, 'active', ?, ?)
-            """,
-            (
-                text,
-                proposal["concept_text"],
-                f"series:{proposal['series_slug']}",
-                proposal["series_slug"],
-                proposal["source_language"],
-                proposal["target_language"],
-                json.dumps(semantic_tags, ensure_ascii=False, sort_keys=True),
-                now,
-                now,
-            ),
-        )
-        crystal_id = int(cursor.lastrowid)
-        conn.execute(
-            "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
-            (crystal_id, proposal["concept_text"], text),
-        )
-        for tag in semantic_tags:
-            conn.execute(
-                """
-                insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
-                values (?, ?, 0.95, ?)
-                """,
-                (crystal_id, tag, now),
-            )
         concept_id = self._ensure_concept_for_proposal(
             conn,
             proposal,
             source_form=source_form,
-            semantic_tags=semantic_tags,
+            semantic_tags=("concept-proposal",),
             now=now,
         )
-        conn.execute(
-            """
-            insert into crystal_concepts(
-              crystal_id,
-              concept_id,
-              link_type,
-              confidence,
-              created_at
+        renderings = [
+            proposal["canonical_rendering"],
+            *json.loads(proposal["approved_variants_json"]),
+            *json.loads(proposal["forbidden_variants_json"]),
+        ]
+        for rendering in renderings:
+            if not isinstance(rendering, str) or not rendering.strip():
+                continue
+            self._ensure_concept_facet(
+                conn,
+                concept_id=concept_id,
+                value=rendering.strip(),
+                facet_type="rendering",
+                language_tag=proposal["target_language"],
+                is_canonical=False,
+                now=now,
             )
-            values (?, ?, 'defines', 0.95, ?)
-            on conflict(crystal_id, concept_id, link_type) do update set
-              confidence = max(crystal_concepts.confidence, excluded.confidence)
-            """,
-            (crystal_id, concept_id, now),
-        )
-        return crystal_id
+        return concept_id
 
     def _ensure_concept_for_proposal(
         self,
