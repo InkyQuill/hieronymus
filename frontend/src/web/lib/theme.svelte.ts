@@ -4,7 +4,9 @@ const STORAGE_KEY = "hiero-theme";
 
 function systemPreference(): Theme {
   if (typeof window === "undefined") return "dark";
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  return window.matchMedia("(prefers-color-scheme: light)").matches
+    ? "light"
+    : "dark";
 }
 
 function storedTheme(): Theme | null {

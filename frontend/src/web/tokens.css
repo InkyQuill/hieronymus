@@ -2,7 +2,8 @@
 
 :root {
   --font-serif: "Literata", Georgia, "Times New Roman", serif;
-  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans:
+    "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Inconsolata LGC", "Inconsolata", "Courier New", monospace;
 
   --text-display: 400 clamp(28px, 4vw, 36px) / 1.15 var(--font-serif);
@@ -102,5 +103,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-theme] { transition: none; }
+  [data-theme] {
+    transition: none;
+  }
 }
