@@ -16,7 +16,7 @@ from openai import OpenAI
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_config import DreamConfig, WorkflowProfile, load_dream_config
-from hieronymus.dream_workflows import CRYSTALLIZATION_PHASE, resolve_effective_workflow
+from hieronymus.dream_workflows import resolve_effective_workflow
 from hieronymus.dreaming import (
     DeterministicDreamProvider,
     DreamConceptProposal,
@@ -38,6 +38,8 @@ from hieronymus.provider_config import (
 from hieronymus.provider_config import (
     load_provider_catalog,
 )
+
+_DEFAULT_DREAM_PASS = "knowledge_crystals"
 
 ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_API_BASE_URL = "https://api.anthropic.com"
@@ -339,6 +341,22 @@ class SdkDreamProvider:
             _dream_prompt(context, memories),
         )
         return _parse_dream_json(self.name, raw_text)
+
+    def run_pass(
+        self,
+        pass_name: str,
+        context: TranslationContext,
+        memories: list[ShortTermMemoryRecord],
+    ) -> dict[str, object]:
+        prompt = _dream_pass_prompt(pass_name, context, memories)
+        raw_text = self._client.generate_dream(self.settings.model, prompt)
+        try:
+            payload = json.loads(raw_text)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{self.name} returned invalid JSON for {pass_name}") from error
+        if type(payload) is not dict:
+            raise ValueError(f"{self.name} returned a non-object {pass_name} response")
+        return payload
 
 
 @dataclass(frozen=True)
@@ -886,6 +904,26 @@ def _dream_prompt(
     )
 
 
+def _dream_pass_prompt(
+    pass_name: str,
+    context: TranslationContext,
+    memories: list[ShortTermMemoryRecord],
+) -> str:
+    from hieronymus.dream_workflows import PHASE_PROMPTS
+
+    instruction = PHASE_PROMPTS.get(pass_name)
+    if instruction is None:
+        raise ValueError(f"unknown Dream pass: {pass_name}")
+    payload = json.loads(_dream_prompt(context, memories))
+    payload["instruction"] = (
+        f"Dream pass: {pass_name}. {instruction} Use only provided source memory ids. "
+        "Return one JSON object without markdown."
+    )
+    if pass_name == "coverage_audit":
+        payload["schema"] = {"covered_memory_ids": [1]}
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def _default_model_suggestions(name: str) -> list[str]:
     defaults = {
         "openai": ["gpt-4.1-mini", "gpt-4.1", "o4-mini"],
@@ -1398,7 +1436,7 @@ def _model_for_profile(dream_config: DreamConfig, profile_name: str) -> str:
 
 
 def _runtime_workflow(dream_config: DreamConfig) -> WorkflowProfile | None:
-    workflow = dream_config.workflows.get(CRYSTALLIZATION_PHASE)
+    workflow = dream_config.workflows.get(_DEFAULT_DREAM_PASS)
     if workflow is not None and workflow.enabled:
         return workflow
     for workflow in dream_config.workflows.values():
@@ -1408,9 +1446,9 @@ def _runtime_workflow(dream_config: DreamConfig) -> WorkflowProfile | None:
 
 
 def _runtime_workflow_name(dream_config: DreamConfig) -> str | None:
-    workflow = dream_config.workflows.get(CRYSTALLIZATION_PHASE)
+    workflow = dream_config.workflows.get(_DEFAULT_DREAM_PASS)
     if workflow is not None and workflow.enabled:
-        return CRYSTALLIZATION_PHASE
+        return _DEFAULT_DREAM_PASS
     for name, workflow in dream_config.workflows.items():
         if workflow.enabled:
             return name

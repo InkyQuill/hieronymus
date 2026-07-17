@@ -4,13 +4,8 @@ import pytest
 
 from hieronymus.dream_config import WorkflowProfile, default_dream_config
 from hieronymus.dream_workflows import (
-    CONCEPT_DISCOVERY_PHASE,
-    CONSOLIDATION_COMPACTION_PHASE,
-    CRYSTALLIZATION_PHASE,
-    DECAY_REINFORCEMENT_REVIEW_PHASE,
+    DREAM_PASS_NAMES,
     PHASE_PROMPTS,
-    RELATION_DISCOVERY_PHASE,
-    RULE_DISCOVERY_PHASE,
     build_phase_prompt,
     resolve_effective_workflow,
     resolve_enabled_workflows,
@@ -23,41 +18,28 @@ from hieronymus.provider_config import (
 )
 
 
-def test_default_workflows_have_separate_phase_prompts() -> None:
-    assert set(PHASE_PROMPTS) == {
-        CRYSTALLIZATION_PHASE,
-        CONCEPT_DISCOVERY_PHASE,
-        RULE_DISCOVERY_PHASE,
-        CONSOLIDATION_COMPACTION_PHASE,
-        DECAY_REINFORCEMENT_REVIEW_PHASE,
-    }
-    assert "Convert short-term memories" in PHASE_PROMPTS[CRYSTALLIZATION_PHASE]
-    assert "Discover deterministic translation rules" in PHASE_PROMPTS[RULE_DISCOVERY_PHASE]
-    assert "combine or supersede" in PHASE_PROMPTS[CONSOLIDATION_COMPACTION_PHASE]
-    assert "reinforce or decay" in PHASE_PROMPTS[DECAY_REINFORCEMENT_REVIEW_PHASE]
-    assert len(set(PHASE_PROMPTS.values())) == 5
+def test_default_workflows_have_exactly_seven_separate_pass_prompts() -> None:
+    assert tuple(PHASE_PROMPTS) == DREAM_PASS_NAMES
+    assert "advisory" in PHASE_PROMPTS["concepts"]
+    assert "deterministic translation rules" in PHASE_PROMPTS["rule_crystals"]
+    assert "Account for every" in PHASE_PROMPTS["coverage_audit"]
+    assert len(set(PHASE_PROMPTS.values())) == 7
     for prompt in PHASE_PROMPTS.values():
         assert "Use English memory prose by default." in prompt
         assert "Long-term crystals must be 1-2 sentences." in prompt
         assert "Short-term memories must be 1-6 sentences." in prompt
 
 
-def test_default_enabled_workflows_exclude_disabled_relation_discovery() -> None:
+def test_default_workflows_require_explicit_provider_configuration() -> None:
     resolved = resolve_enabled_workflows(default_dream_config())
 
-    assert set(resolved) == {
-        CRYSTALLIZATION_PHASE,
-        "reinforcement_compaction",
-    }
-    assert resolved[CRYSTALLIZATION_PHASE].provider == "anthropic"
-    assert resolved["reinforcement_compaction"].provider == "ollama"
-    assert RELATION_DISCOVERY_PHASE not in resolved
+    assert resolved == {}
 
 
 def test_phase_prompt_includes_general_prompt_format_constraint_and_input() -> None:
     prompt = build_phase_prompt(
         default_dream_config(),
-        CRYSTALLIZATION_PHASE,
+        "knowledge_crystals",
         '{"pending_short_term_memory_ids": [1, 2]}',
     )
 
@@ -73,7 +55,7 @@ def test_unknown_phase_raises() -> None:
 
 def test_effective_workflow_uses_provider_catalog_defaults() -> None:
     dream_config = default_dream_config().with_workflow(
-        CRYSTALLIZATION_PHASE,
+        "knowledge_crystals",
         WorkflowProfile(
             provider="",
             model="",
@@ -92,7 +74,7 @@ def test_effective_workflow_uses_provider_catalog_defaults() -> None:
         defaults=ProviderDefaults(provider="openai", model="gpt-4.1-mini"),
     )
 
-    resolved = resolve_effective_workflow(dream_config, catalog, CRYSTALLIZATION_PHASE)
+    resolved = resolve_effective_workflow(dream_config, catalog, "knowledge_crystals")
 
     assert resolved.provider == "openai"
     assert resolved.model == "gpt-4.1-mini"
@@ -100,7 +82,7 @@ def test_effective_workflow_uses_provider_catalog_defaults() -> None:
 
 def test_effective_workflow_requires_enabled_provider() -> None:
     dream_config = default_dream_config().with_workflow(
-        CRYSTALLIZATION_PHASE,
+        "knowledge_crystals",
         WorkflowProfile(
             provider="",
             model="model",
@@ -110,14 +92,14 @@ def test_effective_workflow_requires_enabled_provider() -> None:
 
     with pytest.raises(
         ProviderCatalogError,
-        match="enabled workflow must have a provider: crystallization",
+        match="enabled workflow must have a provider: knowledge_crystals",
     ):
-        resolve_effective_workflow(dream_config, ProviderCatalog(), CRYSTALLIZATION_PHASE)
+        resolve_effective_workflow(dream_config, ProviderCatalog(), "knowledge_crystals")
 
 
 def test_effective_workflow_requires_enabled_model() -> None:
     dream_config = default_dream_config().with_workflow(
-        CRYSTALLIZATION_PHASE,
+        "knowledge_crystals",
         WorkflowProfile(
             provider="openai",
             model="",
@@ -137,15 +119,18 @@ def test_effective_workflow_requires_enabled_model() -> None:
 
     with pytest.raises(
         ProviderCatalogError,
-        match="enabled workflow must have a model: crystallization",
+        match="enabled workflow must have a model: knowledge_crystals",
     ):
-        resolve_effective_workflow(dream_config, catalog, CRYSTALLIZATION_PHASE)
+        resolve_effective_workflow(dream_config, catalog, "knowledge_crystals")
 
 
 def test_effective_workflow_requires_catalog_profile() -> None:
+    configured = default_dream_config().with_workflow(
+        "knowledge_crystals", WorkflowProfile(provider="anthropic", model="claude", enabled=True)
+    )
     with pytest.raises(ProviderCatalogError, match="provider profile missing: anthropic"):
         resolve_effective_workflow(
-            default_dream_config(),
+            configured,
             ProviderCatalog(),
-            CRYSTALLIZATION_PHASE,
+            "knowledge_crystals",
         )

@@ -199,7 +199,7 @@ def test_doctor_accepts_deterministic_dream_workflow_without_provider_profile(
         (
             "[dreaming]\n"
             "enabled = true\n"
-            "[workflows.crystallization]\n"
+            "[workflows.knowledge_crystals]\n"
             "provider='missing'\n"
             "model='x'\n"
             "enabled=true\n",
@@ -210,7 +210,7 @@ def test_doctor_accepts_deterministic_dream_workflow_without_provider_profile(
         (
             "[dreaming]\n"
             "enabled = true\n"
-            "[workflows.crystallization]\n"
+            "[workflows.knowledge_crystals]\n"
             "provider='anthropic'\n"
             "model=''\n"
             "enabled=true\n",
@@ -224,7 +224,7 @@ def test_doctor_accepts_deterministic_dream_workflow_without_provider_profile(
             "[providers.anthropic]\n"
             "type='anthropic'\n"
             "api_key=''\n"
-            "[workflows.crystallization]\n"
+            "[workflows.knowledge_crystals]\n"
             "provider='anthropic'\n"
             "model='x'\n"
             "enabled=true\n",
@@ -279,11 +279,11 @@ def test_doctor_reports_multiple_dream_readiness_errors_after_config_validation_
         "[providers.openai]\n"
         "type='openai'\n"
         "api_key=''\n"
-        "[workflows.crystallization]\n"
+        "[workflows.knowledge_crystals]\n"
         "provider='missing'\n"
         "model='x'\n"
         "enabled=true\n"
-        "[workflows.reinforcement_compaction]\n"
+        "[workflows.reinforcement]\n"
         "provider='openai'\n"
         "model='gpt-4.1-mini'\n"
         "enabled=true\n",
@@ -354,7 +354,7 @@ def test_doctor_warns_when_configured_dream_model_missing_from_cache(config) -> 
         "[providers.ollama]\n"
         "type='ollama'\n"
         "endpoint='http://localhost:11434'\n"
-        "[workflows.crystallization]\n"
+        "[workflows.knowledge_crystals]\n"
         "provider='ollama'\n"
         "model='missing-model'\n"
         "enabled=true\n",
@@ -394,7 +394,7 @@ def test_doctor_ignores_dream_model_cache_for_obsolete_provider_profile(config) 
         "[providers.ollama]\n"
         "type='ollama'\n"
         "endpoint='http://localhost:11434'\n"
-        "[workflows.crystallization]\n"
+        "[workflows.knowledge_crystals]\n"
         "provider='ollama'\n"
         "model='missing-model'\n"
         "enabled=true\n",
@@ -432,7 +432,7 @@ def test_doctor_ignores_stale_dream_model_cache(config) -> None:
         "[providers.ollama]\n"
         "type='ollama'\n"
         "endpoint='http://localhost:11434'\n"
-        "[workflows.crystallization]\n"
+        "[workflows.knowledge_crystals]\n"
         "provider='ollama'\n"
         "model='missing-model'\n"
         "enabled=true\n",
@@ -487,7 +487,7 @@ def test_doctor_reports_fresh_dream_provider_cache_errors(
         "[providers.ollama]\n"
         "type='ollama'\n"
         "endpoint='http://localhost:11434'\n"
-        "[workflows.crystallization]\n"
+        "[workflows.knowledge_crystals]\n"
         "provider='ollama'\n"
         "model='gemma4-e3b'\n"
         "enabled=true\n",

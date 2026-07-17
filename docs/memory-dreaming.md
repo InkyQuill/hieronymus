@@ -108,17 +108,20 @@ events such as `confirmed_by_user`, `used_in_translation`, `passed_review`, or
 `caused_correction`.
 
 Dream cycles process completed sessions. Short-term memories stay pending until
-dreaming processes them or a user removes them. Workflow phases consume provider
-and model assignments from `~/.config/hieronymus/dream.conf`, then resolve the
-provider endpoint profiles, API keys, and defaults from
-`~/.config/hieronymus/provider.conf`. User corrections are stored as short-term
-memories first; through crystallization they can become high-confidence rule
-crystals instead of bypassing the learning workflow.
+dreaming processes them or a user removes them. A run chooses whole completed
+sessions oldest-first, never splits one, and caps the selection at 500 memories.
+Every configured pass receives that same selection. Provider/model assignments
+come from `~/.config/hieronymus/dream.conf`; provider profiles and API keys come
+from `~/.config/hieronymus/provider.conf`.
 
-Dreaming is split into workflow phases. Crystallization converts short-term
-memories into crystals, rule crystals, concepts, facets, semantic tags, story
-scopes, links, and low-confidence thought memories. Reinforcement and compaction
-then inspect the affected memory set and decide what to reinforce, decay,
+Dreaming has seven independent, evidence-tracked passes: concepts, terminology
+candidates, rule crystals, knowledge crystals, relations, reinforcement, and a
+coverage audit. Outputs must cite selected short-memory IDs. Hieronymus stages,
+validates, de-duplicates, and bounds all output before one commit. If any pass
+or the coverage audit fails, nothing is applied and sessions remain completed for
+retry. Concepts and terminology candidates are advisory; only a rule crystal
+with explicit user-rule evidence can enforce a rendering. Reinforcement and
+compaction then inspect the affected memory set and decide what to reinforce, decay,
 combine, supersede, or archive. Optional discovery workflows can be assigned to a
 separate provider profile, such as a local Ollama model.
 
@@ -216,7 +219,7 @@ Complete the session so it can be processed by dreaming:
 hieronymus session-complete 1
 ```
 
-Run dreaming manually. This uses the configured crystallization workflow profile.
+Run dreaming manually. This uses all seven configured Dream pass profiles.
 Manual `hiero dream` drains all pending short-term memories, including a final
 small batch below the scheduled minimum threshold:
 

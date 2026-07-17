@@ -37,9 +37,17 @@ def test_default_dream_config_matches_memory_spec(tmp_path: Path) -> None:
     assert dream_config.max_pending_short_term_memories == 200
     assert dream_config.max_short_term_memories_per_cycle == 50
     assert dream_config.not_enough_memories_cycle_threshold == 5
-    assert dream_config.workflows["crystallization"].provider == "anthropic"
-    assert dream_config.workflows["relation_discovery"].enabled is False
-    assert dream_config.workflows["reinforcement_compaction"].provider == "ollama"
+    assert tuple(dream_config.workflows) == (
+        "concepts",
+        "terminology_candidates",
+        "rule_crystals",
+        "knowledge_crystals",
+        "relations",
+        "reinforcement",
+        "coverage_audit",
+    )
+    assert dream_config.workflows["knowledge_crystals"].provider == ""
+    assert dream_config.max_short_term_memories_per_run == 500
 
 
 def test_save_dream_config_does_not_write_provider_profiles_or_secrets(
@@ -64,14 +72,14 @@ def test_load_save_dream_config_round_trips_workflows_without_providers(
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     dream_config = default_dream_config().with_workflow(
-        "crystallization",
+        "knowledge_crystals",
         WorkflowProfile(provider="local_llm", model="local-model", enabled=True),
     )
 
     save_dream_config(config, dream_config)
     loaded = load_dream_config(config)
 
-    assert loaded.workflows["crystallization"] == WorkflowProfile(
+    assert loaded.workflows["knowledge_crystals"] == WorkflowProfile(
         provider="local_llm",
         model="local-model",
         enabled=True,
@@ -190,13 +198,13 @@ def test_workflow_provider_existence_is_validated_outside_dream_config(
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     dream_config = default_dream_config().with_workflow(
-        "crystallization",
+        "knowledge_crystals",
         WorkflowProfile(provider="missing", model="model", enabled=True),
     )
 
     save_dream_config(config, dream_config)
 
-    assert load_dream_config(config).workflows["crystallization"].provider == "missing"
+    assert load_dream_config(config).workflows["knowledge_crystals"].provider == "missing"
 
 
 def test_enabled_workflow_rejects_empty_model(
@@ -204,7 +212,7 @@ def test_enabled_workflow_rejects_empty_model(
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     dream_config = default_dream_config().with_workflow(
-        "crystallization",
+        "knowledge_crystals",
         WorkflowProfile(provider="anthropic", model="", enabled=True),
     )
 
@@ -224,12 +232,12 @@ def test_enabled_workflow_rejects_empty_model(
             "schedule_interval_minutes must be an integer",
         ),
         (
-            "[workflows.crystallization]\nprovider = 123\n",
-            r"workflows\.crystallization\.provider must be a string",
+            "[workflows.knowledge_crystals]\nprovider = 123\n",
+            r"workflows\.knowledge_crystals\.provider must be a string",
         ),
         (
-            "[workflows.crystallization]\nenabled = 'true'\n",
-            r"workflows\.crystallization\.enabled must be a boolean",
+            "[workflows.knowledge_crystals]\nenabled = 'true'\n",
+            r"workflows\.knowledge_crystals\.enabled must be a boolean",
         ),
     ],
 )
@@ -245,7 +253,7 @@ def test_load_dream_config_rejects_toml_type_mismatches(
         load_dream_config(config)
 
 
-def test_load_dream_config_ignores_deprecated_providers_after_migration(
+def test_load_dream_config_rejects_removed_workflow_names(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
@@ -265,7 +273,5 @@ enabled = true
         encoding="utf-8",
     )
 
-    dream_config = load_dream_config(config)
-
-    assert dream_config.workflows["crystallization"].provider == "openai"
-    assert "providers" not in dream_config.to_payload()
+    with pytest.raises(DreamConfigError, match="seven Dream passes"):
+        load_dream_config(config)

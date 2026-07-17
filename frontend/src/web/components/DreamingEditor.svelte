@@ -24,6 +24,9 @@
       max_related_concepts_per_cycle: 80,
       max_related_crystals_per_concept: 20,
       max_total_affected_crystals: 500,
+      max_short_term_memories_per_run: 500,
+      max_long_term_records_affected_per_run: 1000,
+      max_relation_records_per_pass: 1000,
       general_prompt: "",
     },
     workflows: {},
@@ -45,7 +48,7 @@
 
 <section class="settings" aria-label="Dreaming settings">
   <header class="page-header">
-    <div><h2>Dreaming</h2><p>Schedule and model workflows for local memory maintenance.</p></div>
+    <div><h2>Dreaming</h2><p>Seven evidence-tracked passes turn completed reading memory into durable knowledge.</p></div>
     <button class="primary" disabled={busy} onclick={() => onSave($state.snapshot(settings))}>Save dreaming</button>
   </header>
 
@@ -54,7 +57,9 @@
     <label>Interval (minutes)<input type="number" min="1" bind:value={settings.dreaming.schedule_interval_minutes} /></label>
     <label>Minimum pending memories<input type="number" min="1" bind:value={settings.dreaming.min_pending_short_term_memories} /></label>
     <label>Maximum pending memories<input type="number" min="1" bind:value={settings.dreaming.max_pending_short_term_memories} /></label>
-    <label>Maximum memories per cycle<input type="number" min="1" bind:value={settings.dreaming.max_short_term_memories_per_cycle} /></label>
+    <label>Maximum memories per run<input type="number" min="1" max="500" bind:value={settings.dreaming.max_short_term_memories_per_run} /></label>
+    <label>Maximum long-term records per run<input type="number" min="1" bind:value={settings.dreaming.max_long_term_records_affected_per_run} /></label>
+    <label>Maximum relations per pass<input type="number" min="1" bind:value={settings.dreaming.max_relation_records_per_pass} /></label>
   </div>
 
   <section class="workflows"><h3>Workflows</h3>
@@ -70,6 +75,7 @@
               <input value={workflow.model} placeholder="Model ID" oninput={(event) => updateWorkflow(name, { model: event.currentTarget.value })} />
             {/if}
           </label>
+          <label>Maximum records<input type="number" min="1" bind:value={workflow.max_records_per_pass} /></label>
         </div>
       </article>
     {/each}

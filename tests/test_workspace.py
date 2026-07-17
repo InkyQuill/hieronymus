@@ -120,6 +120,27 @@ def test_short_term_memory_batch_rolls_back_when_any_item_is_invalid(
     assert store.list_short_term_memories(session.id) == []
 
 
+def test_short_term_memory_batch_accepts_the_book_scale_limit(
+    config: HieronymusConfig,
+) -> None:
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    memory_ids = store.add_short_term_memories_batch(
+        session.id,
+        [
+            {
+                "source_role": "mundane",
+                "kind": "reading-conclusion",
+                "text": f"Distinct conclusion {index}.",
+            }
+            for index in range(500)
+        ],
+    )
+
+    assert memory_ids == list(range(1, 501))
+
+
 def test_short_term_memory_metadata_includes_validation_warning(
     config: HieronymusConfig,
 ) -> None:

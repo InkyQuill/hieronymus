@@ -17,7 +17,6 @@ from hieronymus.dreaming import (
 from hieronymus.memory_models import TranslationContext
 from hieronymus.provider_config import (
     ProviderCatalog,
-    ProviderCatalogError,
     ProviderProfile,
     save_provider_catalog,
 )
@@ -201,9 +200,13 @@ def test_scheduled_dreaming_drains_all_pending_in_capped_cycles(
     assert run.created_crystal_count == 55
     assert run.proposal_count == 0
     assert [(row["phase"], row["status"], row["input_count"]) for row in phase_rows] == [
-        ("crystallization", "completed", 20),
-        ("crystallization", "completed", 20),
-        ("crystallization", "completed", 15),
+        ("concepts", "completed", 55),
+        ("terminology_candidates", "completed", 55),
+        ("rule_crystals", "completed", 55),
+        ("knowledge_crystals", "completed", 55),
+        ("relations", "completed", 55),
+        ("reinforcement", "completed", 55),
+        ("coverage_audit", "completed", 55),
     ]
     assert _pending_short_term_memory_count(config) == 0
     assert [(row["status"], row["cycle_id"]) for row in session_rows] == [
@@ -543,7 +546,7 @@ enabled = true
         encoding="utf-8",
     )
 
-    with pytest.raises(ProviderCatalogError, match="provider profile missing: missing"):
+    with pytest.raises(DreamConfigError, match="seven Dream passes"):
         resolve_provider(config)
 
 

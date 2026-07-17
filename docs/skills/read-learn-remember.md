@@ -17,14 +17,16 @@ cover every important term, concept, and detail; the limit applies to a block, n
 amount remembered. RAG stores the direct source, while short-term memory stores indirect
 understanding of it.
 
-Preferred storage primitive:
+Preferred storage primitive (up to 500 independently valid blocks per call):
 
 ```text
-hieronymus_short_term_add
+hieronymus_short_term_add_batch
 ```
 
 Use concise text, source references, and relevant language tags, story scopes, and semantic tags.
-There is no supported Read MCP judgment tool; use the skill workflow plus `hieronymus_short_term_add`.
+Continue with further batches until every important detail is covered. There is no supported Read MCP
+judgment tool; use the skill workflow plus `hieronymus_rag_import` and
+`hieronymus_short_term_add_batch`.
 
 ## Learn
 

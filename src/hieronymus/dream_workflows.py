@@ -5,13 +5,15 @@ import json
 from hieronymus.dream_config import DreamConfig, WorkflowProfile
 from hieronymus.provider_config import ProviderCatalog, ProviderCatalogError
 
-CRYSTALLIZATION_PHASE = "crystallization"
-CONCEPT_DISCOVERY_PHASE = "concept_discovery"
-RULE_DISCOVERY_PHASE = "rule_discovery"
-CONSOLIDATION_COMPACTION_PHASE = "consolidation_compaction"
-DECAY_REINFORCEMENT_REVIEW_PHASE = "decay_reinforcement_review"
-RELATION_DISCOVERY_PHASE = CONCEPT_DISCOVERY_PHASE
-REINFORCEMENT_COMPACTION_PHASE = DECAY_REINFORCEMENT_REVIEW_PHASE
+DREAM_PASS_NAMES = (
+    "concepts",
+    "terminology_candidates",
+    "rule_crystals",
+    "knowledge_crystals",
+    "relations",
+    "reinforcement",
+    "coverage_audit",
+)
 
 _ENGLISH_MEMORY_PROSE = (
     "Use English memory prose by default. Japanese, Russian, or other languages may "
@@ -21,37 +23,37 @@ _ENGLISH_MEMORY_PROSE = (
 
 
 PHASE_PROMPTS = {
-    CRYSTALLIZATION_PHASE: (
-        f"{_ENGLISH_MEMORY_PROSE} Convert short-term memories to concise long-term "
-        'memory candidates. Correction memories saying "User told me" should become '
-        "rule crystals when they express translation rules. Create concepts, facets, "
-        "semantic tags, story scopes, and links when the evidence supports them. Return JSON."
+    "concepts": (
+        f"{_ENGLISH_MEMORY_PROSE} Extract every supported concept and its advisory facets. "
+        "Do not create translation rules. Every item must list source_memory_ids. Return JSON."
     ),
-    CONCEPT_DISCOVERY_PHASE: (
-        f"{_ENGLISH_MEMORY_PROSE} Inspect the affected memory set and propose concepts, "
-        "facets, concept links, semantic tags, story scopes, and rename candidates. Every "
-        "proposal must be supported by snapshot evidence from the supplied snapshot. Return JSON."
+    "terminology_candidates": (
+        f"{_ENGLISH_MEMORY_PROSE} Extract advisory terminology candidates and source evidence. "
+        "They must not impose strict validation. Return JSON."
     ),
-    RULE_DISCOVERY_PHASE: (
+    "rule_crystals": (
         f"{_ENGLISH_MEMORY_PROSE} Discover deterministic translation rules only when "
-        "the supplied evidence supports them. Approved termbase entries and user-rule "
-        "memories outrank fuzzy memories and speculative thoughts. Return JSON."
+        "explicit user-rule evidence supports them. Every rule must list source_memory_ids. "
+        "Return JSON."
     ),
-    CONSOLIDATION_COMPACTION_PHASE: (
-        f"{_ENGLISH_MEMORY_PROSE} Decide what to combine or supersede. Keep active rule "
-        "crystals deterministic, and compact only when the result is clearer than the "
-        "inputs. Return JSON maintenance actions."
+    "knowledge_crystals": (
+        f"{_ENGLISH_MEMORY_PROSE} Extract factual, narrative, stylistic, character, world, "
+        "and analytical knowledge as concise crystals with source_memory_ids. Return JSON."
     ),
-    DECAY_REINFORCEMENT_REVIEW_PHASE: (
-        f"{_ENGLISH_MEMORY_PROSE} Decide what to reinforce or decay. Active rule crystals "
-        "do not decay, but they may be superseded when newer approved evidence supports a "
-        "clearer rule. Return JSON maintenance actions."
+    "relations": (
+        f"{_ENGLISH_MEMORY_PROSE} Discover supported relations between concepts and crystals "
+        "with source_memory_ids. "
+        "Return JSON."
     ),
-}
-
-_PHASE_ALIASES = {
-    "relation_discovery": CONCEPT_DISCOVERY_PHASE,
-    "reinforcement_compaction": DECAY_REINFORCEMENT_REVIEW_PHASE,
+    "reinforcement": (
+        f"{_ENGLISH_MEMORY_PROSE} Identify referenced long-term memory to reinforce, with "
+        "source_memory_ids. Return JSON."
+    ),
+    "coverage_audit": (
+        f"{_ENGLISH_MEMORY_PROSE} Account for every selected short-term memory ID. "
+        "Return covered_memory_ids and "
+        "source_memory_ids for every audit item. Return JSON."
+    ),
 }
 
 
@@ -84,8 +86,7 @@ def resolve_effective_workflow(
 
 
 def build_phase_prompt(dream_config: DreamConfig, phase: str, phase_input: object) -> str:
-    canonical_phase = _PHASE_ALIASES.get(phase, phase)
-    phase_prompt = PHASE_PROMPTS.get(canonical_phase)
+    phase_prompt = PHASE_PROMPTS.get(phase)
     if phase_prompt is None:
         raise ValueError(f"unknown dream workflow phase: {phase}")
 

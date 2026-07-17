@@ -228,9 +228,13 @@ def _form_schema() -> dict[str, object]:
                     hint=hint,
                 )
                 for workflow_name, workflow_label in (
-                    ("crystallization", "Crystallization"),
-                    ("reinforcement_compaction", "Reinforcement"),
-                    ("relation_discovery", "Relations"),
+                    ("concepts", "Concepts"),
+                    ("terminology_candidates", "Terminology"),
+                    ("rule_crystals", "Rules"),
+                    ("knowledge_crystals", "Knowledge"),
+                    ("relations", "Relations"),
+                    ("reinforcement", "Reinforcement"),
+                    ("coverage_audit", "Coverage audit"),
                 )
                 for field_name, field_label, field_type, hint in (
                     ("provider", "Provider", "text", "Provider profile id for this workflow."),
@@ -1076,11 +1080,11 @@ class ConfigBridge:
                 default_provider_catalog(),
             )
             workflow = dream_config.workflows.get(
-                "crystallization",
+                "knowledge_crystals",
                 WorkflowProfile(provider=selected, model="", enabled=True),
             )
             dream_config = dream_config.with_workflow(
-                "crystallization",
+                "knowledge_crystals",
                 replace(
                     workflow,
                     provider=selected,
@@ -1248,9 +1252,9 @@ class ConfigBridge:
             explicit = params.get("provider")
         if explicit is not None:
             return self._require_provider_id(explicit)
-        crystallization = dream_config.workflows.get("crystallization")
-        if crystallization is not None and crystallization.provider:
-            return crystallization.provider
+        knowledge = dream_config.workflows.get("knowledge_crystals")
+        if knowledge is not None and knowledge.provider:
+            return knowledge.provider
         if provider_catalog.defaults.provider:
             return provider_catalog.defaults.provider
         draft = params.get("draft")
@@ -1262,9 +1266,9 @@ class ConfigBridge:
                     return provider
             raw_workflows = draft.get("workflows")
             if type(raw_workflows) is dict:
-                raw_crystallization = raw_workflows.get("crystallization")
-                if type(raw_crystallization) is dict:
-                    provider = raw_crystallization.get("provider")
+                raw_knowledge = raw_workflows.get("knowledge_crystals")
+                if type(raw_knowledge) is dict:
+                    provider = raw_knowledge.get("provider")
                     if type(provider) is str and provider:
                         return provider
         return "openai"
@@ -1297,12 +1301,12 @@ class ConfigBridge:
         selected: str,
     ) -> DreamConfig:
         workflow = dream_config.workflows.get(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider=selected, model="", enabled=True),
         )
         return dream_config.with_workflow(
-            "crystallization",
-            replace(workflow, provider=selected, enabled=True),
+            "knowledge_crystals",
+            replace(workflow, provider=selected, enabled=bool(workflow.model.strip())),
         )
 
     def _apply_provider_form(
@@ -1339,17 +1343,17 @@ class ConfigBridge:
             ),
         )
         workflow = dream_config.workflows.get(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider=selected, model="", enabled=True),
         )
         updated_workflow = replace(
             workflow,
             provider=selected,
             model=values["model"].strip(),
-            enabled=True,
+            enabled=bool(values["model"].strip()),
         )
         return (
-            dream_config.with_workflow("crystallization", updated_workflow),
+            dream_config.with_workflow("knowledge_crystals", updated_workflow),
             provider_catalog.with_provider(selected, updated_provider),
         )
 
@@ -1789,6 +1793,9 @@ def _dream_config_from_draft(
                 "max_related_concepts_per_cycle",
                 "max_related_crystals_per_concept",
                 "max_total_affected_crystals",
+                "max_short_term_memories_per_run",
+                "max_long_term_records_affected_per_run",
+                "max_relation_records_per_pass",
                 "general_prompt",
             )
             if key in dreaming
@@ -1803,7 +1810,7 @@ def _dream_config_from_draft(
             current = next_workflows.get(name, WorkflowProfile(provider="", model=""))
             updates = {
                 key: raw_workflow[key]
-                for key in ("provider", "model", "enabled")
+                for key in ("provider", "model", "enabled", "max_records_per_pass")
                 if key in raw_workflow
             }
             next_workflows[name] = replace(current, **updates)
@@ -2017,7 +2024,7 @@ def _field_for_error(error: str, selected: str) -> str:
         return "provider_catalog.defaults.provider"
     if error.startswith("defaults.model "):
         return "provider_catalog.defaults.model"
-    if error == "enabled workflow must have a model: crystallization":
+    if error == "enabled workflow must have a model: knowledge_crystals":
         return "provider.model"
     if error.startswith("autostart_enabled "):
         return "dreaming.autostart_enabled"

@@ -9,7 +9,7 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_audit import DreamAuditStore
-from hieronymus.dream_config import default_dream_config
+from hieronymus.dream_config import WorkflowProfile, default_dream_config, save_dream_config
 from hieronymus.dreaming import DreamRunRecord, DreamService
 from hieronymus.llm_cache import CachedModels, ModelCacheEntry, save_model_cache
 from hieronymus.memory_models import TranslationContext
@@ -57,6 +57,13 @@ def test_memory_contracts_expose_header_status_controls_and_config(
                     key="secret-anthropic",
                 ),
             },
+        ),
+    )
+    save_dream_config(
+        config,
+        default_dream_config().with_workflow(
+            "knowledge_crystals",
+            WorkflowProfile(provider="anthropic", model="claude", enabled=True),
         ),
     )
     stale = (datetime.now(UTC) - timedelta(days=3)).isoformat()

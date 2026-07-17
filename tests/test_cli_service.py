@@ -306,7 +306,7 @@ def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     assert payload["dream_config_path"] == str(data_root / "dream.conf")
     assert payload["release_config_path"] == str(data_root / "release.conf")
     assert payload["tui"] == "available"
-    assert payload["dream"]["workflows"]["crystallization"]["provider"] == "anthropic"
+    assert payload["dream"]["workflows"]["knowledge_crystals"]["provider"] == ""
     assert payload["release"] == {"update_channel": "stable", "update_target": "latest"}
     assert payload["providers"][0]["name"] == "deterministic"
 

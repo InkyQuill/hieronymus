@@ -28,6 +28,7 @@ export type Workflow = {
   provider: string;
   model: string;
   enabled: boolean;
+  max_records_per_pass: number;
 };
 
 export type DreamingValues = {
@@ -41,6 +42,9 @@ export type DreamingValues = {
   max_related_concepts_per_cycle: number;
   max_related_crystals_per_concept: number;
   max_total_affected_crystals: number;
+  max_short_term_memories_per_run: number;
+  max_long_term_records_affected_per_run: number;
+  max_relation_records_per_pass: number;
   general_prompt: string;
 };
 

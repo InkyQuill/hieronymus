@@ -63,11 +63,12 @@ def _enable_autostart(
             max_short_term_memories_per_cycle=max_short_term_memories_per_cycle,
             not_enough_memories_cycle_threshold=not_enough_memories_cycle_threshold,
             workflows={
-                "crystallization": WorkflowProfile(
+                **default_dream_config().workflows,
+                "knowledge_crystals": WorkflowProfile(
                     provider="deterministic",
                     model="deterministic",
                     enabled=True,
-                )
+                ),
             },
         ),
     )
@@ -134,12 +135,13 @@ def test_status_reports_enabled_workflow_when_crystallization_is_disabled(
             default_dream_config(),
             enabled=True,
             workflows={
-                "crystallization": WorkflowProfile(
+                **default_dream_config().workflows,
+                "knowledge_crystals": WorkflowProfile(
                     provider="anthropic",
                     model="claude-sonnet-4-6",
                     enabled=False,
                 ),
-                "reinforcement_compaction": WorkflowProfile(
+                "reinforcement": WorkflowProfile(
                     provider="ollama",
                     model="gemma4-e3b",
                     enabled=True,
@@ -162,7 +164,8 @@ def test_status_degrades_when_crystallization_provider_default_is_missing(
             default_dream_config(),
             enabled=True,
             workflows={
-                "crystallization": WorkflowProfile(
+                **default_dream_config().workflows,
+                "knowledge_crystals": WorkflowProfile(
                     provider="",
                     model="model",
                     enabled=True,
@@ -186,7 +189,8 @@ def test_status_degrades_when_provider_catalog_defaults_are_invalid(
             default_dream_config(),
             enabled=True,
             workflows={
-                "crystallization": WorkflowProfile(
+                **default_dream_config().workflows,
+                "knowledge_crystals": WorkflowProfile(
                     provider="",
                     model="gpt-missing",
                     enabled=True,
@@ -217,7 +221,8 @@ def test_status_degrades_when_provider_catalog_cannot_be_read(
             default_dream_config(),
             enabled=True,
             workflows={
-                "crystallization": WorkflowProfile(
+                **default_dream_config().workflows,
+                "knowledge_crystals": WorkflowProfile(
                     provider="",
                     model="gpt-missing",
                     enabled=True,

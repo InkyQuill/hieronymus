@@ -55,7 +55,7 @@ unless the user asks Hieronymus to learn the material.
 
 Read, Learn, and Remember are agent judgment workflows. MCP tools are storage and retrieval
 primitives, not judgment engines. Read and Learn are no longer exposed as judgment-heavy MCP tools;
-agents should use the skill workflows plus `hieronymus_short_term_add`.
+agents should use the skill workflows plus `hieronymus_short_term_add_batch`.
 
 The MCP server continues to expose primitives only. Read, Learn, and Remember remain agent skills
 so host agents make contextual workflow decisions instead of asking Hieronymus MCP tools to judge

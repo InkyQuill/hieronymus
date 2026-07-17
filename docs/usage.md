@@ -83,7 +83,7 @@ export HIERONYMUS_DATA_ROOT=/home/inky/Yandex.Disk/Translation/.translation-memo
 
 ## Configuration
 
-Open the local configuration TUI:
+Open the local configuration interface:
 
 ```bash
 hiero config
@@ -137,7 +137,8 @@ key = "sk-local-plaintext-value"
 timeout_seconds = 30.0
 ```
 
-Example dreaming workflow assignments:
+Example dreaming workflow assignments (the seven pass names are required; old
+workflow names are rejected in this alpha schema):
 
 ```toml
 # ~/.config/hieronymus/dream.conf
@@ -146,7 +147,9 @@ enabled = true
 schedule_interval_minutes = 30
 min_pending_short_term_memories = 20
 max_pending_short_term_memories = 200
-max_short_term_memories_per_cycle = 50
+max_short_term_memories_per_run = 500
+max_long_term_records_affected_per_run = 1000
+max_relation_records_per_pass = 1000
 not_enough_memories_cycle_threshold = 5
 max_changed_crystals_per_cycle = 200
 max_related_concepts_per_cycle = 80
@@ -154,10 +157,11 @@ max_related_crystals_per_concept = 20
 max_total_affected_crystals = 500
 general_prompt = "Use English as the primary searchable memory language."
 
-[workflows.crystallization]
+[workflows.knowledge_crystals]
 provider = "openai"
 model = "gpt-4.1-mini"
 enabled = true
+max_records_per_pass = 500
 ```
 
 Model suggestions appear when the selected provider API supports listing models
@@ -173,8 +177,8 @@ hiero doctor
 hiero dream --json
 ```
 
-Manual `hiero dream` uses the configured crystallization workflow profile and
-drains all pending short-term memories, including the final small batch that
+Manual `hiero dream` runs the configured seven Dream passes and drains all
+pending short-term memories, including the final small batch that
 scheduled dreaming would normally leave until the minimum threshold is met. Use
 `--wait` to block until an active dream cycle finishes, and `--json` for
 machine-readable output.
@@ -251,6 +255,10 @@ memory and be crystallized by dreaming.
 
 RAG sources are explicit project text and glossary files. They are advisory
 evidence for recall; active rule crystals remain mandatory.
+
+Text, `.md`, and `.markdown` sources are ingested unchanged. Hieronymus converts
+HTML, DOCX, and PDF into managed Markdown before indexing; EPUB is intentionally
+rejected so an agent can split it deliberately.
 
 Import a text or Markdown file:
 

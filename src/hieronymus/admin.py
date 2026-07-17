@@ -894,6 +894,26 @@ class AdminStore:
                     (cycle_id,),
                 ).fetchall()
             ]
+            passes = [
+                {
+                    "name": row["phase"],
+                    "status": row["status"],
+                    "input_count": int(row["input_count"]),
+                    "output_count": int(row["output_count"]),
+                    "covered_count": (
+                        int(row["output_count"]) if row["phase"] == "coverage_audit" else 0
+                    ),
+                }
+                for row in conn.execute(
+                    """
+                    select phase, status, input_count, output_count
+                    from dream_phase_runs
+                    where dream_run_id = ?
+                    order by id
+                    """,
+                    (run_id,),
+                ).fetchall()
+            ]
 
         failed_outputs = [run["error"]] if run["status"] == "failed" and run["error"] else []
         return DreamReview(
@@ -906,6 +926,7 @@ class AdminStore:
             strict_proposals=strict_proposals,
             failed_outputs=failed_outputs,
             validation_errors=[],
+            passes=passes,
         )
 
     def config_editor_payload(self) -> dict[str, object]:

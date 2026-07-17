@@ -48,7 +48,7 @@ endpoint = "https://api.deepseek.com"
 api_key = "raw-secret"
 timeout_seconds = 12
 
-[workflows.crystallization]
+[workflows.knowledge_crystals]
 provider = "openai"
 model = "deepseek-v4-flash"
 enabled = true
@@ -69,7 +69,7 @@ enabled = true
     assert provider_payload["openai"]["key"] == "raw-secret"
     dream_payload = tomllib.loads(config.dream_config_path.read_text(encoding="utf-8"))
     assert "providers" not in dream_payload
-    assert dream_payload["workflows"]["crystallization"]["provider"] == "openai"
+    assert dream_payload["workflows"]["knowledge_crystals"]["provider"] == "openai"
 
 
 def test_load_provider_catalog_rejects_legacy_dream_provider_collision_on_disk(

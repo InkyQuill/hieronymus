@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -281,6 +281,17 @@ class DreamProvider(Protocol):
     ) -> DreamOutput | dict[str, object]: ...
 
 
+class EvidenceDreamProvider(Protocol):
+    name: str
+
+    def run_pass(
+        self,
+        pass_name: str,
+        context: TranslationContext,
+        memories: list[ShortTermMemoryRecord],
+    ) -> dict[str, object]: ...
+
+
 class DeterministicDreamProvider:
     name = "deterministic"
 
@@ -307,6 +318,33 @@ class DeterministicDreamProvider:
                 )
             )
         return DreamOutput(crystals=candidates, concept_proposals=[])
+
+    def run_pass(
+        self,
+        pass_name: str,
+        context: TranslationContext,
+        memories: list[ShortTermMemoryRecord],
+    ) -> dict[str, object]:
+        if pass_name == "coverage_audit":
+            return {"covered_memory_ids": [memory.id for memory in memories]}
+        if pass_name != "knowledge_crystals":
+            return {}
+        output = self.crystallize(context, memories)
+        return {
+            "crystals": [
+                {
+                    "crystal_type": candidate.crystal_type,
+                    "title": candidate.title,
+                    "text": candidate.text,
+                    "strength": candidate.strength,
+                    "confidence": candidate.confidence,
+                    "source_memory_ids": candidate.source_memory_ids,
+                    "source_credibility": candidate.source_credibility,
+                    "rule_intent": candidate.rule_intent,
+                }
+                for candidate in output.crystals
+            ]
+        }
 
 
 DreamBatch = list[tuple[int, TranslationContext, list[ShortTermMemoryRecord]]]
@@ -524,6 +562,13 @@ class DreamService:
         batch_apply_summaries: list[_DreamApplySummary] = []
         maintenance_phase_run_id: int | None = None
         try:
+            if hasattr(self.provider, "run_pass"):
+                return self._run_evidence_pass_cycle(
+                    run_id=run_id,
+                    cycle_id=cycle_id,
+                    trigger_type=trigger_type,
+                    ignore_minimum=ignore_minimum,
+                )
             pending_count = self._pending_short_term_memory_count()
             minimum = self.dream_config.min_pending_short_term_memories
             threshold_state = self._threshold_state(
@@ -762,6 +807,163 @@ class DreamService:
                 )
                 conn.commit()
             raise
+
+    def _run_evidence_pass_cycle(
+        self,
+        *,
+        run_id: int,
+        cycle_id: int,
+        trigger_type: str,
+        ignore_minimum: bool,
+    ) -> DreamRunRecord:
+        from hieronymus.dream_workflows import DREAM_PASS_NAMES
+
+        pending_count = self._pending_short_term_memory_count()
+        if not ignore_minimum and pending_count < self.dream_config.min_pending_short_term_memories:
+            self._complete_run(
+                run_id=run_id,
+                input_count=0,
+                created_crystal_count=0,
+                proposal_count=0,
+            )
+            return DreamRunRecord(
+                id=run_id,
+                cycle_id=cycle_id,
+                status="completed",
+                provider=self.provider.name,
+            )
+
+        groups = self._load_pending_completed_groups(
+            limit=self.dream_config.max_short_term_memories_per_run
+        )
+        if not groups:
+            self._complete_run(
+                run_id=run_id,
+                input_count=0,
+                created_crystal_count=0,
+                proposal_count=0,
+            )
+            return DreamRunRecord(
+                id=run_id,
+                cycle_id=cycle_id,
+                status="completed",
+                provider=self.provider.name,
+            )
+        selected_memory_ids = _selected_memory_ids(groups)
+        allowed_memory_ids = set(selected_memory_ids)
+        selection_context = groups[0][1]
+        selected_memories = [
+            memory for _session_id, _context, memories in groups for memory in memories
+        ]
+        staged_outputs: list[DreamBatchOutput] = []
+        covered_memory_ids: set[int] = set()
+        phase_run_ids: list[int] = []
+        try:
+            for pass_name in DREAM_PASS_NAMES:
+                phase_run_id = self._start_phase_run(
+                    run_id=run_id,
+                    phase=pass_name,
+                    input_count=len(selected_memory_ids),
+                )
+                phase_run_ids.append(phase_run_id)
+                pass_output_count = 0
+                raw_output = self.provider.run_pass(pass_name, selection_context, selected_memories)
+                if type(raw_output) is not dict:
+                    raise ValueError(f"{pass_name} output must be an object")
+                if pass_name == "coverage_audit":
+                    covered = self._coverage_ids(raw_output, allowed_memory_ids)
+                    covered_memory_ids.update(covered)
+                    pass_output_count = len(covered)
+                else:
+                    output = self._normalize_dict_output(raw_output, allowed_memory_ids)
+                    self._validate_normalized_output(
+                        output,
+                        selection_context,
+                        allowed_memory_ids,
+                    )
+                    self._validate_pass_output(pass_name, output)
+                    staged_outputs.append(
+                        (selection_context, groups[0][0], selected_memories, output)
+                    )
+                    pass_output_count = _normalized_output_count(output)
+                self._complete_phase_run(phase_run_id=phase_run_id, output_count=pass_output_count)
+            missing = allowed_memory_ids - covered_memory_ids
+            if missing:
+                raise ValueError(
+                    "coverage_incomplete: "
+                    + ", ".join(str(memory_id) for memory_id in sorted(missing))
+                )
+            staged_record_count = sum(
+                _normalized_output_count(output) for *_prefix, output in staged_outputs
+            )
+            if staged_record_count > self.dream_config.max_long_term_records_affected_per_run:
+                raise ValueError("dream run exceeds max_long_term_records_affected_per_run")
+            apply_summary = self._apply_outputs(
+                run_id=run_id,
+                cycle_id=cycle_id,
+                groups=groups,
+                outputs=_deduplicate_staged_outputs(staged_outputs),
+                archive_memories=True,
+            )
+            processed_session_ids = [session_id for session_id, _context, _memories in groups]
+            with connect(self.config.database_path) as conn:
+                passive_summary = self._apply_passive_events(
+                    conn,
+                    cycle_id,
+                    max_changed_crystals=self.dream_config.max_changed_crystals_per_cycle,
+                )
+                remaining = max(
+                    0,
+                    self.dream_config.max_changed_crystals_per_cycle
+                    - len(_summary_changed_crystal_ids([passive_summary])),
+                )
+                self._apply_cycle_decay(
+                    conn,
+                    cycle_id,
+                    max_changed_crystals=remaining,
+                )
+                self._mark_activations_for_cycle(conn, cycle_id, processed_session_ids)
+                self._mark_fully_archived_completed_sessions(conn, cycle_id, processed_session_ids)
+                conn.commit()
+        except Exception as error:
+            for phase_run_id in phase_run_ids:
+                self._fail_phase_run(phase_run_id, error)
+            raise
+        created_crystal_count = len(apply_summary.created_crystal_ids)
+        proposal_count = sum(len(output.concept_proposals) for *_prefix, output in staged_outputs)
+        self._complete_run(
+            run_id=run_id,
+            input_count=len(selected_memory_ids),
+            created_crystal_count=created_crystal_count,
+            proposal_count=proposal_count,
+        )
+        return DreamRunRecord(
+            id=run_id,
+            cycle_id=cycle_id,
+            status="completed",
+            provider=self.provider.name,
+            input_count=len(selected_memory_ids),
+            created_crystal_count=created_crystal_count,
+            proposal_count=proposal_count,
+        )
+
+    def _coverage_ids(self, payload: dict[str, object], allowed_memory_ids: set[int]) -> set[int]:
+        raw_ids = payload.get("covered_memory_ids")
+        if not isinstance(raw_ids, list) or not all(type(item) is int for item in raw_ids):
+            raise ValueError("coverage_audit output requires covered_memory_ids")
+        covered = set(raw_ids)
+        unknown = covered - allowed_memory_ids
+        if unknown:
+            raise ValueError("coverage_audit references unknown source_memory_ids")
+        return covered
+
+    def _validate_pass_output(self, pass_name: str, output: _NormalizedDreamOutput) -> None:
+        record_count = _normalized_output_count(output)
+        limit = self.dream_config.workflows[pass_name].max_records_per_pass
+        if pass_name == "relations":
+            limit = min(limit, self.dream_config.max_relation_records_per_pass)
+        if record_count > limit:
+            raise ValueError(f"{pass_name} output exceeds max_records_per_pass")
 
     def _record_skipped_run(self, reason: str) -> DreamRunRecord:
         now = _now()
@@ -3452,3 +3654,36 @@ def _confidence_for_short_memory(memory: ShortTermMemoryRecord) -> float:
     if memory.source_credibility in SOURCE_CREDIBILITY_CONFIDENCE:
         return SOURCE_CREDIBILITY_CONFIDENCE[memory.source_credibility]
     return _ROLE_CONFIDENCE[memory.source_role]
+
+
+def _normalized_output_count(output: _NormalizedDreamOutput) -> int:
+    return (
+        len(output.crystals)
+        + len(output.concept_proposals)
+        + len(output.concepts)
+        + len(output.facets)
+        + len(output.supersede_actions)
+    )
+
+
+def _deduplicate_staged_outputs(outputs: list[DreamBatchOutput]) -> list[DreamBatchOutput]:
+    seen_crystals: set[tuple[str, str, str]] = set()
+    seen_concepts: set[str] = set()
+    result: list[DreamBatchOutput] = []
+    for context, session_id, memories, output in outputs:
+        crystals = []
+        for crystal in output.crystals:
+            key = (crystal.crystal_type, crystal.title.casefold(), crystal.text.casefold())
+            if key not in seen_crystals:
+                seen_crystals.add(key)
+                crystals.append(crystal)
+        concepts = []
+        for concept in output.concepts:
+            key = concept.canonical_name.casefold()
+            if key not in seen_concepts:
+                seen_concepts.add(key)
+                concepts.append(concept)
+        result.append(
+            (context, session_id, memories, replace(output, crystals=crystals, concepts=concepts))
+        )
+    return result

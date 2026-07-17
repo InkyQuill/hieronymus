@@ -135,3 +135,4 @@ class DreamReview:
     strict_proposals: list[str]
     failed_outputs: list[str]
     validation_errors: list[str]
+    passes: list[dict[str, int | str]]

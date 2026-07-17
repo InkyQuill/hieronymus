@@ -56,17 +56,18 @@ dreaming settings and per-workflow LLM assignments. Every LLM-consuming
 workflow assignment has the same shape: `provider`, `model`, and `enabled`.
 
 ```toml
-[workflows.crystallization]
+[workflows.knowledge_crystals]
 provider = "deepseek-api"
 model = "deepseek-v4-flash"
 enabled = true
+max_records_per_pass = 500
 
-[workflows.reinforcement_compaction]
+[workflows.reinforcement]
 provider = "local-ollama"
 model = "gemma4-e3b"
 enabled = true
 
-[workflows.relation_discovery]
+[workflows.relations]
 provider = "deepseek-api"
 model = "deepseek-v4-flash"
 enabled = false

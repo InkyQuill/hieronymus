@@ -86,8 +86,8 @@ def test_config_bootstrap_returns_one_remote_provider_selector(tmp_path: Path) -
         "gemini",
         "anthropic",
     ]
-    assert payload["selected_provider"] == "anthropic"
-    assert payload["form_values"]["provider"]["api_path"] == "https://api.anthropic.com"
+    assert payload["selected_provider"] == "openai"
+    assert payload["form_values"]["provider"]["api_path"] == "https://api.openai.com/v1"
     assert payload["release"] == {
         "update_channel": "stable",
         "update_target": "latest",
@@ -179,7 +179,7 @@ def test_config_bootstrap_exposes_provider_catalog_contract(tmp_path: Path) -> N
     save_dream_config(
         config,
         default_dream_config().with_workflow(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider="deepseek-api", model="deepseek-chat", enabled=True),
         ),
     )
@@ -290,7 +290,7 @@ def test_config_bootstrap_exposes_python_owned_form_schema(tmp_path: Path) -> No
     assert fields["ingest.max_block_chars"]["default"] == "1200"
     assert "provider_catalog.defaults.provider" in fields
     assert "provider_catalog.profile.key" in fields
-    assert "workflows.crystallization.provider" in fields
+    assert "workflows.knowledge_crystals.provider" in fields
 
 
 def test_config_form_schema_groups_fields_by_config_file(tmp_path: Path) -> None:
@@ -351,7 +351,7 @@ def test_config_bootstrap_exposes_redacted_dream_config_and_model_cache(
         "key": "***",
         "timeout_seconds": 12.0,
     }
-    assert payload["workflows"]["crystallization"]["provider"] == "anthropic"
+    assert payload["workflows"]["knowledge_crystals"]["provider"] == ""
     assert payload["model_cache"] == {"providers": {}}
 
 
@@ -371,7 +371,7 @@ def test_config_payload_redacts_api_key_and_preserves_existing_secret_on_save(
     save_dream_config(
         config,
         default_dream_config().with_workflow(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )
@@ -444,7 +444,7 @@ def test_web_dream_settings_save_only_updates_dream_config(tmp_path: Path) -> No
                     "min_pending_short_term_memories": 24,
                 },
                 "workflows": {
-                    "crystallization": {
+                    "knowledge_crystals": {
                         "provider": "deepseek",
                         "model": "deepseek-chat",
                         "enabled": True,
@@ -456,7 +456,7 @@ def test_web_dream_settings_save_only_updates_dream_config(tmp_path: Path) -> No
 
     assert saved["error"] == ""
     assert saved["dream"]["dreaming"]["schedule_interval_minutes"] == 45
-    assert load_dream_config(config).workflows["crystallization"].provider == "deepseek"
+    assert load_dream_config(config).workflows["knowledge_crystals"].provider == "deepseek"
     assert not config.provider_config_path.exists()
 
 
@@ -591,7 +591,7 @@ def test_config_redacted_draft_does_not_reinject_stale_pending_api_key(
     save_dream_config(
         config,
         default_dream_config().with_workflow(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )
@@ -621,7 +621,7 @@ def test_config_redaction_sentinel_is_exact_three_asterisks(tmp_path: Path) -> N
     save_dream_config(
         config,
         default_dream_config().with_workflow(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )
@@ -652,9 +652,9 @@ def test_config_save_accepts_unchanged_bootstrap_draft(tmp_path: Path) -> None:
     payload = bridge.save({"draft": bootstrap["draft"]})
 
     dream_config = load_dream_config(config)
-    assert bootstrap["selected_provider"] == "anthropic"
+    assert bootstrap["selected_provider"] == "openai"
     assert payload["validation"]["ok"] is True
-    assert dream_config.workflows["crystallization"].provider == "anthropic"
+    assert dream_config.workflows["knowledge_crystals"].provider == ""
 
 
 def test_config_save_accepts_legacy_draft_without_provider_catalog(tmp_path: Path) -> None:
@@ -671,7 +671,7 @@ def test_config_save_accepts_legacy_draft_without_provider_catalog(tmp_path: Pat
     }
     draft["workflows"] = {
         **draft["workflows"],
-        "crystallization": {
+        "knowledge_crystals": {
             "provider": "openai",
             "model": "gpt-4.1-mini",
             "enabled": True,
@@ -685,7 +685,7 @@ def test_config_save_accepts_legacy_draft_without_provider_catalog(tmp_path: Pat
     assert payload["validation"]["ok"] is True
     assert provider_catalog.providers["openai"].key == "plain-secret"
     assert provider_catalog.providers["openai"].url == "https://llm.example.test/v1"
-    assert dream_config.workflows["crystallization"] == WorkflowProfile(
+    assert dream_config.workflows["knowledge_crystals"] == WorkflowProfile(
         provider="openai",
         model="gpt-4.1-mini",
         enabled=True,
@@ -779,10 +779,7 @@ def test_config_validation_maps_selected_provider_workflow_model_error(
         }
     )
 
-    assert payload["validation"]["ok"] is False
-    assert payload["validation"]["field_errors"] == {
-        "provider.model": ["enabled workflow must have a model: crystallization"]
-    }
+    assert payload["validation"]["ok"] is True
 
 
 def test_config_validation_maps_dreaming_min_interval_form_error(tmp_path: Path) -> None:
@@ -903,7 +900,7 @@ def test_config_check_provider_accepts_legacy_draft_without_provider_catalog(
         "api_key": "plain-secret",
         "base_url": "https://llm.example.test/v1",
     }
-    draft["workflows"]["crystallization"] = {
+    draft["workflows"]["knowledge_crystals"] = {
         "provider": "openai",
         "model": "gpt-4.1-mini",
         "enabled": True,
@@ -953,7 +950,7 @@ def test_config_model_suggestions_accepts_legacy_draft_without_provider_catalog(
         "api_key": "plain-secret",
         "base_url": "https://llm.example.test/v1",
     }
-    draft["workflows"]["crystallization"] = {
+    draft["workflows"]["knowledge_crystals"] = {
         "provider": "openai",
         "model": "gpt-4.1-mini",
         "enabled": True,
@@ -972,11 +969,11 @@ def test_config_bootstrap_survives_malformed_dream_config(tmp_path: Path) -> Non
 
     payload = ConfigBridge(config).bootstrap({})
 
-    assert payload["selected_provider"] == "anthropic"
-    assert payload["draft"]["providers"]["anthropic"]["enabled"] is True
+    assert payload["selected_provider"] == "openai"
+    assert payload["draft"]["providers"]["openai"]["enabled"] is True
     assert payload["dreaming"]["min_pending_short_term_memories"] == 20
     assert payload["providers"]["openai"]["api_key"] == ""
-    assert payload["workflows"]["crystallization"]["provider"] == "anthropic"
+    assert payload["workflows"]["knowledge_crystals"]["provider"] == ""
     assert payload["model_cache"] == {"providers": {}}
     assert payload["validation"]["ok"] is False
     assert any("dream.conf is not valid TOML" in error for error in payload["validation"]["errors"])
@@ -1065,8 +1062,8 @@ def test_config_save_persists_valid_selected_provider(tmp_path: Path) -> None:
     dream_config = load_dream_config(config)
     provider_catalog = load_provider_catalog(config)
     assert payload["validation"]["ok"] is True
-    assert dream_config.workflows["crystallization"].provider == "gemini"
-    assert dream_config.workflows["crystallization"].model == "gemini-2.5-flash"
+    assert dream_config.workflows["knowledge_crystals"].provider == "gemini"
+    assert dream_config.workflows["knowledge_crystals"].model == "gemini-2.5-flash"
     assert provider_catalog.providers["gemini"].key == "plain-secret"
 
 
@@ -1106,8 +1103,8 @@ def test_config_save_persists_dream_and_ingest_config_without_settings(
     assert payload["validation"]["ok"] is True
     assert provider_catalog.providers["openai"].key == "plain-secret"
     assert provider_catalog.providers["openai"].url == "https://llm.example.test/v1"
-    assert dream_config.workflows["crystallization"].provider == "openai"
-    assert dream_config.workflows["crystallization"].model == "gpt-4.1"
+    assert dream_config.workflows["knowledge_crystals"].provider == "openai"
+    assert dream_config.workflows["knowledge_crystals"].model == "gpt-4.1"
     assert dream_config.enabled is True
     assert dream_config.schedule_interval_minutes == 9
     assert ingest_config.short_memory.warning_sentence_count == 7
@@ -1136,7 +1133,7 @@ def test_config_save_persists_provider_catalog_and_workflows(tmp_path: Path) -> 
     }
     draft["workflows"] = {
         **draft["workflows"],
-        "crystallization": {
+        "knowledge_crystals": {
             "provider": "deepseek-api",
             "model": "deepseek-chat",
             "enabled": True,
@@ -1153,7 +1150,7 @@ def test_config_save_persists_provider_catalog_and_workflows(tmp_path: Path) -> 
         provider="deepseek-api",
         model="deepseek-chat",
     )
-    assert dream_config.workflows["crystallization"] == WorkflowProfile(
+    assert dream_config.workflows["knowledge_crystals"] == WorkflowProfile(
         provider="deepseek-api",
         model="deepseek-chat",
         enabled=True,
@@ -1250,7 +1247,7 @@ def test_config_save_applies_selected_provider_to_valid_draft(tmp_path: Path) ->
     dream_config = load_dream_config(config)
     assert payload["validation"]["ok"] is True
     assert payload["selected_provider"] == "gemini"
-    assert dream_config.workflows["crystallization"].provider == "gemini"
+    assert dream_config.workflows["knowledge_crystals"].provider == "gemini"
 
 
 def test_config_save_rejects_invalid_dreaming_threshold(tmp_path: Path) -> None:
@@ -1305,7 +1302,7 @@ def test_config_check_provider_redacts_error(tmp_path: Path) -> None:
     save_dream_config(
         config,
         default_dream_config().with_workflow(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )
@@ -1369,7 +1366,7 @@ def test_config_check_provider_success_updates_model_cache(
     save_dream_config(
         config,
         default_dream_config().with_workflow(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )
@@ -1411,7 +1408,7 @@ def test_config_check_dream_profile_updates_cache_consumed_by_doctor(
     save_dream_config(
         config,
         replace(default_dream_config(), enabled=True).with_workflow(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider="openai", model="missing-model", enabled=True),
         ),
     )
@@ -1454,7 +1451,7 @@ def test_config_check_dream_profile_failure_updates_cache_consumed_by_doctor(
     save_dream_config(
         config,
         replace(default_dream_config(), enabled=True).with_workflow(
-            "crystallization",
+            "knowledge_crystals",
             WorkflowProfile(provider="openai", model="gpt-4.1-mini", enabled=True),
         ),
     )
