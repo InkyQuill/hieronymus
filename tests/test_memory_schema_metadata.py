@@ -71,9 +71,7 @@ def test_global_schema_adds_compatibility_columns_without_dropping_rows(tmp_path
             columns = {row["name"] for row in conn.execute(f"pragma table_info({table})")}
             assert expected_columns <= columns
 
-        activity = conn.execute(
-            "select last_activity_at, created_at from task_sessions"
-        ).fetchone()
+        activity = conn.execute("select last_activity_at, created_at from task_sessions").fetchone()
         assert activity["last_activity_at"] == activity["created_at"]
 
         row_counts = {
