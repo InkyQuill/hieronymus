@@ -52,6 +52,8 @@ def test_rag_payloads_share_flat_serialization_contract() -> None:
         "content_type": "csv",
         "checksum": "abc",
         "metadata": {"scope": "main"},
+        "normalized_path": "",
+        "normalized_format": "",
         "chunk_count": 1,
         "skipped": False,
     }
