@@ -94,3 +94,34 @@ def test_incomplete_coverage_rolls_back_all_dream_mutations(tmp_path) -> None:
         crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
     assert crystal_count == 0
     assert len(WorkspaceStore(config).list_short_term_memories(session_id)) == 2
+
+
+def test_book_scale_batch_is_covered_by_every_dream_pass(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "memory")
+    Registry(config).create_series(
+        slug="book",
+        title="Book",
+        source_language="en",
+        target_language="ru",
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(TranslationContext("book", "en", "ru", task_type="reading"))
+    memory_ids = workspace.add_short_term_memories_batch(
+        session.id,
+        [
+            {
+                "source_role": "mundane",
+                "kind": "reading",
+                "text": f"Distinct reading conclusion {index}.",
+            }
+            for index in range(500)
+        ],
+    )
+    workspace.complete_session(session.id)
+    provider = EvidenceProvider()
+
+    run = DreamService(config, provider).run_cycle()
+
+    assert run.status == "completed"
+    assert all(ids == tuple(memory_ids) for _pass_name, ids in provider.calls)
+    assert workspace.list_short_term_memories(session.id) == []
