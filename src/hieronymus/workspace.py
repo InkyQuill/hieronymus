@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 
 from hieronymus.config import HieronymusConfig
@@ -17,6 +17,7 @@ from hieronymus.memory_models import (
 from hieronymus.short_memory import validate_short_memory_text
 
 _SOURCE_ROLES = frozenset({"mundane", "mentor", "user", "system"})
+_MAX_SHORT_TERM_MEMORIES_PER_BATCH = 500
 
 
 def _now() -> str:
@@ -82,6 +83,29 @@ def _load_metadata_values(
         (owner_id,),
     ).fetchall()
     return tuple(row[value_column] for row in rows)
+
+
+def _batch_item_string(item: Mapping[str, object], field_name: str, default: str = "") -> str:
+    value = item.get(field_name, default)
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    return value
+
+
+def _batch_item_strings(item: Mapping[str, object], field_name: str) -> Iterable[str]:
+    value = item.get(field_name, ())
+    if not isinstance(value, (list, tuple)) or not all(isinstance(entry, str) for entry in value):
+        raise ValueError(f"{field_name} must be a list of strings")
+    return value
+
+
+def _batch_item_metadata(item: Mapping[str, object]) -> dict[str, object] | None:
+    value = item.get("metadata")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("metadata must be an object")
+    return value
 
 
 def short_memory_from_row(conn, row) -> ShortTermMemoryRecord:
@@ -273,20 +297,135 @@ class WorkspaceStore:
         rule_intent: str = "",
         soft_origin: str = "",
     ) -> int:
-        self._validate_source_role(source_role)
-        _require_non_empty(kind, "kind")
-        text = text.strip()
+        return self.add_short_term_memories_batch(
+            session_id,
+            [
+                {
+                    "source_role": source_role,
+                    "kind": kind,
+                    "text": text,
+                    "source_ref": source_ref,
+                    "metadata": metadata,
+                    "language_tags": list(language_tags),
+                    "story_scopes": list(story_scopes),
+                    "semantic_tags": list(semantic_tags),
+                    "source_credibility": source_credibility,
+                    "rule_intent": rule_intent,
+                    "soft_origin": soft_origin,
+                }
+            ],
+        )[0]
+
+    def add_short_term_memories_batch(
+        self,
+        session_id: int,
+        items: list[Mapping[str, object]],
+    ) -> list[int]:
+        if not items:
+            raise ValueError("items must not be empty")
+        if len(items) > _MAX_SHORT_TERM_MEMORIES_PER_BATCH:
+            raise ValueError(
+                "a batch may contain at most "
+                f"{_MAX_SHORT_TERM_MEMORIES_PER_BATCH} short-term memories"
+            )
+
         short_memory_limits = load_ingest_config(self.config).short_memory
+        prepared = [
+            self._prepare_short_term_memory(item, short_memory_limits=short_memory_limits)
+            for item in items
+        ]
+        memory_ids: list[int] = []
+        with connect(self.config.database_path) as conn:
+            self._require_active_session(conn, session_id)
+            for memory in prepared:
+                cursor = conn.execute(
+                    """
+                insert into short_term_memories(
+                  session_id,
+                  source_role,
+                  kind,
+                  text,
+                  source_ref,
+                  metadata_json,
+                  source_credibility,
+                  rule_intent,
+                  soft_origin,
+                  created_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        session_id,
+                        memory["source_role"],
+                        memory["kind"],
+                        memory["text"],
+                        memory["source_ref"],
+                        memory["metadata_json"],
+                        memory["source_credibility"],
+                        memory["rule_intent"],
+                        memory["soft_origin"],
+                        _now(),
+                    ),
+                )
+                memory_id = int(cursor.lastrowid)
+                memory_ids.append(memory_id)
+                _insert_metadata_values(
+                    conn,
+                    table="short_term_memory_language_tags",
+                    owner_column="memory_id",
+                    owner_id=memory_id,
+                    value_column="language_tag",
+                    values=memory["language_tags"],
+                )
+                _insert_metadata_values(
+                    conn,
+                    table="short_term_memory_story_scopes",
+                    owner_column="memory_id",
+                    owner_id=memory_id,
+                    value_column="story_scope",
+                    values=memory["story_scopes"],
+                )
+                _insert_metadata_values(
+                    conn,
+                    table="short_term_memory_semantic_tags",
+                    owner_column="memory_id",
+                    owner_id=memory_id,
+                    value_column="semantic_tag",
+                    values=memory["semantic_tags"],
+                )
+                conn.execute(
+                    "insert into short_term_memories_fts(rowid, text) values (?, ?)",
+                    (memory_id, memory["text"]),
+                )
+            conn.commit()
+        return memory_ids
+
+    def _prepare_short_term_memory(
+        self,
+        item: Mapping[str, object],
+        *,
+        short_memory_limits,
+    ) -> dict[str, object]:
+        source_role = _batch_item_string(item, "source_role")
+        self._validate_source_role(source_role)
+        kind = _batch_item_string(item, "kind")
+        _require_non_empty(kind, "kind")
+        text = _batch_item_string(item, "text").strip()
         validation = validate_short_memory_text(text, limits=short_memory_limits)
-        normalized_language_tags = normalize_string_tuple(language_tags, lowercase=True)
-        normalized_story_scopes = normalize_string_tuple(story_scopes)
-        normalized_semantic_tags = normalize_string_tuple(semantic_tags)
-        source_credibility = source_credibility.strip() or "observation"
-        rule_intent = rule_intent.strip()
-        soft_origin = soft_origin.strip()
+        normalized_language_tags = normalize_string_tuple(
+            _batch_item_strings(item, "language_tags"), lowercase=True
+        )
+        normalized_story_scopes = normalize_string_tuple(_batch_item_strings(item, "story_scopes"))
+        normalized_semantic_tags = normalize_string_tuple(
+            _batch_item_strings(item, "semantic_tags")
+        )
+        source_credibility = _batch_item_string(item, "source_credibility", "observation").strip()
+        source_credibility = source_credibility or "observation"
+        rule_intent = _batch_item_string(item, "rule_intent").strip()
+        soft_origin = _batch_item_string(item, "soft_origin").strip()
         memory_metadata = {
             key: value
-            for key, value in (metadata or {}).items()
+            for key, value in (_batch_item_metadata(item) or {}).items()
             if key not in {"sentence_count", "symbol_count", "validation_warning"}
         }
         if normalized_language_tags:
@@ -305,75 +444,19 @@ class WorkspaceStore:
         memory_metadata["symbol_count"] = validation.symbol_count
         if validation.warning:
             memory_metadata["validation_warning"] = validation.warning
-
-        metadata_json = json.dumps(
-            memory_metadata,
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-        now = _now()
-        with connect(self.config.database_path) as conn:
-            self._require_active_session(conn, session_id)
-            cursor = conn.execute(
-                """
-                insert into short_term_memories(
-                  session_id,
-                  source_role,
-                  kind,
-                  text,
-                  source_ref,
-                  metadata_json,
-                  source_credibility,
-                  rule_intent,
-                  soft_origin,
-                  created_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    session_id,
-                    source_role,
-                    kind,
-                    text,
-                    source_ref,
-                    metadata_json,
-                    source_credibility,
-                    rule_intent,
-                    soft_origin,
-                    now,
-                ),
-            )
-            memory_id = int(cursor.lastrowid)
-            _insert_metadata_values(
-                conn,
-                table="short_term_memory_language_tags",
-                owner_column="memory_id",
-                owner_id=memory_id,
-                value_column="language_tag",
-                values=normalized_language_tags,
-            )
-            _insert_metadata_values(
-                conn,
-                table="short_term_memory_story_scopes",
-                owner_column="memory_id",
-                owner_id=memory_id,
-                value_column="story_scope",
-                values=normalized_story_scopes,
-            )
-            _insert_metadata_values(
-                conn,
-                table="short_term_memory_semantic_tags",
-                owner_column="memory_id",
-                owner_id=memory_id,
-                value_column="semantic_tag",
-                values=normalized_semantic_tags,
-            )
-            conn.execute(
-                "insert into short_term_memories_fts(rowid, text) values (?, ?)",
-                (memory_id, text),
-            )
-            conn.commit()
-        return memory_id
+        return {
+            "source_role": source_role,
+            "kind": kind,
+            "text": text,
+            "source_ref": _batch_item_string(item, "source_ref"),
+            "metadata_json": json.dumps(memory_metadata, ensure_ascii=False, sort_keys=True),
+            "language_tags": normalized_language_tags,
+            "story_scopes": normalized_story_scopes,
+            "semantic_tags": normalized_semantic_tags,
+            "source_credibility": source_credibility,
+            "rule_intent": rule_intent,
+            "soft_origin": soft_origin,
+        }
 
     def list_short_term_memories(
         self,

@@ -986,6 +986,17 @@ def hieronymus_short_term_add(
 
 
 @server.tool()
+def hieronymus_short_term_add_batch(
+    session_id: int,
+    items: list[dict[str, object]],
+) -> dict[str, object]:
+    """Atomically add up to 500 short-term memories to one active session."""
+    config = _load_validated_config()
+    memory_ids = WorkspaceStore(config).add_short_term_memories_batch(session_id, items)
+    return {"memory_ids": memory_ids, "count": len(memory_ids)}
+
+
+@server.tool()
 def hieronymus_recall(
     session_id: int,
     series_slug: str,

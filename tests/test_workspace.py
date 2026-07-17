@@ -69,6 +69,57 @@ def test_short_term_memory_accepts_positional_public_fields(
     assert memories[0].text == "Some text"
 
 
+def test_short_term_memory_batch_is_atomic_and_preserves_order(
+    config: HieronymusConfig,
+) -> None:
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    memory_ids = store.add_short_term_memories_batch(
+        session.id,
+        [
+            {
+                "source_role": "user",
+                "kind": "reading-conclusion",
+                "text": "The first conclusion.",
+                "source_ref": "chapter-1",
+            },
+            {
+                "source_role": "mentor",
+                "kind": "reading-conclusion",
+                "text": "The second conclusion.",
+                "semantic_tags": ["character:hero"],
+            },
+        ],
+    )
+
+    assert memory_ids == [1, 2]
+    memories = store.list_short_term_memories(session.id)
+    assert [memory.text for memory in memories] == [
+        "The first conclusion.",
+        "The second conclusion.",
+    ]
+    assert memories[1].semantic_tags == ("character:hero",)
+
+
+def test_short_term_memory_batch_rolls_back_when_any_item_is_invalid(
+    config: HieronymusConfig,
+) -> None:
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    with pytest.raises(ValueError, match="source_role"):
+        store.add_short_term_memories_batch(
+            session.id,
+            [
+                {"source_role": "user", "kind": "note", "text": "Valid memory."},
+                {"source_role": "agent", "kind": "note", "text": "Invalid memory."},
+            ],
+        )
+
+    assert store.list_short_term_memories(session.id) == []
+
+
 def test_short_term_memory_metadata_includes_validation_warning(
     config: HieronymusConfig,
 ) -> None:

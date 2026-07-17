@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.mcp_server import hieronymus_short_term_add
+from hieronymus.mcp_server import hieronymus_short_term_add, hieronymus_short_term_add_batch
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.workspace import WorkspaceStore
@@ -79,3 +79,33 @@ def test_mcp_short_term_add_stores_agent_read_extract(monkeypatch, tmp_path: Pat
         "symbol_count": 17,
         "workflow": "read",
     }
+
+
+def test_mcp_short_term_add_batch_stores_many_agent_conclusions(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
+    config, session_id = _session(tmp_path, task_type="reading")
+
+    result = hieronymus_short_term_add_batch(
+        session_id=session_id,
+        items=[
+            {
+                "source_role": "mundane",
+                "kind": "reading-conclusion",
+                "text": "The narrator distrusts the council.",
+                "source_ref": "chapter-1",
+                "metadata": {"workflow": "read"},
+            },
+            {
+                "source_role": "mundane",
+                "kind": "reading-conclusion",
+                "text": "The council controls access to the city.",
+                "source_ref": "chapter-1",
+                "metadata": {"workflow": "read"},
+            },
+        ],
+    )
+
+    assert result == {"memory_ids": [1, 2], "count": 2}
+    assert len(WorkspaceStore(config).list_short_term_memories(session_id)) == 2

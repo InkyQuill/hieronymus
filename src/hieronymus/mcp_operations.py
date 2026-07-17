@@ -65,6 +65,7 @@ for _operation in (
     "session_start",
     "session_complete",
     "short_term_add",
+    "short_term_add_batch",
     "recall",
     "feedback",
     "dream",
