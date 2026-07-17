@@ -46,14 +46,14 @@
   }
 </script>
 
-<section class="settings" aria-label="Dreaming settings">
+<section class="settings settings-page" aria-label="Dreaming settings">
   <header class="page-header">
     <div><h2>Dreaming</h2><p>Seven evidence-tracked passes turn completed reading memory into durable knowledge.</p></div>
-    <button class="primary" disabled={busy} onclick={() => onSave($state.snapshot(settings))}>Save dreaming</button>
+    <button class="btn-primary" disabled={busy} onclick={() => onSave($state.snapshot(settings))}>Save dreaming</button>
   </header>
 
   <div class="settings-grid">
-    <label class="toggle"><input type="checkbox" bind:checked={settings.dreaming.enabled} /> Enable scheduled dreaming</label>
+    <label class="toggle-label"><input type="checkbox" bind:checked={settings.dreaming.enabled} /><span class="toggle-track"><span class="toggle-thumb"></span></span>Enable scheduled dreaming</label>
     <label>Interval (minutes)<input type="number" min="1" bind:value={settings.dreaming.schedule_interval_minutes} /></label>
     <label>Minimum pending memories<input type="number" min="1" bind:value={settings.dreaming.min_pending_short_term_memories} /></label>
     <label>Maximum pending memories<input type="number" min="1" bind:value={settings.dreaming.max_pending_short_term_memories} /></label>
@@ -64,8 +64,8 @@
 
   <section class="workflows"><h3>Workflows</h3>
     {#each Object.entries(settings.workflows) as [name, workflow] (name)}
-      <article class="workflow">
-        <header><div><h4>{name.replaceAll("_", " ")}</h4><label class="toggle"><input type="checkbox" checked={workflow.enabled} onchange={(event) => updateWorkflow(name, { enabled: event.currentTarget.checked })} /> Enabled</label></div></header>
+      <article class="card workflow-card"><div>
+        <header><div><h4>{name.replaceAll("_", " ")}</h4></div><label class="toggle-label"><input type="checkbox" checked={workflow.enabled} onchange={(event) => updateWorkflow(name, { enabled: event.currentTarget.checked })} /><span class="toggle-track"><span class="toggle-thumb"></span></span><span class="visually-hidden">Enable {name.replaceAll("_", " ")}</span></label></header>
         <div class="settings-grid compact">
           <label>Provider<select value={workflow.provider} onchange={(event) => updateWorkflow(name, { provider: event.currentTarget.value, model: "" })}><option value="">Choose profile</option>{#each providers as provider (provider.id)}<option value={provider.id}>{provider.name} · {provider.type}</option>{/each}</select></label>
           <label>Model
@@ -77,9 +77,9 @@
           </label>
           <label>Maximum records<input type="number" min="1" bind:value={workflow.max_records_per_pass} /></label>
         </div>
-      </article>
+      </div></article>
     {/each}
   </section>
   <label class="prompt">General prompt<textarea bind:value={settings.dreaming.general_prompt} rows="5"></textarea></label>
-  {#if error}<p class="error">{error}</p>{/if}
+  {#if error}<p class="error-msg">{error}</p>{/if}
 </section>

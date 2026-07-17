@@ -101,6 +101,7 @@ button:disabled, .btn:disabled { cursor: not-allowed; opacity: .45; }
 .prompt { margin-top: var(--space-2xl); }
 .loading { color: var(--color-text-secondary); font: var(--text-body); }
 .error-msg { color: var(--color-danger-text); font: var(--text-body-sm); }
+.visually-hidden { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
 .memory-split { display: grid; gap: var(--space-xl); grid-template-columns: minmax(480px, 1.45fr) minmax(320px, .8fr); }
 
 @media (max-width: 1050px) { .memory-split { grid-template-columns: 1fr; } }
