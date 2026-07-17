@@ -1,112 +1,155 @@
-# Deep reading, normalized RAG, and coverage-driven dreaming
+# Deep reading and coverage-driven dreaming
 
-## Goal
+## Decision
 
-Make book-scale reading produce a complete, inspectable memory substrate: source
-material is retained in RAG, the agent records all significant conclusions as
-compact short-term memories efficiently, and dreaming processes those memories
-through dedicated passes rather than a single mixed request.
+This is a breaking alpha rearchitecture. It replaces the current single
+`provider.crystallize(context, memories) -> DreamOutput` path and mixed
+crystallization output. There is no compatibility adapter, configuration
+migration, or preservation of old workflow names.
 
-## Reading and RAG ingestion
+The goal is book-scale, auditable memory: direct source content stays in RAG,
+the agent records every meaningful conclusion as short-term memory, and dreaming
+extracts each durable record type in independent evidence-tracked passes.
 
-Read is a two-lane workflow.
+## Read orchestration and RAG MCP contract
 
-1. The agent sends every source file to Hieronymus RAG ingestion before deriving
-   memory from it.
-2. RAG retains direct source content; short-term memory never duplicates source
-   paragraphs or long extracts.
-3. The agent emits its own conclusions as short-term memory blocks of one to six
-   sentences. It creates as many blocks as needed to cover every meaningful term,
-   concept, fact, implication, uncertainty, connection, and translation-relevant
-   detail. The per-block length is not a total memory limit.
+`hieronymus-read` is a generated agent skill, not a judgment MCP tool. It uses
+one active reading session and these primitives in order:
 
-Input format policy is deterministic:
+1. Call the existing `hieronymus_rag_import(series_slug, path, source_ref,
+   source_type, language_tags, story_scopes, semantic_tags)` for every source.
+2. A successful existing `RagImportResult` is the durable import receipt. An
+   MCP error identifies the source and conversion error. The agent can retry
+   after the source changes but never converts documents itself.
+3. Read/reason over source and RAG, then call
+   `hieronymus_short_term_add_batch` for conclusions in that same session.
+4. Complete the session only after every source has a receipt or a user-visible
+   failed import.
 
-- `.txt`, `.md`, and `.markdown` import unchanged.
-- `.html`, `.docx`, and text-bearing `.pdf` are converted by Hieronymus to
-  Markdown before RAG parsing and storage.
-- `.epub` is unsupported by automatic ingestion. The agent splits it into
-  source files or chapters before submitting those files.
-- A conversion failure, including a PDF with no extractable text, returns a
-  clear error identifying the source; the agent is not asked to do conversion.
-- The original file is never modified. Generated Markdown is a managed RAG
-  artifact traceable to that original source.
+RAG stores direct source content. Short-term memory stores only the agent's own
+conclusions. Each block contains one to six sentences; the agent creates as
+many blocks as necessary to cover all terms, concepts, facts, implications,
+uncertainties, links, and translation-relevant details.
 
-## Batch short-term memory MCP operation
+Format policy is exact:
 
-Add `hieronymus_short_term_add_batch` for writing large reading results without
-one MCP round-trip per conclusion.
+- `.txt`, `.md`, `.markdown`: import unchanged.
+- `.html`, `.docx`, text-bearing `.pdf`: convert to a managed Markdown artifact
+  before parsing/chunking; the original stays unchanged and the receipt names
+  the artifact.
+- `.epub`: reject as unsupported; the agent splits it into chapters/files first.
+- HTML uses a dedicated HTML-to-Markdown library; DOCX uses `mammoth`; PDF uses
+  `pypdf` extraction plus a deterministic Markdown normalizer. Empty/scanned
+  PDFs fail clearly. No runtime pandoc dependency is introduced.
 
-- It accepts a session ID and an ordered list of the same item fields accepted
-  by `hieronymus_short_term_add` except `session_id`.
-- It validates every item before mutation, then writes the entire batch in one
-  SQLite transaction.
-- It returns ordered memory IDs and an item count.
-- An invalid item rejects the whole batch and creates no memories.
-- The server applies an explicit safe maximum batch size and reports it in its
-  error. The initial limit must permit at least 500 short memories for a book
-  reading workflow in a small number of requests.
-- The Read skill uses batches and tells agents to continue until every important
-  detail has an appropriate compact block.
+## Batch short-term-memory MCP contract
 
-## Soft concepts, terminology, and strict rules
+```text
+hieronymus_short_term_add_batch(
+  session_id: int,
+  items: list[ShortTermMemoryInput],
+) -> {"memory_ids": list[int], "count": int}
+```
 
-Concepts are intentionally vague semantic entities. A concept may exist without
-source form, rendering, aliases, or any terminology proposal.
+Every item has the fields of `hieronymus_short_term_add` except `session_id`:
+`source_role`, `kind`, `text`, `source_ref`, `metadata`, `language_tags`,
+`story_scopes`, `semantic_tags`, `source_credibility`, `rule_intent`, and
+`soft_origin`. All items belong to the supplied active session.
 
-Concept facets and terminology candidates can preserve source forms, preferred
-renderings, and alternate renderings as searchable, advisory information. They
-do not create strict validation requirements. Approval must no longer reject a
-proposal solely because an approved variant differs from a canonical rendering.
+Before starting a write transaction, validate session state and every field with
+the same rules as `add_short_term_memory`: nonempty text and independent
+sentence/symbol ingestion thresholds. The initial maximum is 500 items. A bad
+item or excess size rejects the whole request and creates no records. Returned
+IDs preserve request order.
 
-Only rule crystals create strict terminology validation. A rule crystal is
-created only when evidence establishes an explicit, stable rule, prohibition, or
-user correction. Its canonical rendering and forbidden variants remain strict.
+## Soft concepts and strict rules
 
-## Coverage-driven multi-pass dreaming
+Concepts are vague semantic entities. They may have only a name, description,
+tags, and facets; source form, canonical rendering, aliases, and terminology
+proposals are optional.
 
-A dream run selects one bounded set of completed short-term memories and executes
-separate provider passes over that same set. Each pass returns structured records
-with the short-memory IDs that support them. A record without source evidence is
-rejected.
+Terminology candidates and facets retain source forms, preferred renderings, and
+alternate renderings as searchable advisory data. Approval of divergent variants
+creates/updates soft concept data and never fails for that reason. Only rule
+crystals are strict: they arise from explicit stable rules, prohibitions, or
+user corrections. Their canonical rendering and forbidden variants remain the
+sole inputs to deterministic validation.
 
-The passes are ordered as follows:
+## Replacement dream architecture
 
-1. **Concepts:** create or update concepts and facets.
-2. **Terminology candidates:** create soft proposals with source forms,
-   renderings, aliases, and rationale.
-3. **Rule crystals:** create only explicit strict rules and prohibitions.
-4. **Knowledge crystals:** create independent factual, narrative, stylistic,
-   character, world, and analytical memory crystals.
-5. **Relations:** create links among new and existing long-term records, with
-   short-memory evidence.
-6. **Reinforcement:** return evidence-backed existing long-term record IDs.
-   Valid referenced long-term records are automatically reinforced and recorded
-   in audit data.
-7. **Coverage audit:** report every selected short-memory ID as used by one or
-   more passes or as consciously omitted with a reason. Silent loss is invalid.
+The current alpha workflows are removed: `crystallization`,
+`concept_discovery`/`relation_discovery`, `rule_discovery`,
+`consolidation_compaction`, and
+`decay_reinforcement_review`/`reinforcement_compaction`.
 
-Passes are independently auditable and are not constrained to a small arbitrary
-number of concepts, proposals, or crystals. Each provider prompt instructs the
-model to maximize supported, non-duplicative extraction for its specific record
-type. Bounded input and mutation limits remain to protect local operation.
+They are replaced with seven separately configured provider passes. Each has a
+profile, prompt, schema, phase-run row, request/response audit events, and its
+own output limit:
 
-## Configuration, UI, and observability
+1. `concepts`: concepts and facets only.
+2. `terminology_candidates`: soft terminology proposals and aliases only.
+3. `rule_crystals`: explicit strict rules and prohibitions only.
+4. `knowledge_crystals`: independent long-term knowledge records only.
+5. `relations`: links between new or existing long-term records only.
+6. `reinforcement`: evidence-backed existing long-term record references only.
+7. `coverage_audit`: deterministic coverage computation and optional model
+   classification; it creates no knowledge records.
 
-Dream configuration exposes individual workflow profiles/prompts for each pass,
-with sensible defaults. Existing configurations migrate to compatible defaults.
-The web admin shows per-pass input, output, accepted, rejected, reinforced,
-covered, and consciously omitted counts, and lets the user inspect source-memory
-and long-term evidence for a generated record.
+Knowledge crystals reuse existing crystal types: factual/world/character/
+narrative material is `observation`, analysis is `thought`, style guidance is
+`lesson`, sourced background is `erudition`, and `rule` is reserved for pass 3.
 
-Run audit records preserve prompts, selected short-memory IDs, pass outputs,
-coverage results, long-term references, and automatic reinforcement decisions.
+## Selection, limits, and duplicates
 
-## Verification
+A run selects completed sessions oldest-first, preserves context groups, and
+adds whole groups until `max_short_term_memories_per_run`. A session group is
+never split. Scheduled dreaming handles one bounded run; manual dreaming drains
+repeated bounded runs. Every pass receives the same selected IDs and groups.
 
-Tests cover batch atomicity and a 500-item batch; each conversion policy and
-error; independent Dream pass invocation and evidence validation; soft proposal
-approval with divergent variants; strict rule-crystal validation; automatic
-reinforcement; and coverage audit completeness. Integration coverage verifies a
-book-scale batch is processed through all passes without silent short-memory
-loss.
+The replacement configuration defaults are:
+
+- `max_short_term_memories_per_run = 500`
+- `max_records_per_pass = 500`
+- `max_long_term_records_affected_per_run = 1_000`
+- `max_relation_records_per_pass = 1_000`
+
+Provider output above a pass limit is rejected before mutation. Every created
+record must cite selected `source_memory_ids`; relations and reinforcement also
+cite existing long-term IDs.
+
+Deduplication is deterministic. Normalize type, title, text, concept links, and
+scope/tags; an exact normalized match in the same series is not inserted again,
+but its evidence is audited. Near matches are prompt context only; they merge
+only through an explicit relation or supersession action. No semantic-similarity
+auto-merge exists.
+
+## Transaction, failure, reinforcement, and coverage
+
+One selected run has one transaction boundary. Parse, schema-validate,
+evidence-validate, deduplicate, and stage all pass output before one commit. If
+any required pass fails, times out, or violates schema/limits, rollback all new
+records, links, reinforcements, archiving, and mutations. Keep the failed run
+and phase audit; return sessions to completed for retry.
+
+After staging succeeds, each valid long-term ID named by `reinforcement` gets
+one existing reinforcement event/strength update per run. Audit stores its
+supporting short-memory IDs and event ID.
+
+Coverage is computed from accepted staged records and their source IDs, never
+trusted to LLM omission introspection. The final pass may classify uncovered
+input, but cannot mark it covered. Any selected ID with no accepted
+evidence-backed record fails the run as `coverage_incomplete`, rolls back all
+changes, and is listed in audit data. Silent loss is impossible.
+
+## UI, skill, and verification
+
+The generated Read skill batches conclusions until all significant details are
+represented. Web config exposes one workflow/profile/prompt per pass and the
+four limits. Admin exposes per-pass input, output, accepted, rejected,
+duplicate, reinforced, covered, and uncovered counts plus source/long-term
+evidence.
+
+Tests cover 500-item batch atomicity/order; all conversion policies; divergent
+variant approval; all pass schemas/bounds/same-set inputs; duplicate behavior;
+reinforcement; rollback on pass failure; deterministic coverage failure; and a
+500-memory book-scale run through every pass.
