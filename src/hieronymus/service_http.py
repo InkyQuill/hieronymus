@@ -283,7 +283,15 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             return True
         origin = self.headers.get("Origin", "")
         expected = f"http://{self.server.state.host}:{self.server.state.port}"
-        return bool(origin) and secrets.compare_digest(origin, expected)
+        if origin:
+            return secrets.compare_digest(origin, expected)
+        if self.headers.get("Sec-Fetch-Site", "") != "same-origin":
+            return False
+        referer = urlparse(self.headers.get("Referer", ""))
+        return secrets.compare_digest(
+            f"{referer.scheme}://{referer.netloc}",
+            expected,
+        )
 
     def _handle_admin_websocket(self) -> None:
         if not self._is_browser_authorized():

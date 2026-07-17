@@ -278,6 +278,20 @@ def test_local_origin_can_use_admin_api_without_token(tmp_path: Path) -> None:
         _stop_server(server, thread)
 
 
+def test_same_origin_browser_get_without_origin_is_accepted(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        request = urllib.request.Request(f"{base_url}/api/admin/dashboard")
+        request.add_header("Referer", f"{base_url}/admin")
+        request.add_header("Sec-Fetch-Site", "same-origin")
+        with urllib.request.urlopen(request, timeout=2) as response:
+            assert response.status == 200
+    finally:
+        _stop_server(server, thread)
+
+
 def test_admin_websocket_rejects_foreign_origin(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     server = build_server(config, _make_state(config))
