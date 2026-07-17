@@ -17,6 +17,7 @@ from hieronymus.service_state import (
     remove_server_state,
     write_server_state,
 )
+from hieronymus.session_lifecycle import SessionLifecycle
 
 LOGGER = logging.getLogger(__name__)
 
@@ -57,7 +58,12 @@ class DreamAutostartScheduler:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                self._autostart_cls(self._config).run_due()
+                autostart = self._autostart_cls(self._config)
+                SessionLifecycle(
+                    self._config,
+                    threshold_check=getattr(autostart, "run_threshold_now", lambda: None),
+                ).run_due()
+                autostart.run_due()
             except Exception:
                 LOGGER.exception(
                     "Dream autostart run_due failed for %s with config %s",

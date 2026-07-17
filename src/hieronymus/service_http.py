@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import secrets
+import struct
+import threading
+import time
 from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,9 +16,13 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.daemon_events import AdminEventHub
+from hieronymus.db import connect
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS
+from hieronymus.provider_config import load_provider_catalog
+from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_state import ServerState
 from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.tui_bridge.config_api import ConfigBridge
@@ -29,6 +38,9 @@ class HieronymusHTTPServer(ThreadingHTTPServer):
         super().__init__(server_address, HieronymusRequestHandler)
         self.config = config
         self.state = state
+        self.events = AdminEventHub()
+        self.dream_lock = threading.Lock()
+        self.dream_running = False
 
 
 class HieronymusRequestHandler(BaseHTTPRequestHandler):
@@ -40,55 +52,42 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         request_url = urlparse(self.path)
         path = request_url.path
+        if path == "/ws/admin":
+            self._handle_admin_websocket()
+            return
         if _is_web_route(path):
-            token = parse_qs(request_url.query).get("token", [""])[0]
-            if token and secrets.compare_digest(token, self.server.state.token):
-                self.send_response(HTTPStatus.FOUND.value)
-                self.send_header(
-                    "Set-Cookie",
-                    f"hieronymus_token={token}; HttpOnly; SameSite=Strict; Path=/",
-                )
-                self.send_header("Location", path)
-                self.end_headers()
-                return
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
-                return
             self._send_web_app()
             return
         if path.startswith("/assets/"):
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
-                return
             self._send_web_asset(path)
             return
         if path == "/api/providers":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._send_json(ConfigBridge(self.server.config).provider_list({}))
             return
         if path.startswith("/api/providers/"):
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._handle_provider_get(path)
             return
         if path in _SETTINGS_GET_METHODS:
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._send_config_result(_SETTINGS_GET_METHODS[path], {})
             return
         if path == "/api/admin/dashboard":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._send_admin_result("dashboard", {})
             return
         if path == "/api/admin/snapshot":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             view = parse_qs(request_url.query).get("view", [""])[0]
             selected_id = parse_qs(request_url.query).get("selected_id", [""])[0]
@@ -127,32 +126,35 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             self.server.shutdown()
             return
         if path == "/api/providers":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._send_config_result("save_provider", self._request_json())
             return
         if path.startswith("/api/providers/") and path.endswith("/check"):
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             provider_id = path.removeprefix("/api/providers/").removesuffix("/check").rstrip("/")
             self._send_config_result("check_saved_provider", {"provider_id": provider_id})
             return
         if path in _SETTINGS_SAVE_METHODS:
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             self._send_config_result(_SETTINGS_SAVE_METHODS[path], self._request_json())
             return
         if path.startswith("/api/admin/actions/"):
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            if not self._is_browser_authorized():
+                self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
                 return
             action = path.removeprefix("/api/admin/actions/").strip("/")
             method = _ADMIN_ACTION_METHODS.get(action)
             if method is None:
                 self._send_json({"error": "unknown_admin_action"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if method == "run_manual_dreaming":
+                self._start_manual_dreaming()
                 return
             self._send_admin_result(method, self._request_json())
             return
@@ -185,8 +187,8 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
         if not path.startswith("/api/providers/"):
             self._send_json({"error": "not_found", "path": path}, status=HTTPStatus.NOT_FOUND)
             return
-        if not self._is_authorized():
-            self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+        if not self._is_browser_authorized():
+            self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
             return
         provider_id = path.removeprefix("/api/providers/")
         self._send_config_result("delete_provider", {"provider_id": provider_id})
@@ -278,6 +280,127 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
         )
         return secrets.compare_digest(token, self.server.state.token)
 
+    def _is_browser_authorized(self) -> bool:
+        if self._is_authorized():
+            return True
+        origin = self.headers.get("Origin", "")
+        expected = f"http://{self.server.state.host}:{self.server.state.port}"
+        if origin:
+            return secrets.compare_digest(origin, expected)
+        if self.headers.get("Sec-Fetch-Site", "") != "same-origin":
+            return False
+        referer = urlparse(self.headers.get("Referer", ""))
+        return secrets.compare_digest(
+            f"{referer.scheme}://{referer.netloc}",
+            expected,
+        )
+
+    def _handle_admin_websocket(self) -> None:
+        if not self._is_browser_authorized():
+            self._send_json({"error": "forbidden"}, status=HTTPStatus.FORBIDDEN)
+            return
+        key = self.headers.get("Sec-WebSocket-Key", "")
+        if self.headers.get("Upgrade", "").lower() != "websocket" or not key:
+            self._send_json({"error": "websocket_upgrade_required"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        accept = base64.b64encode(
+            hashlib.sha1(f"{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11".encode()).digest()
+        ).decode()
+        self.send_response(HTTPStatus.SWITCHING_PROTOCOLS.value)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        self.end_headers()
+
+        send_lock = threading.Lock()
+
+        def send_event(event: dict[str, object]) -> None:
+            with send_lock:
+                body = json.dumps(event, ensure_ascii=False).encode("utf-8")
+                header = bytes([0x81])
+                if len(body) < 126:
+                    header += bytes([len(body)])
+                elif len(body) <= 0xFFFF:
+                    header += bytes([126]) + struct.pack("!H", len(body))
+                else:
+                    header += bytes([127]) + struct.pack("!Q", len(body))
+                self.connection.sendall(header + body)
+
+        unsubscribe = self.server.events.subscribe(send_event)
+        try:
+            self.connection.settimeout(1)
+            while self.connection.recv(2):
+                pass
+        except TimeoutError:
+            while True:
+                try:
+                    if not self.connection.recv(2):
+                        break
+                except TimeoutError:
+                    continue
+                except OSError:
+                    break
+        except OSError:
+            pass
+        finally:
+            unsubscribe()
+
+    def _start_manual_dreaming(self) -> None:
+        with self.server.dream_lock:
+            if self.server.dream_running:
+                self._send_json({"started": False, "status": "running"})
+                return
+            self.server.dream_running = True
+        self.server.events.publish("dream_started", {"trigger": "manual"})
+
+        def monitor() -> None:
+            seen_phase_id = 0
+            while self.server.dream_running:
+                try:
+                    with connect(self.server.config.database_path) as conn:
+                        row = conn.execute(
+                            """
+                            select p.id, p.phase, p.dream_run_id, r.cycle_id
+                            from dream_phase_runs as p
+                            join dream_runs as r on r.id = p.dream_run_id
+                            where p.status = 'running'
+                            order by p.id desc limit 1
+                            """
+                        ).fetchone()
+                except Exception:
+                    row = None
+                if row is not None and int(row["id"]) != seen_phase_id:
+                    seen_phase_id = int(row["id"])
+                    self.server.events.publish(
+                        "dream_phase_progress",
+                        {
+                            "run_id": int(row["dream_run_id"]),
+                            "cycle_id": int(row["cycle_id"]),
+                            "phase": row["phase"],
+                        },
+                    )
+                time.sleep(0.2)
+
+        def run() -> None:
+            try:
+                payload = AdminBridge(self.server.config).run_manual_dreaming({})
+                result = payload["result"]
+                self.server.events.publish(
+                    "dream_completed", {"trigger": "manual", "result": result}
+                )
+            except Exception as error:
+                message = redact_configured_secret_values(
+                    str(error), load_provider_catalog(self.server.config)
+                )
+                self.server.events.publish("dream_failed", {"trigger": "manual", "error": message})
+            finally:
+                with self.server.dream_lock:
+                    self.server.dream_running = False
+
+        threading.Thread(target=run, name="hieronymus-manual-dream", daemon=True).start()
+        threading.Thread(target=monitor, name="hieronymus-dream-progress", daemon=True).start()
+        self._send_json({"started": True, "status": "running"})
+
 
 def _web_asset_roots() -> list[Path]:
     package_root = Path(__file__).resolve().parent / "frontend" / "dist"
@@ -323,6 +446,8 @@ _ADMIN_ACTION_METHODS = {
     "decay_concept": "decay_concept",
     "archive_concept": "archive_concept",
     "remove_short_term_memory": "remove_short_term_memory",
+    "close_session": "close_session",
+    "run_manual_dreaming": "run_manual_dreaming",
 }
 
 

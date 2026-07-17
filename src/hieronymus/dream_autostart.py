@@ -214,6 +214,24 @@ class DreamAutostart:
             )
             raise
 
+    def run_threshold_now(self) -> dict[str, object]:
+        dream_config = load_dream_config(self.config)
+        if not dream_config.enabled:
+            return {"ran": False, "reason": "disabled", "cycles": 0}
+        _sessions, pending = self._pending_counts()
+        if pending < dream_config.min_pending_short_term_memories:
+            return {"ran": False, "reason": "not_enough_memories", "cycles": 0}
+        run = DreamService(self.config, resolve_provider(self.config)).run_all(
+            owner="autostart",
+            skip_when_locked=True,
+            ignore_minimum=False,
+            trigger_type="threshold",
+        )
+        if run.status == "skipped":
+            return {"ran": False, "reason": "cycle-active", "cycles": 0}
+        save_autostart_state(self.config, AutostartState(last_started_at=datetime.now(UTC)))
+        return {"ran": True, "reason": "threshold", "cycles": 1}
+
     def _pending_counts(self) -> tuple[int, int]:
         with connect(self.config.database_path) as conn:
             apply_migration(conn, "global.sql")

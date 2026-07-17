@@ -96,12 +96,12 @@ def test_health_endpoint_returns_daemon_identity(tmp_path: Path) -> None:
     assert payload["version"] == "0.1.0"
 
 
-def test_config_page_requires_token_then_redirects_to_cookie_session(tmp_path: Path) -> None:
+def test_config_page_is_available_without_a_browser_token(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     server = build_server(config, _make_state(config))
     thread, base_url = _serve(server)
     try:
-        request = urllib.request.Request(f"{base_url}/config?token=local-test-token")
+        request = urllib.request.Request(f"{base_url}/config")
         cookies = CookieJar()
         opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(cookies),
@@ -113,7 +113,7 @@ def test_config_page_requires_token_then_redirects_to_cookie_session(tmp_path: P
         _stop_server(server, thread)
 
     assert "Hieronymus Web Console" in page
-    assert any(cookie.name == "hieronymus_token" for cookie in cookies)
+    assert not list(cookies)
 
 
 def test_config_and_admin_memory_routes_serve_the_web_application_after_session_setup(
@@ -255,6 +255,60 @@ def test_admin_dashboard_api_returns_local_admin_snapshot(tmp_path: Path) -> Non
 
     assert dashboard["default_view"] == "Crystals"
     assert dashboard["views"]
+
+
+def test_local_origin_can_use_admin_api_without_token(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        request = urllib.request.Request(f"{base_url}/api/admin/dashboard")
+        request.add_header("Origin", base_url)
+        with urllib.request.urlopen(request, timeout=2) as response:
+            assert response.status == 200
+        request = urllib.request.Request(f"{base_url}/api/admin/dashboard")
+        request.add_header("Origin", "https://evil.example")
+        try:
+            urllib.request.urlopen(request, timeout=2)
+        except urllib.error.HTTPError as error:
+            assert error.code == 403
+        else:
+            raise AssertionError("foreign Origin must be rejected")
+    finally:
+        _stop_server(server, thread)
+
+
+def test_same_origin_browser_get_without_origin_is_accepted(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        request = urllib.request.Request(f"{base_url}/api/admin/dashboard")
+        request.add_header("Referer", f"{base_url}/admin")
+        request.add_header("Sec-Fetch-Site", "same-origin")
+        with urllib.request.urlopen(request, timeout=2) as response:
+            assert response.status == 200
+    finally:
+        _stop_server(server, thread)
+
+
+def test_admin_websocket_rejects_foreign_origin(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    server = build_server(config, _make_state(config))
+    thread, base_url = _serve(server)
+    try:
+        request = urllib.request.Request(f"{base_url}/ws/admin")
+        request.add_header("Origin", "https://evil.example")
+        request.add_header("Upgrade", "websocket")
+        request.add_header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+        try:
+            urllib.request.urlopen(request, timeout=2)
+        except urllib.error.HTTPError as error:
+            assert error.code == 403
+        else:
+            raise AssertionError("foreign websocket Origin must be rejected")
+    finally:
+        _stop_server(server, thread)
 
 
 def test_admin_snapshot_api_accepts_a_view_parameter(tmp_path: Path) -> None:
@@ -445,8 +499,13 @@ def test_status_endpoint_survives_an_obsolete_dream_workflow_config(tmp_path: Pa
         _stop_server(server, thread)
 
     assert payload["running"] is True
-    assert payload["providers"] == []
-    assert payload["providers_error"] == "workflows must contain exactly the seven Dream passes"
+    assert {provider["name"] for provider in payload["providers"]} == {
+        "deterministic",
+        "openai",
+        "gemini",
+        "anthropic",
+    }
+    assert payload["providers_error"] == ""
 
 
 def test_shutdown_endpoint_stops_server(tmp_path: Path) -> None:

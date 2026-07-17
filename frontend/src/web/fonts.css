@@ -1,0 +1,23 @@
+@font-face {
+  font-family: Literata;
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("./fonts/literata.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Geist;
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("./fonts/geist.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inconsolata LGC";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/inconsolatalgc.woff2") format("woff2");
+}

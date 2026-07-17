@@ -14,6 +14,7 @@ CODEX_VALIDATOR = Path("/home/inky/.codex/skills/.system/plugin-creator/scripts/
 def test_asset_map_contains_required_skills() -> None:
     assets = asset_map()
 
+    assert "skills/hieronymus-bootstrap/SKILL.md" in assets
     assert "skills/hieronymus-recall/SKILL.md" in assets
     assert "skills/hieronymus-learn/SKILL.md" in assets
     assert "skills/hieronymus-read/SKILL.md" in assets
@@ -23,6 +24,23 @@ def test_asset_map_contains_required_skills() -> None:
     assert "skills/hieronymus-orchestrate/SKILL.md" in assets
     assert "mcp/hieronymus.mcp.json" in assets
     assert "hooks/hooks.codex.json" in assets
+
+
+def test_bootstrap_skill_documents_skill_map_report_and_freeform_source_roles() -> None:
+    bootstrap = asset_map()["skills/hieronymus-bootstrap/SKILL.md"]
+
+    assert "./hiero_report.md" in bootstrap
+    assert "hieronymus-read" in bootstrap
+    assert "hieronymus-learn" in bootstrap
+    assert "hieronymus-remember" in bootstrap
+    assert "hieronymus-recall" in bootstrap
+    assert "hieronymus-translate" in bootstrap
+    assert "hieronymus-review" in bootstrap
+    assert "hieronymus-orchestrate" in bootstrap
+    assert "freeform provenance label" in bootstrap
+    assert 'source_role="agent"' in bootstrap
+    assert 'source_role="user"' in bootstrap
+    assert 'source_role="system"' in bootstrap
 
 
 def test_skill_text_enforces_strict_vs_advisory_contract() -> None:

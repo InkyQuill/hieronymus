@@ -381,6 +381,28 @@ def test_short_term_list_and_remove_contract(config: HieronymusConfig) -> None:
     assert listed_after == []
 
 
+def test_short_term_memory_view_exposes_each_memory_text_and_session_context(
+    config: HieronymusConfig,
+) -> None:
+    session_id = _active_session(config)
+    memory_id = WorkspaceStore(config).add_short_term_memory(
+        session_id,
+        source_role="reading-pass",
+        kind="observation",
+        text="The narrator avoids naming the city in the opening scene.",
+        source_ref="chapter-01.md",
+    )
+
+    snapshot = AdminStore(config).snapshot("Short-Term Memory", selected_id=memory_id)
+
+    assert snapshot.selected is not None
+    assert snapshot.selected.id == memory_id
+    assert snapshot.selected.label == "The narrator avoids naming the city in the opening scene."
+    assert snapshot.detail.body == "The narrator avoids naming the city in the opening scene."
+    assert ("Session", str(session_id)) in snapshot.detail.fields
+    assert ("Source role", "reading-pass") in snapshot.detail.fields
+
+
 def test_dream_all_calls_drain_service_even_without_pending_memory(
     config: HieronymusConfig,
     monkeypatch,

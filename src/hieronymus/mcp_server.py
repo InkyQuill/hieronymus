@@ -954,9 +954,9 @@ def hieronymus_session_complete(session_id: int) -> dict[str, int | bool]:
 @server.tool()
 def hieronymus_short_term_add(
     session_id: int,
-    source_role: str,
     kind: str,
     text: str,
+    source_role: str = "agent",
     source_ref: str = "",
     metadata: dict[str, object] | None = None,
     language_tags: list[str] | None = None,
@@ -966,7 +966,11 @@ def hieronymus_short_term_add(
     rule_intent: str = "",
     soft_origin: str = "",
 ) -> dict[str, int]:
-    """Add a short-term memory to an active session."""
+    """Add a short-term memory to an active session.
+
+    source_role is an optional freeform provenance label. It does not control dreaming's
+    crystal type or confidence; use source_credibility and rule_intent for those signals.
+    """
     config = _load_validated_config()
     memory_id = WorkspaceStore(config).add_short_term_memory(
         session_id=session_id,
@@ -990,7 +994,11 @@ def hieronymus_short_term_add_batch(
     session_id: int,
     items: list[dict[str, object]],
 ) -> dict[str, object]:
-    """Atomically add up to 500 short-term memories to one active session."""
+    """Atomically add up to 500 short-term memories to one active session.
+
+    Each item requires kind and text. source_role is optional freeform provenance metadata and
+    defaults to agent; it does not control dreaming's categorization or confidence.
+    """
     config = _load_validated_config()
     memory_ids = WorkspaceStore(config).add_short_term_memories_batch(session_id, items)
     return {"memory_ids": memory_ids, "count": len(memory_ids)}

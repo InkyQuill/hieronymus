@@ -440,6 +440,13 @@ class AdminBridge:
         )
         return self._mutation_payload(result, params, view="Short-Term Sessions", selected_id=None)
 
+    def close_session(self, params: dict[str, object]) -> dict[str, object]:
+        session_id = _required_int(_aliased_param(params, "session_id", "id"), "session_id")
+        result = self.store.close_session(session_id)
+        return self._mutation_payload(
+            result, params, view="Short-Term Sessions", selected_id=session_id
+        )
+
     def add_user_correction(self, params: dict[str, object]) -> dict[str, object]:
         result = self.store.add_user_correction(
             session_id=_required_int(params.get("session_id"), "session_id"),

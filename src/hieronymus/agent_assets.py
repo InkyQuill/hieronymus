@@ -30,6 +30,54 @@ CODEX_HOOKS = {
 BOUNDARY_TEXT = """Strict concept contracts are mandatory. Crystals and lessons are advisory.
 Do not approve terminology proposals yourself; record proposals for human approval instead."""
 
+SOURCE_ROLE_TEXT = """`source_role` is a freeform provenance label. It does not determine a
+crystal type, confidence, or priority: dreaming chooses those from the evidence, text,
+`source_credibility`, and `rule_intent`. Omit it for an ordinary agent note (it defaults to
+`agent`), or use a useful label such as `user`, `mentor`, `reviewer`, `source-text`, or `system`."""
+
+BOOTSTRAP_SKILL = f"""---
+name: hieronymus-bootstrap
+description: Use at the start of a project session with Hieronymus skills or MCP tools.
+---
+
+# Hieronymus Bootstrap
+
+Use this skill first. It explains the installed workflow and prevents malformed memory writes.
+
+## Skill map
+
+| Need | Skill |
+| --- | --- |
+| Retrieve relevant memory | `hieronymus-recall` |
+| Read sources into RAG and conclusions into memory | `hieronymus-read` |
+| Study or import material | `hieronymus-learn` |
+| Preserve a direct correction | `hieronymus-remember` |
+| Translate with terminology boundaries | `hieronymus-translate` |
+| Review with expert observations | `hieronymus-review` |
+| Coordinate session, recall, feedback, and dreaming | `hieronymus-orchestrate` |
+
+## MCP memory contract
+
+Start a session before writing short-term memory. Use `hieronymus_short_term_add` for one block
+or `hieronymus_short_term_add_batch` for up to 500 independently valid blocks. Every item needs
+`kind` and `text`; `source_role` is optional.
+
+{SOURCE_ROLE_TEXT}
+
+For example, use `source_role="agent"` for an ordinary note and `source_role="user"` for a
+direct correction. Any non-empty provenance label is accepted, including `source_role="system"`.
+
+## Report observed problems
+
+Whenever you notice a Hieronymus bug, missing capability, bad recall, rejected valid input,
+ambiguous skill instruction, or confusing MCP response, append it to `./hiero_report.md` in the
+current project. Record the date, workflow or tool, concise reproduction/context, observed result,
+expected result, and relevant IDs or non-secret evidence. Keep working unless the problem blocks
+the user. Never put API keys, tokens, or private source text in the report.
+
+{BOUNDARY_TEXT}
+"""
+
 RECALL_SKILL = f"""---
 name: hieronymus-recall
 description: Recall Hieronymus memory before translation, review, terminology, or docs work.
@@ -53,7 +101,8 @@ description: Commit material into short-term memory for later dreaming and cryst
 
 Use when the user says to absorb, remember, study, ingest, import, or learn from a source.
 The agent does the judgment: split material into small observed facts, attach source credibility,
-language tags, story scopes, and semantic tags, then call `hieronymus_short_term_add`.
+language tags, story scopes, and semantic tags, then call `hieronymus_short_term_add`. source_role
+is optional provenance metadata; it does not classify the resulting crystal.
 
 MCP tools are storage and retrieval primitives, not judgment engines. There is no supported Learn
 judgment MCP tool; use this skill workflow plus `hieronymus_short_term_add`. Do not promote strict
@@ -85,6 +134,8 @@ detail is covered; a book commonly needs hundreds of conclusion blocks.
 
 MCP tools are storage and retrieval primitives, not judgment engines. There is no supported Read
 judgment MCP tool; use this skill workflow plus `hieronymus_short_term_add_batch`.
+
+source_role is optional provenance metadata and does not classify the resulting crystal.
 
 RAG stores the direct source; short-term memory stores the agent's indirect understanding of it.
 
@@ -132,7 +183,8 @@ description: Review translation output using strict terminology and mentor-grade
 
 {BOUNDARY_TEXT}
 Check strict validation findings first. Identify whether crystals helped or misled. Record recurring
-issues, contradictions, and correction patterns as mentor short-term memories.
+issues, contradictions, and correction patterns as short-term memories. Use an optional
+source_role such as `reviewer` when the provenance will help later audit.
 """
 
 ORCHESTRATE_SKILL = f"""---
@@ -144,7 +196,8 @@ description: Coordinate Hieronymus task sessions, recall, validation, feedback, 
 
 {BOUNDARY_TEXT}
 Create a task session, recall before work, collect short-term memories, record feedback events, and
-trigger or defer dreaming based on configuration or user instruction.
+trigger or defer dreaming based on configuration or user instruction. source_role is optional
+provenance metadata; it never decides how dreaming categorizes the memory.
 """
 
 
@@ -154,6 +207,7 @@ def _json(payload: object) -> str:
 
 def asset_map() -> dict[str, str]:
     return {
+        "skills/hieronymus-bootstrap/SKILL.md": BOOTSTRAP_SKILL,
         "skills/hieronymus-recall/SKILL.md": RECALL_SKILL,
         "skills/hieronymus-learn/SKILL.md": LEARN_SKILL,
         "skills/hieronymus-read/SKILL.md": READ_SKILL,

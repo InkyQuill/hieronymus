@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from hieronymus.config import HieronymusConfig
@@ -108,12 +110,12 @@ def test_short_term_memory_batch_rolls_back_when_any_item_is_invalid(
     store = WorkspaceStore(config)
     session = store.start_session(_context(config))
 
-    with pytest.raises(ValueError, match="source_role"):
+    with pytest.raises(ValueError, match="kind"):
         store.add_short_term_memories_batch(
             session.id,
             [
                 {"source_role": "user", "kind": "note", "text": "Valid memory."},
-                {"source_role": "agent", "kind": "note", "text": "Invalid memory."},
+                {"source_role": "editorial-note", "kind": "", "text": "Invalid memory."},
             ],
         )
 
@@ -271,6 +273,67 @@ def test_complete_session_marks_session_completed(config: HieronymusConfig) -> N
     assert row["completed_at"]
 
 
+def test_complete_session_returns_false_for_already_completed_session(
+    config: HieronymusConfig,
+) -> None:
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    assert store.complete_session(session.id) is True
+    assert store.complete_session(session.id) is False
+
+
+def test_short_term_memory_write_updates_session_activity(config: HieronymusConfig) -> None:
+    store = WorkspaceStore(config)
+    session = store.start_session(_context(config))
+
+    with connect(config.database_path) as conn:
+        before = conn.execute(
+            "select last_activity_at from task_sessions where id = ?", (session.id,)
+        ).fetchone()["last_activity_at"]
+
+    store.add_short_term_memory(session.id, "agent", "note", "A factual note.")
+
+    with connect(config.database_path) as conn:
+        after = conn.execute(
+            "select last_activity_at from task_sessions where id = ?", (session.id,)
+        ).fetchone()["last_activity_at"]
+
+    assert after > before
+
+
+def test_complete_inactive_sessions_only_closes_stale_active_sessions(
+    config: HieronymusConfig,
+) -> None:
+    store = WorkspaceStore(config)
+    stale = store.start_session(_context(config))
+    fresh = store.start_session(_context(config))
+    cutoff = datetime.now(UTC) - timedelta(minutes=30)
+    with connect(config.database_path) as conn:
+        conn.execute(
+            "update task_sessions set last_activity_at = ? where id = ?",
+            ((cutoff - timedelta(seconds=1)).isoformat(), stale.id),
+        )
+        conn.execute(
+            "update task_sessions set last_activity_at = ? where id = ?",
+            ((cutoff + timedelta(seconds=1)).isoformat(), fresh.id),
+        )
+        conn.commit()
+
+    closed = store.complete_inactive_sessions(cutoff)
+
+    assert closed == (stale.id,)
+    with connect(config.database_path) as conn:
+        statuses = {
+            int(row["id"]): row["status"]
+            for row in conn.execute(
+                "select id, status from task_sessions where id in (?, ?)",
+                (stale.id, fresh.id),
+            )
+        }
+    assert statuses == {stale.id: "completed", fresh.id: "active"}
+
+
 def test_get_session_returns_record_with_context(config: HieronymusConfig) -> None:
     store = WorkspaceStore(config)
     session = store.start_session(_context(config))
@@ -280,17 +343,19 @@ def test_get_session_returns_record_with_context(config: HieronymusConfig) -> No
     assert loaded == session
 
 
-def test_short_term_memory_rejects_unknown_role(config: HieronymusConfig) -> None:
+def test_short_term_memory_accepts_freeform_source_role(config: HieronymusConfig) -> None:
     store = WorkspaceStore(config)
     session = store.start_session(_context(config))
 
-    with pytest.raises(ValueError, match="source_role"):
-        store.add_short_term_memory(
-            session.id,
-            source_role="agent",
-            kind="note",
-            text="Keep the register formal.",
-        )
+    memory_id = store.add_short_term_memory(
+        session.id,
+        source_role="editorial-note",
+        kind="note",
+        text="Keep the register formal.",
+    )
+
+    assert store.list_short_term_memories(session.id)[0].id == memory_id
+    assert store.list_short_term_memories(session.id)[0].source_role == "editorial-note"
 
 
 def test_short_term_memory_requires_existing_active_session(

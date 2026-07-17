@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "rootDir": ".",
     "outDir": "dist",
-    "types": ["vite/client"]
+    "types": ["vite/client", "bun-types"]
   },
   "include": ["src/web/**/*.ts", "src/web/**/*.svelte", "vite.config.ts"]
 }

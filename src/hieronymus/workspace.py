@@ -16,7 +16,6 @@ from hieronymus.memory_models import (
 )
 from hieronymus.short_memory import validate_short_memory_text
 
-_SOURCE_ROLES = frozenset({"mundane", "mentor", "user", "system"})
 _MAX_SHORT_TERM_MEMORIES_PER_BATCH = 500
 
 
@@ -168,9 +167,10 @@ class WorkspaceStore:
                   volume,
                   chapter,
                   status,
-                  created_at
+                  created_at,
+                  last_activity_at
                 )
-                values (?, ?, ?, ?, ?, ?, 'active', ?)
+                values (?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
                 (
                     context.series_slug,
@@ -179,6 +179,7 @@ class WorkspaceStore:
                     context.task_type,
                     context.volume,
                     context.chapter,
+                    now,
                     now,
                 ),
             )
@@ -266,20 +267,42 @@ class WorkspaceStore:
             cycle_id=row["cycle_id"],
         )
 
-    def complete_session(self, session_id: int) -> None:
+    def complete_session(self, session_id: int) -> bool:
         with connect(self.config.database_path) as conn:
             cursor = conn.execute(
                 """
                 update task_sessions
                 set status = 'completed',
                     completed_at = ?
-                where id = ?
+                where id = ? and status = 'active'
                 """,
                 (_now(), session_id),
             )
             if cursor.rowcount == 0:
-                raise KeyError(f"unknown session: {session_id}")
+                exists = conn.execute(
+                    "select 1 from task_sessions where id = ?", (session_id,)
+                ).fetchone()
+                if exists is None:
+                    raise KeyError(f"unknown session: {session_id}")
+                return False
             conn.commit()
+        return True
+
+    def complete_inactive_sessions(self, cutoff) -> tuple[int, ...]:
+        with connect(self.config.database_path) as conn:
+            conn.execute("begin immediate")
+            rows = conn.execute(
+                """
+                update task_sessions
+                set status = 'completed', completed_at = ?
+                where status = 'active' and last_activity_at < ?
+                returning id
+                """,
+                (_now(), cutoff.isoformat()),
+            ).fetchall()
+            session_ids = tuple(int(row["id"]) for row in rows)
+            conn.commit()
+        return session_ids
 
     def add_short_term_memory(
         self,
@@ -397,6 +420,10 @@ class WorkspaceStore:
                     "insert into short_term_memories_fts(rowid, text) values (?, ?)",
                     (memory_id, memory["text"]),
                 )
+            conn.execute(
+                "update task_sessions set last_activity_at = ? where id = ?",
+                (_now(), session_id),
+            )
             conn.commit()
         return memory_ids
 
@@ -406,8 +433,8 @@ class WorkspaceStore:
         *,
         short_memory_limits,
     ) -> dict[str, object]:
-        source_role = _batch_item_string(item, "source_role")
-        self._validate_source_role(source_role)
+        source_role = _batch_item_string(item, "source_role", "agent").strip()
+        _require_non_empty(source_role, "source_role")
         kind = _batch_item_string(item, "kind")
         _require_non_empty(kind, "kind")
         text = _batch_item_string(item, "text").strip()
@@ -503,10 +530,6 @@ class WorkspaceStore:
                 (expression, session_id, limit),
             ).fetchall()
             return [short_memory_from_row(conn, row) for row in rows]
-
-    def _validate_source_role(self, source_role: str) -> None:
-        if source_role not in _SOURCE_ROLES:
-            raise ValueError(f"unknown source_role: {source_role}")
 
     def _require_active_session(self, conn, session_id: int) -> None:
         row = conn.execute(

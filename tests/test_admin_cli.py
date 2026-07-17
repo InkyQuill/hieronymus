@@ -35,6 +35,7 @@ def test_admin_json_reports_available_tui_and_counts(tmp_path: Path) -> None:
         "Renderings",
         "Crystals",
         "Lessons",
+        "Short-Term Memory",
         "Short-Term Sessions",
         "Dream Runs",
         "Proposals",

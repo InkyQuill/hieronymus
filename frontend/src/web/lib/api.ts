@@ -137,3 +137,13 @@ export async function runAdminAction(
     body: JSON.stringify(params),
   });
 }
+
+export async function startAdminDreaming(): Promise<{
+  started: boolean;
+  status: string;
+}> {
+  return request("/api/admin/actions/run_manual_dreaming", {
+    method: "POST",
+    body: "{}",
+  });
+}

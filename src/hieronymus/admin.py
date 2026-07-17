@@ -48,6 +48,7 @@ ADMIN_VIEWS = (
     "Renderings",
     "Crystals",
     "Lessons",
+    "Short-Term Memory",
     "Short-Term Sessions",
     "Dream Runs",
     "Proposals",
@@ -59,6 +60,7 @@ ADMIN_VIEW_KEYS = (
     "renderings",
     "crystals",
     "lessons",
+    "short_term_memory",
     "short_term_sessions",
     "dream_runs",
     "proposals",
@@ -777,6 +779,10 @@ class AdminStore:
             )
             conn.commit()
         return ActionResult("short_term_memory", memory_id, "remove", "Short-term memory removed")
+
+    def close_session(self, session_id: int) -> ActionResult:
+        WorkspaceStore(self.config).complete_session(session_id)
+        return ActionResult("task_session", session_id, "complete", "Session closed")
 
     def add_user_correction(
         self,
@@ -1553,6 +1559,8 @@ class AdminStore:
             return self.list_crystals()
         if view == "Lessons":
             return self.list_crystals(crystal_type="lesson")
+        if view == "Short-Term Memory":
+            return self._list_short_term_memory_rows()
         if view == "Short-Term Sessions":
             return self._list_sessions()
         if view == "Dream Runs":
@@ -1632,6 +1640,33 @@ class AdminStore:
                 status=row["status"],
                 scope=row["series_slug"],
                 language_pair=_language_pair(row),
+            )
+            for row in rows
+        ]
+
+    def _list_short_term_memory_rows(self) -> list[AdminRow]:
+        with connect(self.config.database_path) as conn:
+            rows = conn.execute(
+                """
+                select
+                  m.*, s.series_slug, s.source_language, s.target_language,
+                  s.status as session_status
+                from short_term_memories as m
+                join task_sessions as s on s.id = m.session_id
+                where m.archived_at is null
+                order by m.id desc
+                limit 500
+                """
+            ).fetchall()
+        return [
+            AdminRow(
+                id=int(row["id"]),
+                kind=row["kind"],
+                label=_excerpt(row["text"]),
+                status=row["session_status"],
+                scope=f"session:{row['session_id']}",
+                language_pair=_language_pair(row),
+                quality_label=row["source_role"],
             )
             for row in rows
         ]
@@ -1816,6 +1851,8 @@ class AdminStore:
             return self._concept_detail(int(selected.id))
         if view == "Renderings":
             return self._strict_term_detail(int(selected.id))
+        if view == "Short-Term Memory":
+            return self._short_term_memory_detail(int(selected.id))
         if view == "Short-Term Sessions":
             return self._session_detail(int(selected.id))
         if view == "Dream Runs":
@@ -1902,6 +1939,35 @@ class AdminStore:
                 ("Series", row["series_slug"]),
                 ("Language", _language_pair(row)),
                 ("Cycle", str(row["cycle_id"] or "")),
+            ),
+        )
+
+    def _short_term_memory_detail(self, memory_id: int) -> AdminDetail:
+        with connect(self.config.database_path) as conn:
+            row = conn.execute(
+                """
+                select
+                  m.*, s.series_slug, s.source_language, s.target_language,
+                  s.status as session_status
+                from short_term_memories as m
+                join task_sessions as s on s.id = m.session_id
+                where m.id = ? and m.archived_at is null
+                """,
+                (memory_id,),
+            ).fetchone()
+        if row is None:
+            return AdminDetail(title="Missing short-term memory", subtitle="", body="")
+        return AdminDetail(
+            title=_excerpt(row["text"]),
+            subtitle=f"{row['kind']} / session {row['session_status']}",
+            body=row["text"],
+            fields=(
+                ("Session", str(row["session_id"])),
+                ("Source role", row["source_role"]),
+                ("Source reference", row["source_ref"]),
+                ("Series", row["series_slug"]),
+                ("Language", _language_pair(row)),
+                ("Created", row["created_at"]),
             ),
         )
 
