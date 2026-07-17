@@ -369,6 +369,7 @@ _ADMIN_ACTION_METHODS = {
     "decay_concept": "decay_concept",
     "archive_concept": "archive_concept",
     "remove_short_term_memory": "remove_short_term_memory",
+    "close_session": "close_session",
     "run_manual_dreaming": "run_manual_dreaming",
 }
 

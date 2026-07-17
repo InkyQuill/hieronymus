@@ -19,7 +19,8 @@
     | "reinforce_concept"
     | "decay_concept"
     | "archive_concept"
-    | "remove_short_term_memory";
+    | "remove_short_term_memory"
+    | "close_session";
 
   let { dashboard, onNotice }: Props = $props();
 
@@ -27,13 +28,14 @@
     Crystals: ["reinforce_crystal", "decay_crystal", "deprecate_crystal", "delete_crystal"],
     Proposals: ["approve_proposal", "reject_proposal"],
     Concepts: ["reinforce_concept", "decay_concept", "archive_concept"],
-    "Short-Term Sessions": ["remove_short_term_memory"],
+    "Short-Term Sessions": ["close_session"],
   };
   const destructiveActions = new Set<Action>([
     "deprecate_crystal",
     "delete_crystal",
     "archive_concept",
     "remove_short_term_memory",
+    "close_session",
   ]);
   const actionLabels: Record<Action, string> = {
     reinforce_crystal: "Reinforce",
@@ -46,6 +48,7 @@
     decay_concept: "Decay",
     archive_concept: "Archive",
     remove_short_term_memory: "Remove",
+    close_session: "Close session",
   };
 
   const defaultView = $derived(

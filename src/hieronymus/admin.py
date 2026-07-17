@@ -780,6 +780,10 @@ class AdminStore:
             conn.commit()
         return ActionResult("short_term_memory", memory_id, "remove", "Short-term memory removed")
 
+    def close_session(self, session_id: int) -> ActionResult:
+        WorkspaceStore(self.config).complete_session(session_id)
+        return ActionResult("task_session", session_id, "complete", "Session closed")
+
     def add_user_correction(
         self,
         *,

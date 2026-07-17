@@ -267,7 +267,7 @@ class WorkspaceStore:
             cycle_id=row["cycle_id"],
         )
 
-    def complete_session(self, session_id: int) -> None:
+    def complete_session(self, session_id: int) -> bool:
         with connect(self.config.database_path) as conn:
             cursor = conn.execute(
                 """
@@ -279,8 +279,14 @@ class WorkspaceStore:
                 (_now(), session_id),
             )
             if cursor.rowcount == 0:
-                raise KeyError(f"unknown session: {session_id}")
+                exists = conn.execute(
+                    "select 1 from task_sessions where id = ?", (session_id,)
+                ).fetchone()
+                if exists is None:
+                    raise KeyError(f"unknown session: {session_id}")
+                return False
             conn.commit()
+        return True
 
     def complete_inactive_sessions(self, cutoff) -> tuple[int, ...]:
         with connect(self.config.database_path) as conn:
