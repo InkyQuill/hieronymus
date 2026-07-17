@@ -16,7 +16,8 @@ body {
 
 main {
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 100dvh;
 }
 
@@ -26,6 +27,19 @@ main {
   flex-direction: column;
   padding: var(--space-2xl);
 }
+
+.topbar {
+  align-items: center;
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border-default);
+  display: flex;
+  gap: var(--space-2xl);
+  padding: var(--space-md) var(--space-4xl);
+}
+.topbar .brand { color: var(--color-text-primary); font: var(--text-display); font-size: 20px; margin-right: auto; text-decoration: none; }
+.topbar nav { display: flex; gap: var(--space-lg); }
+.topbar nav a { color: var(--color-text-secondary); font: var(--text-body-sm); text-decoration: none; }
+.topbar nav a.active { color: var(--color-accent-text); }
 
 .sidebar h1 {
   font: var(--text-display);
@@ -191,9 +205,11 @@ main {
 }
 @media (max-width: 720px) {
   main {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
+  .topbar { gap: var(--space-md); padding: var(--space-md) var(--space-lg); }
+  .topbar .brand { font-size: 18px; }
+  .topbar nav { gap: var(--space-md); }
   .sidebar {
     padding: var(--space-lg);
   }

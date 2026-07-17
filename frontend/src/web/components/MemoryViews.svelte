@@ -51,8 +51,11 @@
     close_session: "Close session",
   };
 
+  const requestedView = new URLSearchParams(window.location.search).get("view") ?? "";
   const defaultView = $derived(
-    dashboard.views.includes("Crystals") ? "Crystals" : (dashboard.views[0] ?? ""),
+    dashboard.views.includes(requestedView)
+      ? requestedView
+      : dashboard.views.includes("Crystals") ? "Crystals" : (dashboard.views[0] ?? ""),
   );
   let selectedView = $state("");
   let snapshot = $state.raw<AdminSnapshot["snapshot"] | null>(null);

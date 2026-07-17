@@ -31,9 +31,62 @@
   margin-top: var(--space-xs);
   text-transform: uppercase;
 }
+.stat-card {
+  color: inherit;
+  display: block;
+  text-decoration: none;
+  transition: border-color var(--duration-fast) var(--ease-smooth), transform var(--duration-fast) var(--ease-smooth);
+}
+.stat-card:hover {
+  border-color: var(--color-accent);
+  transform: translateY(-1px);
+}
 .status-card {
   margin-top: var(--space-lg);
 }
+.workflow-card {
+  margin-top: var(--space-lg);
+}
+.workflow-heading {
+  align-items: baseline;
+  display: flex;
+  gap: var(--space-md);
+  justify-content: space-between;
+}
+.workflow-heading h3 {
+  font: var(--text-h3);
+  margin: 0;
+}
+.workflow-heading span,
+.workflow-detail {
+  color: var(--color-text-secondary);
+  font: var(--text-caption);
+}
+.workflow-line {
+  display: grid;
+  gap: var(--space-sm);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  list-style: none;
+  margin: var(--space-lg) 0 0;
+  padding: 0;
+}
+.workflow-line li {
+  color: var(--color-text-tertiary);
+  font: var(--text-caption);
+  min-width: 0;
+}
+.workflow-marker {
+  background: var(--color-border-default);
+  display: block;
+  height: 3px;
+  margin-bottom: var(--space-sm);
+  width: 100%;
+}
+.workflow-line li.complete { color: var(--color-text-secondary); }
+.workflow-line li.complete .workflow-marker { background: var(--color-accent); }
+.workflow-line li.active { color: var(--color-accent-text); }
+.workflow-line li.active .workflow-marker { background: var(--color-accent-text); height: 5px; }
+.workflow-detail { margin: var(--space-md) 0 0; text-transform: capitalize; }
 .status-card h3 {
   font: var(--text-h3);
   margin: 0 0 var(--space-md);
@@ -296,6 +349,7 @@ button:disabled,
   margin-right: var(--space-xl);
   min-height: 44px;
   padding: var(--space-sm) 0;
+  text-decoration: none;
 }
 .tab-btn:hover {
   color: var(--color-text-primary);
@@ -303,6 +357,10 @@ button:disabled,
 .tab-btn.active {
   border-bottom-color: var(--color-accent);
   color: var(--color-accent-text);
+}
+
+@media (max-width: 720px) {
+  .workflow-line { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .editor-backdrop {

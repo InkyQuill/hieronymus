@@ -191,29 +191,22 @@
 </script>
 
 <main>
-  <aside class="sidebar">
-    <h1>Hieronymus</h1>
-    <p>{section === "admin" || section === "memory" ? "local administration" : "local configuration"}</p>
+  <header class="topbar">
+    <a class="brand" href="/admin">Hieronymus</a>
     <nav aria-label="Primary navigation">
       <a class:active={section === "admin"} href="/admin">Overview</a>
-      <a class:active={section === "memory"} href="/admin/memory">Memory views</a>
-      <a class:active={section === "providers"} href="/config">Providers</a>
-      <a class:active={section === "dreaming"} href="/config/dreaming">Dreaming</a>
-      <a class:active={section === "ingest"} href="/config/ingest">Ingest</a>
-      <a class:active={section === "release"} href="/config/release">Release</a>
+      <a class:active={section === "memory"} href="/admin/memory">Memory</a>
+      <a class:active={!(section === "admin" || section === "memory")} href="/config">Config</a>
     </nav>
-    <footer>
-      All data is local.<br />No cloud. No tracking.
-      <button class="theme-toggle" aria-label={themeToggle.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onclick={themeToggle.toggle}>
+    <button class="theme-toggle" aria-label={themeToggle.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onclick={themeToggle.toggle}>
         {#if themeToggle.theme === "dark"}
           <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1Zm0 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0 10a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1Zm-6.36-1.05a1 1 0 0 1 1.41 0l.71.71a1 1 0 0 1-1.42 1.41l-.7-.7a1 1 0 0 1 0-1.42Zm10.61 0a1 1 0 0 1 1.42 1.42l-.71.7a1 1 0 0 1-1.41-1.41l.7-.71ZM3 9h1a1 1 0 1 1 0 2H3a1 1 0 1 1 0-2Zm13 0h1a1 1 0 1 1 0 2h-1a1 1 0 1 1 0-2ZM4.34 3.64a1 1 0 0 1 1.41 0l.71.7a1 1 0 1 1-1.42 1.42l-.7-.71a1 1 0 0 1 0-1.41Zm10.61 0a1 1 0 0 1 0 1.41l-.7.71a1 1 0 1 1-1.42-1.42l.71-.7a1 1 0 0 1 1.41 0Z" /></svg>
         {:else}
           <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor"><path d="M17.29 13.29A8 8 0 0 1 6.71 2.71a8 8 0 1 0 10.58 10.58Z" /></svg>
         {/if}
         {themeToggle.theme === "dark" ? "Light" : "Dark"}
-      </button>
-    </footer>
-  </aside>
+    </button>
+  </header>
   <section class="workspace">
     {#if section === "admin" && adminDashboard}
       <AdminDashboard dashboard={adminDashboard} {error} onDream={runDreaming} />
@@ -221,6 +214,7 @@
       <MemoryViews dashboard={adminDashboard} onNotice={({ message, tone }) => showNotice(message, tone)} />
     {:else if section === "providers"}
       <div class="settings settings-page">
+        <nav class="view-tabs" aria-label="Configuration sections"><a class="tab-btn active" href="/config">Providers</a><a class="tab-btn" href="/config/dreaming">Dreaming</a><a class="tab-btn" href="/config/ingest">Ingest</a><a class="tab-btn" href="/config/release">Release</a></nav>
         <header class="page-header">
           <div><h2>Providers</h2><p>Manage model-provider profiles for hosted and local models.</p></div>
           <button class="btn-primary" onclick={() => { createOpen = true; selected = null; models = []; }}>New provider</button>
@@ -235,10 +229,22 @@
         {/if}
       </div>
     {:else if section === "dreaming" && dreamSettings}
-      {#key "dreaming"}<DreamingEditor initial={dreamSettings} providers={dreamProviders} {modelCache} {busy} {error} onSave={saveDream} />{/key}
+      <nav class="view-tabs" aria-label="Configuration sections"><a class="tab-btn" href="/config">Providers</a><a class="tab-btn active" href="/config/dreaming">Dreaming</a><a class="tab-btn" href="/config/ingest">Ingest</a><a class="tab-btn" href="/config/release">Release</a></nav>{#key "dreaming"}<DreamingEditor initial={dreamSettings} providers={dreamProviders} {modelCache} {busy} {error} onSave={saveDream} />{/key}
     {:else if section === "ingest" && ingestSettings}
+      <nav class="view-tabs" aria-label="Configuration sections">
+        <a class="tab-btn" href="/config">Providers</a>
+        <a class="tab-btn" href="/config/dreaming">Dreaming</a>
+        <a class="tab-btn active" href="/config/ingest">Ingest</a>
+        <a class="tab-btn" href="/config/release">Release</a>
+      </nav>
       {#key "ingest"}<IngestEditor initial={ingestSettings} {busy} {error} onSave={saveIngest} />{/key}
     {:else if section === "release" && releaseSettings}
+      <nav class="view-tabs" aria-label="Configuration sections">
+        <a class="tab-btn" href="/config">Providers</a>
+        <a class="tab-btn" href="/config/dreaming">Dreaming</a>
+        <a class="tab-btn" href="/config/ingest">Ingest</a>
+        <a class="tab-btn active" href="/config/release">Release</a>
+      </nav>
       {#key "release"}<ReleaseEditor initial={releaseSettings} {busy} {error} onSave={saveRelease} />{/key}
     {:else if error}<p class="error-msg">{error}</p>
     {:else}<p class="loading">Loading settings…</p>{/if}
