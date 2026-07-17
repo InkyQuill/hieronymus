@@ -7,6 +7,7 @@
   import ProviderEditor from "./components/ProviderEditor.svelte";
   import ReleaseEditor from "./components/ReleaseEditor.svelte";
   import Toast from "./components/Toast.svelte";
+  import { createThemeToggle } from "./lib/theme.svelte";
   import {
     deleteProvider,
     checkProvider,
@@ -56,6 +57,7 @@
   let releaseSettings = $state.raw<ReleaseSettings | null>(null);
   let adminDashboard = $state.raw<AdminDashboardPayload | null>(null);
   let notice = $state.raw<{ message: string; tone: "success" | "error" } | null>(null);
+  const themeToggle = createThemeToggle();
 
   function showNotice(message: string, tone: "success" | "error" = "success") {
     notice = { message, tone };
@@ -168,25 +170,58 @@
 </script>
 
 <main>
-  <aside class="sidebar"><h1>Hieronymus</h1><p>{section === "admin" || section === "memory" ? "local administration" : "local configuration"}</p><nav><a class:active={section === "admin"} href="/admin">Overview</a><a class:active={section === "memory"} href="/admin/memory">Memory views</a><a class:active={section === "providers"} href="/config">Providers</a><a class:active={section === "dreaming"} href="/config/dreaming">Dreaming</a><a class:active={section === "ingest"} href="/config/ingest">Ingest</a><a class:active={section === "release"} href="/config/release">Release</a></nav><footer>All data is local.<br />No cloud. No tracking.</footer></aside>
-  <section class="content">
+  <aside class="sidebar">
+    <h1>Hieronymus</h1>
+    <p>{section === "admin" || section === "memory" ? "local administration" : "local configuration"}</p>
+    <nav aria-label="Primary navigation">
+      <a class:active={section === "admin"} href="/admin">Overview</a>
+      <a class:active={section === "memory"} href="/admin/memory">Memory views</a>
+      <a class:active={section === "providers"} href="/config">Providers</a>
+      <a class:active={section === "dreaming"} href="/config/dreaming">Dreaming</a>
+      <a class:active={section === "ingest"} href="/config/ingest">Ingest</a>
+      <a class:active={section === "release"} href="/config/release">Release</a>
+    </nav>
+    <footer>
+      All data is local.<br />No cloud. No tracking.
+      <button class="theme-toggle" aria-label={themeToggle.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onclick={themeToggle.toggle}>
+        {#if themeToggle.theme === "dark"}
+          <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1Zm0 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0 10a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1Zm-6.36-1.05a1 1 0 0 1 1.41 0l.71.71a1 1 0 0 1-1.42 1.41l-.7-.7a1 1 0 0 1 0-1.42Zm10.61 0a1 1 0 0 1 1.42 1.42l-.71.7a1 1 0 0 1-1.41-1.41l.7-.71ZM3 9h1a1 1 0 1 1 0 2H3a1 1 0 1 1 0-2Zm13 0h1a1 1 0 1 1 0 2h-1a1 1 0 1 1 0-2ZM4.34 3.64a1 1 0 0 1 1.41 0l.71.7a1 1 0 1 1-1.42 1.42l-.7-.71a1 1 0 0 1 0-1.41Zm10.61 0a1 1 0 0 1 0 1.41l-.7.71a1 1 0 1 1-1.42-1.42l.71-.7a1 1 0 0 1 1.41 0Z" /></svg>
+        {:else}
+          <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor"><path d="M17.29 13.29A8 8 0 0 1 6.71 2.71a8 8 0 1 0 10.58 10.58Z" /></svg>
+        {/if}
+        {themeToggle.theme === "dark" ? "Light" : "Dark"}
+      </button>
+    </footer>
+  </aside>
+  <section class="workspace">
     {#if section === "admin" && adminDashboard}
       <AdminDashboard dashboard={adminDashboard} {error} />
     {:else if section === "memory" && adminDashboard}
       <MemoryViews dashboard={adminDashboard} onNotice={({ message, tone }) => showNotice(message, tone)} />
     {:else if section === "providers"}
-      <header class="page-header"><div><h2>Providers</h2><p>Manage custom model-provider profiles.</p></div><button class="primary" onclick={() => { createOpen = true; selected = null; models = []; }}>New provider</button></header>
-      {#if error}<p class="error">{error}</p>{/if}
-      {#if busy && providers.length === 0}<p>Loading profiles…</p>{:else if providers.length === 0}<div class="empty"><h3>No provider profiles yet</h3><p>Create a profile for OpenAI, DeepSeek, Z.ai, or any compatible endpoint.</p></div>{:else}<table><thead><tr><th>Display name</th><th>Type</th><th>Endpoint</th><th>Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class:selected={selected?.id === provider.id} onclick={() => { selected = provider; createOpen = false; models = []; }}><td>{provider.name}</td><td>{provider.type}</td><td>{provider.url}</td><td>{provider.key_configured ? "Configured" : "Missing"}</td></tr>{/each}</tbody></table>{/if}
+      <div class="settings settings-page">
+        <header class="page-header">
+          <div><h2>Providers</h2><p>Manage model-provider profiles for hosted and local models.</p></div>
+          <button class="btn-primary" onclick={() => { createOpen = true; selected = null; models = []; }}>New provider</button>
+        </header>
+        {#if error}<p class="error-msg">{error}</p>{/if}
+        {#if busy && providers.length === 0}
+          <p class="loading">Loading profiles…</p>
+        {:else if providers.length === 0}
+          <div class="table-wrap"><table><tbody><tr><td class="empty-cell">No provider profiles yet. Create one to connect an LLM.</td></tr></tbody></table></div>
+        {:else}
+          <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Type</th><th>Endpoint</th><th>Key</th></tr></thead><tbody>{#each providers as provider (provider.id)}<tr class:selected={selected?.id === provider.id} role="button" tabindex="0" onclick={() => { selected = provider; createOpen = false; models = []; }} onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") { selected = provider; createOpen = false; models = []; } }}><td>{provider.name}</td><td>{provider.type}</td><td>{provider.url}</td><td>{provider.key_configured ? "Configured" : "Missing"}</td></tr>{/each}</tbody></table></div>
+        {/if}
+      </div>
     {:else if section === "dreaming" && dreamSettings}
       {#key "dreaming"}<DreamingEditor initial={dreamSettings} providers={dreamProviders} {modelCache} {busy} {error} onSave={saveDream} />{/key}
     {:else if section === "ingest" && ingestSettings}
       {#key "ingest"}<IngestEditor initial={ingestSettings} {busy} {error} onSave={saveIngest} />{/key}
     {:else if section === "release" && releaseSettings}
       {#key "release"}<ReleaseEditor initial={releaseSettings} {busy} {error} onSave={saveRelease} />{/key}
-    {:else if error}<p class="error">{error}</p>
-    {:else}<p>Loading settings…</p>{/if}
+    {:else if error}<p class="error-msg">{error}</p>
+    {:else}<p class="loading">Loading settings…</p>{/if}
   </section>
-  {#if section === "providers" && (selected || createOpen)}{#key selected?.id ?? "new"}<ProviderEditor provider={selected} {models} {busy} {error} onSave={save} onDelete={remove} onCheck={check} onRefreshModels={refresh} onClose={() => { selected = null; createOpen = false; error = ""; }} />{/key}{/if}
+  {#if section === "providers" && (selected || createOpen)}{#key selected?.id ?? "new"}<div class="editor-backdrop" onclick={() => { selected = null; createOpen = false; error = ""; }} role="presentation"></div><ProviderEditor provider={selected} {models} {busy} {error} onSave={save} onDelete={remove} onCheck={check} onRefreshModels={refresh} onClose={() => { selected = null; createOpen = false; error = ""; }} />{/key}{/if}
   {#if notice}<Toast message={notice.message} tone={notice.tone} onDismiss={() => { notice = null; }} />{/if}
 </main>
