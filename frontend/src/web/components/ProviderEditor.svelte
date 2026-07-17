@@ -46,7 +46,7 @@
   function submit() { onSave(draft); }
 </script>
 
-<aside class="editor-panel" aria-label="Provider editor" role="dialog" aria-modal="true">
+<div class="editor-panel" aria-label="Provider editor" role="dialog" aria-modal="true">
   <header><h2>{provider ? `Edit ${provider.name}` : "New provider"}</h2><button class="btn-icon" aria-label="Close editor" onclick={onClose}>&times;</button></header>
   <form onsubmit={(event) => { event.preventDefault(); submit(); }}>
     <label>Profile ID<input bind:value={draft.id} disabled={provider !== null} required pattern="[A-Za-z0-9_-]+" /></label>
@@ -59,4 +59,4 @@
     <div class="editor-footer"><button class="btn-primary" disabled={busy}>Save profile</button>{#if provider}<button class="btn-secondary" type="button" onclick={onCheck} disabled={busy}>Check connection</button><button class="btn-secondary" type="button" onclick={onRefreshModels} disabled={busy}>Refresh models</button>{/if}</div>
   </form>
   {#if provider}<section class="models-section"><h3>Discovered models</h3>{#if models.length}<ul>{#each models as model (model)}<li>{model}</li>{/each}</ul>{:else}<p>No cached models. Refresh after testing the connection.</p>{/if}</section><button class="btn-danger" onclick={onDelete} disabled={busy}>Delete provider</button>{/if}
-</aside>
+</div>
