@@ -28,11 +28,19 @@ Continue with further batches until every important detail is covered. There is 
 judgment tool; use the skill workflow plus `hieronymus_rag_import` and
 `hieronymus_short_term_add_batch`.
 
+`source_role` is optional freeform provenance metadata. Omit it for ordinary agent conclusions
+(the MCP tool defaults it to `agent`), or use a label such as `user`, `reviewer`, or
+`source-text`. It never decides the crystal type or confidence; dreaming uses evidence,
+`source_credibility`, and `rule_intent` instead.
+
 ## Learn
 
 Use Learn when the user asks the agent to absorb, study, ingest, import, or learn material. Split the
 source into observed facts or compact blocks, record source credibility, and attach language tags,
 story scopes, and semantic tags before writing short-term memory.
+
+Use an optional freeform `source_role` only when its provenance is helpful to audit later; it does
+not classify the memory for dreaming.
 
 Learn must not create long-term crystals directly. Dreaming is the path from learned short-term
 memory to lessons, erudition, concept/facet updates, and rule crystals. There is no supported Learn

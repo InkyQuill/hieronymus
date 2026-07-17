@@ -36,16 +36,6 @@ _MIN_NORMALIZED_CONFIDENCE = 0.05
 STRENGTH_DECAY_PER_CYCLE = 0.03
 CONFIDENCE_DECAY_AFTER_STRENGTH_BELOW = 0.20
 CONFIDENCE_DECAY_PER_CYCLE = 0.01
-_ROLE_TYPES = {
-    "user": "lesson",
-    "mentor": "erudition",
-    "mundane": "concept",
-}
-_ROLE_CONFIDENCE = {
-    "user": 0.9,
-    "mentor": 0.75,
-    "mundane": 0.6,
-}
 _SENTENCE_RE = re.compile(r"[^.!?。！？]+[.!?。！？]?")
 _MAX_SKIPPED_CANDIDATE_RECORDS = 2
 _INVALID_PASSIVE_EVENT_WHERE = """
@@ -3684,13 +3674,14 @@ def _title_from_kind(kind: str) -> str:
 def _crystal_type_for_short_memory(memory: ShortTermMemoryRecord) -> str | None:
     if memory.source_credibility == "user_rule" or memory.rule_intent.strip():
         return "rule"
-    return _ROLE_TYPES.get(memory.source_role)
+    return "concept"
 
 
 def _confidence_for_short_memory(memory: ShortTermMemoryRecord) -> float:
-    if memory.source_credibility in SOURCE_CREDIBILITY_CONFIDENCE:
-        return SOURCE_CREDIBILITY_CONFIDENCE[memory.source_credibility]
-    return _ROLE_CONFIDENCE[memory.source_role]
+    return SOURCE_CREDIBILITY_CONFIDENCE.get(
+        memory.source_credibility,
+        SOURCE_CREDIBILITY_CONFIDENCE["observation"],
+    )
 
 
 def _normalized_output_count(output: _NormalizedDreamOutput) -> int:

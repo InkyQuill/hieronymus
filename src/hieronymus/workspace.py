@@ -16,7 +16,6 @@ from hieronymus.memory_models import (
 )
 from hieronymus.short_memory import validate_short_memory_text
 
-_SOURCE_ROLES = frozenset({"mundane", "mentor", "user", "system"})
 _MAX_SHORT_TERM_MEMORIES_PER_BATCH = 500
 
 
@@ -406,8 +405,8 @@ class WorkspaceStore:
         *,
         short_memory_limits,
     ) -> dict[str, object]:
-        source_role = _batch_item_string(item, "source_role")
-        self._validate_source_role(source_role)
+        source_role = _batch_item_string(item, "source_role", "agent").strip()
+        _require_non_empty(source_role, "source_role")
         kind = _batch_item_string(item, "kind")
         _require_non_empty(kind, "kind")
         text = _batch_item_string(item, "text").strip()
@@ -503,10 +502,6 @@ class WorkspaceStore:
                 (expression, session_id, limit),
             ).fetchall()
             return [short_memory_from_row(conn, row) for row in rows]
-
-    def _validate_source_role(self, source_role: str) -> None:
-        if source_role not in _SOURCE_ROLES:
-            raise ValueError(f"unknown source_role: {source_role}")
 
     def _require_active_session(self, conn, session_id: int) -> None:
         row = conn.execute(

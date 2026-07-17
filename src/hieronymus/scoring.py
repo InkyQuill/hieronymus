@@ -18,7 +18,6 @@ PASSIVE_EVENT_DELTAS = {
     "superseded": (-0.12, -0.05),
 }
 
-_ALLOWED_SOURCE_ROLES = frozenset({"mundane", "mentor", "user", "system"})
 _ARCHIVE_STRENGTH_THRESHOLD = 0.05
 
 
@@ -61,7 +60,6 @@ class FeedbackStore:
         evidence: str = "",
         session_id: int | None = None,
     ) -> int:
-        self._validate_source_role(source_role)
         strength_delta, confidence_delta = self._event_delta(event_type)
         is_immediate = event_type in IMMEDIATE_EVENT_DELTAS
         now = _now()
@@ -147,10 +145,6 @@ class FeedbackStore:
             conn.commit()
 
         return event_id
-
-    def _validate_source_role(self, source_role: str) -> None:
-        if source_role not in _ALLOWED_SOURCE_ROLES:
-            raise ValueError(f"unknown source_role: {source_role}")
 
     def _event_delta(self, event_type: str) -> tuple[float, float]:
         if event_type in IMMEDIATE_EVENT_DELTAS:

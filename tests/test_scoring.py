@@ -221,7 +221,9 @@ def test_apply_score_delta_archives_zero_confidence_non_rule_but_not_active_rule
     ) == (0.0, 0.0, "active")
 
 
-def test_unknown_event_type_and_role_raise_value_error(config: HieronymusConfig) -> None:
+def test_unknown_event_type_raises_but_feedback_source_role_is_freeform(
+    config: HieronymusConfig,
+) -> None:
     crystal_id = _add_crystal(config)
     feedback = FeedbackStore(config)
 
@@ -231,12 +233,14 @@ def test_unknown_event_type_and_role_raise_value_error(config: HieronymusConfig)
             event_type="praised",
             source_role="user",
         )
-    with pytest.raises(ValueError, match="source_role"):
+    assert (
         feedback.record(
             crystal_id=crystal_id,
             event_type="confirmed_by_user",
-            source_role="editor",
+            source_role="editorial-review",
         )
+        > 0
+    )
 
 
 def test_unknown_crystal_raises_key_error(config: HieronymusConfig) -> None:

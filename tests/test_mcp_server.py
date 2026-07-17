@@ -358,13 +358,14 @@ def test_mcp_session_memory_complete_and_dream_happy_path(monkeypatch, tmp_path)
 
     added = mcp_server.hieronymus_short_term_add(
         started["session_id"],
-        source_role="user",
         kind="correction",
         text="Use Sense as a game-system term.",
         source_ref="chapter-2",
         metadata={"line": 12},
     )
     assert added == {"memory_id": 1}
+    memory = WorkspaceStore(load_config()).list_short_term_memories(started["session_id"])[0]
+    assert memory.source_role == "agent"
 
     completed = mcp_server.hieronymus_session_complete(started["session_id"])
     assert completed == {"session_id": 1, "completed": True}

@@ -105,7 +105,7 @@ def test_dreaming_crystallizes_completed_short_term_memory(config: HieronymusCon
         sources = conn.execute("select * from crystal_sources").fetchall()
 
     assert run.status == "completed"
-    assert crystal["crystal_type"] == "lesson"
+    assert crystal["crystal_type"] == "concept"
     assert crystal["title"] == "Correction"
     assert crystal["text"] == "Use Сенс, not Чувство, for Sense in UI references."
     assert sources[0]["short_term_memory_id"] == memory_id
@@ -882,11 +882,20 @@ def test_dreaming_rejects_concept_proposal_with_non_string_variant(
     assert session_row["cycle_id"] is None
 
 
-def test_deterministic_provider_maps_roles_to_crystal_types(config: HieronymusConfig) -> None:
+def test_deterministic_provider_uses_credibility_not_source_role_for_crystal_type(
+    config: HieronymusConfig,
+) -> None:
     context = _context(config)
     workspace = WorkspaceStore(config)
     session = workspace.start_session(context)
-    user_id = workspace.add_short_term_memory(session.id, "user", "correction", "User lesson.")
+    user_id = workspace.add_short_term_memory(
+        session.id,
+        "editorial-review",
+        "correction",
+        "User lesson.",
+        source_credibility="user_rule",
+        rule_intent="correction",
+    )
     mentor_id = workspace.add_short_term_memory(session.id, "mentor", "note", "Mentor lore.")
     mundane_id = workspace.add_short_term_memory(session.id, "mundane", "tm", "Mundane term.")
     system_id = workspace.add_short_term_memory(session.id, "system", "trace", "System trace.")
@@ -897,11 +906,11 @@ def test_deterministic_provider_maps_roles_to_crystal_types(config: HieronymusCo
     assert [
         (candidate.crystal_type, candidate.source_memory_ids) for candidate in output.crystals
     ] == [
-        ("lesson", [user_id]),
-        ("erudition", [mentor_id]),
+        ("rule", [user_id]),
+        ("concept", [mentor_id]),
         ("concept", [mundane_id]),
+        ("concept", [system_id]),
     ]
-    assert all(system_id not in candidate.source_memory_ids for candidate in output.crystals)
 
 
 def test_dreaming_inserts_strict_concept_proposals_from_provider_output(
