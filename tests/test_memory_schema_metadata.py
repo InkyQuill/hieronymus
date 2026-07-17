@@ -22,6 +22,9 @@ EXPECTED_METADATA_TABLES = {
 
 
 EXPECTED_COMPATIBILITY_COLUMNS = {
+    "task_sessions": {
+        "last_activity_at",
+    },
     "concept_facets": {
         "is_canonical",
         "superseded_at",
@@ -67,6 +70,11 @@ def test_global_schema_adds_compatibility_columns_without_dropping_rows(tmp_path
         for table, expected_columns in EXPECTED_COMPATIBILITY_COLUMNS.items():
             columns = {row["name"] for row in conn.execute(f"pragma table_info({table})")}
             assert expected_columns <= columns
+
+        activity = conn.execute(
+            "select last_activity_at, created_at from task_sessions"
+        ).fetchone()
+        assert activity["last_activity_at"] == activity["created_at"]
 
         row_counts = {
             table: conn.execute(f"select count(*) from {table}").fetchone()[0]

@@ -60,6 +60,13 @@ def ensure_global_compatibility_columns(conn: sqlite3.Connection) -> None:
     for table, columns in GLOBAL_COMPATIBILITY_COLUMNS.items():
         for column, definition in columns.items():
             ensure_column(conn, table, column, definition)
+    conn.execute(
+        """
+        update task_sessions
+        set last_activity_at = created_at
+        where last_activity_at = ''
+        """
+    )
     conn.commit()
     ensure_concepts_allow_duplicate_names(conn)
     ensure_concept_facet_compatibility(conn)
