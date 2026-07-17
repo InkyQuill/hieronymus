@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { connectAdminEvents } from "./lib/admin-events.svelte";
   import AdminDashboard from "./components/AdminDashboard.svelte";
   import MemoryViews from "./components/MemoryViews.svelte";
   import DreamingEditor from "./components/DreamingEditor.svelte";
@@ -181,7 +182,12 @@
     }
   }
 
-  onMount(loadSection);
+  onMount(() => {
+    void loadSection();
+    return connectAdminEvents(() => {
+      if (section === "admin" || section === "memory") void loadSection();
+    });
+  });
 </script>
 
 <main>
