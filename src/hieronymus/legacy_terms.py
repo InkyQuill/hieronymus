@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from hieronymus.memory_migration import (
     StrictTermConversionBlocked,
+    _validate_retirement_ownership_integrity,
     convert_strict_terms,
 )
 from hieronymus.rule_crystals import parse_rule_crystal
@@ -394,6 +395,22 @@ def check_strict_term_retirement_parity(
             tags_by_term.setdefault(int(tag["term_id"]), set()).add(str(tag["tag"]))
     inactive_audited = _count_matching_inactive_audits(conn, _expected_inactive_audit_json(payload))
 
+    active_ids = tuple(int(term["id"]) for term in active)
+    try:
+        _validate_retirement_ownership_integrity(
+            conn,
+            active_ids,
+            ", ".join(str(term_id) for term_id in active_ids) or "<none>",
+        )
+    except (StrictTermConversionBlocked, sqlite3.DatabaseError):
+        return StrictTermRetirementCoverage(
+            total_terms=len(terms),
+            active_terms=len(active),
+            migrated_terms=migrated_terms,
+            inactive_audited=inactive_audited,
+            blocked_term_ids=active_ids,
+        )
+
     blocked = tuple(
         int(term["id"])
         for term in active
@@ -645,9 +662,9 @@ def _is_owned_target(
             """
             select 1 from strict_term_retirement_ownership
             where source_table = 'strict_terms' and source_id = ?
-              and object_type = ? and object_key = ?
+              and object_type = ? and object_id = ?
             """,
-            (source_id, object_type, str(object_id)),
+            (source_id, object_type, object_id),
         ).fetchone()
         is not None
     )

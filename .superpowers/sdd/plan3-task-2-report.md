@@ -31,6 +31,9 @@ SQL-only ordered runner, `DROP_PHASE_ENABLED` is false, and the legacy tables re
 | user tags/languages/links | shared graph safety | preserved while owned projection converges |
 | directory symlink swap / renamed backup | descriptor and identity pinning | rejected safely |
 | incomplete inactive-audit schema | pre-mutation validation | inactive term IDs reported |
+| cross-term/spoofed ownership | deletion authorization | blocks all active IDs before mutation |
+| two-ledger shared facet | exclusive deletion proof | stale edge released; facet/reference preserved |
+| missing owned relationship | ownership integrity and parity | blocks; coverage remains incomplete |
 
 RED was established with `uv run pytest tests/test_strict_term_retirement.py -q`:
 collection failed with `ModuleNotFoundError: No module named 'hieronymus.legacy_terms'`.
@@ -45,6 +48,12 @@ The rereview established a third RED run: 9/30 focused tests failed on unowned t
 user-relationship deletion, audit mutation, backup identity/symlink races, relationship schema
 diagnostics, and ledger uniqueness. After ownership and descriptor-pinning remediation, the
 focused retirement suite passes 32/32.
+
+The acceptance review established a fourth RED run: both new critical regressions failed. A
+cross-term relationship row selected another term's tag for deletion and stale cleanup deleted a
+facet still targeted by another ledger. Relationship provenance is now structured rather than
+JSON-encoded, the complete ownership graph is validated before retirement writes, and focused
+retirement/ownership/graph verification passes 77/77.
 
 ## Backup format and durability
 
@@ -81,16 +90,22 @@ crystal, and audit counts unchanged. The injected failure occurs after the first
 written its graph; rollback leaves all graph and ledger counts at zero while the verified
 two-term backup remains readable.
 
-Rerun reconciliation is an ownership-bounded strict-term projection. Migration-private tables
-record provenance separately for created concepts/facets/crystals and for semantic tags,
-language tags, and crystal-concept links. Ledger and natural matches without an ownership record
-are treated as adopted/user data: they are preserved and the ledger is repointed to a dedicated
-owned node. Only marked nodes and marked relationships may be updated or deleted. User-added
-tags, language tags, and concept links remain intact while obsolete migration-owned values are
-removed. Parity requires ledger targets to match owned nodes and verifies required projection
-values as subsets of the shared relationship tables. Inactive audit events are append-only: an
-exact prior snapshot is reused; changed or malformed history is preserved and a corrected event
-is appended.
+Rerun reconciliation is an ownership-bounded strict-term projection. Migration-private object
+provenance uses typed object IDs; relationship provenance stores structured owner type/ID,
+related type/ID, and value columns rather than executable opaque keys. Before any retirement
+mutation, integrity validation proves canonical source IDs, term binding, ledger identity, owned
+foreign targets, facet-to-concept membership, and exact relationship existence. Any malformed,
+missing, spoofed, or cross-term edge blocks every affected active term; parity independently runs
+the same audit and cannot report complete against corrupt ownership metadata.
+
+Ledger and natural matches without valid ownership are adopted/user data: they are preserved and
+the ledger is repointed to a dedicated owned node. Tag and language deletion requires the exact
+structured edge, its actual relationship, and its current migration-owned node. Stale facet
+deletion additionally requires exclusive ownership: no other ledger/ownership/current projection,
+source crystal, user language tag, story scope, or semantic tag may reference it. Otherwise only
+the stale ledger and ownership metadata are released, leaving every external target resolvable.
+Inactive audit events remain append-only: an exact snapshot is reused; changed or malformed
+history is preserved and a corrected event is appended.
 
 `pytest-cov`/`coverage.py` are not project dependencies (`pytest --cov` is unrecognized and
 `python -m coverage` is unavailable), so no synthetic package coverage percentage is
@@ -106,19 +121,20 @@ SQL migration `0001`; all three legacy tables remain present after preparation.
 
 ## Verification
 
-- `uv run pytest tests/test_strict_term_retirement.py -q` — 32 passed.
-- `uv run pytest` — 1400 passed in 145.07s.
+- `uv run pytest tests/test_strict_term_retirement.py tests/test_memory_graph_migration.py tests/test_memory_schema_metadata.py -q` — 77 passed.
+- `uv run pytest` — 1403 passed in 146.50s.
 - `uv run ruff check .` — passed.
 - `uv run ruff format --check .` — 180 files already formatted.
 - `git diff --check` — passed.
 
 ## Self-review and concerns
 
-Reviewed the complete diff for mutation ordering, transaction ownership, ownership proof before
-every exact graph mutation/deletion, shared relationship preservation, append-only audit history,
-backup identity/checksum scope, descriptor-relative publication, symlink/rename races, errno
-handling, schema diagnostics, alias provenance, and accidental runner activation. The runtime
-still reads legacy tables, so the destructive phase correctly remains unavailable.
+Reviewed the complete diff for mutation ordering, transaction ownership, canonical term binding,
+structured ownership constraints, foreign-target and actual-edge validation, cross-term conflict
+blocking, deletion exclusivity, stranded ledger targets, best-effort graph repair compatibility,
+shared relationship preservation, append-only audit history, backup identity/checksum scope,
+descriptor-relative publication, schema diagnostics, alias provenance, and accidental runner
+activation. The runtime still reads legacy tables, so destructive retirement remains unavailable.
 No implementation blocker remains. Task 3 must remove runtime legacy access before enabling
 or implementing table drops.
 
@@ -127,3 +143,4 @@ or implementing table drops.
 Implementation and verification report: `10bf714 feat: prepare lossless strict term retirement`.
 Reviewer Important findings are fixed in the subsequent dedicated remediation commit.
 Rereview findings are fixed in a separate ownership/backup hardening commit.
+Critical acceptance findings are fixed in a subsequent structured-ownership safety commit.
