@@ -2,12 +2,9 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use hiero_bin::cli::Cli;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
-
-#[derive(Debug, Parser)]
-#[command(name = "hiero", version)]
-struct Cli {}
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -24,6 +21,9 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-async fn run(_cli: Cli) -> Result<()> {
-    Ok(())
+async fn run(cli: Cli) -> Result<()> {
+    anyhow::bail!(
+        "{:?} command execution is not available in the initial CLI schema",
+        cli.execution()
+    )
 }
