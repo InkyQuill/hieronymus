@@ -16,7 +16,9 @@ dependencies = [
   "openai>=2.0.0",
   "pyyaml>=6.0.3",
   "pypdf>=6.0.0",
+  "starlette>=0.47.0,<1",
   "tomli-w>=1.2.0",
+  "uvicorn>=0.40.0,<1",
 ]
 
 [project.scripts]
@@ -27,6 +29,7 @@ hieronymus-mcp = "hieronymus.mcp_server:main"
 
 [dependency-groups]
 dev = [
+  "httpx>=0.28.0,<1",
   "pytest>=8.3.0",
   "python-semantic-release>=10.5.3",
   "ruff>=0.8.0",

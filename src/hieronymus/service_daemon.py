@@ -7,11 +7,13 @@ import threading
 from datetime import UTC, datetime
 from typing import Protocol
 
+import uvicorn
+
 from hieronymus.config import HieronymusConfig, load_config
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.presentation import package_version
+from hieronymus.service_app import build_app
 from hieronymus.service_config import load_service_config
-from hieronymus.service_http import build_server
 from hieronymus.service_state import (
     ServerState,
     remove_server_state,
@@ -95,16 +97,23 @@ def main(argv: list[str] | None = None) -> None:
         data_root=str(config.data_root),
         database_path=str(config.database_path),
     )
-    server = build_server(config, state)
-    state = server.state
+    app = build_app(config, state)
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=state.host,
+            port=state.port,
+            access_log=False,
+        )
+    )
+    app.state.runtime.request_shutdown = lambda: setattr(server, "should_exit", True)
     write_server_state(config, state)
     dream_scheduler = DreamAutostartScheduler(config)
     dream_scheduler.start()
     try:
-        server.serve_forever()
+        server.run()
     finally:
         dream_scheduler.stop()
-        server.server_close()
         remove_server_state(config, expected_state=state)
 
 
