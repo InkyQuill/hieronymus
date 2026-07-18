@@ -39,6 +39,7 @@ from hieronymus.provider_config import (
     load_provider_catalog,
     redacted_provider_catalog_payload,
 )
+from hieronymus.scoring import FeedbackStore
 from hieronymus.service_manager import ServiceManager
 from hieronymus.values import clamp_score as _clamp_score
 from hieronymus.values import utc_now
@@ -189,11 +190,6 @@ ADMIN_COMMANDS = (
         "requires_selection": True,
     },
 )
-_ADMIN_IMMEDIATE_EVENT_DELTAS = {
-    "confirmed_by_user": (0.15, 0.20),
-    "contradicted_by_user": (-0.20, -0.25),
-    "deleted_by_user": (-0.50, -0.35),
-}
 
 
 def admin_view_key(view: str) -> str:
@@ -259,14 +255,12 @@ def _tag_score(candidate_tags: tuple[str, ...], wanted_tags: tuple[str, ...]) ->
     return len(set(candidate_tags).intersection(wanted_tags))
 
 
-_ARCHIVE_STRENGTH_THRESHOLD = 0.05
-
-
 class AdminStore:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
         with connect(self.config.database_path) as conn:
             apply_migration(conn, "global.sql")
+        self._feedback = FeedbackStore(config)
 
     def status_payload(self) -> dict[str, object]:
         return {
@@ -1114,17 +1108,6 @@ class AdminStore:
                 crystal_id,
                 "deleted_by_user",
                 evidence=evidence,
-            )
-            conn.execute(
-                """
-                update crystals
-                set status = 'archived',
-                    strength = 0,
-                    confidence = 0,
-                    updated_at = ?
-                where id = ?
-                """,
-                (self._now(), crystal_id),
             )
             after = self._get_crystal(conn, crystal_id)
             self._audit_with_connection(
@@ -2058,50 +2041,13 @@ class AdminStore:
         *,
         evidence: str,
     ) -> int:
-        strength_delta, confidence_delta = _ADMIN_IMMEDIATE_EVENT_DELTAS[event_type]
-        now = self._now()
-        crystal = self._get_crystal(conn, crystal_id)
-        cursor = conn.execute(
-            """
-            insert into memory_events(
-              crystal_id,
-              session_id,
-              event_type,
-              source_role,
-              evidence,
-              strength_delta,
-              confidence_delta,
-              applied,
-              created_at
-            )
-            values (?, null, ?, 'user', ?, ?, ?, 1, ?)
-            """,
-            (
-                crystal_id,
-                event_type,
-                evidence,
-                strength_delta,
-                confidence_delta,
-                now,
-            ),
+        return self._feedback._record_with_connection(
+            conn,
+            crystal_id,
+            event_type,
+            "user",
+            evidence=evidence,
         )
-        strength = _clamp_score(float(crystal["strength"]) + strength_delta)
-        confidence = _clamp_score(float(crystal["confidence"]) + confidence_delta)
-        status = crystal["status"]
-        if event_type == "deleted_by_user" and strength < _ARCHIVE_STRENGTH_THRESHOLD:
-            status = "archived"
-        conn.execute(
-            """
-            update crystals
-            set strength = ?,
-                confidence = ?,
-                status = ?,
-                updated_at = ?
-            where id = ?
-            """,
-            (strength, confidence, status, now, crystal_id),
-        )
-        return int(cursor.lastrowid)
 
     def _validate_crystal_contexts(self, rows: list[sqlite3.Row]) -> None:
         if len(rows) < 2:

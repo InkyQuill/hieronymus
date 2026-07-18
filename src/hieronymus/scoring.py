@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
 from hieronymus.values import clamp_score as _clamp_score
@@ -52,89 +54,106 @@ class FeedbackStore:
         evidence: str = "",
         session_id: int | None = None,
     ) -> int:
+        with connect(self.config.database_path) as conn:
+            event_id = self._record_with_connection(
+                conn,
+                crystal_id,
+                event_type,
+                source_role,
+                evidence=evidence,
+                session_id=session_id,
+            )
+            conn.commit()
+        return event_id
+
+    def _record_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        crystal_id: int,
+        event_type: str,
+        source_role: str,
+        evidence: str = "",
+        session_id: int | None = None,
+    ) -> int:
         strength_delta, confidence_delta = self._event_delta(event_type)
         is_immediate = event_type in IMMEDIATE_EVENT_DELTAS
         now = _now()
+        crystal = conn.execute(
+            """
+            select series_slug, source_language, target_language,
+                   crystal_type, strength, confidence, status
+            from crystals
+            where id = ?
+            """,
+            (crystal_id,),
+        ).fetchone()
+        if crystal is None:
+            raise KeyError(f"unknown crystal: {crystal_id}")
 
-        with connect(self.config.database_path) as conn:
-            crystal = conn.execute(
+        if session_id is not None:
+            session = conn.execute(
                 """
-                select series_slug, source_language, target_language,
-                       crystal_type, strength, confidence, status
-                from crystals
+                select series_slug, source_language, target_language
+                from task_sessions
                 where id = ?
                 """,
-                (crystal_id,),
+                (session_id,),
             ).fetchone()
-            if crystal is None:
-                raise KeyError(f"unknown crystal: {crystal_id}")
+            if session is None:
+                raise KeyError(f"unknown session: {session_id}")
+            self._validate_session_context(crystal, session)
 
-            if session_id is not None:
-                session = conn.execute(
-                    """
-                    select series_slug, source_language, target_language
-                    from task_sessions
-                    where id = ?
-                    """,
-                    (session_id,),
-                ).fetchone()
-                if session is None:
-                    raise KeyError(f"unknown session: {session_id}")
-                self._validate_session_context(crystal, session)
-
-            cursor = conn.execute(
-                """
-                insert into memory_events(
-                  crystal_id,
-                  session_id,
-                  event_type,
-                  source_role,
-                  evidence,
-                  strength_delta,
-                  confidence_delta,
-                  applied,
-                  created_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    crystal_id,
-                    session_id,
-                    event_type,
-                    source_role,
-                    evidence,
-                    strength_delta,
-                    confidence_delta,
-                    int(is_immediate),
-                    now,
-                ),
+        cursor = conn.execute(
+            """
+            insert into memory_events(
+              crystal_id,
+              session_id,
+              event_type,
+              source_role,
+              evidence,
+              strength_delta,
+              confidence_delta,
+              applied,
+              created_at
             )
-            event_id = int(cursor.lastrowid)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                crystal_id,
+                session_id,
+                event_type,
+                source_role,
+                evidence,
+                strength_delta,
+                confidence_delta,
+                int(is_immediate),
+                now,
+            ),
+        )
+        event_id = int(cursor.lastrowid)
 
-            if is_immediate:
-                strength, confidence, status = apply_score_delta(
-                    strength=float(crystal["strength"]),
-                    confidence=float(crystal["confidence"]),
-                    status=crystal["status"],
-                    crystal_type=crystal["crystal_type"],
-                    strength_delta=strength_delta,
-                    confidence_delta=confidence_delta,
-                )
-                if event_type == "deleted_by_user" and strength < _ARCHIVE_STRENGTH_THRESHOLD:
-                    status = "archived"
-                conn.execute(
-                    """
-                    update crystals
-                    set strength = ?,
-                        confidence = ?,
-                        status = ?,
-                        updated_at = ?
-                    where id = ?
-                    """,
-                    (strength, confidence, status, now, crystal_id),
-                )
-
-            conn.commit()
+        if is_immediate:
+            strength, confidence, status = apply_score_delta(
+                strength=float(crystal["strength"]),
+                confidence=float(crystal["confidence"]),
+                status=crystal["status"],
+                crystal_type=crystal["crystal_type"],
+                strength_delta=strength_delta,
+                confidence_delta=confidence_delta,
+            )
+            if event_type == "deleted_by_user" and strength < _ARCHIVE_STRENGTH_THRESHOLD:
+                status = "archived"
+            conn.execute(
+                """
+                update crystals
+                set strength = ?,
+                    confidence = ?,
+                    status = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (strength, confidence, status, now, crystal_id),
+            )
 
         return event_id
 

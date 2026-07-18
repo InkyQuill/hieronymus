@@ -11,6 +11,7 @@ from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
+from hieronymus.scoring import FeedbackStore
 from hieronymus.termbase import Termbase
 
 
@@ -56,6 +57,117 @@ def _audit_actions(config: HieronymusConfig) -> list[str]:
     with connect(config.database_path) as conn:
         rows = conn.execute("select action from audit_log order by id").fetchall()
     return [row["action"] for row in rows]
+
+
+def _feedback_state(
+    config: HieronymusConfig, crystal_id: int
+) -> tuple[float, float, str, str, float, float, int]:
+    with connect(config.database_path) as conn:
+        crystal = conn.execute(
+            "select strength, confidence, status from crystals where id = ?", (crystal_id,)
+        ).fetchone()
+        event = conn.execute(
+            """
+            select event_type, strength_delta, confidence_delta, applied
+            from memory_events
+            where crystal_id = ?
+            """,
+            (crystal_id,),
+        ).fetchone()
+    return (
+        crystal["strength"],
+        crystal["confidence"],
+        crystal["status"],
+        event["event_type"],
+        event["strength_delta"],
+        event["confidence_delta"],
+        event["applied"],
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "admin_action",
+        "event_type",
+        "crystal_type",
+        "strength",
+        "confidence",
+        "expected",
+    ),
+    [
+        (
+            "reinforce_crystal",
+            "confirmed_by_user",
+            "lesson",
+            0.5,
+            0.5,
+            (0.65, 0.7, "active", "confirmed_by_user", 0.15, 0.2, 1),
+        ),
+        (
+            "decay_crystal",
+            "contradicted_by_user",
+            "lesson",
+            0.4,
+            0.25,
+            (0.2, 0.0, "archived", "contradicted_by_user", -0.2, -0.25, 1),
+        ),
+        (
+            "decay_crystal",
+            "contradicted_by_user",
+            "rule",
+            0.4,
+            0.25,
+            (0.2, 0.0, "active", "contradicted_by_user", -0.2, -0.25, 1),
+        ),
+        (
+            "delete_crystal",
+            "deleted_by_user",
+            "lesson",
+            0.54,
+            0.5,
+            (0.04, 0.15, "archived", "deleted_by_user", -0.5, -0.35, 1),
+        ),
+    ],
+    ids=("reinforce", "decay-to-zero", "active-rule-immunity", "delete-threshold"),
+)
+def test_admin_feedback_actions_match_canonical_scoring(
+    config: HieronymusConfig,
+    admin_action: str,
+    event_type: str,
+    crystal_type: str,
+    strength: float,
+    confidence: float,
+    expected: tuple[float, float, str, str, float, float, int],
+) -> None:
+    context = _context(config)
+    direct_id = _add_crystal(
+        config,
+        context,
+        title="Direct",
+        crystal_type=crystal_type,
+        strength=strength,
+        confidence=confidence,
+    )
+    admin_id = _add_crystal(
+        config,
+        context,
+        title="Admin",
+        crystal_type=crystal_type,
+        strength=strength,
+        confidence=confidence,
+    )
+
+    FeedbackStore(config).record(direct_id, event_type, "user", evidence="Parity check.")
+    getattr(AdminStore(config), admin_action)(admin_id, evidence="Parity check.")
+
+    direct_state = _feedback_state(config, direct_id)
+    admin_state = _feedback_state(config, admin_id)
+    assert direct_state[:2] == pytest.approx(expected[:2])
+    assert direct_state[2:4] == expected[2:4]
+    assert direct_state[4:6] == pytest.approx(expected[4:6])
+    assert direct_state[6] == expected[6]
+    assert admin_state[:2] == pytest.approx(direct_state[:2])
+    assert admin_state[2:] == direct_state[2:]
 
 
 def _create_proposal(config: HieronymusConfig, context: TranslationContext) -> int:
@@ -132,7 +244,7 @@ def test_edit_deprecate_and_delete_crystal_refresh_status_fts_scores_and_audit(
     assert archived["status"] == "archived"
     assert deleted["status"] == "archived"
     assert deleted["strength"] == 0
-    assert deleted["confidence"] == 0
+    assert deleted["confidence"] == pytest.approx(0.15)
     assert [audit["action"] for audit in audits] == ["edit", "deprecate", "delete"]
     before = json.loads(audits[0]["before_json"])
     after = json.loads(audits[0]["after_json"])

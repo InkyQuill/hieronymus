@@ -145,6 +145,42 @@ def test_user_confirmation_accepts_positional_required_args(
     assert crystal.confidence == pytest.approx(0.7)
 
 
+def test_feedback_with_existing_connection_stays_in_caller_transaction(
+    config: HieronymusConfig,
+) -> None:
+    crystal_id = _add_crystal(config, strength=0.4, confidence=0.5)
+    feedback = FeedbackStore(config)
+
+    with connect(config.database_path) as conn:
+        event_id = feedback._record_with_connection(
+            conn,
+            crystal_id,
+            "confirmed_by_user",
+            "user",
+            evidence="Transactional feedback.",
+        )
+        pending_crystal = conn.execute(
+            "select strength, confidence from crystals where id = ?", (crystal_id,)
+        ).fetchone()
+        pending_event = conn.execute(
+            "select applied from memory_events where id = ?", (event_id,)
+        ).fetchone()
+        conn.rollback()
+
+    crystal = CrystalStore(config).get(crystal_id)
+    with connect(config.database_path) as conn:
+        persisted_event = conn.execute(
+            "select id from memory_events where id = ?", (event_id,)
+        ).fetchone()
+
+    assert pending_crystal["strength"] == pytest.approx(0.55)
+    assert pending_crystal["confidence"] == pytest.approx(0.7)
+    assert pending_event["applied"] == 1
+    assert crystal.strength == pytest.approx(0.4)
+    assert crystal.confidence == pytest.approx(0.5)
+    assert persisted_event is None
+
+
 def test_passive_event_is_recorded_but_not_applied_immediately(config: HieronymusConfig) -> None:
     crystal_id = _add_crystal(config, strength=0.4, confidence=0.5)
 
