@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.mcp_tools import DirectMcpBackend
 from hieronymus.service_discovery import discover_local_service
 
 type McpPayload = dict[str, object] | list[dict[str, object]]
@@ -72,3 +73,7 @@ for _operation in (
     "concept_proposals_list",
 ):
     MCP_OPERATION_HANDLERS[_operation] = _daemon_operation(_operation)
+
+
+def direct_mcp_backend(config: HieronymusConfig) -> DirectMcpBackend:
+    return DirectMcpBackend(config, MCP_OPERATION_HANDLERS)

@@ -4,11 +4,8 @@ import inspect
 import json
 from contextvars import ContextVar
 from dataclasses import asdict
-from functools import wraps
 from pathlib import Path
 from typing import Any
-
-from mcp.server.fastmcp import FastMCP
 
 from hieronymus.concept_models import ConceptFacetRecord, ConceptRecord
 from hieronymus.concepts import CONCEPT_CANDIDATE, ConceptProposalStore, ConceptStore
@@ -18,6 +15,13 @@ from hieronymus.daemon_mcp_client import DaemonMcpClient
 from hieronymus.db import connect
 from hieronymus.dream_providers import resolve_provider
 from hieronymus.dreaming import DreamService
+from hieronymus.mcp_operations import direct_mcp_backend
+from hieronymus.mcp_tools import (
+    ProxyMcpBackend,
+    create_mcp_server,
+    mcp_tool,
+    tool_operations,
+)
 from hieronymus.memory import MemoryStore
 from hieronymus.memory_models import (
     CrystalRecord,
@@ -41,32 +45,6 @@ from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
 _daemon_config: ContextVar[HieronymusConfig | None] = ContextVar("daemon_config", default=None)
-_DIRECT_MCP_OPERATIONS: dict[str, Any] = {}
-
-
-class DaemonMcpServer(FastMCP):
-    def tool(self, *args: Any, **kwargs: Any):
-        register = super().tool(*args, **kwargs)
-
-        def decorate(function: Any) -> Any:
-            operation = function.__name__.removeprefix("hieronymus_")
-            _DIRECT_MCP_OPERATIONS[operation] = function
-            signature = inspect.signature(function)
-
-            @wraps(function)
-            def invoke_via_daemon(*function_args: Any, **function_kwargs: Any) -> Any:
-                if _daemon_config.get() is not None:
-                    return function(*function_args, **function_kwargs)
-                bound = signature.bind(*function_args, **function_kwargs)
-                bound.apply_defaults()
-                return _daemon_client().invoke(operation, dict(bound.arguments))
-
-            return register(invoke_via_daemon)
-
-        return decorate
-
-
-server = DaemonMcpServer("hieronymus")
 _MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION = (
     "Compatibility wrapper. New workflows should use concept, facet, short-term memory, "
     "and rule-crystal primitives."
@@ -89,7 +67,7 @@ def invoke_daemon_operation(
     operation: str,
     params: dict[str, object],
 ) -> object:
-    function = _DIRECT_MCP_OPERATIONS.get(operation)
+    function = tool_operations().get(operation)
     if function is None:
         raise KeyError(operation)
     try:
@@ -371,13 +349,13 @@ def _recent_dream_audit_proposal_payloads(config: HieronymusConfig) -> list[dict
     return payloads
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_status() -> dict[str, Any]:
     """Report MCP adapter mode and discovered local service status."""
     return _daemon_client().invoke("status", {})
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_series_create(
     slug: str,
     title: str,
@@ -397,7 +375,7 @@ def hieronymus_series_create(
     return _series_payload(series)
 
 
-@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
+@mcp_tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_series_init(
     slug: str,
     title: str,
@@ -415,14 +393,14 @@ def hieronymus_series_init(
     )
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_series_list() -> list[dict[str, Any]]:
     """List registered series with language tags."""
     config = _load_validated_config()
     return [_series_payload(series) for series in Registry(config).list_series()]
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_series_set_language_tags(
     series_id: int,
     language_tags: list[str],
@@ -437,7 +415,7 @@ def hieronymus_series_set_language_tags(
     raise KeyError(f"unknown series id: {series_id}")
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_list(
     status: str | None = None,
     semantic_tag: str | None = None,
@@ -457,14 +435,14 @@ def hieronymus_concept_list(
     return [_concept_payload(concept) for concept in concepts]
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_get(concept_id: int) -> dict[str, Any]:
     """Get one concept by id."""
     config = _load_validated_config()
     return _concept_payload(ConceptStore(config).get(concept_id))
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_create(
     canonical_name: str,
     description: str = "",
@@ -493,7 +471,7 @@ def hieronymus_concept_create(
     return _concept_payload(concept)
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_update(
     concept_id: int,
     description: str | None = None,
@@ -511,7 +489,7 @@ def hieronymus_concept_update(
     return _concept_payload(concept)
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_archive(concept_id: int, reason: str = "") -> dict[str, Any]:
     """Archive a concept so recall and strict rule logic stop using it."""
     config = _load_validated_config()
@@ -520,7 +498,7 @@ def hieronymus_concept_archive(concept_id: int, reason: str = "") -> dict[str, A
     return _concept_payload(store.get(concept_id))
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_merge(
     source_concept_id: int,
     target_concept_id: int,
@@ -536,7 +514,7 @@ def hieronymus_concept_merge(
     }
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_rename(
     concept_id: int,
     new_label: str,
@@ -552,7 +530,7 @@ def hieronymus_concept_rename(
     return _concept_payload(concept)
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_facet_add(
     concept_id: int,
     value: str,
@@ -585,7 +563,7 @@ def hieronymus_concept_facet_add(
     return _facet_payload(facet)
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_facet_update(
     facet_id: int,
     value: str | None = None,
@@ -617,14 +595,14 @@ def hieronymus_concept_facet_update(
     return _facet_payload(facet)
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_facet_list(concept_id: int) -> list[dict[str, Any]]:
     """List active facets for a concept."""
     config = _load_validated_config()
     return [_facet_payload(facet) for facet in ConceptStore(config).list_facets(concept_id)]
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_facet_set_canonical(
     concept_id: int,
     facet_id: int,
@@ -636,7 +614,7 @@ def hieronymus_concept_facet_set_canonical(
     return _facet_payload(store.get_facet(facet_id))
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_concept_semantic_tags_set(
     concept_id: int,
     semantic_tags: list[str],
@@ -648,7 +626,7 @@ def hieronymus_concept_semantic_tags_set(
     return _concept_payload(store.get(concept_id))
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_crystal_link_concept(
     crystal_id: int,
     concept_id: int,
@@ -667,7 +645,7 @@ def hieronymus_crystal_link_concept(
     return _crystal_payload(crystal) or {}
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_crystal_story_scopes_set(
     crystal_id: int,
     story_scopes: list[str],
@@ -683,7 +661,7 @@ def hieronymus_crystal_story_scopes_set(
     return _crystal_payload(crystal) or {}
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_crystal_semantic_tags_set(
     crystal_id: int,
     semantic_tags: list[str],
@@ -699,7 +677,7 @@ def hieronymus_crystal_semantic_tags_set(
     return _crystal_payload(crystal) or {}
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_rule_crystals_list(
     status: str | None = None,
     series_slug: str | None = None,
@@ -717,7 +695,7 @@ def hieronymus_rule_crystals_list(
     ]
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_rule_crystal_archive(crystal_id: int) -> dict[str, Any]:
     """Archive a rule crystal."""
     config = _load_validated_config()
@@ -725,14 +703,14 @@ def hieronymus_rule_crystal_archive(crystal_id: int) -> dict[str, Any]:
     return _crystal_payload(crystal) or {}
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_rule_crystal_validate(crystal_id: int) -> dict[str, Any]:
     """Validate rule-crystal shape and deterministic enforceability."""
     config = _load_validated_config()
     return CrystalStore(config).validate_rule_crystal(crystal_id)
 
 
-@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
+@mcp_tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_termbase_contract(
     series_slug: str,
     raw_text: str,
@@ -754,7 +732,7 @@ def hieronymus_termbase_contract(
     return [asdict(term) for term in terms]
 
 
-@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
+@mcp_tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_termbase_validate(
     series_slug: str,
     raw_text: str,
@@ -780,7 +758,7 @@ def hieronymus_termbase_validate(
     return [asdict(finding) for finding in findings]
 
 
-@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
+@mcp_tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_termbase_propose(
     series_slug: str,
     category: str,
@@ -812,7 +790,7 @@ def hieronymus_termbase_propose(
     return {"term_id": term_id}
 
 
-@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
+@mcp_tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_termbase_approve(
     series_slug: str,
     term_id: int,
@@ -834,7 +812,7 @@ def hieronymus_termbase_approve(
     return {"term_id": term_id, "approved": True}
 
 
-@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
+@mcp_tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_memory_search(
     series_slug: str,
     query: str,
@@ -853,7 +831,7 @@ def hieronymus_memory_search(
     return [asdict(memory) for memory in memories]
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_rag_import(
     series_slug: str,
     path: str,
@@ -877,7 +855,7 @@ def hieronymus_rag_import(
     return _rag_import_payload(result)
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_rag_search(
     series_slug: str,
     query: str,
@@ -889,7 +867,7 @@ def hieronymus_rag_search(
     return [_rag_hit_payload(hit) for hit in hits]
 
 
-@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
+@mcp_tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_memory_add(
     series_slug: str,
     kind: str,
@@ -920,7 +898,7 @@ def hieronymus_memory_add(
     return {"memory_id": memory_id, "storage": "short_term"}
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_session_start(
     series_slug: str,
     source_language: str | None = None,
@@ -943,7 +921,7 @@ def hieronymus_session_start(
     return {"session_id": session.id}
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_session_complete(session_id: int) -> dict[str, int | bool]:
     """Complete an agent workflow session so it can be dreamed."""
     config = _load_validated_config()
@@ -951,7 +929,7 @@ def hieronymus_session_complete(session_id: int) -> dict[str, int | bool]:
     return {"session_id": session_id, "completed": True}
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_short_term_add(
     session_id: int,
     kind: str,
@@ -989,7 +967,7 @@ def hieronymus_short_term_add(
     return {"memory_id": memory_id}
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_short_term_add_batch(
     session_id: int,
     items: list[dict[str, object]],
@@ -1004,7 +982,7 @@ def hieronymus_short_term_add_batch(
     return {"memory_ids": memory_ids, "count": len(memory_ids)}
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_recall(
     session_id: int,
     series_slug: str,
@@ -1037,7 +1015,7 @@ def hieronymus_recall(
     return [_recall_payload(result) for result in results]
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_feedback(
     session_id: int,
     correction_text: str,
@@ -1053,7 +1031,7 @@ def hieronymus_feedback(
     return {"memory_id": memory_id}
 
 
-@server.tool()
+@mcp_tool()
 def hieronymus_dream(
     provider: str | None = None,
     wait: bool = False,
@@ -1074,7 +1052,7 @@ def hieronymus_dream(
     }
 
 
-@server.tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
+@mcp_tool(description=_MEMORY_PRIMITIVES_COMPATIBILITY_DESCRIPTION)
 def hieronymus_concept_proposals_list() -> list[dict[str, Any]]:
     """List strict proposals and legacy-compatible candidate concept suggestions."""
     config = _load_validated_config()
@@ -1085,6 +1063,18 @@ def hieronymus_concept_proposals_list() -> list[dict[str, Any]]:
         ],
         *_recent_dream_audit_proposal_payloads(config),
     ]
+
+
+def build_http_mcp_server(config: HieronymusConfig):
+    return create_mcp_server(
+        direct_mcp_backend(config),
+        streamable_http_path="/",
+        json_response=True,
+        stateless_http=True,
+    )
+
+
+server = create_mcp_server(ProxyMcpBackend(lambda: _daemon_client()))
 
 
 def main() -> None:

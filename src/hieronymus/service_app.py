@@ -4,6 +4,7 @@ import asyncio
 import json
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from hieronymus.db import connect
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS
+from hieronymus.mcp_server import build_http_mcp_server
 from hieronymus.provider_config import load_provider_catalog
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_state import ServerState
@@ -56,6 +58,20 @@ class _HostValidationMiddleware:
             await websocket.send_denial_response(_json({"error": "forbidden"}, 403))
             return
         await _json({"error": "forbidden"}, 403)(scope, receive, send)
+
+
+class _ExactMcpMountPathMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"] == "/mcp":
+            scope = {
+                **scope,
+                "path": "/mcp/",
+                "raw_path": b"/mcp/",
+            }
+        await self._app(scope, receive, send)
 
 
 class _AssetFiles(StaticFiles):
@@ -401,7 +417,16 @@ def build_app(
 ) -> Starlette:
     resolved_asset_root = asset_root or Path(__file__).resolve().parent / "frontend" / "dist"
     runtime = _ServiceRuntime(config, state)
+    mcp_server = build_http_mcp_server(config)
+    mcp_app = mcp_server.streamable_http_app()
+
+    @asynccontextmanager
+    async def lifespan(_: Starlette):
+        async with mcp_app.router.lifespan_context(mcp_app):
+            yield
+
     routes = [
+        Mount("/mcp", app=mcp_app, name="mcp"),
         Route("/config", _web_app),
         Route("/config/{path:path}", _web_app),
         Route("/admin", _web_app),
@@ -428,6 +453,7 @@ def build_app(
     app = Starlette(
         routes=routes,
         exception_handlers={404: _not_found, 405: _not_found},
+        lifespan=lifespan,
     )
     app.state.runtime = runtime
     app.state.asset_root = resolved_asset_root
@@ -437,6 +463,7 @@ def build_app(
         expected_host=f"{state.host}:{state.port}",
         expected_origin=f"http://{state.host}:{state.port}",
     )
+    app.add_middleware(_ExactMcpMountPathMiddleware)
     return app
 
 

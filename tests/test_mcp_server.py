@@ -338,6 +338,71 @@ def test_mcp_server_registers_expected_tool_names():
     }
 
 
+def test_direct_and_proxy_mcp_servers_preserve_all_tool_contracts(config):
+    from hieronymus.mcp_server import build_http_mcp_server, server
+
+    direct_server = build_http_mcp_server(config)
+    proxy_tools = asyncio.run(server.list_tools())
+    direct_tools = asyncio.run(direct_server.list_tools())
+
+    def contracts(tools):
+        return {
+            tool.name: (
+                tool.description,
+                tool.inputSchema,
+                tool.outputSchema,
+            )
+            for tool in tools
+        }
+
+    assert contracts(direct_tools) == contracts(proxy_tools)
+
+
+def test_direct_mcp_backend_runs_sync_operations_outside_event_loop(config, monkeypatch):
+    from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS
+    from hieronymus.mcp_server import build_http_mcp_server
+
+    def series_list(_, params):
+        assert params == {}
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        return []
+
+    monkeypatch.setitem(MCP_OPERATION_HANDLERS, "series_list", series_list)
+    direct_server = build_http_mcp_server(config)
+
+    _, payload = asyncio.run(direct_server.call_tool("hieronymus_series_list", {}))
+
+    assert payload == {"result": []}
+
+
+def test_stdio_server_delegates_through_compatibility_proxy(monkeypatch):
+    from hieronymus import mcp_server
+
+    class FakeDaemonClient:
+        def invoke(self, operation, params):
+            assert operation == "series_create"
+            assert params == {
+                "slug": "oso",
+                "title": "Only Sense Online",
+                "source_language": "",
+                "target_language": "",
+                "language_tags": None,
+            }
+            return {"slug": "oso", "title": "Only Sense Online"}
+
+    monkeypatch.setattr(mcp_server, "_daemon_client", lambda: FakeDaemonClient())
+
+    _, payload = asyncio.run(
+        mcp_server.server.call_tool(
+            "hieronymus_series_create",
+            {"slug": "oso", "title": "Only Sense Online"},
+        )
+    )
+
+    assert payload == {"slug": "oso", "title": "Only Sense Online"}
+
+
 def test_mcp_session_memory_complete_and_dream_happy_path(monkeypatch, tmp_path):
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "hieronymus"))
     series = Registry(load_config()).create_series(
