@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
 
 from hieronymus.admin_models import (
     ActionResult,
@@ -41,6 +40,8 @@ from hieronymus.provider_config import (
     redacted_provider_catalog_payload,
 )
 from hieronymus.service_manager import ServiceManager
+from hieronymus.values import clamp_score as _clamp_score
+from hieronymus.values import utc_now
 from hieronymus.workspace import WorkspaceStore
 
 ADMIN_VIEWS = (
@@ -1999,11 +2000,6 @@ class AdminStore:
             payload = json.loads(row["payload_json"])
         except json.JSONDecodeError:
             payload = {"_invalid_json": row["payload_json"]}
-        except Exception as error:
-            payload = {
-                "_invalid_json": row["payload_json"],
-                "_error": str(error),
-            }
         return AdminDetail(
             title=f"{row['event_type']}: {row['summary']}",
             subtitle=row["severity"],
@@ -2523,7 +2519,7 @@ class AdminStore:
         )
 
     def _now(self) -> str:
-        return datetime.now(UTC).isoformat()
+        return utc_now()
 
     def _count(
         self,
@@ -2563,10 +2559,6 @@ def _json_tuple(value: str) -> tuple[str, ...]:
     if not isinstance(loaded, list):
         return ()
     return tuple(str(item) for item in loaded)
-
-
-def _clamp_score(value: float) -> float:
-    return min(max(value, 0.0), 1.0)
 
 
 def _language_pair(row: sqlite3.Row) -> str:

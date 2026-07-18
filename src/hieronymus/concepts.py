@@ -4,12 +4,13 @@ import json
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from hieronymus.concept_models import ConceptFacetRecord, ConceptRecord
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import search_expression
 from hieronymus.db import apply_migration, connect
+from hieronymus.values import clamp_score as _clamp_confidence
+from hieronymus.values import utc_now as _now
 
 CONCEPT_CANDIDATE = "candidate"
 CONCEPT_ESTABLISHED = "established"
@@ -34,10 +35,6 @@ _ALLOWED_PUBLIC_STATUSES = frozenset(
 )
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 @dataclass(frozen=True)
 class StrictConceptProposal:
     id: int
@@ -55,10 +52,6 @@ class StrictConceptProposal:
 
 def _json_array(values: list[str]) -> str:
     return json.dumps(values, ensure_ascii=False, sort_keys=True)
-
-
-def _clamp_confidence(value: float) -> float:
-    return min(max(value, 0.0), 1.0)
 
 
 def _public_status(status: str) -> str:

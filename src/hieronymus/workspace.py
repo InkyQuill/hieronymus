@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import search_expression
@@ -15,25 +14,15 @@ from hieronymus.memory_models import (
     normalize_string_tuple,
 )
 from hieronymus.short_memory import validate_short_memory_text
+from hieronymus.values import json_object
+from hieronymus.values import utc_now as _now
 
 _MAX_SHORT_TERM_MEMORIES_PER_BATCH = 500
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _require_non_empty(value: str, field_name: str) -> None:
     if not value.strip():
         raise ValueError(f"{field_name} must not be empty")
-
-
-def _json_object(raw: str) -> dict[str, object]:
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return value if isinstance(value, dict) else {}
 
 
 def _metadata_string(value: object, default: str = "") -> str:
@@ -108,7 +97,10 @@ def _batch_item_metadata(item: Mapping[str, object]) -> dict[str, object] | None
 
 
 def short_memory_from_row(conn, row) -> ShortTermMemoryRecord:
-    metadata = _json_object(row["metadata_json"])
+    try:
+        metadata = json_object(row["metadata_json"])
+    except ValueError:
+        metadata = {}
     language_tags = _load_metadata_values(
         conn,
         table="short_term_memory_language_tags",

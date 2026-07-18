@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
 from typing import Protocol
 
 from hieronymus.concepts import VALID_FACET_KINDS, ConceptProposalStore, ConceptStore
@@ -17,6 +16,9 @@ from hieronymus.memory_models import ShortTermMemoryRecord, TranslationContext
 from hieronymus.provider_config import load_provider_catalog
 from hieronymus.scoring import PASSIVE_EVENT_DELTAS, apply_score_delta
 from hieronymus.secrets import redact_configured_secret_values
+from hieronymus.values import clamp_score as _clamp_score
+from hieronymus.values import normalize_string_tuple
+from hieronymus.values import utc_now as _now
 from hieronymus.workspace import WorkspaceStore, short_memory_from_row
 
 _ALLOWED_CRYSTAL_TYPES = frozenset(
@@ -49,10 +51,6 @@ and (
   )
 )
 """
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _trigger_type_from_owner(owner: str) -> str:
@@ -130,10 +128,6 @@ def _summary_output_count(summary: _DreamApplySummary) -> int:
             summary.decayed_crystal_ids,
         )
     )
-
-
-def _clamp_score(value: float) -> float:
-    return min(max(value, 0.0), 1.0)
 
 
 @dataclass(frozen=True)
@@ -3661,7 +3655,7 @@ def _clean_int_tuple(*values: object) -> tuple[int, ...]:
 
 
 def _clean_text_tuple(values: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(sorted({value.strip() for value in values if value.strip()}))
+    return tuple(sorted(normalize_string_tuple(values)))
 
 
 def _title_from_kind(kind: str) -> str:

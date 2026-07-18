@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
+from hieronymus.values import clamp_score as _clamp_score
+from hieronymus.values import utc_now as _now
 
 IMMEDIATE_EVENT_DELTAS = {
     "confirmed_by_user": (0.15, 0.20),
@@ -19,14 +19,6 @@ PASSIVE_EVENT_DELTAS = {
 }
 
 _ARCHIVE_STRENGTH_THRESHOLD = 0.05
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _clamp_score(value: float) -> float:
-    return min(max(value, 0.0), 1.0)
 
 
 def apply_score_delta(

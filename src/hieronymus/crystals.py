@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, datetime
 from typing import Any
 
 from hieronymus.config import HieronymusConfig
@@ -14,6 +13,9 @@ from hieronymus.rule_crystals import (
     active_concept_ids_for_rule,
     parse_rule_crystal,
 )
+from hieronymus.values import clamp_score as _clamp_score
+from hieronymus.values import normalize_string_tuple
+from hieronymus.values import utc_now as _now
 
 _ALLOWED_CRYSTAL_TYPES = frozenset(
     {"lesson", "rule", "thought", "observation", "concept_note", "concept", "erudition"}
@@ -24,16 +26,8 @@ _MAX_SEARCH_LIMIT = 50
 _TOKEN_RE = re.compile(r"\w+")
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _clamp_score(value: float) -> float:
-    return min(max(value, 0.0), 1.0)
-
-
 def _clean_text_tuple(values: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(sorted({value.strip() for value in values if value.strip()}))
+    return tuple(sorted(normalize_string_tuple(values)))
 
 
 def _clean_int_tuple(values: tuple[int, ...]) -> tuple[int, ...]:

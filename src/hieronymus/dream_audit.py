@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
+from hieronymus.values import utc_now as _now
 
 _REDACTED = "[REDACTED]"
 _SECRET_KEYS = frozenset(
@@ -124,7 +124,3 @@ def _is_secret_key(key: object) -> bool:
         return False
     normalized = key.replace("-", "").replace("_", "").lower()
     return normalized in _SECRET_KEYS or "token" in normalized or "bearer" in normalized
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()

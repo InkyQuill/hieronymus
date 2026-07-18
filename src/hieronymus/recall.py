@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Literal
 
 from hieronymus.concepts import ConceptStore
@@ -18,6 +17,7 @@ from hieronymus.memory_models import (
 )
 from hieronymus.rag import RagStore
 from hieronymus.rag_models import RagChunkRecord
+from hieronymus.values import utc_now as _now
 from hieronymus.workspace import short_memory_from_row
 
 _RECALL_REASON = "weighted search match"
@@ -82,10 +82,6 @@ class _RagRankedItem:
 
 
 type _RankedItem = _LongTermRankedItem | _ShortTermRankedItem | _RagRankedItem
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _long_term_candidate_limit(limit: int) -> int:

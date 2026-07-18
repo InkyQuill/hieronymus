@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterable
-from datetime import UTC, datetime
 from pathlib import Path
 
 from hieronymus.config import HieronymusConfig
@@ -17,6 +16,8 @@ from hieronymus.rag_models import (
     RagSourceRecord,
 )
 from hieronymus.rag_parsing import RagLoadSourceType, load_rag_file
+from hieronymus.values import normalize_string_tuple as _clean_text_tuple
+from hieronymus.values import utc_now as _now
 
 _MAX_RAG_SEARCH_LIMIT = 50
 _RAG_LANGUAGE_TAG_BOOST = 0.05
@@ -558,19 +559,3 @@ def _reason_for_chunk_kind(chunk_kind: str) -> str:
     if chunk_kind == "markdown_section":
         return "rag markdown section match"
     return "rag project text match"
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
-def _clean_text_tuple(values: Iterable[str]) -> tuple[str, ...]:
-    clean_values: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        clean_value = value.strip()
-        if not clean_value or clean_value in seen:
-            continue
-        seen.add(clean_value)
-        clean_values.append(clean_value)
-    return tuple(clean_values)

@@ -1,28 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
 from hieronymus.rag_models import RagChunkRecord
-
-
-def normalize_string_tuple(
-    values: Iterable[str],
-    *,
-    lowercase: bool = False,
-) -> tuple[str, ...]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        item = value.strip()
-        if lowercase:
-            item = item.lower()
-        if not item or item in seen:
-            continue
-        seen.add(item)
-        normalized.append(item)
-    return tuple(normalized)
+from hieronymus.values import normalize_string_tuple
 
 
 @dataclass(frozen=True)

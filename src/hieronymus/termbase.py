@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import connect
@@ -13,6 +12,7 @@ from hieronymus.rule_crystals import (
     load_active_rule_crystals,
     parse_rule_crystal,
 )
+from hieronymus.values import utc_now as _now
 
 _VALID_ALIAS_KINDS = frozenset(
     {
@@ -22,10 +22,6 @@ _VALID_ALIAS_KINDS = frozenset(
         "search_alias",
     }
 )
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _contains(raw_text: str, text: str, *, case_sensitive: bool) -> bool:

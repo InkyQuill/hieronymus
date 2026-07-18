@@ -3,10 +3,11 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
+from hieronymus.values import normalize_string_tuple
+from hieronymus.values import utc_now as _now
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -21,10 +22,6 @@ class Series:
     id: int | None = None
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 def _validate_slug(slug: str) -> None:
     if not _SLUG_PATTERN.fullmatch(slug):
         raise ValueError(
@@ -34,7 +31,7 @@ def _validate_slug(slug: str) -> None:
 
 
 def _normalize_language_tags(tags: Iterable[str]) -> tuple[str, ...]:
-    return tuple(sorted({tag.strip().lower() for tag in tags if tag.strip()}))
+    return tuple(sorted(normalize_string_tuple(tags, lowercase=True)))
 
 
 def _compat_language_tags(source_language: str, target_language: str) -> tuple[str, ...]:
