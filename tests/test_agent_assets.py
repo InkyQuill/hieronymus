@@ -9,6 +9,7 @@ import pytest
 import hieronymus.agent_assets as agent_assets
 from hieronymus.agent_assets import asset_map, render_agent_plugin_assets
 from hieronymus.agent_plugins import resolve_plugin
+from hieronymus.agent_plugins.base import BaseAgentPlugin
 
 CODEX_VALIDATOR = Path("/home/inky/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py")
 
@@ -203,5 +204,18 @@ def test_codex_generated_bundle_passes_local_validator(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("target", ["", "unknown"])
 def test_render_agent_plugin_assets_rejects_missing_or_unknown_target(target: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported agent plugin target"):
+        render_agent_plugin_assets(target)
+
+
+@pytest.mark.parametrize("target", ["mimo", "pi", "hermes"])
+def test_render_rejects_reserved_target_before_mcp_entry_generation(
+    target: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_if_called(_: BaseAgentPlugin) -> dict[str, object]:
+        raise AssertionError("reserved target attempted MCP entry generation")
+
+    monkeypatch.setattr(BaseAgentPlugin, "mcp_server_entry", fail_if_called)
+
     with pytest.raises(ValueError, match="Unsupported agent plugin target"):
         render_agent_plugin_assets(target)

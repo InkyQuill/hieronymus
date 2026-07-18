@@ -20,7 +20,6 @@ HIERONYMUS_MCP_URL = "http://127.0.0.1:9768/mcp"
 
 
 class McpTransport(Enum):
-    COMMAND = "command"
     STREAMABLE_HTTP = "streamable-http"
 
 
@@ -98,7 +97,7 @@ class AgentPlugin(Protocol):
     protocol_note: str
     installs_managed_config: bool
     required_asset_paths: tuple[str, ...]
-    mcp_transport: McpTransport
+    mcp_transport: McpTransport | None
 
     def mcp_server_entry(self) -> dict[str, object]:
         raise NotImplementedError
@@ -300,10 +299,10 @@ class BaseAgentPlugin:
     protocol_note = ""
     installs_managed_config = False
     required_asset_paths: tuple[str, ...] = ()
-    mcp_transport = McpTransport.COMMAND
+    mcp_transport: McpTransport | None = None
 
     def mcp_server_entry(self) -> dict[str, object]:
-        return {"command": "hieronymus-mcp", "args": []}
+        raise NotImplementedError(f"{self.name} plugin must define an MCP server entry")
 
     def _require_non_empty_paths(self) -> None:
         if not self.detect_paths:

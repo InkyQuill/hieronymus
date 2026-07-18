@@ -374,3 +374,19 @@ def test_plugin_plan_includes_availability(tmp_path: Path) -> None:
 @pytest.mark.parametrize("target", ["codex", "claude", "gemini", "opencode", "openclaw"])
 def test_adapter_records_confirmed_streamable_http_transport(target: str) -> None:
     assert resolve_plugin(target).mcp_transport is McpTransport.STREAMABLE_HTTP
+
+
+def test_transport_capability_has_no_command_generation_fallback() -> None:
+    assert list(McpTransport) == [McpTransport.STREAMABLE_HTTP]
+
+
+def test_base_plugin_requires_an_explicit_mcp_server_entry() -> None:
+    with pytest.raises(NotImplementedError, match="must define an MCP server entry"):
+        BaseAgentPlugin().mcp_server_entry()
+
+
+def test_every_writable_adapter_owns_its_mcp_server_entry() -> None:
+    for plugin in available_plugins():
+        if plugin.installs_managed_config:
+            assert "mcp_server_entry" in type(plugin).__dict__
+            assert plugin.mcp_transport is McpTransport.STREAMABLE_HTTP

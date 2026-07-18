@@ -216,6 +216,8 @@ def render_agent_plugin_assets(target: str) -> dict[str, str]:
         plugin = resolve_plugin(target)
     except ValueError as error:
         raise ValueError(f"Unsupported agent plugin target: {target}") from error
+    if not plugin.installs_managed_config:
+        raise ValueError(f"Unsupported agent plugin target: {target}")
     assets = asset_map()
     mcp_config = {"mcpServers": {"hieronymus": plugin.mcp_server_entry()}}
     assets["mcp/hieronymus.mcp.json"] = _json(mcp_config)
