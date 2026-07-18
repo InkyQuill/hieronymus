@@ -903,9 +903,9 @@ async fn verify_compatibility_table_signature(
         });
     }
     let actual_autoindexes = compatibility_autoindexes(actual, table).await?;
-    let expected_autoindexes = if table == "concepts"
-        && actual_signature.contains("unique(scope_type,scope_key,canonical_name)")
-    {
+    let has_unique_clause =
+        schema_tokens(&actual_sql).contains(&SchemaToken::Word("unique".to_owned()));
+    let expected_autoindexes = if table == "concepts" && has_unique_clause {
         vec![(
             "u".to_owned(),
             1,
@@ -1096,20 +1096,167 @@ async fn object_manifest(
 }
 
 fn normalize_schema_sql(sql: &str) -> String {
-    sql.split_whitespace()
+    let mut tokens = schema_tokens(sql);
+    while matches!(tokens.last(), Some(SchemaToken::Symbol(';'))) {
+        tokens.pop();
+    }
+    let mut normalized = Vec::with_capacity(tokens.len());
+    let mut position = 0;
+    while position < tokens.len() {
+        if tokens[position..].starts_with(&[
+            SchemaToken::Word("if".to_owned()),
+            SchemaToken::Word("not".to_owned()),
+            SchemaToken::Word("exists".to_owned()),
+        ]) {
+            position += 3;
+        } else {
+            normalized.push(tokens[position].clone());
+            position += 1;
+        }
+    }
+    normalized
+        .into_iter()
+        .map(|token| token.signature())
         .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
-        .replace(" if not exists ", " ")
+        .join("|")
 }
 
 fn compact_schema_sql(sql: &str) -> String {
     normalize_schema_sql(sql)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SchemaToken {
+    Word(String),
+    Identifier(String),
+    Literal(String),
+    Symbol(char),
+}
+
+impl SchemaToken {
+    fn signature(self) -> String {
+        match self {
+            Self::Word(value) => format!("w{}:{value}", value.len()),
+            Self::Identifier(value) => format!("i{}:{value}", value.len()),
+            Self::Literal(value) => format!("l{}:{value}", value.len()),
+            Self::Symbol(value) => format!("p:{value}"),
+        }
+    }
+}
+
+fn schema_tokens(sql: &str) -> Vec<SchemaToken> {
+    let characters = sql.char_indices().collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    let mut position = 0;
+    while position < characters.len() {
+        let (_, character) = characters[position];
+        if character.is_whitespace() {
+            position += 1;
+            continue;
+        }
+        if character == '-'
+            && characters
+                .get(position + 1)
+                .is_some_and(|item| item.1 == '-')
+        {
+            position += 2;
+            while position < characters.len() && characters[position].1 != '\n' {
+                position += 1;
+            }
+            continue;
+        }
+        if character == '/'
+            && characters
+                .get(position + 1)
+                .is_some_and(|item| item.1 == '*')
+        {
+            position += 2;
+            while position + 1 < characters.len()
+                && !(characters[position].1 == '*' && characters[position + 1].1 == '/')
+            {
+                position += 1;
+            }
+            position = (position + 2).min(characters.len());
+            continue;
+        }
+        if character == '\'' {
+            let (literal, next) = quoted_token(&characters, position, '\'', '\'');
+            tokens.push(SchemaToken::Literal(literal));
+            position = next;
+            continue;
+        }
+        if matches!(character, '"' | '`' | '[') {
+            let closing = if character == '[' { ']' } else { character };
+            let (identifier, next) = quoted_token(&characters, position, closing, closing);
+            let identifier = identifier
+                .strip_prefix(character)
+                .and_then(|value| value.strip_suffix(closing))
+                .unwrap_or(&identifier);
+            let escaped = format!("{closing}{closing}");
+            let identifier = identifier.replace(&escaped, &closing.to_string());
+            let normalized = identifier.to_ascii_lowercase();
+            if is_simple_identifier(&normalized) {
+                tokens.push(SchemaToken::Word(normalized));
+            } else {
+                tokens.push(SchemaToken::Identifier(normalized));
+            }
+            position = next;
+            continue;
+        }
+        if character.is_alphanumeric() || matches!(character, '_' | '$') {
+            let start = position;
+            position += 1;
+            while position < characters.len()
+                && (characters[position].1.is_alphanumeric()
+                    || matches!(characters[position].1, '_' | '$'))
+            {
+                position += 1;
+            }
+            let start_byte = characters[start].0;
+            let end_byte = characters.get(position).map_or(sql.len(), |item| item.0);
+            tokens.push(SchemaToken::Word(
+                sql[start_byte..end_byte].to_ascii_lowercase(),
+            ));
+            continue;
+        }
+        tokens.push(SchemaToken::Symbol(character));
+        position += 1;
+    }
+    tokens
+}
+
+fn quoted_token(
+    characters: &[(usize, char)],
+    start: usize,
+    closing: char,
+    escaped: char,
+) -> (String, usize) {
+    let mut position = start + 1;
+    let mut value = String::from(characters[start].1);
+    while position < characters.len() {
+        let character = characters[position].1;
+        value.push(character);
+        position += 1;
+        if character == closing {
+            if position < characters.len() && characters[position].1 == escaped {
+                value.push(characters[position].1);
+                position += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    (value, position)
+}
+
+fn is_simple_identifier(identifier: &str) -> bool {
+    identifier
         .chars()
-        .filter(|character| !character.is_whitespace() && *character != '"')
-        .collect::<String>()
-        .trim_end_matches(';')
-        .to_owned()
+        .next()
+        .is_some_and(|character| character.is_alphabetic() || character == '_')
+        && identifier
+            .chars()
+            .all(|character| character.is_alphanumeric() || matches!(character, '_' | '$'))
 }
 
 fn is_known_legacy_table(name: &str) -> bool {
@@ -1509,7 +1656,7 @@ mod tests {
         migrate::{Migration, MigrationType, Migrator},
     };
 
-    use super::validate_migration_metadata;
+    use super::{compact_schema_sql, normalize_schema_sql, validate_migration_metadata};
 
     fn migration(version: i64) -> Migration {
         Migration::new(
@@ -1558,5 +1705,35 @@ mod tests {
         .await
         .expect("version 2 table should inspect");
         assert_eq!(version_two_table, 1);
+    }
+
+    #[test]
+    fn schema_signature_normalizes_identifiers_but_preserves_escaped_string_literals() {
+        let double_quoted = r#"CREATE TABLE "Odd'Name" ("Value" TEXT DEFAULT 'O''Brien');"#;
+        let bracket_quoted = r#"create table [odd'name] ([value] text default 'O''Brien')"#;
+        assert_eq!(
+            normalize_schema_sql(double_quoted),
+            normalize_schema_sql(bracket_quoted)
+        );
+        assert_ne!(
+            normalize_schema_sql(double_quoted),
+            normalize_schema_sql(r#"create table `odd'name` (`value` text default 'o''brien')"#)
+        );
+        assert_eq!(
+            normalize_schema_sql(r#"create table "A""B" (value text)"#),
+            normalize_schema_sql(r#"CREATE TABLE [a"b] (`VALUE` TEXT)"#)
+        );
+    }
+
+    #[test]
+    fn schema_signature_preserves_blob_literal_bytes_and_constraint_order() {
+        assert_ne!(
+            compact_schema_sql("CREATE TABLE t (v BLOB DEFAULT X'AbCd')"),
+            compact_schema_sql("create table t(v blob default x'aBcD')")
+        );
+        assert_ne!(
+            compact_schema_sql("create table t(a text check(a <> ''), b text)"),
+            compact_schema_sql("create table t(b text, a text check(a <> ''))")
+        );
     }
 }

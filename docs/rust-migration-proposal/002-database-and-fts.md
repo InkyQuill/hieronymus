@@ -273,7 +273,10 @@ and the concepts rebuild, including both `386d1e8` pre-rebuild concept layouts, 
 `status DEFAULT 'vague'`, defaults, and foreign-key actions. Acceptance uses exact normalized
 `CREATE TABLE` signatures plus automatic-index origins, unique columns, sort directions, and
 collations; column-level `UNIQUE`, `CHECK`, `COLLATE`, generated clauses, and arbitrary
-missing-column subsets therefore cannot hide behind `table_xinfo`. Only after that
+missing-column subsets therefore cannot hide behind `table_xinfo`. Signature normalization is
+SQL-token aware: it canonicalizes whitespace, terminal semicolons, unquoted/identifier case and
+supported identifier quotes, while preserving the exact bytes, case, and escaping of quoted string
+and blob literals. Only after that
 proof may the compatibility patcher add those known columns and normalize timestamps, then rebuild
 ordinary tables through fixed shadow names into the authoritative STRICT schema, map
 `strict_concept_proposals` to `concept_proposals` and `memory_graph_migration_ledger` to

@@ -592,6 +592,13 @@ async fn concept_facet_value_variant(replacement: &str) -> SqlitePool {
     legacy_pool_from_schema(&schema).await
 }
 
+async fn current_schema_variant(needle: &str, replacement: &str) -> SqlitePool {
+    let current = include_str!("../../../src/hieronymus/migrations/global.sql");
+    let schema = current.replacen(needle, replacement, 1);
+    assert_ne!(schema, current, "fixture must change the current schema");
+    legacy_pool_from_schema(&schema).await
+}
+
 #[tokio::test]
 async fn compatibility_column_unique_clause_is_rejected_before_mutation() {
     let pool = concept_facet_value_variant("value text not null unique,").await;
@@ -607,6 +614,22 @@ async fn compatibility_column_collation_is_rejected_before_mutation() {
 #[tokio::test]
 async fn compatibility_column_check_is_rejected_before_mutation() {
     let pool = concept_facet_value_variant("value text not null check(length(value) > 0),").await;
+    assert_unknown_shape_is_unchanged(&pool).await;
+}
+
+#[tokio::test]
+async fn quoted_check_literal_case_change_is_rejected_before_mutation() {
+    let pool = current_schema_variant("scope_type = 'global'", "scope_type = 'GLOBAL'").await;
+    assert_unknown_shape_is_unchanged(&pool).await;
+}
+
+#[tokio::test]
+async fn quoted_fts_trigger_command_case_change_is_rejected_before_mutation() {
+    let pool = current_schema_variant(
+        "values ('delete', old.id, old.canonical_name, old.description);",
+        "values ('DELETE', old.id, old.canonical_name, old.description);",
+    )
+    .await;
     assert_unknown_shape_is_unchanged(&pool).await;
 }
 
