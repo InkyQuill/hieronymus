@@ -121,7 +121,7 @@
 
 <section class="grid gap-8 lg:grid-cols-[minmax(14rem,18rem)_minmax(0,1fr)]" aria-label="Memory views">
   <div class="self-start lg:sticky lg:top-24">
-    <p class="mb-4 inline-block rounded-full border border-accent bg-[var(--hiero-accent-bg)] px-2.5 py-0.5 text-eyebrow uppercase tracking-[0.12em] text-accent">Memory administration</p>
+    <p class="mb-4 inline-block rounded-full border border-accent bg-[var(--hiero-accent-bg)] px-2.5 py-0.5 text-eyebrow uppercase tracking-[0.12em] text-accent-text">Memory administration</p>
     <h2 class="text-display">Memory views</h2>
     <p class="mt-3 max-w-prose text-body text-secondary">Find a record, read its context, then curate only the memory that needs attention.</p>
     <div class="mt-6 border-t border-default pt-4 text-caption text-secondary">{snapshot?.rows.length ?? 0} records</div>
@@ -129,7 +129,7 @@
   <div class="min-w-0">
     <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Memory view selector">
       {#each dashboard.views as view (view)}
-        <button class="min-h-11 border-b-2 px-3 py-2 text-body-sm {selectedView === view ? 'border-accent text-accent' : 'border-transparent text-secondary hover:bg-raised hover:text-primary'}" onclick={() => void load(view)}>{view}</button>
+        <button class="min-h-11 border-b-2 px-3 py-2 text-body-sm {selectedView === view ? 'border-accent text-accent-text' : 'border-transparent text-secondary hover:bg-raised hover:text-primary'}" onclick={() => void load(view)}>{view}</button>
       {/each}
     </nav>
     {#if error}<p class="mb-5 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
@@ -150,7 +150,7 @@
         </div>
         <aside class="flex min-h-[22.5rem] flex-col overflow-hidden rounded-md border border-default bg-surface" aria-label="Selected memory record">
           {#if snapshot.selected}
-            <div class="p-5"><p class="text-eyebrow uppercase tracking-[0.08em] text-accent">{snapshot.selected.kind} · {snapshot.selected.status}</p><h3 class="mt-1 text-h3">{snapshot.detail.title}</h3><p class="mt-1 text-body-sm text-secondary">{snapshot.detail.subtitle}</p></div>
+            <div class="p-5"><p class="text-eyebrow uppercase tracking-[0.08em] text-accent-text">{snapshot.selected.kind} · {snapshot.selected.status}</p><h3 class="mt-1 text-h3">{snapshot.detail.title}</h3><p class="mt-1 text-body-sm text-secondary">{snapshot.detail.subtitle}</p></div>
             {#if snapshot.detail.body}<pre class="mx-5 min-h-30 overflow-auto border-l-[3px] border-accent bg-raised p-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap">{snapshot.detail.body}</pre>{/if}
             {#if snapshot.detail.fields.length}<dl class="grid gap-2 p-5">{#each snapshot.detail.fields as [name, value] (name)}<div class="border-t border-default pt-2"><dt class="text-caption text-secondary">{name}</dt><dd class="mt-1 break-words text-mono">{value}</dd></div>{/each}</dl>{/if}
             {#if actionsFor(snapshot.selected).length}<div class="mt-auto border-t border-default p-5"><h4 class="mb-2 text-body-sm font-medium">Actions</h4><div class="flex flex-wrap gap-2">{#each actionsFor(snapshot.selected) as action (action)}<button class="min-h-11 rounded-sm border px-4 py-2 text-body-sm {destructiveActions.has(action) ? 'border-danger bg-raised text-danger hover:bg-[var(--hiero-danger-bg)]' : 'border-default bg-surface text-primary hover:bg-raised'}" disabled={runningAction !== null} onclick={() => requestAction(action)}>{runningAction === action ? "Working…" : actionLabels[action]}</button>{/each}</div></div>{/if}

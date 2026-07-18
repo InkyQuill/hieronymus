@@ -1,5 +1,8 @@
 # Tailwind Web Console Implementation Plan
 
+> [!CAUTION]
+> **Superseded:** Follow the [Tailwind rewrite remediation plan](./2026-07-18-tailwind-rewrite-remediation.md) instead. The Bun-specific test commands and `mise`-based Hatch build hook below are historical implementation notes and must not be treated as current guidance.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the frontend's legacy component CSS with a Tailwind CSS v4 editorial-workbench interface while preserving all current Svelte behavior and the persisted `data-theme` preference.

@@ -14,6 +14,7 @@
   --color-secondary: var(--hiero-text-secondary);
   --color-tertiary: var(--hiero-text-tertiary);
   --color-accent: var(--hiero-accent);
+  --color-accent-text: var(--hiero-accent-text);
   --color-danger: var(--hiero-danger);
   --color-success: var(--hiero-success);
   --color-default: var(--hiero-border-default);
@@ -109,7 +110,7 @@
   --hiero-text-secondary: #6b6040;
   --hiero-text-tertiary: #9e9470;
   --hiero-accent: #b88820;
-  --hiero-accent-text: #8b6914;
+  --hiero-accent-text: #7f5f10;
   --hiero-accent-soft: #d4a84b;
   --hiero-accent-bg: rgb(184 136 32 / 8%);
   --hiero-danger: #b83030;

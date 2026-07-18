@@ -49,7 +49,7 @@
 <section class="mx-auto max-w-5xl" aria-label="Dreaming settings">
   <header class="flex flex-wrap items-start justify-between gap-4 border-b border-default pb-6">
     <div><h2 class="text-display">Dreaming</h2><p class="mt-2 max-w-2xl text-body text-secondary">Seven evidence-tracked passes turn completed reading memory into durable knowledge.</p></div>
-    <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent hover:bg-[var(--hiero-accent-bg)] disabled:cursor-not-allowed disabled:opacity-60" disabled={busy} onclick={() => onSave($state.snapshot(settings))}>Save dreaming</button>
+    <button class="min-h-11 rounded-sm border border-accent bg-raised px-4 py-2 text-body-sm font-medium text-accent-text hover:bg-[var(--hiero-accent-bg)] disabled:cursor-not-allowed disabled:opacity-60" disabled={busy} onclick={() => onSave($state.snapshot(settings))}>Save dreaming</button>
   </header>
 
   <div class="mt-6 grid gap-4 sm:grid-cols-2">

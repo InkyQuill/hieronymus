@@ -207,12 +207,12 @@
 
 <main class="min-h-dvh bg-root font-sans text-primary">
   <header class="sticky top-0 z-20 border-b border-default bg-surface">
-    <div class="mx-auto flex w-full max-w-[90rem] items-center gap-4 px-4 py-3 sm:px-8 lg:px-12">
+    <div class="mx-auto flex w-full max-w-[90rem] flex-wrap items-center justify-between gap-4 px-4 py-3 sm:flex-nowrap sm:px-8 lg:px-12">
     <a class="font-serif text-xl text-primary no-underline" href="/admin">Hieronymus</a>
-    <nav class="flex flex-1 items-center gap-1" aria-label="Primary navigation">
-      <a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'admin' ? 'bg-raised text-primary' : ''}" href="/admin">Overview</a>
-      <a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'memory' ? 'bg-raised text-primary' : ''}" href="/admin/memory">Memory</a>
-      <a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {!(section === 'admin' || section === 'memory') ? 'bg-raised text-primary' : ''}" href="/config">Config</a>
+    <nav class="order-last flex w-full min-w-0 items-center gap-1 sm:order-none sm:w-auto sm:flex-1" aria-label="Primary navigation">
+      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'admin' ? 'bg-raised text-primary' : ''}" href="/admin">Overview</a>
+      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {section === 'memory' ? 'bg-raised text-primary' : ''}" href="/admin/memory">Memory</a>
+      <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary {!(section === 'admin' || section === 'memory') ? 'bg-raised text-primary' : ''}" href="/config">Config</a>
     </nav>
     <button class="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-sm border border-default px-3 py-2 text-body-sm text-secondary hover:border-accent hover:text-primary" aria-label={themeToggle.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} onclick={themeToggle.toggle}>
         {#if themeToggle.theme === "dark"}
@@ -233,7 +233,7 @@
       <div class="grid gap-8 md:grid-cols-[minmax(14rem,18rem)_minmax(0,1fr)]">
         <aside class="border-b border-default pb-4 md:border-r md:border-b-0 md:pr-8">
           <p class="mb-4 text-eyebrow uppercase tracking-[0.16em] text-tertiary">Configuration</p>
-          <nav class="grid gap-1" aria-label="Configuration sections"><a class="rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config">Providers</a><a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/dreaming">Dreaming</a><a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a><a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a></nav>
+          <nav class="grid gap-1" aria-label="Configuration sections"><a class="inline-flex min-h-11 items-center rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config">Providers</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/dreaming">Dreaming</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a></nav>
         </aside>
         <div class="min-w-0">
         <header class="mb-8 flex flex-col gap-4 border-b border-default pb-6 sm:flex-row sm:items-end sm:justify-between">
@@ -251,21 +251,21 @@
         </div>
       </div>
     {:else if section === "dreaming" && dreamSettings}
-      <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Configuration sections"><a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a><a class="rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/dreaming">Dreaming</a><a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a><a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a></nav>{#key "dreaming"}<DreamingEditor initial={dreamSettings} providers={dreamProviders} {modelCache} {busy} {error} onSave={saveDream} />{/key}
+      <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Configuration sections"><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a><a class="inline-flex min-h-11 items-center rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/dreaming">Dreaming</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a><a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a></nav>{#key "dreaming"}<DreamingEditor initial={dreamSettings} providers={dreamProviders} {modelCache} {busy} {error} onSave={saveDream} />{/key}
     {:else if section === "ingest" && ingestSettings}
       <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Configuration sections">
-        <a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a>
-        <a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/dreaming">Dreaming</a>
-        <a class="rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/ingest">Ingest</a>
-        <a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a>
+        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a>
+        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/dreaming">Dreaming</a>
+        <a class="inline-flex min-h-11 items-center rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/ingest">Ingest</a>
+        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/release">Release</a>
       </nav>
       {#key "ingest"}<IngestEditor initial={ingestSettings} {busy} {error} onSave={saveIngest} />{/key}
     {:else if section === "release" && releaseSettings}
       <nav class="mb-6 flex flex-wrap gap-1 border-b border-default pb-3" aria-label="Configuration sections">
-        <a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a>
-        <a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/dreaming">Dreaming</a>
-        <a class="rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a>
-        <a class="rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/release">Release</a>
+        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config">Providers</a>
+        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/dreaming">Dreaming</a>
+        <a class="inline-flex min-h-11 items-center rounded-sm px-3 py-2 text-body-sm text-secondary no-underline hover:bg-raised hover:text-primary" href="/config/ingest">Ingest</a>
+        <a class="inline-flex min-h-11 items-center rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/release">Release</a>
       </nav>
       {#key "release"}<ReleaseEditor initial={releaseSettings} {busy} {error} onSave={saveRelease} />{/key}
     {:else if error}<p class="border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>
