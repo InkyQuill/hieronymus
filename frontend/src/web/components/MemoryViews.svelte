@@ -132,7 +132,7 @@
         <button class="min-h-11 border-b-2 px-3 py-2 text-body-sm {selectedView === view ? 'border-accent text-accent' : 'border-transparent text-secondary hover:bg-raised hover:text-primary'}" onclick={() => void load(view)}>{view}</button>
       {/each}
     </nav>
-    {#if error}<p class="mb-5 border-l-2 border-danger bg-raised px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
+    {#if error}<p class="mb-5 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
     {#if loading}
       <p class="text-body text-secondary">Loading {selectedView}…</p>
     {:else if snapshot}

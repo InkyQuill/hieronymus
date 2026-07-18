@@ -46,3 +46,37 @@ test("legacy stylesheets remain deleted", async () => {
   await expect(access(webFile("./tokens.css"))).rejects.toThrow();
   await expect(access(webFile("./components.css"))).rejects.toThrow();
 });
+
+test("the Tailwind stylesheet contains only used shared component selectors", async () => {
+  const css = await source("./app.css");
+  expect(css).not.toContain(".table-shell");
+  expect(css).not.toContain(".toggle-track");
+  expect(css).not.toContain(".toggle-thumb");
+  expect(css).toContain(".data-table");
+  expect(css).toContain(".editor-dialog");
+});
+
+test("inline error alerts use the semantic danger background", async () => {
+  for (const path of [
+    "./App.svelte",
+    "./components/AdminDashboard.svelte",
+    "./components/MemoryViews.svelte",
+    "./components/DreamingEditor.svelte",
+    "./components/IngestEditor.svelte",
+    "./components/ProviderEditor.svelte",
+    "./components/ReleaseEditor.svelte",
+  ]) {
+    const component = await source(path);
+    const alerts =
+      component.match(/<p class="[^"]*border-danger[^"]*text-danger[^"]*"/g) ??
+      [];
+    expect(
+      alerts.length,
+      `${path} should expose an inline error alert`,
+    ).toBeGreaterThan(0);
+    for (const alert of alerts) {
+      expect(alert).toContain("bg-[var(--hiero-danger-bg)]");
+      expect(alert).not.toContain("bg-raised");
+    }
+  }
+});

@@ -240,7 +240,7 @@
           <div><p class="mb-2 text-eyebrow uppercase tracking-[0.16em] text-tertiary">Model access</p><h2 class="text-display">Providers</h2><p class="mt-2 max-w-2xl text-body text-secondary">Manage model-provider profiles for hosted and local models.</p></div>
           <button class="min-h-11 rounded-sm bg-accent px-4 py-2 text-body-sm font-medium text-root hover:opacity-90" onclick={() => { createOpen = true; selected = null; models = []; }}>New provider</button>
         </header>
-        {#if error}<p class="mb-5 border-l-2 border-danger bg-raised px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
+        {#if error}<p class="mb-5 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
         {#if busy && providers.length === 0}
           <p class="border border-default bg-surface px-4 py-8 text-body text-secondary">Loading profiles…</p>
         {:else if providers.length === 0}
@@ -268,7 +268,7 @@
         <a class="rounded-sm bg-raised px-3 py-2 text-body-sm text-primary no-underline" href="/config/release">Release</a>
       </nav>
       {#key "release"}<ReleaseEditor initial={releaseSettings} {busy} {error} onSave={saveRelease} />{/key}
-    {:else if error}<p class="border-l-2 border-danger bg-raised px-4 py-3 text-body-sm text-danger">{error}</p>
+    {:else if error}<p class="border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>
     {:else}<p class="border border-default bg-surface px-4 py-8 text-body text-secondary">Loading settings…</p>{/if}
   </section>
   {#if section === "providers" && (selected || createOpen)}{#key selected?.id ?? "new"}<ProviderEditor provider={selected} {models} {busy} {error} onSave={save} onDelete={remove} onCheck={check} onRefreshModels={refresh} onClose={() => { selected = null; createOpen = false; error = ""; }} />{/key}{/if}

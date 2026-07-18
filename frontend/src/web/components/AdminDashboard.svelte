@@ -70,6 +70,6 @@
         {/if}
     </section>
     <section class="mt-4 rounded-md border border-default bg-surface p-5"><h3 class="mb-4 text-h3">Local service</h3><dl class="flex flex-wrap gap-x-12 gap-y-4"><div><dt class="text-caption text-secondary">Dreaming</dt><dd class="mt-1 text-body">{String(dashboard.dream_status.state ?? "unknown")}</dd></div>{#if dashboard.dream_status.current_phase}<div><dt class="text-caption text-secondary">Phase</dt><dd class="mt-1 text-body">{String(dashboard.dream_status.current_phase)} · {Math.round(Number(dashboard.dream_status.progress ?? 0) * 100)}%</dd></div>{/if}<div><dt class="text-caption text-secondary">Short-term memory</dt><dd class="mt-1 text-body">{String(dashboard.short_term_status.state ?? "unknown")}</dd></div></dl></section>
-    {#if error}<p class="mt-4 border-l-2 border-danger bg-raised px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
+    {#if error}<p class="mt-4 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
   </div>
 </section>
