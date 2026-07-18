@@ -63,9 +63,9 @@
 
 **Files:** Create `crates/hiero-bin/src/cli/mod.rs`, `crates/hiero-bin/src/cli/commands.rs`, `crates/hiero-bin/tests/cli_schema.rs`; modify `crates/hiero-bin/src/main.rs`.
 
-**Interfaces:** Produces `Cli`, `Commands`, `RagCommand`, `AgentHookCommand`, and `async fn dispatch(cli: Cli, config: HieronymusConfig) -> anyhow::Result<()>`.
+**Interfaces:** Produces `Cli`, `Commands`, `SeriesCommand`, `SessionCommand`, `ConceptCommand`, `ConceptFacetCommand`, `RagCommand`, `SkillsCommand`, `AgentHookCommand`, `CommandExecution`, and `async fn dispatch(cli: Cli, config: HieronymusConfig) -> anyhow::Result<()>`.
 
-- [ ] Add `Cli::try_parse_from` tests for every command in proposal 001 §4, including no-subcommand behavior, nested `rag`, `agent-hook session-start|session-end`, repeated tag values, JSON flags, and rejected missing/invalid arguments.
+- [ ] Add `Cli::try_parse_from` tests for every command in proposal 001 §4, including no-subcommand behavior, all nested command groups, `agent-hook session-start|session-end`, repeated tag values, JSON flags, and rejected missing/invalid arguments.
 - [ ] Run `cargo test -p hiero-bin --test cli_schema`; expect RED.
 - [ ] Implement the exact clap schema, using nested subcommand enums rather than 30 flat variants where command spelling is grouped (`series`, `session`, `concept`, `skills`, `rag`, `agent-hook`). Preserve the proposal's external command names with `#[command(name = "...")]`.
 - [ ] Encode boundary classification as `CommandExecution::{DirectStore, DaemonHttp, StartDaemon, StdioMcp}` and assert `status|stop|config` are the only daemon HTTP commands.

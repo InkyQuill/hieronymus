@@ -206,7 +206,7 @@ pub struct Cli {
     #[arg(short, long)]
     pub json: bool,
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -222,10 +222,13 @@ pub enum Commands {
     /// Run system diagnostics — see §7
     Doctor,
 
-    // Series — see §6
-    SeriesCreate { slug: String, title: String, source_language: String, target_language: String },
-    SeriesList { #[arg(long)] json: bool },
-    SeriesInit { slug: String },
+    // Grouped domain commands. External spelling is `hiero <group> <action>`.
+    Series { #[command(subcommand)] command: SeriesCommand },
+    Session { #[command(subcommand)] command: SessionCommand },
+    Concept { #[command(subcommand)] command: ConceptCommand },
+    Rag { #[command(subcommand)] command: RagCommand },
+    Skills { #[command(subcommand)] command: SkillsCommand },
+    AgentHook { #[command(subcommand)] command: AgentHookCommand },
 
     // Termbase — see 003 §3.4
     ProposeTerm { series_slug: String, category: String, source_text: String, canonical: String, #[arg(long)] tags: Vec<String>, #[arg(long)] notes: Option<String> },
@@ -237,40 +240,55 @@ pub enum Commands {
     Remember { series_slug: String, kind: String, text: String },
     RememberShort { session_id: i64, kind: String, text: String },
     Forget { crystal_id: i64 },
-    SessionStart { series_slug: String },
-    SessionComplete { session_id: i64 },
     Recall { session_id: i64, series_slug: String, query: String, #[arg(long, default_value_t = 10)] limit: usize },
 
-    // RAG — see 003 §4
-    Rag { #[command(subcommand)] cmd: RagCommand },
     Feedback { session_id: i64, correction_text: String },
     Dream { #[arg(long)] provider: Option<String>, #[arg(long)] wait: bool },
 
-    // Concepts — see 003 §3.3
-    ConceptList { series_slug: String },
-    ConceptCreate { series_slug: String, name: String },
-    ConceptUpdate { concept_id: i64, #[arg(long)] name: Option<String> },
-    ConceptArchive { concept_id: i64 },
-    ConceptMerge { source_id: i64, target_id: i64, reason: String },
-    ConceptRename { concept_id: i64, new_name: String },
-    ConceptFacetAdd { concept_id: i64, kind: String, text: String },
-    ConceptFacetUpdate { facet_id: i64, text: String },
-    ConceptFacetList { concept_id: i64 },
-    ConceptFacetSetCanonical { facet_id: i64 },
-    ConceptSemanticTagsSet { concept_id: i64, tags: Vec<String> },
     CrystalValidate { crystal_id: i64 },
-    ConceptProposalsList { series_slug: String },
 
-    // Agent/Skills — see §5
+    // Agent installation — see §5
     Install { #[arg(long)] app: Option<String>, #[arg(long)] dry_run: bool },
-    SkillsInstall { targets: Vec<String>, #[arg(long)] dry_run: bool },
-    SkillsUninstall { targets: Vec<String>, #[arg(long)] dry_run: bool },
 
     // Update — see 006 §3
     Update { #[arg(long)] check_only: bool },
 
     /// Stdio MCP compatibility shim — see 005 §1
     Mcp,
+}
+
+#[derive(Subcommand)]
+pub enum SeriesCommand {
+    Create { slug: String, title: String, source_language: String, target_language: String },
+    List { #[arg(long)] json: bool },
+    Init { slug: String },
+}
+
+#[derive(Subcommand)]
+pub enum SessionCommand {
+    Start { series_slug: String },
+    Complete { session_id: i64 },
+}
+
+#[derive(Subcommand)]
+pub enum ConceptCommand {
+    List { series_slug: String },
+    Create { series_slug: String, name: String },
+    Update { concept_id: i64, #[arg(long)] name: Option<String> },
+    Archive { concept_id: i64 },
+    Merge { source_id: i64, target_id: i64, reason: String },
+    Rename { concept_id: i64, new_name: String },
+    Facet { #[command(subcommand)] command: ConceptFacetCommand },
+    SemanticTagsSet { concept_id: i64, tags: Vec<String> },
+    ProposalsList { series_slug: String },
+}
+
+#[derive(Subcommand)]
+pub enum ConceptFacetCommand {
+    Add { concept_id: i64, kind: String, text: String },
+    Update { facet_id: i64, text: String },
+    List { concept_id: i64 },
+    SetCanonical { facet_id: i64 },
 }
 
 #[derive(Subcommand)]
@@ -281,10 +299,23 @@ pub enum RagCommand {
     IndexRebuild,
     IndexCancel,
 }
+
+#[derive(Subcommand)]
+pub enum SkillsCommand {
+    Install { targets: Vec<String>, #[arg(long)] dry_run: bool },
+    Uninstall { targets: Vec<String>, #[arg(long)] dry_run: bool },
+}
+
+#[derive(Subcommand)]
+pub enum AgentHookCommand {
+    SessionStart,
+    SessionEnd,
+}
 ```
 
-**CLI boundary rules:** `search`, `remember`, `recall`, `rag-*`, `dream`, `doctor`, `validate`,
-`propose-term`, `approve`, `session-*`, `concept-*` talk directly to `hiero-core` stores using a
+**CLI boundary rules:** `search`, `remember`, `recall`, `rag *`, `dream`, `doctor`, `validate`,
+`propose-term`, `approve`, `series *`, `session *`, `concept *`, `skills *`, and `agent-hook *`
+talk directly to `hiero-core` stores using a
 short-lived `SqlitePool`. Only `status`, `stop`, `config` make HTTP calls to a running daemon.
 `hiero` with no subcommand starts the daemon if not running, otherwise prints status.
 
