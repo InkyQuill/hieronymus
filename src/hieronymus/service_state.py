@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from hieronymus.config import HieronymusConfig
 
@@ -30,6 +30,7 @@ class ServerState:
     data_root: str
     database_path: str
     process_identity: str | None = None
+    launch_id: str | None = None
 
     @property
     def base_url(self) -> str:
@@ -53,6 +54,7 @@ class ServerState:
                 if payload.get("process_identity") is not None
                 else None
             ),
+            launch_id=(str(payload["launch_id"]) if payload.get("launch_id") is not None else None),
         )
 
 
@@ -94,14 +96,24 @@ def process_start_identity(pid: int) -> str | None:
         return None
 
 
-def state_matches_process(config: HieronymusConfig, state: ServerState) -> bool:
-    if state.process_identity is None:
-        return False
+ProcessIdentityStatus = Literal["match", "mismatch", "unavailable"]
+
+
+def process_identity_status(config: HieronymusConfig, state: ServerState) -> ProcessIdentityStatus:
     if Path(state.data_root).resolve() != config.data_root.resolve():
-        return False
+        return "mismatch"
     if Path(state.database_path).resolve() != config.database_path.resolve():
-        return False
-    return process_start_identity(state.pid) == state.process_identity
+        return "mismatch"
+    if state.process_identity is None:
+        return "unavailable"
+    current_identity = process_start_identity(state.pid)
+    if current_identity is None:
+        return "unavailable"
+    return "match" if current_identity == state.process_identity else "mismatch"
+
+
+def state_matches_process(config: HieronymusConfig, state: ServerState) -> bool:
+    return process_identity_status(config, state) == "match"
 
 
 def read_server_state(config: HieronymusConfig) -> ServerState | None:

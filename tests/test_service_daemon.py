@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import signal
@@ -8,8 +9,10 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import hieronymus.service_daemon as service_daemon
 from hieronymus.config import HieronymusConfig
@@ -158,27 +161,91 @@ def test_shutdown_coordinator_is_idempotent_across_request_and_finalize(
     coordinator.finish("uvicorn")
 
     assert server.should_exit is True
-    scheduler.stop.assert_called_once_with()
+    scheduler.stop.assert_called_once()
 
 
-def _free_port() -> int:
-    with socket.socket() as candidate:
-        candidate.bind(("127.0.0.1", 0))
-        return candidate.getsockname()[1]
+def test_coordinated_server_preserves_uvicorn_repeated_sigint_semantics(
+    config: HieronymusConfig,
+) -> None:
+    server = service_daemon.CoordinatedServer(service_daemon.uvicorn.Config(lambda *_: None))
+    scheduler = type("Scheduler", (), {"stop": MagicMock(return_value=True)})()
+    coordinator = service_daemon.ShutdownCoordinator(config, server, scheduler, None)
+    server.shutdown_coordinator = coordinator
+
+    server.handle_exit(signal.SIGINT, None)
+    server.handle_exit(signal.SIGINT, None)
+
+    assert server._captured_signals == [signal.SIGINT, signal.SIGINT]
+    assert server.should_exit is True
+    assert server.force_exit is True
+
+
+def test_coordinated_server_bounds_uvicorn_lifespan_shutdown(
+    config: HieronymusConfig, caplog
+) -> None:
+    server = service_daemon.CoordinatedServer(service_daemon.uvicorn.Config(lambda *_: None))
+    scheduler = type("Scheduler", (), {"stop": MagicMock(return_value=True)})()
+    coordinator = service_daemon.ShutdownCoordinator(config, server, scheduler, None)
+    server.shutdown_coordinator = coordinator
+    coordinator.request("test")
+    coordinator._deadline = time.monotonic() + 0.01
+
+    async def stuck_shutdown(*_args, **_kwargs) -> None:
+        await asyncio.sleep(1)
+
+    started = time.monotonic()
+    with (
+        patch.object(service_daemon.uvicorn.Server, "shutdown", new=stuck_shutdown),
+        caplog.at_level(logging.ERROR, logger="hieronymus.service_daemon"),
+    ):
+        asyncio.run(server.shutdown())
+
+    assert time.monotonic() - started < 0.5
+    assert server.force_exit is True
+    assert "lifespan shutdown exceeded" in caplog.text
+
+
+def _start_daemon_with_reserved_port(
+    data_root: Path, *, attempts: int = 5
+) -> tuple[subprocess.Popen[str], int]:
+    data_root.mkdir(exist_ok=True)
+    for _ in range(attempts):
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+            (data_root / "service.conf").write_text(f"[service]\nport = {port}\n", encoding="utf-8")
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "hieronymus.service_daemon",
+                    "--data-root",
+                    str(data_root),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and process.poll() is None:
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/health", timeout=0.1
+                ) as response:
+                    if response.status == 200:
+                        return process, port
+            except (OSError, urllib.error.URLError):
+                time.sleep(0.02)
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=2)
+    raise AssertionError(f"daemon did not start after {attempts} reserved-port attempts")
 
 
 def test_daemon_sigterm_removes_state_and_exits(tmp_path: Path) -> None:
     data_root = tmp_path / "hieronymus"
-    data_root.mkdir()
-    port = _free_port()
-    (data_root / "service.conf").write_text(f"[service]\nport = {port}\n", encoding="utf-8")
-    process = subprocess.Popen(
-        [sys.executable, "-m", "hieronymus.service_daemon", "--data-root", str(data_root)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    process, _port = _start_daemon_with_reserved_port(data_root)
     config = HieronymusConfig(data_root=data_root)
     try:
         deadline = time.monotonic() + 5
@@ -189,7 +256,7 @@ def test_daemon_sigterm_removes_state_and_exits(tmp_path: Path) -> None:
 
         os.kill(process.pid, signal.SIGTERM)
 
-        assert process.wait(timeout=5) == 0
+        assert process.wait(timeout=5) == -signal.SIGTERM
         assert read_server_state(config) is None
     finally:
         if process.poll() is None:

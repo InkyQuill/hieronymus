@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import signal
 import threading
+import time
+import uuid
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -15,6 +18,11 @@ from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.presentation import package_version
 from hieronymus.service_app import build_app
 from hieronymus.service_config import load_service_config
+from hieronymus.service_deadlines import (
+    DAEMON_SHUTDOWN_TIMEOUT,
+    UVICORN_SHUTDOWN_TIMEOUT,
+    UVICORN_TASK_SHUTDOWN_TIMEOUT,
+)
 from hieronymus.service_logging import configure_daemon_logging
 from hieronymus.service_state import (
     ServerState,
@@ -54,15 +62,16 @@ class DreamAutostartScheduler:
     def start(self) -> None:
         self._thread.start()
 
-    def stop(self) -> bool:
+    def stop(self, *, timeout: float | None = None) -> bool:
         self._stop.set()
         if self._thread.ident is None or threading.current_thread() is self._thread:
             return True
-        self._thread.join(timeout=self._join_timeout)
+        join_timeout = self._join_timeout if timeout is None else min(timeout, self._join_timeout)
+        self._thread.join(timeout=max(0.0, join_timeout))
         if self._thread.is_alive():
             LOGGER.error(
                 "Dream autostart scheduler did not stop within %.3f seconds",
-                self._join_timeout,
+                join_timeout,
             )
             return False
         return True
@@ -93,7 +102,7 @@ class _ServerProtocol(Protocol):
 
 
 class _SchedulerProtocol(Protocol):
-    def stop(self) -> bool: ...
+    def stop(self, *, timeout: float | None = None) -> bool: ...
 
 
 class ShutdownCoordinator:
@@ -111,13 +120,22 @@ class ShutdownCoordinator:
         self._lock = threading.Lock()
         self._requested = False
         self._finished = False
+        self._deadline: float | None = None
 
     def request(self, source: str) -> None:
         with self._lock:
             if not self._requested:
                 LOGGER.info("Daemon shutdown requested by %s", source)
                 self._requested = True
+                self._deadline = time.monotonic() + DAEMON_SHUTDOWN_TIMEOUT
             self._server.should_exit = True
+
+    def remaining(self, maximum: float | None = None) -> float:
+        with self._lock:
+            if self._deadline is None:
+                self._deadline = time.monotonic() + DAEMON_SHUTDOWN_TIMEOUT
+            remaining = max(0.0, self._deadline - time.monotonic())
+        return remaining if maximum is None else min(remaining, maximum)
 
     def finish(self, source: str) -> None:
         with self._lock:
@@ -125,7 +143,7 @@ class ShutdownCoordinator:
                 return
             self._finished = True
         LOGGER.info("Finishing daemon shutdown after %s", source)
-        self._scheduler.stop()
+        self._scheduler.stop(timeout=self.remaining())
         if self._state is not None:
             remove_server_state(self._config, expected_state=self._state)
 
@@ -134,14 +152,28 @@ class CoordinatedServer(uvicorn.Server):
     shutdown_coordinator: ShutdownCoordinator | None = None
 
     def handle_exit(self, sig: int, frame: object | None) -> None:
+        super().handle_exit(sig, frame)
         if self.shutdown_coordinator is None:
-            super().handle_exit(sig, frame)
             return
         try:
             source = signal.Signals(sig).name.lower()
         except ValueError:
             source = f"signal-{sig}"
         self.shutdown_coordinator.request(source)
+
+    async def shutdown(self, sockets=None) -> None:
+        timeout = UVICORN_SHUTDOWN_TIMEOUT
+        if self.shutdown_coordinator is not None:
+            timeout = self.shutdown_coordinator.remaining(timeout)
+        try:
+            try:
+                await asyncio.wait_for(super().shutdown(sockets), timeout=timeout)
+            except TimeoutError:
+                LOGGER.error("Uvicorn lifespan shutdown exceeded %.3f seconds", timeout)
+                self.force_exit = True
+        finally:
+            if self.shutdown_coordinator is not None:
+                self.shutdown_coordinator.finish("uvicorn-shutdown")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -174,6 +206,7 @@ def main(argv: list[str] | None = None) -> None:
         data_root=str(config.data_root),
         database_path=str(config.database_path),
         process_identity=process_start_identity(os.getpid()),
+        launch_id=uuid.uuid4().hex,
     )
     app = build_app(config, state)
     server = CoordinatedServer(
@@ -183,7 +216,7 @@ def main(argv: list[str] | None = None) -> None:
             port=state.port,
             access_log=False,
             log_config=None,
-            timeout_graceful_shutdown=5.0,
+            timeout_graceful_shutdown=UVICORN_TASK_SHUTDOWN_TIMEOUT,
         )
     )
     write_server_state(config, state)

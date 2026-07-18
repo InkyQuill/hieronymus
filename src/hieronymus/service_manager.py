@@ -9,15 +9,16 @@ from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.service_client import ServiceClient, ServiceClientError
+from hieronymus.service_deadlines import MANAGER_SHUTDOWN_TIMEOUT
 from hieronymus.service_logging import daemon_log_path, open_early_daemon_log
 from hieronymus.service_state import (
     ServerState,
     cleanup_stale_state,
     is_pid_running,
+    process_identity_status,
     read_server_state,
     remove_server_state,
     server_start_lock,
-    state_matches_process,
 )
 
 
@@ -40,7 +41,7 @@ class ServiceManager:
         client: ClientProtocol | None = None,
         startup_timeout: float = 10.0,
         poll_interval: float = 0.1,
-        shutdown_timeout: float = 2.0,
+        shutdown_timeout: float = MANAGER_SHUTDOWN_TIMEOUT,
         terminate_timeout: float = 2.0,
         kill_timeout: float = 1.0,
     ) -> None:
@@ -59,7 +60,9 @@ class ServiceManager:
         if state is None:
             return {"running": False, "reason": "no-state"}
         try:
-            self.client.health(state)
+            health = self.client.health(state)
+            if not self._health_attests_state(health, state):
+                return {"running": False, "reason": "identity-mismatch"}
             return self.client.status(state)
         except (OSError, ServiceClientError):
             return {"running": False, "reason": "unreachable"}
@@ -131,11 +134,12 @@ class ServiceManager:
             if state is not None and state.pid == process.pid:
                 last_state = state
                 try:
-                    self.client.health(state)
+                    health = self.client.health(state)
                 except (OSError, ServiceClientError):
                     pass
                 else:
-                    return
+                    if self._health_attests_state(health, state):
+                        return
             returncode = process.poll()
             if returncode is not None:
                 self._remove_owned_state(process, last_state)
@@ -165,17 +169,30 @@ class ServiceManager:
     def _terminate_owned_child(self, process: subprocess.Popen[object]) -> bool:
         if process.poll() is not None:
             return True
-        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return self._reap_missing_child(process)
         try:
             process.wait(timeout=self.terminate_timeout)
             return True
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                return self._reap_missing_child(process)
             try:
                 process.wait(timeout=self.kill_timeout)
             except subprocess.TimeoutExpired:
                 return False
             return True
+
+    def _reap_missing_child(self, process: subprocess.Popen[object]) -> bool:
+        try:
+            process.wait(timeout=self.kill_timeout)
+        except subprocess.TimeoutExpired:
+            return process.poll() is not None
+        return True
 
     def _health_status(self) -> dict[str, Any]:
         cleanup_stale_state(self.config)
@@ -183,9 +200,11 @@ class ServiceManager:
         if state is None:
             return {"running": False, "reason": "no-state"}
         try:
-            self.client.health(state)
+            health = self.client.health(state)
         except (OSError, ServiceClientError):
             return {"running": False, "reason": "unreachable"}
+        if not self._health_attests_state(health, state):
+            return {"running": False, "reason": "identity-mismatch"}
         return {
             "running": True,
             "pid": state.pid,
@@ -202,10 +221,22 @@ class ServiceManager:
         if state is None:
             return None
         try:
-            self.client.health(state)
+            health = self.client.health(state)
         except (OSError, ServiceClientError):
             return None
+        if not self._health_attests_state(health, state):
+            return None
         return state
+
+    @staticmethod
+    def _health_attests_state(health: dict[str, Any], state: ServerState) -> bool:
+        return (
+            state.launch_id is not None
+            and health.get("pid") == state.pid
+            and health.get("data_root") == state.data_root
+            and health.get("database_path") == state.database_path
+            and health.get("launch_id") == state.launch_id
+        )
 
     def stop(self) -> dict[str, Any]:
         state = read_server_state(self.config)
@@ -216,10 +247,29 @@ class ServiceManager:
                 "stop_status": "stopped",
                 "reason": "not-running",
             }
+        attested = False
+        health_received = False
         try:
-            self.client.shutdown(state)
+            health = self.client.health(state)
+            health_received = True
+            attested = self._health_attests_state(health, state)
         except (OSError, ServiceClientError):
             pass
+        if health_received and not attested:
+            return {
+                "running": True,
+                "stopped": False,
+                "stop_status": "failed",
+                "reason": "health-identity-mismatch",
+            }
+        if not attested:
+            health_unavailable = True
+        else:
+            health_unavailable = False
+            try:
+                self.client.shutdown(state)
+            except (OSError, ServiceClientError):
+                pass
         if not is_pid_running(state.pid):
             remove_server_state(self.config, expected_state=state)
             return {"running": False, "stopped": True, "stop_status": "stopped"}
@@ -231,13 +281,15 @@ class ServiceManager:
                 "stop_status": "failed",
                 "reason": "state-owner-changed",
             }
-        if not state_matches_process(self.config, state):
-            return {
-                "running": True,
-                "stopped": False,
-                "stop_status": "failed",
-                "reason": "process-identity-mismatch",
-            }
+        if health_unavailable:
+            identity = process_identity_status(self.config, state)
+            if identity != "match":
+                return {
+                    "running": True,
+                    "stopped": False,
+                    "stop_status": "failed",
+                    "reason": f"process-identity-{identity}",
+                }
         if self._wait_until_process_stops(state, self.shutdown_timeout):
             remove_server_state(self.config, expected_state=state)
             return {"running": False, "stopped": True, "stop_status": "stopped"}
@@ -249,17 +301,40 @@ class ServiceManager:
                 "stop_status": "failed",
                 "reason": "state-owner-changed",
             }
-        self._signal_state_process(state, signal.SIGTERM)
+        signal_result = self._signal_state_process(state, signal.SIGTERM)
+        if signal_result != "sent":
+            if signal_result == "gone":
+                remove_server_state(self.config, expected_state=state)
+                return {"running": False, "stopped": True, "stop_status": "stopped"}
+            reason = (
+                "process-identity-unavailable"
+                if signal_result == "unavailable"
+                else "process-identity-changed"
+            )
+            if health_unavailable and signal_result == "mismatch":
+                reason = "process-identity-mismatch"
+            return {
+                "running": True,
+                "stopped": False,
+                "stop_status": "failed",
+                "reason": reason,
+            }
         if not self._wait_until_process_stops(state, self.terminate_timeout):
-            if not state_matches_process(self.config, state):
+            signal_result = self._signal_state_process(state, signal.SIGKILL)
+            if signal_result not in {"sent", "gone"}:
                 return {
                     "running": True,
                     "stopped": False,
                     "stop_status": "failed",
-                    "reason": "process-identity-changed",
+                    "reason": (
+                        "process-identity-unavailable"
+                        if signal_result == "unavailable"
+                        else "process-identity-changed"
+                    ),
                 }
-            self._signal_state_process(state, signal.SIGKILL)
-            if not self._wait_until_process_stops(state, self.kill_timeout):
+            if signal_result == "sent" and not self._wait_until_process_stops(
+                state, self.kill_timeout
+            ):
                 return {
                     "running": True,
                     "stopped": False,
@@ -277,16 +352,26 @@ class ServiceManager:
             time.sleep(self.poll_interval)
         return not is_pid_running(state.pid)
 
-    @staticmethod
-    def _signal_state_process(state: ServerState, sent_signal: signal.Signals) -> None:
+    def _signal_state_process(self, state: ServerState, sent_signal: signal.Signals) -> str:
+        if read_server_state(self.config) != state:
+            return "mismatch"
+        identity = process_identity_status(self.config, state)
+        if identity != "match":
+            return identity
         try:
             process_group = os.getpgid(state.pid)
+            if read_server_state(self.config) != state:
+                return "mismatch"
+            identity = process_identity_status(self.config, state)
+            if identity != "match":
+                return identity
             if process_group == state.pid:
                 os.killpg(process_group, sent_signal)
             else:
                 os.kill(state.pid, sent_signal)
         except ProcessLookupError:
-            pass
+            return "gone"
+        return "sent"
 
     def restart(self) -> dict[str, Any]:
         stopped = self.stop()

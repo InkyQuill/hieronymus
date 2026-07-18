@@ -214,7 +214,17 @@ async def _web_app(request: Request) -> Response:
 
 async def _health(request: Request) -> JSONResponse:
     state = _runtime(request).state
-    return _json({"ok": True, "service": "hieronymus", "version": state.version})
+    return _json(
+        {
+            "ok": True,
+            "service": "hieronymus",
+            "version": state.version,
+            "pid": state.pid,
+            "data_root": state.data_root,
+            "database_path": state.database_path,
+            "launch_id": state.launch_id,
+        }
+    )
 
 
 async def _status(request: Request) -> JSONResponse:

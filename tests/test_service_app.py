@@ -27,6 +27,7 @@ def _make_state(config: HieronymusConfig) -> ServerState:
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
+        launch_id="test-launch",
     )
 
 
@@ -63,7 +64,16 @@ def test_health_endpoint_returns_daemon_identity(client: TestClient) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "service": "hieronymus", "version": "0.1.0"}
+    assert response.json() == {
+        "ok": True,
+        "service": "hieronymus",
+        "version": "0.1.0",
+        "pid": 12345,
+        "data_root": str(client.app.state.runtime.config.data_root),
+        "database_path": str(client.app.state.runtime.config.database_path),
+        "launch_id": "test-launch",
+    }
+    assert "token" not in response.json()
 
 
 @pytest.mark.parametrize("path", ["/config", "/config/dreaming", "/admin", "/admin/memory"])

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import signal
+import socket
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -17,6 +18,7 @@ from hieronymus.service_client import ServiceClientError
 from hieronymus.service_manager import ServiceManager
 from hieronymus.service_state import (
     ServerState,
+    process_start_identity,
     read_server_state,
     write_server_state,
 )
@@ -24,11 +26,6 @@ from hieronymus.service_state import (
 
 def daemon_log_path(config: HieronymusConfig) -> Path:
     return config.data_root / "daemon.log"
-
-
-def process_start_identity(pid: int) -> str:
-    stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-    return stat[stat.rfind(")") + 2 :].split()[19]
 
 
 def server_state(
@@ -44,6 +41,7 @@ def server_state(
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
+        launch_id="test-launch",
     )
 
 
@@ -56,7 +54,14 @@ class FakeClient:
     def health(self, state: ServerState) -> dict[str, object]:
         if not self.healthy:
             raise OSError("connection refused")
-        return {"ok": True, "service": "hieronymus"}
+        return {
+            "ok": True,
+            "service": "hieronymus",
+            "pid": state.pid,
+            "data_root": state.data_root,
+            "database_path": state.database_path,
+            "launch_id": state.launch_id,
+        }
 
     def status(self, state: ServerState) -> dict[str, object]:
         self.status_calls += 1
@@ -351,8 +356,6 @@ def test_start_timeout_terminates_owned_process_group_and_reports_log(tmp_path: 
 
 
 def test_start_on_occupied_configured_port_fails_without_fallback(tmp_path: Path) -> None:
-    import socket
-
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     config.data_root.mkdir(parents=True)
     with socket.socket() as occupied:
@@ -370,6 +373,53 @@ def test_start_on_occupied_configured_port_fails_without_fallback(tmp_path: Path
     assert str(daemon_log_path(config)) in str(raised.value)
     assert read_server_state(config) is None
     assert f"{port}" in daemon_log_path(config).read_text(encoding="utf-8")
+
+
+def _start_real_daemon_with_reserved_port(
+    data_root: Path, *, attempts: int = 5
+) -> tuple[ServiceManager, ServerState]:
+    data_root.mkdir(exist_ok=True)
+    last_error: RuntimeError | None = None
+    for _ in range(attempts):
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+            (data_root / "service.conf").write_text(f"[service]\nport = {port}\n", encoding="utf-8")
+        manager = ServiceManager(
+            HieronymusConfig(data_root=data_root), startup_timeout=3, poll_interval=0.02
+        )
+        try:
+            manager.start()
+        except RuntimeError as error:
+            last_error = error
+            continue
+        state = read_server_state(manager.config)
+        assert state is not None
+        return manager, state
+    raise AssertionError(f"daemon startup failed after {attempts} attempts: {last_error}")
+
+
+def test_start_rejects_older_healthy_daemon_when_spawned_child_loses_bind(
+    tmp_path: Path,
+) -> None:
+    old_manager, old_state = _start_real_daemon_with_reserved_port(tmp_path / "old")
+    new_config = HieronymusConfig(data_root=tmp_path / "new")
+    new_config.data_root.mkdir()
+    (new_config.config_root / "service.conf").write_text(
+        f"[service]\nport = {old_state.port}\n", encoding="utf-8"
+    )
+    new_manager = ServiceManager(new_config, startup_timeout=3, poll_interval=0.02)
+    try:
+        with pytest.raises(RuntimeError) as raised:
+            new_manager.start()
+
+        assert "exited" in str(raised.value)
+        assert str(daemon_log_path(new_config)) in str(raised.value)
+        assert read_server_state(new_config) is None
+        assert old_manager.status()["running"] is True
+    finally:
+        result = old_manager.stop()
+        assert result["stop_status"] in {"stopped", "forced"}
 
 
 def _spawn_signal_test_process(*, ignore_term: bool) -> subprocess.Popen[str]:
@@ -394,7 +444,10 @@ def test_stop_forces_matching_process_that_ignores_term(tmp_path: Path) -> None:
     process = _spawn_signal_test_process(ignore_term=True)
     try:
         state = server_state(config, pid=process.pid)
-        state = replace(state, process_identity=process_start_identity(process.pid))
+        identity = process_start_identity(process.pid)
+        if identity is None:
+            pytest.skip("safe signal escalation requires Linux procfs process identity")
+        state = replace(state, process_identity=identity)
         write_server_state(config, state)
         manager = ServiceManager(
             config,
@@ -435,7 +488,7 @@ def test_stop_never_signals_or_removes_mismatched_process_state(tmp_path: Path) 
             result = manager.stop()
 
         assert result["stop_status"] == "failed"
-        assert result["reason"] == "process-identity-mismatch"
+        assert result["reason"] == "process-identity-changed"
         assert process.poll() is None
         assert read_server_state(config) == state
         killpg.assert_not_called()
@@ -456,3 +509,155 @@ def test_restart_aborts_after_failed_stop(tmp_path: Path) -> None:
 
     assert result == {"stopped": failed, "status": None}
     start.assert_not_called()
+
+
+def test_health_status_rejects_responder_that_does_not_attest_state(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config, pid=os.getpid())
+    state = replace(state, launch_id="expected-launch")
+    write_server_state(config, state)
+
+    class OtherDaemonClient(FakeClient):
+        def health(self, state: ServerState) -> dict[str, object]:
+            return {
+                "ok": True,
+                "service": "hieronymus",
+                "pid": state.pid + 1,
+                "data_root": state.data_root,
+                "database_path": state.database_path,
+                "launch_id": "other-launch",
+            }
+
+    status = ServiceManager(config, client=OtherDaemonClient(healthy=True)).status()
+
+    assert status == {"running": False, "reason": "identity-mismatch"}
+
+
+def test_stop_waits_for_attested_graceful_exit_without_procfs(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config)
+    state = replace(state, launch_id="portable-launch")
+    write_server_state(config, state)
+    running = iter([True, False])
+    manager = ServiceManager(config, client=FakeClient(healthy=True), poll_interval=0)
+
+    with (
+        patch("hieronymus.service_manager.is_pid_running", side_effect=lambda _pid: next(running)),
+        patch("hieronymus.service_manager.process_identity_status", return_value="unavailable"),
+        patch("hieronymus.service_manager.os.killpg") as killpg,
+    ):
+        result = manager.stop()
+
+    assert result["stop_status"] == "stopped"
+    killpg.assert_not_called()
+
+
+def test_stop_fails_safely_when_procfs_unavailable_and_process_is_unresponsive(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config)
+    state = replace(state, launch_id="portable-launch")
+    write_server_state(config, state)
+    manager = ServiceManager(
+        config,
+        client=FakeClient(healthy=False),
+        shutdown_timeout=0.005,
+        poll_interval=0.001,
+    )
+
+    with (
+        patch("hieronymus.service_manager.is_pid_running", return_value=True),
+        patch("hieronymus.service_manager.process_identity_status", return_value="unavailable"),
+        patch("hieronymus.service_manager.os.kill") as kill_process,
+        patch("hieronymus.service_manager.os.killpg") as kill_group,
+    ):
+        result = manager.stop()
+
+    assert result["stop_status"] == "failed"
+    assert result["reason"] == "process-identity-unavailable"
+    kill_process.assert_not_called()
+    kill_group.assert_not_called()
+
+
+def test_stop_revalidates_pid_identity_after_grace_period_before_sigterm(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config)
+    state = replace(state, launch_id="launch")
+    write_server_state(config, state)
+    manager = ServiceManager(
+        config,
+        client=FakeClient(healthy=True),
+        shutdown_timeout=0.005,
+        poll_interval=0.001,
+    )
+
+    with (
+        patch("hieronymus.service_manager.is_pid_running", return_value=True),
+        patch(
+            "hieronymus.service_manager.process_identity_status",
+            return_value="mismatch",
+        ),
+        patch("hieronymus.service_manager.os.getpgid", return_value=state.pid),
+        patch("hieronymus.service_manager.os.kill") as kill_process,
+        patch("hieronymus.service_manager.os.killpg") as kill_group,
+    ):
+        result = manager.stop()
+
+    assert result["stop_status"] == "failed"
+    assert result["reason"] == "process-identity-changed"
+    kill_process.assert_not_called()
+    kill_group.assert_not_called()
+
+
+def test_stop_revalidates_pid_identity_immediately_before_sigkill(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config)
+    write_server_state(config, state)
+    manager = ServiceManager(
+        config,
+        client=FakeClient(healthy=True),
+        shutdown_timeout=0.002,
+        terminate_timeout=0.002,
+        poll_interval=0.001,
+    )
+
+    with (
+        patch("hieronymus.service_manager.is_pid_running", return_value=True),
+        patch(
+            "hieronymus.service_manager.process_identity_status",
+            side_effect=["match", "match", "mismatch"],
+        ),
+        patch("hieronymus.service_manager.os.getpgid", return_value=state.pid),
+        patch("hieronymus.service_manager.os.killpg") as kill_group,
+    ):
+        result = manager.stop()
+
+    assert result["stop_status"] == "failed"
+    assert result["reason"] == "process-identity-changed"
+    kill_group.assert_called_once_with(state.pid, signal.SIGTERM)
+
+
+def test_startup_cleanup_preserves_original_error_when_child_exits_before_signal(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    process = FakeProcess()
+    manager = ServiceManager(
+        config,
+        client=FakeClient(healthy=False),
+        startup_timeout=0.005,
+        poll_interval=0.001,
+    )
+
+    with (
+        patch("hieronymus.service_manager.subprocess.Popen", return_value=process),
+        patch("hieronymus.service_manager.os.killpg", side_effect=ProcessLookupError),
+    ):
+        with pytest.raises(RuntimeError) as raised:
+            manager.start()
+
+    assert "startup timed out" in str(raised.value)
+    assert str(daemon_log_path(config)) in str(raised.value)
