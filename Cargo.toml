@@ -21,6 +21,7 @@ indicatif = "0.17"
 lancedb = "0.17"
 mime_guess = "2"
 ort = "2.0.0-rc.12"
+percent-encoding = "2"
 phf = { version = "0.12", features = ["macros"] }
 pulldown-cmark = "0.12"
 regex = "1"
@@ -42,6 +43,7 @@ tower-http = { version = "0.6", features = ["trace", "cors", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4"] }
+url = "2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

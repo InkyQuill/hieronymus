@@ -1,4 +1,8 @@
-use super::{DbError, MISSING_FTS5_PROTOCOL_ERROR, is_memory_url, map_connect_error};
+use std::str::FromStr;
+
+use sqlx::{SqliteConnection, sqlite::SqliteConnectOptions};
+
+use super::{DbError, Fts5Probe, Fts5ProbeError, build_pool_with_probe, memory_settings};
 
 #[test]
 fn memory_url_detection_uses_sqlite_url_semantics() {
@@ -8,23 +12,43 @@ fn memory_url_detection_uses_sqlite_url_semantics() {
         "sqlite://?mode=memory",
         "sqlite://file:shared?cache=shared&mode=memory",
     ] {
-        assert!(is_memory_url(url), "{url} should be an in-memory URL");
+        assert!(
+            memory_settings(url).is_memory,
+            "{url} should be an in-memory URL"
+        );
     }
     for url in [
         "sqlite://memory.sqlite",
         "sqlite://mode=memory.sqlite",
         "sqlite://file.sqlite?cache=shared",
     ] {
-        assert!(!is_memory_url(url), "{url} should be a file URL");
+        assert!(
+            !memory_settings(url).is_memory,
+            "{url} should be a file URL"
+        );
     }
 }
 
-#[test]
-fn fts5_probe_protocol_failure_maps_to_distinct_error() {
-    let error = map_connect_error(
-        "sqlite::memory:",
-        sqlx::Error::Protocol(MISSING_FTS5_PROTOCOL_ERROR.to_owned()),
-    );
+struct MissingFts5Probe;
+
+impl Fts5Probe for MissingFts5Probe {
+    async fn check(&self, _connection: &mut SqliteConnection) -> Result<(), Fts5ProbeError> {
+        Err(Fts5ProbeError::Missing)
+    }
+}
+
+#[tokio::test]
+async fn injected_preflight_failure_exits_pool_construction_as_missing_fts5() {
+    let options = SqliteConnectOptions::from_str("sqlite::memory:")
+        .expect("test connection options should parse");
+
+    let error = build_pool_with_probe(
+        options,
+        "injected preflight test".to_owned(),
+        &MissingFts5Probe,
+    )
+    .await
+    .expect_err("missing FTS5 should fail before constructing the pool");
 
     assert!(matches!(error, DbError::MissingFts5));
 }

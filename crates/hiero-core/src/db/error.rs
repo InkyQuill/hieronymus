@@ -25,6 +25,12 @@ pub enum DbError {
     #[error("SQLite was built without required FTS5 support; install an FTS5-enabled SQLite build")]
     MissingFts5,
 
+    #[error("failed to verify required SQLite FTS5 support: {source}")]
+    Fts5Probe {
+        #[source]
+        source: sqlx::Error,
+    },
+
     #[error("failed to apply embedded SQLite migrations: {source}")]
     Migration {
         #[source]

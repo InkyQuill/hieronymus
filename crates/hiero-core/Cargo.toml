@@ -12,6 +12,7 @@ chrono.workspace = true
 csv.workspace = true
 lancedb.workspace = true
 ort.workspace = true
+percent-encoding.workspace = true
 phf.workspace = true
 pulldown-cmark.workspace = true
 regex.workspace = true
@@ -28,6 +29,7 @@ thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
 uuid.workspace = true
+url.workspace = true
 
 [lints]
 workspace = true
