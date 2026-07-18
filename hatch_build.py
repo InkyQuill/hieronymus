@@ -6,7 +6,9 @@ from subprocess import CalledProcessError, run
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 MINIMUM_BUN_VERSION = (1, 3, 0)
-BUN_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
+BUN_VERSION_PATTERN = re.compile(
+    r"(\d+)\.(\d+)\.(\d+)(?:-(?P<prerelease>[0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?"
+)
 
 
 def validate_bun_version() -> None:
@@ -31,8 +33,12 @@ def validate_bun_version() -> None:
             "could not validate the installed Bun version"
         )
 
-    parsed_version = tuple(int(part) for part in match.groups())
-    if parsed_version < MINIMUM_BUN_VERSION:
+    parsed_version = (
+        *(int(part) for part in match.groups()[:3]),
+        match.group("prerelease") is None,
+    )
+    minimum_version = (*MINIMUM_BUN_VERSION, True)
+    if parsed_version < minimum_version:
         raise RuntimeError(
             "Bun >=1.3 is required to build the Hieronymus web console; "
             f"installed Bun version {version} is unsupported"

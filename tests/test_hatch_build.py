@@ -49,7 +49,7 @@ def test_build_hook_keeps_actionable_missing_bun_error(
         build_hook(build_hook_module, tmp_path).initialize("editable", {})
 
 
-@pytest.mark.parametrize("version", ["1.2.99", "0.99.0"])
+@pytest.mark.parametrize("version", ["1.3.0-alpha", "1.2.99", "0.99.0"])
 def test_build_hook_rejects_unsupported_bun(
     build_hook_module: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
