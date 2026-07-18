@@ -2,6 +2,97 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-07-18)
+
+### Bug Fixes
+
+- Address Tailwind review findings
+  ([`be21485`](https://github.com/InkyQuill/hieronymus/commit/be2148534647e5f046ca88656510a22fd4230d0a))
+
+- Bound editor dialog width
+  ([`270ebbd`](https://github.com/InkyQuill/hieronymus/commit/270ebbd77094b7aba7bd1955cda9cac3706538b3))
+
+- Explain missing Bun during package builds
+  ([`472aeef`](https://github.com/InkyQuill/hieronymus/commit/472aeef9357ab10c36525a763fd3ad1bb09ad3ed))
+
+- Load Tailwind web stylesheet
+  ([`668a653`](https://github.com/InkyQuill/hieronymus/commit/668a653e591f28092eac07c4c936fb23e6c8c69d))
+
+- Reject prerelease Bun at minimum version
+  ([`4ac011c`](https://github.com/InkyQuill/hieronymus/commit/4ac011c2fe7febe58f664d67af785c51b5241be2))
+
+- Remove mise dependency from package build
+  ([`d72810c`](https://github.com/InkyQuill/hieronymus/commit/d72810c715e00eb137a367f1c86bcb1c0945c6c9))
+
+- Restore dreaming toggle state
+  ([`a73965e`](https://github.com/InkyQuill/hieronymus/commit/a73965efb65ce6f0cc13eb61037192101896adec))
+
+- Restore strong border utility
+  ([`11fdedc`](https://github.com/InkyQuill/hieronymus/commit/11fdedc6d3e86d8c42adbb085f514136dd2a9144))
+
+### Build System
+
+- Add Tailwind v4 frontend integration
+  ([`b366374`](https://github.com/InkyQuill/hieronymus/commit/b366374ed6b30b845066bcdce5243975c1b83579))
+
+- Bundle frontend assets during package builds
+  ([`5380080`](https://github.com/InkyQuill/hieronymus/commit/5380080d37f711d776568ef6cc3aad3e65144323))
+
+- Make Hatch own frontend packaging
+  ([`ccbafe8`](https://github.com/InkyQuill/hieronymus/commit/ccbafe84596a42f9d6a891a3c60a20df7c4b336f))
+
+### Chores
+
+- Remove internal task report
+  ([`d283406`](https://github.com/InkyQuill/hieronymus/commit/d283406cd607181fcfdf425cf1e7addb8a05c4c9))
+
+### Code Style
+
+- Finish Tailwind migration cleanup
+  ([`57e87c0`](https://github.com/InkyQuill/hieronymus/commit/57e87c0f0e1647e4b029b39346482a2cb9949549))
+
+### Documentation
+
+- Add frontend packaging validation task
+  ([`04559eb`](https://github.com/InkyQuill/hieronymus/commit/04559eb5374f244009f643daefd5928b9b30b11f))
+
+- Clarify Tailwind remediation design
+  ([`7581184`](https://github.com/InkyQuill/hieronymus/commit/7581184a3425effa2cadeb86d632217532a98374))
+
+- Design Tailwind rewrite remediation
+  ([`4dcd82c`](https://github.com/InkyQuill/hieronymus/commit/4dcd82cc172ca9115201b293d6ab5d8917ebb454))
+
+- Plan Tailwind rewrite remediation
+  ([`4b7b28d`](https://github.com/InkyQuill/hieronymus/commit/4b7b28ddf3f1c38c77464ceadcbc8d21c3846241))
+
+### Features
+
+- Define Tailwind web console theme
+  ([`338a4bd`](https://github.com/InkyQuill/hieronymus/commit/338a4bde925549d013dfaa3399f225a33a349edd))
+
+### Refactoring
+
+- Complete Tailwind web console migration
+  ([`28d4dfc`](https://github.com/InkyQuill/hieronymus/commit/28d4dfcc0c4b9fa203da80381588c9431f1c0659))
+
+- Migrate admin views to Tailwind
+  ([`8854a39`](https://github.com/InkyQuill/hieronymus/commit/8854a395a78374e60c5397d2b147a31c5cfc7fdd))
+
+- Migrate settings editors to Tailwind
+  ([`a7acfff`](https://github.com/InkyQuill/hieronymus/commit/a7acfffc395739b855c896dddef633e704af9eea))
+
+- Migrate web app shell to Tailwind
+  ([`2eb8835`](https://github.com/InkyQuill/hieronymus/commit/2eb88354dd25b2faa8135b43ea5858b4ef6b3a62))
+
+### Testing
+
+- Add rendered Svelte test harness
+  ([`13df96e`](https://github.com/InkyQuill/hieronymus/commit/13df96e6109182b6938f1d1b6f18e20a9f64e4e5))
+
+- Cover Tailwind console interactions
+  ([`05db414`](https://github.com/InkyQuill/hieronymus/commit/05db4148a45020a833dc8ac016c851af8e58f27e))
+
+
 ## v0.6.0 (2026-07-17)
 
 ### Bug Fixes
