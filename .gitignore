@@ -26,6 +26,9 @@ coverage/
 frontend/coverage/
 *.tsbuildinfo
 
+# Rust
+target/
+
 # Local editor and workspace state
 .agents/
 .vscode/

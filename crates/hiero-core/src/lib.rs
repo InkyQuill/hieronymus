@@ -1,0 +1,1 @@
+//! Domain library for Hieronymus.
