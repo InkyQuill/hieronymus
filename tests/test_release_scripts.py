@@ -3,7 +3,10 @@ from __future__ import annotations
 import errno
 import os
 import pty
+import select
+import signal
 import subprocess
+import time
 from pathlib import Path
 from textwrap import dedent
 
@@ -62,9 +65,20 @@ def run_channel_selection_in_tty(
             os.close(output_fd)
         os.execv("/bin/sh", ["sh", "-c", f"{functions}\nselect_install_channel"])
 
-    os.write(terminal, b"2\n")
+    interactive = not redirect_stdin and not redirect_stdout
+    prompt = b"Install channel [stable/dev] (stable): "
+    answer_sent = False
+    deadline = time.monotonic() + 2.0
     output = bytearray()
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([terminal], [], [], remaining)[0]:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            os.close(terminal)
+            raise AssertionError(
+                "TTY child did not exit within 2 seconds; it may be waiting for input"
+            )
         try:
             chunk = os.read(terminal, 4096)
         except OSError as error:
@@ -74,6 +88,9 @@ def run_channel_selection_in_tty(
         if not chunk:
             break
         output.extend(chunk)
+        if interactive and not answer_sent and prompt in output:
+            os.write(terminal, b"2\n")
+            answer_sent = True
     _, status = os.waitpid(pid, 0)
     os.close(terminal)
     stdout = redirected_output.read_text() if redirected_output.exists() else ""
@@ -87,7 +104,7 @@ def test_install_tty_selects_requested_channel_when_stdio_is_interactive(
 
     assert returncode == 0
     assert "Choose Hieronymus install channel:" in terminal
-    assert "Install channel [stable/dev] (stable): dev\r\n" in terminal
+    assert "Install channel [stable/dev] (stable): 2\r\ndev\r\n" in terminal
     assert stdout == ""
 
 
