@@ -1,4 +1,5 @@
 mod error;
+mod legacy_baseline;
 
 #[cfg(test)]
 mod test_support;
@@ -74,6 +75,7 @@ pub async fn connect_url(url: &str) -> Result<SqlitePool, DbError> {
 }
 
 pub async fn migrate(pool: &SqlitePool) -> Result<(), DbError> {
+    legacy_baseline::prepare(pool, &MIGRATOR).await?;
     MIGRATOR
         .run(pool)
         .await

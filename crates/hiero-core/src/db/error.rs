@@ -42,4 +42,32 @@ pub enum DbError {
         #[source]
         source: MigrateError,
     },
+
+    #[error("failed to inspect legacy SQLite schema: {source}")]
+    LegacyInspection {
+        #[source]
+        source: sqlx::Error,
+    },
+
+    #[error("unsupported legacy SQLite schema: {reason}")]
+    UnsupportedLegacySchema { reason: String },
+
+    #[error(
+        "legacy timestamp `{table}.{column}` row {rowid} is not RFC 3339 UTC or SQLite UTC text: `{value}`"
+    )]
+    LegacyTimestamp {
+        table: String,
+        column: String,
+        rowid: i64,
+        value: String,
+    },
+
+    #[error("failed to baseline legacy SQLite schema: {source}")]
+    LegacyUpgrade {
+        #[source]
+        source: sqlx::Error,
+    },
+
+    #[error("failed to restore foreign-key enforcement after legacy migration: {reason}")]
+    ForeignKeyRestore { reason: String },
 }
