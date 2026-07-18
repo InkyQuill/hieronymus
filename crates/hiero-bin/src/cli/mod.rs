@@ -17,7 +17,7 @@ pub struct Cli {
     #[arg(long)]
     pub data_root: Option<PathBuf>,
 
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     pub json: bool,
 
     #[command(subcommand)]

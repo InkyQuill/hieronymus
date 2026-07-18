@@ -388,13 +388,16 @@ pub struct DoctorReport { pub checks: Vec<DoctorCheck> }
 pub struct DoctorCheck { pub name: String, pub status: CheckStatus, pub detail: String }
 pub enum CheckStatus { Ok, Warn, Fail }
 
-pub async fn run_doctor(config: &HieronymusConfig, pool: &SqlitePool) -> Result<DoctorReport>;
+pub async fn run_doctor(config: &HieronymusConfig) -> DoctorReport;
 ```
 
-Checks performed: database schema/migration-ledger validity (002 §5), FTS integrity against
-trigger-owned indexes (002 §3), agent plugin detection (§5), provider connections with API-key
-redaction (004 §1), RAG source/chunk counts, semantic index health without triggering a model
-download (003 §3), config file TOML validity, Rust toolchain / Bun (dev-only) presence.
+The foundation implementation observes config-file TOML validity, database path/readability and
+nearest-existing-ancestor writeability, agent plugin detection, configured bind-port availability,
+and whether the derived semantic-index location is rebuildable from authoritative SQLite data.
+These are point-in-time observations, not startup guarantees. Later phases extend the report with
+database schema/migration-ledger validity (002 §5), FTS integrity against trigger-owned indexes
+(002 §3), provider connections with API-key redaction (004 §1), RAG source/chunk counts, and
+semantic index health without triggering a model download (003 §3).
 
 ---
 

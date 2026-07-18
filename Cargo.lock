@@ -2819,6 +2819,8 @@ dependencies = [
  "predicates",
  "rmcp",
  "rust-embed",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tower",
  "tower-http",

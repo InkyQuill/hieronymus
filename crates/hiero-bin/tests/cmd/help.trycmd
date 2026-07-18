@@ -39,7 +39,7 @@ Options:
   -V, --version                Print version
 
 $ hiero series --help
-Usage: hiero series <COMMAND>
+Usage: hiero series [OPTIONS] <COMMAND>
 
 Commands:
   create[..]
@@ -48,10 +48,11 @@ Commands:
   help    Print this message or the help of the given subcommand(s)
 
 Options:
+  -j, --json[..]
   -h, --help  Print help
 
 $ hiero session --help
-Usage: hiero session <COMMAND>
+Usage: hiero session [OPTIONS] <COMMAND>
 
 Commands:
   start[..]
@@ -59,10 +60,11 @@ Commands:
   help      Print this message or the help of the given subcommand(s)
 
 Options:
+  -j, --json[..]
   -h, --help  Print help
 
 $ hiero concept --help
-Usage: hiero concept <COMMAND>
+Usage: hiero concept [OPTIONS] <COMMAND>
 
 Commands:
   list[..]
@@ -77,10 +79,11 @@ Commands:
   help               Print this message or the help of the given subcommand(s)
 
 Options:
+  -j, --json[..]
   -h, --help  Print help
 
 $ hiero concept facet --help
-Usage: hiero concept facet <COMMAND>
+Usage: hiero concept facet [OPTIONS] <COMMAND>
 
 Commands:
   add[..]
@@ -90,10 +93,11 @@ Commands:
   help           Print this message or the help of the given subcommand(s)
 
 Options:
+  -j, --json[..]
   -h, --help  Print help
 
 $ hiero rag --help
-Usage: hiero rag <COMMAND>
+Usage: hiero rag [OPTIONS] <COMMAND>
 
 Commands:
   import[..]
@@ -104,10 +108,11 @@ Commands:
   help           Print this message or the help of the given subcommand(s)
 
 Options:
+  -j, --json[..]
   -h, --help  Print help
 
 $ hiero skills --help
-Usage: hiero skills <COMMAND>
+Usage: hiero skills [OPTIONS] <COMMAND>
 
 Commands:
   install[..]
@@ -115,10 +120,11 @@ Commands:
   help       Print this message or the help of the given subcommand(s)
 
 Options:
+  -j, --json[..]
   -h, --help  Print help
 
 $ hiero agent-hook --help
-Usage: hiero agent-hook <COMMAND>
+Usage: hiero agent-hook [OPTIONS] <COMMAND>
 
 Commands:
   session-start[..]
@@ -126,6 +132,7 @@ Commands:
   help           Print this message or the help of the given subcommand(s)
 
 Options:
+  -j, --json[..]
   -h, --help  Print help
 
 ```
