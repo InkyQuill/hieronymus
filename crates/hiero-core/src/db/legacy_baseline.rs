@@ -1,6 +1,6 @@
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use sqlx::{
-    AssertSqlSafe, Executor, Row, SqliteConnection, SqlitePool,
+    AssertSqlSafe, Connection, Executor, Row, SqliteConnection, SqlitePool,
     migrate::{Migrate, Migrator},
 };
 
@@ -69,6 +69,34 @@ const EXPLICIT_COPY_TABLES: &[&str] = &[
     "concept_facets",
 ];
 
+const COMPATIBILITY_COLUMNS: &[(&str, &str, &str)] = &[
+    (
+        "task_sessions",
+        "last_activity_at",
+        "TEXT NOT NULL DEFAULT ''",
+    ),
+    ("short_term_memories", "source_credibility", "TEXT"),
+    ("short_term_memories", "rule_intent", "TEXT"),
+    ("short_term_memories", "soft_origin", "TEXT"),
+    (
+        "crystals",
+        "source_credibility",
+        "TEXT NOT NULL DEFAULT 'observation'",
+    ),
+    ("crystals", "rule_intent", "TEXT NOT NULL DEFAULT ''"),
+    ("crystals", "malformed_penalty", "REAL NOT NULL DEFAULT 0"),
+    ("crystals", "supersedes_crystal_id", "INTEGER"),
+    ("crystals", "soft_origin", "TEXT"),
+    ("crystals", "is_inferred", "INTEGER NOT NULL DEFAULT 0"),
+    ("concepts", "merged_into_concept_id", "INTEGER"),
+    (
+        "concept_facets",
+        "is_canonical",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    ("concept_facets", "superseded_at", "TEXT"),
+];
+
 const TIMESTAMP_COLUMNS: &[(&str, &[&str])] = &[
     ("series", &["created_at", "updated_at"]),
     ("series_language_tags", &["created_at"]),
@@ -106,9 +134,11 @@ pub(super) async fn prepare(pool: &SqlitePool, migrator: &Migrator) -> Result<()
         .acquire()
         .await
         .map_err(|source| DbError::LegacyInspection { source })?;
-    if table_exists(&mut connection, SQLX_TABLE).await?
-        || user_table_count(&mut connection).await? == 0
-    {
+    if table_exists(&mut connection, SQLX_TABLE).await? {
+        validate_migration_metadata(&mut connection, migrator).await?;
+        return Ok(());
+    }
+    if user_table_count(&mut connection).await? == 0 {
         return Ok(());
     }
 
@@ -156,6 +186,7 @@ async fn baseline_transaction(
     migrator: &Migrator,
 ) -> Result<(), DbError> {
     if table_exists(connection, SQLX_TABLE).await? {
+        validate_migration_metadata(connection, migrator).await?;
         return Ok(());
     }
     verify_supported_legacy_schema(connection).await?;
@@ -179,6 +210,166 @@ async fn baseline_transaction(
     drop_shadows(connection).await?;
     verify_foreign_keys(connection).await?;
     record_baseline(connection, migrator).await?;
+    Ok(())
+}
+
+async fn validate_migration_metadata(
+    connection: &mut SqliteConnection,
+    migrator: &Migrator,
+) -> Result<(), DbError> {
+    let columns = sqlx::query("PRAGMA table_info('_sqlx_migrations')")
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(|source| DbError::LegacyInspection { source })?
+        .into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get::<i64, _>("cid")?,
+                row.try_get::<String, _>("name")?,
+                row.try_get::<String, _>("type")?,
+                row.try_get::<i64, _>("notnull")?,
+                row.try_get::<Option<String>, _>("dflt_value")?,
+                row.try_get::<i64, _>("pk")?,
+            ))
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(|source| DbError::LegacyInspection { source })?;
+    let expected_columns = vec![
+        (0, "version".to_owned(), "BIGINT".to_owned(), 0, None, 1),
+        (1, "description".to_owned(), "TEXT".to_owned(), 1, None, 0),
+        (
+            2,
+            "installed_on".to_owned(),
+            "TIMESTAMP".to_owned(),
+            1,
+            Some("CURRENT_TIMESTAMP".to_owned()),
+            0,
+        ),
+        (3, "success".to_owned(), "BOOLEAN".to_owned(), 1, None, 0),
+        (4, "checksum".to_owned(), "BLOB".to_owned(), 1, None, 0),
+        (
+            5,
+            "execution_time".to_owned(),
+            "BIGINT".to_owned(),
+            1,
+            None,
+            0,
+        ),
+    ];
+    if columns != expected_columns {
+        return Err(DbError::InvalidMigrationMetadata {
+            reason: format!(
+                "`_sqlx_migrations` does not have the SQLx 0.9 SQLite column contract; expected {expected_columns:?}, found {columns:?}"
+            ),
+        });
+    }
+
+    let indexes = sqlx::query("PRAGMA index_list('_sqlx_migrations')")
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(|source| DbError::LegacyInspection { source })?;
+    if indexes.len() != 1
+        || indexes[0]
+            .try_get::<i64, _>("unique")
+            .map_err(|source| DbError::LegacyInspection { source })?
+            != 1
+        || indexes[0]
+            .try_get::<String, _>("origin")
+            .map_err(|source| DbError::LegacyInspection { source })?
+            != "pk"
+        || indexes[0]
+            .try_get::<i64, _>("partial")
+            .map_err(|source| DbError::LegacyInspection { source })?
+            != 0
+    {
+        return Err(DbError::InvalidMigrationMetadata {
+            reason: "`_sqlx_migrations` must have only SQLx's version primary-key index".to_owned(),
+        });
+    }
+
+    let stored = sqlx::query(
+        "SELECT version, description, success, checksum FROM _sqlx_migrations ORDER BY version",
+    )
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|source| DbError::InvalidMigrationMetadata {
+        reason: format!("cannot read migration history: {source}"),
+    })?;
+    let embedded = migrator.iter().collect::<Vec<_>>();
+    if stored.len() > embedded.len() {
+        return Err(DbError::InvalidMigrationMetadata {
+            reason: format!(
+                "history has {} row(s), but this binary embeds only {} migration(s); remove no rows until the database is inspected with the newer binary",
+                stored.len(),
+                embedded.len()
+            ),
+        });
+    }
+    for (position, row) in stored.iter().enumerate() {
+        let version = row.try_get::<i64, _>("version").map_err(|source| {
+            DbError::InvalidMigrationMetadata {
+                reason: format!(
+                    "cannot decode history row {} version: {source}",
+                    position + 1
+                ),
+            }
+        })?;
+        let description = row.try_get::<String, _>("description").map_err(|source| {
+            DbError::InvalidMigrationMetadata {
+                reason: format!("cannot decode migration {version} description as TEXT: {source}"),
+            }
+        })?;
+        let success = row.try_get::<i64, _>("success").map_err(|source| {
+            DbError::InvalidMigrationMetadata {
+                reason: format!("cannot decode migration {version} success flag: {source}"),
+            }
+        })?;
+        let checksum = row.try_get::<Vec<u8>, _>("checksum").map_err(|source| {
+            DbError::InvalidMigrationMetadata {
+                reason: format!("cannot decode migration {version} checksum: {source}"),
+            }
+        })?;
+        let expected = embedded[position];
+        if version != expected.version {
+            let known = embedded
+                .iter()
+                .any(|migration| migration.version == version);
+            let reason = if known {
+                format!(
+                    "migration history is not an embedded prefix: expected version {} at position {}, found {version}; restore the missing migration record",
+                    expected.version,
+                    position + 1
+                )
+            } else {
+                format!(
+                    "migration version {version} is unknown to this binary; use the binary that created it or restore a compatible database backup"
+                )
+            };
+            return Err(DbError::InvalidMigrationMetadata { reason });
+        }
+        if success != 1 {
+            return Err(DbError::InvalidMigrationMetadata {
+                reason: format!(
+                    "migration {version} is dirty (`success` = {success}); inspect the partially applied migration before repairing its metadata"
+                ),
+            });
+        }
+        if description != expected.description.as_ref() {
+            return Err(DbError::InvalidMigrationMetadata {
+                reason: format!(
+                    "migration {version} description mismatch: expected `{}`, found `{description}`",
+                    expected.description
+                ),
+            });
+        }
+        if checksum != expected.checksum.as_ref() {
+            return Err(DbError::InvalidMigrationMetadata {
+                reason: format!(
+                    "migration {version} checksum does not match the embedded migration; restore the matching migration or database"
+                ),
+            });
+        }
+    }
     Ok(())
 }
 
@@ -232,7 +423,87 @@ async fn verify_supported_legacy_schema(connection: &mut SqliteConnection) -> Re
             reason: format!("unknown Python-era tables: {}", unknown.join(", ")),
         });
     }
+    verify_legacy_object_manifest(connection).await?;
     Ok(())
+}
+
+async fn verify_legacy_object_manifest(connection: &mut SqliteConnection) -> Result<(), DbError> {
+    let mut reference = SqliteConnection::connect("sqlite::memory:")
+        .await
+        .map_err(|source| DbError::LegacyInspection { source })?;
+    reference
+        .execute(sqlx::raw_sql(include_str!(
+            "../../../../src/hieronymus/migrations/global.sql"
+        )))
+        .await
+        .map_err(|source| DbError::LegacyInspection { source })?;
+
+    for (table, column, _) in COMPATIBILITY_COLUMNS {
+        if !column_exists(connection, table, column).await? {
+            sqlx::query(AssertSqlSafe(format!(
+                "ALTER TABLE {table} DROP COLUMN {column}"
+            )))
+            .execute(&mut reference)
+            .await
+            .map_err(|source| DbError::UnsupportedLegacySchema {
+                reason: format!(
+                    "cannot construct the known compatibility manifest without {table}.{column}: {source}"
+                ),
+            })?;
+        }
+    }
+
+    let expected = object_manifest(&mut reference).await?;
+    let actual = object_manifest(connection).await?;
+    if actual != expected {
+        let first_difference = actual
+            .iter()
+            .zip(expected.iter())
+            .position(|(actual, expected)| actual != expected)
+            .unwrap_or_else(|| actual.len().min(expected.len()));
+        return Err(DbError::UnsupportedLegacySchema {
+            reason: format!(
+                "Python schema object manifest differs at position {first_difference}: expected {:?}, found {:?}; only documented compatibility columns may be absent",
+                expected.get(first_difference),
+                actual.get(first_difference)
+            ),
+        });
+    }
+    Ok(())
+}
+
+async fn object_manifest(
+    connection: &mut SqliteConnection,
+) -> Result<Vec<(String, String, String, String)>, DbError> {
+    sqlx::query(
+        "SELECT type, name, tbl_name, coalesce(sql, '') AS sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+    )
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|source| DbError::LegacyInspection { source })?
+    .into_iter()
+    .map(|row| {
+        let sql = row
+            .try_get::<String, _>("sql")
+            .map_err(|source| DbError::LegacyInspection { source })?;
+        Ok((
+            row.try_get("type")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("name")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("tbl_name")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            normalize_schema_sql(&sql),
+        ))
+    })
+    .collect()
+}
+
+fn normalize_schema_sql(sql: &str) -> String {
+    sql.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }
 
 fn is_known_legacy_table(name: &str) -> bool {
@@ -256,33 +527,7 @@ fn is_known_legacy_table(name: &str) -> bool {
 }
 
 async fn add_compatibility_columns(connection: &mut SqliteConnection) -> Result<(), DbError> {
-    for (table, column, definition) in [
-        (
-            "task_sessions",
-            "last_activity_at",
-            "TEXT NOT NULL DEFAULT ''",
-        ),
-        ("short_term_memories", "source_credibility", "TEXT"),
-        ("short_term_memories", "rule_intent", "TEXT"),
-        ("short_term_memories", "soft_origin", "TEXT"),
-        (
-            "crystals",
-            "source_credibility",
-            "TEXT NOT NULL DEFAULT 'observation'",
-        ),
-        ("crystals", "rule_intent", "TEXT NOT NULL DEFAULT ''"),
-        ("crystals", "malformed_penalty", "REAL NOT NULL DEFAULT 0"),
-        ("crystals", "supersedes_crystal_id", "INTEGER"),
-        ("crystals", "soft_origin", "TEXT"),
-        ("crystals", "is_inferred", "INTEGER NOT NULL DEFAULT 0"),
-        ("concepts", "merged_into_concept_id", "INTEGER"),
-        (
-            "concept_facets",
-            "is_canonical",
-            "INTEGER NOT NULL DEFAULT 0",
-        ),
-        ("concept_facets", "superseded_at", "TEXT"),
-    ] {
+    for (table, column, definition) in COMPATIBILITY_COLUMNS {
         if !column_exists(connection, table, column).await? {
             execute_dynamic(
                 connection,

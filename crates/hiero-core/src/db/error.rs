@@ -49,6 +49,9 @@ pub enum DbError {
         source: sqlx::Error,
     },
 
+    #[error("invalid SQLx migration metadata: {reason}")]
+    InvalidMigrationMetadata { reason: String },
+
     #[error("unsupported legacy SQLite schema: {reason}")]
     UnsupportedLegacySchema { reason: String },
 

@@ -24,6 +24,38 @@ async fn legacy_pool() -> SqlitePool {
     pool
 }
 
+async fn schema_snapshot(pool: &SqlitePool) -> Vec<(String, String, String, String)> {
+    sqlx::query_as(
+        "SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("legacy schema should inspect")
+}
+
+async fn assert_unknown_shape_is_unchanged(pool: &SqlitePool) {
+    let before = schema_snapshot(pool).await;
+    let error = migrate(pool)
+        .await
+        .expect_err("altered full-family Python schema must be rejected");
+    assert!(
+        matches!(error, DbError::UnsupportedLegacySchema { .. }),
+        "unexpected error: {error}"
+    );
+    assert_eq!(schema_snapshot(pool).await, before);
+    let migration_metadata: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sqlite_schema WHERE name = '_sqlx_migrations'")
+            .fetch_one(pool)
+            .await
+            .expect("metadata absence should inspect");
+    let shadows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sqlite_schema WHERE name LIKE '__hiero_legacy_%'")
+            .fetch_one(pool)
+            .await
+            .expect("shadow absence should inspect");
+    assert_eq!((migration_metadata, shadows), (0, 0));
+}
+
 async fn seed_every_legacy_table(pool: &SqlitePool) {
     pool.execute(sqlx::raw_sql(
         r#"
@@ -343,4 +375,90 @@ async fn reserved_shadow_collision_is_rejected_before_any_rename() {
             .await
             .expect("original schema should remain");
     assert_eq!(original, 1);
+}
+
+#[tokio::test]
+async fn full_legacy_family_missing_noncompat_column_is_rejected_before_mutation() {
+    let pool = legacy_pool().await;
+    sqlx::query("ALTER TABLE audit_log DROP COLUMN note")
+        .execute(&pool)
+        .await
+        .expect("missing-column fixture should install");
+    assert_unknown_shape_is_unchanged(&pool).await;
+}
+
+#[tokio::test]
+async fn full_legacy_family_with_extra_column_is_rejected_before_mutation() {
+    let pool = legacy_pool().await;
+    sqlx::query("ALTER TABLE audit_log ADD COLUMN intruder TEXT")
+        .execute(&pool)
+        .await
+        .expect("extra-column fixture should install");
+    assert_unknown_shape_is_unchanged(&pool).await;
+}
+
+#[tokio::test]
+async fn full_legacy_family_with_wrong_column_type_is_rejected_before_mutation() {
+    let pool = legacy_pool().await;
+    pool.execute(sqlx::raw_sql(
+        r#"
+        DROP TABLE audit_log;
+        CREATE TABLE audit_log (
+          id integer primary key,
+          actor integer not null default 'admin',
+          action text not null,
+          entity_type text not null,
+          entity_id text not null,
+          note text not null default '',
+          before_json text not null default '{}',
+          after_json text not null default '{}',
+          created_at text not null
+        );
+        "#,
+    ))
+    .await
+    .expect("wrong-type fixture should install");
+    assert_unknown_shape_is_unchanged(&pool).await;
+}
+
+#[tokio::test]
+async fn full_legacy_family_with_altered_constraint_is_rejected_before_mutation() {
+    let pool = legacy_pool().await;
+    pool.execute(sqlx::raw_sql(
+        r#"
+        DROP TABLE audit_log;
+        CREATE TABLE audit_log (
+          id integer primary key,
+          actor text not null default 'admin' check(actor <> ''),
+          action text not null,
+          entity_type text not null,
+          entity_id text not null,
+          note text not null default '',
+          before_json text not null default '{}',
+          after_json text not null default '{}',
+          created_at text not null
+        );
+        "#,
+    ))
+    .await
+    .expect("altered-constraint fixture should install");
+    assert_unknown_shape_is_unchanged(&pool).await;
+}
+
+#[tokio::test]
+async fn full_legacy_family_with_altered_foreign_key_is_rejected_before_mutation() {
+    let pool = legacy_pool().await;
+    pool.execute(sqlx::raw_sql(
+        r#"
+        DROP TABLE crystal_sources;
+        CREATE TABLE crystal_sources (
+          crystal_id integer not null references crystals(id) on delete cascade,
+          short_term_memory_id integer not null references short_term_memories(id) on delete set null,
+          primary key(crystal_id, short_term_memory_id)
+        );
+        "#,
+    ))
+    .await
+    .expect("altered-FK fixture should install");
+    assert_unknown_shape_is_unchanged(&pool).await;
 }
