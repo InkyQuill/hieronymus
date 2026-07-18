@@ -1,6 +1,6 @@
 # Memory Reconsolidation Design
 
-**Status:** Approved for implementation planning on 2026-07-18
+**Status:** Approved for implementation planning on 2026-07-18 (revised after review)
 
 ## Context
 
@@ -13,24 +13,30 @@ crystals, not an unbeatable lane — a high-scoring non-rule result can still ou
 shipped behavior.
 
 Separately, the schema already carries `rule_intent` and `source_credibility` columns on
-`crystals` (`src/hieronymus/migrations/global.sql:90-115`) and an existing `crystal_links` table
-and `crystal_activations` table — infrastructure for exactly the "graded, associative, gradually
+`crystals` (`global.sql:59-60,103-104`, both `text`) and existing `crystal_links` and
+`crystal_activations` tables — infrastructure for exactly the "graded, associative, gradually
 reinforced memory" model this design formalizes, that the current codebase only partially wires
-up (rule crystals get a boost; nothing today creates working copies on recall, propagates
-activation across `crystal_links`, or lets an agent report which recalled crystals it actually
-used).
+up. **Both fields are freeform text, not numeric weights**: `source_credibility` holds one of a
+known small set of labels mapped to confidence via `SOURCE_CREDIBILITY_CONFIDENCE`
+(`dreaming.py:26-33`: `rumor=0.15, thought=0.2, observation=0.35, source_text=0.7,
+user_suggestion=0.8, expert=0.85, user_rule=0.95`); `rule_intent` is genuinely freeform
+(`admin.py:796` defaults it to `"correction"`) but is used everywhere else as a boolean presence
+check (`dreaming.py:3675`: `memory.rule_intent.strip()`; `recall.py:504`'s scalar-match boost).
+This design reuses both mechanisms as-is rather than changing either column's type or semantics —
+no data migration needed for existing rows.
 
 This design corrects the migration proposal's recall model to match reality (rules are
 prioritized, not enforced) and extends it with an explicit reconsolidation loop: a crystal
 recalled during a session becomes an editable working copy in short-term memory, agents report
 back which recalled crystals were useful or missed, and dreaming turns that evidence into
-reinforcement, decay, supersession, and associative link strengthening — modeling recall as an
-active, revisable process rather than a read-only lookup.
+reinforcement, decay, supersession, combination, and associative link strengthening — modeling
+recall as an active, revisable process rather than a read-only lookup.
 
 ## Goals
 
-- Replace the "rule crystals are a mandatory, unbeatable recall lane" invariant with a
-  `rule_intent`-weighted score boost, matching the real current implementation.
+- Replace the "rule crystals are a mandatory, unbeatable recall lane" invariant with a boost
+  driven by the existing `source_credibility` confidence map and `rule_intent` presence check,
+  matching the real current implementation instead of ADR 0005's unimplemented aspiration.
 - Let a recalled crystal be copied into session-scoped short-term memory as an editable working
   copy, deduplicated per `(session_id, crystal_id)`, so an agent can revise it during a session
   based on new information without mutating the source crystal directly.
@@ -40,45 +46,58 @@ active, revisable process rather than a read-only lookup.
   versus irrelevant (`useful`/`miss` crystal-id lists), feeding immediate score deltas.
 - At dream time, turn accumulated evidence (repeat-recall counts, useful/miss outcomes, edited
   working copies) into: passive reinforcement, decay, supersession of a crystal whose working
-  copy diverged meaningfully, and Hebbian strengthening/creation of `crystal_links` between
-  crystals used together.
+  copy diverged meaningfully, combination of highly-similar co-activated crystals, and Hebbian
+  strengthening of `crystal_links` between crystals used together.
 - Replace rule-crystal archive immunity with a `rule_intent`-driven decay-rate dampener — rules
   fade slower under disuse, but nothing is permanently exempt from decay.
 
 ## Non-Goals
 
+- No schema type change for `rule_intent`/`source_credibility` and no migration of existing
+  values — both stay `text`, reusing existing label semantics.
 - No embedding-based link discovery. `crystal_links` strengthen from usage co-occurrence
   evidence at dream time, not a separate similarity/clustering job — semantic association is
   already RAG's job (vector search over `rag_chunks`), not a second graph on top of crystals.
-- No live (synchronous, in-recall) link creation or strengthening — only lookup of existing
-  links happens during `recall()`; writing new/stronger links is a batched dreaming operation.
+- No live (synchronous, in-recall) link creation, strengthening, or crystal combination — only
+  lookup of existing links happens during `recall()`; writing new/stronger links and combining
+  crystals are batched dreaming operations.
 - No change to the RAG pipeline's own retrieval model (003 §3-§5 of the migration proposal) —
   this design is scoped to crystals/short-term memory, not RAG chunks.
 - No UI/admin-console changes are specified here; the admin console's crystal/concept views
   (005 §5 of the migration proposal) are updated separately if this design changes what they
   need to display.
+- No N-way crystal combination in one step — combination is pairwise only (see "Dream-Time
+  Integration"); an N-way cluster resolves over several dream cycles, one pair at a time.
 
 ## Recall-Time Behavior
 
 `RecallService::recall(session_id, ctx, query, limit)`, for each crystal candidate:
 
-1. **Score boost, not a mandatory lane.** Apply a boost proportional to `rule_intent` (a
-   continuous field, not a boolean `crystal_type == 'rule'` gate) and `source_credibility`. A
-   crystal with high `rule_intent` typically ranks first, but a strong enough non-rule match can
-   still outrank it — this is the "prioritized, not enforced" behavior the current
-   `_ACTIVE_RULE_BOOST` already approximates; this design makes the boost a function of the
-   existing graded fields instead of a binary type check.
+1. **Score boost, not a mandatory lane.** Apply `source_credibility_weight(crystal) =
+   SOURCE_CREDIBILITY_CONFIDENCE.get(crystal.source_credibility).unwrap_or(0.35)` (the map ported
+   to Rust verbatim, `0.35` = `observation`'s weight as the schema default) as a multiplicative
+   or additive scoring factor, plus a flat `RULE_INTENT_BOOST` (named constant, not derived from
+   the text content) applied only when `!crystal.rule_intent.trim().is_empty()`. A high-credibility
+   rule-intent crystal typically ranks first, but a strong enough non-rule match can still outrank
+   it — matching the real current `_ACTIVE_RULE_BOOST`/`_add_short_term_scalar_boosts` behavior,
+   just fed by the existing label semantics instead of a `crystal_type == 'rule'` gate.
 2. **Session-scoped working-copy dedup.** Look up an existing `short_term_memories` row with
    `source_crystal_id = crystal.id` for this `session_id`. If none exists, insert one (text
    seeded from the crystal's current text) — this is the crystal's editable working copy for the
    session. If one already exists, don't duplicate it; instead insert a `memory_events` row
    (`event_type = "recalled_again"`) so repeat-recall pressure is captured through the existing
    event-sourced scoring pattern rather than a new mutable counter column.
-3. **Live spreading activation.** For any crystal whose score (after step 1) exceeds a
-   configurable threshold, look up its 1-hop neighbors in `crystal_links` and fold them into the
-   result set at `linked_score = source_score * link_weight * attenuation_factor` (attenuation
-   configurable, default e.g. `0.5`). This is a single bounded query per triggering crystal, not
-   a graph traversal — one hop only.
+3. **`crystal_activations` logging.** Every candidate returned (deduped or not) gets one
+   `crystal_activations` row: `(session_id, crystal_id, activated_at, outcome = NULL)`. This is
+   the per-activation ledger `record_recall_outcome` (below) and dreaming's `LinkReinforcer`
+   phase both read — a full log, unlike the deduped short-term working copy.
+4. **Live spreading activation.** For any crystal whose post-boost score exceeds
+   `SPREADING_ACTIVATION_THRESHOLD`, look up its 1-hop neighbors in `crystal_links` and fold them
+   into the result set at `linked_score = source_score * link_weight * SPREADING_ATTENUATION`.
+   Both constants live as named `const`s in `hiero-core::domain::recall` (default `0.55` and
+   `0.5`) — matching how `_ACTIVE_RULE_BOOST` is a hardcoded module constant today, not a config
+   file field, since nothing in the current system makes these user-tunable. This is a single
+   bounded query per triggering crystal, not a graph traversal — one hop only.
 
 Active-rule-first ordering is dropped as an invariant; result ordering is purely score-based
 after the boost in step 1 is applied.
@@ -92,76 +111,121 @@ the migration proposal's 003/005 updates):
 FeedbackStore::record_recall_outcome(session_id: i64, useful: &[i64], miss: &[i64]) -> Result<()>
 ```
 
-Each id in `useful` receives an immediate positive delta via the existing
-`IMMEDIATE_EVENT_DELTAS` mechanism (`event_type = "recalled_useful"`); each id in `miss` receives
-an immediate negative delta (`event_type = "recalled_miss"`). The MCP tool's schema description
-instructs the calling agent to send this after acting on recall results — the instruction lives
-in the tool definition itself so it travels with the tool rather than depending on a separately
-maintained agent skill document staying in sync.
+Behavior:
+- Each id in `useful` gets an `IMMEDIATE_EVENT_DELTAS["recalled_useful"] = (0.06, 0.04)` delta —
+  one notch below `confirmed_by_user`'s `(0.15, 0.20)`, since the agent finding a memory useful
+  isn't the same strength of signal as a human explicitly confirming it's correct.
+- Each id in `miss` gets `IMMEDIATE_EVENT_DELTAS["recalled_miss"] = (-0.05, -0.03)` — deliberately
+  softer than `contradicted_by_user`'s `(-0.20, -0.25)`, since "not relevant this time" isn't the
+  same claim as "this is wrong."
+- Both id lists additionally set `outcome = 'useful' | 'miss'` on the matching `crystal_activations`
+  rows for that `session_id` (§Recall-Time Behavior step 3), which is what `LinkReinforcer`
+  reads at dream time.
+
+The MCP tool's schema description instructs the calling agent to send this after acting on
+recall results — the instruction lives in the tool definition itself so it travels with the tool
+rather than depending on a separately maintained agent skill document staying in sync.
 
 ## Dream-Time Integration
 
-- **Reinforcement.** `ReinforcementManager` reads `recalled_again`/`recalled_useful`/
-  `recalled_miss` event counts accumulated since the last cycle as passive-delta evidence, in
-  addition to whatever direct feedback already existed.
-- **Reconsolidation vs. supersession.** For every working-copy short-term memory whose text has
-  diverged from its source crystal's current text (the agent edited it mid-session), the
-  `Crystallizer` phase computes a token-level diff ratio between the working copy and the source
-  crystal's text. Below a default threshold (edit distance under 20% of token count), it
-  reinforces the original crystal in place — no new row. At or above the threshold, it
-  crystallizes a *new* crystal with `supersedes_crystal_id` pointing at the original, and the
-  original transitions to `status = 'superseded'`. The threshold is a `DreamConfig` field (004
-  §1's config struct), not hardcoded, so it can be tuned without a schema change. History is
-  preserved via a chain of superseded crystals, never overwritten in place.
-- **Hebbian link strengthening.** Crystals marked `useful` together within the same session are
-  co-activation evidence. `Consolidator` strengthens the existing `crystal_links` row between
-  them, or creates one if none exists, during its batch pass over the cycle's session data —
-  this is deliberately async/batched (Non-Goals), not computed per-feedback-call.
+Three new/changed phases, each implementing the `DreamPhase` trait from 004 §2:
+
+- **`ReinforcementManager` (existing phase, extended).** Reads `recalled_again` event counts
+  (`PASSIVE_EVENT_DELTAS["recalled_again"] = (0.02, 0.0)` — strength-only, since mere
+  resurfacing implies nothing about correctness) accumulated since the last cycle as additional
+  passive-delta evidence, alongside whatever direct feedback already existed. `recalled_useful`/
+  `recalled_miss` are already applied immediately (§Explicit Feedback Signal) so this phase does
+  not reapply them.
+- **`Reconsolidator` (new phase, purely algorithmic — no `DreamProvider`/LLM dependency, unlike
+  `Crystallizer`).** For every non-archived working-copy short-term memory
+  (`source_crystal_id IS NOT NULL`), computes a token-level diff ratio against the source
+  crystal's current text.
+  - Below `DreamConfig::reconsolidation_diff_threshold` (default: edit distance under 20% of
+    token count): reinforce the original crystal in place, no new row.
+  - At or above the threshold: crystallize a *new* crystal with `supersedes_crystal_id` set to
+    the original's id (text taken directly from the working copy — no LLM call, this is a
+    mechanical carry-over), and flip the original to `status = 'superseded'`. The new crystal
+    inherits the original's `crystal_concepts` rows (copied, not moved — the superseded row's
+    links are left in place for audit history; only active crystals are queried in practice, so
+    the leftover rows on a superseded crystal are inert).
+  - Either way, the working-copy `short_term_memories` row gets `archived_at` set (the existing
+    field already used to exclude processed rows from dreaming input — `workspace.py:498`,
+    `dreaming.py:1278` etc. — no new lifecycle field needed).
+- **`LinkReinforcer` (new phase, replaces the earlier draft's overloaded `Consolidator`
+  extension — kept separate because `Consolidator`'s existing input is `Vec<ConceptRecord>`, a
+  different type from the crystal-activation data this phase needs).** Reads the cycle's
+  `crystal_activations` rows.
+  - **Hebbian strengthening**: crystals with `outcome = 'useful'` in the same session are
+    co-activation evidence; strengthens the existing `crystal_links` row between them, or creates
+    one if none exists.
+  - **Pairwise combination**: among co-activated `useful` pairs, if a similarity check (shared
+    `crystal_concepts`, or a text-similarity score above a threshold) indicates they're
+    near-duplicates, propose a combination: pick a survivor (higher `source_credibility` weight,
+    tie-broken by higher `strength`), union the other's `crystal_concepts` and `crystal_links`
+    rows onto the survivor, set the absorbed crystal's `status = 'superseded'`, and record a
+    `memory_events` row (`event_type = "combined_into"`, `evidence = survivor_id`) on the
+    absorbed crystal — `supersedes_crystal_id` isn't reused here since that slot is already the
+    `Reconsolidator`'s "new crystal replaces its own prior working-copy revision" relationship;
+    combination is a different relationship (two independently-existing crystals merging) and
+    doesn't need a new column, just an event-sourced record consistent with how
+    `recalled_again`/`recalled_useful`/`recalled_miss` are already handled. Combination is
+    pairwise only (Non-Goals) — a 3-way-similar cluster resolves over multiple dream cycles.
 
 ## Rule-Intent Crystals
 
 Archive immunity for `crystal_type == 'rule' && status == 'active'` is removed. In its place,
-`rule_intent` acts as a decay-rate multiplier inside `apply_score_delta` (e.g. decay deltas are
-scaled by `1.0 - (rule_intent * 0.5)`, so a crystal with `rule_intent = 1.0` decays at half the
-normal rate). A well-established rule fades gradually under sustained disuse instead of snapping
-directly to archived, but nothing is permanently exempt — consistent with "prioritized, not
-enforced."
+`apply_score_delta` (003 §2.5) dampens decay deltas by a flat factor (default `0.5`, i.e. half
+the normal decay rate) when `!crystal.rule_intent.trim().is_empty()`, optionally further scaled
+by `source_credibility_weight(crystal)` for graded effect (a `user_rule`-credibility crystal
+decays slower than an `observation`-credibility one, even if both have non-empty `rule_intent`).
+A well-established rule fades gradually under sustained disuse instead of snapping directly to
+archived, but nothing is permanently exempt — consistent with "prioritized, not enforced."
 
 ## Data Model Changes
 
 - `short_term_memories`: add nullable `source_crystal_id INTEGER REFERENCES crystals(id)` —
   marks a row as a working copy; `NULL` for organically-added short-term memories.
-- `crystal_links`, `crystal_activations`: reuse the existing tables (`global.sql`); exact column
-  sets are pinned when the migration proposal's schema doc (002) is updated from a direct read
-  of `global.sql`, not re-specified here.
+- `crystal_activations`: gains (or already has, to be confirmed against `global.sql` when 002 is
+  updated) a nullable `outcome TEXT` column (`'useful' | 'miss' | NULL`) written by
+  `record_recall_outcome`.
+- `crystal_links`: reused as-is; exact columns pinned from `global.sql` when 002 is updated.
 - No new tables. `memory_events` already supports arbitrary `event_type` strings, so
-  `recalled_again`/`recalled_useful`/`recalled_miss` require no schema change there.
+  `recalled_again`/`recalled_useful`/`recalled_miss`/`combined_into` require no schema change
+  there.
 
 ## Interaction With The Migration Proposal
 
 This design changes the following sections of `docs/rust-migration-proposal/`:
 
 - **003** (`RecallService::recall`, §3): rewrite per "Recall-Time Behavior" above; drop the
-  "active rules always first" invariant. `FeedbackStore` (§2.5): add
-  `record_recall_outcome`; `apply_score_delta` gains the `rule_intent` decay multiplier.
-- **004** (`ReinforcementManager`, `Crystallizer`, `Consolidator`, §2): each gains the
-  responsibilities described in "Dream-Time Integration" above.
+  "active rules always first" invariant; port `SOURCE_CREDIBILITY_CONFIDENCE` into
+  `hiero-core::domain::crystal` or `values`. `FeedbackStore` (§2.5): add
+  `record_recall_outcome`, the three new event-delta entries, and the `rule_intent`/
+  `source_credibility` decay dampener in `apply_score_delta`.
+- **004** (§2): `ReinforcementManager` extended per above; add `Reconsolidator` and
+  `LinkReinforcer` as new phases; `Consolidator` is explicitly left unchanged (concepts only).
+  `DreamConfig` (004 §1) gains `reconsolidation_diff_threshold`.
 - **005** (§3 MCP tools, §5 REST API): add the `useful`/`miss` feedback tool/endpoint with
   agent-facing instruction text in its schema.
-- **002**: add `source_crystal_id` to `short_term_memories`; pin real `crystal_links` /
-  `crystal_activations` columns from `global.sql`.
+- **002**: add `source_crystal_id` to `short_term_memories`; confirm/add `outcome` on
+  `crystal_activations`; pin real `crystal_links` columns from `global.sql`.
 
 ## Testing Considerations
 
 - Dedup correctness: two recalls of the same crystal in one session produce exactly one
-  short-term working copy and two `memory_events` rows (one `recalled_again` after the first
-  dedup hit).
-- Spreading activation: a crystal above threshold with a known `crystal_links` neighbor returns
-  that neighbor in the same `recall()` call, at the expected attenuated score, and does not
-  recurse past one hop.
-- Reconsolidation: a working copy edited beyond the "minor edit" threshold produces a new
-  crystal with `supersedes_crystal_id` set and flips the original to `superseded` on the next
-  dream cycle; an unedited or trivially-edited working copy only reinforces the original.
-- Rule decay: two crystals with identical event histories but different `rule_intent` values
-  decay at different rates, and both are archivable given enough negative evidence (no
-  immunity).
+  short-term working copy, two `crystal_activations` rows, and one `recalled_again` memory event
+  (from the second recall's dedup hit).
+- Spreading activation: a crystal above `SPREADING_ACTIVATION_THRESHOLD` with a known
+  `crystal_links` neighbor returns that neighbor in the same `recall()` call, at the expected
+  attenuated score, and does not recurse past one hop.
+- Reconsolidation: a working copy edited beyond `reconsolidation_diff_threshold` produces a new
+  crystal with `supersedes_crystal_id` set, flips the original to `superseded`, copies concept
+  links, and archives the working copy — all on the next dream cycle. An unedited or trivially
+  edited working copy only reinforces the original and still gets archived.
+- Combination: two co-activated `useful` crystals with high similarity produce exactly one
+  `combined_into` event, one survivor with the union of both crystals' concept/links, and one
+  absorbed crystal marked `superseded` — never a schema change to `supersedes_crystal_id`.
+- Rule decay: two crystals with identical event histories but one empty and one non-empty
+  `rule_intent` decay at different rates; both remain archivable given enough negative evidence
+  (no immunity). Two non-empty-`rule_intent` crystals with different `source_credibility` labels
+  decay at different rates from each other too.
