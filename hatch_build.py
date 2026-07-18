@@ -9,12 +9,12 @@ class CustomBuildHook(BuildHookInterface):
         frontend = Path(self.root) / "frontend"
 
         run(
-            "mise exec bun@1.3.14 -- bun install --frozen-lockfile".split(),
+            "bun install --frozen-lockfile".split(),
             check=True,
             cwd=frontend,
         )
         run(
-            "mise exec bun@1.3.14 -- bun run build".split(),
+            "bun run build".split(),
             check=True,
             cwd=frontend,
         )

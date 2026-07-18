@@ -251,8 +251,9 @@ def test_pyproject_configures_local_frontend_build_hook() -> None:
 
     build_hook = (ROOT / "hatch_build.py").read_text()
     assert "BuildHookInterface" in build_hook
-    assert "mise exec bun@1.3.14 -- bun install --frozen-lockfile" in build_hook
-    assert "mise exec bun@1.3.14 -- bun run build" in build_hook
+    assert '"bun install --frozen-lockfile"' in build_hook
+    assert '"bun run build"' in build_hook
+    assert "mise" not in build_hook
 
 
 def test_project_ignores_local_agent_config() -> None:
