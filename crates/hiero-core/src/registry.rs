@@ -9,40 +9,28 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, FromRow, Serialize, Deserialize)]
 pub struct SeriesRecord {
     pub id: i64,
     pub slug: String,
     pub title: String,
     pub default_source_language: String,
     pub default_target_language: String,
-    pub language_tags: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, FromRow)]
-struct SeriesRow {
-    id: i64,
-    slug: String,
-    title: String,
-    default_source_language: String,
-    default_target_language: String,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeriesWithLanguageTags {
+    pub series: SeriesRecord,
+    pub language_tags: Vec<String>,
 }
 
-impl SeriesRow {
-    fn with_tags(self, language_tags: Vec<String>) -> SeriesRecord {
-        SeriesRecord {
-            id: self.id,
-            slug: self.slug,
-            title: self.title,
-            default_source_language: self.default_source_language,
-            default_target_language: self.default_target_language,
+impl SeriesRecord {
+    fn with_tags(self, language_tags: Vec<String>) -> SeriesWithLanguageTags {
+        SeriesWithLanguageTags {
+            series: self,
             language_tags,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
         }
     }
 }
@@ -91,7 +79,7 @@ impl<'a> SeriesRegistry<'a> {
         title: &str,
         source_lang: &str,
         target_lang: &str,
-    ) -> Result<SeriesRecord> {
+    ) -> Result<SeriesWithLanguageTags> {
         self.create_with_language_tags(slug, title, source_lang, target_lang, None)
             .await
     }
@@ -103,7 +91,7 @@ impl<'a> SeriesRegistry<'a> {
         source_lang: &str,
         target_lang: &str,
         language_tags: Option<&[String]>,
-    ) -> Result<SeriesRecord> {
+    ) -> Result<SeriesWithLanguageTags> {
         validate_slug(slug)?;
         let language_tags = language_tags.map_or_else(
             || normalize_language_tags(&[source_lang.to_owned(), target_lang.to_owned()]),
@@ -143,8 +131,8 @@ impl<'a> SeriesRegistry<'a> {
         Ok(row.with_tags(language_tags))
     }
 
-    pub async fn list(&self) -> Result<Vec<SeriesRecord>> {
-        let rows = sqlx::query_as::<_, SeriesRow>(
+    pub async fn list(&self) -> Result<Vec<SeriesWithLanguageTags>> {
+        let rows = sqlx::query_as::<_, SeriesRecord>(
             r#"
             select id, slug, title, default_source_language, default_target_language,
                    created_at, updated_at
@@ -177,9 +165,9 @@ impl<'a> SeriesRegistry<'a> {
             .collect())
     }
 
-    pub async fn get(&self, slug: &str) -> Result<SeriesRecord> {
+    pub async fn get(&self, slug: &str) -> Result<SeriesWithLanguageTags> {
         let mut connection = self.pool.acquire().await?;
-        let row = sqlx::query_as::<_, SeriesRow>(
+        let row = sqlx::query_as::<_, SeriesRecord>(
             r#"
             select id, slug, title, default_source_language, default_target_language,
                    created_at, updated_at
@@ -232,9 +220,9 @@ impl<'a> SeriesRegistry<'a> {
     pub async fn init_at(&self, slug: &str, workspace: impl AsRef<Path>) -> Result<()> {
         let series = self.get(slug).await?;
         let config = WorkspaceConfig {
-            series_slug: &series.slug,
-            source_language: &series.default_source_language,
-            target_language: &series.default_target_language,
+            series_slug: &series.series.slug,
+            source_language: &series.series.default_source_language,
+            target_language: &series.series.default_target_language,
             task_type: "translation",
         };
         let mut contents =
@@ -255,8 +243,8 @@ struct WorkspaceConfig<'a> {
 async fn fetch_series_by_slug(
     transaction: &mut Transaction<'_, Sqlite>,
     slug: &str,
-) -> std::result::Result<Option<SeriesRow>, sqlx::Error> {
-    sqlx::query_as::<_, SeriesRow>(
+) -> std::result::Result<Option<SeriesRecord>, sqlx::Error> {
+    sqlx::query_as::<_, SeriesRecord>(
         r#"
         select id, slug, title, default_source_language, default_target_language,
                created_at, updated_at

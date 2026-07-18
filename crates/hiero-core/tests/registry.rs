@@ -3,7 +3,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use hiero_core::registry::{RegistryError, SeriesRegistry};
+use hiero_core::registry::{RegistryError, SeriesRecord, SeriesRegistry};
 use serde_json::json;
 use sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions};
 
@@ -52,6 +52,38 @@ async fn fixture() -> SqlitePool {
 }
 
 #[tokio::test]
+async fn series_record_decodes_the_seven_persisted_columns() {
+    let pool = fixture().await;
+    sqlx::query(
+        r#"
+        insert into series(
+          slug, title, default_source_language, default_target_language, created_at, updated_at
+        ) values ('oso', 'Only Sense Online', 'ja', 'en', ?, ?)
+        "#,
+    )
+    .bind("2026-07-18T10:00:00Z")
+    .bind("2026-07-18T11:00:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let row = sqlx::query_as::<_, SeriesRecord>(
+        r#"
+        select id, slug, title, default_source_language, default_target_language,
+               created_at, updated_at
+        from series
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the authoritative series row should decode directly");
+
+    assert_eq!(row.slug, "oso");
+    assert_eq!(row.default_source_language, "ja");
+    assert_eq!(row.default_target_language, "en");
+}
+
+#[tokio::test]
 async fn create_upserts_a_slug_and_seeds_compatibility_language_tags() {
     let pool = fixture().await;
     let registry = SeriesRegistry::new(&pool);
@@ -65,10 +97,10 @@ async fn create_upserts_a_slug_and_seeds_compatibility_language_tags() {
         .await
         .expect("duplicate slug should update the existing series");
 
-    assert_eq!(created.id, updated.id);
-    assert_eq!(updated.title, "Only Sense Online Rebuild");
-    assert_eq!(updated.default_source_language, "jp");
-    assert_eq!(updated.default_target_language, "ru");
+    assert_eq!(created.series.id, updated.series.id);
+    assert_eq!(updated.series.title, "Only Sense Online Rebuild");
+    assert_eq!(updated.series.default_source_language, "jp");
+    assert_eq!(updated.series.default_target_language, "ru");
     assert_eq!(updated.language_tags, ["jp", "ru"]);
     assert_eq!(registry.get("only-sense-online").await.unwrap(), updated);
 }
@@ -113,7 +145,7 @@ async fn list_orders_series_and_each_series_language_tags_stably() {
     assert_eq!(
         listed
             .iter()
-            .map(|series| series.slug.as_str())
+            .map(|series| series.series.slug.as_str())
             .collect::<Vec<_>>(),
         ["alpha", "beta"]
     );
@@ -158,13 +190,13 @@ async fn set_language_tags_replaces_tags_without_changing_compatibility_fields()
     let tags = vec!["RU".to_owned(), " en ".to_owned(), "ru".to_owned()];
 
     registry
-        .set_language_tags(series.id, &tags)
+        .set_language_tags(series.series.id, &tags)
         .await
         .expect("tags should be replaced");
     let updated = registry.get("only-sense-online").await.unwrap();
 
-    assert_eq!(updated.default_source_language, "ja");
-    assert_eq!(updated.default_target_language, "en");
+    assert_eq!(updated.series.default_source_language, "ja");
+    assert_eq!(updated.series.default_target_language, "en");
     assert_eq!(updated.language_tags, ["en", "ru"]);
 }
 
@@ -184,7 +216,7 @@ async fn set_language_tags_rolls_back_deletion_when_an_insert_fails() {
     .unwrap();
 
     let error = registry
-        .set_language_tags(series.id, &["forbidden".to_owned()])
+        .set_language_tags(series.series.id, &["forbidden".to_owned()])
         .await
         .unwrap_err();
 
@@ -267,13 +299,13 @@ async fn language_tag_replacement_has_one_created_at_per_operation() {
         .await
         .unwrap();
     registry
-        .set_language_tags(series.id, &["ja".to_owned(), "en".to_owned()])
+        .set_language_tags(series.series.id, &["ja".to_owned(), "en".to_owned()])
         .await
         .unwrap();
 
     let rows =
         sqlx::query("select distinct created_at from series_language_tags where series_id = ?")
-            .bind(series.id)
+            .bind(series.series.id)
             .fetch_all(&pool)
             .await
             .unwrap();
