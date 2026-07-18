@@ -1086,14 +1086,6 @@ class AdminStore:
                 """,
                 (title, text, now, crystal_id),
             )
-            self._replace_crystal_fts(
-                conn,
-                crystal_id,
-                old_title=before["title"],
-                old_text=before["text"],
-                title=title,
-                text=text,
-            )
             after = self._get_crystal(conn, crystal_id)
             self._audit_with_connection(
                 conn,
@@ -1215,10 +1207,6 @@ class AdminStore:
                 ),
             )
             merged_id = int(cursor.lastrowid)
-            conn.execute(
-                "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
-                (merged_id, title, text),
-            )
             for crystal_id in crystal_ids:
                 conn.execute(
                     """
@@ -1303,10 +1291,6 @@ class AdminStore:
                 new_id = int(cursor.lastrowid)
                 new_ids.append(new_id)
                 conn.execute(
-                    "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
-                    (new_id, title, text),
-                )
-                conn.execute(
                     """
                     insert or ignore into crystal_links(
                       source_crystal_id,
@@ -1368,10 +1352,6 @@ class AdminStore:
                 ),
             )
             promoted_id = int(cursor.lastrowid)
-            conn.execute(
-                "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
-                (promoted_id, source["title"], source["text"]),
-            )
             self._audit_with_connection(
                 conn,
                 "promote",
@@ -2213,25 +2193,6 @@ class AdminStore:
         if row is None:
             raise KeyError(f"unknown dream run: {run_id}")
         return row
-
-    def _replace_crystal_fts(
-        self,
-        conn: sqlite3.Connection,
-        crystal_id: int,
-        *,
-        old_title: str,
-        old_text: str,
-        title: str,
-        text: str,
-    ) -> None:
-        conn.execute(
-            "insert into crystals_fts(crystals_fts, rowid, title, text) values ('delete', ?, ?, ?)",
-            (crystal_id, old_title, old_text),
-        )
-        conn.execute(
-            "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
-            (crystal_id, title, text),
-        )
 
     def _approve_advisory_concept_proposal(
         self,

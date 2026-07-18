@@ -184,10 +184,6 @@ class CrystalStore:
                 ),
             )
             crystal_id = int(cursor.lastrowid)
-            conn.execute(
-                "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
-                (crystal_id, title, text),
-            )
             for story_scope in clean_story_scopes:
                 conn.execute(
                     """

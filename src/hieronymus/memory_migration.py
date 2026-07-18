@@ -979,10 +979,6 @@ class MemoryGraphMigrator:
                     ),
                 )
                 crystal_id = int(cursor.lastrowid)
-                conn.execute(
-                    "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
-                    (crystal_id, title, text),
-                )
                 created["crystals"] += 1
             else:
                 crystal_id = int(row["id"])
@@ -1069,13 +1065,6 @@ class MemoryGraphMigrator:
                 _now(conn),
                 crystal_id,
             ),
-        )
-        conn.execute(
-            """
-            insert or replace into crystals_fts(rowid, title, text)
-            values (?, ?, ?)
-            """,
-            (crystal_id, title, text),
         )
 
     def _ensure_crystal_concept_link(

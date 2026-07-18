@@ -93,3 +93,148 @@ def test_global_migration_allows_cycle_less_records(tmp_path: Path) -> None:
     assert nullable["task_sessions"]["cycle_id"]
     assert nullable["crystal_activations"]["cycle_id"]
     assert nullable["memory_events"]["cycle_id"]
+
+
+def test_global_memory_fts_triggers_track_raw_mutations_and_session_cascade(
+    tmp_path: Path,
+) -> None:
+    with connect(tmp_path / "hieronymus.sqlite") as conn:
+        apply_migration(conn, "global.sql")
+        conn.execute(
+            """
+            insert into series(
+              slug, title, default_source_language, default_target_language,
+              created_at, updated_at
+            ) values ('series', 'Series', 'ja', 'ru', 'now', 'now')
+            """
+        )
+        session_id = conn.execute(
+            """
+            insert into task_sessions(
+              series_slug, source_language, target_language, task_type, status,
+              created_at, last_activity_at
+            ) values ('series', 'ja', 'ru', 'translate', 'active', 'now', 'now')
+            """
+        ).lastrowid
+        memory_id = conn.execute(
+            """
+            insert into short_term_memories(
+              session_id, source_role, kind, text, created_at
+            ) values (?, 'user', 'note', 'raw insertion token', 'now')
+            """,
+            (session_id,),
+        ).lastrowid
+
+        assert (
+            conn.execute(
+                """
+            select count(*) from short_term_memories_fts
+            where short_term_memories_fts match 'insertion'
+            """
+            ).fetchone()[0]
+            == 1
+        )
+        conn.execute(
+            "update short_term_memories set text = 'raw update token' where id = ?",
+            (memory_id,),
+        )
+        assert (
+            conn.execute(
+                """
+            select count(*) from short_term_memories_fts
+            where short_term_memories_fts match 'insertion'
+            """
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                """
+            select count(*) from short_term_memories_fts
+            where short_term_memories_fts match 'update'
+            """
+            ).fetchone()[0]
+            == 1
+        )
+
+        conn.execute("delete from task_sessions where id = ?", (session_id,))
+        assert (
+            conn.execute(
+                """
+            select count(*) from short_term_memories_fts
+            where short_term_memories_fts match 'update'
+            """
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_global_migration_repairs_legacy_memory_fts_drift(tmp_path: Path) -> None:
+    with connect(tmp_path / "hieronymus.sqlite") as conn:
+        apply_migration(conn, "global.sql")
+        conn.execute(
+            """
+            insert into series(
+              slug, title, default_source_language, default_target_language,
+              created_at, updated_at
+            ) values ('series', 'Series', 'ja', 'ru', 'now', 'now')
+            """
+        )
+        session_id = conn.execute(
+            """
+            insert into task_sessions(
+              series_slug, source_language, target_language, task_type, status,
+              created_at, last_activity_at
+            ) values ('series', 'ja', 'ru', 'translate', 'active', 'now', 'now')
+            """
+        ).lastrowid
+        conn.execute("drop trigger short_term_memories_ai")
+        memory_id = conn.execute(
+            """
+            insert into short_term_memories(
+              session_id, source_role, kind, text, created_at
+            ) values (?, 'user', 'note', 'legacy missing token', 'now')
+            """,
+            (session_id,),
+        ).lastrowid
+        conn.execute("drop trigger crystals_ai")
+        crystal_id = conn.execute(
+            """
+            insert into crystals(
+              crystal_type, text, title, scope_type, strength, confidence,
+              status, created_at, updated_at
+            ) values (
+              'lesson', 'legacy stale token', 'Legacy', 'global', 0.5, 0.5,
+              'active', 'now', 'now'
+            )
+            """
+        ).lastrowid
+        conn.execute(
+            "insert into crystals_fts(rowid, title, text) values (?, 'Wrong', 'drifted token')",
+            (crystal_id,),
+        )
+        conn.commit()
+
+        apply_migration(conn, "global.sql")
+
+        assert (
+            conn.execute(
+                """
+            select rowid from short_term_memories_fts
+            where short_term_memories_fts match 'missing'
+            """
+            ).fetchone()[0]
+            == memory_id
+        )
+        assert (
+            conn.execute(
+                "select rowid from crystals_fts where crystals_fts match 'stale'"
+            ).fetchone()[0]
+            == crystal_id
+        )
+        assert (
+            conn.execute(
+                "select count(*) from crystals_fts where crystals_fts match 'drifted'"
+            ).fetchone()[0]
+            == 0
+        )

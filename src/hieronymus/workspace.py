@@ -408,10 +408,6 @@ class WorkspaceStore:
                     value_column="semantic_tag",
                     values=memory["semantic_tags"],
                 )
-                conn.execute(
-                    "insert into short_term_memories_fts(rowid, text) values (?, ?)",
-                    (memory_id, memory["text"]),
-                )
             conn.execute(
                 "update task_sessions set last_activity_at = ? where id = ?",
                 (_now(), session_id),

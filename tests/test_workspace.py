@@ -393,13 +393,13 @@ def test_short_term_memory_is_searchable_in_fts(config: HieronymusConfig) -> Non
     )
 
     with connect(config.database_path) as conn:
-        row = conn.execute(
+        rows = conn.execute(
             """
             select rowid
             from short_term_memories_fts
             where short_term_memories_fts match ?
             """,
             ("инвентарь",),
-        ).fetchone()
+        ).fetchall()
 
-    assert row["rowid"] == memory_id
+    assert [row["rowid"] for row in rows] == [memory_id]

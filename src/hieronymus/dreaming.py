@@ -2582,10 +2582,6 @@ class DreamService:
             ),
         )
         crystal_id = int(cursor.lastrowid)
-        conn.execute(
-            "insert into crystals_fts(rowid, title, text) values (?, ?, ?)",
-            (crystal_id, candidate.title, candidate.text),
-        )
         for memory_id in candidate.source_memory_ids:
             conn.execute(
                 """

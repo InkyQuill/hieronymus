@@ -646,10 +646,6 @@ class Termbase:
             ),
         )
         crystal_id = int(cursor.lastrowid)
-        conn.execute(
-            "insert into crystals_fts(rowid, title, text) values (?, '', ?)",
-            (crystal_id, text),
-        )
         self._ensure_crystal_semantic_tags(conn, crystal_id, tags=tags, now=now)
         self._link_rule_crystal_to_concept(
             conn,

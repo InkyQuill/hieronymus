@@ -87,6 +87,21 @@ create virtual table if not exists short_term_memories_fts using fts5(
   content_rowid='id'
 );
 
+create trigger if not exists short_term_memories_ai after insert on short_term_memories begin
+  insert into short_term_memories_fts(rowid, text) values (new.id, new.text);
+end;
+
+create trigger if not exists short_term_memories_ad after delete on short_term_memories begin
+  insert into short_term_memories_fts(short_term_memories_fts, rowid, text)
+  values ('delete', old.id, old.text);
+end;
+
+create trigger if not exists short_term_memories_au after update on short_term_memories begin
+  insert into short_term_memories_fts(short_term_memories_fts, rowid, text)
+  values ('delete', old.id, old.text);
+  insert into short_term_memories_fts(rowid, text) values (new.id, new.text);
+end;
+
 create table if not exists crystals (
   id integer primary key,
   crystal_type text not null,
@@ -126,6 +141,21 @@ create virtual table if not exists crystals_fts using fts5(
   content='crystals',
   content_rowid='id'
 );
+
+create trigger if not exists crystals_ai after insert on crystals begin
+  insert into crystals_fts(rowid, title, text) values (new.id, new.title, new.text);
+end;
+
+create trigger if not exists crystals_ad after delete on crystals begin
+  insert into crystals_fts(crystals_fts, rowid, title, text)
+  values ('delete', old.id, old.title, old.text);
+end;
+
+create trigger if not exists crystals_au after update on crystals begin
+  insert into crystals_fts(crystals_fts, rowid, title, text)
+  values ('delete', old.id, old.title, old.text);
+  insert into crystals_fts(rowid, title, text) values (new.id, new.title, new.text);
+end;
 
 create table if not exists crystal_sources (
   crystal_id integer not null references crystals(id) on delete cascade,

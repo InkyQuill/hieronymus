@@ -278,20 +278,25 @@ def test_migration_reconciles_existing_ledger_rule_crystal(
             """,
             (str(term_id),),
         ).fetchone()
-        fts_text = conn.execute(
+        fts_rows = conn.execute(
             """
-            select text
+            select rowid
             from crystals_fts
-            where rowid = ?
+            where crystals_fts match 'Attack'
+              and rowid = ?
             """,
             (row["id"],),
-        ).fetchone()["text"]
+        ).fetchall()
+        stale_fts = conn.execute(
+            "select rowid from crystals_fts where crystals_fts match 'stale'"
+        ).fetchall()
     assert report.created == {}
     assert row["text"] == "攻撃力上昇 is translated as Attack Boost."
     assert row["title"] == ""
     assert row["status"] == "active"
     assert row["confidence"] == 0.95
-    assert fts_text == "攻撃力上昇 is translated as Attack Boost."
+    assert [fts_row["rowid"] for fts_row in fts_rows] == [row["id"]]
+    assert stale_fts == []
 
 
 def test_migration_reconciles_existing_ledger_facet(

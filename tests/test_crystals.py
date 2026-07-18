@@ -413,15 +413,51 @@ def test_search_includes_global_crystals(config: HieronymusConfig) -> None:
             """
         )
         crystal_id = int(cursor.lastrowid)
-        conn.execute(
-            "insert into crystals_fts(rowid, title, text) values (?, '', ?)",
-            (crystal_id, "Honorific suffixes often signal social distance."),
-        )
         conn.commit()
 
     results = store.search(context, "honorific social")
 
     assert [result.id for result in results] == [crystal_id]
+
+
+def test_crystal_fts_tracks_raw_update_and_delete(config: HieronymusConfig) -> None:
+    context = _context(config)
+    store = CrystalStore(config)
+    crystal_id = store.add_crystal(
+        context,
+        crystal_type="lesson",
+        title="Original marker",
+        text="Original searchable token.",
+    )
+
+    with connect(config.database_path) as conn:
+        conn.execute(
+            """
+            update crystals
+            set title = 'Updated marker', text = 'Replacement searchable token.'
+            where id = ?
+            """,
+            (crystal_id,),
+        )
+        assert (
+            conn.execute(
+                "select count(*) from crystals_fts where crystals_fts match 'Original'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "select count(*) from crystals_fts where crystals_fts match 'Replacement'"
+            ).fetchone()[0]
+            == 1
+        )
+        conn.execute("delete from crystals where id = ?", (crystal_id,))
+        assert (
+            conn.execute(
+                "select count(*) from crystals_fts where crystals_fts match 'Replacement'"
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_add_crystal_links_source_memories(config: HieronymusConfig) -> None:

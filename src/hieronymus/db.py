@@ -75,6 +75,22 @@ def ensure_global_compatibility_columns(conn: sqlite3.Connection) -> None:
     conn.commit()
     ensure_concepts_allow_duplicate_names(conn)
     ensure_concept_facet_compatibility(conn)
+    ensure_memory_fts_compatibility(conn)
+
+
+def ensure_memory_fts_compatibility(conn: sqlite3.Connection) -> None:
+    content_columns = {
+        "short_term_memories_fts": ("short_term_memories", {"id", "text"}),
+        "crystals_fts": ("crystals", {"id", "title", "text"}),
+    }
+    for table, (content_table, required_columns) in content_columns.items():
+        if not required_columns <= _column_names(conn, content_table):
+            continue
+        try:
+            conn.execute(f"insert into {table}({table}, rank) values ('integrity-check', 1)")
+        except sqlite3.DatabaseError:
+            conn.execute(f"insert into {table}({table}) values ('rebuild')")
+    conn.commit()
 
 
 def ensure_concept_facet_compatibility(conn: sqlite3.Connection) -> None:

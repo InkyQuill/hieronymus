@@ -230,17 +230,24 @@ def test_edit_deprecate_and_delete_crystal_refresh_status_fts_scores_and_audit(
     with connect(config.database_path) as conn:
         edited = conn.execute("select * from crystals where id = ?", (edit_id,)).fetchone()
         edited_fts = conn.execute(
-            "select * from crystals_fts where rowid = ?",
+            """
+            select rowid from crystals_fts
+            where crystals_fts match 'Updated'
+              and rowid = ?
+            """,
             (edit_id,),
-        ).fetchone()
+        ).fetchall()
+        stale_fts = conn.execute(
+            "select rowid from crystals_fts where crystals_fts match 'Old'"
+        ).fetchall()
         archived = conn.execute("select * from crystals where id = ?", (archive_id,)).fetchone()
         deleted = conn.execute("select * from crystals where id = ?", (delete_id,)).fetchone()
         audits = conn.execute("select * from audit_log order by id").fetchall()
 
     assert edited["title"] == "Updated センス"
     assert edited["text"] == "Use сенс for センス."
-    assert edited_fts["title"] == "Updated センス"
-    assert edited_fts["text"] == "Use сенс for センス."
+    assert [row["rowid"] for row in edited_fts] == [edit_id]
+    assert stale_fts == []
     assert archived["status"] == "archived"
     assert deleted["status"] == "archived"
     assert deleted["strength"] == 0
