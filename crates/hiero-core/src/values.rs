@@ -9,7 +9,11 @@ pub struct JsonObjectError;
 
 #[must_use]
 pub fn clamp_score(value: f64) -> f64 {
-    value.clamp(0.0, 1.0)
+    if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, 1.0)
+    }
 }
 
 #[must_use]
@@ -57,6 +61,19 @@ mod tests {
             (0.25, 0.25),
             (1.0, 1.0),
             (2.0, 1.0),
+        ];
+
+        for (value, expected) in cases {
+            assert_eq!(clamp_score(value), expected);
+        }
+    }
+
+    #[test]
+    fn clamp_score_normalizes_non_finite_values_deterministically() {
+        let cases = [
+            (f64::NAN, 0.0),
+            (f64::NEG_INFINITY, 0.0),
+            (f64::INFINITY, 1.0),
         ];
 
         for (value, expected) in cases {

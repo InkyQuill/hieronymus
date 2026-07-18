@@ -6,6 +6,17 @@ trait Environment {
     fn var_os(&self, key: &str) -> Option<OsString>;
 }
 
+fn environment_path(environment: &impl Environment, key: &str) -> Option<PathBuf> {
+    environment
+        .var_os(key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn absolute_environment_path(environment: &impl Environment, key: &str) -> Option<PathBuf> {
+    environment_path(environment, key).filter(|path| path.is_absolute())
+}
+
 struct ProcessEnvironment;
 
 impl Environment for ProcessEnvironment {
@@ -18,7 +29,7 @@ impl Environment for ProcessEnvironment {
 pub enum ConfigError {
     #[error("HOME is required when an XDG root is not configured")]
     MissingHome,
-    #[error("failed to create configuration directory `{path}`: {source}")]
+    #[error("failed to create required directory `{path}`: {source}")]
     CreateDirectory {
         path: PathBuf,
         #[source]
@@ -42,26 +53,22 @@ impl HieronymusConfig {
         data_root: Option<PathBuf>,
         environment: &impl Environment,
     ) -> Result<Self, ConfigError> {
-        let home = || environment.var_os("HOME").map(PathBuf::from);
+        let data_home = || absolute_environment_path(environment, "HOME");
         let data_root = data_root
+            .filter(|path| !path.as_os_str().is_empty())
+            .or_else(|| environment_path(environment, "HIERONYMUS_DATA_ROOT"))
             .or_else(|| {
-                environment
-                    .var_os("HIERONYMUS_DATA_ROOT")
-                    .map(PathBuf::from)
-            })
-            .or_else(|| {
-                environment
-                    .var_os("XDG_DATA_HOME")
-                    .map(PathBuf::from)
+                absolute_environment_path(environment, "XDG_DATA_HOME")
                     .map(|root| root.join(APPLICATION_DIR))
             })
-            .or_else(|| home().map(|root| root.join(".local/share").join(APPLICATION_DIR)))
+            .or_else(|| data_home().map(|root| root.join(".local/share").join(APPLICATION_DIR)))
             .ok_or(ConfigError::MissingHome)?;
-        let config_root = environment
-            .var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
+        let config_root = absolute_environment_path(environment, "XDG_CONFIG_HOME")
             .map(|root| root.join(APPLICATION_DIR))
-            .or_else(|| home().map(|root| root.join(".config").join(APPLICATION_DIR)))
+            .or_else(|| {
+                absolute_environment_path(environment, "HOME")
+                    .map(|root| root.join(".config").join(APPLICATION_DIR))
+            })
             .ok_or(ConfigError::MissingHome)?;
 
         Ok(Self {
@@ -185,10 +192,12 @@ mod tests {
         collections::HashMap,
         ffi::OsString,
         fs,
-        os::unix::ffi::OsStringExt,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
 
     use super::{Environment, HieronymusConfig};
 
@@ -251,6 +260,71 @@ mod tests {
     }
 
     #[test]
+    fn data_root_ignores_invalid_xdg_and_home_values() {
+        let cases = [
+            (
+                TestEnvironment::default()
+                    .with("XDG_DATA_HOME", "/xdg")
+                    .with("HOME", "/home/test"),
+                Ok(PathBuf::from("/xdg/hieronymus")),
+            ),
+            (
+                TestEnvironment::default()
+                    .with("HIERONYMUS_DATA_ROOT", "")
+                    .with("XDG_DATA_HOME", "")
+                    .with("HOME", "/home/test"),
+                Ok(PathBuf::from("/home/test/.local/share/hieronymus")),
+            ),
+            (
+                TestEnvironment::default()
+                    .with("XDG_DATA_HOME", "relative/xdg")
+                    .with("HOME", "/home/test"),
+                Ok(PathBuf::from("/home/test/.local/share/hieronymus")),
+            ),
+            (
+                TestEnvironment::default().with("HOME", "/home/test"),
+                Ok(PathBuf::from("/home/test/.local/share/hieronymus")),
+            ),
+            (
+                TestEnvironment::default()
+                    .with("XDG_DATA_HOME", "")
+                    .with("HOME", "relative/home")
+                    .with("XDG_CONFIG_HOME", "/config"),
+                Err(()),
+            ),
+            (
+                TestEnvironment::default().with("XDG_CONFIG_HOME", "/config"),
+                Err(()),
+            ),
+        ];
+
+        for (environment, expected) in cases {
+            let actual = HieronymusConfig::load_with_environment(None, &environment);
+            match expected {
+                Ok(expected_root) => {
+                    assert_eq!(
+                        actual.expect("configuration should resolve").data_root,
+                        expected_root
+                    )
+                }
+                Err(()) => assert!(matches!(actual, Err(super::ConfigError::MissingHome))),
+            }
+        }
+    }
+
+    #[test]
+    fn data_root_treats_an_empty_explicit_path_as_unset() {
+        let environment = TestEnvironment::default()
+            .with("XDG_DATA_HOME", "/xdg")
+            .with("XDG_CONFIG_HOME", "/config");
+
+        let config = HieronymusConfig::load_with_environment(Some(PathBuf::new()), &environment)
+            .expect("configuration should fall back from an empty explicit path");
+
+        assert_eq!(config.data_root, PathBuf::from("/xdg/hieronymus"));
+    }
+
+    #[test]
     fn config_root_uses_xdg_config_home_separately_from_data_root() {
         let environment = TestEnvironment::default()
             .with("HIERONYMUS_DATA_ROOT", "/data")
@@ -261,6 +335,53 @@ mod tests {
             .expect("configuration should resolve");
 
         assert_eq!(config.config_root(), PathBuf::from("/config/hieronymus"));
+    }
+
+    #[test]
+    fn config_root_ignores_invalid_xdg_and_home_values() {
+        let cases = [
+            (
+                TestEnvironment::default()
+                    .with("XDG_CONFIG_HOME", "/config")
+                    .with("HOME", "/home/test"),
+                Ok(PathBuf::from("/config/hieronymus")),
+            ),
+            (
+                TestEnvironment::default()
+                    .with("XDG_CONFIG_HOME", "")
+                    .with("HOME", "/home/test"),
+                Ok(PathBuf::from("/home/test/.config/hieronymus")),
+            ),
+            (
+                TestEnvironment::default()
+                    .with("XDG_CONFIG_HOME", "relative/config")
+                    .with("HOME", "/home/test"),
+                Ok(PathBuf::from("/home/test/.config/hieronymus")),
+            ),
+            (
+                TestEnvironment::default().with("HOME", "/home/test"),
+                Ok(PathBuf::from("/home/test/.config/hieronymus")),
+            ),
+            (
+                TestEnvironment::default()
+                    .with("XDG_CONFIG_HOME", "")
+                    .with("HOME", "relative/home"),
+                Err(()),
+            ),
+            (TestEnvironment::default(), Err(())),
+        ];
+
+        for (environment, expected) in cases {
+            let actual =
+                HieronymusConfig::load_with_environment(Some(PathBuf::from("/data")), &environment);
+            match expected {
+                Ok(expected_root) => assert_eq!(
+                    actual.expect("configuration should resolve").config_root(),
+                    expected_root
+                ),
+                Err(()) => assert!(matches!(actual, Err(super::ConfigError::MissingHome))),
+            }
+        }
     }
 
     #[test]
@@ -337,13 +458,48 @@ mod tests {
     }
 
     #[test]
+    fn ensure_directories_preserves_the_failing_path_and_io_source() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock should follow the Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("hiero-config-error-{unique}"));
+        fs::create_dir(&root).expect("test root should be created");
+        let blocking_file = root.join("data");
+        fs::write(&blocking_file, b"not a directory").expect("blocking file should be created");
+        let environment = TestEnvironment::default()
+            .with("XDG_CONFIG_HOME", root.as_os_str())
+            .with("HOME", "/home/test");
+        let config =
+            HieronymusConfig::load_with_environment(Some(blocking_file.clone()), &environment)
+                .expect("configuration should resolve without touching the filesystem");
+
+        let error = config
+            .ensure_directories()
+            .expect_err("a regular file cannot be used as the data directory");
+
+        assert!(error.to_string().starts_with(&format!(
+            "failed to create required directory `{}`:",
+            blocking_file.display()
+        )));
+        assert!(std::error::Error::source(&error).is_some());
+        match &error {
+            super::ConfigError::CreateDirectory { path, source } => {
+                assert_eq!(path, &blocking_file);
+                assert_eq!(source.kind(), std::io::ErrorKind::AlreadyExists);
+            }
+            super::ConfigError::MissingHome => panic!("expected directory creation error"),
+        }
+        fs::remove_dir_all(root).expect("test directories should be removable");
+    }
+
+    #[test]
     fn port_follows_cli_environment_default_precedence() {
         let cases = [
             (Some(8080), Some(OsString::from("9090")), 8080),
             (None, Some(OsString::from("9090")), 9090),
             (None, None, 9768),
             (None, Some(OsString::from("invalid")), 9768),
-            (None, Some(OsString::from_vec(vec![0xff])), 9768),
         ];
 
         for (cli_arg, env_port, expected) in cases {
@@ -356,6 +512,18 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn port_falls_back_for_non_unicode_environment_values() {
+        let environment =
+            TestEnvironment::default().with("HIERONYMUS_PORT", OsString::from_vec(vec![0xff]));
+
+        assert_eq!(
+            HieronymusConfig::resolve_port_with_environment(None, &environment),
+            9768
+        );
     }
 
     #[test]
