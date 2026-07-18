@@ -7,7 +7,7 @@ use std::{
 
 use rust_embed::RustEmbed;
 
-use super::AgentError;
+use super::{AgentError, PathFailure};
 
 #[derive(RustEmbed)]
 #[folder = "../../assets/skills"]
@@ -190,16 +190,52 @@ fn stage_skill_directories(
         Ok(())
     })();
     if let Err(error) = result {
-        remove_stages(&staged);
-        return Err(error);
+        let failures = remove_stages_with(&staged, &SystemDirectoryOperations);
+        return if failures.is_empty() {
+            Err(error)
+        } else {
+            Err(AgentError::SkillRollbackFailed {
+                cause: Box::new(error),
+                failures,
+            })
+        };
     }
     Ok(staged)
 }
 
 fn replace_staged_directories(staged: &[(PathBuf, PathBuf)]) -> Result<(), AgentError> {
+    replace_staged_directories_with(staged, &SystemDirectoryOperations)
+}
+
+trait DirectoryOperations {
+    fn exists(&self, path: &Path) -> bool;
+    fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()>;
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()>;
+}
+
+struct SystemDirectoryOperations;
+
+impl DirectoryOperations for SystemDirectoryOperations {
+    fn exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
+
+    fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()> {
+        fs::rename(source, destination)
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        fs::remove_dir_all(path)
+    }
+}
+
+fn replace_staged_directories_with(
+    staged: &[(PathBuf, PathBuf)],
+    operations: &impl DirectoryOperations,
+) -> Result<(), AgentError> {
     let mut replaced = Vec::<(PathBuf, PathBuf, Option<PathBuf>)>::new();
     for (destination, stage) in staged {
-        let backup = if destination.exists() {
+        let backup = if operations.exists(destination) {
             let id = STAGE_ID.fetch_add(1, Ordering::Relaxed);
             let name = destination
                 .file_name()
@@ -207,53 +243,109 @@ fn replace_staged_directories(staged: &[(PathBuf, PathBuf)]) -> Result<(), Agent
                 .unwrap_or("skill");
             let backup =
                 destination.with_file_name(format!(".{name}.backup-{}-{id}", std::process::id()));
-            if let Err(source) = fs::rename(destination, &backup) {
-                rollback_replacements(&replaced);
-                remove_stages(staged);
-                return Err(io_error(destination, source));
+            if let Err(source) = operations.rename(destination, &backup) {
+                return rollback_or_error(
+                    io_error(destination, source),
+                    &replaced,
+                    staged,
+                    operations,
+                );
             }
             Some(backup)
         } else {
             None
         };
         replaced.push((destination.clone(), stage.clone(), backup));
-        if let Err(source) = fs::rename(stage, destination) {
-            rollback_replacements(&replaced);
-            remove_stages(staged);
-            return Err(io_error(destination, source));
+        if let Err(source) = operations.rename(stage, destination) {
+            return rollback_or_error(io_error(destination, source), &replaced, staged, operations);
         }
     }
+    let mut cleanup_failures = Vec::new();
     for (_, _, backup) in replaced {
-        if let Some(backup) = backup {
-            fs::remove_dir_all(&backup).map_err(|source| io_error(&backup, source))?;
+        if let Some(backup) = backup
+            && let Err(source) = operations.remove_dir_all(&backup)
+        {
+            cleanup_failures.push(path_failure("remove committed backup", &backup, source));
         }
     }
-    Ok(())
+    if cleanup_failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AgentError::CommittedSkillCleanup {
+            failures: cleanup_failures,
+        })
+    }
 }
 
-fn rollback_replacements(replaced: &[(PathBuf, PathBuf, Option<PathBuf>)]) {
+fn rollback_or_error(
+    cause: AgentError,
+    replaced: &[(PathBuf, PathBuf, Option<PathBuf>)],
+    staged: &[(PathBuf, PathBuf)],
+    operations: &impl DirectoryOperations,
+) -> Result<(), AgentError> {
+    let mut failures = rollback_replacements(replaced, operations);
+    failures.extend(remove_stages_with(staged, operations));
+    if failures.is_empty() {
+        Err(cause)
+    } else {
+        Err(AgentError::SkillRollbackFailed {
+            cause: Box::new(cause),
+            failures,
+        })
+    }
+}
+
+fn rollback_replacements(
+    replaced: &[(PathBuf, PathBuf, Option<PathBuf>)],
+    operations: &impl DirectoryOperations,
+) -> Vec<PathFailure> {
+    let mut failures = Vec::new();
     for (destination, stage, backup) in replaced.iter().rev() {
-        if destination.exists() {
-            let _ = fs::rename(destination, stage);
+        if operations.exists(destination)
+            && let Err(source) = operations.rename(destination, stage)
+        {
+            failures.push(path_failure(
+                "move replacement back to stage",
+                destination,
+                source,
+            ));
         }
-        if let Some(backup) = backup {
-            let _ = fs::rename(backup, destination);
+        if let Some(backup) = backup
+            && let Err(source) = operations.rename(backup, destination)
+        {
+            failures.push(path_failure("restore original skill", backup, source));
         }
     }
+    failures
 }
 
-fn remove_stages(staged: &[(PathBuf, PathBuf)]) {
+fn remove_stages_with(
+    staged: &[(PathBuf, PathBuf)],
+    operations: &impl DirectoryOperations,
+) -> Vec<PathFailure> {
+    let mut failures = Vec::new();
     for (_, stage) in staged {
-        if stage.exists() {
-            let _ = fs::remove_dir_all(stage);
+        if operations.exists(stage)
+            && let Err(source) = operations.remove_dir_all(stage)
+        {
+            failures.push(path_failure("remove staged skill", stage, source));
         }
+    }
+    failures
+}
+
+fn path_failure(operation: &'static str, path: &Path, source: std::io::Error) -> PathFailure {
+    PathFailure {
+        operation,
+        path: path.to_path_buf(),
+        error: source.to_string(),
     }
 }
 
 fn is_owned_skill_directory(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name.starts_with("hieronymus-"))
+        .is_some_and(is_embedded_skill_name)
         && path.is_dir()
         && !path
             .symlink_metadata()
@@ -265,6 +357,16 @@ fn is_owned_skill_directory(path: &Path) -> bool {
             .symlink_metadata()
             .map(|metadata| metadata.file_type().is_symlink())
             .unwrap_or(true)
+}
+
+fn is_embedded_skill_name(name: &str) -> bool {
+    EmbeddedSkills::iter().any(|path| {
+        Path::new(path.as_ref())
+            .components()
+            .next()
+            .and_then(|part| part.as_os_str().to_str())
+            == Some(name)
+    })
 }
 
 fn ensure_not_symlink(path: &Path) -> Result<(), AgentError> {
@@ -283,5 +385,138 @@ fn io_error(path: &Path, source: std::io::Error) -> AgentError {
     AgentError::Io {
         path: path.to_path_buf(),
         source,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::{Cell, RefCell},
+        collections::HashSet,
+        io,
+        path::{Path, PathBuf},
+    };
+
+    use super::{DirectoryOperations, replace_staged_directories_with};
+    use crate::agent::AgentError;
+
+    struct FakeOperations {
+        paths: RefCell<HashSet<PathBuf>>,
+        rename_calls: Cell<usize>,
+        fail_renames: HashSet<usize>,
+        fail_cleanup: bool,
+    }
+
+    impl FakeOperations {
+        fn new(paths: impl IntoIterator<Item = PathBuf>) -> Self {
+            Self {
+                paths: RefCell::new(paths.into_iter().collect()),
+                rename_calls: Cell::new(0),
+                fail_renames: HashSet::new(),
+                fail_cleanup: false,
+            }
+        }
+
+        fn failing_renames(mut self, calls: &[usize]) -> Self {
+            self.fail_renames.extend(calls.iter().copied());
+            self
+        }
+    }
+
+    impl DirectoryOperations for FakeOperations {
+        fn exists(&self, path: &Path) -> bool {
+            self.paths.borrow().contains(path)
+        }
+
+        fn rename(&self, source: &Path, destination: &Path) -> io::Result<()> {
+            let call = self.rename_calls.get() + 1;
+            self.rename_calls.set(call);
+            if self.fail_renames.contains(&call) {
+                return Err(io::Error::other(format!("injected rename failure {call}")));
+            }
+            let mut paths = self.paths.borrow_mut();
+            if !paths.remove(source) || paths.contains(destination) {
+                return Err(io::Error::other("invalid virtual rename"));
+            }
+            paths.insert(destination.to_path_buf());
+            Ok(())
+        }
+
+        fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+            if self.fail_cleanup {
+                return Err(io::Error::other("injected cleanup failure"));
+            }
+            self.paths.borrow_mut().remove(path);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn pre_commit_failure_rolls_back_every_completed_replacement() {
+        let destination_a = PathBuf::from("/skills/a");
+        let destination_b = PathBuf::from("/skills/b");
+        let stage_a = PathBuf::from("/skills/.a-stage");
+        let stage_b = PathBuf::from("/skills/.b-stage");
+        let operations = FakeOperations::new([
+            destination_a.clone(),
+            destination_b.clone(),
+            stage_a.clone(),
+            stage_b.clone(),
+        ])
+        .failing_renames(&[3]);
+
+        let error = replace_staged_directories_with(
+            &[
+                (destination_a.clone(), stage_a),
+                (destination_b.clone(), stage_b),
+            ],
+            &operations,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AgentError::Io { .. }));
+        assert!(operations.exists(&destination_a));
+        assert!(operations.exists(&destination_b));
+    }
+
+    #[test]
+    fn rollback_failure_reports_each_failed_restore() {
+        let destination_a = PathBuf::from("/skills/a");
+        let destination_b = PathBuf::from("/skills/b");
+        let stage_a = PathBuf::from("/skills/.a-stage");
+        let stage_b = PathBuf::from("/skills/.b-stage");
+        let operations = FakeOperations::new([
+            destination_a.clone(),
+            destination_b.clone(),
+            stage_a.clone(),
+            stage_b.clone(),
+        ])
+        .failing_renames(&[3, 4]);
+
+        let error = replace_staged_directories_with(
+            &[(destination_a, stage_a), (destination_b, stage_b)],
+            &operations,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, AgentError::SkillRollbackFailed { ref failures, .. } if failures.len() == 2)
+        );
+    }
+
+    #[test]
+    fn cleanup_failure_reports_commit_and_retained_backup() {
+        let destination = PathBuf::from("/skills/a");
+        let stage = PathBuf::from("/skills/.a-stage");
+        let mut operations = FakeOperations::new([destination.clone(), stage.clone()]);
+        operations.fail_cleanup = true;
+
+        let error = replace_staged_directories_with(&[(destination.clone(), stage)], &operations)
+            .unwrap_err();
+
+        assert!(
+            matches!(error, AgentError::CommittedSkillCleanup { ref failures } if failures.len() == 1)
+        );
+        assert!(operations.exists(&destination));
     }
 }

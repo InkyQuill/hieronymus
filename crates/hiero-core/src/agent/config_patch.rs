@@ -1,15 +1,13 @@
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::Write,
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    path::Path,
 };
 
 use serde_json::{Map, Value};
+use tempfile::{Builder, NamedTempFile};
 
 use super::AgentError;
-
-static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 pub fn load_json_object(path: &Path) -> Result<Map<String, Value>, AgentError> {
     let text = read_optional(path)?;
@@ -80,6 +78,47 @@ pub(crate) fn try_patch_toml_config(
 }
 
 pub fn atomic_write_text(path: &Path, contents: &str) -> Result<(), AgentError> {
+    atomic_write_text_with(path, contents, &SystemAtomicFileOperations)
+}
+
+struct PersistFailure {
+    temporary: NamedTempFile,
+    source: std::io::Error,
+}
+
+trait AtomicFileOperations {
+    fn persist(&self, temporary: NamedTempFile, path: &Path) -> Result<File, PersistFailure>;
+    fn sync_parent(&self, parent: &Path) -> std::io::Result<()>;
+}
+
+struct SystemAtomicFileOperations;
+
+impl AtomicFileOperations for SystemAtomicFileOperations {
+    fn persist(&self, temporary: NamedTempFile, path: &Path) -> Result<File, PersistFailure> {
+        temporary.persist(path).map_err(|error| PersistFailure {
+            temporary: error.file,
+            source: error.error,
+        })
+    }
+
+    fn sync_parent(&self, parent: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            File::open(parent)?.sync_all()
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = parent;
+            Ok(())
+        }
+    }
+}
+
+fn atomic_write_text_with(
+    path: &Path,
+    contents: &str,
+    operations: &impl AtomicFileOperations,
+) -> Result<(), AgentError> {
     let parent = path
         .parent()
         .ok_or_else(|| AgentError::MissingParent(path.to_path_buf()))?;
@@ -87,44 +126,45 @@ pub fn atomic_write_text(path: &Path, contents: &str) -> Result<(), AgentError> 
         path: parent.to_path_buf(),
         source,
     })?;
-    let temporary = temporary_path(path);
-    let result = (|| {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary).map_err(|source| AgentError::Io {
-            path: temporary.clone(),
+    let mut temporary = Builder::new()
+        .prefix(".hiero-config-")
+        .tempfile_in(parent)
+        .map_err(|source| AgentError::Io {
+            path: parent.to_path_buf(),
             source,
         })?;
-        file.write_all(contents.as_bytes())
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temporary
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|source| AgentError::Io {
-                path: temporary.clone(),
+                path: temporary.path().to_path_buf(),
                 source,
             })?;
-        file.sync_all().map_err(|source| AgentError::Io {
-            path: temporary.clone(),
+    }
+    temporary
+        .write_all(contents.as_bytes())
+        .and_then(|()| temporary.as_file().sync_all())
+        .map_err(|source| AgentError::Io {
+            path: temporary.path().to_path_buf(),
             source,
         })?;
-        fs::rename(&temporary, path).map_err(|source| AgentError::Io {
+    let _persisted = operations.persist(temporary, path).map_err(|failure| {
+        let temporary_path = failure.temporary.path().to_path_buf();
+        drop(failure.temporary);
+        AgentError::Io {
+            path: temporary_path,
+            source: failure.source,
+        }
+    })?;
+    operations
+        .sync_parent(parent)
+        .map_err(|source| AgentError::CommittedDurability {
             path: path.to_path_buf(),
             source,
-        })?;
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|source| AgentError::Io {
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
+        })
 }
 
 fn read_optional(path: &Path) -> Result<String, AgentError> {
@@ -138,11 +178,82 @@ fn read_optional(path: &Path) -> Result<String, AgentError> {
     }
 }
 
-fn temporary_path(path: &Path) -> PathBuf {
-    let id = TEMP_ID.fetch_add(1, Ordering::Relaxed);
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("config");
-    path.with_file_name(format!(".{name}.tmp-{}-{id}", std::process::id()))
+#[cfg(test)]
+mod tests {
+    use std::{fs::File, io, path::Path};
+
+    use tempfile::NamedTempFile;
+
+    use super::{AtomicFileOperations, PersistFailure, atomic_write_text_with};
+    use crate::agent::AgentError;
+
+    struct FailingOperations {
+        fail_persist: bool,
+        fail_sync: bool,
+    }
+
+    impl AtomicFileOperations for FailingOperations {
+        fn persist(&self, temporary: NamedTempFile, path: &Path) -> Result<File, PersistFailure> {
+            if self.fail_persist {
+                return Err(PersistFailure {
+                    temporary,
+                    source: io::Error::other("injected persist failure"),
+                });
+            }
+            temporary.persist(path).map_err(|error| PersistFailure {
+                temporary: error.file,
+                source: error.error,
+            })
+        }
+
+        fn sync_parent(&self, _parent: &Path) -> io::Result<()> {
+            if self.fail_sync {
+                Err(io::Error::other("injected directory sync failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn pre_commit_replace_failure_preserves_the_original() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        std::fs::write(&path, "original").unwrap();
+
+        let error = atomic_write_text_with(
+            &path,
+            "replacement",
+            &FailingOperations {
+                fail_persist: true,
+                fail_sync: false,
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AgentError::Io { .. }));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "original");
+    }
+
+    #[test]
+    fn post_commit_sync_failure_reports_that_replacement_committed() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        std::fs::write(&path, "original").unwrap();
+
+        let error = atomic_write_text_with(
+            &path,
+            "replacement",
+            &FailingOperations {
+                fail_persist: false,
+                fail_sync: true,
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, AgentError::CommittedDurability { path: ref actual, .. } if actual == &path)
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "replacement");
+    }
 }

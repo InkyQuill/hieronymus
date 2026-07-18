@@ -5,13 +5,16 @@ use std::{
 };
 
 use hiero_core::agent::{
-    AgentPlugin, ProjectAgentContext, agent_plugins,
+    AgentError, AgentPlugin, ProjectAgentContext, agent_plugins,
     claude::ClaudePlugin,
     codex::CodexPlugin,
     config_patch::{load_json_object, load_toml_object, patch_json_config, patch_toml_config},
     context::discover_context,
     gemini::GeminiPlugin,
-    install_skills, resolve_plugin, skill_assets, uninstall_skills,
+    install_skills,
+    openclaw::OpenClawPlugin,
+    opencode::OpenCodePlugin,
+    resolve_plugin, skill_assets, uninstall_skills,
 };
 use serde_json::json;
 
@@ -179,6 +182,128 @@ fn command_plugin_writes_the_main_binary_mcp_shim() {
 }
 
 #[test]
+fn plugins_reject_conflicting_user_owned_entries_without_mutation() {
+    let root = workspace("plugin-conflicts");
+    let context = ProjectAgentContext::for_workspace(&root, "oso");
+    let cases: Vec<(Box<dyn AgentPlugin>, PathBuf, &str)> = vec![
+        (
+            Box::new(ClaudePlugin::at(root.join("claude.json"))),
+            root.join("claude.json"),
+            r#"{"mcpServers":{"hieronymus":{"command":"custom"}}}"#,
+        ),
+        (
+            Box::new(GeminiPlugin::at(root.join("gemini.json"))),
+            root.join("gemini.json"),
+            r#"{"mcpServers":{"hieronymus":{"command":"custom"}}}"#,
+        ),
+        (
+            Box::new(OpenCodePlugin::at(root.join("opencode.json"))),
+            root.join("opencode.json"),
+            r#"{"mcpServers":{"hieronymus":{"command":"custom"}}}"#,
+        ),
+        (
+            Box::new(OpenClawPlugin::at(root.join("openclaw.json"))),
+            root.join("openclaw.json"),
+            r#"{"mcpServers":{"hieronymus":{"command":"custom"}}}"#,
+        ),
+    ];
+    for (plugin, path, original) in cases {
+        fs::write(&path, original).unwrap();
+        let error = plugin
+            .apply(&plugin.install_plan(&context).unwrap(), false)
+            .unwrap_err();
+        assert!(
+            matches!(error, AgentError::ManagedEntryConflict { path: ref actual } if actual == &path)
+        );
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
+    }
+
+    let path = root.join("codex.toml");
+    let original = "[mcp_servers.hieronymus]\ncommand = \"custom\"\n";
+    fs::write(&path, original).unwrap();
+    let plugin = CodexPlugin::at(path.clone());
+    let error = plugin
+        .apply(&plugin.install_plan(&context).unwrap(), false)
+        .unwrap_err();
+    assert!(
+        matches!(error, AgentError::ManagedEntryConflict { path: ref actual } if actual == &path)
+    );
+    assert_eq!(fs::read_to_string(path).unwrap(), original);
+}
+
+#[test]
+fn codex_detection_requires_exact_http_entry_and_malformed_sections_are_immutable() {
+    let root = workspace("codex-exact");
+    let path = root.join("config.toml");
+    let plugin = CodexPlugin::at(path.clone());
+    let context = ProjectAgentContext::for_workspace(&root, "oso");
+    fs::write(
+        &path,
+        "[mcp_servers.hieronymus]\nurl = \"http://127.0.0.1:9768/mcp\"\ncommand = \"hiero\"\n",
+    )
+    .unwrap();
+    assert!(!plugin.detect().installed);
+
+    let malformed = "mcp_servers = []\nmodel = \"gpt-5\"\n";
+    fs::write(&path, malformed).unwrap();
+    assert!(
+        plugin
+            .apply(&plugin.install_plan(&context).unwrap(), false)
+            .is_err()
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), malformed);
+
+    fs::write(
+        &path,
+        "[mcp_servers.hieronymus]\nurl = \"http://127.0.0.1:9768/mcp\"\n",
+    )
+    .unwrap();
+    assert!(plugin.detect().installed);
+}
+
+#[test]
+fn command_plugins_use_documented_paths_and_are_repeat_safe() {
+    let root = workspace("command-plugin-paths");
+    let context = ProjectAgentContext::for_workspace(&root, "oso");
+    let cases: Vec<(Box<dyn AgentPlugin>, PathBuf)> = vec![
+        (
+            Box::new(GeminiPlugin::at(root.join(".gemini/settings.json"))),
+            root.join(".gemini/settings.json"),
+        ),
+        (
+            Box::new(OpenCodePlugin::at(
+                root.join(".config/opencode/plugin.json"),
+            )),
+            root.join(".config/opencode/plugin.json"),
+        ),
+        (
+            Box::new(OpenClawPlugin::at(root.join(".openclaw/openclaw.json"))),
+            root.join(".openclaw/openclaw.json"),
+        ),
+    ];
+    for (plugin, path) in cases {
+        let plan = plugin.install_plan(&context).unwrap();
+        assert_eq!(plan.steps[0].path, path);
+        plugin.apply(&plan, true).unwrap();
+        assert!(!path.exists());
+        plugin.apply(&plan, false).unwrap();
+        plugin.apply(&plan, false).unwrap();
+        assert_eq!(
+            load_json_object(&path).unwrap()["mcpServers"]["hieronymus"],
+            json!({"command":"hiero", "args":["mcp"]})
+        );
+    }
+}
+
+#[test]
+fn claude_detection_reports_host_directory_and_config_file() {
+    let root = workspace("claude-detect-paths");
+    let config = root.join(".claude.json");
+    let availability = ClaudePlugin::at(config.clone()).detect();
+    assert_eq!(availability.detect_paths, [root.join(".claude"), config]);
+}
+
+#[test]
 fn skill_install_is_idempotent_and_uninstall_removes_only_owned_directories() {
     let root = workspace("skills");
     assert_eq!(skill_assets().len(), 8);
@@ -213,6 +338,25 @@ fn skill_install_rejects_unknown_targets_before_writing() {
     assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
 }
 
+#[test]
+fn uninstall_preserves_user_skills_with_hieronymus_prefix_including_dry_run() {
+    let root = workspace("skill-exact-ownership");
+    install_skills(&root, &["agents".into()], false).unwrap();
+    let custom = root.join(".agents/skills/hieronymus-custom/SKILL.md");
+    fs::create_dir_all(custom.parent().unwrap()).unwrap();
+    fs::write(&custom, "user owned").unwrap();
+
+    let dry_run = uninstall_skills(&root, &["agents".into()], true).unwrap();
+    assert!(
+        !dry_run
+            .installed
+            .contains(&custom.parent().unwrap().to_path_buf())
+    );
+    assert_eq!(fs::read_to_string(&custom).unwrap(), "user owned");
+    uninstall_skills(&root, &["agents".into()], false).unwrap();
+    assert_eq!(fs::read_to_string(custom).unwrap(), "user owned");
+}
+
 #[cfg(unix)]
 #[test]
 fn skill_install_rejects_symlinked_target_roots() {
@@ -225,6 +369,30 @@ fn skill_install_rejects_symlinked_target_roots() {
 
     assert!(install_skills(&root, &["agents".into()], false).is_err());
     assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_install_rejects_symlinked_owned_directory_or_skill_file_before_writing() {
+    use std::os::unix::fs::symlink;
+
+    for kind in ["directory", "skill-file"] {
+        let root = workspace(kind);
+        let outside = workspace(&format!("{kind}-outside"));
+        let outside_skill = outside.join("SKILL.md");
+        fs::write(&outside_skill, "outside").unwrap();
+        let destination = root.join(".agents/skills/hieronymus-read");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        if kind == "directory" {
+            symlink(&outside, &destination).unwrap();
+        } else {
+            fs::create_dir_all(&destination).unwrap();
+            symlink(&outside_skill, destination.join("SKILL.md")).unwrap();
+        }
+
+        assert!(install_skills(&root, &["agents".into()], false).is_err());
+        assert_eq!(fs::read_to_string(&outside_skill).unwrap(), "outside");
+    }
 }
 
 #[cfg(unix)]

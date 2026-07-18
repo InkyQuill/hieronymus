@@ -27,18 +27,17 @@ impl AgentPlugin for CodexPlugin {
         "codex"
     }
     fn detect(&self) -> AgentAvailability {
+        let expected = http_entry();
         let installed = super::config_patch::load_toml_object(&self.config_path)
             .ok()
             .and_then(|root| {
                 root.get("mcp_servers")?
                     .as_table()?
                     .get("hieronymus")?
-                    .as_table()?
-                    .get("url")?
-                    .as_str()
-                    .map(str::to_owned)
+                    .as_table()
+                    .cloned()
             })
-            .is_some_and(|url| url == MCP_HTTP_URL);
+            .is_some_and(|entry| entry == expected);
         availability(
             installed,
             &[self
@@ -59,12 +58,27 @@ impl AgentPlugin for CodexPlugin {
         let path = only_path(plan)?;
         try_patch_toml_config(path, |root| {
             let servers = table_section(root, "mcp_servers", path)?;
-            let mut entry = toml::Table::new();
-            entry.insert("url".into(), toml::Value::String(MCP_HTTP_URL.to_owned()));
-            servers.insert("hieronymus".into(), toml::Value::Table(entry));
+            let entry = http_entry();
+            match servers.get("hieronymus") {
+                Some(toml::Value::Table(existing)) if existing == &entry => {}
+                Some(_) => {
+                    return Err(AgentError::ManagedEntryConflict {
+                        path: path.to_path_buf(),
+                    });
+                }
+                None => {
+                    servers.insert("hieronymus".into(), toml::Value::Table(entry));
+                }
+            }
             Ok(())
         })
     }
+}
+
+fn http_entry() -> toml::Table {
+    let mut entry = toml::Table::new();
+    entry.insert("url".into(), toml::Value::String(MCP_HTTP_URL.to_owned()));
+    entry
 }
 
 fn table_section<'a>(

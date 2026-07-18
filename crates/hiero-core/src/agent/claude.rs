@@ -30,13 +30,10 @@ impl AgentPlugin for ClaudePlugin {
     }
     fn detect(&self) -> AgentAvailability {
         let entry = json!({"type": "http", "url": MCP_HTTP_URL});
+        let parent = self.config_path.parent().unwrap_or(&self.config_path);
         availability(
             json_mcp_matches(&self.config_path, &entry),
-            &[self
-                .config_path
-                .parent()
-                .unwrap_or(&self.config_path)
-                .to_path_buf()],
+            &[parent.join(".claude"), self.config_path.clone()],
             &self.config_path,
         )
     }

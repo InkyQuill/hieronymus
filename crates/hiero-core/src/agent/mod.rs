@@ -27,6 +27,12 @@ pub enum AgentError {
         #[source]
         source: std::io::Error,
     },
+    #[error("replacement of `{path}` committed, but syncing its parent directory failed: {source}")]
+    CommittedDurability {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("invalid JSON object in `{path}`: {source}")]
     InvalidJson {
         path: PathBuf,
@@ -48,12 +54,33 @@ pub enum AgentError {
         path: PathBuf,
         section: &'static str,
     },
+    #[error(
+        "refusing to overwrite user-owned Hieronymus MCP entry in `{path}`; remove or rename the existing entry before installing"
+    )]
+    ManagedEntryConflict { path: PathBuf },
     #[error("path has no parent: `{0}`")]
     MissingParent(PathBuf),
     #[error("unsupported skill target: `{0}`")]
     UnsupportedSkillTarget(String),
     #[error("unsafe filesystem path: `{0}`")]
     UnsafePath(PathBuf),
+    #[error("skill replacement failed and one or more originals could not be restored")]
+    SkillRollbackFailed {
+        #[source]
+        cause: Box<AgentError>,
+        failures: Vec<PathFailure>,
+    },
+    #[error(
+        "skill replacement committed, but one or more backup directories could not be cleaned up"
+    )]
+    CommittedSkillCleanup { failures: Vec<PathFailure> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathFailure {
+    pub operation: &'static str,
+    pub path: PathBuf,
+    pub error: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,7 +162,17 @@ pub(crate) fn only_path(plan: &InstallPlan) -> Result<&Path, AgentError> {
 pub(crate) fn patch_json_mcp(path: &Path, entry: Value) -> Result<(), AgentError> {
     config_patch::try_patch_json_config(path, |root| {
         let servers = object_section(root, "mcpServers", path)?;
-        servers.insert("hieronymus".into(), entry);
+        match servers.get("hieronymus") {
+            Some(existing) if existing == &entry => {}
+            Some(_) => {
+                return Err(AgentError::ManagedEntryConflict {
+                    path: path.to_path_buf(),
+                });
+            }
+            None => {
+                servers.insert("hieronymus".into(), entry);
+            }
+        }
         Ok(())
     })
 }
