@@ -541,7 +541,7 @@ def test_migration_rolls_back_partial_backfill_on_failure(config: HieronymusConf
         assert conn.execute("select count(*) from series_language_tags").fetchone()[0] == 0
 
 
-def test_strict_term_with_unsupported_source_alias_is_skipped(
+def test_strict_term_source_alias_is_mapped_to_rule_graph(
     config: HieronymusConfig,
 ) -> None:
     _seed_base(config)
@@ -558,13 +558,15 @@ def test_strict_term_with_unsupported_source_alias_is_skipped(
 
     report = MemoryGraphMigrator(config).run()
 
-    assert report.skipped == {"strict_terms.unsupported_alias": 1}
+    assert report.skipped == {}
     with connect(config.database_path) as conn:
-        assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
-        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+        alias = conn.execute(
+            "select facet_type, value, language from concept_facets where value = '攻撃バフ'"
+        ).fetchone()
+        assert tuple(alias) == ("alias", "攻撃バフ", "ja")
 
 
-def test_strict_term_with_unsupported_search_alias_is_skipped(
+def test_strict_term_search_alias_is_mapped_to_rule_graph(
     config: HieronymusConfig,
 ) -> None:
     _seed_base(config)
@@ -581,10 +583,12 @@ def test_strict_term_with_unsupported_search_alias_is_skipped(
 
     report = MemoryGraphMigrator(config).run()
 
-    assert report.skipped == {"strict_terms.unsupported_alias": 1}
+    assert report.skipped == {}
     with connect(config.database_path) as conn:
-        assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
-        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+        alias = conn.execute(
+            "select facet_type, value, language from concept_facets where value = 'atk buff'"
+        ).fetchone()
+        assert tuple(alias) == ("alias", "atk buff", "ja")
 
 
 def test_strict_term_with_case_insensitive_forbidden_alias_is_skipped(
@@ -610,7 +614,7 @@ def test_strict_term_with_case_insensitive_forbidden_alias_is_skipped(
         assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
 
 
-def test_strict_term_with_source_alias_in_partial_alias_schema_is_skipped(
+def test_strict_term_source_alias_in_partial_alias_schema_is_mapped(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "memory")
@@ -628,13 +632,18 @@ def test_strict_term_with_source_alias_in_partial_alias_schema_is_skipped(
 
     report = MemoryGraphMigrator(config).run()
 
-    assert report.skipped == {"strict_terms.unsupported_alias": 1}
+    assert report.skipped == {}
     with connect(config.database_path) as conn:
-        assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
-        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "select count(*) from concept_facets "
+                "where facet_type = 'alias' and value = '攻撃バフ'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
-def test_strict_term_with_search_alias_in_partial_alias_schema_is_skipped(
+def test_strict_term_search_alias_in_partial_alias_schema_is_mapped(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "memory")
@@ -652,10 +661,15 @@ def test_strict_term_with_search_alias_in_partial_alias_schema_is_skipped(
 
     report = MemoryGraphMigrator(config).run()
 
-    assert report.skipped == {"strict_terms.unsupported_alias": 1}
+    assert report.skipped == {}
     with connect(config.database_path) as conn:
-        assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
-        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "select count(*) from concept_facets "
+                "where facet_type = 'alias' and value = 'atk buff'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_skipped_strict_term_does_not_remain_pending_in_dry_report(

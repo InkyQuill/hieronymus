@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -12,7 +12,6 @@ from hieronymus.config import HieronymusConfig
 from hieronymus.db import connect, ensure_schema
 from hieronymus.rule_crystals import parse_rule_crystal
 
-_UNSUPPORTED_RULE_ALIAS_KINDS = frozenset({"source_variant", "search_alias"})
 _REQUIRED_GENERATED_GRAPH_COLUMNS = {
     "concepts": {
         "id",
@@ -82,6 +81,22 @@ class MemoryGraphMigrationReport:
 
     def has_pending_work(self) -> bool:
         return any(count > 0 for count in self.pending.values())
+
+
+@dataclass(frozen=True)
+class StrictTermConversionReport:
+    active_terms: int
+    migrated_terms: int
+    created: Mapping[str, int] = field(default_factory=dict)
+    blocked_term_ids: tuple[int, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        return self.migrated_terms == self.active_terms and not self.blocked_term_ids
+
+
+class StrictTermConversionBlocked(ValueError):
+    """Raised when a legacy strict term cannot be represented without loss."""
 
 
 def _now(conn: sqlite3.Connection) -> str:
@@ -455,6 +470,44 @@ class MemoryGraphMigrator:
             ):
                 skipped["generated_graph.incomplete_schema"] += 1
             return
+        report = convert_strict_terms(conn, blocking=False)
+        created.update(report.created)
+        if report.blocked_term_ids:
+            skipped["strict_terms.unsupported_alias"] += len(report.blocked_term_ids)
+
+    def _convert_strict_terms_unchecked(
+        self,
+        conn: sqlite3.Connection,
+        created: Counter[str],
+        skipped: Counter[str],
+        *,
+        failure_hook: Callable[[int], None] | None = None,
+    ) -> None:
+        if not (
+            _has_table(conn, "strict_terms")
+            and _has_columns(
+                conn,
+                "strict_terms",
+                {
+                    "id",
+                    "status",
+                    "source_text",
+                    "canonical_translation",
+                    "notes",
+                    "series_slug",
+                    "source_language",
+                    "target_language",
+                },
+            )
+        ):
+            return
+        if not _generated_graph_schema_is_complete(conn):
+            if _scalar_count(
+                conn,
+                "select count(*) from strict_terms where status in ('approved', 'active')",
+            ):
+                skipped["generated_graph.incomplete_schema"] += 1
+            return
         rows = conn.execute(
             """
             select *
@@ -503,6 +556,23 @@ class MemoryGraphMigrator:
                 is_canonical=True,
                 created=created,
             )
+            for alias_id, language, text, kind in self._strict_term_alias_rows(
+                conn, int(term["id"])
+            ):
+                if kind not in {"source_variant", "search_alias", "approved_variant"}:
+                    continue
+                self._ensure_facet(
+                    conn,
+                    source_table="strict_terms",
+                    source_id=f"{term['id']}:alias:{alias_id}",
+                    concept_id=concept_id,
+                    value=text,
+                    facet_type="rendering" if kind == "approved_variant" else "alias",
+                    language=language,
+                    confidence=0.95,
+                    is_canonical=False,
+                    created=created,
+                )
             self._ensure_facet(
                 conn,
                 source_table="strict_terms",
@@ -531,6 +601,17 @@ class MemoryGraphMigrator:
                 created=created,
             )
             self._ensure_crystal_concept_link(conn, crystal_id, concept_id, confidence=0.95)
+            for alias_id, _, _, kind in self._strict_term_alias_rows(conn, int(term["id"])):
+                if kind == "forbidden_variant":
+                    self._record_ledger(
+                        conn,
+                        "strict_terms",
+                        f"{term['id']}:alias:{alias_id}",
+                        "crystals",
+                        crystal_id,
+                    )
+            if failure_hook is not None:
+                failure_hook(int(term["id"]))
 
     def _migrate_strict_concept_proposals(
         self,
@@ -1131,7 +1212,12 @@ class MemoryGraphMigrator:
             (term_id,),
         ).fetchall()
         for row in rows:
-            if row["kind"] in _UNSUPPORTED_RULE_ALIAS_KINDS:
+            if row["kind"] not in {
+                "source_variant",
+                "search_alias",
+                "approved_variant",
+                "forbidden_variant",
+            }:
                 return None
             if not bool(row["case_sensitive"]):
                 return None
@@ -1146,6 +1232,36 @@ class MemoryGraphMigrator:
             if row["kind"] == "forbidden_variant" and row["text"].strip()
         )
         return (approved, forbidden)
+
+    def _strict_term_alias_rows(
+        self,
+        conn: sqlite3.Connection,
+        term_id: int,
+    ) -> tuple[tuple[int, str, str, str], ...]:
+        if not _has_table(conn, "strict_term_aliases"):
+            return ()
+        columns = _columns(conn, "strict_term_aliases")
+        if not {"term_id", "language", "text", "kind"} <= columns:
+            return ()
+        id_column = "id" if "id" in columns else "rowid"
+        return tuple(
+            (
+                int(row["alias_id"]),
+                str(row["language"]),
+                str(row["text"]).strip(),
+                str(row["kind"]),
+            )
+            for row in conn.execute(
+                f"""
+                select {id_column} as alias_id, language, text, kind
+                from strict_term_aliases
+                where term_id = ?
+                  and trim(text) != ''
+                order by {id_column}
+                """,
+                (term_id,),
+            )
+        )
 
     def _matching_concept(
         self,
@@ -1544,6 +1660,91 @@ class MemoryGraphMigrator:
             ):
                 count += 1
         return count
+
+
+def convert_strict_terms(
+    conn: sqlite3.Connection,
+    *,
+    blocking: bool = True,
+    failure_hook: Callable[[int], None] | None = None,
+) -> StrictTermConversionReport:
+    """Convert approved legacy terms using the caller's connection and transaction.
+
+    The function never commits or rolls back. Callers own transaction boundaries; the
+    retirement orchestrator uses this to keep backup verification outside DB mutation.
+    """
+    if not _has_table(conn, "strict_terms"):
+        return StrictTermConversionReport(active_terms=0, migrated_terms=0)
+
+    required_term_columns = {
+        "id",
+        "status",
+        "source_text",
+        "canonical_translation",
+        "notes",
+        "series_slug",
+        "source_language",
+        "target_language",
+    }
+    if not _has_columns(conn, "strict_terms", required_term_columns):
+        raise StrictTermConversionBlocked("strict_terms has an incomplete legacy shape")
+    if not _generated_graph_schema_is_complete(conn):
+        raise StrictTermConversionBlocked("generated rule graph schema is incomplete")
+
+    active_rows = conn.execute(
+        "select * from strict_terms where status in ('approved', 'active') order by id"
+    ).fetchall()
+    blocked: list[tuple[int, str]] = []
+    writer = object.__new__(MemoryGraphMigrator)
+    for term in active_rows:
+        term_id = int(term["id"])
+        for column in (
+            "source_text",
+            "canonical_translation",
+            "series_slug",
+            "source_language",
+            "target_language",
+        ):
+            if not str(term[column]).strip():
+                blocked.append((term_id, f"{column} is empty"))
+                break
+        else:
+            aliases = writer._strict_term_rule_aliases(conn, term_id)
+            if aliases is None:
+                blocked.append((term_id, "aliases must use known kinds and be case-sensitive"))
+                continue
+            approved, forbidden = aliases
+            if not _validate_rule_shape(
+                source_text=term["source_text"],
+                canonical_translation=term["canonical_translation"],
+                approved_variants=approved,
+                forbidden_variants=forbidden,
+            ):
+                blocked.append((term_id, "alias or rule shape cannot be represented losslessly"))
+
+    if blocked and blocking:
+        details = "; ".join(f"term {term_id}: {reason}" for term_id, reason in blocked)
+        raise StrictTermConversionBlocked(details)
+
+    created: Counter[str] = Counter()
+    skipped: Counter[str] = Counter()
+    writer._convert_strict_terms_unchecked(
+        conn,
+        created,
+        skipped,
+        failure_hook=failure_hook,
+    )
+    migrated = sum(
+        _generated_rule_artifacts_exist(conn, "strict_terms", str(int(term["id"])))
+        for term in active_rows
+    )
+    blocked_ids = tuple(term_id for term_id, _ in blocked)
+    return StrictTermConversionReport(
+        active_terms=len(active_rows),
+        migrated_terms=migrated,
+        created=dict(created),
+        blocked_term_ids=blocked_ids,
+    )
 
 
 def _database_path(db: Database | HieronymusConfig | Path | str) -> Path:
