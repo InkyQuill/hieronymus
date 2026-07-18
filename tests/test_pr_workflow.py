@@ -115,18 +115,15 @@ def test_pr_workflow_backend_job_runs_python_checks() -> None:
     backend_runs = [line for line in backend if line.startswith("      - run: ")]
     assert backend_runs == [
         "      - run: uv sync --dev",
-        "      - run: bun install --cwd frontend --frozen-lockfile",
-        "      - run: bun run --cwd frontend build",
         "      - run: uv run pytest",
         "      - run: uv run ruff check .",
         "      - run: uv run ruff format --check .",
     ]
-    assert backend_runs.index("      - run: bun install --cwd frontend --frozen-lockfile") < (
-        backend_runs.index("      - run: uv run pytest")
-    )
-    assert backend_runs.index("      - run: bun run --cwd frontend build") < backend_runs.index(
-        "      - run: uv run pytest"
-    )
+    assert (
+        "      # Fresh runners do not restore .venv, so uv sync installs the editable project "
+        "and Hatch builds the frontend."
+    ) in backend
+    assert not any("--reinstall-package" in line for line in backend)
 
 
 def test_pr_workflow_frontend_job_runs_bun_tests_and_build() -> None:

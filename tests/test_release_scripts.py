@@ -48,16 +48,18 @@ def test_install_script_uses_managed_github_checkout() -> None:
     assert 'mktemp "${TMPDIR:-/tmp}/hieronymus-uv-install.XXXXXX"' in text
     assert '-o "$UV_INSTALLER"' in text
     assert "uv installation completed but uv was not found on PATH" in text
-    assert "bun install --frozen-lockfile" in text
-    assert "bun run build" in text
     assert 'uv tool install --force --reinstall "$APP_DIR"' in text
     assert "Bun >= 1.3" in text
+    assert "build_frontend()" not in text
+    assert "Building OpenTUI frontend" not in text
+    assert "Hieronymus TUI" not in text
+    assert "Hieronymus web console" in text
     assert "HIERONYMUS_INSTALL_YES" in text
     assert "HIERONYMUS_INSTALL_CHANNEL" in text
     assert 'channel = "$channel"' in text
 
 
-def test_install_script_builds_frontend_before_tool_install_and_writes_stable_channel(
+def test_install_script_delegates_frontend_build_to_tool_install_and_writes_stable_channel(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -133,11 +135,8 @@ def test_install_script_builds_frontend_before_tool_install_and_writes_stable_ch
 
     assert result.returncode == 0, result.stderr
     commands = command_log.read_text(encoding="utf-8").splitlines()
-    assert f"bun:{frontend_dir}:install --frozen-lockfile" in commands
-    assert f"bun:{frontend_dir}:run build" in commands
-    assert commands.index(f"bun:{frontend_dir}:run build") < commands.index(
-        f"uv:{ROOT}:tool install --force --reinstall {app_dir}"
-    )
+    assert f"uv:{ROOT}:tool install --force --reinstall {app_dir}" in commands
+    assert not any(command.startswith("bun:") and "run build" in command for command in commands)
     assert (home / ".config" / "hieronymus" / "release.conf").read_text(
         encoding="utf-8"
     ) == '[updates]\nchannel = "stable"\n'
@@ -220,7 +219,8 @@ def test_install_script_dev_channel_checks_out_main_and_writes_release_conf(
     commands = command_log.read_text(encoding="utf-8").splitlines()
     assert f"git:{ROOT}:-C {app_dir} fetch origin main" in commands
     assert f"git:{ROOT}:-C {app_dir} checkout --detach FETCH_HEAD" in commands
-    assert f"bun:{frontend_dir}:run build" in commands
+    assert f"uv:{ROOT}:tool install --force --reinstall {app_dir}" in commands
+    assert not any(command.startswith("bun:") and "run build" in command for command in commands)
     assert (home / ".config" / "hieronymus" / "release.conf").read_text(
         encoding="utf-8"
     ) == '[updates]\nchannel = "dev"\n'
