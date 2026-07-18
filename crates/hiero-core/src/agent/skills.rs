@@ -227,7 +227,16 @@ trait DirectoryOperations {
 
 struct OwnedBackup {
     path: PathBuf,
-    _owner: Option<TempDir>,
+    owner: Option<TempDir>,
+}
+
+impl OwnedBackup {
+    fn retain(&mut self) {
+        if let Some(owner) = self.owner.take() {
+            let retained = owner.keep();
+            debug_assert_eq!(self.path.parent(), Some(retained.as_path()));
+        }
+    }
 }
 
 struct SystemDirectoryOperations;
@@ -252,7 +261,7 @@ impl DirectoryOperations for SystemDirectoryOperations {
         let path = owner.path().join("original");
         Ok(OwnedBackup {
             path,
-            _owner: Some(owner),
+            owner: Some(owner),
         })
     }
 }
@@ -272,7 +281,7 @@ fn replace_staged_directories_with(
                 Err(source) => {
                     return rollback_or_error(
                         io_error(parent, source),
-                        &replaced,
+                        &mut replaced,
                         staged,
                         operations,
                     );
@@ -281,7 +290,7 @@ fn replace_staged_directories_with(
             if let Err(source) = operations.rename(destination, &backup.path) {
                 return rollback_or_error(
                     io_error(destination, source),
-                    &replaced,
+                    &mut replaced,
                     staged,
                     operations,
                 );
@@ -292,7 +301,12 @@ fn replace_staged_directories_with(
         };
         replaced.push((destination.clone(), stage.clone(), backup));
         if let Err(source) = operations.rename(stage, destination) {
-            return rollback_or_error(io_error(destination, source), &replaced, staged, operations);
+            return rollback_or_error(
+                io_error(destination, source),
+                &mut replaced,
+                staged,
+                operations,
+            );
         }
     }
     let mut cleanup_failures = Vec::new();
@@ -318,7 +332,7 @@ fn replace_staged_directories_with(
 
 fn rollback_or_error(
     cause: AgentError,
-    replaced: &[(PathBuf, PathBuf, Option<OwnedBackup>)],
+    replaced: &mut [(PathBuf, PathBuf, Option<OwnedBackup>)],
     staged: &[(PathBuf, PathBuf)],
     operations: &impl DirectoryOperations,
 ) -> Result<(), AgentError> {
@@ -335,11 +349,11 @@ fn rollback_or_error(
 }
 
 fn rollback_replacements(
-    replaced: &[(PathBuf, PathBuf, Option<OwnedBackup>)],
+    replaced: &mut [(PathBuf, PathBuf, Option<OwnedBackup>)],
     operations: &impl DirectoryOperations,
 ) -> Vec<PathFailure> {
     let mut failures = Vec::new();
-    for (destination, stage, backup) in replaced.iter().rev() {
+    for (destination, stage, backup) in replaced.iter_mut().rev() {
         if operations.exists(destination)
             && let Err(source) = operations.rename(destination, stage)
         {
@@ -353,6 +367,7 @@ fn rollback_replacements(
             && let Err(source) = operations.rename(&backup.path, destination)
         {
             failures.push(path_failure("restore original skill", &backup.path, source));
+            backup.retain();
         }
     }
     failures
@@ -495,7 +510,54 @@ mod tests {
         fn create_backup(&self, parent: &Path) -> io::Result<OwnedBackup> {
             Ok(OwnedBackup {
                 path: parent.join(format!(".fake-backup-{}/original", self.rename_calls.get())),
-                _owner: None,
+                owner: None,
+            })
+        }
+    }
+
+    struct OwnedBackupOperations {
+        rename_calls: Cell<usize>,
+        fail_renames: HashSet<usize>,
+        backup_paths: RefCell<Vec<PathBuf>>,
+    }
+
+    impl OwnedBackupOperations {
+        fn failing_renames(calls: &[usize]) -> Self {
+            Self {
+                rename_calls: Cell::new(0),
+                fail_renames: calls.iter().copied().collect(),
+                backup_paths: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl DirectoryOperations for OwnedBackupOperations {
+        fn exists(&self, path: &Path) -> bool {
+            path.exists()
+        }
+
+        fn rename(&self, source: &Path, destination: &Path) -> io::Result<()> {
+            let call = self.rename_calls.get() + 1;
+            self.rename_calls.set(call);
+            if self.fail_renames.contains(&call) {
+                return Err(io::Error::other(format!("injected rename failure {call}")));
+            }
+            std::fs::rename(source, destination)
+        }
+
+        fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+            std::fs::remove_dir_all(path)
+        }
+
+        fn create_backup(&self, parent: &Path) -> io::Result<OwnedBackup> {
+            let owner = tempfile::Builder::new()
+                .prefix(".owned-backup-")
+                .tempdir_in(parent)?;
+            let path = owner.path().join("original");
+            self.backup_paths.borrow_mut().push(path.clone());
+            Ok(OwnedBackup {
+                path,
+                owner: Some(owner),
             })
         }
     }
@@ -550,6 +612,57 @@ mod tests {
 
         assert!(
             matches!(error, AgentError::SkillRollbackFailed { ref failures, .. } if failures.len() == 2)
+        );
+    }
+
+    #[test]
+    fn failed_restores_retain_owned_backups_at_every_reported_recovery_path() {
+        let root = tempfile::tempdir().unwrap();
+        let mut staged = Vec::new();
+        for name in ["a", "b", "c"] {
+            let destination = root.path().join(name);
+            let stage = root.path().join(format!(".{name}-stage"));
+            std::fs::create_dir(&destination).unwrap();
+            std::fs::write(destination.join("value"), format!("old-{name}")).unwrap();
+            std::fs::create_dir(&stage).unwrap();
+            std::fs::write(stage.join("value"), format!("new-{name}")).unwrap();
+            staged.push((destination, stage));
+        }
+        // Fail the final install, then two restores; the first restore still succeeds.
+        let operations = OwnedBackupOperations::failing_renames(&[6, 7, 9]);
+
+        let error = replace_staged_directories_with(&staged, &operations).unwrap_err();
+        let AgentError::SkillRollbackFailed { failures, .. } = error else {
+            panic!("expected rollback failure");
+        };
+        let backup_paths = operations.backup_paths.borrow();
+        let retained = [&backup_paths[2], &backup_paths[1]];
+
+        assert_eq!(failures.len(), retained.len());
+        for path in retained {
+            assert!(
+                failures.iter().any(|failure| {
+                    failure.operation == "restore original skill" && failure.path == *path
+                }),
+                "retained backup must be reported: {}",
+                path.display()
+            );
+            assert!(
+                path.join("value").is_file(),
+                "{} was deleted",
+                path.display()
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(staged[0].0.join("value")).unwrap(),
+            "old-a"
+        );
+        assert!(!backup_paths[0].parent().unwrap().exists());
+        assert!(staged.iter().all(|(_, stage)| !stage.exists()));
+        assert!(
+            staged[1..]
+                .iter()
+                .all(|(destination, _)| !destination.exists())
         );
     }
 
