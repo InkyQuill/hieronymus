@@ -11,16 +11,39 @@ import type {
   ReleaseSettings,
 } from "./types";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    ...init,
-  });
-  const payload = (await response.json()) as T & { error?: string };
-  if (!response.ok || payload.error)
-    throw new Error(payload.error || "Request failed");
-  return payload;
+export const REQUEST_TIMEOUT_MS = 30_000;
+
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const timeoutController = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    timeoutController.abort();
+  }, REQUEST_TIMEOUT_MS);
+  const callerSignal = init?.signal;
+  const abortForCaller = () => timeoutController.abort(callerSignal?.reason);
+
+  if (callerSignal?.aborted) abortForCaller();
+  else callerSignal?.addEventListener("abort", abortForCaller, { once: true });
+
+  try {
+    const response = await fetch(path, {
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      ...init,
+      signal: timeoutController.signal,
+    });
+    const payload = (await response.json()) as T & { error?: string };
+    if (!response.ok || payload.error)
+      throw new Error(payload.error || "Request failed");
+    return payload;
+  } catch (reason) {
+    if (timedOut) throw new Error("Request timed out");
+    throw reason;
+  } finally {
+    clearTimeout(timeoutId);
+    callerSignal?.removeEventListener("abort", abortForCaller);
+  }
 }
 
 export async function listProviders(): Promise<ProviderProfile[]> {

@@ -28,6 +28,7 @@
     Crystals: ["reinforce_crystal", "decay_crystal", "deprecate_crystal", "delete_crystal"],
     Proposals: ["approve_proposal", "reject_proposal"],
     Concepts: ["reinforce_concept", "decay_concept", "archive_concept"],
+    "Short-Term Memory": ["remove_short_term_memory"],
     "Short-Term Sessions": ["close_session"],
   };
   const destructiveActions = new Set<Action>([
@@ -94,7 +95,8 @@
     error = "";
     try {
       const result = await runAdminAction(action, { id: row.id, confirmed });
-      applySnapshot(result.snapshot);
+      if (action === "remove_short_term_memory") await load(selectedView);
+      else applySnapshot(result.snapshot);
       pendingAction = null;
       onNotice({ message: result.result.message, tone: "success" });
     } catch (reason) {

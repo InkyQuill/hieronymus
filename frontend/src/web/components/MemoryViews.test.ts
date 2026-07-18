@@ -113,3 +113,72 @@ test("destructive memory actions require confirmation and send the exact payload
     confirmed: true,
   });
 });
+
+test("short-term memories require confirmation before removal and refresh after success", async () => {
+  const user = userEvent.setup();
+  const shortTermRow = {
+    ...row,
+    id: 11,
+    kind: "short-term memory",
+    label: "Transient phrase",
+  };
+  const shortTermSnapshot = {
+    snapshot: {
+      ...selectedSnapshot.snapshot,
+      view: "Short-Term Memory",
+      rows: [shortTermRow],
+      selected: shortTermRow,
+      detail: {
+        ...selectedSnapshot.snapshot.detail,
+        title: "Transient phrase",
+      },
+    },
+  } satisfies AdminSnapshot;
+  const refreshedSnapshot = {
+    snapshot: {
+      ...shortTermSnapshot.snapshot,
+      rows: [],
+      selected: null,
+    },
+  } satisfies AdminSnapshot;
+  const shortTermDashboard = {
+    ...dashboard,
+    views: ["Short-Term Memory"],
+  } satisfies AdminDashboard;
+  let resolveRemoval!: (result: AdminActionResult) => void;
+
+  loadSnapshotMock
+    .mockReset()
+    .mockResolvedValueOnce(shortTermSnapshot)
+    .mockResolvedValueOnce(refreshedSnapshot);
+  runActionMock.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveRemoval = resolve;
+      }),
+  );
+
+  render(MemoryViews, {
+    props: { dashboard: shortTermDashboard, onNotice: vi.fn() },
+  });
+  await user.click(await screen.findByRole("button", { name: "Remove" }));
+
+  expect(runActionMock).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Confirm Remove" }));
+  expect(runActionMock).toHaveBeenCalledWith("remove_short_term_memory", {
+    id: 11,
+    confirmed: true,
+  });
+  expect(loadSnapshotMock).toHaveBeenCalledTimes(1);
+
+  resolveRemoval({
+    result: { message: "Removed Transient phrase." },
+    snapshot: refreshedSnapshot.snapshot,
+  });
+  await waitFor(() =>
+    expect(loadSnapshotMock).toHaveBeenLastCalledWith(
+      "Short-Term Memory",
+      undefined,
+    ),
+  );
+});
