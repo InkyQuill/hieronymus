@@ -1,3 +1,5 @@
--- Supports the bounded decay cursor in proposal 004 section 5.
+-- Supports the exact id-cursor decay query in proposal 004 section 5.
 CREATE INDEX idx_crystals_maintenance
-ON crystals(status, crystal_type, last_reinforced_cycle, last_activated_cycle, id);
+ON crystals(id, created_cycle, last_activated_cycle, last_reinforced_cycle)
+WHERE status IN ('active', 'candidate')
+  AND NOT (crystal_type = 'rule' AND status = 'active');

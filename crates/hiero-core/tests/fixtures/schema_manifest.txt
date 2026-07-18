@@ -1,0 +1,394 @@
+TABLE audit_log
+SQL CREATE TABLE audit_log (   id INTEGER PRIMARY KEY,   actor TEXT NOT NULL DEFAULT 'admin',   action TEXT NOT NULL,   entity_type TEXT NOT NULL,   entity_id TEXT NOT NULL,   note TEXT NOT NULL DEFAULT '',   before_json TEXT NOT NULL DEFAULT '{}',   after_json TEXT NOT NULL DEFAULT '{}',   created_at TEXT NOT NULL ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|actor|TEXT|1|'admin'|0
+COLUMN 2|action|TEXT|1|NULL|0
+COLUMN 3|entity_type|TEXT|1|NULL|0
+COLUMN 4|entity_id|TEXT|1|NULL|0
+COLUMN 5|note|TEXT|1|''|0
+COLUMN 6|before_json|TEXT|1|'{}'|0
+COLUMN 7|after_json|TEXT|1|'{}'|0
+COLUMN 8|created_at|TEXT|1|NULL|0
+TABLE concept_facet_language_tags
+SQL CREATE TABLE concept_facet_language_tags (   facet_id INTEGER NOT NULL REFERENCES concept_facets(id) ON DELETE CASCADE,   language_tag TEXT NOT NULL,   PRIMARY KEY (facet_id, language_tag) ) STRICT
+COLUMN 0|facet_id|INTEGER|1|NULL|1
+COLUMN 1|language_tag|TEXT|1|NULL|2
+FK 0|0|concept_facets|facet_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_concept_facet_language_tags_1|1|pk|0|facet_id,language_tag
+TABLE concept_facet_semantic_tags
+SQL CREATE TABLE concept_facet_semantic_tags (   facet_id INTEGER NOT NULL REFERENCES concept_facets(id) ON DELETE CASCADE,   semantic_tag TEXT NOT NULL,   PRIMARY KEY (facet_id, semantic_tag) ) STRICT
+COLUMN 0|facet_id|INTEGER|1|NULL|1
+COLUMN 1|semantic_tag|TEXT|1|NULL|2
+FK 0|0|concept_facets|facet_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_concept_facet_semantic_tags_1|1|pk|0|facet_id,semantic_tag
+TABLE concept_facet_story_scopes
+SQL CREATE TABLE concept_facet_story_scopes (   facet_id INTEGER NOT NULL REFERENCES concept_facets(id) ON DELETE CASCADE,   story_scope TEXT NOT NULL,   PRIMARY KEY (facet_id, story_scope) ) STRICT
+COLUMN 0|facet_id|INTEGER|1|NULL|1
+COLUMN 1|story_scope|TEXT|1|NULL|2
+FK 0|0|concept_facets|facet_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_concept_facet_story_scopes_1|1|pk|0|facet_id,story_scope
+TABLE concept_facets
+SQL CREATE TABLE concept_facets (   id INTEGER PRIMARY KEY,   concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,   language TEXT NOT NULL DEFAULT '',   facet_type TEXT NOT NULL CHECK (     facet_type IN ('name', 'rendering', 'description', 'note', 'alias', 'former_label')   ),   value TEXT NOT NULL,   source_crystal_id INTEGER REFERENCES crystals(id) ON DELETE SET NULL,   confidence REAL NOT NULL DEFAULT 0.2 CHECK (confidence >= 0.0 AND confidence <= 1.0),   is_canonical INTEGER NOT NULL DEFAULT 0 CHECK (is_canonical IN (0, 1)),   superseded_at TEXT,   created_at TEXT NOT NULL,   updated_at TEXT NOT NULL ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|concept_id|INTEGER|1|NULL|0
+COLUMN 2|language|TEXT|1|''|0
+COLUMN 3|facet_type|TEXT|1|NULL|0
+COLUMN 4|value|TEXT|1|NULL|0
+COLUMN 5|source_crystal_id|INTEGER|0|NULL|0
+COLUMN 6|confidence|REAL|1|0.2|0
+COLUMN 7|is_canonical|INTEGER|1|0|0
+COLUMN 8|superseded_at|TEXT|0|NULL|0
+COLUMN 9|created_at|TEXT|1|NULL|0
+COLUMN 10|updated_at|TEXT|1|NULL|0
+FK 0|0|crystals|source_crystal_id|id|NO ACTION|SET NULL|NONE
+FK 1|0|concepts|concept_id|id|NO ACTION|CASCADE|NONE
+TABLE concept_proposals
+SQL CREATE TABLE concept_proposals (   id INTEGER PRIMARY KEY,   dream_run_id INTEGER REFERENCES dream_runs(id) ON DELETE SET NULL,   series_slug TEXT NOT NULL DEFAULT '',   source_language TEXT NOT NULL,   target_language TEXT NOT NULL,   concept_text TEXT NOT NULL,   source_form TEXT NOT NULL,   canonical_rendering TEXT NOT NULL,   approved_variants_json TEXT NOT NULL DEFAULT '[]',   forbidden_variants_json TEXT NOT NULL DEFAULT '[]',   rationale TEXT NOT NULL DEFAULT '',   status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),   created_at TEXT NOT NULL,   updated_at TEXT NOT NULL ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|dream_run_id|INTEGER|0|NULL|0
+COLUMN 2|series_slug|TEXT|1|''|0
+COLUMN 3|source_language|TEXT|1|NULL|0
+COLUMN 4|target_language|TEXT|1|NULL|0
+COLUMN 5|concept_text|TEXT|1|NULL|0
+COLUMN 6|source_form|TEXT|1|NULL|0
+COLUMN 7|canonical_rendering|TEXT|1|NULL|0
+COLUMN 8|approved_variants_json|TEXT|1|'[]'|0
+COLUMN 9|forbidden_variants_json|TEXT|1|'[]'|0
+COLUMN 10|rationale|TEXT|1|''|0
+COLUMN 11|status|TEXT|1|NULL|0
+COLUMN 12|created_at|TEXT|1|NULL|0
+COLUMN 13|updated_at|TEXT|1|NULL|0
+FK 0|0|dream_runs|dream_run_id|id|NO ACTION|SET NULL|NONE
+TABLE concept_renames
+SQL CREATE TABLE concept_renames (   id INTEGER PRIMARY KEY,   concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,   old_name TEXT NOT NULL,   new_name TEXT NOT NULL,   reason TEXT NOT NULL DEFAULT '',   dream_run_id INTEGER REFERENCES dream_runs(id) ON DELETE SET NULL,   created_at TEXT NOT NULL ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|concept_id|INTEGER|1|NULL|0
+COLUMN 2|old_name|TEXT|1|NULL|0
+COLUMN 3|new_name|TEXT|1|NULL|0
+COLUMN 4|reason|TEXT|1|''|0
+COLUMN 5|dream_run_id|INTEGER|0|NULL|0
+COLUMN 6|created_at|TEXT|1|NULL|0
+FK 0|0|dream_runs|dream_run_id|id|NO ACTION|SET NULL|NONE
+FK 1|0|concepts|concept_id|id|NO ACTION|CASCADE|NONE
+TABLE concept_semantic_tags
+SQL CREATE TABLE concept_semantic_tags (   concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,   tag TEXT NOT NULL,   confidence REAL NOT NULL DEFAULT 0.2 CHECK (confidence >= 0.0 AND confidence <= 1.0),   created_at TEXT NOT NULL,   PRIMARY KEY (concept_id, tag) ) STRICT
+COLUMN 0|concept_id|INTEGER|1|NULL|1
+COLUMN 1|tag|TEXT|1|NULL|2
+COLUMN 2|confidence|REAL|1|0.2|0
+COLUMN 3|created_at|TEXT|1|NULL|0
+FK 0|0|concepts|concept_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_concept_semantic_tags_1|1|pk|0|concept_id,tag
+TABLE concepts
+SQL CREATE TABLE concepts (   id INTEGER PRIMARY KEY,   canonical_name TEXT NOT NULL,   description TEXT NOT NULL DEFAULT '',   scope_type TEXT NOT NULL DEFAULT 'global',   scope_key TEXT NOT NULL DEFAULT '',   status TEXT NOT NULL DEFAULT 'candidate' CHECK (     status IN ('candidate', 'established', 'archived', 'merged')   ),   confidence REAL NOT NULL DEFAULT 0.2 CHECK (confidence >= 0.0 AND confidence <= 1.0),   merged_into_concept_id INTEGER REFERENCES concepts(id),   created_at TEXT NOT NULL,   updated_at TEXT NOT NULL,   CHECK (     (scope_type = 'global' AND scope_key = '')     OR (scope_type != 'global' AND scope_key != '')   ) ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|canonical_name|TEXT|1|NULL|0
+COLUMN 2|description|TEXT|1|''|0
+COLUMN 3|scope_type|TEXT|1|'global'|0
+COLUMN 4|scope_key|TEXT|1|''|0
+COLUMN 5|status|TEXT|1|'candidate'|0
+COLUMN 6|confidence|REAL|1|0.2|0
+COLUMN 7|merged_into_concept_id|INTEGER|0|NULL|0
+COLUMN 8|created_at|TEXT|1|NULL|0
+COLUMN 9|updated_at|TEXT|1|NULL|0
+FK 0|0|concepts|merged_into_concept_id|id|NO ACTION|NO ACTION|NONE
+TABLE crystal_activations
+SQL CREATE TABLE crystal_activations (   id INTEGER PRIMARY KEY,   crystal_id INTEGER NOT NULL REFERENCES crystals(id) ON DELETE CASCADE,   session_id INTEGER NOT NULL REFERENCES task_sessions(id) ON DELETE CASCADE,   recall_query TEXT NOT NULL,   rank INTEGER NOT NULL,   score REAL NOT NULL,   reason TEXT NOT NULL DEFAULT '',   outcome TEXT CHECK (outcome IS NULL OR outcome IN ('useful', 'miss')),   cycle_id INTEGER,   created_at TEXT NOT NULL ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|crystal_id|INTEGER|1|NULL|0
+COLUMN 2|session_id|INTEGER|1|NULL|0
+COLUMN 3|recall_query|TEXT|1|NULL|0
+COLUMN 4|rank|INTEGER|1|NULL|0
+COLUMN 5|score|REAL|1|NULL|0
+COLUMN 6|reason|TEXT|1|''|0
+COLUMN 7|outcome|TEXT|0|NULL|0
+COLUMN 8|cycle_id|INTEGER|0|NULL|0
+COLUMN 9|created_at|TEXT|1|NULL|0
+FK 0|0|task_sessions|session_id|id|NO ACTION|CASCADE|NONE
+FK 1|0|crystals|crystal_id|id|NO ACTION|CASCADE|NONE
+TABLE crystal_concepts
+SQL CREATE TABLE crystal_concepts (   crystal_id INTEGER NOT NULL REFERENCES crystals(id) ON DELETE CASCADE,   concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,   link_type TEXT NOT NULL DEFAULT 'mentions',   confidence REAL NOT NULL DEFAULT 0.2 CHECK (confidence >= 0.0 AND confidence <= 1.0),   created_at TEXT NOT NULL,   PRIMARY KEY (crystal_id, concept_id, link_type) ) STRICT
+COLUMN 0|crystal_id|INTEGER|1|NULL|1
+COLUMN 1|concept_id|INTEGER|1|NULL|2
+COLUMN 2|link_type|TEXT|1|'mentions'|3
+COLUMN 3|confidence|REAL|1|0.2|0
+COLUMN 4|created_at|TEXT|1|NULL|0
+FK 0|0|concepts|concept_id|id|NO ACTION|CASCADE|NONE
+FK 1|0|crystals|crystal_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_crystal_concepts_1|1|pk|0|crystal_id,concept_id,link_type
+TABLE crystal_language_tags
+SQL CREATE TABLE crystal_language_tags (   crystal_id INTEGER NOT NULL REFERENCES crystals(id) ON DELETE CASCADE,   language_tag TEXT NOT NULL,   PRIMARY KEY (crystal_id, language_tag) ) STRICT
+COLUMN 0|crystal_id|INTEGER|1|NULL|1
+COLUMN 1|language_tag|TEXT|1|NULL|2
+FK 0|0|crystals|crystal_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_crystal_language_tags_1|1|pk|0|crystal_id,language_tag
+TABLE crystal_links
+SQL CREATE TABLE crystal_links (   source_crystal_id INTEGER NOT NULL REFERENCES crystals(id) ON DELETE CASCADE,   target_crystal_id INTEGER NOT NULL REFERENCES crystals(id) ON DELETE CASCADE,   link_type TEXT NOT NULL,   PRIMARY KEY (source_crystal_id, target_crystal_id, link_type) ) STRICT
+COLUMN 0|source_crystal_id|INTEGER|1|NULL|1
+COLUMN 1|target_crystal_id|INTEGER|1|NULL|2
+COLUMN 2|link_type|TEXT|1|NULL|3
+FK 0|0|crystals|target_crystal_id|id|NO ACTION|CASCADE|NONE
+FK 1|0|crystals|source_crystal_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_crystal_links_1|1|pk|0|source_crystal_id,target_crystal_id,link_type
+TABLE crystal_semantic_tags
+SQL CREATE TABLE crystal_semantic_tags (   crystal_id INTEGER NOT NULL REFERENCES crystals(id) ON DELETE CASCADE,   tag TEXT NOT NULL,   confidence REAL NOT NULL DEFAULT 0.2 CHECK (confidence >= 0.0 AND confidence <= 1.0),   created_at TEXT NOT NULL,   PRIMARY KEY (crystal_id, tag) ) STRICT
+COLUMN 0|crystal_id|INTEGER|1|NULL|1
+COLUMN 1|tag|TEXT|1|NULL|2
+COLUMN 2|confidence|REAL|1|0.2|0
+COLUMN 3|created_at|TEXT|1|NULL|0
+FK 0|0|crystals|crystal_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_crystal_semantic_tags_1|1|pk|0|crystal_id,tag
+TABLE crystal_sources
+SQL CREATE TABLE crystal_sources (   crystal_id INTEGER NOT NULL REFERENCES crystals(id) ON DELETE CASCADE,   short_term_memory_id INTEGER NOT NULL REFERENCES short_term_memories(id) ON DELETE CASCADE,   PRIMARY KEY (crystal_id, short_term_memory_id) ) STRICT
+COLUMN 0|crystal_id|INTEGER|1|NULL|1
+COLUMN 1|short_term_memory_id|INTEGER|1|NULL|2
+FK 0|0|short_term_memories|short_term_memory_id|id|NO ACTION|CASCADE|NONE
+FK 1|0|crystals|crystal_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_crystal_sources_1|1|pk|0|crystal_id,short_term_memory_id
+TABLE crystal_story_scopes
+SQL CREATE TABLE crystal_story_scopes (   crystal_id INTEGER NOT NULL REFERENCES crystals(id) ON DELETE CASCADE,   scope TEXT NOT NULL,   confidence REAL NOT NULL DEFAULT 0.2 CHECK (confidence >= 0.0 AND confidence <= 1.0),   created_at TEXT NOT NULL,   PRIMARY KEY (crystal_id, scope) ) STRICT
+COLUMN 0|crystal_id|INTEGER|1|NULL|1
+COLUMN 1|scope|TEXT|1|NULL|2
+COLUMN 2|confidence|REAL|1|0.2|0
+COLUMN 3|created_at|TEXT|1|NULL|0
+FK 0|0|crystals|crystal_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_crystal_story_scopes_1|1|pk|0|crystal_id,scope
+TABLE crystals
+SQL CREATE TABLE crystals (   id INTEGER PRIMARY KEY,   crystal_type TEXT NOT NULL CHECK (     crystal_type IN ('lesson', 'rule', 'thought', 'observation', 'concept_note', 'concept', 'erudition')   ),   text TEXT NOT NULL,   title TEXT NOT NULL DEFAULT '',   scope_type TEXT NOT NULL,   scope_key TEXT NOT NULL DEFAULT '',   series_slug TEXT NOT NULL DEFAULT '',   source_language TEXT NOT NULL DEFAULT '',   target_language TEXT NOT NULL DEFAULT '',   tags_json TEXT NOT NULL DEFAULT '[]',   strength REAL NOT NULL CHECK (strength >= 0.0 AND strength <= 1.0),   confidence REAL NOT NULL CHECK (confidence >= 0.0 AND confidence <= 1.0),   source_credibility TEXT NOT NULL DEFAULT 'observation',   rule_intent TEXT NOT NULL DEFAULT '',   soft_origin TEXT,   is_inferred INTEGER NOT NULL DEFAULT 0 CHECK (is_inferred IN (0, 1)),   malformed_penalty REAL NOT NULL DEFAULT 0.0 CHECK (malformed_penalty >= 0.0),   supersedes_crystal_id INTEGER REFERENCES crystals(id) ON DELETE SET NULL,   status TEXT NOT NULL CHECK (     status IN ('active', 'candidate', 'archived', 'rejected', 'superseded')   ),   created_cycle INTEGER NOT NULL DEFAULT 0,   last_activated_cycle INTEGER,   last_reinforced_cycle INTEGER,   created_at TEXT NOT NULL,   updated_at TEXT NOT NULL ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|crystal_type|TEXT|1|NULL|0
+COLUMN 2|text|TEXT|1|NULL|0
+COLUMN 3|title|TEXT|1|''|0
+COLUMN 4|scope_type|TEXT|1|NULL|0
+COLUMN 5|scope_key|TEXT|1|''|0
+COLUMN 6|series_slug|TEXT|1|''|0
+COLUMN 7|source_language|TEXT|1|''|0
+COLUMN 8|target_language|TEXT|1|''|0
+COLUMN 9|tags_json|TEXT|1|'[]'|0
+COLUMN 10|strength|REAL|1|NULL|0
+COLUMN 11|confidence|REAL|1|NULL|0
+COLUMN 12|source_credibility|TEXT|1|'observation'|0
+COLUMN 13|rule_intent|TEXT|1|''|0
+COLUMN 14|soft_origin|TEXT|0|NULL|0
+COLUMN 15|is_inferred|INTEGER|1|0|0
+COLUMN 16|malformed_penalty|REAL|1|0.0|0
+COLUMN 17|supersedes_crystal_id|INTEGER|0|NULL|0
+COLUMN 18|status|TEXT|1|NULL|0
+COLUMN 19|created_cycle|INTEGER|1|0|0
+COLUMN 20|last_activated_cycle|INTEGER|0|NULL|0
+COLUMN 21|last_reinforced_cycle|INTEGER|0|NULL|0
+COLUMN 22|created_at|TEXT|1|NULL|0
+COLUMN 23|updated_at|TEXT|1|NULL|0
+FK 0|0|crystals|supersedes_crystal_id|id|NO ACTION|SET NULL|NONE
+INDEX 0|idx_crystals_maintenance|0|c|1|id,created_cycle,last_activated_cycle,last_reinforced_cycle
+TABLE dream_audit_entries
+SQL CREATE TABLE dream_audit_entries (   id INTEGER PRIMARY KEY,   dream_run_id INTEGER NOT NULL REFERENCES dream_runs(id) ON DELETE CASCADE,   phase_run_id INTEGER REFERENCES dream_phase_runs(id) ON DELETE SET NULL,   event_type TEXT NOT NULL,   severity TEXT NOT NULL DEFAULT 'info',   summary TEXT NOT NULL,   payload_json TEXT NOT NULL DEFAULT '{}',   created_at TEXT NOT NULL ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|dream_run_id|INTEGER|1|NULL|0
+COLUMN 2|phase_run_id|INTEGER|0|NULL|0
+COLUMN 3|event_type|TEXT|1|NULL|0
+COLUMN 4|severity|TEXT|1|'info'|0
+COLUMN 5|summary|TEXT|1|NULL|0
+COLUMN 6|payload_json|TEXT|1|'{}'|0
+COLUMN 7|created_at|TEXT|1|NULL|0
+FK 0|0|dream_phase_runs|phase_run_id|id|NO ACTION|SET NULL|NONE
+FK 1|0|dream_runs|dream_run_id|id|NO ACTION|CASCADE|NONE
+TABLE dream_phase_runs
+SQL CREATE TABLE dream_phase_runs (   id INTEGER PRIMARY KEY,   dream_run_id INTEGER NOT NULL REFERENCES dream_runs(id) ON DELETE CASCADE,   phase TEXT NOT NULL,   provider_profile TEXT NOT NULL,   provider_type TEXT NOT NULL,   model TEXT NOT NULL,   status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),   input_count INTEGER NOT NULL DEFAULT 0,   output_count INTEGER NOT NULL DEFAULT 0,   error TEXT NOT NULL DEFAULT '',   prompt_hash TEXT NOT NULL DEFAULT '',   created_at TEXT NOT NULL,   completed_at TEXT ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|dream_run_id|INTEGER|1|NULL|0
+COLUMN 2|phase|TEXT|1|NULL|0
+COLUMN 3|provider_profile|TEXT|1|NULL|0
+COLUMN 4|provider_type|TEXT|1|NULL|0
+COLUMN 5|model|TEXT|1|NULL|0
+COLUMN 6|status|TEXT|1|NULL|0
+COLUMN 7|input_count|INTEGER|1|0|0
+COLUMN 8|output_count|INTEGER|1|0|0
+COLUMN 9|error|TEXT|1|''|0
+COLUMN 10|prompt_hash|TEXT|1|''|0
+COLUMN 11|created_at|TEXT|1|NULL|0
+COLUMN 12|completed_at|TEXT|0|NULL|0
+FK 0|0|dream_runs|dream_run_id|id|NO ACTION|CASCADE|NONE
+TABLE dream_runs
+SQL CREATE TABLE dream_runs (   id INTEGER PRIMARY KEY,   cycle_id INTEGER NOT NULL UNIQUE,   status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'skipped')),   provider TEXT NOT NULL,   input_count INTEGER NOT NULL DEFAULT 0,   created_crystal_count INTEGER NOT NULL DEFAULT 0,   proposal_count INTEGER NOT NULL DEFAULT 0,   error TEXT NOT NULL DEFAULT '',   created_at TEXT NOT NULL,   completed_at TEXT ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|cycle_id|INTEGER|1|NULL|0
+COLUMN 2|status|TEXT|1|NULL|0
+COLUMN 3|provider|TEXT|1|NULL|0
+COLUMN 4|input_count|INTEGER|1|0|0
+COLUMN 5|created_crystal_count|INTEGER|1|0|0
+COLUMN 6|proposal_count|INTEGER|1|0|0
+COLUMN 7|error|TEXT|1|''|0
+COLUMN 8|created_at|TEXT|1|NULL|0
+COLUMN 9|completed_at|TEXT|0|NULL|0
+INDEX 0|sqlite_autoindex_dream_runs_1|1|u|0|cycle_id
+TABLE memory_events
+SQL CREATE TABLE memory_events (   id INTEGER PRIMARY KEY,   crystal_id INTEGER REFERENCES crystals(id) ON DELETE SET NULL,   session_id INTEGER REFERENCES task_sessions(id) ON DELETE SET NULL,   event_type TEXT NOT NULL,   source_role TEXT NOT NULL,   evidence TEXT NOT NULL DEFAULT '',   strength_delta REAL NOT NULL DEFAULT 0,   confidence_delta REAL NOT NULL DEFAULT 0,   applied INTEGER NOT NULL DEFAULT 0 CHECK (applied IN (0, 1)),   cycle_id INTEGER,   created_at TEXT NOT NULL ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|crystal_id|INTEGER|0|NULL|0
+COLUMN 2|session_id|INTEGER|0|NULL|0
+COLUMN 3|event_type|TEXT|1|NULL|0
+COLUMN 4|source_role|TEXT|1|NULL|0
+COLUMN 5|evidence|TEXT|1|''|0
+COLUMN 6|strength_delta|REAL|1|0|0
+COLUMN 7|confidence_delta|REAL|1|0|0
+COLUMN 8|applied|INTEGER|1|0|0
+COLUMN 9|cycle_id|INTEGER|0|NULL|0
+COLUMN 10|created_at|TEXT|1|NULL|0
+FK 0|0|task_sessions|session_id|id|NO ACTION|SET NULL|NONE
+FK 1|0|crystals|crystal_id|id|NO ACTION|SET NULL|NONE
+TABLE migration_ledger
+SQL CREATE TABLE migration_ledger (   source_table TEXT NOT NULL,   source_id TEXT NOT NULL,   target_table TEXT NOT NULL,   target_id INTEGER NOT NULL,   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),   PRIMARY KEY (source_table, source_id, target_table) ) STRICT
+COLUMN 0|source_table|TEXT|1|NULL|1
+COLUMN 1|source_id|TEXT|1|NULL|2
+COLUMN 2|target_table|TEXT|1|NULL|3
+COLUMN 3|target_id|INTEGER|1|NULL|0
+COLUMN 4|created_at|TEXT|1|strftime('%Y-%m-%dT%H:%M:%fZ', 'now')|0
+INDEX 0|sqlite_autoindex_migration_ledger_1|1|pk|0|source_table,source_id,target_table
+TABLE rag_chunk_language_tags
+SQL CREATE TABLE rag_chunk_language_tags (   chunk_id INTEGER NOT NULL REFERENCES rag_chunks(id) ON DELETE CASCADE,   language_tag TEXT NOT NULL,   PRIMARY KEY (chunk_id, language_tag) ) STRICT
+COLUMN 0|chunk_id|INTEGER|1|NULL|1
+COLUMN 1|language_tag|TEXT|1|NULL|2
+FK 0|0|rag_chunks|chunk_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_rag_chunk_language_tags_1|1|pk|0|chunk_id,language_tag
+TABLE rag_chunk_semantic_tags
+SQL CREATE TABLE rag_chunk_semantic_tags (   chunk_id INTEGER NOT NULL REFERENCES rag_chunks(id) ON DELETE CASCADE,   semantic_tag TEXT NOT NULL,   PRIMARY KEY (chunk_id, semantic_tag) ) STRICT
+COLUMN 0|chunk_id|INTEGER|1|NULL|1
+COLUMN 1|semantic_tag|TEXT|1|NULL|2
+FK 0|0|rag_chunks|chunk_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_rag_chunk_semantic_tags_1|1|pk|0|chunk_id,semantic_tag
+TABLE rag_chunk_story_scopes
+SQL CREATE TABLE rag_chunk_story_scopes (   chunk_id INTEGER NOT NULL REFERENCES rag_chunks(id) ON DELETE CASCADE,   story_scope TEXT NOT NULL,   PRIMARY KEY (chunk_id, story_scope) ) STRICT
+COLUMN 0|chunk_id|INTEGER|1|NULL|1
+COLUMN 1|story_scope|TEXT|1|NULL|2
+FK 0|0|rag_chunks|chunk_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_rag_chunk_story_scopes_1|1|pk|0|chunk_id,story_scope
+TABLE rag_chunks
+SQL CREATE TABLE rag_chunks (   id INTEGER PRIMARY KEY,   source_id INTEGER NOT NULL REFERENCES rag_sources(id) ON DELETE CASCADE,   series_slug TEXT NOT NULL REFERENCES series(slug) ON DELETE CASCADE,   chunk_kind TEXT NOT NULL,   text TEXT NOT NULL,   display_text TEXT NOT NULL,   location TEXT NOT NULL DEFAULT '',   metadata_json TEXT NOT NULL DEFAULT '{}',   created_at TEXT NOT NULL,   FOREIGN KEY (source_id, series_slug)     REFERENCES rag_sources(id, series_slug) ON DELETE CASCADE ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|source_id|INTEGER|1|NULL|0
+COLUMN 2|series_slug|TEXT|1|NULL|0
+COLUMN 3|chunk_kind|TEXT|1|NULL|0
+COLUMN 4|text|TEXT|1|NULL|0
+COLUMN 5|display_text|TEXT|1|NULL|0
+COLUMN 6|location|TEXT|1|''|0
+COLUMN 7|metadata_json|TEXT|1|'{}'|0
+COLUMN 8|created_at|TEXT|1|NULL|0
+FK 0|0|rag_sources|source_id|id|NO ACTION|CASCADE|NONE
+FK 0|1|rag_sources|series_slug|series_slug|NO ACTION|CASCADE|NONE
+FK 1|0|series|series_slug|slug|NO ACTION|CASCADE|NONE
+FK 2|0|rag_sources|source_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|rag_chunks_series_slug_idx|0|c|0|series_slug
+INDEX 1|rag_chunks_source_id_idx|0|c|0|source_id
+TABLE rag_sources
+SQL CREATE TABLE rag_sources (   id INTEGER PRIMARY KEY,   series_slug TEXT NOT NULL REFERENCES series(slug) ON DELETE CASCADE,   source_ref TEXT NOT NULL,   source_type TEXT NOT NULL,   content_type TEXT NOT NULL,   checksum TEXT NOT NULL,   metadata_json TEXT NOT NULL DEFAULT '{}',   created_at TEXT NOT NULL,   updated_at TEXT NOT NULL,   UNIQUE (id, series_slug),   UNIQUE (series_slug, source_ref) ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|series_slug|TEXT|1|NULL|0
+COLUMN 2|source_ref|TEXT|1|NULL|0
+COLUMN 3|source_type|TEXT|1|NULL|0
+COLUMN 4|content_type|TEXT|1|NULL|0
+COLUMN 5|checksum|TEXT|1|NULL|0
+COLUMN 6|metadata_json|TEXT|1|'{}'|0
+COLUMN 7|created_at|TEXT|1|NULL|0
+COLUMN 8|updated_at|TEXT|1|NULL|0
+FK 0|0|series|series_slug|slug|NO ACTION|CASCADE|NONE
+INDEX 1|sqlite_autoindex_rag_sources_1|1|u|0|id,series_slug
+INDEX 0|sqlite_autoindex_rag_sources_2|1|u|0|series_slug,source_ref
+TABLE semantic_chunk_state
+SQL CREATE TABLE semantic_chunk_state (   chunk_id INTEGER PRIMARY KEY REFERENCES rag_chunks(id),   checksum TEXT NOT NULL,   generation_id TEXT NOT NULL,   indexed_at TEXT NOT NULL ) STRICT
+COLUMN 0|chunk_id|INTEGER|0|NULL|1
+COLUMN 1|checksum|TEXT|1|NULL|0
+COLUMN 2|generation_id|TEXT|1|NULL|0
+COLUMN 3|indexed_at|TEXT|1|NULL|0
+FK 0|0|rag_chunks|chunk_id|id|NO ACTION|NO ACTION|NONE
+TABLE semantic_index_jobs
+SQL CREATE TABLE semantic_index_jobs (   id INTEGER PRIMARY KEY,   status TEXT NOT NULL DEFAULT 'pending' CHECK (     status IN ('pending', 'running', 'completed', 'failed', 'cancelled')   ),   generation_id TEXT,   created_at TEXT NOT NULL,   completed_at TEXT ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|status|TEXT|1|'pending'|0
+COLUMN 2|generation_id|TEXT|0|NULL|0
+COLUMN 3|created_at|TEXT|1|NULL|0
+COLUMN 4|completed_at|TEXT|0|NULL|0
+TABLE series
+SQL CREATE TABLE series (   id INTEGER PRIMARY KEY,   slug TEXT NOT NULL UNIQUE,   title TEXT NOT NULL,   default_source_language TEXT NOT NULL,   default_target_language TEXT NOT NULL,   created_at TEXT NOT NULL,   updated_at TEXT NOT NULL ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|slug|TEXT|1|NULL|0
+COLUMN 2|title|TEXT|1|NULL|0
+COLUMN 3|default_source_language|TEXT|1|NULL|0
+COLUMN 4|default_target_language|TEXT|1|NULL|0
+COLUMN 5|created_at|TEXT|1|NULL|0
+COLUMN 6|updated_at|TEXT|1|NULL|0
+INDEX 0|sqlite_autoindex_series_1|1|u|0|slug
+TABLE series_language_tags
+SQL CREATE TABLE series_language_tags (   series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,   language_tag TEXT NOT NULL,   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),   PRIMARY KEY (series_id, language_tag) ) STRICT
+COLUMN 0|series_id|INTEGER|1|NULL|1
+COLUMN 1|language_tag|TEXT|1|NULL|2
+COLUMN 2|created_at|TEXT|1|strftime('%Y-%m-%dT%H:%M:%fZ', 'now')|0
+FK 0|0|series|series_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_series_language_tags_1|1|pk|0|series_id,language_tag
+TABLE short_term_memories
+SQL CREATE TABLE short_term_memories (   id INTEGER PRIMARY KEY,   session_id INTEGER NOT NULL REFERENCES task_sessions(id) ON DELETE CASCADE,   source_role TEXT NOT NULL,   kind TEXT NOT NULL,   text TEXT NOT NULL,   source_ref TEXT NOT NULL DEFAULT '',   metadata_json TEXT NOT NULL DEFAULT '{}',   source_credibility TEXT,   rule_intent TEXT,   soft_origin TEXT,   source_crystal_id INTEGER REFERENCES crystals(id) ON DELETE SET NULL,   created_at TEXT NOT NULL,   archived_at TEXT ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|session_id|INTEGER|1|NULL|0
+COLUMN 2|source_role|TEXT|1|NULL|0
+COLUMN 3|kind|TEXT|1|NULL|0
+COLUMN 4|text|TEXT|1|NULL|0
+COLUMN 5|source_ref|TEXT|1|''|0
+COLUMN 6|metadata_json|TEXT|1|'{}'|0
+COLUMN 7|source_credibility|TEXT|0|NULL|0
+COLUMN 8|rule_intent|TEXT|0|NULL|0
+COLUMN 9|soft_origin|TEXT|0|NULL|0
+COLUMN 10|source_crystal_id|INTEGER|0|NULL|0
+COLUMN 11|created_at|TEXT|1|NULL|0
+COLUMN 12|archived_at|TEXT|0|NULL|0
+FK 0|0|crystals|source_crystal_id|id|NO ACTION|SET NULL|NONE
+FK 1|0|task_sessions|session_id|id|NO ACTION|CASCADE|NONE
+TABLE short_term_memory_language_tags
+SQL CREATE TABLE short_term_memory_language_tags (   memory_id INTEGER NOT NULL REFERENCES short_term_memories(id) ON DELETE CASCADE,   language_tag TEXT NOT NULL,   PRIMARY KEY (memory_id, language_tag) ) STRICT
+COLUMN 0|memory_id|INTEGER|1|NULL|1
+COLUMN 1|language_tag|TEXT|1|NULL|2
+FK 0|0|short_term_memories|memory_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_short_term_memory_language_tags_1|1|pk|0|memory_id,language_tag
+TABLE short_term_memory_semantic_tags
+SQL CREATE TABLE short_term_memory_semantic_tags (   memory_id INTEGER NOT NULL REFERENCES short_term_memories(id) ON DELETE CASCADE,   semantic_tag TEXT NOT NULL,   PRIMARY KEY (memory_id, semantic_tag) ) STRICT
+COLUMN 0|memory_id|INTEGER|1|NULL|1
+COLUMN 1|semantic_tag|TEXT|1|NULL|2
+FK 0|0|short_term_memories|memory_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_short_term_memory_semantic_tags_1|1|pk|0|memory_id,semantic_tag
+TABLE short_term_memory_story_scopes
+SQL CREATE TABLE short_term_memory_story_scopes (   memory_id INTEGER NOT NULL REFERENCES short_term_memories(id) ON DELETE CASCADE,   story_scope TEXT NOT NULL,   PRIMARY KEY (memory_id, story_scope) ) STRICT
+COLUMN 0|memory_id|INTEGER|1|NULL|1
+COLUMN 1|story_scope|TEXT|1|NULL|2
+FK 0|0|short_term_memories|memory_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_short_term_memory_story_scopes_1|1|pk|0|memory_id,story_scope
+TABLE task_session_language_tags
+SQL CREATE TABLE task_session_language_tags (   session_id INTEGER NOT NULL REFERENCES task_sessions(id) ON DELETE CASCADE,   language_tag TEXT NOT NULL,   PRIMARY KEY (session_id, language_tag) ) STRICT
+COLUMN 0|session_id|INTEGER|1|NULL|1
+COLUMN 1|language_tag|TEXT|1|NULL|2
+FK 0|0|task_sessions|session_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_task_session_language_tags_1|1|pk|0|session_id,language_tag
+TABLE task_session_semantic_tags
+SQL CREATE TABLE task_session_semantic_tags (   session_id INTEGER NOT NULL REFERENCES task_sessions(id) ON DELETE CASCADE,   semantic_tag TEXT NOT NULL,   PRIMARY KEY (session_id, semantic_tag) ) STRICT
+COLUMN 0|session_id|INTEGER|1|NULL|1
+COLUMN 1|semantic_tag|TEXT|1|NULL|2
+FK 0|0|task_sessions|session_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_task_session_semantic_tags_1|1|pk|0|session_id,semantic_tag
+TABLE task_session_story_scopes
+SQL CREATE TABLE task_session_story_scopes (   session_id INTEGER NOT NULL REFERENCES task_sessions(id) ON DELETE CASCADE,   story_scope TEXT NOT NULL,   PRIMARY KEY (session_id, story_scope) ) STRICT
+COLUMN 0|session_id|INTEGER|1|NULL|1
+COLUMN 1|story_scope|TEXT|1|NULL|2
+FK 0|0|task_sessions|session_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|sqlite_autoindex_task_session_story_scopes_1|1|pk|0|session_id,story_scope
+TABLE task_sessions
+SQL CREATE TABLE task_sessions (   id INTEGER PRIMARY KEY,   series_slug TEXT NOT NULL REFERENCES series(slug),   source_language TEXT NOT NULL,   target_language TEXT NOT NULL,   task_type TEXT NOT NULL,   volume TEXT NOT NULL DEFAULT '',   chapter TEXT NOT NULL DEFAULT '',   status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'dreamed')),   cycle_id INTEGER,   created_at TEXT NOT NULL,   last_activity_at TEXT NOT NULL,   completed_at TEXT ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|series_slug|TEXT|1|NULL|0
+COLUMN 2|source_language|TEXT|1|NULL|0
+COLUMN 3|target_language|TEXT|1|NULL|0
+COLUMN 4|task_type|TEXT|1|NULL|0
+COLUMN 5|volume|TEXT|1|''|0
+COLUMN 6|chapter|TEXT|1|''|0
+COLUMN 7|status|TEXT|1|NULL|0
+COLUMN 8|cycle_id|INTEGER|0|NULL|0
+COLUMN 9|created_at|TEXT|1|NULL|0
+COLUMN 10|last_activity_at|TEXT|1|NULL|0
+COLUMN 11|completed_at|TEXT|0|NULL|0
+FK 0|0|series|series_slug|slug|NO ACTION|NO ACTION|NONE

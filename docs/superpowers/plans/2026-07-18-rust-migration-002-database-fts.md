@@ -4,7 +4,7 @@
 
 **Goal:** Create the authoritative SQLite schema, safe connection pool, versioned migrations, trigger-owned FTS5 indexes, row models, and legacy strict-term conversion boundary.
 
-**Architecture:** `hiero-core::db` owns connection options and a single embedded `sqlx::Migrator`; stores receive cloned `SqlitePool` handles. Pure SQL migrations establish schema, while the data-bearing strict-term conversion runs as an explicit Rust pre-migration transaction before the final SQL drop migration.
+**Architecture:** `hiero-core::db` owns connection options and a single embedded `sqlx::Migrator`; stores receive cloned `SqlitePool` handles. Before `0001`, Rust classifies and losslessly baselines supported Python schemas in one `BEGIN IMMEDIATE` shadow-rebuild transaction, recording embedded migration metadata only after row-count/FK validation. Pure SQL migrations establish fresh schema, while the data-bearing strict-term conversion runs as an explicit Rust transaction before the final SQL drop migration.
 
 **Tech Stack:** Rust 2024, SQLx 0.9 SQLite, SQLite FTS5/WAL, chrono, serde, tempfile.
 
@@ -16,6 +16,7 @@
 - Every transaction that reads before writing begins with `BEGIN IMMEDIATE` semantics.
 - FTS indexes are external-content tables maintained only by triggers; stores never dual-write FTS rows.
 - Store timestamps as uniform RFC 3339 UTC text.
+- Never run fresh-only `0001` directly against a Python database. Baseline it first, retain every strict-term object for Task 5, restore `foreign_keys = ON`, then let the single SQLx migrator continue.
 - `migrations/0005_drop_strict_terms.sql` must never run until Rust conversion and parity checks commit successfully.
 
 ---
@@ -38,6 +39,7 @@
 - [ ] Write tests asserting `PRAGMA foreign_keys = 1`, `busy_timeout = 5000`, file DB `journal_mode = wal`, max eight concurrent acquisitions, migration idempotence, and a failed migration rollback.
 - [ ] Run `cargo test -p hiero-core --test database`; expect RED.
 - [ ] Define one `static MIGRATOR: Migrator = sqlx::migrate!("../../migrations")` in `hiero-core`; do not claim the macro path changes based on the calling crate. Use `SqliteConnectOptions::from_str`, `create_if_missing`, WAL only for non-memory URLs, `foreign_keys(true)`, and `busy_timeout(Duration::from_secs(5))`.
+- [ ] Before calling `MIGRATOR.run`, classify empty/SQLx/Python/unknown state under `BEGIN IMMEDIATE`. Baseline only the exact supported Python family with fixed collision-checked shadows, lossless timestamp normalization and rename mappings, strict-term retention, row-count/FK validation, SQLx 0.9 embedded checksum metadata, rollback on failure, and verified FK restoration before returning the connection.
 - [ ] Add `after_connect` assertions for required SQLite capabilities (`sqlite_compileoption_used('ENABLE_FTS5')` or a create/drop probe) and actionable `DbError::MissingFts5`.
 - [ ] Run focused tests; expect GREEN. Commit `feat: add SQLite pool and migration runner`.
 
@@ -50,7 +52,7 @@
 - [ ] Write schema-introspection tests over `sqlite_schema`, `pragma_foreign_key_list`, `pragma_index_list`, and `pragma_table_info`. Assert all required tables exist, all four strict-term objects do not, `concepts` uses scope fields without series FK, RAG compound FK exists, and timestamps parse as RFC 3339.
 - [ ] Run `cargo test -p hiero-core --test schema`; expect RED.
 - [ ] Transcribe proposal 002 §2 into `0001`, correcting declaration order for readability and using SQLite `STRICT` on ordinary tables only after a compatibility test proves all declared types are supported. Use `INTEGER CHECK (... IN (0,1))` for booleans and explicit status/range checks where the Python schema already constrains values.
-- [ ] Add the maintenance partial/composite indexes used by actual bounded queries; verify each with `EXPLAIN QUERY PLAN` assertions rather than assuming an index is used.
+- [ ] Add the partial `idx_crystals_maintenance(id, created_cycle, last_activated_cycle, last_reinforced_cycle)` for the exact Rust id-cursor decay query (`status IN`, `id >`, current-cycle exclusions, active-rule exclusion, `ORDER BY id LIMIT`); verify natural named-index use and absence of a temporary B-tree/full scan with `EXPLAIN QUERY PLAN`.
 - [ ] Run focused tests; expect GREEN. Commit `feat: create authoritative Rust schema`.
 
 ### Task 3: Make FTS Trigger-Owned
@@ -83,7 +85,7 @@
 
 - [ ] Build a Python-era fixture with active/inactive terms, tags, aliases, duplicate ledger entries, an injected invalid row, and no legacy tables. Assert direct structured mapping, semantic-tag union/deduplication, traceable ledger rows, idempotence, rollback on mismatch, and drop only after exact source/target count parity.
 - [ ] Run `cargo test -p hiero-core --test legacy_terms`; expect RED.
-- [ ] In one acquired connection, execute `BEGIN IMMEDIATE`, detect legacy tables, read structured rows, insert rule crystals and semantic tags with bound parameters, record ledger rows, verify counts, then drop legacy FTS/triggers/child/parent objects in safe order and commit. Do not call the free-text `parse_rule` path.
+- [ ] In one acquired connection, execute `BEGIN IMMEDIATE`, consume the strict-term objects retained by the pre-0001 baseline, read structured rows, insert rule crystals and semantic tags with bound parameters, record ledger rows, verify counts, then drop legacy FTS/triggers/child/parent objects in safe order and commit. Do not call the free-text `parse_rule` path.
 - [ ] Keep `0005_drop_strict_terms.sql` limited to guarded DDL for fresh/empty cases. Migration orchestration must run `0001..0004`, invoke the Rust converter, then run `0005`; document why a plain SQLx migration cannot call Rust.
 - [ ] Run focused tests against both fresh and copied Python schemas; expect GREEN. Commit `feat: retire legacy strict terms safely`.
 

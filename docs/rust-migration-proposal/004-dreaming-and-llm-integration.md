@@ -211,7 +211,13 @@ pub fn similarity(a: &CrystalRecord, b: &CrystalRecord, a_concepts: &[i64], b_co
 
 Ambient decay in Python scans every eligible crystal on each dream run, which doesn't scale past
 a few thousand crystals. In Rust:
-- `idx_crystals_maintenance` (002 §2) covers `(status, crystal_type, last_reinforced_cycle, last_activated_cycle, id)`.
+- `idx_crystals_maintenance` (002 §2) is a partial covering cursor index on
+  `(id, created_cycle, last_activated_cycle, last_reinforced_cycle)` for eligible active/candidate
+  non-active-rule rows. `DecayManager` freezes the bounded query shape as:
+  `status IN ('active','candidate')`, `id > ?`, `created_cycle != ?`, both current-cycle
+  exclusions through `coalesce(..., -1) != ?`, the active-rule exclusion, `ORDER BY id LIMIT ?`.
+  This replaces Python's `OFFSET` paging with an id cursor and must naturally use the named index
+  without a temporary B-tree.
 - `DecayManager` queries only a **bounded set**: crystals recalled or linked during the current
   cycle's context, plus crystals whose `last_reinforced_cycle` is older than a configurable
   staleness window — never a full table scan.

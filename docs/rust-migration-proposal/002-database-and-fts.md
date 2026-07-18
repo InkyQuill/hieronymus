@@ -193,10 +193,16 @@ create table semantic_index_jobs (id integer primary key, status text not null d
 create table semantic_chunk_state (chunk_id integer primary key references rag_chunks(id), checksum text not null, generation_id text not null, indexed_at text not null);
 
 -- Compound index for bounded dream maintenance (004 §3)
-create index idx_crystals_maintenance on crystals(status, crystal_type, last_reinforced_cycle, last_activated_cycle, id);
+create index idx_crystals_maintenance
+on crystals(id, created_cycle, last_activated_cycle, last_reinforced_cycle)
+where status in ('active', 'candidate')
+  and not (crystal_type = 'rule' and status = 'active');
 ```
 
-`strict_terms`, `strict_term_tags`, `strict_term_aliases`, `strict_terms_fts` are never created.
+Fresh Rust databases never create `strict_terms`, `strict_term_tags`, `strict_term_aliases`, or
+`strict_terms_fts`. The pre-0001 Python baseline described in §4 temporarily carries those four
+legacy objects forward, losslessly, so Task 5 can convert their structured rows before dropping
+them.
 
 ---
 
@@ -248,9 +254,22 @@ END;
 
 ## 4. Migration Sequence
 
+Before SQLx applies `0001`, migration orchestration classifies the database while holding a
+`BEGIN IMMEDIATE` transaction. Empty databases follow the normal SQLx path. Databases already
+owning valid SQLx metadata continue normally. A supported Python `global.sql` database runs one
+crash-atomic baseline transaction: validate its exact object family and timestamp formats, rebuild
+ordinary tables through fixed shadow names into the authoritative STRICT schema, map
+`strict_concept_proposals` to `concept_proposals` and `memory_graph_migration_ledger` to
+`migration_ledger`, retain/rebuild all four strict-term objects for Task 5, validate per-table row
+counts and `foreign_key_check`, and record embedded migration 0001 with SQLx's own description and
+checksum. Unknown, partial, dirty, or reserved-shadow schemas fail with a typed actionable error;
+they are never treated as fresh. Foreign-key enforcement is restored and verified before the
+pooled connection is returned on every success or error path.
+
 | # | Migration | Effect |
 |---|---|---|
-| `0001` | `initial_schema.sql` | Creates all tables in §2 (minus `strict_terms*`), records baseline in `migration_ledger` |
+| pre-`0001` | Rust Python baseline | Losslessly rebuilds a supported Python schema and records embedded `0001`; retains strict-term objects for Task 5 |
+| `0001` | `initial_schema.sql` | Creates all fresh-database tables in §2 (minus `strict_terms*`) |
 | `0002` | `fts_triggers.sql` | Creates/narrows the §3 triggers, rebuilds FTS content from existing rows |
 | `0003` | `compound_indexes.sql` | Adds `idx_crystals_maintenance` |
 | `0004` | `semantic_index_state.sql` | Adds `semantic_index_jobs`, `semantic_chunk_state` |

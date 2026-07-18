@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
 use hiero_core::db::{connect_url, migrate};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Executor, Row, SqlitePool};
 
 const REQUIRED_TABLES: &[&str] = &[
     "audit_log",
@@ -74,6 +74,105 @@ async fn schema_names(pool: &SqlitePool, object_type: &str) -> BTreeSet<String> 
     .expect("sqlite_schema should be readable")
     .into_iter()
     .collect()
+}
+
+async fn exact_schema_manifest(pool: &SqlitePool) -> String {
+    let mut output = String::new();
+    for table in REQUIRED_TABLES {
+        let sql: String =
+            sqlx::query_scalar("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?")
+                .bind(table)
+                .fetch_one(pool)
+                .await
+                .expect("table SQL should be readable");
+        output.push_str(&format!("TABLE {table}\nSQL {}\n", sql.replace('\n', " ")));
+
+        for row in sqlx::query(
+            "SELECT cid, name, type, [notnull], dflt_value, pk FROM pragma_table_info(?) ORDER BY cid",
+        )
+        .bind(table)
+        .fetch_all(pool)
+        .await
+        .expect("table_info should be readable")
+        {
+            output.push_str(&format!(
+                "COLUMN {}|{}|{}|{}|{}|{}\n",
+                row.get::<i64, _>("cid"),
+                row.get::<String, _>("name"),
+                row.get::<String, _>("type"),
+                row.get::<i64, _>("notnull"),
+                row.try_get::<Option<String>, _>("dflt_value")
+                    .expect("default value should decode")
+                    .unwrap_or_else(|| "NULL".to_owned()),
+                row.get::<i64, _>("pk"),
+            ));
+        }
+
+        for row in sqlx::query(
+            "SELECT id, seq, [table], [from], [to], on_update, on_delete, [match] FROM pragma_foreign_key_list(?) ORDER BY id, seq",
+        )
+        .bind(table)
+        .fetch_all(pool)
+        .await
+        .expect("foreign_key_list should be readable")
+        {
+            output.push_str(&format!(
+                "FK {}|{}|{}|{}|{}|{}|{}|{}\n",
+                row.get::<i64, _>("id"),
+                row.get::<i64, _>("seq"),
+                row.get::<String, _>("table"),
+                row.get::<String, _>("from"),
+                row.get::<String, _>("to"),
+                row.get::<String, _>("on_update"),
+                row.get::<String, _>("on_delete"),
+                row.get::<String, _>("match"),
+            ));
+        }
+
+        for index in sqlx::query(
+            "SELECT seq, name, [unique], origin, partial FROM pragma_index_list(?) ORDER BY name",
+        )
+        .bind(table)
+        .fetch_all(pool)
+        .await
+        .expect("index_list should be readable")
+        {
+            let name: String = index.get("name");
+            let columns = sqlx::query_scalar::<_, String>(
+                "SELECT name FROM pragma_index_info(?) ORDER BY seqno",
+            )
+            .bind(&name)
+            .fetch_all(pool)
+            .await
+            .expect("index_info should be readable")
+            .join(",");
+            output.push_str(&format!(
+                "INDEX {}|{}|{}|{}|{}|{}\n",
+                index.get::<i64, _>("seq"),
+                name,
+                index.get::<i64, _>("unique"),
+                index.get::<String, _>("origin"),
+                index.get::<i64, _>("partial"),
+                columns,
+            ));
+        }
+    }
+    output
+}
+
+#[tokio::test]
+async fn exact_schema_manifest_matches_every_column_constraint_foreign_key_and_index() {
+    let pool = migrated_pool().await;
+    let actual = exact_schema_manifest(&pool).await;
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/schema_manifest.txt"
+    );
+    if std::env::var_os("UPDATE_SCHEMA_MANIFEST").is_some() {
+        std::fs::write(path, &actual).expect("schema manifest should update");
+    }
+    let expected = std::fs::read_to_string(path).expect("schema manifest should be readable");
+    assert_eq!(actual, expected);
 }
 
 #[tokio::test]
@@ -199,11 +298,10 @@ async fn explicit_indexes_have_the_exact_declared_columns() {
             "crystals",
             "idx_crystals_maintenance",
             vec![
-                "status",
-                "crystal_type",
-                "last_reinforced_cycle",
-                "last_activated_cycle",
                 "id",
+                "created_cycle",
+                "last_activated_cycle",
+                "last_reinforced_cycle",
             ],
         ),
         (
@@ -264,6 +362,70 @@ async fn schema_enforces_boolean_score_status_and_scope_checks() {
 }
 
 #[tokio::test]
+async fn every_closed_label_boolean_and_unit_range_check_rejects_invalid_storage() {
+    let pool = migrated_pool().await;
+    pool.execute(sqlx::raw_sql(
+        r#"
+        INSERT INTO series VALUES (1, 'checks', 'Checks', 'en', 'ru', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+        INSERT INTO task_sessions(id, series_slug, source_language, target_language, task_type, status, created_at, last_activity_at)
+        VALUES (1, 'checks', 'en', 'ru', 'translation', 'active', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+        INSERT INTO crystals(id, crystal_type, text, scope_type, strength, confidence, status, created_at, updated_at)
+        VALUES (1, 'observation', 'check', 'global', 0.5, 0.5, 'active', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+        INSERT INTO crystal_activations(id, crystal_id, session_id, recall_query, rank, score, outcome, created_at)
+        VALUES (1, 1, 1, 'check', 1, 0.5, 'useful', '2026-07-19T00:00:00Z');
+        INSERT INTO dream_runs(id, cycle_id, status, provider, created_at)
+        VALUES (1, 1, 'running', 'check', '2026-07-19T00:00:00Z');
+        INSERT INTO concepts(id, canonical_name, status, confidence, created_at, updated_at)
+        VALUES (1, 'Check', 'candidate', 0.5, '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+        INSERT INTO concept_facets(id, concept_id, facet_type, value, confidence, is_canonical, created_at, updated_at)
+        VALUES (1, 1, 'name', 'Check', 0.5, 1, '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+        INSERT INTO concept_semantic_tags VALUES (1, 'check', 0.5, '2026-07-19T00:00:00Z');
+        INSERT INTO concept_proposals(id, dream_run_id, source_language, target_language, concept_text, source_form, canonical_rendering, status, created_at, updated_at)
+        VALUES (1, 1, 'en', 'ru', 'Check', 'Check', 'Проверка', 'pending', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+        INSERT INTO crystal_concepts VALUES (1, 1, 'mentions', 0.5, '2026-07-19T00:00:00Z');
+        INSERT INTO crystal_story_scopes VALUES (1, 'chapter:1', 0.5, '2026-07-19T00:00:00Z');
+        INSERT INTO crystal_semantic_tags VALUES (1, 'check', 0.5, '2026-07-19T00:00:00Z');
+        INSERT INTO memory_events(id, event_type, source_role, applied, created_at)
+        VALUES (1, 'check', 'system', 1, '2026-07-19T00:00:00Z');
+        INSERT INTO dream_phase_runs(id, dream_run_id, phase, provider_profile, provider_type, model, status, created_at)
+        VALUES (1, 1, 'check', 'check', 'check', 'check', 'running', '2026-07-19T00:00:00Z');
+        INSERT INTO semantic_index_jobs(id, status, created_at) VALUES (1, 'pending', '2026-07-19T00:00:00Z');
+        "#,
+    )).await.expect("valid CHECK fixtures should insert");
+
+    for statement in [
+        "UPDATE task_sessions SET status = 'invalid' WHERE id = 1",
+        "UPDATE crystals SET crystal_type = 'invalid' WHERE id = 1",
+        "UPDATE crystals SET strength = -0.1 WHERE id = 1",
+        "UPDATE crystals SET confidence = 1.1 WHERE id = 1",
+        "UPDATE crystals SET is_inferred = 2 WHERE id = 1",
+        "UPDATE crystals SET malformed_penalty = -0.1 WHERE id = 1",
+        "UPDATE crystals SET status = 'invalid' WHERE id = 1",
+        "UPDATE crystal_activations SET outcome = 'invalid' WHERE id = 1",
+        "UPDATE dream_runs SET status = 'invalid' WHERE id = 1",
+        "UPDATE concepts SET status = 'invalid' WHERE id = 1",
+        "UPDATE concepts SET confidence = 1.1 WHERE id = 1",
+        "UPDATE concepts SET scope_type = 'series', scope_key = '' WHERE id = 1",
+        "UPDATE concept_facets SET facet_type = 'invalid' WHERE id = 1",
+        "UPDATE concept_facets SET confidence = -0.1 WHERE id = 1",
+        "UPDATE concept_facets SET is_canonical = 2 WHERE id = 1",
+        "UPDATE concept_semantic_tags SET confidence = 1.1 WHERE concept_id = 1",
+        "UPDATE concept_proposals SET status = 'invalid' WHERE id = 1",
+        "UPDATE crystal_concepts SET confidence = -0.1 WHERE crystal_id = 1",
+        "UPDATE crystal_story_scopes SET confidence = 1.1 WHERE crystal_id = 1",
+        "UPDATE crystal_semantic_tags SET confidence = -0.1 WHERE crystal_id = 1",
+        "UPDATE memory_events SET applied = 2 WHERE id = 1",
+        "UPDATE dream_phase_runs SET status = 'invalid' WHERE id = 1",
+        "UPDATE semantic_index_jobs SET status = 'invalid' WHERE id = 1",
+    ] {
+        sqlx::query(statement)
+            .execute(&pool)
+            .await
+            .expect_err("every declared CHECK must reject invalid storage");
+    }
+}
+
+#[tokio::test]
 async fn default_and_explicit_timestamps_roundtrip_as_rfc3339_utc() {
     let pool = migrated_pool().await;
     let explicit = "2026-07-19T03:04:05.678Z";
@@ -309,12 +471,13 @@ async fn maintenance_query_uses_the_named_compound_index() {
     let now = "2026-07-19T00:00:00Z";
     for id in 1..=200_i64 {
         sqlx::query(
-            "INSERT INTO crystals (id, crystal_type, text, scope_type, strength, confidence, status, last_activated_cycle, last_reinforced_cycle, created_at, updated_at) VALUES (?, ?, ?, 'global', 0.5, 0.5, ?, ?, ?, ?, ?)",
+            "INSERT INTO crystals (id, crystal_type, text, scope_type, strength, confidence, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at) VALUES (?, ?, ?, 'global', 0.5, 0.5, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(if id % 7 == 0 { "rule" } else { "observation" })
         .bind(format!("crystal {id}"))
         .bind(if id % 5 == 0 { "archived" } else { "active" })
+        .bind(id % 19)
         .bind(id % 13)
         .bind(id % 17)
         .bind(now)
@@ -325,8 +488,10 @@ async fn maintenance_query_uses_the_named_compound_index() {
     }
 
     let details = sqlx::query(
-        "EXPLAIN QUERY PLAN SELECT id FROM crystals WHERE status = 'active' AND crystal_type = 'observation' AND last_reinforced_cycle < ? AND last_activated_cycle < ? ORDER BY last_reinforced_cycle, last_activated_cycle, id LIMIT ?",
+        "EXPLAIN QUERY PLAN SELECT id, crystal_type, strength, confidence, status FROM crystals WHERE status IN ('active', 'candidate') AND id > ? AND created_cycle != ? AND coalesce(last_activated_cycle, -1) != ? AND coalesce(last_reinforced_cycle, -1) != ? AND NOT (crystal_type = 'rule' AND status = 'active') ORDER BY id LIMIT ?",
     )
+    .bind(50_i64)
+    .bind(10_i64)
     .bind(10_i64)
     .bind(10_i64)
     .bind(20_i64)
@@ -341,6 +506,14 @@ async fn maintenance_query_uses_the_named_compound_index() {
     assert!(
         details.contains("idx_crystals_maintenance"),
         "unexpected query plan:\n{details}"
+    );
+    assert!(
+        !details.contains("USE TEMP B-TREE"),
+        "unexpected sort:\n{details}"
+    );
+    assert!(
+        !details.contains("SCAN crystals"),
+        "unbounded scan:\n{details}"
     );
 }
 
