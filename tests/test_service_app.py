@@ -3,17 +3,24 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient, WebSocketDenialResponse
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.daemon_events import AdminEventHub
 from hieronymus.dream_locks import dream_cycle_lock
+from hieronymus.dreaming import DreamOutput
+from hieronymus.memory_models import TranslationContext
+from hieronymus.registry import Registry
 from hieronymus.service_app import _cancel_tasks, build_app, status_payload
 from hieronymus.service_state import ServerState
+from hieronymus.workspace import WorkspaceStore
 
 SERVICE_ORIGIN = "http://127.0.0.1:9768"
 
@@ -393,6 +400,59 @@ def test_admin_websocket_connects_broadcasts_and_disconnects(client: TestClient)
     assert events.subscriber_count == 0
 
 
+def test_admin_websocket_overflow_closes_only_slow_live_subscriber(
+    config: HieronymusConfig,
+    asset_root: Path,
+) -> None:
+    app = build_app(config, _make_state(config), asset_root=asset_root)
+    app.state.runtime.events = AdminEventHub(default_capacity=1)
+    slow_send_started = threading.Event()
+    release_slow_send = threading.Event()
+    original_send_json = WebSocket.send_json
+
+    async def controlled_send_json(self, data, mode="text"):
+        if self.headers.get("x-test-slow") == "true":
+            slow_send_started.set()
+            while not release_slow_send.is_set():
+                await asyncio.sleep(0.001)
+        await original_send_json(self, data, mode=mode)
+
+    with (
+        patch.object(WebSocket, "send_json", controlled_send_json),
+        TestClient(app, base_url=SERVICE_ORIGIN) as local_client,
+        local_client.websocket_connect(
+            "/ws/admin",
+            headers={
+                **_browser_headers(),
+                "Host": "127.0.0.1:9768",
+                "X-Test-Slow": "true",
+            },
+        ) as slow,
+        local_client.websocket_connect(
+            "/ws/admin", headers={**_browser_headers(), "Host": "127.0.0.1:9768"}
+        ) as healthy,
+    ):
+        try:
+            app.state.runtime.events.publish("progress", {"sequence": 1})
+            assert slow_send_started.wait(timeout=1)
+            assert healthy.receive_json()["payload"] == {"sequence": 1}
+            app.state.runtime.events.publish("progress", {"sequence": 2})
+            assert healthy.receive_json()["payload"] == {"sequence": 2}
+            app.state.runtime.events.publish("progress", {"sequence": 3})
+            assert healthy.receive_json()["payload"] == {"sequence": 3}
+
+            release_slow_send.set()
+            assert slow.receive_json()["payload"] == {"sequence": 1}
+            with pytest.raises(WebSocketDisconnect) as closed:
+                slow.receive_json()
+            assert closed.value.code == 1013
+
+            app.state.runtime.events.publish("progress", {"sequence": 4})
+            assert healthy.receive_json()["payload"] == {"sequence": 4}
+        finally:
+            release_slow_send.set()
+
+
 def test_status_endpoint_returns_paths_pid_and_active_cycle(
     config: HieronymusConfig, asset_root: Path
 ) -> None:
@@ -681,26 +741,31 @@ def test_manual_dreaming_failure_redacts_configured_secrets(
 def test_manual_dreaming_publishes_start_phase_and_completion_to_websocket(
     config: HieronymusConfig, asset_root: Path
 ) -> None:
-    class PublishingAdminBridge:
-        def __init__(self, _: HieronymusConfig) -> None:
-            pass
+    class EmptyProvider:
+        name = "empty"
 
-        def run_manual_dreaming(self, _: dict[str, object], *, event_sink=None):
-            assert event_sink is not None
-            event_sink(
-                "dream_phase_progress",
-                {
-                    "run_id": 7,
-                    "cycle_id": 9,
-                    "phase_run_id": 11,
-                    "phase": "knowledge_crystals",
-                    "status": "running",
-                },
-            )
-            return {"result": {"id": 7, "cycle_id": 9, "status": "completed"}}
+        def crystallize(self, context, memories):
+            return DreamOutput(crystals=[], concept_proposals=[])
+
+    series = Registry(config).create_series(
+        slug="websocket-dream",
+        title="WebSocket Dream",
+        source_language="ja",
+        target_language="ru",
+    )
+    context = TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type="translate",
+    )
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    workspace.add_short_term_memory(session.id, "user", "note", "Dream over WebSocket.")
+    workspace.complete_session(session.id)
 
     with (
-        patch("hieronymus.service_app.AdminBridge", PublishingAdminBridge),
+        patch("hieronymus.admin.resolve_provider", return_value=EmptyProvider()),
         TestClient(
             build_app(config, _make_state(config), asset_root=asset_root),
             base_url=SERVICE_ORIGIN,
@@ -712,15 +777,19 @@ def test_manual_dreaming_publishes_start_phase_and_completion_to_websocket(
         response = local_client.post(
             "/api/admin/actions/run_manual_dreaming", json={}, headers=_browser_headers()
         )
-        events = [websocket.receive_json() for _ in range(3)]
+        events = [websocket.receive_json() for _ in range(4)]
 
     assert response.json() == {"started": True, "status": "running"}
     assert [event["type"] for event in events] == [
         "dream_started",
         "dream_phase_progress",
+        "dream_phase_progress",
         "dream_completed",
     ]
-    assert events[1]["payload"]["phase"] == "knowledge_crystals"
+    assert [(event["payload"]["phase"], event["payload"]["status"]) for event in events[1:3]] == [
+        ("crystallization", "running"),
+        ("crystallization", "completed"),
+    ]
 
 
 def test_manual_dreaming_failure_is_safe_when_sanitization_also_fails(

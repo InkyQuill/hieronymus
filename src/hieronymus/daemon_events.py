@@ -4,7 +4,7 @@ import asyncio
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
-from threading import Lock
+from threading import Lock, RLock
 
 _DEFAULT_SUBSCRIBER_CAPACITY = 32
 
@@ -86,7 +86,7 @@ class AdminEventHub:
         if default_capacity < 1:
             raise ValueError("default_capacity must be at least 1")
         self._default_capacity = default_capacity
-        self._lock = Lock()
+        self._lock = RLock()
         self._subscribers: set[AdminEventSubscription] = set()
 
     @property
@@ -114,9 +114,8 @@ class AdminEventHub:
             "payload": payload,
         }
         with self._lock:
-            subscribers = tuple(self._subscribers)
-        for subscriber in subscribers:
-            subscriber.offer(event)
+            for subscriber in tuple(self._subscribers):
+                subscriber.offer(event)
 
     def _remove(self, subscriber: AdminEventSubscription) -> None:
         with self._lock:

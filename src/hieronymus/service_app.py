@@ -336,20 +336,21 @@ async def _admin_websocket(websocket: WebSocket) -> None:
         return
     await websocket.accept()
     subscription = runtime.events.subscribe()
+    disconnect_task = asyncio.create_task(websocket.receive_text())
+    event_task: asyncio.Task[dict[str, object]] | None = None
     try:
         while True:
             event_task = asyncio.create_task(subscription.receive())
-            disconnect_task = asyncio.create_task(websocket.receive_text())
             race_tasks = {event_task, disconnect_task}
-            done: set[asyncio.Task[Any]] = set()
-            try:
-                done, _ = await asyncio.wait(race_tasks, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                await _cancel_tasks(race_tasks - done)
+            done, _ = await asyncio.wait(race_tasks, return_when=asyncio.FIRST_COMPLETED)
             if disconnect_task in done:
                 disconnect_task.result()
+                disconnect_task = asyncio.create_task(websocket.receive_text())
             if event_task in done:
                 await websocket.send_json(event_task.result())
+            else:
+                await _cancel_tasks({event_task})
+            event_task = None
     except EventSubscriptionOverflow:
         await websocket.close(code=1013, reason="event backlog overflow")
     except EventSubscriptionClosed:
@@ -357,6 +358,7 @@ async def _admin_websocket(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        await _cancel_tasks({task for task in (disconnect_task, event_task) if task is not None})
         subscription.close()
 
 

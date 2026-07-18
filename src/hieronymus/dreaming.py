@@ -1413,22 +1413,24 @@ class DreamService:
 
     def _complete_phase_run(self, *, phase_run_id: int, output_count: int) -> None:
         with connect(self.config.database_path) as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 update dream_phase_runs
                 set status = 'completed',
                     output_count = ?,
                     completed_at = ?
-                where id = ?
+                where id = ? and status = 'running'
                 """,
                 (output_count, _now(), phase_run_id),
             )
             conn.commit()
-        self._publish_phase_transition(
-            phase_run_id,
-            status="completed",
-            output_count=output_count,
-        )
+        if cursor.rowcount:
+            self._publish_phase_transition(
+                phase_run_id,
+                status="completed",
+                terminal=True,
+                output_count=output_count,
+            )
 
     def _fail_phase_run(self, phase_run_id: int, error: Exception) -> None:
         redacted_error = self._redacted_error_message(error)
@@ -1448,13 +1450,23 @@ class DreamService:
             self._publish_phase_transition(
                 phase_run_id,
                 status="failed",
+                terminal=True,
                 error=self._safe_event_error_message(error),
             )
 
     def _publish_phase_transition(
-        self, phase_run_id: int, *, status: str, **details: object
+        self,
+        phase_run_id: int,
+        *,
+        status: str,
+        terminal: bool = False,
+        **details: object,
     ) -> None:
-        started = self._phase_event_payloads.get(phase_run_id)
+        started = (
+            self._phase_event_payloads.pop(phase_run_id, None)
+            if terminal
+            else self._phase_event_payloads.get(phase_run_id)
+        )
         if started is None:
             return
         self._publish_event(

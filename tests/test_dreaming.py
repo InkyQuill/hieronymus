@@ -1,3 +1,4 @@
+import threading
 from unittest.mock import patch
 
 import pytest
@@ -192,6 +193,137 @@ def test_failed_phase_event_is_safe_when_secret_sanitization_fails(
     ]
     assert failed[0]["error"] == "dreaming failed"
     assert "super-secret" not in str(failed[0])
+
+
+def _start_test_phase(
+    config: HieronymusConfig,
+    service: DreamService,
+    *,
+    cycle_id: int,
+) -> int:
+    with connect(config.database_path) as conn:
+        cursor = conn.execute(
+            """
+            insert into dream_runs(cycle_id, status, provider, created_at)
+            values (?, 'running', ?, '2026-07-18T00:00:00+00:00')
+            """,
+            (cycle_id, service.provider.name),
+        )
+        run_id = int(cursor.lastrowid)
+        conn.commit()
+    return service._start_phase_run(
+        run_id=run_id,
+        cycle_id=cycle_id,
+        phase="test_phase",
+        input_count=1,
+    )
+
+
+def test_repeated_phase_completion_publishes_one_terminal_transition(
+    config: HieronymusConfig,
+) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    service = DreamService(
+        config,
+        EmptyDreamProvider(),
+        event_sink=lambda event_type, payload: events.append((event_type, payload)),
+    )
+    phase_run_id = _start_test_phase(config, service, cycle_id=91)
+
+    service._complete_phase_run(phase_run_id=phase_run_id, output_count=1)
+    service._complete_phase_run(phase_run_id=phase_run_id, output_count=2)
+
+    with connect(config.database_path) as conn:
+        phase = conn.execute(
+            "select status, output_count from dream_phase_runs where id = ?",
+            (phase_run_id,),
+        ).fetchone()
+    terminal = [payload for _event_type, payload in events if payload["status"] == "completed"]
+    assert (phase["status"], phase["output_count"]) == ("completed", 1)
+    assert [payload["output_count"] for payload in terminal] == [1]
+    assert phase_run_id not in service._phase_event_payloads
+
+
+def test_concurrent_phase_completion_publishes_one_terminal_transition(
+    config: HieronymusConfig,
+) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    service = DreamService(
+        config,
+        EmptyDreamProvider(),
+        event_sink=lambda event_type, payload: events.append((event_type, payload)),
+    )
+    phase_run_id = _start_test_phase(config, service, cycle_id=92)
+    barrier = threading.Barrier(3)
+    errors: list[Exception] = []
+
+    def complete(output_count: int) -> None:
+        try:
+            barrier.wait(timeout=1)
+            service._complete_phase_run(
+                phase_run_id=phase_run_id,
+                output_count=output_count,
+            )
+        except Exception as error:
+            errors.append(error)
+
+    workers = [threading.Thread(target=complete, args=(count,)) for count in (1, 2)]
+    for worker in workers:
+        worker.start()
+    barrier.wait(timeout=1)
+    for worker in workers:
+        worker.join(timeout=1)
+
+    assert not errors
+    assert all(not worker.is_alive() for worker in workers)
+    with connect(config.database_path) as conn:
+        phase = conn.execute(
+            "select status, output_count from dream_phase_runs where id = ?",
+            (phase_run_id,),
+        ).fetchone()
+    terminal = [payload for _event_type, payload in events if payload["status"] == "completed"]
+    assert phase["status"] == "completed"
+    assert len(terminal) == 1
+    assert phase["output_count"] == terminal[0]["output_count"]
+
+
+def test_event_sink_failure_does_not_change_phase_outcomes_or_stop_later_work(
+    config: HieronymusConfig,
+) -> None:
+    class TrackingProvider(DeterministicDreamProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.passes: list[str] = []
+
+        def run_pass(self, pass_name, context, memories):
+            self.passes.append(pass_name)
+            return super().run_pass(pass_name, context, memories)
+
+    context = _context(config)
+    _completed_session(config, context)
+    provider = TrackingProvider()
+    delivered_after_failure: list[dict[str, object]] = []
+    sink_calls = 0
+
+    def flaky_sink(_event_type: str, payload: dict[str, object]) -> None:
+        nonlocal sink_calls
+        sink_calls += 1
+        if sink_calls == 1:
+            raise RuntimeError("event transport failed")
+        delivered_after_failure.append(payload)
+
+    run = DreamService(config, provider, event_sink=flaky_sink).run_all(owner="admin")
+
+    with connect(config.database_path) as conn:
+        statuses = [
+            row["status"]
+            for row in conn.execute("select status from dream_phase_runs order by id").fetchall()
+        ]
+    assert run.status == "completed"
+    assert len(provider.passes) == 7
+    assert statuses == ["completed"] * 7
+    assert delivered_after_failure[-1]["phase"] == "coverage_audit"
+    assert delivered_after_failure[-1]["status"] == "completed"
 
 
 def test_dreaming_preserves_typed_session_metadata_for_provider(
