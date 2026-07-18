@@ -2,7 +2,10 @@ use std::str::FromStr;
 
 use sqlx::{SqliteConnection, sqlite::SqliteConnectOptions};
 
-use super::{DbError, Fts5Probe, Fts5ProbeError, build_pool_with_probe, memory_settings};
+use super::{
+    DbError, Fts5Probe, Fts5ProbeError, RequiredFts5, absolute_config_path, build_pool_with_probe,
+    config_path_options, connect_options, memory_settings,
+};
 
 #[test]
 fn memory_url_detection_uses_sqlite_url_semantics() {
@@ -13,7 +16,9 @@ fn memory_url_detection_uses_sqlite_url_semantics() {
         "sqlite://file:shared?cache=shared&mode=memory",
     ] {
         assert!(
-            memory_settings(url).is_memory,
+            memory_settings(url)
+                .expect("test URL should parse")
+                .is_memory,
             "{url} should be an in-memory URL"
         );
     }
@@ -23,7 +28,9 @@ fn memory_url_detection_uses_sqlite_url_semantics() {
         "sqlite://file.sqlite?cache=shared",
     ] {
         assert!(
-            !memory_settings(url).is_memory,
+            !memory_settings(url)
+                .expect("test URL should parse")
+                .is_memory,
             "{url} should be a file URL"
         );
     }
@@ -51,4 +58,33 @@ async fn injected_preflight_failure_exits_pool_construction_as_missing_fts5() {
     .expect_err("missing FTS5 should fail before constructing the pool");
 
     assert!(matches!(error, DbError::MissingFts5));
+}
+
+#[tokio::test]
+async fn relative_file_prefix_path_is_resolved_as_a_literal_file() {
+    let directory = tempfile::TempDir::new().expect("temporary directory should be created");
+    let relative = std::path::Path::new("file:name?mode=memory#literal").join("hieronymus.db");
+    let absolute = absolute_config_path(&relative, directory.path());
+    std::fs::create_dir_all(
+        absolute
+            .parent()
+            .expect("test database path should have a parent"),
+    )
+    .expect("literal database parent should be created");
+
+    let pool = connect_options(
+        super::configure_options(config_path_options(&absolute), false),
+        "relative file-prefix test".to_owned(),
+        &RequiredFts5,
+    )
+    .await
+    .expect("relative file-prefix path should remain file-backed");
+    let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+        .fetch_one(&pool)
+        .await
+        .expect("journal mode should be readable");
+
+    assert!(absolute.is_file());
+    assert_eq!(journal_mode, "wal");
+    pool.close().await;
 }

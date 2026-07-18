@@ -15,6 +15,12 @@ pub enum DbError {
         source: std::io::Error,
     },
 
+    #[error("failed to resolve the current directory for a relative database path: {source}")]
+    CurrentDirectory {
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("failed to connect to SQLite database `{url}`: {source}")]
     Connect {
         url: String,

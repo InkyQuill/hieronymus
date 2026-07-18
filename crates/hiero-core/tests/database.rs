@@ -85,7 +85,7 @@ async fn connect_creates_the_configured_database_parent() {
 #[tokio::test]
 async fn connect_uses_literal_question_mark_and_percent_in_configured_path() {
     let directory = TempDir::new().expect("temporary directory should be created");
-    let data_root = directory.path().join("literal?percent%root");
+    let data_root = directory.path().join("literal?percent%hash#root");
     let config =
         HieronymusConfig::load(Some(data_root)).expect("explicit data root should resolve");
 
@@ -203,6 +203,7 @@ async fn private_cache_memory_urls_are_rejected() {
         "sqlite://:memory:?cache=private",
         "sqlite://named?mode=memory&cache=private",
         "sqlite://encoded?%6dode=mem%6fry&%63ache=priv%61te",
+        "sqlite://repeated?mode=memory&cache=shared&cache=private",
     ] {
         let error = connect_url(url)
             .await
@@ -212,6 +213,89 @@ async fn private_cache_memory_urls_are_rejected() {
             matches!(error, DbError::InvalidUrl { .. }),
             "unexpected error for {url}: {error:?}"
         );
+    }
+}
+
+#[tokio::test]
+async fn memory_options_follow_sqlx_parameter_order() {
+    for url in [
+        "sqlite::memory:?cache=private&mode=memory",
+        "sqlite://ordered?cache=private&mode=memory",
+        "sqlite://repeated?mode=memory&cache=private&mode=memory",
+        "sqlite://encoded?%63ache=priv%61te&%6dode=mem%6fry",
+    ] {
+        let pool = connect_url(url)
+            .await
+            .unwrap_or_else(|error| panic!("final effective cache is shared for {url}: {error}"));
+        let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&pool)
+            .await
+            .expect("journal mode should be readable");
+        assert_eq!(journal_mode, "memory");
+        pool.close().await;
+    }
+}
+
+#[tokio::test]
+async fn named_memory_identity_is_shared_across_overlapping_pools() {
+    let first = connect_url("sqlite://shared-name?mode=memory&cache=shared")
+        .await
+        .expect("first named pool should connect");
+    let second = connect_url("sqlite://shared%2Dname?%6dode=mem%6fry&cache=shared")
+        .await
+        .expect("equivalent encoded named pool should connect");
+
+    sqlx::query("CREATE TABLE cross_pool (value TEXT NOT NULL)")
+        .execute(&first)
+        .await
+        .expect("first pool should create shared table");
+    sqlx::query("INSERT INTO cross_pool (value) VALUES ('shared')")
+        .execute(&first)
+        .await
+        .expect("first pool should insert shared value");
+    let value: String = sqlx::query_scalar("SELECT value FROM cross_pool")
+        .fetch_one(&second)
+        .await
+        .expect("equivalent named pool should see the same database");
+
+    assert_eq!(value, "shared");
+    first.close().await;
+    second.close().await;
+}
+
+#[tokio::test]
+async fn different_named_and_anonymous_memory_pools_are_isolated() {
+    let named_a = connect_url("sqlite://named-a?mode=memory")
+        .await
+        .expect("first named pool should connect");
+    let named_b = connect_url("sqlite://named-b?mode=memory")
+        .await
+        .expect("second named pool should connect");
+    let anonymous_a = connect_url("sqlite::memory:")
+        .await
+        .expect("first anonymous pool should connect");
+    let anonymous_b = connect_url("sqlite://:memory:")
+        .await
+        .expect("second anonymous pool should connect");
+
+    for pool in [&named_a, &anonymous_a] {
+        sqlx::query("CREATE TABLE isolated (value TEXT NOT NULL)")
+            .execute(pool)
+            .await
+            .expect("source pool should create its own table");
+    }
+    for pool in [&named_b, &anonymous_b] {
+        let table_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'isolated'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("isolated schema should be readable");
+        assert_eq!(table_count, 0);
+    }
+
+    for pool in [named_a, named_b, anonymous_a, anonymous_b] {
+        pool.close().await;
     }
 }
 

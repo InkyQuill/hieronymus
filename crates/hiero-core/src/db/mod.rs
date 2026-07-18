@@ -6,6 +6,7 @@ mod test_support;
 use std::{path::Path, str::FromStr, time::Duration};
 
 pub use error::DbError;
+use sha2::{Digest, Sha256};
 use sqlx::{
     Connection, SqliteConnection, SqlitePool,
     migrate::Migrator,
@@ -21,7 +22,10 @@ const MISSING_FTS5_PROTOCOL_ERROR: &str = "hieronymus: SQLite FTS5 support is un
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 
 pub async fn connect(config: &HieronymusConfig) -> Result<SqlitePool, DbError> {
-    let database_path = config.database_path();
+    let configured_path = config.database_path();
+    let current_directory =
+        std::env::current_dir().map_err(|source| DbError::CurrentDirectory { source })?;
+    let database_path = absolute_config_path(&configured_path, &current_directory);
     let parent = database_path
         .parent()
         .expect("the configured database path always has a data-root parent");
@@ -45,8 +49,8 @@ pub async fn connect_url(url: &str) -> Result<SqlitePool, DbError> {
         url: url.to_owned(),
         reason: source.to_string(),
     })?;
-    let memory = memory_settings(url);
-    if memory.is_memory && memory.private_cache {
+    let memory = memory_settings(url)?;
+    if memory.is_memory && !memory.shared_cache {
         return Err(invalid_url(
             url,
             "private-cache in-memory databases cannot safely back an eight-connection pool; use `cache=shared`",
@@ -59,10 +63,7 @@ pub async fn connect_url(url: &str) -> Result<SqlitePool, DbError> {
         // schema state across concurrently opened SQLite handles. Normalize
         // every accepted form to one unique pool-local named memory database.
         options = options
-            .filename(format!(
-                "file:hieronymus-memory-{}?mode=memory&cache=shared",
-                Uuid::new_v4()
-            ))
+            .filename(memory_filename(&memory))
             .in_memory(false)
             .shared_cache(true);
     }
@@ -175,13 +176,14 @@ fn configure_options(mut options: SqliteConnectOptions, is_memory: bool) -> Sqli
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct MemorySettings {
     is_memory: bool,
-    private_cache: bool,
+    shared_cache: bool,
+    canonical_name: Option<String>,
 }
 
-fn memory_settings(url: &str) -> MemorySettings {
+fn memory_settings(url: &str) -> Result<MemorySettings, DbError> {
     let without_scheme = url
         .strip_prefix("sqlite://")
         .or_else(|| url.strip_prefix("sqlite:"))
@@ -189,20 +191,48 @@ fn memory_settings(url: &str) -> MemorySettings {
     let (database, query) = without_scheme
         .split_once('?')
         .map_or((without_scheme, ""), |parts| parts);
+    let decoded_database = percent_encoding::percent_decode_str(database)
+        .decode_utf8()
+        .map_err(|source| DbError::InvalidUrl {
+            url: url.to_owned(),
+            reason: source.to_string(),
+        })?;
+    let is_anonymous_name = decoded_database.is_empty() || decoded_database == ":memory:";
+    let starts_in_memory = database == ":memory:";
     let mut settings = MemorySettings {
-        is_memory: database == ":memory:",
-        private_cache: false,
+        is_memory: starts_in_memory,
+        shared_cache: starts_in_memory,
+        canonical_name: None,
     };
 
     for (key, value) in form_urlencoded::parse(query.as_bytes()) {
         match (key.as_ref(), value.as_ref()) {
-            ("mode", "memory") => settings.is_memory = true,
-            ("cache", "private") => settings.private_cache = true,
-            ("cache", "shared") => settings.private_cache = false,
+            ("mode", "memory") => {
+                settings.is_memory = true;
+                // This matches SQLx: mode=memory enables shared cache at the
+                // point where it appears, so later parameters may override it.
+                settings.shared_cache = true;
+            }
+            ("cache", "private") => settings.shared_cache = false,
+            ("cache", "shared") => settings.shared_cache = true,
             _ => {}
         }
     }
-    settings
+    if settings.is_memory && !is_anonymous_name {
+        settings.canonical_name = Some(decoded_database.into_owned());
+    }
+    Ok(settings)
+}
+
+fn memory_filename(settings: &MemorySettings) -> String {
+    let identity = settings.canonical_name.as_ref().map_or_else(
+        || format!("anonymous-{}", Uuid::new_v4()),
+        |name| {
+            let digest = Sha256::digest(name.as_bytes());
+            format!("named-{digest:x}")
+        },
+    );
+    format!("file:hieronymus-memory-{identity}?mode=memory&cache=shared")
 }
 
 fn invalid_url(url: &str, reason: &str) -> DbError {
@@ -246,4 +276,12 @@ fn config_path_options(path: &Path) -> SqliteConnectOptions {
     }
 
     SqliteConnectOptions::new().filename(path)
+}
+
+fn absolute_config_path(path: &Path, current_directory: &Path) -> std::path::PathBuf {
+    if path.is_absolute() {
+        path.to_owned()
+    } else {
+        current_directory.join(path)
+    }
 }
