@@ -4,7 +4,11 @@ import asyncio
 import json
 import os
 import socket
+import subprocess
+import sys
+import time
 import tomllib
+from collections.abc import Callable
 from dataclasses import replace
 
 import httpx
@@ -14,7 +18,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 from hieronymus.concepts import ConceptProposalStore, ConceptStore
-from hieronymus.config import load_config
+from hieronymus.config import HieronymusConfig, load_config
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_config import (
@@ -30,10 +34,119 @@ from hieronymus.provider_config import (
     save_provider_catalog,
 )
 from hieronymus.registry import Registry
-from hieronymus.service_manager import ServiceManager
-from hieronymus.service_state import read_server_state
+from hieronymus.service_client import ServiceClient, ServiceClientError
+from hieronymus.service_state import ServerState, read_server_state, remove_server_state
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
+
+_TEMPORARY_DAEMON_ATTEMPTS = 3
+_TEMPORARY_DAEMON_STARTUP_TIMEOUT = 5.0
+_TEMPORARY_DAEMON_POLL_INTERVAL = 0.05
+_TEMPORARY_DAEMON_STOP_TIMEOUT = 2.0
+
+
+def _available_loopback_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _launch_temporary_daemon(command: list[str]) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def _discard_temporary_daemon_attempt(
+    config: HieronymusConfig,
+    process: subprocess.Popen[bytes],
+) -> None:
+    if process.poll() is None:
+        process.terminate()
+    try:
+        process.wait(timeout=_TEMPORARY_DAEMON_STOP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=_TEMPORARY_DAEMON_STOP_TIMEOUT)
+    state = read_server_state(config)
+    if state is not None and state.pid == process.pid:
+        remove_server_state(config, expected_state=state)
+
+
+def _start_temporary_daemon(
+    config: HieronymusConfig,
+    *,
+    port_factory: Callable[[], int] = _available_loopback_port,
+    process_factory: Callable[[list[str]], subprocess.Popen[bytes]] = _launch_temporary_daemon,
+    attempts: int = _TEMPORARY_DAEMON_ATTEMPTS,
+) -> tuple[subprocess.Popen[bytes], ServerState]:
+    failures: list[str] = []
+    config.data_root.mkdir(parents=True, exist_ok=True)
+    client = ServiceClient(timeout=_TEMPORARY_DAEMON_POLL_INTERVAL)
+
+    for attempt in range(1, attempts + 1):
+        port = port_factory()
+        (config.config_root / "service.conf").write_text(
+            f'[service]\nhost = "127.0.0.1"\nport = {port}\n',
+            encoding="utf-8",
+        )
+        process = process_factory(
+            [
+                sys.executable,
+                "-m",
+                "hieronymus.service_daemon",
+                "--data-root",
+                str(config.data_root),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+            ]
+        )
+        deadline = time.monotonic() + _TEMPORARY_DAEMON_STARTUP_TIMEOUT
+        while time.monotonic() < deadline:
+            return_code = process.poll()
+            if return_code is not None:
+                failures.append(f"attempt {attempt} port {port}: exited {return_code}")
+                break
+            state = read_server_state(config)
+            if state is not None and state.pid == process.pid and state.port == port:
+                try:
+                    client.health(state)
+                except (OSError, ServiceClientError):
+                    pass
+                else:
+                    time.sleep(_TEMPORARY_DAEMON_POLL_INTERVAL)
+                    if process.poll() is None and read_server_state(config) == state:
+                        return process, state
+            time.sleep(_TEMPORARY_DAEMON_POLL_INTERVAL)
+        else:
+            failures.append(f"attempt {attempt} port {port}: startup timed out")
+        _discard_temporary_daemon_attempt(config, process)
+
+    details = "; ".join(failures)
+    raise RuntimeError(f"temporary daemon failed after {attempts} attempts: {details}")
+
+
+def _stop_temporary_daemon(
+    config: HieronymusConfig,
+    process: subprocess.Popen[bytes],
+    state: ServerState,
+) -> None:
+    if process.poll() is None:
+        try:
+            ServiceClient().shutdown(state)
+        except (OSError, ServiceClientError):
+            process.terminate()
+    try:
+        process.wait(timeout=_TEMPORARY_DAEMON_STOP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=_TEMPORARY_DAEMON_STOP_TIMEOUT)
+    remove_server_state(config, expected_state=state)
 
 
 def test_mcp_status_delegates_to_daemon_client(monkeypatch, tmp_path):
@@ -366,78 +479,147 @@ def test_direct_and_proxy_mcp_servers_preserve_all_tool_contracts(config):
     assert contracts(direct_tools) == contracts(proxy_tools)
 
 
-def test_real_stdio_server_preserves_http_tool_contracts_and_calls(config, monkeypatch) -> None:
-    def available_port() -> int:
-        with socket.socket() as listener:
-            listener.bind(("127.0.0.1", 0))
-            return int(listener.getsockname()[1])
+def test_temporary_daemon_start_retries_after_port_collision(config) -> None:
+    selected_ports: list[int] = []
+    processes: list[subprocess.Popen[bytes]] = []
 
+    with socket.socket() as occupied_listener:
+        occupied_listener.bind(("127.0.0.1", 0))
+        occupied_listener.listen()
+        occupied_port = int(occupied_listener.getsockname()[1])
+
+        def port_factory() -> int:
+            if not selected_ports:
+                port = occupied_port
+            else:
+                with socket.socket() as listener:
+                    listener.bind(("127.0.0.1", 0))
+                    port = int(listener.getsockname()[1])
+            selected_ports.append(port)
+            return port
+
+        def process_factory(command: list[str]) -> subprocess.Popen[bytes]:
+            process = _launch_temporary_daemon(command)
+            processes.append(process)
+            return process
+
+        process, state = _start_temporary_daemon(
+            config,
+            port_factory=port_factory,
+            process_factory=process_factory,
+        )
+
+    try:
+        assert selected_ports[0] == occupied_port
+        assert len(selected_ports) >= 2
+        assert processes[0].poll() is not None
+        assert state.port == selected_ports[-1]
+        assert process.poll() is None
+    finally:
+        _stop_temporary_daemon(config, process, state)
+
+    assert read_server_state(config) is None
+
+
+def test_temporary_daemon_start_reports_bounded_collision_failures(config) -> None:
+    processes: list[subprocess.Popen[bytes]] = []
+
+    with socket.socket() as occupied_listener:
+        occupied_listener.bind(("127.0.0.1", 0))
+        occupied_listener.listen()
+        occupied_port = int(occupied_listener.getsockname()[1])
+
+        def process_factory(command: list[str]) -> subprocess.Popen[bytes]:
+            process = _launch_temporary_daemon(command)
+            processes.append(process)
+            return process
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                rf"temporary daemon failed after 2 attempts: "
+                rf"attempt 1 port {occupied_port}: exited \d+; "
+                rf"attempt 2 port {occupied_port}: exited \d+"
+            ),
+        ):
+            _start_temporary_daemon(
+                config,
+                port_factory=lambda: occupied_port,
+                process_factory=process_factory,
+                attempts=2,
+            )
+
+    assert len(processes) == 2
+    assert all(process.poll() is not None for process in processes)
+    assert read_server_state(config) is None
+
+
+def test_real_stdio_server_preserves_http_tool_contracts_and_calls(config, monkeypatch) -> None:
     async def exercise() -> None:
         monkeypatch.delenv("HIERONYMUS_HOST", raising=False)
         monkeypatch.delenv("HIERONYMUS_PORT", raising=False)
-        config.data_root.mkdir(parents=True)
-        port = available_port()
-        (config.config_root / "service.conf").write_text(
-            f'[service]\nhost = "127.0.0.1"\nport = {port}\n',
-            encoding="utf-8",
-        )
-        manager = ServiceManager(config)
-        manager.start()
-        state = read_server_state(config)
-        assert state is not None
-        assert state.port == port
+        process, state = _start_temporary_daemon(config)
 
-        stdio_parameters = StdioServerParameters(
-            command="uv",
-            args=["run", "hieronymus-mcp"],
-            cwd=os.getcwd(),
-            env={**os.environ, "HIERONYMUS_DATA_ROOT": str(config.data_root)},
-        )
-        async with stdio_client(stdio_parameters) as (stdio_read, stdio_write):
-            async with ClientSession(stdio_read, stdio_write) as stdio_session:
-                await stdio_session.initialize()
-                async with httpx.AsyncClient() as http_client:
-                    async with streamable_http_client(
-                        f"http://{state.host}:{state.port}/mcp",
-                        http_client=http_client,
-                    ) as (http_read, http_write, _):
-                        async with ClientSession(http_read, http_write) as http_session:
-                            await http_session.initialize()
-                            stdio_tools = await stdio_session.list_tools()
-                            http_tools = await http_session.list_tools()
+        try:
+            stdio_parameters = StdioServerParameters(
+                command="uv",
+                args=["run", "hieronymus-mcp"],
+                cwd=os.getcwd(),
+                env={**os.environ, "HIERONYMUS_DATA_ROOT": str(config.data_root)},
+            )
+            async with stdio_client(stdio_parameters) as (stdio_read, stdio_write):
+                async with ClientSession(stdio_read, stdio_write) as stdio_session:
+                    await stdio_session.initialize()
+                    async with httpx.AsyncClient() as http_client:
+                        async with streamable_http_client(
+                            f"http://{state.host}:{state.port}/mcp",
+                            http_client=http_client,
+                        ) as (http_read, http_write, _):
+                            async with ClientSession(http_read, http_write) as http_session:
+                                await http_session.initialize()
+                                stdio_tools = await stdio_session.list_tools()
+                                http_tools = await http_session.list_tools()
 
-                            assert [tool.model_dump() for tool in stdio_tools.tools] == [
-                                tool.model_dump() for tool in http_tools.tools
-                            ]
-                            assert len(stdio_tools.tools) == 39
+                                assert [tool.model_dump() for tool in stdio_tools.tools] == [
+                                    tool.model_dump() for tool in http_tools.tools
+                                ]
+                                assert len(stdio_tools.tools) == 39
 
-                            stdio_status = await stdio_session.call_tool("hieronymus_status", {})
-                            http_status = await http_session.call_tool("hieronymus_status", {})
-                            assert stdio_status.structuredContent == http_status.structuredContent
-                            assert stdio_status.structuredContent is not None
-                            assert stdio_status.structuredContent["mcp_transports"] == {
-                                "http": {"available": True, "mode": "streamable-http"},
-                                "stdio": {"available": True, "mode": "compatibility-proxy"},
-                            }
+                                stdio_status = await stdio_session.call_tool(
+                                    "hieronymus_status", {}
+                                )
+                                http_status = await http_session.call_tool("hieronymus_status", {})
+                                assert (
+                                    stdio_status.structuredContent == http_status.structuredContent
+                                )
+                                assert stdio_status.structuredContent is not None
+                                assert stdio_status.structuredContent["mcp_transports"] == {
+                                    "http": {"available": True, "mode": "streamable-http"},
+                                    "stdio": {"available": True, "mode": "compatibility-proxy"},
+                                }
 
-                            stdio_created = await stdio_session.call_tool(
-                                "hieronymus_series_create",
-                                {"slug": "stdio", "title": "Stdio"},
-                            )
-                            http_created = await http_session.call_tool(
-                                "hieronymus_series_create",
-                                {"slug": "http", "title": "HTTP"},
-                            )
-                            assert stdio_created.isError is False
-                            assert http_created.isError is False
+                                stdio_created = await stdio_session.call_tool(
+                                    "hieronymus_series_create",
+                                    {"slug": "stdio", "title": "Stdio"},
+                                )
+                                http_created = await http_session.call_tool(
+                                    "hieronymus_series_create",
+                                    {"slug": "http", "title": "HTTP"},
+                                )
+                                assert stdio_created.isError is False
+                                assert http_created.isError is False
 
-                            stdio_listed = await stdio_session.call_tool(
-                                "hieronymus_series_list", {}
-                            )
-                            http_listed = await http_session.call_tool("hieronymus_series_list", {})
-                            assert stdio_listed.structuredContent == http_listed.structuredContent
-
-        manager.stop()
+                                stdio_listed = await stdio_session.call_tool(
+                                    "hieronymus_series_list", {}
+                                )
+                                http_listed = await http_session.call_tool(
+                                    "hieronymus_series_list", {}
+                                )
+                                assert (
+                                    stdio_listed.structuredContent == http_listed.structuredContent
+                                )
+        finally:
+            _stop_temporary_daemon(config, process, state)
 
     asyncio.run(exercise())
 
