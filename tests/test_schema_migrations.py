@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -59,6 +61,35 @@ def test_fresh_database_baselines_verified_packaged_migrations_without_replay(
     assert not any("values ('rebuild')" in statement.lower() for statement in statements)
 
 
+def test_two_concurrent_fresh_initializers_share_one_valid_ledger(tmp_path: Path) -> None:
+    database_path = tmp_path / "hieronymus.sqlite"
+    ready = Barrier(2)
+    connections = [
+        sqlite3.connect(database_path, check_same_thread=False),
+        sqlite3.connect(database_path, check_same_thread=False),
+    ]
+    for conn in connections:
+        conn.row_factory = sqlite3.Row
+        conn.execute("pragma foreign_keys = on")
+        conn.execute("pragma journal_mode = wal")
+
+    def initialize(conn: sqlite3.Connection) -> None:
+        try:
+            ready.wait(timeout=5)
+            db.ensure_schema(conn)
+        finally:
+            conn.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(initialize, conn) for conn in connections]
+        for future in futures:
+            future.result(timeout=10)
+
+    with db.connect(database_path) as conn:
+        assert ledger_rows(conn) == [("0001", "memory_fts_triggers")]
+        assert conn.execute("pragma integrity_check").fetchone()[0] == "ok"
+
+
 def test_existing_pre_ledger_database_applies_fts_upgrade_once(tmp_path: Path) -> None:
     with db.connect(tmp_path / "hieronymus.sqlite") as conn:
         db.apply_migration(conn, "global.sql")
@@ -110,7 +141,7 @@ def test_existing_pre_ledger_database_applies_fts_upgrade_once(tmp_path: Path) -
     assert first_applied_at == second_applied_at
 
 
-def test_existing_partial_pre_ledger_schema_skips_inapplicable_fts_rebuild(
+def test_existing_partial_pre_ledger_schema_normalizes_usable_fts_shape(
     tmp_path: Path,
 ) -> None:
     with db.connect(tmp_path / "hieronymus.sqlite") as conn:
@@ -120,9 +151,89 @@ def test_existing_partial_pre_ledger_schema_skips_inapplicable_fts_rebuild(
         db.ensure_schema(conn)
 
         assert ledger_rows(conn) == [("0001", "memory_fts_triggers")]
+        crystal_id = conn.execute(
+            "insert into crystals(crystal_type, text) values ('lesson', 'first token')"
+        ).lastrowid
+        assert (
+            conn.execute(
+                "select rowid from crystals_fts where crystals_fts match 'first'"
+            ).fetchone()[0]
+            == crystal_id
+        )
+
+        conn.execute("update crystals set text = 'second token' where id = ?", (crystal_id,))
+        assert (
+            conn.execute(
+                "select rowid from crystals_fts where crystals_fts match 'second'"
+            ).fetchone()[0]
+            == crystal_id
+        )
+
+        conn.execute("delete from crystals where id = ?", (crystal_id,))
+        assert (
+            conn.execute(
+                "select rowid from crystals_fts where crystals_fts match 'second'"
+            ).fetchone()
+            is None
+        )
 
 
-def test_migrations_apply_in_lexical_version_order() -> None:
+def test_later_migration_failure_rolls_back_global_repairs_and_ledger(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "hieronymus.sqlite"
+    with db.connect(database_path) as conn:
+        conn.execute("create table crystals (id integer primary key, text text)")
+        conn.execute("insert into crystals(id, text) values (1, 'preserved')")
+        conn.commit()
+
+        monkeypatch.setattr(
+            db,
+            "discover_schema_migrations",
+            lambda: [
+                migration(
+                    "0001",
+                    "earlier_success",
+                    "create table earlier_effect(value integer);",
+                ),
+                migration(
+                    "0002",
+                    "broken_later",
+                    "create table transient(value integer); insert into missing_table values (1);",
+                ),
+            ],
+        )
+
+        with pytest.raises(sqlite3.OperationalError, match="missing_table"):
+            db.ensure_schema(conn)
+
+        assert {row["name"] for row in conn.execute("pragma table_info(crystals)")} == {
+            "id",
+            "text",
+        }
+        assert conn.execute("select text from crystals where id = 1").fetchone()[0] == "preserved"
+        assert (
+            conn.execute(
+                "select 1 from sqlite_master where type = 'table' and name = 'series'"
+            ).fetchone()
+            is None
+        )
+        assert (
+            conn.execute(
+                "select 1 from sqlite_master where type = 'table' and name = 'earlier_effect'"
+            ).fetchone()
+            is None
+        )
+        assert (
+            conn.execute(
+                "select 1 from sqlite_master where type = 'table' and name = 'schema_migrations'"
+            ).fetchone()
+            is None
+        )
+
+
+def test_migrations_apply_in_numeric_version_order() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     migrations = [
@@ -206,10 +317,11 @@ def test_failed_migration_rolls_back_changes_and_ledger_record() -> None:
     assert ledger_rows(conn) == []
 
 
-@pytest.mark.parametrize("statement", ["vacuum", "commit"])
+@pytest.mark.parametrize("statement", ["vacuum", "commit", "detach database aux"])
 def test_non_transactional_statement_fails_without_partial_commit(statement: str) -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
+    conn.execute("attach database ':memory:' as aux")
     non_transactional = migration(
         "0001",
         "non_transactional",
@@ -225,7 +337,45 @@ def test_non_transactional_statement_fails_without_partial_commit(statement: str
         ).fetchone()
         is None
     )
-    assert ledger_rows(conn) == []
+    assert (
+        conn.execute(
+            "select 1 from sqlite_master where type = 'table' and name = 'schema_migrations'"
+        ).fetchone()
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "pragma user_version = 7; create table effect(value integer);",
+        "savepoint nested; create table effect(value integer); release nested;",
+        "attach database ':memory:' as aux; create table effect(value integer);",
+    ],
+)
+def test_transactional_sql_statements_are_not_overbroadly_rejected(sql: str) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+
+    db.apply_schema_migrations(conn, [migration("0001", "allowed", sql)])
+
+    assert (
+        conn.execute(
+            "select 1 from sqlite_master where type = 'table' and name = 'effect'"
+        ).fetchone()
+        is not None
+    )
+
+
+def test_detach_cannot_run_under_sqlites_required_write_transaction() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.execute("attach database ':memory:' as aux")
+    conn.execute("begin immediate")
+
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        conn.execute("detach database aux")
+
+    conn.rollback()
 
 
 def test_runner_rejects_an_existing_transaction_before_any_schema_change() -> None:
@@ -249,3 +399,51 @@ def test_runner_rejects_an_existing_transaction_before_any_schema_change() -> No
         is None
     )
     conn.rollback()
+
+
+def write_migration_resource(directory: Path, name: str, sql: str = "select 1;") -> None:
+    directory.joinpath(name).write_text(sql, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "1_unpadded.sql",
+        "001_mixed_width.sql",
+        "00001_mixed_width.sql",
+        "notes.sql",
+        "0002_BadName.sql",
+    ],
+)
+def test_discovery_rejects_malformed_sql_resource_names(
+    tmp_path: Path,
+    monkeypatch,
+    filename: str,
+) -> None:
+    write_migration_resource(tmp_path, filename)
+    monkeypatch.setattr(db, "files", lambda package: tmp_path)
+
+    with pytest.raises(db.SchemaMigrationError, match="four zero-padded digits"):
+        db.discover_schema_migrations()
+
+
+def test_discovery_rejects_duplicate_numeric_versions(tmp_path: Path, monkeypatch) -> None:
+    write_migration_resource(tmp_path, "0001_first.sql")
+    write_migration_resource(tmp_path, "0001_second.sql")
+    monkeypatch.setattr(db, "files", lambda package: tmp_path)
+
+    with pytest.raises(db.SchemaMigrationError, match="duplicate migration version 0001"):
+        db.discover_schema_migrations()
+
+
+def test_discovery_sorts_valid_resources_by_numeric_version(tmp_path: Path, monkeypatch) -> None:
+    write_migration_resource(tmp_path, "0010_tenth.sql")
+    write_migration_resource(tmp_path, "0002_second.sql")
+    monkeypatch.setattr(db, "files", lambda package: tmp_path)
+
+    discovered = db.discover_schema_migrations()
+
+    assert [(item.version, item.name) for item in discovered] == [
+        ("0002", "second"),
+        ("0010", "tenth"),
+    ]

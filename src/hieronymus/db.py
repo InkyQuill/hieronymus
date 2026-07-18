@@ -3,23 +3,24 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections.abc import Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
 
-MIGRATION_FILENAME = re.compile(r"^(?P<version>\d+)_(?P<name>[a-z0-9_]+)\.sql$")
+MIGRATION_VERSION_WIDTH = 4
+MIGRATION_FILENAME = re.compile(
+    rf"^(?P<version>\d{{{MIGRATION_VERSION_WIDTH}}})_"
+    r"(?P<name>[a-z][a-z0-9]*(?:_[a-z0-9]+)*)\.sql$"
+)
 NON_TRANSACTIONAL_SQL = {
-    "attach",
     "begin",
     "commit",
     "detach",
     "end",
-    "pragma",
-    "release",
     "rollback",
-    "savepoint",
     "vacuum",
 }
 MIGRATION_LEDGER_SQL = """
@@ -40,6 +41,7 @@ GLOBAL_COMPATIBILITY_COLUMNS = {
         "merged_into_concept_id": "integer references concepts(id)",
     },
     "short_term_memories": {
+        "text": "text not null default ''",
         "source_credibility": "text",
         "rule_intent": "text",
         "soft_origin": "text",
@@ -48,6 +50,8 @@ GLOBAL_COMPATIBILITY_COLUMNS = {
         "last_activity_at": "text not null default ''",
     },
     "crystals": {
+        "text": "text not null default ''",
+        "title": "text not null default ''",
         "source_credibility": "text not null default 'observation'",
         "rule_intent": "text not null default ''",
         "malformed_penalty": "real not null default 0",
@@ -84,37 +88,51 @@ def connect(path: Path) -> sqlite3.Connection:
 
 def apply_migration(conn: sqlite3.Connection, name: str) -> None:
     sql = files("hieronymus.migrations").joinpath(name).read_text(encoding="utf-8")
-    conn.executescript(sql)
-    if name == "global.sql":
+    if name != "global.sql":
+        conn.executescript(sql)
         conn.commit()
+        return
+
+    _require_no_active_transaction(conn)
+    with _schema_transaction(conn, disable_foreign_keys=True):
+        _execute_sql_statements(conn, _sql_statements(sql))
         ensure_global_compatibility_columns(conn)
-    conn.commit()
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
     """Create or upgrade the global schema through the ordered migration ledger."""
     _require_no_active_transaction(conn)
     migrations = discover_schema_migrations()
-    if _table_exists(conn, "schema_migrations"):
-        apply_schema_migrations(conn, migrations)
-        return
+    _preflight_migrations(migrations)
+    global_sql = files("hieronymus.migrations").joinpath("global.sql").read_text(encoding="utf-8")
 
-    is_fresh = not _has_application_schema(conn)
-    apply_migration(conn, "global.sql")
-    if is_fresh:
-        _baseline_schema_migrations(conn, migrations)
-    else:
-        apply_schema_migrations(conn, migrations)
+    with _schema_transaction(conn, disable_foreign_keys=True):
+        if _table_exists(conn, "schema_migrations"):
+            _apply_pending_migrations(conn, migrations)
+            return
+
+        is_fresh = not _has_application_schema(conn)
+        _execute_sql_statements(conn, _sql_statements(global_sql))
+        ensure_global_compatibility_columns(conn)
+        if is_fresh:
+            _baseline_schema_migrations(conn, migrations)
+        else:
+            _apply_pending_migrations(conn, migrations)
 
 
 def discover_schema_migrations() -> list[SchemaMigration]:
-    """Read numbered SQL migrations from package resources in lexical order."""
+    """Read strict four-digit numbered SQL package resources in numeric order."""
     migrations: list[SchemaMigration] = []
     versions = files("hieronymus.migrations.versions")
-    for resource in sorted(versions.iterdir(), key=lambda item: item.name):
+    for resource in versions.iterdir():
+        if not resource.name.endswith(".sql"):
+            continue
         match = MIGRATION_FILENAME.fullmatch(resource.name)
         if match is None:
-            continue
+            raise SchemaMigrationError(
+                f"invalid migration resource {resource.name!r}; expected four zero-padded digits "
+                "and a lowercase snake-case name, for example 0001_example.sql"
+            )
         migrations.append(
             SchemaMigration(
                 version=match.group("version"),
@@ -122,8 +140,7 @@ def discover_schema_migrations() -> list[SchemaMigration]:
                 sql=resource.read_text(encoding="utf-8"),
             )
         )
-    _validate_migration_order(migrations)
-    return migrations
+    return _ordered_migrations(migrations)
 
 
 def apply_schema_migrations(
@@ -132,46 +149,44 @@ def apply_schema_migrations(
 ) -> None:
     """Apply each pending migration atomically and record it after success."""
     _require_no_active_transaction(conn)
-    ordered = sorted(migrations, key=lambda migration: migration.version)
-    _validate_migration_order(ordered)
+    ordered = _ordered_migrations(migrations)
+    _preflight_migrations(ordered)
     _create_migration_ledger(conn)
+    with _schema_transaction(conn):
+        _apply_pending_migrations(conn, ordered)
+
+
+def _apply_pending_migrations(
+    conn: sqlite3.Connection,
+    migrations: list[SchemaMigration],
+) -> None:
     applied = {
         row["version"] if isinstance(row, sqlite3.Row) else row[0]: row
         for row in conn.execute(
             "select version, name, checksum, applied_at from schema_migrations"
         ).fetchall()
     }
-    for migration in ordered:
+    for migration in migrations:
         row = applied.get(migration.version)
         if row is not None:
             _validate_applied_migration(row, migration)
 
-    for migration in ordered:
+    for migration in migrations:
         if migration.version in applied:
             continue
-        statements = _sql_statements(migration.sql)
-        _reject_non_transactional_statements(migration, statements)
-        try:
-            conn.execute("begin immediate")
-            for statement in statements:
-                conn.execute(statement)
-            conn.execute(
-                """
-                insert into schema_migrations(version, name, checksum, applied_at)
-                values (?, ?, ?, ?)
-                """,
-                (
-                    migration.version,
-                    migration.name,
-                    migration.checksum,
-                    _utc_timestamp(),
-                ),
-            )
-            conn.commit()
-        except Exception:
-            if conn.in_transaction:
-                conn.rollback()
-            raise
+        _execute_sql_statements(conn, _sql_statements(migration.sql))
+        conn.execute(
+            """
+            insert into schema_migrations(version, name, checksum, applied_at)
+            values (?, ?, ?, ?)
+            """,
+            (
+                migration.version,
+                migration.name,
+                migration.checksum,
+                _utc_timestamp(),
+            ),
+        )
 
 
 def _require_no_active_transaction(conn: sqlite3.Connection) -> None:
@@ -179,12 +194,54 @@ def _require_no_active_transaction(conn: sqlite3.Connection) -> None:
         raise SchemaMigrationError("schema migrations cannot start inside an active transaction")
 
 
-def _validate_migration_order(migrations: list[SchemaMigration]) -> None:
-    versions = [migration.version for migration in migrations]
-    if len(versions) != len(set(versions)):
-        raise SchemaMigrationError("schema migration versions must be unique")
-    if versions != sorted(versions):
-        raise SchemaMigrationError("schema migrations must use lexical numeric order")
+def _ordered_migrations(migrations: Iterable[SchemaMigration]) -> list[SchemaMigration]:
+    candidates = list(migrations)
+    for migration in candidates:
+        if not re.fullmatch(rf"\d{{{MIGRATION_VERSION_WIDTH}}}", migration.version):
+            raise SchemaMigrationError(
+                f"migration version {migration.version!r} must use four zero-padded digits"
+            )
+    ordered = sorted(candidates, key=lambda migration: int(migration.version))
+    seen: set[int] = set()
+    for migration in ordered:
+        numeric_version = int(migration.version)
+        if numeric_version in seen:
+            raise SchemaMigrationError(f"duplicate migration version {migration.version}")
+        seen.add(numeric_version)
+    return ordered
+
+
+def _preflight_migrations(migrations: list[SchemaMigration]) -> None:
+    for migration in migrations:
+        _reject_non_transactional_statements(migration, _sql_statements(migration.sql))
+
+
+@contextmanager
+def _schema_transaction(
+    conn: sqlite3.Connection,
+    *,
+    disable_foreign_keys: bool = False,
+):
+    foreign_keys_enabled = bool(conn.execute("pragma foreign_keys").fetchone()[0])
+    if disable_foreign_keys and foreign_keys_enabled:
+        conn.execute("pragma foreign_keys = off")
+    try:
+        conn.execute("begin immediate")
+        yield
+        if disable_foreign_keys:
+            violations = conn.execute("pragma foreign_key_check").fetchall()
+            if violations:
+                raise SchemaMigrationError(
+                    f"schema migration introduced foreign key violations: {violations!r}"
+                )
+        conn.commit()
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    finally:
+        if disable_foreign_keys and foreign_keys_enabled:
+            conn.execute("pragma foreign_keys = on")
 
 
 def _create_migration_ledger(conn: sqlite3.Connection) -> None:
@@ -217,12 +274,19 @@ def _sql_statements(sql: str) -> list[str]:
     return statements
 
 
+def _execute_sql_statements(conn: sqlite3.Connection, statements: list[str]) -> None:
+    for statement in statements:
+        conn.execute(statement)
+
+
 def _reject_non_transactional_statements(
     migration: SchemaMigration,
     statements: list[str],
 ) -> None:
     for statement in statements:
         keyword = _leading_sql_keyword(statement)
+        if keyword == "rollback" and re.match(r"^\s*rollback\s+to\b", statement, re.IGNORECASE):
+            continue
         if keyword in NON_TRANSACTIONAL_SQL:
             raise SchemaMigrationError(
                 f"migration {migration.version} contains {keyword.upper()}, "
@@ -251,28 +315,21 @@ def _baseline_schema_migrations(
     migrations: list[SchemaMigration],
 ) -> None:
     validators = {"0001": _verify_memory_fts_trigger_state}
-    try:
-        conn.execute("begin immediate")
-        conn.execute(MIGRATION_LEDGER_SQL)
-        for migration in migrations:
-            validator = validators.get(migration.version)
-            if validator is None:
-                raise SchemaMigrationError(
-                    f"fresh schema has no baseline verifier for migration {migration.version}"
-                )
-            validator(conn)
-            conn.execute(
-                """
-                insert into schema_migrations(version, name, checksum, applied_at)
-                values (?, ?, ?, ?)
-                """,
-                (migration.version, migration.name, migration.checksum, _utc_timestamp()),
+    conn.execute(MIGRATION_LEDGER_SQL)
+    for migration in migrations:
+        validator = validators.get(migration.version)
+        if validator is None:
+            raise SchemaMigrationError(
+                f"fresh schema has no baseline verifier for migration {migration.version}"
             )
-        conn.commit()
-    except Exception:
-        if conn.in_transaction:
-            conn.rollback()
-        raise
+        validator(conn)
+        conn.execute(
+            """
+            insert into schema_migrations(version, name, checksum, applied_at)
+            values (?, ?, ?, ?)
+            """,
+            (migration.version, migration.name, migration.checksum, _utc_timestamp()),
+        )
 
 
 def _verify_memory_fts_trigger_state(conn: sqlite3.Connection) -> None:
@@ -328,6 +385,11 @@ def ensure_global_compatibility_columns(conn: sqlite3.Connection) -> None:
     for table, columns in GLOBAL_COMPATIBILITY_COLUMNS.items():
         for column, definition in columns.items():
             ensure_column(conn, table, column, definition)
+    for table in ("short_term_memories", "crystals"):
+        if "id" not in _column_names(conn, table):
+            raise SchemaMigrationError(
+                f"legacy table {table!r} has no id column required by memory FTS"
+            )
     task_session_columns = _column_names(conn, "task_sessions")
     if {"created_at", "last_activity_at"} <= task_session_columns:
         conn.execute(
@@ -337,7 +399,6 @@ def ensure_global_compatibility_columns(conn: sqlite3.Connection) -> None:
             where last_activity_at = ''
             """
         )
-    conn.commit()
     ensure_concepts_allow_duplicate_names(conn)
     ensure_concept_facet_compatibility(conn)
 
@@ -358,25 +419,20 @@ def ensure_concept_facet_compatibility(conn: sqlite3.Connection) -> None:
 
     if _concept_facet_fts_needs_rebuild(conn):
         conn.execute("insert into concept_facet_fts(concept_facet_fts) values ('rebuild')")
-    conn.commit()
 
 
 def ensure_concepts_allow_duplicate_names(conn: sqlite3.Connection) -> None:
     if not _concepts_has_unique_name_scope_constraint(conn):
         return
 
-    if conn.in_transaction:
-        raise RuntimeError("concepts compatibility rebuild requires no active transaction")
+    if not conn.in_transaction:
+        raise RuntimeError("concepts compatibility rebuild requires an active schema transaction")
 
-    foreign_keys_enabled = bool(conn.execute("pragma foreign_keys").fetchone()[0])
-    conn.execute("pragma foreign_keys = off")
-    try:
-        conn.execute("begin")
-        conn.execute("drop trigger if exists concepts_ai")
-        conn.execute("drop trigger if exists concepts_ad")
-        conn.execute("drop trigger if exists concepts_au")
-        conn.execute(
-            """
+    conn.execute("drop trigger if exists concepts_ai")
+    conn.execute("drop trigger if exists concepts_ad")
+    conn.execute("drop trigger if exists concepts_au")
+    conn.execute(
+        """
             create table concepts_new (
               id integer primary key,
               canonical_name text not null,
@@ -394,9 +450,9 @@ def ensure_concepts_allow_duplicate_names(conn: sqlite3.Connection) -> None:
               )
             )
             """
-        )
-        conn.execute(
-            """
+    )
+    conn.execute(
+        """
             insert into concepts_new(
               id,
               canonical_name,
@@ -422,11 +478,11 @@ def ensure_concepts_allow_duplicate_names(conn: sqlite3.Connection) -> None:
               updated_at
             from concepts
             """
-        )
-        conn.execute("drop table concepts")
-        conn.execute("alter table concepts_new rename to concepts")
-        conn.execute(
-            """
+    )
+    conn.execute("drop table concepts")
+    conn.execute("alter table concepts_new rename to concepts")
+    conn.execute(
+        """
             create trigger concepts_ai
             after insert on concepts
             begin
@@ -434,9 +490,9 @@ def ensure_concepts_allow_duplicate_names(conn: sqlite3.Connection) -> None:
               values (new.id, new.canonical_name, new.description);
             end
             """
-        )
-        conn.execute(
-            """
+    )
+    conn.execute(
+        """
             create trigger concepts_ad
             after delete on concepts
             begin
@@ -444,9 +500,9 @@ def ensure_concepts_allow_duplicate_names(conn: sqlite3.Connection) -> None:
               values ('delete', old.id, old.canonical_name, old.description);
             end
             """
-        )
-        conn.execute(
-            """
+    )
+    conn.execute(
+        """
             create trigger concepts_au
             after update on concepts
             begin
@@ -456,16 +512,9 @@ def ensure_concepts_allow_duplicate_names(conn: sqlite3.Connection) -> None:
               values (new.id, new.canonical_name, new.description);
             end
             """
-        )
-        if _table_exists(conn, "concepts_fts"):
-            conn.execute("insert into concepts_fts(concepts_fts) values ('rebuild')")
-        conn.execute("commit")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("rollback")
-        raise
-    finally:
-        conn.execute(f"pragma foreign_keys = {int(foreign_keys_enabled)}")
+    )
+    if _table_exists(conn, "concepts_fts"):
+        conn.execute("insert into concepts_fts(concepts_fts) values ('rebuild')")
 
 
 def _concepts_has_unique_name_scope_constraint(conn: sqlite3.Connection) -> bool:
