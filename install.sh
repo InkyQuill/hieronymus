@@ -17,7 +17,7 @@ require_command() {
 }
 
 has_tty() {
-    [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null && ( : >/dev/tty ) 2>/dev/null
+    [ -t 0 ] && [ -t 1 ] && [ -r /dev/tty ] && [ -w /dev/tty ] && ( : </dev/tty ) 2>/dev/null && ( : >/dev/tty ) 2>/dev/null
 }
 
 confirm() {

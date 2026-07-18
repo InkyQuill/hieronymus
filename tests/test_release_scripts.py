@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import errno
 import os
+import pty
 import subprocess
 from pathlib import Path
 from textwrap import dedent
@@ -34,6 +36,90 @@ def script_env(tmp_path: Path, *, home: Path | None = None) -> dict[str, str]:
     env["PATH"] = f"{fake_bin}:{os.environ['PATH']}"
     env["MISE_DISABLE"] = "1"
     return env
+
+
+def run_channel_selection_in_tty(
+    tmp_path: Path,
+    *,
+    redirect_stdin: bool = False,
+    redirect_stdout: bool = False,
+) -> tuple[int, str, str]:
+    functions = script_text("install.sh").split("\nrequire_command git\n", 1)[0]
+    redirected_output = tmp_path / "stdout"
+    pid, terminal = pty.fork()
+    if pid == 0:
+        if redirect_stdin:
+            input_fd = os.open(os.devnull, os.O_RDONLY)
+            os.dup2(input_fd, 0)
+            os.close(input_fd)
+        if redirect_stdout:
+            output_fd = os.open(
+                redirected_output,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600,
+            )
+            os.dup2(output_fd, 1)
+            os.close(output_fd)
+        os.execv("/bin/sh", ["sh", "-c", f"{functions}\nselect_install_channel"])
+
+    os.write(terminal, b"2\n")
+    output = bytearray()
+    while True:
+        try:
+            chunk = os.read(terminal, 4096)
+        except OSError as error:
+            if error.errno != errno.EIO:
+                raise
+            break
+        if not chunk:
+            break
+        output.extend(chunk)
+    _, status = os.waitpid(pid, 0)
+    os.close(terminal)
+    stdout = redirected_output.read_text() if redirected_output.exists() else ""
+    return os.waitstatus_to_exitcode(status), output.decode(), stdout
+
+
+def test_install_tty_selects_requested_channel_when_stdio_is_interactive(
+    tmp_path: Path,
+) -> None:
+    returncode, terminal, stdout = run_channel_selection_in_tty(tmp_path)
+
+    assert returncode == 0
+    assert "Choose Hieronymus install channel:" in terminal
+    assert "Install channel [stable/dev] (stable): dev\r\n" in terminal
+    assert stdout == ""
+
+
+def test_install_tty_uses_default_without_prompt_when_stdin_is_redirected(
+    tmp_path: Path,
+) -> None:
+    returncode, terminal, stdout = run_channel_selection_in_tty(
+        tmp_path,
+        redirect_stdin=True,
+    )
+
+    assert returncode == 0
+    assert "no interactive terminal; installing stable channel" in terminal
+    assert "Choose Hieronymus install channel:" not in terminal
+    assert "Install channel [stable/dev] (stable):" not in terminal
+    assert "stable\r\n" in terminal
+    assert stdout == ""
+
+
+def test_install_tty_uses_default_without_prompt_when_stdout_is_redirected(
+    tmp_path: Path,
+) -> None:
+    returncode, terminal, stdout = run_channel_selection_in_tty(
+        tmp_path,
+        redirect_stdout=True,
+    )
+
+    assert returncode == 0
+    assert "no interactive terminal; installing stable channel" in terminal
+    assert "Choose Hieronymus install channel:" not in terminal
+    assert "Install channel [stable/dev] (stable):" not in terminal
+    assert stdout == "stable\n"
 
 
 def test_install_script_uses_managed_github_checkout() -> None:
