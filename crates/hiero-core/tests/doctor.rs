@@ -4,6 +4,7 @@ use hiero_core::{
     config::HieronymusConfig,
     doctor::{CheckStatus, DoctorCheck, DoctorReport, run_doctor},
 };
+use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 
 fn check<'a>(report: &'a DoctorReport, name: &str) -> &'a DoctorCheck {
     report
@@ -67,6 +68,11 @@ async fn doctor_rejects_a_non_sqlite_database_file() {
     let report = run_doctor(&config).await;
 
     assert_eq!(check(&report, "database").status, CheckStatus::Fail);
+    assert_eq!(
+        check(&report, "derived-index").status,
+        CheckStatus::Fail,
+        "a corrupt authoritative source cannot rebuild derived data"
+    );
 }
 
 #[tokio::test]
@@ -80,6 +86,32 @@ async fn doctor_rejects_an_orphaned_derived_index() {
     let report = run_doctor(&config).await;
 
     assert_eq!(check(&report, "derived-index").status, CheckStatus::Fail);
+}
+
+#[tokio::test]
+async fn doctor_only_claims_rebuildability_from_a_verified_sqlite_source() {
+    let temporary = tempfile::tempdir().expect("temporary root should be created");
+    let data_root = temporary.path().join("data");
+    fs::create_dir(&data_root).expect("data root should be created");
+    let database = data_root.join("hieronymus.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database)
+        .create_if_missing(true);
+    let connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("valid SQLite fixture should be created");
+    connection
+        .close()
+        .await
+        .expect("SQLite fixture should close cleanly");
+    let config = HieronymusConfig::load(Some(data_root)).expect("configuration should resolve");
+
+    let report = run_doctor(&config).await;
+
+    assert_eq!(check(&report, "database").status, CheckStatus::Ok);
+    let derived = check(&report, "derived-index");
+    assert_eq!(derived.status, CheckStatus::Warn);
+    assert!(derived.detail.contains("can be rebuilt"));
 }
 
 #[test]
