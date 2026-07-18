@@ -2841,6 +2841,7 @@ dependencies = [
  "pulldown-cmark",
  "regex",
  "reqwest",
+ "rust-embed",
  "secrecy",
  "serde",
  "serde_json",
