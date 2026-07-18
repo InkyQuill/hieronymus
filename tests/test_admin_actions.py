@@ -385,6 +385,58 @@ def test_approve_proposal_keeps_all_variant_forms_advisory(
     assert crystal_count == 0
 
 
+@pytest.mark.parametrize(
+    ("column", "payload", "field"),
+    [
+        ("approved_variants_json", '["valid", "   "]', "approved_variants"),
+        ("forbidden_variants_json", '{"not": "an array"}', "forbidden_variants"),
+    ],
+)
+def test_approve_proposal_rejects_malformed_variant_payload_without_mutation(
+    config: HieronymusConfig,
+    column: str,
+    payload: str,
+    field: str,
+) -> None:
+    context = _context(config)
+    proposal_id = _create_proposal(config, context)
+    admin = AdminStore(config)
+    with connect(config.database_path) as conn:
+        conn.execute(
+            f"update strict_concept_proposals set {column} = ? where id = ?",
+            (payload, proposal_id),
+        )
+        conn.commit()
+
+    with pytest.raises(ValueError, match=field):
+        admin.approve_proposal(proposal_id)
+
+    with connect(config.database_path) as conn:
+        counts = {
+            table: conn.execute(f"select count(*) from {table}").fetchone()[0]
+            for table in (
+                "concepts",
+                "concept_facets",
+                "concept_semantic_tags",
+                "memory_graph_migration_ledger",
+                "audit_log",
+            )
+        }
+        status = conn.execute(
+            "select status from strict_concept_proposals where id = ?",
+            (proposal_id,),
+        ).fetchone()["status"]
+
+    assert counts == {
+        "concepts": 0,
+        "concept_facets": 0,
+        "concept_semantic_tags": 0,
+        "memory_graph_migration_ledger": 0,
+        "audit_log": 0,
+    }
+    assert status == "pending"
+
+
 def test_rejecting_approved_proposal_raises_without_mutating(
     config: HieronymusConfig,
 ) -> None:

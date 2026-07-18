@@ -255,6 +255,19 @@ def _tag_score(candidate_tags: tuple[str, ...], wanted_tags: tuple[str, ...]) ->
     return len(set(candidate_tags).intersection(wanted_tags))
 
 
+def _proposal_variants(payload: object, field: str) -> tuple[str, ...]:
+    message = f"{field} must be a JSON array of nonblank strings"
+    try:
+        values = json.loads(payload)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise ValueError(message) from error
+    if not isinstance(values, list) or any(
+        not isinstance(value, str) or not value.strip() for value in values
+    ):
+        raise ValueError(message)
+    return tuple(value.strip() for value in values)
+
+
 class AdminStore:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
@@ -1393,27 +1406,45 @@ class AdminStore:
         now = self._now()
         with connect(self.config.database_path) as conn:
             proposal = self._get_proposal(conn, proposal_id)
-            if proposal["status"] != "pending":
-                raise ValueError("proposal must be pending")
-            concept_id = self._approve_advisory_concept_proposal(conn, proposal, now=now)
-            conn.execute(
-                """
-                update strict_concept_proposals
-                set status = 'approved',
-                    updated_at = ?
-                where id = ?
-                """,
-                (now, proposal_id),
+            approved_variants = _proposal_variants(
+                proposal["approved_variants_json"], "approved_variants"
             )
-            self._audit_with_connection(
-                conn,
-                "approve",
-                "strict_concept_proposal",
-                proposal_id,
-                before_json=self._row_json(proposal),
-                after_json=json.dumps({"concept_id": concept_id}, sort_keys=True),
+            forbidden_variants = _proposal_variants(
+                proposal["forbidden_variants_json"], "forbidden_variants"
             )
-            conn.commit()
+            try:
+                conn.execute("begin immediate")
+                proposal = self._get_proposal(conn, proposal_id)
+                if proposal["status"] != "pending":
+                    raise ValueError("proposal must be pending")
+                concept_id = self._approve_advisory_concept_proposal(
+                    conn,
+                    proposal,
+                    approved_variants=approved_variants,
+                    forbidden_variants=forbidden_variants,
+                    now=now,
+                )
+                conn.execute(
+                    """
+                    update strict_concept_proposals
+                    set status = 'approved',
+                        updated_at = ?
+                    where id = ?
+                    """,
+                    (now, proposal_id),
+                )
+                self._audit_with_connection(
+                    conn,
+                    "approve",
+                    "strict_concept_proposal",
+                    proposal_id,
+                    before_json=self._row_json(proposal),
+                    after_json=json.dumps({"concept_id": concept_id}, sort_keys=True),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
         return concept_id
 
     def reject_proposal(self, proposal_id: int, *, evidence: str) -> ActionResult:
@@ -2207,6 +2238,8 @@ class AdminStore:
         conn: sqlite3.Connection,
         proposal: sqlite3.Row,
         *,
+        approved_variants: tuple[str, ...],
+        forbidden_variants: tuple[str, ...],
         now: str,
     ) -> int:
         source_form = proposal["source_form"].strip() or proposal["concept_text"]
@@ -2217,18 +2250,16 @@ class AdminStore:
             semantic_tags=("concept-proposal",),
             now=now,
         )
-        renderings = [
-            proposal["canonical_rendering"],
-            *json.loads(proposal["approved_variants_json"]),
-            *json.loads(proposal["forbidden_variants_json"]),
-        ]
+        renderings = (
+            proposal["canonical_rendering"].strip(),
+            *approved_variants,
+            *forbidden_variants,
+        )
         for rendering in renderings:
-            if not isinstance(rendering, str) or not rendering.strip():
-                continue
             self._ensure_concept_facet(
                 conn,
                 concept_id=concept_id,
-                value=rendering.strip(),
+                value=rendering,
                 facet_type="rendering",
                 language_tag=proposal["target_language"],
                 is_canonical=False,

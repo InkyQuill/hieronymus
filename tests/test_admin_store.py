@@ -1,8 +1,12 @@
+import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 import pytest
 
 from hieronymus.admin import ADMIN_VIEWS, AdminStore
+from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
@@ -42,6 +46,76 @@ def _context(config: HieronymusConfig) -> TranslationContext:
         chapter="002",
         tags=("style",),
     )
+
+
+def test_concurrent_proposal_approval_has_one_transition_and_one_graph(
+    config: HieronymusConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(config)
+    proposal_id = ConceptProposalStore(config).create(
+        dream_run_id=None,
+        series_slug=context.series_slug,
+        source_language=context.source_language,
+        target_language=context.target_language,
+        concept_text="センス",
+        source_form="センス",
+        canonical_rendering="сенс",
+        approved_variants=[],
+        forbidden_variants=["sense"],
+        rationale="Use the established Russian rendering.",
+    )
+    stores = (AdminStore(config), AdminStore(config))
+    stale_read_barrier = threading.Barrier(2)
+    start_barrier = threading.Barrier(2)
+    original_get_proposal = AdminStore._get_proposal
+
+    def synchronize_legacy_stale_reads(
+        self: AdminStore,
+        conn: sqlite3.Connection,
+        selected_id: int,
+    ) -> sqlite3.Row:
+        proposal = original_get_proposal(self, conn, selected_id)
+        if not conn.in_transaction:
+            stale_read_barrier.wait(timeout=5)
+        return proposal
+
+    monkeypatch.setattr(AdminStore, "_get_proposal", synchronize_legacy_stale_reads)
+
+    def approve(store: AdminStore) -> tuple[str, object]:
+        start_barrier.wait(timeout=5)
+        try:
+            return ("approved", store.approve_proposal(proposal_id))
+        except Exception as error:  # noqa: BLE001 - concurrent outcome is asserted below
+            return ("error", error)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(approve, stores))
+
+    approved = [value for status, value in outcomes if status == "approved"]
+    errors = [value for status, value in outcomes if status == "error"]
+    assert len(approved) == 1
+    assert len(errors) == 1
+    assert isinstance(errors[0], ValueError)
+    assert str(errors[0]) == "proposal must be pending"
+
+    with connect(config.database_path) as conn:
+        counts = {
+            table: conn.execute(f"select count(*) from {table}").fetchone()[0]
+            for table in ("concepts", "concept_facets", "concept_semantic_tags", "audit_log")
+        }
+        status = conn.execute(
+            "select status from strict_concept_proposals where id = ?",
+            (proposal_id,),
+        ).fetchone()["status"]
+
+    assert counts == {
+        "concepts": 1,
+        "concept_facets": 3,
+        "concept_semantic_tags": 1,
+        "audit_log": 1,
+    }
+    assert status == "approved"
 
 
 def test_status_payload_reports_admin_counts(
