@@ -63,7 +63,7 @@
 
 **Files:** Create `crates/hiero-bin/src/cli/mod.rs`, `crates/hiero-bin/src/cli/commands.rs`, `crates/hiero-bin/tests/cli_schema.rs`; modify `crates/hiero-bin/src/main.rs`.
 
-**Interfaces:** Produces `Cli`, `Commands`, `SeriesCommand`, `SessionCommand`, `ConceptCommand`, `ConceptFacetCommand`, `RagCommand`, `SkillsCommand`, `AgentHookCommand`, `CommandExecution`, and `async fn dispatch(cli: Cli, config: HieronymusConfig) -> anyhow::Result<()>`.
+**Interfaces:** Produces `Cli`, `Commands`, `SeriesCommand`, `SessionCommand`, `ConceptCommand`, `ConceptFacetCommand`, `RagCommand`, `SkillsCommand`, `AgentHookCommand`, `CommandExecution`, and `Cli::execution() -> CommandExecution`. Real command dispatch is composed only as its backing services become available in Tasks 4-6 and Phases 002-005; this task must not add successful no-op handlers.
 
 - [ ] Add `Cli::try_parse_from` tests for every command in proposal 001 §4, including no-subcommand behavior, all nested command groups, `agent-hook session-start|session-end`, repeated tag values, JSON flags, and rejected missing/invalid arguments.
 - [ ] Run `cargo test -p hiero-bin --test cli_schema`; expect RED.
