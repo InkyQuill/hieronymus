@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from hieronymus.agent_plugins import available_plugins, resolve_plugin
-from hieronymus.agent_plugins.base import AgentAvailability, BaseAgentPlugin, InstallPlan
+from hieronymus.agent_plugins.base import (
+    AgentAvailability,
+    BaseAgentPlugin,
+    InstallPlan,
+    McpTransport,
+)
 from hieronymus.config import HieronymusConfig
 
 
@@ -100,8 +105,7 @@ def test_codex_availability_detects_assets_and_managed_marker(
                 "[hieronymus]",
                 "managed = true",
                 "[mcp_servers.hieronymus]",
-                'command = "hieronymus-mcp"',
-                "args = []",
+                'url = "http://127.0.0.1:9768/mcp"',
                 "[plugins.hieronymus]",
                 f'path = "{config.agent_plugins_root / "codex"}"',
                 "",
@@ -183,8 +187,7 @@ def test_codex_availability_rejects_symlink_required_asset(
                 "[hieronymus]",
                 "managed = true",
                 "[mcp_servers.hieronymus]",
-                'command = "hieronymus-mcp"',
-                "args = []",
+                'url = "http://127.0.0.1:9768/mcp"',
                 "[plugins.hieronymus]",
                 f'path = "{config.agent_plugins_root / "codex"}"',
                 "",
@@ -366,3 +369,8 @@ def test_plugin_plan_includes_availability(tmp_path: Path) -> None:
     assert isinstance(plan, InstallPlan)
     assert plan.availability.target == "codex"
     assert plan.to_json_dict()["availability"] == plan.availability.to_json_dict()
+
+
+@pytest.mark.parametrize("target", ["codex", "claude", "gemini", "opencode", "openclaw"])
+def test_adapter_records_confirmed_streamable_http_transport(target: str) -> None:
+    assert resolve_plugin(target).mcp_transport is McpTransport.STREAMABLE_HTTP

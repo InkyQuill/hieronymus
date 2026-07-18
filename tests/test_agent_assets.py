@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from hieronymus.agent_assets import asset_map, render_agent_plugin_assets
+from hieronymus.agent_plugins import resolve_plugin
 
 CODEX_VALIDATOR = Path("/home/inky/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py")
 
@@ -85,10 +86,10 @@ def test_read_learn_remember_skills_keep_judgment_out_of_mcp() -> None:
     assert "source_credibility `user_rule`" in remember
 
 
-def test_mcp_config_references_hieronymus_mcp() -> None:
+def test_shared_mcp_asset_no_longer_embeds_command_transport() -> None:
     config = json.loads(asset_map()["mcp/hieronymus.mcp.json"])
 
-    assert config["mcpServers"]["hieronymus"]["command"] == "hieronymus-mcp"
+    assert config == {"mcpServers": {"hieronymus": {"url": "http://127.0.0.1:9768/mcp"}}}
 
 
 def test_codex_hooks_call_session_start_and_end_modules() -> None:
@@ -113,8 +114,36 @@ def test_render_agent_plugin_assets_includes_agent_name() -> None:
 
     assert assets[".codex-plugin/plugin.json"].startswith("{")
     assert '"name": "hieronymus"' in assets[".codex-plugin/plugin.json"]
-    assert "hieronymus-mcp" in assets["mcp/hieronymus.mcp.json"]
-    assert "hieronymus-mcp" in assets[".mcp.json"]
+    assert "http://127.0.0.1:9768/mcp" in assets["mcp/hieronymus.mcp.json"]
+    assert "http://127.0.0.1:9768/mcp" in assets[".mcp.json"]
+    assert "hieronymus-mcp" not in assets["mcp/hieronymus.mcp.json"]
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("codex", {"url": "http://127.0.0.1:9768/mcp"}),
+        ("claude", {"type": "http", "url": "http://127.0.0.1:9768/mcp"}),
+        ("gemini", {"httpUrl": "http://127.0.0.1:9768/mcp"}),
+        (
+            "opencode",
+            {"type": "remote", "url": "http://127.0.0.1:9768/mcp"},
+        ),
+        (
+            "openclaw",
+            {"transport": "streamable-http", "url": "http://127.0.0.1:9768/mcp"},
+        ),
+    ],
+)
+def test_rendered_asset_uses_confirmed_streamable_http_adapter_schema(
+    target: str, expected: dict[str, object]
+) -> None:
+    plugin = resolve_plugin(target)
+    assets = render_agent_plugin_assets(target, mcp_server_entry=plugin.mcp_server_entry())
+    config = json.loads(assets["mcp/hieronymus.mcp.json"])
+
+    assert config["mcpServers"]["hieronymus"] == expected
+    assert "command" not in expected
 
 
 @pytest.mark.parametrize(

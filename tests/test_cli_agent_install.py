@@ -73,7 +73,7 @@ def test_install_codex_json_installs_but_dry_run_does_not_mutate(
     assert payload["availability"]["installed"] is True
     assert (data_root / "agent-plugins" / "codex" / ".codex-plugin" / "plugin.json").exists()
     config_payload = tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
-    assert config_payload["mcp_servers"]["hieronymus"]["command"] == "hieronymus-mcp"
+    assert config_payload["mcp_servers"]["hieronymus"] == {"url": "http://127.0.0.1:9768/mcp"}
     assert config_payload["plugins"]["hieronymus"]["path"] == str(
         data_root / "agent-plugins" / "codex"
     )

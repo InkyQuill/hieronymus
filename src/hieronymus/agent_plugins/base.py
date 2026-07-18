@@ -7,6 +7,7 @@ import tempfile
 import time
 import tomllib
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -15,6 +16,12 @@ import tomli_w
 from hieronymus.config import HieronymusConfig
 
 AGENT_WORKFLOW_SPEC = "docs/agent-workflows.md"
+HIERONYMUS_MCP_URL = "http://127.0.0.1:9768/mcp"
+
+
+class McpTransport(Enum):
+    COMMAND = "command"
+    STREAMABLE_HTTP = "streamable-http"
 
 
 @dataclass(frozen=True)
@@ -91,6 +98,10 @@ class AgentPlugin(Protocol):
     protocol_note: str
     installs_managed_config: bool
     required_asset_paths: tuple[str, ...]
+    mcp_transport: McpTransport
+
+    def mcp_server_entry(self) -> dict[str, object]:
+        raise NotImplementedError
 
     def has_expected_config(self, config: HieronymusConfig) -> bool:
         raise NotImplementedError
@@ -175,11 +186,36 @@ def set_managed_entry(
     *,
     path: Path,
     force: bool,
+    owned_existing_values: tuple[dict[str, Any], ...] = (),
+    managed: bool = False,
 ) -> None:
     existing = section.get(key)
-    if existing is not None and existing != value and not force:
+    migratable = managed and existing in owned_existing_values
+    if existing is not None and existing != value and not migratable and not force:
         raise ValueError(f"refusing to overwrite existing {key} entry in {path}; use --force")
     section[key] = value
+
+
+def is_hieronymus_managed(payload: dict[str, Any]) -> bool:
+    marker = payload.get("hieronymus")
+    return isinstance(marker, dict) and marker.get("managed") is True
+
+
+def remove_owned_legacy_entry(
+    payload: dict[str, Any],
+    section_name: str,
+    *,
+    path: Path,
+    managed: bool,
+    expected: dict[str, Any],
+) -> None:
+    if section_name not in payload:
+        return
+    section = get_object_section(payload, section_name, path)
+    if managed and section.get("hieronymus") == expected:
+        del section["hieronymus"]
+        if not section:
+            del payload[section_name]
 
 
 def has_hieronymus_marker(path: Path) -> bool:
@@ -264,6 +300,10 @@ class BaseAgentPlugin:
     protocol_note = ""
     installs_managed_config = False
     required_asset_paths: tuple[str, ...] = ()
+    mcp_transport = McpTransport.COMMAND
+
+    def mcp_server_entry(self) -> dict[str, object]:
+        return {"command": "hieronymus-mcp", "args": []}
 
     def _require_non_empty_paths(self) -> None:
         if not self.detect_paths:

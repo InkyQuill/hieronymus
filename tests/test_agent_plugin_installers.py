@@ -12,6 +12,7 @@ from hieronymus.config import HieronymusConfig
 
 WRITABLE_PLUGIN_TARGETS = ["claude", "codex", "openclaw", "opencode", "gemini"]
 RESERVED_PLUGIN_TARGETS = ["mimo", "pi", "hermes"]
+MCP_URL = "http://127.0.0.1:9768/mcp"
 
 
 @pytest.fixture
@@ -204,7 +205,7 @@ def test_codex_install_is_idempotent_for_identical_assets(
     assert manifest.read_text(encoding="utf-8") == first_text
 
 
-def test_codex_install_patches_toml_mcp_and_plugin(
+def test_codex_confirmed_streamable_http_uses_url_toml_schema(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -220,8 +221,7 @@ def test_codex_install_patches_toml_mcp_and_plugin(
 
     payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert payload["profile"]["name"] == "default"
-    assert payload["mcp_servers"]["hieronymus"]["command"] == "hieronymus-mcp"
-    assert payload["mcp_servers"]["hieronymus"]["args"] == []
+    assert payload["mcp_servers"]["hieronymus"] == {"url": MCP_URL}
     assert payload["plugins"]["hieronymus"]["path"] == str(config.agent_plugins_root / "codex")
     assert payload["hieronymus"] == {"managed": True, "version": "0.1.0"}
     backups = list(config.backups_root.glob("codex-config-*.toml"))
@@ -247,7 +247,7 @@ def test_codex_install_keeps_toml_config_valid_on_repeated_install(
     assert sorted(payload["plugins"]) == ["hieronymus"]
 
 
-def test_claude_install_patches_json_config(
+def test_claude_confirmed_streamable_http_uses_type_http_url_json_schema(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -264,10 +264,7 @@ def test_claude_install_patches_json_config(
     assert plan.result_kind == "installed"
     assert plan.availability.installed is True
     assert payload["theme"] == "dark"
-    assert payload["mcpServers"]["hieronymus"] == {
-        "args": [],
-        "command": "hieronymus-mcp",
-    }
+    assert payload["mcpServers"]["hieronymus"] == {"type": "http", "url": MCP_URL}
     assert payload["hieronymus"] == {
         "managed": True,
         "pluginPath": str(config.agent_plugins_root / "claude"),
@@ -291,7 +288,7 @@ def test_claude_install_creates_missing_json_config(
     resolve_plugin("claude").install(config)
 
     payload = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
-    assert payload["mcpServers"]["hieronymus"]["command"] == "hieronymus-mcp"
+    assert payload["mcpServers"]["hieronymus"] == {"type": "http", "url": MCP_URL}
     assert payload["hieronymus"]["managed"] is True
     assert not config.backups_root.exists()
 
@@ -310,7 +307,7 @@ def test_claude_install_handles_empty_json_config(
     resolve_plugin("claude").install(config)
 
     payload = json.loads(claude_json.read_text(encoding="utf-8"))
-    assert payload["mcpServers"]["hieronymus"]["command"] == "hieronymus-mcp"
+    assert payload["mcpServers"]["hieronymus"] == {"type": "http", "url": MCP_URL}
     backups = list(config.backups_root.glob("claude-.claude-*.json"))
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == "\n"
@@ -351,85 +348,79 @@ def test_claude_install_is_idempotent_for_config_entries(
     assert payload["hieronymus"]["pluginPath"] == str(config.agent_plugins_root / "claude")
 
 
-@pytest.mark.parametrize(
-    (
-        "target",
-        "host_dir",
-        "config_path",
-        "existing_payload",
-        "backup_glob",
-        "manifest_path",
-        "registration_key",
-    ),
-    [
-        (
-            "openclaw",
-            ".openclaw",
-            ".openclaw/openclaw.json",
-            {"theme": "dark"},
-            "openclaw-openclaw-*.json",
-            "openclaw/plugin.json",
-            "plugins",
-        ),
-        (
-            "opencode",
-            ".config/opencode",
-            ".config/opencode/plugin.json",
-            {"mode": "fast"},
-            "opencode-plugin-*.json",
-            "opencode/plugin.json",
-            "plugins",
-        ),
-        (
-            "gemini",
-            ".gemini",
-            ".gemini/settings.json",
-            {"ui": {"theme": "dark"}},
-            "gemini-settings-*.json",
-            "gemini-extension.json",
-            "extensions",
-        ),
-    ],
-)
-def test_json_agent_install_patches_config_and_reports_installed(
+def _install_json_target(
     target: str,
     host_dir: str,
     config_path: str,
     existing_payload: dict[str, object],
-    backup_glob: str,
-    manifest_path: str,
-    registration_key: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
+) -> tuple[HieronymusConfig, dict[str, object]]:
     home = tmp_path / "home"
     (home / host_dir).mkdir(parents=True)
     absolute_config_path = home / config_path
-    existing_text = json.dumps(existing_payload, sort_keys=True) + "\n"
-    absolute_config_path.write_text(existing_text, encoding="utf-8")
+    absolute_config_path.write_text(json.dumps(existing_payload) + "\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
     plan = resolve_plugin(target).install(config)
 
-    payload = json.loads(absolute_config_path.read_text(encoding="utf-8"))
     assert plan.result_kind == "installed"
     assert plan.availability.installed is True
-    for key, value in existing_payload.items():
-        assert payload[key] == value
-    assert payload["mcpServers"]["hieronymus"] == {
-        "args": [],
-        "command": "hieronymus-mcp",
+    return config, json.loads(absolute_config_path.read_text(encoding="utf-8"))
+
+
+def test_gemini_confirmed_streamable_http_uses_http_url_json_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, payload = _install_json_target(
+        "gemini",
+        ".gemini",
+        ".gemini/settings.json",
+        {"ui": {"theme": "dark"}},
+        tmp_path,
+        monkeypatch,
+    )
+
+    assert payload["ui"] == {"theme": "dark"}
+    assert payload["mcpServers"]["hieronymus"] == {"httpUrl": MCP_URL}
+    assert payload["extensions"]["hieronymus"] == {
+        "path": str(config.agent_plugins_root / "gemini")
     }
-    assert payload[registration_key]["hieronymus"] == {
-        "path": str(config.agent_plugins_root / target),
+
+
+def test_opencode_confirmed_streamable_http_uses_remote_url_json_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, payload = _install_json_target(
+        "opencode",
+        ".config/opencode",
+        ".config/opencode/plugin.json",
+        {"mode": "fast"},
+        tmp_path,
+        monkeypatch,
+    )
+
+    assert payload["mode"] == "fast"
+    assert payload["mcp"]["hieronymus"] == {"type": "remote", "url": MCP_URL}
+    assert payload["plugins"]["hieronymus"] == {"path": str(config.agent_plugins_root / "opencode")}
+    assert "mcpServers" not in payload
+
+
+def test_openclaw_confirmed_streamable_http_uses_nested_transport_url_json_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, payload = _install_json_target(
+        "openclaw", ".openclaw", ".openclaw/openclaw.json", {"theme": "dark"}, tmp_path, monkeypatch
+    )
+
+    assert payload["theme"] == "dark"
+    assert payload["mcp"]["servers"]["hieronymus"] == {
+        "transport": "streamable-http",
+        "url": MCP_URL,
     }
-    assert payload["hieronymus"] == {"managed": True, "version": "0.1.0"}
-    assert (config.agent_plugins_root / target / manifest_path).exists()
-    assert resolve_plugin(target).availability(config).installed is True
-    backups = list(config.backups_root.glob(backup_glob))
-    assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == existing_text
+    assert payload["plugins"]["hieronymus"] == {"path": str(config.agent_plugins_root / "openclaw")}
+    assert "mcpServers" not in payload
 
 
 @pytest.mark.parametrize(
@@ -460,7 +451,12 @@ def test_json_agent_install_is_idempotent_for_config_entries(
     payload = json.loads((home / config_path).read_text(encoding="utf-8"))
     assert first.result_kind == "installed"
     assert second.result_kind == "installed"
-    assert sorted(payload["mcpServers"]) == ["hieronymus"]
+    if target == "openclaw":
+        assert sorted(payload["mcp"]["servers"]) == ["hieronymus"]
+    elif target == "opencode":
+        assert sorted(payload["mcp"]) == ["hieronymus"]
+    else:
+        assert sorted(payload["mcpServers"]) == ["hieronymus"]
     assert sorted(payload[registration_key]) == ["hieronymus"]
     assert payload["hieronymus"]["managed"] is True
 
@@ -507,7 +503,132 @@ def test_codex_install_force_overwrites_conflicting_mcp(
 
     payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert plan.availability.installed is True
-    assert payload["mcp_servers"]["hieronymus"]["command"] == "hieronymus-mcp"
+    assert payload["mcp_servers"]["hieronymus"] == {"url": MCP_URL}
+
+
+def test_codex_reinstall_migrates_owned_command_and_preserves_unrelated_servers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    codex.mkdir(parents=True)
+    config_path = codex / "config.toml"
+    config_path.write_text(
+        '[mcp_servers.hieronymus]\ncommand = "hieronymus-mcp"\nargs = []\n'
+        '[mcp_servers.user_server]\ncommand = "user-command"\n'
+        '[hieronymus]\nmanaged = true\nversion = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    resolve_plugin("codex").install(config)
+    resolve_plugin("codex").install(config)
+
+    payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["mcp_servers"]["hieronymus"] == {"url": MCP_URL}
+    assert payload["mcp_servers"]["user_server"] == {"command": "user-command"}
+
+
+@pytest.mark.parametrize(
+    ("target", "host_dir", "config_path", "entry_path", "expected_entry"),
+    [
+        (
+            "claude",
+            ".claude",
+            ".claude.json",
+            ("mcpServers", "hieronymus"),
+            {"type": "http", "url": MCP_URL},
+        ),
+        (
+            "gemini",
+            ".gemini",
+            ".gemini/settings.json",
+            ("mcpServers", "hieronymus"),
+            {"httpUrl": MCP_URL},
+        ),
+        (
+            "opencode",
+            ".config/opencode",
+            ".config/opencode/plugin.json",
+            ("mcp", "hieronymus"),
+            {"type": "remote", "url": MCP_URL},
+        ),
+        (
+            "openclaw",
+            ".openclaw",
+            ".openclaw/openclaw.json",
+            ("mcp", "servers", "hieronymus"),
+            {"transport": "streamable-http", "url": MCP_URL},
+        ),
+    ],
+)
+def test_json_reinstall_migrates_only_owned_command_and_preserves_user_servers(
+    target: str,
+    host_dir: str,
+    config_path: str,
+    entry_path: tuple[str, ...],
+    expected_entry: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / host_dir).mkdir(parents=True)
+    path = home / config_path
+    path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "hieronymus": {"command": "hieronymus-mcp", "args": []},
+                    "user-server": {"command": "user-command", "custom": True},
+                },
+                "hieronymus": {"managed": True, "version": "0.1.0"},
+                "userSetting": {"keep": True},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    plugin = resolve_plugin(target)
+    plugin.install(config)
+    plugin.install(config)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    entry: object = payload
+    for key in entry_path:
+        assert isinstance(entry, dict)
+        entry = entry[key]
+    assert entry == expected_entry
+    assert (
+        payload["mcpServers"] == {"user-server": {"command": "user-command", "custom": True}}
+        if target in {"opencode", "openclaw"}
+        else {
+            "hieronymus": expected_entry,
+            "user-server": {"command": "user-command", "custom": True},
+        }
+    )
+    assert payload["userSetting"] == {"keep": True}
+
+
+def test_opencode_unmarked_similarly_named_user_entry_is_not_migrated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    config_path = home / ".config" / "opencode" / "plugin.json"
+    config_path.parent.mkdir(parents=True)
+    original = {"mcp": {"hieronymus": {"type": "remote", "url": "https://user.invalid/mcp"}}}
+    config_path.write_text(json.dumps(original) + "\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    with pytest.raises(ValueError, match="refusing to overwrite existing hieronymus entry"):
+        resolve_plugin("opencode").install(HieronymusConfig(data_root=tmp_path / "hieronymus"))
+
+    assert json.loads(config_path.read_text(encoding="utf-8")) == original
 
 
 def test_json_agent_install_rejects_malformed_section_without_traceback(

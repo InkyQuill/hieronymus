@@ -5,9 +5,7 @@ import json
 MCP_CONFIG = {
     "mcpServers": {
         "hieronymus": {
-            "command": "hieronymus-mcp",
-            "args": [],
-            "env": {},
+            "url": "http://127.0.0.1:9768/mcp",
         }
     }
 }
@@ -220,8 +218,16 @@ def asset_map() -> dict[str, str]:
     }
 
 
-def render_agent_plugin_assets(target: str) -> dict[str, str]:
+def render_agent_plugin_assets(
+    target: str,
+    *,
+    mcp_server_entry: dict[str, object] | None = None,
+) -> dict[str, str]:
     assets = asset_map()
+    mcp_config = {
+        "mcpServers": {"hieronymus": mcp_server_entry or MCP_CONFIG["mcpServers"]["hieronymus"]}
+    }
+    assets["mcp/hieronymus.mcp.json"] = _json(mcp_config)
     plugin_json = {
         "name": "hieronymus",
         "version": "0.1.0",
@@ -231,7 +237,7 @@ def render_agent_plugin_assets(target: str) -> dict[str, str]:
     }
 
     if target == "codex":
-        assets[".mcp.json"] = _json(MCP_CONFIG)
+        assets[".mcp.json"] = _json(mcp_config)
         assets[".codex-plugin/plugin.json"] = _json(
             {
                 **plugin_json,
@@ -274,7 +280,7 @@ def render_agent_plugin_assets(target: str) -> dict[str, str]:
                 "name": "hieronymus",
                 "version": "0.1.0",
                 "contextFileName": "AGENTS.md",
-                "mcpServers": MCP_CONFIG["mcpServers"],
+                "mcpServers": mcp_config["mcpServers"],
             }
         )
         return assets
