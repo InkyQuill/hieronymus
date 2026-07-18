@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -21,6 +23,12 @@ BACKUP_FORMAT = "hieronymus.strict-terms-backup"
 BACKUP_VERSION = 1
 ACTIVE_STATUSES = frozenset({"approved", "active"})
 LEGACY_TABLES = ("strict_terms", "strict_term_tags", "strict_term_aliases")
+_TIMESTAMP_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
+_UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = {
+    errno.EINVAL,
+    errno.ENOTSUP,
+    getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+}
 
 
 class LegacyTermRetirementBlocked(StrictTermConversionBlocked):
@@ -86,6 +94,12 @@ def write_legacy_terms_backup(
 ) -> VerifiedLegacyTermsBackup:
     """Write and verify a complete snapshot without changing the database."""
     stamp = timestamp or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    if _TIMESTAMP_RE.fullmatch(stamp) is None:
+        raise ValueError("timestamp must use the safe UTC form YYYYMMDDTHHMMSSZ")
+    requested_dir = backup_dir.absolute()
+    resolved_dir = backup_dir.resolve(strict=False)
+    if requested_dir != resolved_dir:
+        raise LegacyTermRetirementBlocked("backup directory must not contain symlinks")
     payload: dict[str, object] = {
         "format": BACKUP_FORMAT,
         "version": BACKUP_VERSION,
@@ -95,9 +109,14 @@ def write_legacy_terms_backup(
         "strict_term_aliases": _rows(conn, "strict_term_aliases"),
     }
     payload["checksum"] = _checksum_payload(payload)
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    destination = backup_dir / f"strict-terms-v{BACKUP_VERSION}-{stamp}.json"
-    temporary = backup_dir / f".{destination.name}.{uuid4().hex}.tmp"
+    resolved_dir.mkdir(parents=True, exist_ok=True)
+    if resolved_dir.is_symlink() or resolved_dir.resolve(strict=True) != resolved_dir:
+        raise LegacyTermRetirementBlocked("backup directory changed to an unsafe symlink")
+    unique_id = uuid4().hex
+    destination = resolved_dir / f"strict-terms-v{BACKUP_VERSION}-{stamp}-{unique_id}.json"
+    temporary = resolved_dir / f".{destination.name}.tmp"
+    if destination.parent != resolved_dir or temporary.parent != resolved_dir:
+        raise LegacyTermRetirementBlocked("backup path escaped the resolved backup directory")
     try:
         with temporary.open("x", encoding="utf-8") as stream:
             json.dump(payload, stream, ensure_ascii=False, sort_keys=True, indent=2)
@@ -105,7 +124,7 @@ def write_legacy_terms_backup(
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
-        _fsync_directory(backup_dir)
+        _fsync_directory(resolved_dir)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -121,12 +140,15 @@ def _fsync_directory(directory: Path) -> None:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     try:
         descriptor = os.open(directory, flags)
-    except OSError:
-        return
+    except OSError as exc:
+        if exc.errno in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+            return
+        raise
     try:
         os.fsync(descriptor)
-    except OSError:
-        pass
+    except OSError as exc:
+        if exc.errno not in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+            raise
     finally:
         os.close(descriptor)
 
@@ -167,6 +189,7 @@ def prepare_strict_term_retirement(
     try:
         backup = write_legacy_terms_backup(conn, backup_dir, timestamp=timestamp)
         payload = verify_legacy_terms_backup(backup.path)
+        _validate_inactive_audit_shape(conn, payload)
         try:
             conversion = convert_strict_terms(conn, failure_hook=failure_hook)
         except StrictTermConversionBlocked as exc:
@@ -179,8 +202,9 @@ def prepare_strict_term_retirement(
             inactive_audited=inactive_audited,
         )
         if not coverage.complete:
+            blocked = ", ".join(str(term_id) for term_id in coverage.blocked_term_ids)
             raise LegacyTermRetirementBlocked(
-                f"strict term retirement parity failed for terms {coverage.blocked_term_ids}"
+                f"strict term retirement parity failed for terms {blocked}"
             )
         conn.commit()
     except BaseException:
@@ -189,32 +213,57 @@ def prepare_strict_term_retirement(
     return StrictTermRetirementResult(backup=backup, coverage=coverage)
 
 
-def _audit_inactive_terms(conn: sqlite3.Connection, payload: Mapping[str, object]) -> int:
-    inactive = [
-        row
+def _validate_inactive_audit_shape(conn: sqlite3.Connection, payload: Mapping[str, object]) -> None:
+    inactive_ids = [
+        int(row["id"])
         for row in payload["strict_terms"]
         if isinstance(row, dict) and row.get("status") not in ACTIVE_STATUSES
     ]
-    tag_rows = [row for row in payload["strict_term_tags"] if isinstance(row, dict)]
-    alias_rows = [row for row in payload["strict_term_aliases"] if isinstance(row, dict)]
-    for row in inactive:
-        entity_id = str(row["id"])
-        exists = conn.execute(
+    if not inactive_ids:
+        return
+    columns = {row["name"] for row in conn.execute("pragma table_info(audit_log)")}
+    required = {
+        "id",
+        "actor",
+        "action",
+        "entity_type",
+        "entity_id",
+        "note",
+        "before_json",
+        "after_json",
+        "created_at",
+    }
+    if not required <= columns:
+        affected = ", ".join(str(term_id) for term_id in inactive_ids)
+        noun = "term" if len(inactive_ids) == 1 else "terms"
+        raise LegacyTermRetirementBlocked(f"{noun} {affected}: inactive audit schema is incomplete")
+
+
+def _audit_inactive_terms(conn: sqlite3.Connection, payload: Mapping[str, object]) -> int:
+    expected = _expected_inactive_audit_json(payload)
+    for entity_id, before_json in expected.items():
+        existing = conn.execute(
             """
-            select 1 from audit_log
+            select id, before_json from audit_log
             where action = 'strict_term_retirement'
               and entity_type = 'strict_term'
               and entity_id = ?
+            order by id
             """,
             (entity_id,),
-        ).fetchone()
-        if exists is not None:
+        ).fetchall()
+        if existing:
+            first = existing[0]
+            if first["before_json"] != before_json:
+                conn.execute(
+                    "update audit_log set before_json = ? where id = ?",
+                    (before_json, first["id"]),
+                )
+            duplicate_ids = tuple(int(row["id"]) for row in existing[1:])
+            if duplicate_ids:
+                placeholders = ", ".join("?" for _ in duplicate_ids)
+                conn.execute(f"delete from audit_log where id in ({placeholders})", duplicate_ids)
             continue
-        audit_snapshot = {
-            "term": row,
-            "tags": [tag for tag in tag_rows if str(tag.get("term_id")) == entity_id],
-            "aliases": [alias for alias in alias_rows if str(alias.get("term_id")) == entity_id],
-        }
         conn.execute(
             """
             insert into audit_log(
@@ -222,21 +271,47 @@ def _audit_inactive_terms(conn: sqlite3.Connection, payload: Mapping[str, object
             ) values ('migration', 'strict_term_retirement', 'strict_term', ?,
                       'Preserved inactive legacy term before retirement.', ?, '{}', datetime('now'))
             """,
-            (entity_id, json.dumps(audit_snapshot, ensure_ascii=False, sort_keys=True)),
+            (entity_id, before_json),
         )
+    return _count_matching_inactive_audits(conn, expected)
+
+
+def _expected_inactive_audit_json(payload: Mapping[str, object]) -> dict[str, str]:
+    inactive = [
+        row
+        for row in payload["strict_terms"]
+        if isinstance(row, dict) and row.get("status") not in ACTIVE_STATUSES
+    ]
+    tag_rows = [row for row in payload["strict_term_tags"] if isinstance(row, dict)]
+    alias_rows = [row for row in payload["strict_term_aliases"] if isinstance(row, dict)]
+    return {
+        str(row["id"]): json.dumps(
+            {
+                "term": row,
+                "tags": [tag for tag in tag_rows if tag.get("term_id") == row["id"]],
+                "aliases": [alias for alias in alias_rows if alias.get("term_id") == row["id"]],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        for row in inactive
+    }
+
+
+def _count_matching_inactive_audits(conn: sqlite3.Connection, expected: Mapping[str, str]) -> int:
     return sum(
         conn.execute(
             """
-            select exists(
-              select 1 from audit_log
-              where action = 'strict_term_retirement'
-                and entity_type = 'strict_term'
-                and entity_id = ?
-            )
+            select count(*) from audit_log
+            where action = 'strict_term_retirement'
+              and entity_type = 'strict_term'
+              and entity_id = ?
+              and before_json = ?
             """,
-            (str(row["id"]),),
+            (entity_id, before_json),
         ).fetchone()[0]
-        for row in inactive
+        == 1
+        for entity_id, before_json in expected.items()
     )
 
 
@@ -257,6 +332,7 @@ def check_strict_term_retirement_parity(
     for tag in payload["strict_term_tags"]:
         if isinstance(tag, dict):
             tags_by_term.setdefault(int(tag["term_id"]), set()).add(str(tag["tag"]))
+    inactive_audited = _count_matching_inactive_audits(conn, _expected_inactive_audit_json(payload))
 
     blocked = tuple(
         int(term["id"])
@@ -302,48 +378,144 @@ def _active_term_has_parity(
     rendering_id = targets.get((f"{term_id}:rendering", "concept_facets"))
     if None in {concept_id, crystal_id, source_id, rendering_id}:
         return False
-    crystal = conn.execute(
-        "select text, status from crystals where id = ?", (crystal_id,)
+    concept = conn.execute(
+        """
+        select canonical_name, description, scope_type, scope_key, status, confidence
+        from concepts where id = ?
+        """,
+        (concept_id,),
     ).fetchone()
+    if (
+        concept is None
+        or concept["canonical_name"] != term["source_text"]
+        or concept["description"] != term["notes"]
+        or concept["scope_type"] != "series"
+        or concept["scope_key"] != f"series:{term['series_slug']}"
+        or concept["status"] != "established"
+        or float(concept["confidence"]) < 0.95
+    ):
+        return False
+    crystal = conn.execute(
+        """
+        select text, status, strength, confidence, source_credibility,
+               source_language, target_language, crystal_type, title,
+               scope_type, scope_key, series_slug
+        from crystals where id = ?
+        """,
+        (crystal_id,),
+    ).fetchone()
+    parsed = None if crystal is None else parse_rule_crystal(crystal["text"])
     if (
         crystal is None
         or crystal["status"] != "active"
-        or parse_rule_crystal(crystal["text"]) is None
+        or parsed is None
+        or parsed.source_text != term["source_text"]
+        or parsed.canonical_translation != term["canonical_translation"]
+        or float(crystal["strength"]) < 0.8
+        or float(crystal["confidence"]) < 0.95
+        or crystal["source_credibility"] != "user_rule"
+        or crystal["source_language"] != term["source_language"]
+        or crystal["target_language"] != term["target_language"]
+        or crystal["crystal_type"] != "rule"
+        or crystal["title"] != ""
+        or crystal["scope_type"] != "series"
+        or crystal["scope_key"] != f"series:{term['series_slug']}"
+        or crystal["series_slug"] != term["series_slug"]
     ):
         return False
     facets = {
-        int(row["id"]): (row["facet_type"], row["value"], row["language"])
+        int(row["id"]): (
+            row["facet_type"],
+            row["value"],
+            row["language"],
+            bool(row["is_canonical"]),
+            float(row["confidence"]),
+        )
         for row in conn.execute(
-            "select id, facet_type, value, language from concept_facets where concept_id = ?",
+            """
+            select id, facet_type, value, language, is_canonical, confidence
+            from concept_facets where concept_id = ?
+            """,
             (concept_id,),
         )
     }
     source_facet = facets.get(source_id)
     rendering_facet = facets.get(rendering_id)
-    if source_facet is None or source_facet[:2] != ("name", term["source_text"]):
+    if source_facet is None or source_facet[:4] != (
+        "name",
+        term["source_text"],
+        term["source_language"],
+        True,
+    ):
         return False
-    if rendering_facet is None or rendering_facet[:2] != (
+    if source_facet[4] < 0.95:
+        return False
+    if rendering_facet is None or rendering_facet[:4] != (
         "rendering",
         term["canonical_translation"],
+        term["target_language"],
+        False,
     ):
+        return False
+    if rendering_facet[4] < 0.95:
+        return False
+    for facet_id, expected_language in (
+        (source_id, term["source_language"]),
+        (rendering_id, term["target_language"]),
+    ):
+        language_tags = {
+            row["language_tag"]
+            for row in conn.execute(
+                "select language_tag from concept_facet_language_tags where facet_id = ?",
+                (facet_id,),
+            )
+        }
+        if language_tags != {str(expected_language).casefold()}:
+            return False
+    expected_alias_targets = {
+        (
+            f"{term_id}:alias:{alias['id']}",
+            "crystals" if alias["kind"] == "forbidden_variant" else "concept_facets",
+        )
+        for alias in aliases
+    }
+    actual_alias_targets = {
+        (source_id, target_table)
+        for source_id, target_table in targets
+        if source_id.startswith(f"{term_id}:alias:")
+    }
+    if actual_alias_targets != expected_alias_targets:
         return False
     for alias in aliases:
         alias_source_id = f"{term_id}:alias:{alias['id']}"
         if alias["kind"] in {"source_variant", "search_alias", "approved_variant"}:
             alias_target = targets.get((alias_source_id, "concept_facets"))
             expected_type = "rendering" if alias["kind"] == "approved_variant" else "alias"
-            if alias_target is None or facets.get(alias_target) != (
+            expected_canonical = False
+            alias_facet = facets.get(alias_target) if alias_target is not None else None
+            if alias_facet is None or alias_facet[:4] != (
                 expected_type,
                 alias["text"].strip(),
                 alias["language"],
+                expected_canonical,
             ):
+                return False
+            if alias_facet[4] < 0.95:
+                return False
+            alias_language_tags = {
+                row["language_tag"]
+                for row in conn.execute(
+                    "select language_tag from concept_facet_language_tags where facet_id = ?",
+                    (alias_target,),
+                )
+            }
+            if alias_language_tags != {str(alias["language"]).casefold()}:
                 return False
         if (
             alias["kind"] == "forbidden_variant"
             and targets.get((alias_source_id, "crystals")) != crystal_id
         ):
             return False
-    parsed = parse_rule_crystal(crystal["text"])
     forbidden = tuple(
         alias["text"].strip()
         for alias in aliases
@@ -365,12 +537,29 @@ def _active_term_has_parity(
     }
     linked = conn.execute(
         """
-        select 1 from crystal_concepts
+        select confidence from crystal_concepts
         where crystal_id = ? and concept_id = ? and link_type = 'defines'
         """,
         (crystal_id, concept_id),
     ).fetchone()
-    return tags <= concept_tags and tags <= crystal_tags and linked is not None
+    expected_languages = {
+        str(term["source_language"]).casefold(),
+        str(term["target_language"]).casefold(),
+    }
+    crystal_languages = {
+        row["language_tag"]
+        for row in conn.execute(
+            "select language_tag from crystal_language_tags where crystal_id = ?",
+            (crystal_id,),
+        )
+    }
+    return (
+        tags == concept_tags
+        and tags == crystal_tags
+        and crystal_languages == expected_languages
+        and linked is not None
+        and float(linked["confidence"]) >= 0.95
+    )
 
 
 def drop_legacy_tables(conn: sqlite3.Connection) -> None:

@@ -64,6 +64,12 @@ _REQUIRED_GENERATED_GRAPH_COLUMNS = {
     "crystal_language_tags": {"crystal_id", "language_tag"},
     "crystal_semantic_tags": {"crystal_id", "tag", "confidence", "created_at"},
     "crystal_concepts": {"crystal_id", "concept_id", "link_type", "confidence", "created_at"},
+    "memory_graph_migration_ledger": {
+        "source_table",
+        "source_id",
+        "target_table",
+        "target_id",
+    },
 }
 
 
@@ -543,6 +549,7 @@ class MemoryGraphMigrator:
                 confidence=0.95,
                 semantic_tags=tags,
                 created=created,
+                exact_projection=True,
             )
             self._ensure_facet(
                 conn,
@@ -555,6 +562,7 @@ class MemoryGraphMigrator:
                 confidence=0.95,
                 is_canonical=True,
                 created=created,
+                exact_projection=True,
             )
             for alias_id, language, text, kind in self._strict_term_alias_rows(
                 conn, int(term["id"])
@@ -572,6 +580,7 @@ class MemoryGraphMigrator:
                     confidence=0.95,
                     is_canonical=False,
                     created=created,
+                    exact_projection=True,
                 )
             self._ensure_facet(
                 conn,
@@ -584,6 +593,7 @@ class MemoryGraphMigrator:
                 confidence=0.95,
                 is_canonical=False,
                 created=created,
+                exact_projection=True,
             )
             crystal_id = self._ensure_rule_crystal(
                 conn,
@@ -599,6 +609,7 @@ class MemoryGraphMigrator:
                 confidence=0.95,
                 semantic_tags=tags,
                 created=created,
+                exact_projection=True,
             )
             self._ensure_crystal_concept_link(conn, crystal_id, concept_id, confidence=0.95)
             for alias_id, _, _, kind in self._strict_term_alias_rows(conn, int(term["id"])):
@@ -610,6 +621,14 @@ class MemoryGraphMigrator:
                         "crystals",
                         crystal_id,
                     )
+            self._remove_stale_strict_term_alias_artifacts(
+                conn,
+                int(term["id"]),
+                {
+                    alias_id: ("crystals" if kind == "forbidden_variant" else "concept_facets")
+                    for alias_id, _, _, kind in self._strict_term_alias_rows(conn, int(term["id"]))
+                },
+            )
             if failure_hook is not None:
                 failure_hook(int(term["id"]))
 
@@ -734,6 +753,7 @@ class MemoryGraphMigrator:
         confidence: float,
         semantic_tags: tuple[str, ...],
         created: Counter[str],
+        exact_projection: bool = False,
     ) -> int:
         existing = self._ledger_target(conn, source_table, source_id, "concepts")
         if existing is not None and _row_exists(conn, "concepts", existing):
@@ -746,6 +766,7 @@ class MemoryGraphMigrator:
                 scope_key=scope_key,
                 status=status,
                 confidence=confidence,
+                force_projection=exact_projection,
             )
         else:
             natural = self._matching_concept(conn, canonical_name, scope_key, semantic_tags)
@@ -779,9 +800,19 @@ class MemoryGraphMigrator:
                     scope_key=scope_key,
                     status=status,
                     confidence=confidence,
+                    force_projection=exact_projection,
                 )
             self._record_ledger(conn, source_table, source_id, "concepts", concept_id)
 
+        if exact_projection:
+            _delete_unwanted_values(
+                conn,
+                table="concept_semantic_tags",
+                owner_column="concept_id",
+                owner_id=concept_id,
+                value_column="tag",
+                wanted=semantic_tags,
+            )
         for tag in semantic_tags:
             conn.execute(
                 """
@@ -804,6 +835,7 @@ class MemoryGraphMigrator:
         scope_key: str,
         status: str,
         confidence: float,
+        force_projection: bool = False,
     ) -> None:
         existing = conn.execute(
             "select status, confidence from concepts where id = ?",
@@ -812,7 +844,7 @@ class MemoryGraphMigrator:
         if existing is None:
             return
         existing_confidence = float(existing["confidence"])
-        if confidence < existing_confidence:
+        if confidence < existing_confidence and not force_projection:
             return
         next_confidence = max(existing_confidence, confidence)
         conn.execute(
@@ -851,8 +883,31 @@ class MemoryGraphMigrator:
         confidence: float,
         is_canonical: bool,
         created: Counter[str],
+        exact_projection: bool = False,
     ) -> int:
         existing = self._ledger_target(conn, source_table, source_id, "concept_facets")
+        if (
+            exact_projection
+            and existing is not None
+            and _facet_has_other_provenance(conn, source_table, source_id, existing)
+            and not _facet_matches_projection(
+                conn,
+                existing,
+                concept_id=concept_id,
+                value=value,
+                facet_type=facet_type,
+                language=language,
+                is_canonical=is_canonical,
+            )
+        ):
+            conn.execute(
+                """
+                delete from memory_graph_migration_ledger
+                where source_table = ? and source_id = ? and target_table = 'concept_facets'
+                """,
+                (source_table, source_id),
+            )
+            existing = None
         if (
             existing is not None
             and _row_exists(conn, "concept_facets", existing)
@@ -864,21 +919,34 @@ class MemoryGraphMigrator:
                 facet_id,
                 confidence=confidence,
                 is_canonical=is_canonical,
+                value=value,
+                facet_type=facet_type,
+                language=language,
+                force_projection=exact_projection,
             )
         else:
-            row = conn.execute(
-                """
-                select id, confidence, is_canonical
-                from concept_facets
-                where concept_id = ?
-                  and value = ?
-                  and facet_type = ?
-                  and superseded_at is null
-                order by id
-                limit 1
-                """,
-                (concept_id, value, facet_type),
-            ).fetchone()
+            if exact_projection:
+                row = conn.execute(
+                    """
+                    select id, confidence, is_canonical
+                    from concept_facets
+                    where concept_id = ? and value = ? and facet_type = ? and language = ?
+                      and is_canonical = ? and superseded_at is null
+                    order by id limit 1
+                    """,
+                    (concept_id, value, facet_type, language, int(is_canonical)),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    select id, confidence, is_canonical
+                    from concept_facets
+                    where concept_id = ? and value = ? and facet_type = ?
+                      and superseded_at is null
+                    order by id limit 1
+                    """,
+                    (concept_id, value, facet_type),
+                ).fetchone()
             if row is None:
                 now = _now(conn)
                 cursor = conn.execute(
@@ -917,9 +985,15 @@ class MemoryGraphMigrator:
                     confidence=confidence,
                     is_canonical=is_canonical,
                     row=row,
+                    value=value,
+                    facet_type=facet_type,
+                    language=language,
+                    force_projection=exact_projection,
                 )
             self._record_ledger(conn, source_table, source_id, "concept_facets", facet_id)
 
+        if exact_projection:
+            conn.execute("delete from concept_facet_language_tags where facet_id = ?", (facet_id,))
         for language_tag in _clean_tags((language,), lowercase=True):
             conn.execute(
                 """
@@ -938,6 +1012,10 @@ class MemoryGraphMigrator:
         confidence: float,
         is_canonical: bool,
         row: sqlite3.Row | None = None,
+        value: str = "",
+        facet_type: str = "",
+        language: str = "",
+        force_projection: bool = False,
     ) -> None:
         existing = (
             row
@@ -949,7 +1027,28 @@ class MemoryGraphMigrator:
         if existing is None:
             return
         next_confidence = max(float(existing["confidence"]), confidence)
-        next_is_canonical = bool(existing["is_canonical"]) or is_canonical
+        next_is_canonical = (
+            is_canonical if force_projection else (bool(existing["is_canonical"]) or is_canonical)
+        )
+        if force_projection:
+            conn.execute(
+                """
+                update concept_facets
+                set value = ?, facet_type = ?, language = ?, confidence = ?,
+                    is_canonical = ?, updated_at = ?
+                where id = ?
+                """,
+                (
+                    value,
+                    facet_type,
+                    language,
+                    next_confidence,
+                    int(next_is_canonical),
+                    _now(conn),
+                    facet_id,
+                ),
+            )
+            return
         if next_confidence == float(existing["confidence"]) and next_is_canonical == bool(
             existing["is_canonical"]
         ):
@@ -981,6 +1080,7 @@ class MemoryGraphMigrator:
         confidence: float,
         semantic_tags: tuple[str, ...],
         created: Counter[str],
+        exact_projection: bool = False,
     ) -> int:
         existing = self._ledger_target(conn, source_table, source_id, "crystals")
         if existing is not None and _row_exists(conn, "crystals", existing):
@@ -1078,6 +1178,16 @@ class MemoryGraphMigrator:
                 )
             self._record_ledger(conn, source_table, source_id, "crystals", crystal_id)
 
+        if exact_projection:
+            conn.execute("delete from crystal_language_tags where crystal_id = ?", (crystal_id,))
+            _delete_unwanted_values(
+                conn,
+                table="crystal_semantic_tags",
+                owner_column="crystal_id",
+                owner_id=crystal_id,
+                value_column="tag",
+                wanted=semantic_tags,
+            )
         for language_tag in _clean_tags((source_language, target_language), lowercase=True):
             conn.execute(
                 """
@@ -1262,6 +1372,46 @@ class MemoryGraphMigrator:
                 (term_id,),
             )
         )
+
+    def _remove_stale_strict_term_alias_artifacts(
+        self,
+        conn: sqlite3.Connection,
+        term_id: int,
+        current_alias_targets: Mapping[int, str],
+    ) -> None:
+        prefix = f"{term_id}:alias:"
+        rows = conn.execute(
+            """
+            select source_id, target_table, target_id
+            from memory_graph_migration_ledger
+            where source_table = 'strict_terms' and source_id like ?
+            order by source_id, target_table
+            """,
+            (f"{prefix}%",),
+        ).fetchall()
+        for row in rows:
+            suffix = str(row["source_id"])[len(prefix) :]
+            if suffix.isdigit() and current_alias_targets.get(int(suffix)) == row["target_table"]:
+                continue
+            conn.execute(
+                """
+                delete from memory_graph_migration_ledger
+                where source_table = 'strict_terms' and source_id = ? and target_table = ?
+                """,
+                (row["source_id"], row["target_table"]),
+            )
+            if row["target_table"] != "concept_facets":
+                continue
+            still_referenced = conn.execute(
+                """
+                select 1 from memory_graph_migration_ledger
+                where target_table = 'concept_facets' and target_id = ?
+                limit 1
+                """,
+                (row["target_id"],),
+            ).fetchone()
+            if still_referenced is None:
+                conn.execute("delete from concept_facets where id = ?", (row["target_id"],))
 
     def _matching_concept(
         self,
@@ -1676,6 +1826,9 @@ def convert_strict_terms(
     if not _has_table(conn, "strict_terms"):
         return StrictTermConversionReport(active_terms=0, migrated_terms=0)
 
+    active_ids = _active_strict_term_ids(conn)
+    affected = ", ".join(str(term_id) for term_id in active_ids) or "<none>"
+
     required_term_columns = {
         "id",
         "status",
@@ -1687,9 +1840,13 @@ def convert_strict_terms(
         "target_language",
     }
     if not _has_columns(conn, "strict_terms", required_term_columns):
-        raise StrictTermConversionBlocked("strict_terms has an incomplete legacy shape")
+        raise StrictTermConversionBlocked(
+            f"terms {affected}: strict_terms has an incomplete legacy shape"
+        )
     if not _generated_graph_schema_is_complete(conn):
-        raise StrictTermConversionBlocked("generated rule graph schema is incomplete")
+        raise StrictTermConversionBlocked(
+            f"terms {affected}: generated rule graph or ledger shape is incomplete"
+        )
 
     active_rows = conn.execute(
         "select * from strict_terms where status in ('approved', 'active') order by id"
@@ -1709,6 +1866,10 @@ def convert_strict_terms(
                 blocked.append((term_id, f"{column} is empty"))
                 break
         else:
+            incomplete_alias = _strict_term_incomplete_alias(conn, term_id)
+            if incomplete_alias is not None:
+                blocked.append((term_id, incomplete_alias))
+                continue
             aliases = writer._strict_term_rule_aliases(conn, term_id)
             if aliases is None:
                 blocked.append((term_id, "aliases must use known kinds and be case-sensitive"))
@@ -1744,6 +1905,33 @@ def convert_strict_terms(
         migrated_terms=migrated,
         created=dict(created),
         blocked_term_ids=blocked_ids,
+    )
+
+
+def _strict_term_incomplete_alias(conn: sqlite3.Connection, term_id: int) -> str | None:
+    if not _has_table(conn, "strict_term_aliases"):
+        return None
+    required = {"term_id", "text", "language", "kind"}
+    if not _has_columns(conn, "strict_term_aliases", required):
+        return "alias relationship shape is incomplete"
+    for row in conn.execute(
+        "select text, language from strict_term_aliases where term_id = ? order by rowid",
+        (term_id,),
+    ):
+        if not str(row["text"]).strip():
+            return "alias text is empty"
+        if not str(row["language"]).strip():
+            return "alias language is empty"
+    return None
+
+
+def _active_strict_term_ids(conn: sqlite3.Connection) -> tuple[int, ...]:
+    columns = _columns(conn, "strict_terms")
+    if "id" not in columns:
+        return ()
+    where = "where status in ('approved', 'active')" if "status" in columns else ""
+    return tuple(
+        int(row["id"]) for row in conn.execute(f"select id from strict_terms {where} order by id")
     )
 
 
@@ -1792,6 +1980,26 @@ def _concept_semantic_tags(conn: sqlite3.Connection, concept_id: int) -> tuple[s
             "select tag from concept_semantic_tags where concept_id = ? order by tag",
             (concept_id,),
         )
+    )
+
+
+def _delete_unwanted_values(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    owner_column: str,
+    owner_id: int,
+    value_column: str,
+    wanted: Iterable[str],
+) -> None:
+    wanted_values = tuple(wanted)
+    if not wanted_values:
+        conn.execute(f"delete from {table} where {owner_column} = ?", (owner_id,))
+        return
+    placeholders = ", ".join("?" for _ in wanted_values)
+    conn.execute(
+        f"delete from {table} where {owner_column} = ? and {value_column} not in ({placeholders})",
+        (owner_id, *wanted_values),
     )
 
 
@@ -1972,6 +2180,47 @@ def _facet_belongs_to_concept(
         (facet_id, concept_id),
     )
     return row.fetchone() is not None
+
+
+def _facet_has_other_provenance(
+    conn: sqlite3.Connection,
+    source_table: str,
+    source_id: str,
+    facet_id: int,
+) -> bool:
+    return (
+        conn.execute(
+            """
+            select 1 from memory_graph_migration_ledger
+            where target_table = 'concept_facets' and target_id = ?
+              and not (source_table = ? and source_id = ?)
+            limit 1
+            """,
+            (facet_id, source_table, source_id),
+        ).fetchone()
+        is not None
+    )
+
+
+def _facet_matches_projection(
+    conn: sqlite3.Connection,
+    facet_id: int,
+    *,
+    concept_id: int,
+    value: str,
+    facet_type: str,
+    language: str,
+    is_canonical: bool,
+) -> bool:
+    row = conn.execute(
+        """
+        select 1 from concept_facets
+        where id = ? and concept_id = ? and value = ? and facet_type = ? and language = ?
+          and is_canonical = ? and superseded_at is null
+        """,
+        (facet_id, concept_id, value, facet_type, language, int(is_canonical)),
+    ).fetchone()
+    return row is not None
 
 
 def _pending_default_language_tags(conn: sqlite3.Connection, table: str) -> int:
