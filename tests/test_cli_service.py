@@ -291,6 +291,28 @@ def test_restart_json_returns_manager_payload(tmp_path: Path) -> None:
     }
 
 
+def test_restart_json_reports_failed_stop_without_starting(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    with patch("hieronymus.cli.ServiceManager") as manager_class:
+        manager_class.return_value.restart.return_value = {
+            "stopped": {
+                "running": True,
+                "stopped": False,
+                "stop_status": "failed",
+                "reason": "process-identity-mismatch",
+            },
+            "status": None,
+        }
+        result = runner.invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "restart", "--json"],
+        )
+
+    assert result.exit_code == 1
+    assert json.loads(result.output)["stopped"]["stop_status"] == "failed"
+
+
 def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
     data_root = tmp_path / "hieronymus"
 

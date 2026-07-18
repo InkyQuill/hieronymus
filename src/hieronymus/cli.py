@@ -350,10 +350,16 @@ def restart(ctx: click.Context, json_output: bool) -> None:
     payload = ServiceManager(ctx.obj["config"]).restart()
     if json_output:
         click.echo(render_json(payload))
+        if payload.get("stopped", {}).get("stop_status") == "failed":
+            ctx.exit(1)
         return
 
     click.echo(render_greeting())
     click.echo()
+    if payload["status"] is None:
+        raise click.ClickException(
+            f"service restart aborted: {payload['stopped'].get('reason', 'shutdown failed')}"
+        )
     _echo_status_lines(payload["status"])
 
 

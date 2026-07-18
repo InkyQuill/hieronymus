@@ -1,15 +1,34 @@
 from __future__ import annotations
 
 import os
+import signal
+import subprocess
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.service_client import ServiceClientError
 from hieronymus.service_manager import ServiceManager
-from hieronymus.service_state import ServerState, read_server_state, write_server_state
+from hieronymus.service_state import (
+    ServerState,
+    read_server_state,
+    write_server_state,
+)
+
+
+def daemon_log_path(config: HieronymusConfig) -> Path:
+    return config.data_root / "daemon.log"
+
+
+def process_start_identity(pid: int) -> str:
+    stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    return stat[stat.rfind(")") + 2 :].split()[19]
 
 
 def server_state(
@@ -106,7 +125,7 @@ def test_status_removes_unreachable_live_state(tmp_path: Path) -> None:
     status = manager.status()
 
     assert status == {"running": False, "reason": "unreachable"}
-    assert read_server_state(config) is None
+    assert read_server_state(config) == state
 
 
 def test_status_removes_bad_service_client_payload_state(tmp_path: Path) -> None:
@@ -118,7 +137,7 @@ def test_status_removes_bad_service_client_payload_state(tmp_path: Path) -> None
     status = manager.status()
 
     assert status == {"running": False, "reason": "unreachable"}
-    assert read_server_state(config) is None
+    assert read_server_state(config) == state
 
 
 def test_start_returns_without_spawning_when_service_is_healthy(tmp_path: Path) -> None:
@@ -185,7 +204,12 @@ def test_stop_without_state_is_clean_result(tmp_path: Path) -> None:
 
     result = manager.stop()
 
-    assert result == {"running": False, "stopped": False, "reason": "not-running"}
+    assert result == {
+        "running": False,
+        "stopped": False,
+        "stop_status": "stopped",
+        "reason": "not-running",
+    }
 
 
 def test_stop_calls_shutdown_for_existing_state(tmp_path: Path) -> None:
@@ -215,3 +239,220 @@ def test_stop_preserves_newer_state_written_during_shutdown(tmp_path: Path) -> N
     assert client.shutdown_called is True
     assert result["stopped"] is True
     assert read_server_state(config) == new_state
+
+
+class FakeProcess:
+    def __init__(self, *, pid: int = 43210, returncode: int | None = None) -> None:
+        self.pid = pid
+        self.returncode = returncode
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.returncode is None:
+            raise subprocess.TimeoutExpired("daemon", timeout)
+        return self.returncode
+
+
+def test_start_reports_child_exit_before_state_with_log_path(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    process = FakeProcess(returncode=23)
+    manager = ServiceManager(config, client=FakeClient(healthy=False), poll_interval=0.001)
+
+    with patch("hieronymus.service_manager.subprocess.Popen", return_value=process):
+        with pytest.raises(RuntimeError) as raised:
+            manager.start()
+
+    message = str(raised.value)
+    assert "exited before publishing state" in message
+    assert "exit code 23" in message
+    assert str(daemon_log_path(config)) in message
+
+
+def test_start_distinguishes_published_but_unhealthy_child_exit(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config, pid=43210)
+    process = FakeProcess(pid=state.pid)
+    manager = ServiceManager(config, client=FakeClient(healthy=False), poll_interval=0.001)
+
+    def publish_then_exit(*_args, **_kwargs) -> FakeProcess:
+        write_server_state(config, state)
+        process.returncode = 24
+        return process
+
+    with patch("hieronymus.service_manager.subprocess.Popen", side_effect=publish_then_exit):
+        with pytest.raises(RuntimeError, match="published state but exited"):
+            manager.start()
+
+    assert read_server_state(config) is None
+
+
+def test_start_reports_published_but_unhealthy_timeout(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config, pid=43210)
+    process = FakeProcess(pid=state.pid)
+    manager = ServiceManager(
+        config,
+        client=FakeClient(healthy=False),
+        startup_timeout=0.01,
+        poll_interval=0.001,
+        terminate_timeout=0.01,
+    )
+
+    def publish(*_args, **_kwargs) -> FakeProcess:
+        write_server_state(config, state)
+        return process
+
+    def terminate_group(pid: int, sent_signal: int) -> None:
+        assert (pid, sent_signal) == (process.pid, signal.SIGTERM)
+        process.returncode = -sent_signal
+
+    with (
+        patch("hieronymus.service_manager.subprocess.Popen", side_effect=publish),
+        patch("hieronymus.service_manager.os.killpg", side_effect=terminate_group),
+    ):
+        with pytest.raises(
+            RuntimeError,
+            match="published state but did not become healthy before startup timeout",
+        ):
+            manager.start()
+
+    assert read_server_state(config) is None
+
+
+def test_start_timeout_terminates_owned_process_group_and_reports_log(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    process = FakeProcess()
+    manager = ServiceManager(
+        config,
+        client=FakeClient(healthy=False),
+        startup_timeout=0.01,
+        poll_interval=0.001,
+        terminate_timeout=0.01,
+        kill_timeout=0.01,
+    )
+
+    def terminate_group(pid: int, sent_signal: int) -> None:
+        assert pid == process.pid
+        assert sent_signal in {signal.SIGTERM, signal.SIGKILL}
+        process.returncode = -sent_signal
+
+    with (
+        patch("hieronymus.service_manager.subprocess.Popen", return_value=process),
+        patch("hieronymus.service_manager.os.killpg", side_effect=terminate_group) as killpg,
+    ):
+        with pytest.raises(RuntimeError) as raised:
+            manager.start()
+
+    assert "timed out before publishing state" in str(raised.value)
+    assert str(daemon_log_path(config)) in str(raised.value)
+    killpg.assert_called_once_with(process.pid, signal.SIGTERM)
+
+
+def test_start_on_occupied_configured_port_fails_without_fallback(tmp_path: Path) -> None:
+    import socket
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        port = occupied.getsockname()[1]
+        (config.config_root / "service.conf").write_text(
+            f"[service]\nport = {port}\n", encoding="utf-8"
+        )
+        manager = ServiceManager(config, startup_timeout=3, poll_interval=0.02)
+
+        with pytest.raises(RuntimeError) as raised:
+            manager.start()
+
+    assert "exited" in str(raised.value)
+    assert str(daemon_log_path(config)) in str(raised.value)
+    assert read_server_state(config) is None
+    assert f"{port}" in daemon_log_path(config).read_text(encoding="utf-8")
+
+
+def _spawn_signal_test_process(*, ignore_term: bool) -> subprocess.Popen[str]:
+    handler = "signal.signal(signal.SIGTERM, signal.SIG_IGN);" if ignore_term else ""
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            f"import signal,time;{handler}print('ready',flush=True);time.sleep(30)",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    assert process.stdout.readline() == "ready\n"
+    return process
+
+
+def test_stop_forces_matching_process_that_ignores_term(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    process = _spawn_signal_test_process(ignore_term=True)
+    try:
+        state = server_state(config, pid=process.pid)
+        state = replace(state, process_identity=process_start_identity(process.pid))
+        write_server_state(config, state)
+        manager = ServiceManager(
+            config,
+            client=FakeClient(healthy=True),
+            shutdown_timeout=0.03,
+            terminate_timeout=0.03,
+            kill_timeout=1,
+            poll_interval=0.005,
+        )
+
+        result = manager.stop()
+
+        assert result["stop_status"] == "forced"
+        assert result["stopped"] is True
+        assert process.wait(timeout=2) == -signal.SIGKILL
+        assert read_server_state(config) is None
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=2)
+
+
+def test_stop_never_signals_or_removes_mismatched_process_state(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    process = _spawn_signal_test_process(ignore_term=False)
+    try:
+        state = server_state(config, pid=process.pid)
+        state = replace(state, process_identity="different-process")
+        write_server_state(config, state)
+        manager = ServiceManager(
+            config,
+            client=FakeClient(healthy=True),
+            shutdown_timeout=0.01,
+            poll_interval=0.002,
+        )
+
+        with patch("hieronymus.service_manager.os.killpg") as killpg:
+            result = manager.stop()
+
+        assert result["stop_status"] == "failed"
+        assert result["reason"] == "process-identity-mismatch"
+        assert process.poll() is None
+        assert read_server_state(config) == state
+        killpg.assert_not_called()
+    finally:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=2)
+
+
+def test_restart_aborts_after_failed_stop(tmp_path: Path) -> None:
+    manager = ServiceManager(HieronymusConfig(data_root=tmp_path / "hieronymus"))
+    failed = {"running": True, "stopped": False, "stop_status": "failed"}
+
+    with (
+        patch.object(manager, "stop", return_value=failed),
+        patch.object(manager, "start") as start,
+    ):
+        result = manager.restart()
+
+    assert result == {"stopped": failed, "status": None}
+    start.assert_not_called()

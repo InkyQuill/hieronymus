@@ -29,6 +29,7 @@ class ServerState:
     started_at: str
     data_root: str
     database_path: str
+    process_identity: str | None = None
 
     @property
     def base_url(self) -> str:
@@ -47,6 +48,11 @@ class ServerState:
             started_at=str(payload["started_at"]),
             data_root=str(payload["data_root"]),
             database_path=str(payload["database_path"]),
+            process_identity=(
+                str(payload["process_identity"])
+                if payload.get("process_identity") is not None
+                else None
+            ),
         )
 
 
@@ -64,12 +70,38 @@ def is_pid_running(pid: int) -> bool:
     if pid <= 0:
         return False
     try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        if stat[stat.rfind(")") + 2 :].split()[0] == "Z":
+            return False
+    except (FileNotFoundError, OSError, IndexError):
+        pass
+    try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
     return True
+
+
+def process_start_identity(pid: int) -> str | None:
+    if pid <= 0:
+        return None
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        return stat[stat.rfind(")") + 2 :].split()[19]
+    except (FileNotFoundError, OSError, IndexError):
+        return None
+
+
+def state_matches_process(config: HieronymusConfig, state: ServerState) -> bool:
+    if state.process_identity is None:
+        return False
+    if Path(state.data_root).resolve() != config.data_root.resolve():
+        return False
+    if Path(state.database_path).resolve() != config.database_path.resolve():
+        return False
+    return process_start_identity(state.pid) == state.process_identity
 
 
 def read_server_state(config: HieronymusConfig) -> ServerState | None:
