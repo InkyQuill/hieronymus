@@ -22,6 +22,12 @@ const installBrowserStorage = () => {
 
 installBrowserStorage();
 
+if (!HTMLDialogElement.prototype.showModal) {
+  HTMLDialogElement.prototype.showModal = function showModal() {
+    this.open = true;
+  };
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

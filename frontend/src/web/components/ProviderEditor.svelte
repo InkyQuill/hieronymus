@@ -22,7 +22,16 @@
 
   onMount(() => {
     previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    draft = provider ? { ...provider, key: "", timeout_seconds: String(provider.timeout_seconds) } : blankDraft();
+    draft = provider
+      ? {
+          id: provider.id,
+          name: provider.name,
+          type: provider.type,
+          url: provider.url,
+          key: "",
+          timeout_seconds: String(provider.timeout_seconds),
+        }
+      : blankDraft();
     dialog.showModal();
     dialog.querySelector<HTMLElement>("input:not([disabled]), select, button")?.focus();
   });
