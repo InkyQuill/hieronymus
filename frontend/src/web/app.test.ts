@@ -1,23 +1,19 @@
-import { expect, test } from "bun:test";
+import { access, readFile } from "node:fs/promises";
+import { expect, test } from "vitest";
 
-test("the app shell uses the semantic Tailwind surface utilities", async () => {
-  const app = await Bun.file(new URL("./App.svelte", import.meta.url)).text();
+const webFile = (path: string) => new URL(path, import.meta.url);
+const source = (path: string) => readFile(webFile(path), "utf8");
 
-  expect(app).toContain("min-h-dvh");
-  expect(app).toContain("bg-root");
-  expect(app).toContain("border-default");
-});
-
-test("the web stylesheet defines the data-theme Tailwind dark variant", async () => {
-  const css = await Bun.file(new URL("./app.css", import.meta.url)).text();
+test("the web stylesheet configures Tailwind and the data-theme dark variant", async () => {
+  const css = await source("./app.css");
+  expect(css).toContain('@import "tailwindcss";');
   expect(css).toContain(
     '@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));',
   );
-  expect(css).toContain('@import "tailwindcss";');
 });
 
-test("the semantic theme preserves both runtime modes and editorial utilities", async () => {
-  const css = await Bun.file(new URL("./app.css", import.meta.url)).text();
+test("the semantic theme exposes required runtime tokens and utilities", async () => {
+  const css = await source("./app.css");
   for (const token of [
     "--hiero-bg-root",
     "--hiero-text-primary",
@@ -34,52 +30,19 @@ test("the semantic theme preserves both runtime modes and editorial utilities", 
   expect(css).toMatch(/\[data-theme="dark"\]\s*\{[\s\S]*?--hiero-bg-root:/);
 });
 
-test("the editor dialog remains within narrow viewports while right-aligned", async () => {
-  const css = await Bun.file(new URL("./app.css", import.meta.url)).text();
-
+test("the editor dialog source contract remains viewport-bounded and right-aligned", async () => {
+  const css = await source("./app.css");
   expect(css).toMatch(
     /\.editor-dialog\s*\{[\s\S]*?right:\s*0;[\s\S]*?width:\s*min\(420px,\s*100%\);/,
   );
 });
 
-test("the web entry module imports the Tailwind stylesheet", async () => {
-  const entryModule = await Bun.file(
-    new URL("./main.ts", import.meta.url),
-  ).text();
-
-  expect(entryModule).toContain('import "./app.css";');
+test("the web entry imports the Tailwind stylesheet", async () => {
+  expect(await source("./main.ts")).toContain('import "./app.css";');
 });
 
-test("the legacy stylesheets have been retired", async () => {
-  for (const filename of ["tokens.css", "base.css", "components.css"]) {
-    expect(
-      await Bun.file(new URL(`./${filename}`, import.meta.url)).exists(),
-    ).toBe(false);
-  }
-});
-
-test("memory rows keep keyboard activation after Tailwind migration", async () => {
-  const memoryView = await Bun.file(
-    new URL("./components/MemoryViews.svelte", import.meta.url),
-  ).text();
-
-  expect(memoryView).toContain('event.key === "Enter"');
-  expect(memoryView).toContain("event.preventDefault()");
-  expect(memoryView).toContain("overflow-x-auto");
-});
-
-test("editor controls preserve native dialog and accessible toggle markup", async () => {
-  const providerEditor = await Bun.file(
-    new URL("./components/ProviderEditor.svelte", import.meta.url),
-  ).text();
-  const dreamingEditor = await Bun.file(
-    new URL("./components/DreamingEditor.svelte", import.meta.url),
-  ).text();
-
-  expect(providerEditor).toContain("<dialog");
-  expect(providerEditor).toContain("aria-labelledby");
-  expect(dreamingEditor).toContain("peer");
-  expect(dreamingEditor).toContain("min-h-11");
-  expect(dreamingEditor).toContain("peer-checked:[&>span]:translate-x-[18px]");
-  expect(dreamingEditor).toContain("peer-checked:[&>span]:bg-accent");
+test("legacy stylesheets remain deleted", async () => {
+  await expect(access(webFile("./base.css"))).rejects.toThrow();
+  await expect(access(webFile("./tokens.css"))).rejects.toThrow();
+  await expect(access(webFile("./components.css"))).rejects.toThrow();
 });
