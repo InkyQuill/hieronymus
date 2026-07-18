@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 
 from hieronymus.config import HieronymusConfig
@@ -123,6 +125,73 @@ def test_manual_dreaming_drains_small_batch_even_below_minimum(
     assert run.status == "completed"
     assert run.input_count == 1
     assert _pending_short_term_memory_count(config) == 0
+
+
+def test_dreaming_publishes_each_phase_transition_at_the_orchestration_source(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    _completed_session(config, context)
+    events: list[tuple[str, dict[str, object]]] = []
+
+    run = DreamService(
+        config,
+        DeterministicDreamProvider(),
+        event_sink=lambda event_type, payload: events.append((event_type, payload)),
+    ).run_all(owner="admin")
+
+    phase_events = [
+        payload for event_type, payload in events if event_type == "dream_phase_progress"
+    ]
+    assert [(event["phase"], event["status"]) for event in phase_events] == [
+        (phase, status)
+        for phase in (
+            "concepts",
+            "terminology_candidates",
+            "rule_crystals",
+            "knowledge_crystals",
+            "relations",
+            "reinforcement",
+            "coverage_audit",
+        )
+        for status in ("running", "completed")
+    ]
+    assert {event["run_id"] for event in phase_events} == {run.id}
+    assert {event["cycle_id"] for event in phase_events} == {run.cycle_id}
+    assert all(isinstance(event["phase_run_id"], int) for event in phase_events)
+
+
+def test_failed_phase_event_is_safe_when_secret_sanitization_fails(
+    config: HieronymusConfig,
+) -> None:
+    class FailingProvider:
+        name = "failing"
+
+        def run_pass(self, pass_name, context, memories):
+            raise RuntimeError("provider super-secret failed")
+
+    context = _context(config)
+    _completed_session(config, context)
+    events: list[tuple[str, dict[str, object]]] = []
+
+    with patch(
+        "hieronymus.dreaming.load_provider_catalog",
+        side_effect=RuntimeError("catalog contains super-secret"),
+    ):
+        with pytest.raises(RuntimeError, match="super-secret"):
+            DreamService(
+                config,
+                FailingProvider(),
+                event_sink=lambda event_type, payload: events.append((event_type, payload)),
+            ).run_all(owner="admin")
+
+    failed = [
+        payload
+        for event_type, payload in events
+        if event_type == "dream_phase_progress" and payload["status"] == "failed"
+    ]
+    assert failed[0]["error"] == "dreaming failed"
+    assert "super-secret" not in str(failed[0])
 
 
 def test_dreaming_preserves_typed_session_metadata_for_provider(

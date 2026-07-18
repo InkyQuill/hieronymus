@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -19,8 +18,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.daemon_events import AdminEventHub
-from hieronymus.db import connect
+from hieronymus.daemon_events import (
+    AdminEventHub,
+    EventSubscriptionClosed,
+    EventSubscriptionOverflow,
+)
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_providers import ProviderRegistry
 from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS, mcp_transport_diagnostics
@@ -107,37 +109,11 @@ class _ServiceRuntime:
             self.dream_running = True
         self.events.publish("dream_started", {"trigger": "manual"})
 
-        def monitor() -> None:
-            seen_phase_id = 0
-            while self.dream_running:
-                try:
-                    with connect(self.config.database_path) as conn:
-                        row = conn.execute(
-                            """
-                            select p.id, p.phase, p.dream_run_id, r.cycle_id
-                            from dream_phase_runs as p
-                            join dream_runs as r on r.id = p.dream_run_id
-                            where p.status = 'running'
-                            order by p.id desc limit 1
-                            """
-                        ).fetchone()
-                except Exception:
-                    row = None
-                if row is not None and int(row["id"]) != seen_phase_id:
-                    seen_phase_id = int(row["id"])
-                    self.events.publish(
-                        "dream_phase_progress",
-                        {
-                            "run_id": int(row["dream_run_id"]),
-                            "cycle_id": int(row["cycle_id"]),
-                            "phase": row["phase"],
-                        },
-                    )
-                time.sleep(0.2)
-
         def run() -> None:
             try:
-                payload = AdminBridge(self.config).run_manual_dreaming({})
+                payload = AdminBridge(self.config).run_manual_dreaming(
+                    {}, event_sink=self.events.publish
+                )
                 self.events.publish(
                     "dream_completed", {"trigger": "manual", "result": payload["result"]}
                 )
@@ -149,7 +125,6 @@ class _ServiceRuntime:
                     self.dream_running = False
 
         threading.Thread(target=run, name="hieronymus-manual-dream", daemon=True).start()
-        threading.Thread(target=monitor, name="hieronymus-dream-progress", daemon=True).start()
         return {"started": True, "status": "running"}
 
 
@@ -359,34 +334,30 @@ async def _admin_websocket(websocket: WebSocket) -> None:
     if origin is not None and origin != _expected_origin(runtime):
         await websocket.send_denial_response(_json({"error": "forbidden"}, 403))
         return
-    loop = asyncio.get_running_loop()
-    events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
-
-    def receive_event(event: dict[str, object]) -> None:
-        loop.call_soon_threadsafe(events.put_nowait, event)
-
-    unsubscribe = runtime.events.subscribe(receive_event)
     await websocket.accept()
+    subscription = runtime.events.subscribe()
     try:
         while True:
-            event_task = asyncio.create_task(events.get())
-            receive_task = asyncio.create_task(websocket.receive())
-            race_tasks = {event_task, receive_task}
+            event_task = asyncio.create_task(subscription.receive())
+            disconnect_task = asyncio.create_task(websocket.receive_text())
+            race_tasks = {event_task, disconnect_task}
             done: set[asyncio.Task[Any]] = set()
             try:
                 done, _ = await asyncio.wait(race_tasks, return_when=asyncio.FIRST_COMPLETED)
             finally:
                 await _cancel_tasks(race_tasks - done)
-            if receive_task in done:
-                message = receive_task.result()
-                if message["type"] == "websocket.disconnect":
-                    break
+            if disconnect_task in done:
+                disconnect_task.result()
             if event_task in done:
                 await websocket.send_json(event_task.result())
+    except EventSubscriptionOverflow:
+        await websocket.close(code=1013, reason="event backlog overflow")
+    except EventSubscriptionClosed:
+        pass
     except WebSocketDisconnect:
         pass
     finally:
-        unsubscribe()
+        subscription.close()
 
 
 async def _config_result(

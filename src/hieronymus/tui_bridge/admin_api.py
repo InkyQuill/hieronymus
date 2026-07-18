@@ -12,6 +12,7 @@ from hieronymus.admin import (
 from hieronymus.admin_models import ActionResult, AdminDetail, AdminRow, AdminSnapshot
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
+from hieronymus.dreaming import DreamEventSink
 from hieronymus.service_manager import ServiceManager
 from hieronymus.tui_bridge.protocol import dataclass_to_json
 
@@ -253,9 +254,14 @@ class AdminBridge:
             "stats": dataclass_to_json(self.store.stats()),
         }
 
-    def run_manual_dreaming(self, params: dict[str, object]) -> dict[str, object]:
+    def run_manual_dreaming(
+        self,
+        params: dict[str, object],
+        *,
+        event_sink: DreamEventSink | None = None,
+    ) -> dict[str, object]:
         view, filters = _refresh_context(params, default_view="Dream Runs")
-        run = self.store.run_manual_dreaming()
+        run = self.store.run_manual_dreaming(event_sink=event_sink)
         return self._mutation_payload(
             dataclass_to_json(run),
             params,

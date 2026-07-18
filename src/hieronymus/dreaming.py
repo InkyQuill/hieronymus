@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
@@ -336,6 +337,7 @@ DreamBatch = list[tuple[int, TranslationContext, list[ShortTermMemoryRecord]]]
 DreamBatchOutput = tuple[
     TranslationContext, int, list[ShortTermMemoryRecord], _NormalizedDreamOutput
 ]
+DreamEventSink = Callable[[str, dict[str, object]], None]
 
 
 class DreamService:
@@ -344,10 +346,13 @@ class DreamService:
         config: HieronymusConfig,
         provider: DreamProvider,
         max_short_term_memories_per_cycle: int | None = None,
+        event_sink: DreamEventSink | None = None,
     ) -> None:
         self.config = config
         self.dream_config = load_dream_config(config)
         self.provider = provider
+        self._event_sink = event_sink
+        self._phase_event_payloads: dict[int, dict[str, object]] = {}
         self.max_short_term_memories_per_cycle = (
             max_short_term_memories_per_cycle
             if max_short_term_memories_per_cycle is not None
@@ -592,6 +597,7 @@ class DreamService:
                 selected_memory_ids = _selected_memory_ids(groups)
                 phase_run_id = self._start_phase_run(
                     run_id=run_id,
+                    cycle_id=cycle_id,
                     phase="crystallization",
                     input_count=batch_input_count,
                 )
@@ -693,6 +699,7 @@ class DreamService:
                 if self._has_maintenance_candidates(conn, cycle_id):
                     maintenance_phase_run_id = self._start_phase_run(
                         run_id=run_id,
+                        cycle_id=cycle_id,
                         phase="maintenance",
                         input_count=0,
                     )
@@ -847,6 +854,7 @@ class DreamService:
             for pass_name in DREAM_PASS_NAMES:
                 phase_run_id = self._start_phase_run(
                     run_id=run_id,
+                    cycle_id=cycle_id,
                     phase=pass_name,
                     input_count=len(selected_memory_ids),
                 )
@@ -1359,7 +1367,7 @@ class DreamService:
             ).fetchall()
         return [int(row["id"]) for row in rows]
 
-    def _start_phase_run(self, *, run_id: int, phase: str, input_count: int) -> int:
+    def _start_phase_run(self, *, run_id: int, cycle_id: int, phase: str, input_count: int) -> int:
         now = _now()
         provider_profile = self._provider_profile()
         provider_type = self.provider.name
@@ -1391,6 +1399,16 @@ class DreamService:
             )
             phase_run_id = int(cursor.lastrowid)
             conn.commit()
+        payload: dict[str, object] = {
+            "run_id": run_id,
+            "cycle_id": cycle_id,
+            "phase_run_id": phase_run_id,
+            "phase": phase,
+            "status": "running",
+            "input_count": input_count,
+        }
+        self._phase_event_payloads[phase_run_id] = payload
+        self._publish_event("dream_phase_progress", payload)
         return phase_run_id
 
     def _complete_phase_run(self, *, phase_run_id: int, output_count: int) -> None:
@@ -1406,20 +1424,57 @@ class DreamService:
                 (output_count, _now(), phase_run_id),
             )
             conn.commit()
+        self._publish_phase_transition(
+            phase_run_id,
+            status="completed",
+            output_count=output_count,
+        )
 
     def _fail_phase_run(self, phase_run_id: int, error: Exception) -> None:
+        redacted_error = self._redacted_error_message(error)
         with connect(self.config.database_path) as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 update dream_phase_runs
                 set status = 'failed',
                     error = ?,
                     completed_at = ?
-                where id = ?
+                where id = ? and status = 'running'
                 """,
-                (self._redacted_error_message(error), _now(), phase_run_id),
+                (redacted_error, _now(), phase_run_id),
             )
             conn.commit()
+        if cursor.rowcount:
+            self._publish_phase_transition(
+                phase_run_id,
+                status="failed",
+                error=self._safe_event_error_message(error),
+            )
+
+    def _publish_phase_transition(
+        self, phase_run_id: int, *, status: str, **details: object
+    ) -> None:
+        started = self._phase_event_payloads.get(phase_run_id)
+        if started is None:
+            return
+        self._publish_event(
+            "dream_phase_progress",
+            {**started, "status": status, **details},
+        )
+
+    def _publish_event(self, event_type: str, payload: dict[str, object]) -> None:
+        if self._event_sink is None:
+            return
+        try:
+            self._event_sink(event_type, payload)
+        except Exception:
+            return
+
+    def _safe_event_error_message(self, error: Exception) -> str:
+        try:
+            return redact_configured_secret_values(str(error), load_provider_catalog(self.config))
+        except Exception:
+            return "dreaming failed"
 
     def _complete_run(
         self,

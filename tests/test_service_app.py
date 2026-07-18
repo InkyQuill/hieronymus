@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -372,6 +372,27 @@ def test_admin_websocket_rejects_foreign_origin(client: TestClient) -> None:
     assert denied.value.status_code == 403
 
 
+def test_admin_websocket_connects_broadcasts_and_disconnects(client: TestClient) -> None:
+    events = client.app.state.runtime.events
+    with (
+        client.websocket_connect(
+            "/ws/admin", headers={**_browser_headers(), "Host": "127.0.0.1:9768"}
+        ) as first,
+        client.websocket_connect(
+            "/ws/admin", headers={**_browser_headers(), "Host": "127.0.0.1:9768"}
+        ) as second,
+    ):
+        assert events.subscriber_count == 2
+        events.publish("dream_started", {"trigger": "manual"})
+        assert first.receive_json()["type"] == "dream_started"
+        assert second.receive_json()["type"] == "dream_started"
+
+    deadline = time.monotonic() + 1
+    while events.subscriber_count and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert events.subscriber_count == 0
+
+
 def test_status_endpoint_returns_paths_pid_and_active_cycle(
     config: HieronymusConfig, asset_root: Path
 ) -> None:
@@ -630,7 +651,9 @@ def test_manual_dreaming_failure_redacts_configured_secrets(
         def __init__(self, _: HieronymusConfig) -> None:
             pass
 
-        def run_manual_dreaming(self, _: dict[str, object]) -> dict[str, object]:
+        def run_manual_dreaming(
+            self, _: dict[str, object], *, event_sink=None
+        ) -> dict[str, object]:
             raise RuntimeError("provider super-secret failed")
 
     with (
@@ -655,38 +678,84 @@ def test_manual_dreaming_failure_redacts_configured_secrets(
     assert "super-secret" not in failed["payload"]["error"]
 
 
+def test_manual_dreaming_publishes_start_phase_and_completion_to_websocket(
+    config: HieronymusConfig, asset_root: Path
+) -> None:
+    class PublishingAdminBridge:
+        def __init__(self, _: HieronymusConfig) -> None:
+            pass
+
+        def run_manual_dreaming(self, _: dict[str, object], *, event_sink=None):
+            assert event_sink is not None
+            event_sink(
+                "dream_phase_progress",
+                {
+                    "run_id": 7,
+                    "cycle_id": 9,
+                    "phase_run_id": 11,
+                    "phase": "knowledge_crystals",
+                    "status": "running",
+                },
+            )
+            return {"result": {"id": 7, "cycle_id": 9, "status": "completed"}}
+
+    with (
+        patch("hieronymus.service_app.AdminBridge", PublishingAdminBridge),
+        TestClient(
+            build_app(config, _make_state(config), asset_root=asset_root),
+            base_url=SERVICE_ORIGIN,
+        ) as local_client,
+        local_client.websocket_connect(
+            "/ws/admin", headers={**_browser_headers(), "Host": "127.0.0.1:9768"}
+        ) as websocket,
+    ):
+        response = local_client.post(
+            "/api/admin/actions/run_manual_dreaming", json={}, headers=_browser_headers()
+        )
+        events = [websocket.receive_json() for _ in range(3)]
+
+    assert response.json() == {"started": True, "status": "running"}
+    assert [event["type"] for event in events] == [
+        "dream_started",
+        "dream_phase_progress",
+        "dream_completed",
+    ]
+    assert events[1]["payload"]["phase"] == "knowledge_crystals"
+
+
 def test_manual_dreaming_failure_is_safe_when_sanitization_also_fails(
     config: HieronymusConfig, asset_root: Path
 ) -> None:
-    failure_received = threading.Event()
-    received: list[dict[str, object]] = []
-
     class FailingAdminBridge:
         def __init__(self, _: HieronymusConfig) -> None:
             pass
 
-        def run_manual_dreaming(self, _: dict[str, object]) -> dict[str, object]:
+        def run_manual_dreaming(
+            self, _: dict[str, object], *, event_sink=None
+        ) -> dict[str, object]:
             raise RuntimeError("provider super-secret failed")
 
-    app = build_app(config, _make_state(config), asset_root=asset_root)
-
-    def receive_event(event: dict[str, object]) -> None:
-        if event["type"] == "dream_failed":
-            received.append(event)
-            failure_received.set()
-
-    app.state.runtime.events.subscribe(receive_event)
     with (
         patch("hieronymus.service_app.AdminBridge", FailingAdminBridge),
         patch(
             "hieronymus.service_app.load_provider_catalog",
             side_effect=RuntimeError("catalog contains super-secret"),
         ),
+        TestClient(
+            build_app(config, _make_state(config), asset_root=asset_root),
+            base_url=SERVICE_ORIGIN,
+        ) as local_client,
+        local_client.websocket_connect(
+            "/ws/admin", headers={**_browser_headers(), "Host": "127.0.0.1:9768"}
+        ) as websocket,
     ):
-        app.state.runtime.start_manual_dreaming()
-        assert failure_received.wait(timeout=1)
+        local_client.post(
+            "/api/admin/actions/run_manual_dreaming", json={}, headers=_browser_headers()
+        )
+        websocket.receive_json()
+        failed = websocket.receive_json()
 
-    assert received[0]["payload"] == {
+    assert failed["payload"] == {
         "trigger": "manual",
         "error": "manual dreaming failed",
     }

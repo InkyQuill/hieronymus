@@ -29,7 +29,7 @@ from hieronymus.dream_config import (
 from hieronymus.dream_locks import read_dream_cycle_state
 from hieronymus.dream_providers import ProviderProfile as RuntimeProviderProfile
 from hieronymus.dream_providers import resolve_provider
-from hieronymus.dreaming import DreamRunRecord, DreamService
+from hieronymus.dreaming import DreamEventSink, DreamRunRecord, DreamService
 from hieronymus.llm_cache import dream_profile_cache_identity, load_model_cache
 from hieronymus.memory_models import TranslationContext
 from hieronymus.presentation import GREETING_ICON, TAGLINE, package_display_version
@@ -824,8 +824,14 @@ class AdminStore:
             "User correction recorded",
         )
 
-    def run_manual_dreaming(self) -> DreamRunRecord:
-        run = DreamService(self.config, resolve_provider(self.config)).run_all(
+    def run_manual_dreaming(self, *, event_sink: DreamEventSink | None = None) -> DreamRunRecord:
+        provider = resolve_provider(self.config)
+        service = (
+            DreamService(self.config, provider)
+            if event_sink is None
+            else DreamService(self.config, provider, event_sink=event_sink)
+        )
+        run = service.run_all(
             owner="admin",
             ignore_minimum=True,
         )
