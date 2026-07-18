@@ -1,4 +1,5 @@
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use hiero_core::{
     config::HieronymusConfig,
@@ -9,6 +10,15 @@ use tempfile::TempDir;
 
 fn file_url(directory: &TempDir, name: &str) -> String {
     format!("sqlite://{}", directory.path().join(name).display())
+}
+
+fn unique_memory_name(prefix: &str) -> String {
+    static NEXT_NAME: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "{prefix}-{}-{}",
+        std::process::id(),
+        NEXT_NAME.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 #[tokio::test]
@@ -140,14 +150,18 @@ async fn connect_preserves_directory_creation_failure_context() {
 
 #[tokio::test]
 async fn memory_urls_do_not_request_wal() {
+    let encoded_name = unique_memory_name("encoded-journal");
     for url in [
-        "sqlite::memory:",
-        "sqlite://:memory:",
-        "sqlite://?mode=memory",
-        "sqlite://file:shared-memory?mode=memory&cache=shared",
-        "sqlite://encoded?%6dode=mem%6fry&%63ache=shar%65d",
+        "sqlite::memory:".to_owned(),
+        "sqlite://:memory:".to_owned(),
+        "sqlite://?mode=memory".to_owned(),
+        format!(
+            "sqlite://{}?mode=memory&cache=shared",
+            unique_memory_name("shared-journal")
+        ),
+        format!("sqlite://{encoded_name}?%6dode=mem%6fry&%63ache=shar%65d"),
     ] {
-        let pool = connect_url(url)
+        let pool = connect_url(&url)
             .await
             .unwrap_or_else(|error| panic!("{url} should connect: {error}"));
         let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
@@ -163,14 +177,20 @@ async fn memory_urls_do_not_request_wal() {
 #[tokio::test]
 async fn in_memory_pool_connections_share_one_database() {
     for url in [
-        "sqlite::memory:",
-        "sqlite://:memory:",
-        "sqlite://%3Amemory%3A",
-        "sqlite://%3amemory%3a",
-        "sqlite://named-memory?mode=memory",
-        "sqlite://encoded-memory?%6dode=mem%6fry&%63ache=shar%65d",
+        "sqlite::memory:".to_owned(),
+        "sqlite://:memory:".to_owned(),
+        "sqlite://%3Amemory%3A".to_owned(),
+        "sqlite://%3amemory%3a".to_owned(),
+        format!(
+            "sqlite://{}?mode=memory",
+            unique_memory_name("named-shared-state")
+        ),
+        format!(
+            "sqlite://{}?%6dode=mem%6fry&%63ache=shar%65d",
+            unique_memory_name("encoded-shared-state")
+        ),
     ] {
-        let pool = connect_url(url)
+        let pool = connect_url(&url)
             .await
             .unwrap_or_else(|error| panic!("{url} should connect: {error}"));
         let mut writer = pool.acquire().await.expect("writer should be acquired");
@@ -221,12 +241,21 @@ async fn private_cache_memory_urls_are_rejected() {
 #[tokio::test]
 async fn memory_options_follow_sqlx_parameter_order() {
     for url in [
-        "sqlite::memory:?cache=private&mode=memory",
-        "sqlite://ordered?cache=private&mode=memory",
-        "sqlite://repeated?mode=memory&cache=private&mode=memory",
-        "sqlite://encoded?%63ache=priv%61te&%6dode=mem%6fry",
+        "sqlite::memory:?cache=private&mode=memory".to_owned(),
+        format!(
+            "sqlite://{}?cache=private&mode=memory",
+            unique_memory_name("ordered-options")
+        ),
+        format!(
+            "sqlite://{}?mode=memory&cache=private&mode=memory",
+            unique_memory_name("repeated-options")
+        ),
+        format!(
+            "sqlite://{}?%63ache=priv%61te&%6dode=mem%6fry",
+            unique_memory_name("encoded-options")
+        ),
     ] {
-        let pool = connect_url(url)
+        let pool = connect_url(&url)
             .await
             .unwrap_or_else(|error| panic!("final effective cache is shared for {url}: {error}"));
         let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
@@ -240,10 +269,14 @@ async fn memory_options_follow_sqlx_parameter_order() {
 
 #[tokio::test]
 async fn named_memory_identity_is_shared_across_overlapping_pools() {
-    let first = connect_url("sqlite://shared-name?mode=memory&cache=shared")
+    let name = unique_memory_name("shared-name");
+    let encoded_name = name.replace('-', "%2D");
+    let first_url = format!("sqlite://{name}?mode=memory&cache=shared");
+    let second_url = format!("sqlite://{encoded_name}?%6dode=mem%6fry&cache=shared");
+    let first = connect_url(&first_url)
         .await
         .expect("first named pool should connect");
-    let second = connect_url("sqlite://shared%2Dname?%6dode=mem%6fry&cache=shared")
+    let second = connect_url(&second_url)
         .await
         .expect("equivalent encoded named pool should connect");
 
