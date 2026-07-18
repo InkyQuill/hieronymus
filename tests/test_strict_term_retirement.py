@@ -20,6 +20,7 @@ from hieronymus.legacy_terms import (
     verify_legacy_terms_backup,
     write_legacy_terms_backup,
 )
+from hieronymus.memory_migration import convert_strict_terms
 
 NOW = "2026-07-19T12:00:00+00:00"
 
@@ -465,7 +466,7 @@ def test_directory_fsync_io_error_prevents_database_mutation(
 
     with (
         patch(
-            "hieronymus.legacy_terms._fsync_directory",
+            "hieronymus.legacy_terms._fsync_directory_descriptor",
             side_effect=OSError(errno.EIO, "durability failure"),
         ),
         pytest.raises(OSError, match="durability failure"),
@@ -488,6 +489,12 @@ def test_rerun_reconciles_malformed_or_stale_inactive_audit_snapshot(
         "update audit_log set before_json = ? where action = 'strict_term_retirement'",
         (stale_json,),
     )
+    historical = conn.execute(
+        """
+        select id, before_json, created_at from audit_log
+        where action = 'strict_term_retirement'
+        """
+    ).fetchone()
     conn.execute("update strict_terms set notes = 'Changed inactive note' where id = ?", (term_id,))
     conn.execute("insert into strict_term_tags(term_id, tag) values (?, 'history')", (term_id,))
     _alias(conn, term_id, text="Former", kind="forbidden_variant", language="en")
@@ -497,10 +504,12 @@ def test_rerun_reconciles_malformed_or_stale_inactive_audit_snapshot(
 
     assert result.coverage.complete
     rows = conn.execute(
-        "select before_json from audit_log where action = 'strict_term_retirement'"
+        "select id, before_json, created_at from audit_log "
+        "where action = 'strict_term_retirement' order by id"
     ).fetchall()
-    assert len(rows) == 1
-    snapshot = json.loads(rows[0]["before_json"])
+    assert len(rows) == 2
+    assert tuple(rows[0]) == tuple(historical)
+    snapshot = json.loads(rows[1]["before_json"])
     assert snapshot["term"]["notes"] == "Changed inactive note"
     assert snapshot["tags"] == [{"tag": "history", "term_id": term_id}]
     assert snapshot["aliases"][0]["text"] == "Former"
@@ -603,4 +612,324 @@ def test_incomplete_audit_shape_blocks_with_inactive_term_id_before_active_mutat
         prepare_strict_term_retirement(conn, backup_dir)
 
     assert active_id != inactive_id
+    assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
+
+
+def test_unowned_ledger_targets_are_preserved_and_repointed_to_owned_replacements(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, backup_dir = legacy_database
+    term_id = _term(conn, source="旧名", rendering="Old")
+    conn.execute("insert into strict_term_tags(term_id, tag) values (?, 'legacy')", (term_id,))
+    conn.commit()
+    convert_strict_terms(conn)
+    conn.commit()
+    conn.execute("delete from strict_term_retirement_relationship_ownership")
+    conn.execute("delete from strict_term_retirement_ownership")
+    conn.commit()
+    old_targets = {
+        (row["source_id"], row["target_table"]): int(row["target_id"])
+        for row in conn.execute(
+            """
+            select source_id, target_table, target_id from memory_graph_migration_ledger
+            where source_table = 'strict_terms'
+            """
+        )
+    }
+    old_concept = old_targets[(str(term_id), "concepts")]
+    old_crystal = old_targets[(str(term_id), "crystals")]
+    old_source = old_targets[(f"{term_id}:source", "concept_facets")]
+    conn.execute(
+        "update concepts set description = 'user-owned', status = 'archived', "
+        "confidence = 0.99 where id = ?",
+        (old_concept,),
+    )
+    conn.execute(
+        "update concept_facets set value = 'user facet', language = 'zz' where id = ?",
+        (old_source,),
+    )
+    user_concept = conn.execute(
+        """
+        insert into concepts(canonical_name, description, scope_type, scope_key, status,
+          confidence, created_at, updated_at)
+        values ('User', 'User link target', 'series', 'series:book', 'established', 1, ?, ?)
+        """,
+        (NOW, NOW),
+    ).lastrowid
+    conn.execute(
+        """
+        insert into crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at)
+        values (?, ?, 'mentions', 1, ?)
+        """,
+        (old_crystal, user_concept, NOW),
+    )
+    conn.execute(
+        "update strict_terms set source_text = '新名', canonical_translation = 'New' where id = ?",
+        (term_id,),
+    )
+    conn.commit()
+
+    result = prepare_strict_term_retirement(conn, backup_dir)
+
+    assert result.coverage.complete
+    new_targets = {
+        (row["source_id"], row["target_table"]): int(row["target_id"])
+        for row in conn.execute(
+            """
+            select source_id, target_table, target_id from memory_graph_migration_ledger
+            where source_table = 'strict_terms'
+            """
+        )
+    }
+    assert new_targets[(str(term_id), "concepts")] != old_concept
+    assert new_targets[(str(term_id), "crystals")] != old_crystal
+    assert tuple(
+        conn.execute(
+            "select description, status, confidence from concepts where id = ?", (old_concept,)
+        ).fetchone()
+    ) == ("user-owned", "archived", 0.99)
+    assert tuple(
+        conn.execute(
+            "select value, language from concept_facets where id = ?", (old_source,)
+        ).fetchone()
+    ) == ("user facet", "zz")
+    assert conn.execute(
+        """
+        select 1 from crystal_concepts
+        where crystal_id = ? and concept_id = ? and link_type = 'mentions'
+        """,
+        (old_crystal, user_concept),
+    ).fetchone()
+    owned = {
+        (row["object_type"], row["object_key"])
+        for row in conn.execute(
+            "select object_type, object_key from strict_term_retirement_ownership"
+        )
+    }
+    assert ("concepts", str(new_targets[(str(term_id), "concepts")])) in owned
+    assert ("crystals", str(new_targets[(str(term_id), "crystals")])) in owned
+
+
+def test_rerun_preserves_user_relationships_on_owned_projection(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, backup_dir = legacy_database
+    term_id = _term(conn, source="用語", rendering="Term")
+    conn.execute("insert into strict_term_tags(term_id, tag) values (?, 'old')", (term_id,))
+    conn.commit()
+    prepare_strict_term_retirement(conn, backup_dir)
+    targets = {
+        (row["source_id"], row["target_table"]): int(row["target_id"])
+        for row in conn.execute(
+            "select source_id, target_table, target_id from memory_graph_migration_ledger"
+        )
+    }
+    concept_id = targets[(str(term_id), "concepts")]
+    crystal_id = targets[(str(term_id), "crystals")]
+    source_facet_id = targets[(f"{term_id}:source", "concept_facets")]
+    user_concept = conn.execute(
+        """
+        insert into concepts(canonical_name, description, scope_type, scope_key, status,
+          confidence, created_at, updated_at)
+        values ('User', '', 'series', 'series:book', 'established', 1, ?, ?)
+        """,
+        (NOW, NOW),
+    ).lastrowid
+    conn.execute(
+        "insert into concept_semantic_tags values (?, 'user-tag', 1, ?)", (concept_id, NOW)
+    )
+    conn.execute(
+        "insert into crystal_semantic_tags values (?, 'user-crystal-tag', 1, ?)",
+        (crystal_id, NOW),
+    )
+    conn.execute(
+        "insert into concept_facet_language_tags values (?, 'user-lang')", (source_facet_id,)
+    )
+    conn.execute("insert into crystal_language_tags values (?, 'user-crystal-lang')", (crystal_id,))
+    conn.execute(
+        "insert into crystal_concepts values (?, ?, 'mentions', 1, ?)",
+        (crystal_id, user_concept, NOW),
+    )
+    conn.execute("delete from strict_term_tags where term_id = ?", (term_id,))
+    conn.execute("insert into strict_term_tags values (?, 'new')", (term_id,))
+    conn.commit()
+
+    result = prepare_strict_term_retirement(conn, backup_dir)
+
+    assert result.coverage.complete
+    assert {
+        row["tag"]
+        for row in conn.execute(
+            "select tag from concept_semantic_tags where concept_id = ?", (concept_id,)
+        )
+    } == {"new", "user-tag"}
+    assert {
+        row["tag"]
+        for row in conn.execute(
+            "select tag from crystal_semantic_tags where crystal_id = ?", (crystal_id,)
+        )
+    } == {"new", "user-crystal-tag"}
+    assert {
+        row["language_tag"]
+        for row in conn.execute(
+            "select language_tag from concept_facet_language_tags where facet_id = ?",
+            (source_facet_id,),
+        )
+    } == {"ja", "user-lang"}
+    assert {
+        row["language_tag"]
+        for row in conn.execute(
+            "select language_tag from crystal_language_tags where crystal_id = ?", (crystal_id,)
+        )
+    } == {"ja", "en", "user-crystal-lang"}
+    assert conn.execute(
+        "select 1 from crystal_concepts where crystal_id = ? and concept_id = ? "
+        "and link_type = 'mentions'",
+        (crystal_id, user_concept),
+    ).fetchone()
+    owned_links = {
+        row["relationship_key"]
+        for row in conn.execute(
+            """
+            select relationship_key
+            from strict_term_retirement_relationship_ownership
+            where source_table = 'strict_terms' and source_id = ?
+              and relationship_type = 'crystal_concepts'
+            """,
+            (str(term_id),),
+        )
+    }
+    assert owned_links == {json.dumps([crystal_id, concept_id, "defines"], separators=(",", ":"))}
+
+
+def test_backup_filename_identity_is_authenticated_and_rename_tamper_blocks(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, backup_dir = legacy_database
+    backup = write_legacy_terms_backup(conn, backup_dir, timestamp="20260719T120000Z")
+    payload = verify_legacy_terms_backup(backup.path)
+
+    assert payload["timestamp"] == "20260719T120000Z"
+    assert re.fullmatch(r"[0-9a-f]{32}", payload["backup_id"])
+    assert payload["backup_id"] in backup.path.name
+    tampered = backup.path.with_name(backup.path.name.replace(payload["backup_id"], "0" * 32))
+    backup.path.rename(tampered)
+    with pytest.raises(LegacyTermRetirementBlocked, match="filename identity"):
+        verify_legacy_terms_backup(tampered)
+
+
+def test_descriptor_pinned_backup_fails_safely_on_directory_symlink_swap(
+    legacy_database: tuple[sqlite3.Connection, Path], tmp_path: Path
+) -> None:
+    conn, backup_dir = legacy_database
+    backup_dir.mkdir()
+    moved = tmp_path / "moved-original"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_open = __import__("os").open
+    swapped = False
+
+    def swapping_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if not swapped and Path(path) == backup_dir.resolve(strict=False):
+            swapped = True
+            backup_dir.rename(moved)
+            backup_dir.symlink_to(outside, target_is_directory=True)
+        return descriptor
+
+    with (
+        patch("hieronymus.legacy_terms.os.open", side_effect=swapping_open),
+        pytest.raises(LegacyTermRetirementBlocked, match="changed|symlink"),
+    ):
+        write_legacy_terms_backup(conn, backup_dir)
+
+    assert not list(outside.iterdir())
+
+
+@pytest.mark.parametrize("table", ["strict_term_tags", "strict_term_aliases"])
+def test_malformed_relationship_schema_blocks_with_all_affected_term_ids(
+    legacy_database: tuple[sqlite3.Connection, Path], table: str
+) -> None:
+    conn, backup_dir = legacy_database
+    first_id = _term(conn, source="一", rendering="One")
+    second_id = _term(conn, source="二", rendering="Two")
+    conn.execute(f"drop table {table}")
+    if table == "strict_term_tags":
+        conn.execute("create table strict_term_tags(term_id integer)")
+    else:
+        conn.execute(
+            "create table strict_term_aliases(term_id integer, language text, text text, kind text)"
+        )
+    conn.commit()
+
+    with pytest.raises(
+        LegacyTermRetirementBlocked,
+        match=rf"terms {first_id}, {second_id}.*{table}.*incomplete",
+    ):
+        prepare_strict_term_retirement(conn, backup_dir)
+
+
+def test_ledger_without_required_uniqueness_blocks_with_all_active_term_ids(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, backup_dir = legacy_database
+    first_id = _term(conn, source="一", rendering="One")
+    second_id = _term(conn, source="二", rendering="Two")
+    conn.execute("drop table memory_graph_migration_ledger")
+    conn.execute(
+        """
+        create table memory_graph_migration_ledger(
+          source_table text, source_id text, target_table text, target_id integer
+        )
+        """
+    )
+    conn.commit()
+
+    with pytest.raises(
+        LegacyTermRetirementBlocked,
+        match=rf"terms {first_id}, {second_id}.*ledger.*unique",
+    ):
+        prepare_strict_term_retirement(conn, backup_dir)
+
+
+def test_alias_ids_must_be_stable_and_unique_for_every_active_term(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, backup_dir = legacy_database
+    first_id = _term(conn, source="一", rendering="One")
+    second_id = _term(conn, source="二", rendering="Two")
+    conn.execute("drop table strict_term_aliases")
+    conn.execute(
+        """
+        create table strict_term_aliases(
+          id integer, term_id integer, language text, text text, kind text,
+          case_sensitive integer
+        )
+        """
+    )
+    conn.commit()
+
+    with pytest.raises(
+        LegacyTermRetirementBlocked,
+        match=rf"terms {first_id}, {second_id}.*stable unique alias IDs",
+    ):
+        prepare_strict_term_retirement(conn, backup_dir)
+
+
+def test_malformed_ownership_schema_blocks_before_graph_mutation(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, backup_dir = legacy_database
+    first_id = _term(conn, source="一", rendering="One")
+    second_id = _term(conn, source="二", rendering="Two")
+    conn.execute("create table strict_term_retirement_ownership(source_id text)")
+    conn.commit()
+
+    with pytest.raises(
+        LegacyTermRetirementBlocked,
+        match=rf"terms {first_id}, {second_id}.*ownership.*incomplete",
+    ):
+        prepare_strict_term_retirement(conn, backup_dir)
+
     assert conn.execute("select count(*) from concepts").fetchone()[0] == 0

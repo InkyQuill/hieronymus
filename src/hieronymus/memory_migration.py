@@ -72,6 +72,21 @@ _REQUIRED_GENERATED_GRAPH_COLUMNS = {
     },
 }
 
+_RETIREMENT_OWNERSHIP_COLUMNS = {
+    "source_table",
+    "source_id",
+    "object_type",
+    "object_key",
+    "created_at",
+}
+_RETIREMENT_RELATIONSHIP_OWNERSHIP_COLUMNS = {
+    "source_table",
+    "source_id",
+    "relationship_type",
+    "relationship_key",
+    "created_at",
+}
+
 
 class Database(Protocol):
     database_path: Path
@@ -476,7 +491,10 @@ class MemoryGraphMigrator:
             ):
                 skipped["generated_graph.incomplete_schema"] += 1
             return
-        report = convert_strict_terms(conn, blocking=False)
+        try:
+            report = convert_strict_terms(conn, blocking=False, require_retirement_schema=False)
+        except StrictTermConversionBlocked:
+            return
         created.update(report.created)
         if report.blocked_term_ids:
             skipped["strict_terms.unsupported_alias"] += len(report.blocked_term_ids)
@@ -611,7 +629,14 @@ class MemoryGraphMigrator:
                 created=created,
                 exact_projection=True,
             )
-            self._ensure_crystal_concept_link(conn, crystal_id, concept_id, confidence=0.95)
+            self._ensure_owned_crystal_concept_link(
+                conn,
+                source_table="strict_terms",
+                source_id=str(term["id"]),
+                crystal_id=crystal_id,
+                concept_id=concept_id,
+                confidence=0.95,
+            )
             for alias_id, _, _, kind in self._strict_term_alias_rows(conn, int(term["id"])):
                 if kind == "forbidden_variant":
                     self._record_ledger(
@@ -755,7 +780,11 @@ class MemoryGraphMigrator:
         created: Counter[str],
         exact_projection: bool = False,
     ) -> int:
-        existing = self._ledger_target(conn, source_table, source_id, "concepts")
+        existing = (
+            _owned_object_id(conn, source_table, source_id, "concepts")
+            if exact_projection
+            else self._ledger_target(conn, source_table, source_id, "concepts")
+        )
         if existing is not None and _row_exists(conn, "concepts", existing):
             concept_id = existing
             self._reconcile_concept(
@@ -769,7 +798,11 @@ class MemoryGraphMigrator:
                 force_projection=exact_projection,
             )
         else:
-            natural = self._matching_concept(conn, canonical_name, scope_key, semantic_tags)
+            natural = (
+                None
+                if exact_projection
+                else self._matching_concept(conn, canonical_name, scope_key, semantic_tags)
+            )
             if natural is None:
                 now = _now(conn)
                 cursor = conn.execute(
@@ -805,24 +838,34 @@ class MemoryGraphMigrator:
             self._record_ledger(conn, source_table, source_id, "concepts", concept_id)
 
         if exact_projection:
-            _delete_unwanted_values(
+            _record_owned_object(conn, source_table, source_id, "concepts", concept_id)
+            self._record_ledger(conn, source_table, source_id, "concepts", concept_id)
+
+        if exact_projection:
+            _sync_owned_values(
                 conn,
+                source_table=source_table,
+                source_id=source_id,
+                relationship_type="concept_semantic_tags",
                 table="concept_semantic_tags",
                 owner_column="concept_id",
                 owner_id=concept_id,
                 value_column="tag",
                 wanted=semantic_tags,
+                confidence_column="confidence",
+                confidence=confidence,
             )
-        for tag in semantic_tags:
-            conn.execute(
-                """
-                insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
-                values (?, ?, ?, ?)
-                on conflict(concept_id, tag) do update set
-                  confidence = max(concept_semantic_tags.confidence, excluded.confidence)
-                """,
-                (concept_id, tag, confidence, _now(conn)),
-            )
+        else:
+            for tag in semantic_tags:
+                conn.execute(
+                    """
+                    insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
+                    values (?, ?, ?, ?)
+                    on conflict(concept_id, tag) do update set
+                      confidence = max(concept_semantic_tags.confidence, excluded.confidence)
+                    """,
+                    (concept_id, tag, confidence, _now(conn)),
+                )
         return concept_id
 
     def _reconcile_concept(
@@ -885,7 +928,11 @@ class MemoryGraphMigrator:
         created: Counter[str],
         exact_projection: bool = False,
     ) -> int:
-        existing = self._ledger_target(conn, source_table, source_id, "concept_facets")
+        existing = (
+            _owned_object_id(conn, source_table, source_id, "concept_facets")
+            if exact_projection
+            else self._ledger_target(conn, source_table, source_id, "concept_facets")
+        )
         if (
             exact_projection
             and existing is not None
@@ -926,16 +973,7 @@ class MemoryGraphMigrator:
             )
         else:
             if exact_projection:
-                row = conn.execute(
-                    """
-                    select id, confidence, is_canonical
-                    from concept_facets
-                    where concept_id = ? and value = ? and facet_type = ? and language = ?
-                      and is_canonical = ? and superseded_at is null
-                    order by id limit 1
-                    """,
-                    (concept_id, value, facet_type, language, int(is_canonical)),
-                ).fetchone()
+                row = None
             else:
                 row = conn.execute(
                     """
@@ -993,15 +1031,28 @@ class MemoryGraphMigrator:
             self._record_ledger(conn, source_table, source_id, "concept_facets", facet_id)
 
         if exact_projection:
-            conn.execute("delete from concept_facet_language_tags where facet_id = ?", (facet_id,))
-        for language_tag in _clean_tags((language,), lowercase=True):
-            conn.execute(
-                """
-                insert or ignore into concept_facet_language_tags(facet_id, language_tag)
-                values (?, ?)
-                """,
-                (facet_id, language_tag),
+            _record_owned_object(conn, source_table, source_id, "concept_facets", facet_id)
+            self._record_ledger(conn, source_table, source_id, "concept_facets", facet_id)
+            _sync_owned_values(
+                conn,
+                source_table=source_table,
+                source_id=source_id,
+                relationship_type="concept_facet_language_tags",
+                table="concept_facet_language_tags",
+                owner_column="facet_id",
+                owner_id=facet_id,
+                value_column="language_tag",
+                wanted=_clean_tags((language,), lowercase=True),
             )
+        else:
+            for language_tag in _clean_tags((language,), lowercase=True):
+                conn.execute(
+                    """
+                    insert or ignore into concept_facet_language_tags(facet_id, language_tag)
+                    values (?, ?)
+                    """,
+                    (facet_id, language_tag),
+                )
         return facet_id
 
     def _reconcile_facet(
@@ -1082,7 +1133,11 @@ class MemoryGraphMigrator:
         created: Counter[str],
         exact_projection: bool = False,
     ) -> int:
-        existing = self._ledger_target(conn, source_table, source_id, "crystals")
+        existing = (
+            _owned_object_id(conn, source_table, source_id, "crystals")
+            if exact_projection
+            else self._ledger_target(conn, source_table, source_id, "crystals")
+        )
         if existing is not None and _row_exists(conn, "crystals", existing):
             crystal_id = existing
             self._reconcile_rule_crystal(
@@ -1100,8 +1155,11 @@ class MemoryGraphMigrator:
             )
         else:
             scope_key = f"series:{series_slug}"
-            row = conn.execute(
-                """
+            row = (
+                None
+                if exact_projection
+                else conn.execute(
+                    """
                 select id
                 from crystals
                 where crystal_type = 'rule'
@@ -1115,8 +1173,9 @@ class MemoryGraphMigrator:
                 order by id
                 limit 1
                 """,
-                (text, scope_key, series_slug, source_language, target_language, status),
-            ).fetchone()
+                    (text, scope_key, series_slug, source_language, target_language, status),
+                ).fetchone()
+            )
             if row is None:
                 now = _now(conn)
                 cursor = conn.execute(
@@ -1179,33 +1238,51 @@ class MemoryGraphMigrator:
             self._record_ledger(conn, source_table, source_id, "crystals", crystal_id)
 
         if exact_projection:
-            conn.execute("delete from crystal_language_tags where crystal_id = ?", (crystal_id,))
-            _delete_unwanted_values(
+            _record_owned_object(conn, source_table, source_id, "crystals", crystal_id)
+            self._record_ledger(conn, source_table, source_id, "crystals", crystal_id)
+            _sync_owned_values(
                 conn,
+                source_table=source_table,
+                source_id=source_id,
+                relationship_type="crystal_language_tags",
+                table="crystal_language_tags",
+                owner_column="crystal_id",
+                owner_id=crystal_id,
+                value_column="language_tag",
+                wanted=_clean_tags((source_language, target_language), lowercase=True),
+            )
+            _sync_owned_values(
+                conn,
+                source_table=source_table,
+                source_id=source_id,
+                relationship_type="crystal_semantic_tags",
                 table="crystal_semantic_tags",
                 owner_column="crystal_id",
                 owner_id=crystal_id,
                 value_column="tag",
                 wanted=semantic_tags,
+                confidence_column="confidence",
+                confidence=confidence,
             )
-        for language_tag in _clean_tags((source_language, target_language), lowercase=True):
-            conn.execute(
-                """
-                insert or ignore into crystal_language_tags(crystal_id, language_tag)
-                values (?, ?)
-                """,
-                (crystal_id, language_tag),
-            )
-        for tag in semantic_tags:
-            conn.execute(
-                """
-                insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
-                values (?, ?, ?, ?)
-                on conflict(crystal_id, tag) do update set
-                  confidence = max(crystal_semantic_tags.confidence, excluded.confidence)
-                """,
-                (crystal_id, tag, confidence, _now(conn)),
-            )
+        else:
+            for language_tag in _clean_tags((source_language, target_language), lowercase=True):
+                conn.execute(
+                    """
+                    insert or ignore into crystal_language_tags(crystal_id, language_tag)
+                    values (?, ?)
+                    """,
+                    (crystal_id, language_tag),
+                )
+            for tag in semantic_tags:
+                conn.execute(
+                    """
+                    insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+                    values (?, ?, ?, ?)
+                    on conflict(crystal_id, tag) do update set
+                      confidence = max(crystal_semantic_tags.confidence, excluded.confidence)
+                    """,
+                    (crystal_id, tag, confidence, _now(conn)),
+                )
         return crystal_id
 
     def _reconcile_rule_crystal(
@@ -1280,6 +1357,25 @@ class MemoryGraphMigrator:
               confidence = max(crystal_concepts.confidence, excluded.confidence)
             """,
             (crystal_id, concept_id, confidence, _now(conn)),
+        )
+
+    def _ensure_owned_crystal_concept_link(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_table: str,
+        source_id: str,
+        crystal_id: int,
+        concept_id: int,
+        confidence: float,
+    ) -> None:
+        _sync_owned_crystal_concept_link(
+            conn,
+            source_table=source_table,
+            source_id=source_id,
+            crystal_id=crystal_id,
+            concept_id=concept_id,
+            confidence=confidence,
         )
 
     def _strict_term_tags(self, conn: sqlite3.Connection, term_id: int) -> tuple[str, ...]:
@@ -1402,16 +1498,13 @@ class MemoryGraphMigrator:
             )
             if row["target_table"] != "concept_facets":
                 continue
-            still_referenced = conn.execute(
-                """
-                select 1 from memory_graph_migration_ledger
-                where target_table = 'concept_facets' and target_id = ?
-                limit 1
-                """,
-                (row["target_id"],),
-            ).fetchone()
-            if still_referenced is None:
-                conn.execute("delete from concept_facets where id = ?", (row["target_id"],))
+            owned_id = _owned_object_id(
+                conn, "strict_terms", str(row["source_id"]), "concept_facets"
+            )
+            if owned_id == int(row["target_id"]):
+                _delete_owned_object(
+                    conn, "strict_terms", str(row["source_id"]), "concept_facets", owned_id
+                )
 
     def _matching_concept(
         self,
@@ -1816,6 +1909,7 @@ def convert_strict_terms(
     conn: sqlite3.Connection,
     *,
     blocking: bool = True,
+    require_retirement_schema: bool = True,
     failure_hook: Callable[[int], None] | None = None,
 ) -> StrictTermConversionReport:
     """Convert approved legacy terms using the caller's connection and transaction.
@@ -1847,6 +1941,10 @@ def convert_strict_terms(
         raise StrictTermConversionBlocked(
             f"terms {affected}: generated rule graph or ledger shape is incomplete"
         )
+    if require_retirement_schema:
+        _validate_strict_relationship_schema(conn, active_ids, affected)
+        _validate_ledger_uniqueness(conn, affected)
+        _validate_retirement_ownership_schema(conn, affected)
 
     active_rows = conn.execute(
         "select * from strict_terms where status in ('approved', 'active') order by id"
@@ -1887,6 +1985,7 @@ def convert_strict_terms(
         details = "; ".join(f"term {term_id}: {reason}" for term_id, reason in blocked)
         raise StrictTermConversionBlocked(details)
 
+    _ensure_retirement_ownership_schema(conn)
     created: Counter[str] = Counter()
     skipped: Counter[str] = Counter()
     writer._convert_strict_terms_unchecked(
@@ -1968,6 +2067,366 @@ def _generated_graph_schema_is_complete(conn: sqlite3.Connection) -> bool:
     )
 
 
+def _validate_strict_relationship_schema(
+    conn: sqlite3.Connection, active_ids: tuple[int, ...], affected: str
+) -> None:
+    del active_ids
+    required = {
+        "strict_term_tags": {"term_id", "tag"},
+        "strict_term_aliases": {"id", "term_id", "language", "text", "kind"},
+    }
+    for table, columns in required.items():
+        if not _has_table(conn, table) or not _has_columns(conn, table, columns):
+            raise StrictTermConversionBlocked(
+                f"terms {affected}: {table} relationship shape is incomplete"
+            )
+    if not _has_unique_columns(conn, "strict_term_aliases", ("id",)):
+        raise StrictTermConversionBlocked(
+            f"terms {affected}: strict_term_aliases requires stable unique alias IDs"
+        )
+    alias_id = next(
+        row for row in conn.execute("pragma table_info(strict_term_aliases)") if row["name"] == "id"
+    )
+    if not int(alias_id["pk"]) and not int(alias_id["notnull"]):
+        raise StrictTermConversionBlocked(
+            f"terms {affected}: strict_term_aliases requires non-null stable alias IDs"
+        )
+
+
+def _validate_ledger_uniqueness(conn: sqlite3.Connection, affected: str) -> None:
+    if not _has_unique_columns(
+        conn,
+        "memory_graph_migration_ledger",
+        ("source_table", "source_id", "target_table"),
+    ):
+        raise StrictTermConversionBlocked(
+            f"terms {affected}: memory graph ledger requires a unique source relationship"
+        )
+
+
+def _validate_retirement_ownership_schema(conn: sqlite3.Connection, affected: str) -> None:
+    expected = {
+        "strict_term_retirement_ownership": _RETIREMENT_OWNERSHIP_COLUMNS,
+        "strict_term_retirement_relationship_ownership": (
+            _RETIREMENT_RELATIONSHIP_OWNERSHIP_COLUMNS
+        ),
+    }
+    for table, columns in expected.items():
+        if _has_table(conn, table) and not _has_columns(conn, table, set(columns)):
+            raise StrictTermConversionBlocked(
+                f"terms {affected}: {table} provenance shape is incomplete"
+            )
+    if _has_table(conn, "strict_term_retirement_ownership") and (
+        not _has_unique_columns(
+            conn,
+            "strict_term_retirement_ownership",
+            ("source_table", "source_id", "object_type"),
+        )
+        or not _has_unique_columns(
+            conn,
+            "strict_term_retirement_ownership",
+            ("object_type", "object_key"),
+        )
+    ):
+        raise StrictTermConversionBlocked(
+            f"terms {affected}: strict term retirement object ownership must be unique"
+        )
+    if _has_table(conn, "strict_term_retirement_relationship_ownership") and not (
+        _has_unique_columns(
+            conn,
+            "strict_term_retirement_relationship_ownership",
+            ("source_table", "source_id", "relationship_type", "relationship_key"),
+        )
+    ):
+        raise StrictTermConversionBlocked(
+            f"terms {affected}: strict term retirement relationship ownership must be unique"
+        )
+
+
+def _has_unique_columns(conn: sqlite3.Connection, table: str, columns: tuple[str, ...]) -> bool:
+    if not _has_table(conn, table):
+        return False
+    primary = tuple(
+        row["name"]
+        for row in sorted(
+            conn.execute(f"pragma table_info({table})"), key=lambda item: int(item["pk"])
+        )
+        if int(row["pk"]) > 0
+    )
+    if primary == columns:
+        return True
+    for index in conn.execute(f"pragma index_list({table})"):
+        if not int(index["unique"]):
+            continue
+        indexed = tuple(row["name"] for row in conn.execute(f"pragma index_info({index['name']})"))
+        if indexed == columns:
+            return True
+    return False
+
+
+def _ensure_retirement_ownership_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        create table if not exists strict_term_retirement_ownership(
+          source_table text not null,
+          source_id text not null,
+          object_type text not null,
+          object_key text not null,
+          created_at text not null,
+          primary key(source_table, source_id, object_type),
+          unique(object_type, object_key)
+        )
+        """
+    )
+    conn.execute(
+        """
+        create table if not exists strict_term_retirement_relationship_ownership(
+          source_table text not null,
+          source_id text not null,
+          relationship_type text not null,
+          relationship_key text not null,
+          created_at text not null,
+          primary key(source_table, source_id, relationship_type, relationship_key)
+        )
+        """
+    )
+
+
+def _owned_object_id(
+    conn: sqlite3.Connection, source_table: str, source_id: str, object_type: str
+) -> int | None:
+    if not _has_table(conn, "strict_term_retirement_ownership"):
+        return None
+    row = conn.execute(
+        """
+        select object_key from strict_term_retirement_ownership
+        where source_table = ? and source_id = ? and object_type = ?
+        """,
+        (source_table, source_id, object_type),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        object_id = int(row["object_key"])
+    except (TypeError, ValueError):
+        return None
+    if not _row_exists(conn, object_type, object_id):
+        conn.execute(
+            """
+            delete from strict_term_retirement_ownership
+            where source_table = ? and source_id = ? and object_type = ?
+            """,
+            (source_table, source_id, object_type),
+        )
+        return None
+    return object_id
+
+
+def _record_owned_object(
+    conn: sqlite3.Connection,
+    source_table: str,
+    source_id: str,
+    object_type: str,
+    object_id: int,
+) -> None:
+    conn.execute(
+        """
+        insert into strict_term_retirement_ownership(
+          source_table, source_id, object_type, object_key, created_at
+        ) values (?, ?, ?, ?, ?)
+        on conflict(source_table, source_id, object_type) do update set
+          object_key = excluded.object_key
+        """,
+        (source_table, source_id, object_type, str(object_id), _now(conn)),
+    )
+
+
+def _relationship_key(owner_id: int, value: str) -> str:
+    return json.dumps([owner_id, value], ensure_ascii=False, separators=(",", ":"))
+
+
+def _sync_owned_values(
+    conn: sqlite3.Connection,
+    *,
+    source_table: str,
+    source_id: str,
+    relationship_type: str,
+    table: str,
+    owner_column: str,
+    owner_id: int,
+    value_column: str,
+    wanted: Iterable[str],
+    confidence_column: str | None = None,
+    confidence: float = 0.0,
+) -> None:
+    wanted_values = tuple(dict.fromkeys(str(value) for value in wanted))
+    wanted_keys = {_relationship_key(owner_id, value): value for value in wanted_values}
+    owned_rows = conn.execute(
+        """
+        select relationship_key from strict_term_retirement_relationship_ownership
+        where source_table = ? and source_id = ? and relationship_type = ?
+        """,
+        (source_table, source_id, relationship_type),
+    ).fetchall()
+    owned_keys = {str(row["relationship_key"]) for row in owned_rows}
+    for key in owned_keys - wanted_keys.keys():
+        try:
+            old_owner, old_value = json.loads(key)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            old_owner, old_value = None, None
+        if isinstance(old_owner, int) and isinstance(old_value, str):
+            conn.execute(
+                f"delete from {table} where {owner_column} = ? and {value_column} = ?",
+                (old_owner, old_value),
+            )
+        conn.execute(
+            """
+            delete from strict_term_retirement_relationship_ownership
+            where source_table = ? and source_id = ? and relationship_type = ?
+              and relationship_key = ?
+            """,
+            (source_table, source_id, relationship_type, key),
+        )
+    for key, value in wanted_keys.items():
+        present = conn.execute(
+            f"select 1 from {table} where {owner_column} = ? and {value_column} = ?",
+            (owner_id, value),
+        ).fetchone()
+        is_owned = key in owned_keys
+        if present is None:
+            if confidence_column is None:
+                conn.execute(
+                    f"insert into {table}({owner_column}, {value_column}) values (?, ?)",
+                    (owner_id, value),
+                )
+            else:
+                conn.execute(
+                    f"insert into {table}({owner_column}, {value_column}, "
+                    f"{confidence_column}, created_at) values (?, ?, ?, ?)",
+                    (owner_id, value, confidence, _now(conn)),
+                )
+            is_owned = True
+        elif is_owned and confidence_column is not None:
+            conn.execute(
+                f"update {table} set {confidence_column} = max({confidence_column}, ?) "
+                f"where {owner_column} = ? and {value_column} = ?",
+                (confidence, owner_id, value),
+            )
+        if is_owned:
+            conn.execute(
+                """
+                insert or ignore into strict_term_retirement_relationship_ownership(
+                  source_table, source_id, relationship_type, relationship_key, created_at
+                ) values (?, ?, ?, ?, ?)
+                """,
+                (source_table, source_id, relationship_type, key, _now(conn)),
+            )
+
+
+def _sync_owned_crystal_concept_link(
+    conn: sqlite3.Connection,
+    *,
+    source_table: str,
+    source_id: str,
+    crystal_id: int,
+    concept_id: int,
+    confidence: float,
+) -> None:
+    relationship_type = "crystal_concepts"
+    expected_key = json.dumps([crystal_id, concept_id, "defines"], separators=(",", ":"))
+    rows = conn.execute(
+        """
+        select relationship_key from strict_term_retirement_relationship_ownership
+        where source_table = ? and source_id = ? and relationship_type = ?
+        """,
+        (source_table, source_id, relationship_type),
+    ).fetchall()
+    owned_keys = {str(row["relationship_key"]) for row in rows}
+    for key in owned_keys - {expected_key}:
+        try:
+            old_crystal, old_concept, old_type = json.loads(key)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            old_crystal, old_concept, old_type = None, None, None
+        if (
+            isinstance(old_crystal, int)
+            and isinstance(old_concept, int)
+            and isinstance(old_type, str)
+        ):
+            conn.execute(
+                """
+                delete from crystal_concepts
+                where crystal_id = ? and concept_id = ? and link_type = ?
+                """,
+                (old_crystal, old_concept, old_type),
+            )
+        conn.execute(
+            """
+            delete from strict_term_retirement_relationship_ownership
+            where source_table = ? and source_id = ? and relationship_type = ?
+              and relationship_key = ?
+            """,
+            (source_table, source_id, relationship_type, key),
+        )
+    present = conn.execute(
+        """
+        select 1 from crystal_concepts
+        where crystal_id = ? and concept_id = ? and link_type = 'defines'
+        """,
+        (crystal_id, concept_id),
+    ).fetchone()
+    is_owned = expected_key in owned_keys
+    if present is None:
+        conn.execute(
+            """
+            insert into crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at)
+            values (?, ?, 'defines', ?, ?)
+            """,
+            (crystal_id, concept_id, confidence, _now(conn)),
+        )
+        is_owned = True
+    elif is_owned:
+        conn.execute(
+            """
+            update crystal_concepts set confidence = max(confidence, ?)
+            where crystal_id = ? and concept_id = ? and link_type = 'defines'
+            """,
+            (confidence, crystal_id, concept_id),
+        )
+    if is_owned:
+        conn.execute(
+            """
+            insert or ignore into strict_term_retirement_relationship_ownership(
+              source_table, source_id, relationship_type, relationship_key, created_at
+            ) values (?, ?, ?, ?, ?)
+            """,
+            (source_table, source_id, relationship_type, expected_key, _now(conn)),
+        )
+
+
+def _delete_owned_object(
+    conn: sqlite3.Connection,
+    source_table: str,
+    source_id: str,
+    object_type: str,
+    object_id: int,
+) -> None:
+    conn.execute(
+        """
+        delete from strict_term_retirement_ownership
+        where source_table = ? and source_id = ? and object_type = ? and object_key = ?
+        """,
+        (source_table, source_id, object_type, str(object_id)),
+    )
+    conn.execute(f"delete from {object_type} where id = ?", (object_id,))
+    conn.execute(
+        """
+        delete from strict_term_retirement_relationship_ownership
+        where source_table = ? and source_id = ?
+        """,
+        (source_table, source_id),
+    )
+
+
 def _row_exists(conn: sqlite3.Connection, table: str, row_id: int) -> bool:
     row = conn.execute(f"select 1 from {table} where id = ?", (row_id,)).fetchone()
     return row is not None
@@ -1980,26 +2439,6 @@ def _concept_semantic_tags(conn: sqlite3.Connection, concept_id: int) -> tuple[s
             "select tag from concept_semantic_tags where concept_id = ? order by tag",
             (concept_id,),
         )
-    )
-
-
-def _delete_unwanted_values(
-    conn: sqlite3.Connection,
-    *,
-    table: str,
-    owner_column: str,
-    owner_id: int,
-    value_column: str,
-    wanted: Iterable[str],
-) -> None:
-    wanted_values = tuple(wanted)
-    if not wanted_values:
-        conn.execute(f"delete from {table} where {owner_column} = ?", (owner_id,))
-        return
-    placeholders = ", ".join("?" for _ in wanted_values)
-    conn.execute(
-        f"delete from {table} where {owner_column} = ? and {value_column} not in ({placeholders})",
-        (owner_id, *wanted_values),
     )
 
 

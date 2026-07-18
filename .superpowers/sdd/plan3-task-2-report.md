@@ -15,7 +15,8 @@ SQL-only ordered runner, `DROP_PHASE_ENABLED` is false, and the legacy tables re
 | forbidden alias | rule text and alias-to-crystal ledger identity | mapped losslessly |
 | semantic tag | concept and crystal side tables | exact subset parity |
 | rejected/inactive term | backup and idempotent audit snapshot | preserved with relationships |
-| existing ledger/rerun | provenance reconciliation | graph/audit counts unchanged |
+| unowned ledger target | ownership boundary | preserved; ledger repointed to dedicated node |
+| owned graph rerun | provenance reconciliation | only marked nodes/relationships reconciled |
 | case-insensitive alias | unsupported shape | blocks with term ID before mutation |
 | injected post-term failure | transaction atomicity | all DB writes roll back; backup remains valid |
 | caller-active transaction | ownership ambiguity | rejected before backup or mutation |
@@ -25,8 +26,10 @@ SQL-only ordered runner, `DROP_PHASE_ENABLED` is false, and the legacy tables re
 | four concurrent same-second backups | collision safety | four unique verified files |
 | unsafe timestamp/symlink | path containment | rejected before publication |
 | directory fsync ENOTSUP/EIO | durability boundary | unsupported ignored; EIO propagated |
-| stale/malformed inactive audit | complete audit parity | reconciled in place, deduplicated |
-| incomplete graph/ledger/alias | actionable blocking | every affected term ID reported |
+| stale/malformed inactive audit | append-only history | prior event preserved; corrected event appended |
+| malformed tag/alias/ledger/provenance | actionable blocking | every affected term ID reported |
+| user tags/languages/links | shared graph safety | preserved while owned projection converges |
+| directory symlink swap / renamed backup | descriptor and identity pinning | rejected safely |
 | incomplete inactive-audit schema | pre-mutation validation | inactive term IDs reported |
 
 RED was established with `uv run pytest tests/test_strict_term_retirement.py -q`:
@@ -38,21 +41,28 @@ reconciliation, collision, path, fsync, audit, and error-message gaps. Three add
 self-review regressions then failed for alias-kind relationship replacement and blank alias
 fields. All now pass.
 
+The rereview established a third RED run: 9/30 focused tests failed on unowned target reuse,
+user-relationship deletion, audit mutation, backup identity/symlink races, relationship schema
+diagnostics, and ledger uniqueness. After ownership and descriptor-pinning remediation, the
+focused retirement suite passes 32/32.
+
 ## Backup format and durability
 
 - Filename: `strict-terms-v1-<validated UTC timestamp>-<128-bit unique ID>.json`.
 - Root identity: `hieronymus.strict-terms-backup`, version `1`.
 - Contents: every ordered row from `strict_terms`, `strict_term_tags`, and
   `strict_term_aliases`, including inactive/rejected terms and their relationships.
-- Integrity: SHA-256 over canonical compact JSON excluding the `checksum` field; the
-  published file is parsed and its checksum recomputed before conversion starts.
+- Integrity: SHA-256 over canonical compact JSON excluding the `checksum` field. The payload
+  authenticates both the timestamp and 128-bit backup ID against the filename; rename tampering
+  is rejected before conversion.
 - Publication: the timestamp accepts only `YYYYMMDDTHHMMSSZ`; resolved directory containment
   rejects symlink/path escapes; each final name has a collision-resistant UUID. A
-  same-directory exclusive temporary file is flushed and file-fsynced before `os.replace`,
-  followed by directory fsync and parse/checksum verification. Only concrete unsupported
-  directory-fsync errnos are suppressed; EIO and other durability failures propagate before
-  conversion. Tests spy on fsync/replace, run four concurrent same-timestamp writers, and
-  prove no temporary file remains.
+  pinned directory descriptor is opened with `O_DIRECTORY`/`O_NOFOLLOW`; the relative
+  same-directory temporary file uses `O_EXCL`/`O_NOFOLLOW`, is flushed and file-fsynced, and is
+  atomically replaced relative to that same descriptor. Directory fsync and descriptor-relative
+  parse/checksum verification follow. Only concrete unsupported directory-fsync errnos are
+  suppressed; EIO and other durability failures propagate before conversion. Tests cover four
+  concurrent same-timestamp writers, path rename tampering, and a directory symlink swap.
 
 ## Conversion, coverage, and parity
 
@@ -71,14 +81,16 @@ crystal, and audit counts unchanged. The injected failure occurs after the first
 written its graph; rollback leaves all graph and ledger counts at zero while the verified
 two-term backup remains readable.
 
-Rerun reconciliation is now an exact strict-term provenance projection: source/rendering and
-alias facets reconcile value, type, language, canonical flag, and minimum confidence; rule
-crystals reconcile active status and canonical text while preserving stronger confidence and
-strength; archived ledger concepts are restored to `established` while preserving stronger
-confidence. Stale alias relationships/facets and obsolete semantic/language tags are removed.
-Parity checks exact concept/crystal activity and identity, facets, languages, tags, links, and
-alias target-table relationships. Inactive audit `before_json` is recomputed from the complete
-term plus tags and aliases, reconciled in place, and checked for exact single-row equality.
+Rerun reconciliation is an ownership-bounded strict-term projection. Migration-private tables
+record provenance separately for created concepts/facets/crystals and for semantic tags,
+language tags, and crystal-concept links. Ledger and natural matches without an ownership record
+are treated as adopted/user data: they are preserved and the ledger is repointed to a dedicated
+owned node. Only marked nodes and marked relationships may be updated or deleted. User-added
+tags, language tags, and concept links remain intact while obsolete migration-owned values are
+removed. Parity requires ledger targets to match owned nodes and verifies required projection
+values as subsets of the shared relationship tables. Inactive audit events are append-only: an
+exact prior snapshot is reused; changed or malformed history is preserved and a corrected event
+is appended.
 
 `pytest-cov`/`coverage.py` are not project dependencies (`pytest --cov` is unrecognized and
 `python -m coverage` is unavailable), so no synthetic package coverage percentage is
@@ -94,19 +106,19 @@ SQL migration `0001`; all three legacy tables remain present after preparation.
 
 ## Verification
 
-- `uv run pytest tests/test_strict_term_retirement.py tests/test_memory_graph_migration.py -q`
-  — 60 passed.
-- `uv run pytest` — 1391 passed in 137.85s.
+- `uv run pytest tests/test_strict_term_retirement.py -q` — 32 passed.
+- `uv run pytest` — 1400 passed in 145.07s.
 - `uv run ruff check .` — passed.
 - `uv run ruff format --check .` — 180 files already formatted.
 - `git diff --check` — passed.
 
 ## Self-review and concerns
 
-Reviewed the complete diff for mutation ordering, transaction ownership, backup contents,
-checksum scope, resolved path containment, errno handling, alias provenance (including kind
-changes and shared-facet splitting), exact rerun behavior, and accidental runner activation. The
-runtime still reads legacy tables, so the destructive phase correctly remains unavailable.
+Reviewed the complete diff for mutation ordering, transaction ownership, ownership proof before
+every exact graph mutation/deletion, shared relationship preservation, append-only audit history,
+backup identity/checksum scope, descriptor-relative publication, symlink/rename races, errno
+handling, schema diagnostics, alias provenance, and accidental runner activation. The runtime
+still reads legacy tables, so the destructive phase correctly remains unavailable.
 No implementation blocker remains. Task 3 must remove runtime legacy access before enabling
 or implementing table drops.
 
@@ -114,3 +126,4 @@ or implementing table drops.
 
 Implementation and verification report: `10bf714 feat: prepare lossless strict term retirement`.
 Reviewer Important findings are fixed in the subsequent dedicated remediation commit.
+Rereview findings are fixed in a separate ownership/backup hardening commit.

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,6 +25,10 @@ BACKUP_VERSION = 1
 ACTIVE_STATUSES = frozenset({"approved", "active"})
 LEGACY_TABLES = ("strict_terms", "strict_term_tags", "strict_term_aliases")
 _TIMESTAMP_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
+_BACKUP_FILENAME_RE = re.compile(
+    rf"^strict-terms-v{BACKUP_VERSION}-(?P<timestamp>[0-9]{{8}}T[0-9]{{6}}Z)-"
+    r"(?P<backup_id>[0-9a-f]{32})\.json$"
+)
 _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = {
     errno.EINVAL,
     errno.ENOTSUP,
@@ -100,35 +105,57 @@ def write_legacy_terms_backup(
     resolved_dir = backup_dir.resolve(strict=False)
     if requested_dir != resolved_dir:
         raise LegacyTermRetirementBlocked("backup directory must not contain symlinks")
+    resolved_dir.mkdir(parents=True, exist_ok=True)
+    if resolved_dir.is_symlink() or resolved_dir.resolve(strict=True) != resolved_dir:
+        raise LegacyTermRetirementBlocked("backup directory changed to an unsafe symlink")
+    unique_id = uuid4().hex
     payload: dict[str, object] = {
         "format": BACKUP_FORMAT,
         "version": BACKUP_VERSION,
+        "timestamp": stamp,
+        "backup_id": unique_id,
         "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "strict_terms": _rows(conn, "strict_terms"),
         "strict_term_tags": _rows(conn, "strict_term_tags"),
         "strict_term_aliases": _rows(conn, "strict_term_aliases"),
     }
     payload["checksum"] = _checksum_payload(payload)
-    resolved_dir.mkdir(parents=True, exist_ok=True)
-    if resolved_dir.is_symlink() or resolved_dir.resolve(strict=True) != resolved_dir:
-        raise LegacyTermRetirementBlocked("backup directory changed to an unsafe symlink")
-    unique_id = uuid4().hex
     destination = resolved_dir / f"strict-terms-v{BACKUP_VERSION}-{stamp}-{unique_id}.json"
-    temporary = resolved_dir / f".{destination.name}.tmp"
-    if destination.parent != resolved_dir or temporary.parent != resolved_dir:
+    temporary_name = f".{destination.name}.{uuid4().hex}.tmp"
+    if destination.parent != resolved_dir or Path(temporary_name).name != temporary_name:
         raise LegacyTermRetirementBlocked("backup path escaped the resolved backup directory")
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    directory_fd = os.open(resolved_dir, directory_flags)
+    temporary_created = False
     try:
-        with temporary.open("x", encoding="utf-8") as stream:
+        pinned = os.fstat(directory_fd)
+        _assert_directory_still_pinned(resolved_dir, pinned)
+        file_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        temporary_fd = os.open(temporary_name, file_flags, 0o600, dir_fd=directory_fd)
+        temporary_created = True
+        with os.fdopen(temporary_fd, "w", encoding="utf-8") as stream:
             json.dump(payload, stream, ensure_ascii=False, sort_keys=True, indent=2)
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, destination)
-        _fsync_directory(resolved_dir)
+        os.replace(
+            temporary_name,
+            destination.name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        temporary_created = False
+        _fsync_directory_descriptor(directory_fd)
+        _assert_directory_still_pinned(resolved_dir, pinned)
+        verified = _read_and_verify_backup_at(directory_fd, destination.name)
     finally:
-        temporary.unlink(missing_ok=True)
+        if temporary_created:
+            try:
+                os.unlink(temporary_name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        os.close(directory_fd)
 
-    verified = verify_legacy_terms_backup(destination)
     return VerifiedLegacyTermsBackup(
         path=destination,
         checksum=str(verified["checksum"]),
@@ -153,11 +180,47 @@ def _fsync_directory(directory: Path) -> None:
         os.close(descriptor)
 
 
+def _fsync_directory_descriptor(descriptor: int) -> None:
+    try:
+        os.fsync(descriptor)
+    except OSError as exc:
+        if exc.errno not in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+            raise
+
+
+def _assert_directory_still_pinned(directory: Path, pinned: os.stat_result) -> None:
+    try:
+        current = os.stat(directory, follow_symlinks=False)
+    except OSError as exc:
+        raise LegacyTermRetirementBlocked("backup directory changed during creation") from exc
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or current.st_dev != pinned.st_dev
+        or current.st_ino != pinned.st_ino
+    ):
+        raise LegacyTermRetirementBlocked("backup directory changed or became a symlink")
+
+
+def _read_and_verify_backup_at(directory_fd: int, filename: str) -> dict[str, Any]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(filename, flags, dir_fd=directory_fd)
+        with os.fdopen(descriptor, encoding="utf-8") as stream:
+            payload = json.load(stream)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise LegacyTermRetirementBlocked(f"invalid legacy terms backup: {filename}") from exc
+    return _verify_backup_payload(payload, filename)
+
+
 def verify_legacy_terms_backup(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise LegacyTermRetirementBlocked(f"invalid legacy terms backup: {path}") from exc
+    return _verify_backup_payload(payload, path.name)
+
+
+def _verify_backup_payload(payload: object, filename: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise LegacyTermRetirementBlocked("legacy terms backup root must be an object")
     if payload.get("format") != BACKUP_FORMAT or payload.get("version") != BACKUP_VERSION:
@@ -168,6 +231,13 @@ def verify_legacy_terms_backup(path: Path) -> dict[str, Any]:
     expected = _checksum_payload(payload)
     if payload.get("checksum") != expected:
         raise LegacyTermRetirementBlocked("legacy terms backup checksum mismatch")
+    match = _BACKUP_FILENAME_RE.fullmatch(filename)
+    if (
+        match is None
+        or payload.get("timestamp") != match.group("timestamp")
+        or payload.get("backup_id") != match.group("backup_id")
+    ):
+        raise LegacyTermRetirementBlocked("legacy terms backup filename identity mismatch")
     return payload
 
 
@@ -252,17 +322,7 @@ def _audit_inactive_terms(conn: sqlite3.Connection, payload: Mapping[str, object
             """,
             (entity_id,),
         ).fetchall()
-        if existing:
-            first = existing[0]
-            if first["before_json"] != before_json:
-                conn.execute(
-                    "update audit_log set before_json = ? where id = ?",
-                    (before_json, first["id"]),
-                )
-            duplicate_ids = tuple(int(row["id"]) for row in existing[1:])
-            if duplicate_ids:
-                placeholders = ", ".join("?" for _ in duplicate_ids)
-                conn.execute(f"delete from audit_log where id in ({placeholders})", duplicate_ids)
+        if any(row["before_json"] == before_json for row in existing):
             continue
         conn.execute(
             """
@@ -310,7 +370,7 @@ def _count_matching_inactive_audits(conn: sqlite3.Connection, expected: Mapping[
             """,
             (entity_id, before_json),
         ).fetchone()[0]
-        == 1
+        >= 1
         for entity_id, before_json in expected.items()
     )
 
@@ -378,6 +438,14 @@ def _active_term_has_parity(
     rendering_id = targets.get((f"{term_id}:rendering", "concept_facets"))
     if None in {concept_id, crystal_id, source_id, rendering_id}:
         return False
+    for source_key, object_type, object_id in (
+        (term_id, "concepts", concept_id),
+        (term_id, "crystals", crystal_id),
+        (f"{term_id}:source", "concept_facets", source_id),
+        (f"{term_id}:rendering", "concept_facets", rendering_id),
+    ):
+        if not _is_owned_target(conn, source_key, object_type, int(object_id)):
+            return False
     concept = conn.execute(
         """
         select canonical_name, description, scope_type, scope_key, status, confidence
@@ -470,7 +538,7 @@ def _active_term_has_parity(
                 (facet_id,),
             )
         }
-        if language_tags != {str(expected_language).casefold()}:
+        if str(expected_language).casefold() not in language_tags:
             return False
     expected_alias_targets = {
         (
@@ -502,6 +570,8 @@ def _active_term_has_parity(
                 return False
             if alias_facet[4] < 0.95:
                 return False
+            if not _is_owned_target(conn, alias_source_id, "concept_facets", int(alias_target)):
+                return False
             alias_language_tags = {
                 row["language_tag"]
                 for row in conn.execute(
@@ -509,7 +579,7 @@ def _active_term_has_parity(
                     (alias_target,),
                 )
             }
-            if alias_language_tags != {str(alias["language"]).casefold()}:
+            if str(alias["language"]).casefold() not in alias_language_tags:
                 return False
         if (
             alias["kind"] == "forbidden_variant"
@@ -554,11 +624,32 @@ def _active_term_has_parity(
         )
     }
     return (
-        tags == concept_tags
-        and tags == crystal_tags
-        and crystal_languages == expected_languages
+        tags <= concept_tags
+        and tags <= crystal_tags
+        and expected_languages <= crystal_languages
         and linked is not None
         and float(linked["confidence"]) >= 0.95
+    )
+
+
+def _is_owned_target(
+    conn: sqlite3.Connection, source_id: str, object_type: str, object_id: int
+) -> bool:
+    if not conn.execute(
+        "select 1 from sqlite_master where type = 'table' "
+        "and name = 'strict_term_retirement_ownership'"
+    ).fetchone():
+        return False
+    return (
+        conn.execute(
+            """
+            select 1 from strict_term_retirement_ownership
+            where source_table = 'strict_terms' and source_id = ?
+              and object_type = ? and object_key = ?
+            """,
+            (source_id, object_type, str(object_id)),
+        ).fetchone()
+        is not None
     )
 
 
