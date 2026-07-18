@@ -84,4 +84,4 @@ or implementing table drops.
 
 ## Commit
 
-To be filled after commit.
+Implementation and verification report: `10bf714 feat: prepare lossless strict term retirement`.
