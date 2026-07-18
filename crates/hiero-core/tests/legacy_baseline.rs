@@ -24,6 +24,244 @@ async fn legacy_pool() -> SqlitePool {
     pool
 }
 
+fn replace_table_definition(schema: &mut String, table: &str, replacement: &str) {
+    let marker = format!("create table if not exists {table} (");
+    let start = schema
+        .find(&marker)
+        .unwrap_or_else(|| panic!("current global schema should declare {table}"));
+    let end = schema[start..]
+        .find("\n);")
+        .map(|offset| start + offset + 3)
+        .unwrap_or_else(|| panic!("{table} declaration should terminate"));
+    schema.replace_range(start..end, replacement);
+}
+
+async fn historical_compatibility_pool(
+    crystals: &str,
+    add_late_crystal_columns: bool,
+) -> SqlitePool {
+    historical_compatibility_pool_with_session_stage(
+        crystals,
+        add_late_crystal_columns,
+        PYTHON_COMPATIBILITY_STAGE_THREE,
+    )
+    .await
+}
+
+async fn historical_compatibility_pool_with_session_stage(
+    crystals: &str,
+    add_late_crystal_columns: bool,
+    session_stage: &str,
+) -> SqlitePool {
+    let options = SqliteConnectOptions::from_str("sqlite::memory:")
+        .expect("memory URL should parse")
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("historical fixture pool should connect");
+    let mut schema = include_str!("../../../src/hieronymus/migrations/global.sql").to_owned();
+    replace_table_definition(&mut schema, "task_sessions", HISTORICAL_TASK_SESSIONS);
+    replace_table_definition(
+        &mut schema,
+        "short_term_memories",
+        HISTORICAL_SHORT_TERM_MEMORIES,
+    );
+    replace_table_definition(&mut schema, "crystals", crystals);
+    replace_table_definition(&mut schema, "concepts", HISTORICAL_CONCEPTS);
+    replace_table_definition(&mut schema, "concept_facets", HISTORICAL_CONCEPT_FACETS);
+    pool.execute(sqlx::raw_sql(sqlx::AssertSqlSafe(schema)))
+        .await
+        .expect("historical global schema should install");
+
+    pool.execute(sqlx::raw_sql(PYTHON_COMPATIBILITY_STAGE_ONE))
+        .await
+        .expect("first Python ALTER stage should install");
+    pool.execute("PRAGMA foreign_keys = OFF")
+        .await
+        .expect("concept rebuild should disable FKs");
+    pool.execute(sqlx::raw_sql(PYTHON_CONCEPT_REBUILD))
+        .await
+        .expect("Python concepts compatibility rebuild should install");
+    pool.execute("PRAGMA foreign_keys = ON")
+        .await
+        .expect("concept rebuild should restore FKs");
+    if add_late_crystal_columns {
+        pool.execute(sqlx::raw_sql(PYTHON_COMPATIBILITY_STAGE_TWO))
+            .await
+            .expect("second Python ALTER stage should install");
+    }
+    pool.execute(sqlx::raw_sql(sqlx::AssertSqlSafe(session_stage.to_owned())))
+        .await
+        .expect("session activity ALTER stage should install");
+    pool
+}
+
+const HISTORICAL_TASK_SESSIONS: &str = r#"create table if not exists task_sessions (
+  id integer primary key,
+  series_slug text not null references series(slug),
+  source_language text not null,
+  target_language text not null,
+  task_type text not null,
+  volume text not null default '',
+  chapter text not null default '',
+  status text not null,
+  cycle_id integer,
+  created_at text not null,
+  completed_at text
+);"#;
+
+const HISTORICAL_SHORT_TERM_MEMORIES: &str = r#"create table if not exists short_term_memories (
+  id integer primary key,
+  session_id integer not null references task_sessions(id) on delete cascade,
+  source_role text not null,
+  kind text not null,
+  text text not null,
+  source_ref text not null default '',
+  metadata_json text not null default '{}',
+  created_at text not null,
+  archived_at text
+);"#;
+
+const HISTORICAL_CRYSTALS_OLDEST: &str = r#"create table if not exists crystals (
+  id integer primary key,
+  crystal_type text not null,
+  text text not null,
+  title text not null default '',
+  scope_type text not null,
+  scope_key text not null default '',
+  series_slug text not null default '',
+  source_language text not null default '',
+  target_language text not null default '',
+  tags_json text not null default '[]',
+  strength real not null,
+  confidence real not null,
+  status text not null,
+  created_cycle integer not null default 0,
+  last_activated_cycle integer,
+  last_reinforced_cycle integer,
+  created_at text not null,
+  updated_at text not null
+);"#;
+
+const HISTORICAL_CRYSTALS_MID_AGE: &str = r#"create table if not exists crystals (
+  id integer primary key,
+  crystal_type text not null,
+  text text not null,
+  title text not null default '',
+  scope_type text not null,
+  scope_key text not null default '',
+  series_slug text not null default '',
+  source_language text not null default '',
+  target_language text not null default '',
+  tags_json text not null default '[]',
+  strength real not null,
+  confidence real not null,
+  source_credibility text not null default 'observation',
+  rule_intent text not null default '',
+  malformed_penalty real not null default 0.0,
+  supersedes_crystal_id integer references crystals(id) on delete set null,
+  status text not null,
+  created_cycle integer not null default 0,
+  last_activated_cycle integer,
+  last_reinforced_cycle integer,
+  created_at text not null,
+  updated_at text not null
+);"#;
+
+const HISTORICAL_CONCEPTS: &str = r#"create table if not exists concepts (
+  id integer primary key,
+  canonical_name text not null,
+  description text not null default '',
+  scope_type text not null default 'global',
+  scope_key text not null default '',
+  status text not null default 'vague',
+  confidence real not null default 0.2,
+  created_at text not null,
+  updated_at text not null,
+  check ((scope_type = 'global' and scope_key = '') or (scope_type != 'global' and scope_key != '')),
+  unique(scope_type, scope_key, canonical_name)
+);"#;
+
+const HISTORICAL_CONCEPT_FACETS: &str = r#"create table if not exists concept_facets (
+  id integer primary key,
+  concept_id integer not null references concepts(id) on delete cascade,
+  language text not null default '',
+  facet_type text not null,
+  value text not null,
+  source_crystal_id integer references crystals(id) on delete set null,
+  confidence real not null default 0.2,
+  created_at text not null,
+  updated_at text not null
+);"#;
+
+const PYTHON_COMPATIBILITY_STAGE_ONE: &str = r#"
+alter table concept_facets add column is_canonical integer not null default 0;
+alter table concept_facets add column superseded_at text;
+alter table concepts add column merged_into_concept_id integer references concepts(id);
+alter table short_term_memories add column source_credibility text;
+alter table short_term_memories add column rule_intent text;
+alter table short_term_memories add column soft_origin text;
+alter table crystals add column soft_origin text;
+alter table crystals add column is_inferred integer not null default 0;
+"#;
+
+const PYTHON_COMPATIBILITY_STAGE_TWO: &str = r#"
+alter table crystals add column source_credibility text not null default 'observation';
+alter table crystals add column rule_intent text not null default '';
+alter table crystals add column malformed_penalty real not null default 0;
+alter table crystals add column supersedes_crystal_id integer references crystals(id);
+"#;
+
+const PYTHON_COMPATIBILITY_STAGE_THREE: &str = r#"
+alter table task_sessions add column last_activity_at text not null default '';
+update task_sessions set last_activity_at = created_at where last_activity_at = '';
+"#;
+
+const PYTHON_CONCEPT_REBUILD: &str = r#"
+drop trigger if exists concepts_ai;
+drop trigger if exists concepts_ad;
+drop trigger if exists concepts_au;
+create table concepts_new (
+  id integer primary key,
+  canonical_name text not null,
+  description text not null default '',
+  scope_type text not null default 'global',
+  scope_key text not null default '',
+  status text not null default 'candidate',
+  confidence real not null default 0.2,
+  merged_into_concept_id integer references concepts_new(id),
+  created_at text not null,
+  updated_at text not null,
+  check (
+    (scope_type = 'global' and scope_key = '')
+    or (scope_type != 'global' and scope_key != '')
+  )
+);
+insert into concepts_new(id, canonical_name, description, scope_type, scope_key, status, confidence,
+  merged_into_concept_id, created_at, updated_at)
+select id, canonical_name, description, scope_type, scope_key, status, confidence,
+  merged_into_concept_id, created_at, updated_at from concepts;
+drop table concepts;
+alter table concepts_new rename to concepts;
+create trigger concepts_ai after insert on concepts begin
+  insert into concepts_fts(rowid, canonical_name, description)
+  values (new.id, new.canonical_name, new.description);
+end;
+create trigger concepts_ad after delete on concepts begin
+  insert into concepts_fts(concepts_fts, rowid, canonical_name, description)
+  values ('delete', old.id, old.canonical_name, old.description);
+end;
+create trigger concepts_au after update on concepts begin
+  insert into concepts_fts(concepts_fts, rowid, canonical_name, description)
+  values ('delete', old.id, old.canonical_name, old.description);
+  insert into concepts_fts(rowid, canonical_name, description)
+  values (new.id, new.canonical_name, new.description);
+end;
+insert into concepts_fts(concepts_fts) values ('rebuild');
+"#;
+
 async fn schema_snapshot(pool: &SqlitePool) -> Vec<(String, String, String, String)> {
     sqlx::query_as(
         "SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
@@ -113,6 +351,85 @@ async fn seed_every_legacy_table(pool: &SqlitePool) {
     ))
     .await
     .expect("representative legacy rows should insert");
+}
+
+async fn seed_historical_compatibility_rows(pool: &SqlitePool) {
+    pool.execute(sqlx::raw_sql(
+        r#"
+        INSERT INTO series(id, slug, title, default_source_language, default_target_language, created_at, updated_at)
+        VALUES (1, 'legacy', 'Legacy', 'en', 'ru', '2026-07-18 10:11:12', '2026-07-18 10:11:13');
+        INSERT INTO task_sessions(id, series_slug, source_language, target_language, task_type, volume, chapter, status, cycle_id, created_at, last_activity_at, completed_at)
+        VALUES (1, 'legacy', 'en', 'ru', 'translation', '1', '2', 'completed', 4, '2026-07-18 10:11:12', '2026-07-18 10:11:13', '2026-07-18 10:11:14');
+        INSERT INTO short_term_memories(id, session_id, source_role, kind, text, source_ref, metadata_json, source_credibility, rule_intent, soft_origin, created_at, archived_at)
+        VALUES (1, 1, 'translator', 'lesson', 'legacy memory', 'chapter:2', '{}', 'expert', 'note', 'historical', '2026-07-18 10:11:12', NULL);
+        INSERT INTO crystals(id, crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, is_inferred, malformed_penalty, supersedes_crystal_id, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at)
+        VALUES (1, 'observation', 'legacy crystal', 'Crystal', 'series', 'legacy', 'legacy', 'en', 'ru', '[]', 0.8, 0.9, 'user_rule', 'correction', 'historical', 1, 0.25, NULL, 'active', 1, 2, 3, '2026-07-18 10:11:12', '2026-07-18 10:11:13');
+        INSERT INTO concepts(id, canonical_name, description, scope_type, scope_key, status, confidence, merged_into_concept_id, created_at, updated_at)
+        VALUES (1, 'Legacy concept', 'fixture', 'series', 'legacy', 'solid', 0.9, NULL, '2026-07-18 10:11:12', '2026-07-18 10:11:13');
+        INSERT INTO concept_facets(id, concept_id, language, facet_type, value, source_crystal_id, confidence, is_canonical, superseded_at, created_at, updated_at)
+        VALUES (1, 1, 'en', 'name', 'Legacy concept', 1, 0.9, 1, NULL, '2026-07-18 10:11:12', '2026-07-18 10:11:13');
+        "#,
+    ))
+    .await
+    .expect("historical compatibility rows should insert");
+}
+
+async fn assert_historical_compatibility_baselines(crystals: &str, add_late_crystal_columns: bool) {
+    let pool = historical_compatibility_pool(crystals, add_late_crystal_columns).await;
+    seed_historical_compatibility_rows(&pool).await;
+    migrate(&pool)
+        .await
+        .expect("real Python ALTER variant should baseline");
+
+    let crystal: (String, String, i64, f64) = sqlx::query_as(
+        "SELECT source_credibility, soft_origin, is_inferred, malformed_penalty FROM crystals WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("historical crystal should survive");
+    assert_eq!(
+        crystal,
+        ("user_rule".to_owned(), "historical".to_owned(), 1, 0.25)
+    );
+    let session_activity: String =
+        sqlx::query_scalar("SELECT last_activity_at FROM task_sessions WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .expect("session activity should survive");
+    assert_eq!(session_activity, "2026-07-18T10:11:13Z");
+    let supersedes_delete: String = sqlx::query_scalar(
+        "SELECT on_delete FROM pragma_foreign_key_list('crystals') WHERE \"from\" = 'supersedes_crystal_id'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("final supersedes FK should inspect");
+    assert_eq!(supersedes_delete, "SET NULL");
+}
+
+#[tokio::test]
+async fn oldest_python_base_with_every_real_alter_stage_baselines_losslessly() {
+    assert_historical_compatibility_baselines(HISTORICAL_CRYSTALS_OLDEST, true).await;
+}
+
+#[tokio::test]
+async fn mixed_age_python_schema_with_declared_and_appended_columns_baselines_losslessly() {
+    assert_historical_compatibility_baselines(HISTORICAL_CRYSTALS_MID_AGE, false).await;
+}
+
+#[tokio::test]
+async fn near_python_variant_with_wrong_compatibility_default_is_rejected_before_mutation() {
+    let malformed_session_stage = PYTHON_COMPATIBILITY_STAGE_THREE.replace(
+        "last_activity_at text not null default ''",
+        "last_activity_at text not null default 'unknown'",
+    );
+    let pool = historical_compatibility_pool_with_session_stage(
+        HISTORICAL_CRYSTALS_OLDEST,
+        true,
+        &malformed_session_stage,
+    )
+    .await;
+
+    assert_unknown_shape_is_unchanged(&pool).await;
 }
 
 #[tokio::test]

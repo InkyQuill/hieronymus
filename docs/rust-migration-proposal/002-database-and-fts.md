@@ -256,18 +256,21 @@ END;
 
 Before SQLx applies `0001`, migration orchestration classifies the database while holding a
 `BEGIN IMMEDIATE` transaction. Empty databases follow the normal SQLx path. Every existing
-`_sqlx_migrations` table is first validated against SQLx 0.9's exact SQLite column/primary-key/
-default contract. Its rows must be a successful ordered prefix of the migrations embedded in the
-running binary, with matching version, description, and checksum; malformed, dirty, unknown,
-future, or gapped histories fail before SQLx runs. This derives valid versions from the current
-embedded migrator rather than hard-coding `[1, 3, 4]`, so adding `0002` later changes the accepted
-prefixes with the binary that embeds it.
+`_sqlx_migrations` table is first validated against SQLx 0.9's exact SQLite table shape and
+normalized `sqlite_schema` DDL, including hidden/generated columns, table options, and constraints.
+Each stored row must be successful and match an embedded migration with the same version,
+description, and checksum. Missing embedded versions are legitimate pending migrations: for
+example, a stored `[1, 3, 4]` history remains valid when a future binary embeds `[1, 2, 3, 4]`, and
+SQLx then applies `0002` without replacing the stored rows. Malformed, dirty, duplicate, unknown,
+future, or mismatched rows fail before SQLx runs.
 
 A supported Python `global.sql` database runs one crash-atomic baseline transaction. Before any
 schema or row mutation, Rust constructs the exact current `global.sql` logical object manifest —
 ordered columns/types/nullability/defaults/primary keys, foreign keys, named indexes, triggers,
-and FTS/auxiliary objects — adjusted only for the observed subset of explicitly documented
-compatibility columns. The actual manifest must match that known variant exactly. Only after that
+and FTS/auxiliary objects. Compatibility tables are accepted only in layouts produced by the real
+Python `db.py` history: the pre-patch base, the actual ordered `ALTER TABLE` stages and declarations,
+and the concepts rebuild, including their historical defaults and foreign-key actions. Arbitrary
+missing-column subsets and malformed near-variants are rejected. Only after that
 proof may the compatibility patcher add those known columns and normalize timestamps, then rebuild
 ordinary tables through fixed shadow names into the authoritative STRICT schema, map
 `strict_concept_proposals` to `concept_proposals` and `memory_graph_migration_ledger` to

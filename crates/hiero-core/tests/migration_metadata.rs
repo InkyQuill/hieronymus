@@ -100,6 +100,48 @@ async fn sqlx_table_with_wrong_default_is_rejected() {
     assert_invalid_metadata(&pool).await;
 }
 
+#[tokio::test]
+async fn sqlx_table_with_hidden_generated_column_is_rejected() {
+    let pool = pool().await;
+    pool.execute(sqlx::raw_sql(
+        r#"
+        CREATE TABLE _sqlx_migrations (
+            version BIGINT PRIMARY KEY,
+            description TEXT NOT NULL,
+            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            success BOOLEAN NOT NULL,
+            checksum BLOB NOT NULL,
+            execution_time BIGINT NOT NULL,
+            hidden_description TEXT GENERATED ALWAYS AS (description) VIRTUAL
+        );
+        "#,
+    ))
+    .await
+    .expect("hidden-column metadata table should install");
+    assert_invalid_metadata(&pool).await;
+}
+
+#[tokio::test]
+async fn sqlx_table_with_extra_check_constraint_is_rejected() {
+    let pool = pool().await;
+    pool.execute(sqlx::raw_sql(
+        r#"
+        CREATE TABLE _sqlx_migrations (
+            version BIGINT PRIMARY KEY,
+            description TEXT NOT NULL,
+            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            success BOOLEAN NOT NULL,
+            checksum BLOB NOT NULL,
+            execution_time BIGINT NOT NULL,
+            CHECK (length(description) > 0)
+        );
+        "#,
+    ))
+    .await
+    .expect("extra-constraint metadata table should install");
+    assert_invalid_metadata(&pool).await;
+}
+
 async fn migrated_pool() -> SqlitePool {
     let pool = pool().await;
     migrate(&pool).await.expect("fresh schema should migrate");
@@ -133,16 +175,6 @@ async fn unknown_future_version_is_rejected_with_actionable_error() {
         .execute(&pool)
         .await
         .expect("future version should install");
-    assert_invalid_metadata(&pool).await;
-}
-
-#[tokio::test]
-async fn non_prefix_history_gap_is_rejected_with_actionable_error() {
-    let pool = migrated_pool().await;
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 3")
-        .execute(&pool)
-        .await
-        .expect("history gap should install");
     assert_invalid_metadata(&pool).await;
 }
 

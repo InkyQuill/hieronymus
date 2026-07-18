@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use sqlx::{
     AssertSqlSafe, Connection, Executor, Row, SqliteConnection, SqlitePool,
@@ -85,16 +87,32 @@ const COMPATIBILITY_COLUMNS: &[(&str, &str, &str)] = &[
     ),
     ("crystals", "rule_intent", "TEXT NOT NULL DEFAULT ''"),
     ("crystals", "malformed_penalty", "REAL NOT NULL DEFAULT 0"),
-    ("crystals", "supersedes_crystal_id", "INTEGER"),
+    (
+        "crystals",
+        "supersedes_crystal_id",
+        "INTEGER REFERENCES crystals(id)",
+    ),
     ("crystals", "soft_origin", "TEXT"),
     ("crystals", "is_inferred", "INTEGER NOT NULL DEFAULT 0"),
-    ("concepts", "merged_into_concept_id", "INTEGER"),
+    (
+        "concepts",
+        "merged_into_concept_id",
+        "INTEGER REFERENCES concepts(id)",
+    ),
     (
         "concept_facets",
         "is_canonical",
         "INTEGER NOT NULL DEFAULT 0",
     ),
     ("concept_facets", "superseded_at", "TEXT"),
+];
+
+const COMPATIBILITY_TABLES: &[&str] = &[
+    "task_sessions",
+    "short_term_memories",
+    "crystals",
+    "concepts",
+    "concept_facets",
 ];
 
 const TIMESTAMP_COLUMNS: &[(&str, &[&str])] = &[
@@ -217,7 +235,7 @@ async fn validate_migration_metadata(
     connection: &mut SqliteConnection,
     migrator: &Migrator,
 ) -> Result<(), DbError> {
-    let columns = sqlx::query("PRAGMA table_info('_sqlx_migrations')")
+    let columns = sqlx::query("PRAGMA table_xinfo('_sqlx_migrations')")
         .fetch_all(&mut *connection)
         .await
         .map_err(|source| DbError::LegacyInspection { source })?
@@ -230,13 +248,22 @@ async fn validate_migration_metadata(
                 row.try_get::<i64, _>("notnull")?,
                 row.try_get::<Option<String>, _>("dflt_value")?,
                 row.try_get::<i64, _>("pk")?,
+                row.try_get::<i64, _>("hidden")?,
             ))
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()
         .map_err(|source| DbError::LegacyInspection { source })?;
     let expected_columns = vec![
-        (0, "version".to_owned(), "BIGINT".to_owned(), 0, None, 1),
-        (1, "description".to_owned(), "TEXT".to_owned(), 1, None, 0),
+        (0, "version".to_owned(), "BIGINT".to_owned(), 0, None, 1, 0),
+        (
+            1,
+            "description".to_owned(),
+            "TEXT".to_owned(),
+            1,
+            None,
+            0,
+            0,
+        ),
         (
             2,
             "installed_on".to_owned(),
@@ -244,9 +271,10 @@ async fn validate_migration_metadata(
             1,
             Some("CURRENT_TIMESTAMP".to_owned()),
             0,
+            0,
         ),
-        (3, "success".to_owned(), "BOOLEAN".to_owned(), 1, None, 0),
-        (4, "checksum".to_owned(), "BLOB".to_owned(), 1, None, 0),
+        (3, "success".to_owned(), "BOOLEAN".to_owned(), 1, None, 0, 0),
+        (4, "checksum".to_owned(), "BLOB".to_owned(), 1, None, 0, 0),
         (
             5,
             "execution_time".to_owned(),
@@ -254,12 +282,38 @@ async fn validate_migration_metadata(
             1,
             None,
             0,
+            0,
         ),
     ];
     if columns != expected_columns {
         return Err(DbError::InvalidMigrationMetadata {
             reason: format!(
                 "`_sqlx_migrations` does not have the SQLx 0.9 SQLite column contract; expected {expected_columns:?}, found {columns:?}"
+            ),
+        });
+    }
+
+    let create_sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|source| DbError::LegacyInspection { source })?;
+    const SQLX_CREATE_SQL: &str = r#"
+        CREATE TABLE _sqlx_migrations (
+            version BIGINT PRIMARY KEY,
+            description TEXT NOT NULL,
+            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            success BOOLEAN NOT NULL,
+            checksum BLOB NOT NULL,
+            execution_time BIGINT NOT NULL
+        )
+    "#;
+    if normalize_schema_sql(&create_sql) != normalize_schema_sql(SQLX_CREATE_SQL) {
+        return Err(DbError::InvalidMigrationMetadata {
+            reason: format!(
+                "`_sqlx_migrations` table SQL differs from SQLx 0.9: `{}`",
+                normalize_schema_sql(&create_sql)
             ),
         });
     }
@@ -296,15 +350,7 @@ async fn validate_migration_metadata(
         reason: format!("cannot read migration history: {source}"),
     })?;
     let embedded = migrator.iter().collect::<Vec<_>>();
-    if stored.len() > embedded.len() {
-        return Err(DbError::InvalidMigrationMetadata {
-            reason: format!(
-                "history has {} row(s), but this binary embeds only {} migration(s); remove no rows until the database is inspected with the newer binary",
-                stored.len(),
-                embedded.len()
-            ),
-        });
-    }
+    let mut seen = HashSet::new();
     for (position, row) in stored.iter().enumerate() {
         let version = row.try_get::<i64, _>("version").map_err(|source| {
             DbError::InvalidMigrationMetadata {
@@ -329,24 +375,19 @@ async fn validate_migration_metadata(
                 reason: format!("cannot decode migration {version} checksum: {source}"),
             }
         })?;
-        let expected = embedded[position];
-        if version != expected.version {
-            let known = embedded
-                .iter()
-                .any(|migration| migration.version == version);
-            let reason = if known {
-                format!(
-                    "migration history is not an embedded prefix: expected version {} at position {}, found {version}; restore the missing migration record",
-                    expected.version,
-                    position + 1
-                )
-            } else {
-                format!(
-                    "migration version {version} is unknown to this binary; use the binary that created it or restore a compatible database backup"
-                )
-            };
-            return Err(DbError::InvalidMigrationMetadata { reason });
+        if !seen.insert(version) {
+            return Err(DbError::InvalidMigrationMetadata {
+                reason: format!("migration version {version} appears more than once"),
+            });
         }
+        let expected = embedded
+            .iter()
+            .find(|migration| migration.version == version)
+            .ok_or_else(|| DbError::InvalidMigrationMetadata {
+                reason: format!(
+                    "migration version {version} is unknown to this binary; use the binary that created it or restore a compatible database backup"
+                ),
+            })?;
         if success != 1 {
             return Err(DbError::InvalidMigrationMetadata {
                 reason: format!(
@@ -438,19 +479,8 @@ async fn verify_legacy_object_manifest(connection: &mut SqliteConnection) -> Res
         .await
         .map_err(|source| DbError::LegacyInspection { source })?;
 
-    for (table, column, _) in COMPATIBILITY_COLUMNS {
-        if !column_exists(connection, table, column).await? {
-            sqlx::query(AssertSqlSafe(format!(
-                "ALTER TABLE {table} DROP COLUMN {column}"
-            )))
-            .execute(&mut reference)
-            .await
-            .map_err(|source| DbError::UnsupportedLegacySchema {
-                reason: format!(
-                    "cannot construct the known compatibility manifest without {table}.{column}: {source}"
-                ),
-            })?;
-        }
+    for table in COMPATIBILITY_TABLES {
+        verify_compatibility_table(connection, &mut reference, table).await?;
     }
 
     let expected = object_manifest(&mut reference).await?;
@@ -472,6 +502,305 @@ async fn verify_legacy_object_manifest(connection: &mut SqliteConnection) -> Res
     Ok(())
 }
 
+type ColumnShape = (i64, String, String, i64, Option<String>, i64, i64);
+type ForeignKeyShape = (String, String, String, String, String, String);
+
+async fn verify_compatibility_table(
+    actual: &mut SqliteConnection,
+    reference: &mut SqliteConnection,
+    table: &str,
+) -> Result<(), DbError> {
+    let actual_columns = table_columns(actual, table).await?;
+    let expected_columns = table_columns(reference, table).await?;
+    let actual_names = actual_columns
+        .iter()
+        .map(|column| column.1.clone())
+        .collect::<Vec<_>>();
+    let expected_names = expected_columns
+        .iter()
+        .map(|column| column.1.clone())
+        .collect::<Vec<_>>();
+    if !allowed_column_layouts(table, &expected_names).contains(&actual_names) {
+        return Err(DbError::UnsupportedLegacySchema {
+            reason: format!(
+                "unsupported Python compatibility column order for {table}: {actual_names:?}"
+            ),
+        });
+    }
+
+    for actual_column in &actual_columns {
+        let expected = expected_columns
+            .iter()
+            .find(|column| column.1 == actual_column.1)
+            .ok_or_else(|| DbError::UnsupportedLegacySchema {
+                reason: format!("unknown column {table}.{}", actual_column.1),
+            })?;
+        if !column_shape_is_supported(table, actual_column, expected) {
+            return Err(DbError::UnsupportedLegacySchema {
+                reason: format!(
+                    "unsupported shape for {table}.{}: expected {expected:?}, found {actual_column:?}",
+                    actual_column.1
+                ),
+            });
+        }
+    }
+
+    verify_compatibility_foreign_keys(actual, reference, table, &actual_names).await?;
+    verify_compatibility_table_constraints(actual, table, &actual_names).await
+}
+
+async fn table_columns(
+    connection: &mut SqliteConnection,
+    table: &str,
+) -> Result<Vec<ColumnShape>, DbError> {
+    sqlx::query(
+        "SELECT cid, name, type, \"notnull\", dflt_value, pk, hidden FROM pragma_table_xinfo(?) ORDER BY cid",
+    )
+    .bind(table)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|source| DbError::LegacyInspection { source })?
+    .into_iter()
+    .map(|row| {
+        Ok((
+            row.try_get("cid")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("name")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("type")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("notnull")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("dflt_value")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("pk")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("hidden")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+        ))
+    })
+    .collect()
+}
+
+fn allowed_column_layouts(table: &str, current: &[String]) -> Vec<Vec<String>> {
+    let compatibility = COMPATIBILITY_COLUMNS
+        .iter()
+        .filter(|(candidate, _, _)| *candidate == table)
+        .map(|(_, column, _)| (*column).to_owned())
+        .collect::<Vec<_>>();
+    let base = current
+        .iter()
+        .filter(|column| !compatibility.contains(column))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut appended = base.clone();
+    appended.extend(compatibility.clone());
+    let mut layouts = vec![current.to_vec(), base.clone(), appended];
+    if table == "crystals" {
+        let mut first_stage = base.clone();
+        first_stage.extend(["soft_origin".to_owned(), "is_inferred".to_owned()]);
+        layouts.push(first_stage.clone());
+        first_stage.extend([
+            "source_credibility".to_owned(),
+            "rule_intent".to_owned(),
+            "malformed_penalty".to_owned(),
+            "supersedes_crystal_id".to_owned(),
+        ]);
+        layouts.push(first_stage);
+        let declared_late = current
+            .iter()
+            .filter(|column| column.as_str() != "soft_origin" && column.as_str() != "is_inferred")
+            .cloned()
+            .collect::<Vec<_>>();
+        layouts.push(declared_late.clone());
+        let mut declared_then_first_stage = declared_late;
+        declared_then_first_stage.extend(["soft_origin".to_owned(), "is_inferred".to_owned()]);
+        layouts.push(declared_then_first_stage);
+    }
+    layouts.sort();
+    layouts.dedup();
+    layouts
+}
+
+fn column_shape_is_supported(table: &str, actual: &ColumnShape, expected: &ColumnShape) -> bool {
+    let same_except_cid = actual.1 == expected.1
+        && actual.2 == expected.2
+        && actual.3 == expected.3
+        && actual.5 == expected.5
+        && actual.6 == expected.6;
+    if !same_except_cid {
+        return false;
+    }
+    actual.4 == expected.4
+        || (table == "task_sessions"
+            && actual.1 == "last_activity_at"
+            && actual.4.as_deref() == Some("''")
+            && expected.4.is_none())
+        || (table == "crystals"
+            && actual.1 == "malformed_penalty"
+            && actual.4.as_deref() == Some("0")
+            && expected.4.as_deref() == Some("0.0"))
+}
+
+async fn verify_compatibility_foreign_keys(
+    actual: &mut SqliteConnection,
+    reference: &mut SqliteConnection,
+    table: &str,
+    actual_names: &[String],
+) -> Result<(), DbError> {
+    let actual_keys = table_foreign_keys(actual, table).await?;
+    let expected_keys = table_foreign_keys(reference, table).await?;
+    let compatibility = COMPATIBILITY_COLUMNS
+        .iter()
+        .filter(|(candidate, _, _)| *candidate == table)
+        .map(|(_, column, _)| *column)
+        .collect::<Vec<_>>();
+    let actual_base = actual_keys
+        .iter()
+        .filter(|key| !compatibility.contains(&key.0.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let expected_base = expected_keys
+        .iter()
+        .filter(|key| !compatibility.contains(&key.0.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if actual_base != expected_base {
+        return Err(DbError::UnsupportedLegacySchema {
+            reason: format!(
+                "foreign keys differ for {table}: {actual_base:?} != {expected_base:?}"
+            ),
+        });
+    }
+    for column in compatibility {
+        let keys = actual_keys
+            .iter()
+            .filter(|key| key.0 == column)
+            .collect::<Vec<_>>();
+        if !actual_names.iter().any(|name| name == column) {
+            if !keys.is_empty() {
+                return Err(DbError::UnsupportedLegacySchema {
+                    reason: format!("foreign key exists for missing {table}.{column}"),
+                });
+            }
+            continue;
+        }
+        let valid = match (table, column, keys.as_slice()) {
+            ("concepts", "merged_into_concept_id", [key]) => {
+                key.1 == "id"
+                    && key.2 == "concepts"
+                    && key.3 == "NO ACTION"
+                    && key.4 == "NO ACTION"
+                    && key.5 == "NONE"
+            }
+            ("crystals", "supersedes_crystal_id", [key]) => {
+                key.1 == "id"
+                    && key.2 == "crystals"
+                    && key.3 == "NO ACTION"
+                    && matches!(key.4.as_str(), "NO ACTION" | "SET NULL")
+                    && key.5 == "NONE"
+            }
+            ("concepts", "merged_into_concept_id", [])
+            | ("crystals", "supersedes_crystal_id", []) => false,
+            (_, _, []) => true,
+            _ => false,
+        };
+        if !valid {
+            return Err(DbError::UnsupportedLegacySchema {
+                reason: format!("unsupported foreign key for {table}.{column}: {keys:?}"),
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn table_foreign_keys(
+    connection: &mut SqliteConnection,
+    table: &str,
+) -> Result<Vec<ForeignKeyShape>, DbError> {
+    sqlx::query(
+        "SELECT \"from\", \"to\", \"table\", on_update, on_delete, \"match\" FROM pragma_foreign_key_list(?) ORDER BY id, seq",
+    )
+    .bind(table)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|source| DbError::LegacyInspection { source })?
+    .into_iter()
+    .map(|row| {
+        Ok((
+            row.try_get("from")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("to")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("table")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("on_update")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("on_delete")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            row.try_get("match")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+        ))
+    })
+    .collect()
+}
+
+async fn verify_compatibility_table_constraints(
+    connection: &mut SqliteConnection,
+    table: &str,
+    columns: &[String],
+) -> Result<(), DbError> {
+    let sql: String =
+        sqlx::query_scalar("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?")
+            .bind(table)
+            .fetch_one(&mut *connection)
+            .await
+            .map_err(|source| DbError::LegacyInspection { source })?;
+    let compact = compact_schema_sql(&sql);
+    if compact.contains("withoutrowid") || compact.ends_with("strict") {
+        return Err(DbError::UnsupportedLegacySchema {
+            reason: format!("unsupported table option on {table}"),
+        });
+    }
+    let check_count = compact.matches("check(").count();
+    if table == "concepts" {
+        const SCOPE_CHECK: &str =
+            "check((scope_type='global'andscope_key='')or(scope_type!='global'andscope_key!=''))";
+        if check_count != 1 || !compact.contains(SCOPE_CHECK) {
+            return Err(DbError::UnsupportedLegacySchema {
+                reason: "concepts must retain the exact scope CHECK".to_owned(),
+            });
+        }
+        let has_unique = compact.contains("unique(scope_type,scope_key,canonical_name)");
+        let merged = columns
+            .iter()
+            .any(|column| column == "merged_into_concept_id");
+        if has_unique
+            && merged
+            && columns
+                .iter()
+                .position(|column| column == "merged_into_concept_id")
+                != columns.len().checked_sub(1)
+        {
+            return Err(DbError::UnsupportedLegacySchema {
+                reason:
+                    "concepts unique-name legacy shape has an impossible merged-column position"
+                        .to_owned(),
+            });
+        }
+        if compact.matches("unique(").count() != usize::from(has_unique) {
+            return Err(DbError::UnsupportedLegacySchema {
+                reason: "concepts has an unknown UNIQUE constraint".to_owned(),
+            });
+        }
+    } else if check_count != 0 || compact.contains("unique(") {
+        return Err(DbError::UnsupportedLegacySchema {
+            reason: format!("{table} has an unknown table constraint"),
+        });
+    }
+    Ok(())
+}
+
 async fn object_manifest(
     connection: &mut SqliteConnection,
 ) -> Result<Vec<(String, String, String, String)>, DbError> {
@@ -483,17 +812,28 @@ async fn object_manifest(
     .map_err(|source| DbError::LegacyInspection { source })?
     .into_iter()
     .map(|row| {
+        let object_type: String = row
+            .try_get("type")
+            .map_err(|source| DbError::LegacyInspection { source })?;
+        let name: String = row
+            .try_get("name")
+            .map_err(|source| DbError::LegacyInspection { source })?;
         let sql = row
             .try_get::<String, _>("sql")
             .map_err(|source| DbError::LegacyInspection { source })?;
+        let normalized_sql = if object_type == "table"
+            && COMPATIBILITY_TABLES.contains(&name.as_str())
+        {
+            "validated compatibility table".to_owned()
+        } else {
+            normalize_schema_sql(&sql)
+        };
         Ok((
-            row.try_get("type")
-                .map_err(|source| DbError::LegacyInspection { source })?,
-            row.try_get("name")
-                .map_err(|source| DbError::LegacyInspection { source })?,
+            object_type,
+            name,
             row.try_get("tbl_name")
                 .map_err(|source| DbError::LegacyInspection { source })?,
-            normalize_schema_sql(&sql),
+            normalized_sql,
         ))
     })
     .collect()
@@ -504,6 +844,14 @@ fn normalize_schema_sql(sql: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_ascii_lowercase()
+        .replace(" if not exists ", " ")
+}
+
+fn compact_schema_sql(sql: &str) -> String {
+    normalize_schema_sql(sql)
+        .chars()
+        .filter(|character| !character.is_whitespace() && *character != '"')
+        .collect()
 }
 
 fn is_known_legacy_table(name: &str) -> bool {
@@ -895,3 +1243,62 @@ SELECT id, concept_id, language, facet_type, value, source_crystal_id,
        confidence, is_canonical, superseded_at, created_at, updated_at
 FROM __hiero_legacy_concept_facets;
 "#;
+
+#[cfg(test)]
+mod tests {
+    use sqlx::{
+        AssertSqlSafe, Connection, SqlSafeStr, SqliteConnection,
+        migrate::{Migration, MigrationType, Migrator},
+    };
+
+    use super::validate_migration_metadata;
+
+    fn migration(version: i64) -> Migration {
+        Migration::new(
+            version,
+            format!("migration {version}").into(),
+            MigrationType::Simple,
+            AssertSqlSafe(format!(
+                "CREATE TABLE migration_{version} (id INTEGER PRIMARY KEY)"
+            ))
+            .into_sql_str(),
+            false,
+        )
+    }
+
+    #[tokio::test]
+    async fn stored_versions_remain_valid_when_future_migrator_inserts_lower_version() {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("future-migrator fixture should connect");
+        let old = Migrator::with_migrations(vec![migration(1), migration(3), migration(4)]);
+        old.run(&mut connection)
+            .await
+            .expect("old migration history should install");
+
+        let future =
+            Migrator::with_migrations(vec![migration(1), migration(2), migration(3), migration(4)]);
+        validate_migration_metadata(&mut connection, &future)
+            .await
+            .expect("stored versions are a valid subset of the future migrator");
+        future
+            .run(&mut connection)
+            .await
+            .expect("future migrator should apply missing version 2");
+
+        let versions: Vec<i64> = sqlx::query_scalar(
+            "SELECT version FROM _sqlx_migrations WHERE success = 1 ORDER BY version",
+        )
+        .fetch_all(&mut connection)
+        .await
+        .expect("future history should read");
+        assert_eq!(versions, [1, 2, 3, 4]);
+        let version_two_table: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'migration_2'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("version 2 table should inspect");
+        assert_eq!(version_two_table, 1);
+    }
+}
