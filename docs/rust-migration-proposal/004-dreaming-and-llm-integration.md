@@ -211,22 +211,47 @@ pub fn similarity(a: &CrystalRecord, b: &CrystalRecord, a_concepts: &[i64], b_co
 
 Ambient decay in Python scans every eligible crystal on each dream run, which doesn't scale past
 a few thousand crystals. In Rust:
-- `idx_crystals_maintenance` (002 §2) is a partial covering cursor index on
-  `(id, created_cycle, last_activated_cycle, last_reinforced_cycle)` for eligible active/candidate
-  non-active-rule rows. `DecayManager` freezes the bounded query shape as:
-  `status IN ('active','candidate')`, `id > ?`, `created_cycle != ?`, both current-cycle
-  exclusions through `coalesce(..., -1) != ?`, the active-rule exclusion, `ORDER BY id LIMIT ?`.
-  This replaces Python's `OFFSET` paging with an id cursor and must naturally use the named index
-  without a temporary B-tree.
+- `idx_crystals_maintenance` (002 §2) is a partial cursor/range index on `id` for eligible
+  active/candidate non-active-rule rows. `DecayManager` freezes this bounded query shape:
+
+  ```sql
+  select id, crystal_type, strength, confidence, status
+  from crystals
+  where status in ('active', 'candidate')
+    and id > :after_id
+    and created_cycle != :current_cycle
+    and coalesce(last_activated_cycle, -1) != :current_cycle
+    and coalesce(last_reinforced_cycle, 0) < :stale_before_cycle
+    and not (crystal_type = 'rule' and status = 'active')
+  order by id
+  limit :limit
+  ```
+
+  `after_id` is the exclusive page cursor, `current_cycle` protects crystals created or activated
+  during the running dream cycle, `stale_before_cycle` is the configurable reinforcement cutoff
+  (`current_cycle - reinforcement_staleness_cycles`), and `limit` is the positive page bound.
+  Equality at the cutoff is not stale; for example, a cutoff of 6 selects cycle 5 but not cycle 6
+  or a one-cycle-old cycle 9. Null reinforcement is treated as cycle 0. The query must naturally
+  use the named index without a temporary B-tree or table scan.
 - `DecayManager` queries only a **bounded set**: crystals recalled or linked during the current
   cycle's context, plus crystals whose `last_reinforced_cycle` is older than a configurable
   staleness window — never a full table scan.
+- Python-parity tests retain Python's status, active-rule, current-creation, and current-activation
+  exclusions. A one-cycle Rust window (`stale_before_cycle = current_cycle`) matches Python's
+  current-cycle reinforcement exclusion for monotonic cycle ids; larger windows deliberately
+  strengthen eligibility by postponing decay until the configured age is reached. Cursor paging
+  replaces Python's `OFFSET` without changing the eligible set for that configured cutoff.
 - Decay deltas run through `FeedbackStore::apply_score_delta` (003 §2.5), which applies the
   `rule_intent`/`source_credibility` dampening described there — no separate rule-immunity
   branch here.
 
 ```rust
-pub struct DecayScope { pub recalled_ids: Vec<i64>, pub linked_ids: Vec<i64>, pub limit: usize }
+pub struct DecayScope {
+    pub recalled_ids: Vec<i64>,
+    pub linked_ids: Vec<i64>,
+    pub stale_before_cycle: i64,
+    pub limit: usize,
+}
 pub fn select_decay_candidates(scope: &DecayScope) -> Vec<i64>;  // indexed, bounded to limit+1
 ```
 

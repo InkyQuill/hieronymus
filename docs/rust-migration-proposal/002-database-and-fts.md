@@ -192,9 +192,9 @@ create virtual table rag_chunks_fts using fts5(text, display_text, location, con
 create table semantic_index_jobs (id integer primary key, status text not null default 'pending', generation_id text, created_at text not null, completed_at text);
 create table semantic_chunk_state (chunk_id integer primary key references rag_chunks(id), checksum text not null, generation_id text not null, indexed_at text not null);
 
--- Compound index for bounded dream maintenance (004 §3)
+-- Partial cursor/range index for bounded dream maintenance (004 §5)
 create index idx_crystals_maintenance
-on crystals(id, created_cycle, last_activated_cycle, last_reinforced_cycle)
+on crystals(id)
 where status in ('active', 'candidate')
   and not (crystal_type = 'rule' and status = 'active');
 ```
@@ -255,14 +255,25 @@ END;
 ## 4. Migration Sequence
 
 Before SQLx applies `0001`, migration orchestration classifies the database while holding a
-`BEGIN IMMEDIATE` transaction. Empty databases follow the normal SQLx path. Databases already
-owning valid SQLx metadata continue normally. A supported Python `global.sql` database runs one
-crash-atomic baseline transaction: validate its exact object family and timestamp formats, rebuild
+`BEGIN IMMEDIATE` transaction. Empty databases follow the normal SQLx path. Every existing
+`_sqlx_migrations` table is first validated against SQLx 0.9's exact SQLite column/primary-key/
+default contract. Its rows must be a successful ordered prefix of the migrations embedded in the
+running binary, with matching version, description, and checksum; malformed, dirty, unknown,
+future, or gapped histories fail before SQLx runs. This derives valid versions from the current
+embedded migrator rather than hard-coding `[1, 3, 4]`, so adding `0002` later changes the accepted
+prefixes with the binary that embeds it.
+
+A supported Python `global.sql` database runs one crash-atomic baseline transaction. Before any
+schema or row mutation, Rust constructs the exact current `global.sql` logical object manifest —
+ordered columns/types/nullability/defaults/primary keys, foreign keys, named indexes, triggers,
+and FTS/auxiliary objects — adjusted only for the observed subset of explicitly documented
+compatibility columns. The actual manifest must match that known variant exactly. Only after that
+proof may the compatibility patcher add those known columns and normalize timestamps, then rebuild
 ordinary tables through fixed shadow names into the authoritative STRICT schema, map
 `strict_concept_proposals` to `concept_proposals` and `memory_graph_migration_ledger` to
 `migration_ledger`, retain/rebuild all four strict-term objects for Task 5, validate per-table row
 counts and `foreign_key_check`, and record embedded migration 0001 with SQLx's own description and
-checksum. Unknown, partial, dirty, or reserved-shadow schemas fail with a typed actionable error;
+checksum. Unknown, partial, shape-altered, or reserved-shadow schemas fail with a typed actionable error;
 they are never treated as fresh. Foreign-key enforcement is restored and verified before the
 pooled connection is returned on every success or error path.
 

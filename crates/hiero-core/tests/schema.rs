@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
 use hiero_core::db::{connect_url, migrate};
-use sqlx::{Executor, Row, SqlitePool};
+use sqlx::{AssertSqlSafe, Executor, Row, SqlitePool};
 
 const REQUIRED_TABLES: &[&str] = &[
     "audit_log",
@@ -294,16 +294,7 @@ async fn rag_chunks_has_the_exact_compound_source_and_series_foreign_key() {
 async fn explicit_indexes_have_the_exact_declared_columns() {
     let pool = migrated_pool().await;
     let expected = [
-        (
-            "crystals",
-            "idx_crystals_maintenance",
-            vec![
-                "id",
-                "created_cycle",
-                "last_activated_cycle",
-                "last_reinforced_cycle",
-            ],
-        ),
+        ("crystals", "idx_crystals_maintenance", vec!["id"]),
         (
             "rag_chunks",
             "rag_chunks_series_slug_idx",
@@ -466,7 +457,7 @@ async fn default_and_explicit_timestamps_roundtrip_as_rfc3339_utc() {
 }
 
 #[tokio::test]
-async fn maintenance_query_uses_the_named_compound_index() {
+async fn maintenance_query_enforces_staleness_boundary_and_uses_partial_cursor_index() {
     let pool = migrated_pool().await;
     let now = "2026-07-19T00:00:00Z";
     for id in 1..=200_i64 {
@@ -487,21 +478,65 @@ async fn maintenance_query_uses_the_named_compound_index() {
         .expect("selective maintenance fixture should insert");
     }
 
-    let details = sqlx::query(
-        "EXPLAIN QUERY PLAN SELECT id, crystal_type, strength, confidence, status FROM crystals WHERE status IN ('active', 'candidate') AND id > ? AND created_cycle != ? AND coalesce(last_activated_cycle, -1) != ? AND coalesce(last_reinforced_cycle, -1) != ? AND NOT (crystal_type = 'rule' AND status = 'active') ORDER BY id LIMIT ?",
-    )
-    .bind(50_i64)
-    .bind(10_i64)
-    .bind(10_i64)
-    .bind(10_i64)
-    .bind(20_i64)
-    .fetch_all(&pool)
-    .await
-    .expect("maintenance plan should compile")
-    .into_iter()
-    .map(|row| row.get::<String, _>("detail"))
-    .collect::<Vec<_>>()
-    .join("\n");
+    for (id, crystal_type, status, created, activated, reinforced) in [
+        (
+            201_i64,
+            "observation",
+            "active",
+            1_i64,
+            Some(2_i64),
+            Some(5_i64),
+        ),
+        (202, "observation", "active", 1, Some(2), Some(6)),
+        (203, "observation", "active", 1, Some(2), Some(9)),
+        (204, "observation", "active", 1, Some(2), None),
+        (205, "observation", "active", 10, Some(2), Some(5)),
+        (206, "observation", "active", 1, Some(10), Some(5)),
+        (207, "rule", "active", 1, Some(2), Some(5)),
+        (208, "rule", "candidate", 1, Some(2), Some(5)),
+    ] {
+        sqlx::query(
+            "INSERT INTO crystals (id, crystal_type, text, scope_type, strength, confidence, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at) VALUES (?, ?, ?, 'global', 0.5, 0.5, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(crystal_type)
+        .bind(format!("boundary {id}"))
+        .bind(status)
+        .bind(created)
+        .bind(activated)
+        .bind(reinforced)
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("maintenance boundary fixture should insert");
+    }
+
+    const QUERY: &str = "SELECT id, crystal_type, strength, confidence, status FROM crystals WHERE status IN ('active', 'candidate') AND id > ? AND created_cycle != ? AND coalesce(last_activated_cycle, -1) != ? AND coalesce(last_reinforced_cycle, 0) < ? AND NOT (crystal_type = 'rule' AND status = 'active') ORDER BY id LIMIT ?";
+    let selected: Vec<i64> = sqlx::query_scalar(QUERY)
+        .bind(200_i64)
+        .bind(10_i64)
+        .bind(10_i64)
+        .bind(6_i64)
+        .bind(20_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("maintenance candidates should select");
+    assert_eq!(selected, vec![201, 204, 208]);
+
+    let details = sqlx::query(AssertSqlSafe(format!("EXPLAIN QUERY PLAN {QUERY}")))
+        .bind(50_i64)
+        .bind(10_i64)
+        .bind(10_i64)
+        .bind(6_i64)
+        .bind(20_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("maintenance plan should compile")
+        .into_iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>()
+        .join("\n");
 
     assert!(
         details.contains("idx_crystals_maintenance"),
@@ -514,6 +549,20 @@ async fn maintenance_query_uses_the_named_compound_index() {
     assert!(
         !details.contains("SCAN crystals"),
         "unbounded scan:\n{details}"
+    );
+}
+
+#[test]
+fn maintenance_proposal_names_the_configurable_staleness_threshold() {
+    let proposal =
+        include_str!("../../../docs/rust-migration-proposal/004-dreaming-and-llm-integration.md");
+    assert!(
+        proposal.contains("coalesce(last_reinforced_cycle, 0) < :stale_before_cycle"),
+        "proposal 004 must freeze the reinforcement staleness boundary"
+    );
+    assert!(
+        proposal.contains("partial cursor/range index"),
+        "proposal 004 must describe the index accurately"
     );
 }
 

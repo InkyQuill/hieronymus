@@ -179,7 +179,7 @@ COLUMN 21|last_reinforced_cycle|INTEGER|0|NULL|0
 COLUMN 22|created_at|TEXT|1|NULL|0
 COLUMN 23|updated_at|TEXT|1|NULL|0
 FK 0|0|crystals|supersedes_crystal_id|id|NO ACTION|SET NULL|NONE
-INDEX 0|idx_crystals_maintenance|0|c|1|id,created_cycle,last_activated_cycle,last_reinforced_cycle
+INDEX 0|idx_crystals_maintenance|0|c|1|id
 TABLE dream_audit_entries
 SQL CREATE TABLE dream_audit_entries (   id INTEGER PRIMARY KEY,   dream_run_id INTEGER NOT NULL REFERENCES dream_runs(id) ON DELETE CASCADE,   phase_run_id INTEGER REFERENCES dream_phase_runs(id) ON DELETE SET NULL,   event_type TEXT NOT NULL,   severity TEXT NOT NULL DEFAULT 'info',   summary TEXT NOT NULL,   payload_json TEXT NOT NULL DEFAULT '{}',   created_at TEXT NOT NULL ) STRICT
 COLUMN 0|id|INTEGER|0|NULL|1
