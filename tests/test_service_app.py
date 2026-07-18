@@ -5,7 +5,7 @@ import json
 import re
 import threading
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient, WebSocketDenialResponse
@@ -387,6 +387,7 @@ def test_status_endpoint_returns_paths_pid_and_active_cycle(
     assert payload["host"] == "127.0.0.1"
     assert payload["port"] == 9768
     assert payload["version"] == "0.1.0"
+    assert payload["launch_id"] == "test-launch"
     assert payload["data_root"] == str(config.data_root)
     assert payload["database_path"] == str(config.database_path)
     assert payload["config_path"] == str(config.config_root)
@@ -451,7 +452,7 @@ def test_shutdown_requests_server_termination(client: TestClient) -> None:
         callback_invocations += 1
 
     client.app.state.runtime.request_shutdown = request_shutdown
-    response = client.post("/shutdown")
+    response = client.post("/shutdown", headers={"X-Hieronymus-Expected-Launch-Id": "test-launch"})
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "stopping": True}
@@ -459,10 +460,28 @@ def test_shutdown_requests_server_termination(client: TestClient) -> None:
     assert callback_invocations == 1
 
 
+def test_shutdown_refuses_mismatched_launch_precondition(client: TestClient) -> None:
+    callback = MagicMock()
+    client.app.state.runtime.request_shutdown = callback
+
+    response = client.post(
+        "/shutdown", headers={"X-Hieronymus-Expected-Launch-Id": "replacement-launch"}
+    )
+
+    assert response.status_code == 412
+    assert response.json() == {
+        "error": "launch_identity_mismatch",
+        "error_type": "launch_identity_mismatch",
+    }
+    assert not client.app.state.shutdown_requested.is_set()
+    callback.assert_not_called()
+
+
 def test_lifecycle_endpoints_require_no_authentication(client: TestClient) -> None:
     assert client.get("/health").status_code == 200
     assert client.get("/status").status_code == 200
-    assert client.post("/shutdown").status_code == 200
+    response = client.post("/shutdown", headers={"X-Hieronymus-Expected-Launch-Id": "test-launch"})
+    assert response.status_code == 200
 
 
 def test_oversized_json_preserves_legacy_empty_object_contract(

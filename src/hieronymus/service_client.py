@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from typing import Any
 
-from hieronymus.service_state import ServerState
+from hieronymus.service_state import EXPECTED_LAUNCH_ID_HEADER, ServerState
 
 
 class ServiceClientError(RuntimeError):
@@ -35,7 +36,14 @@ class ServiceClient:
         return self.request_json("GET", state, "/status")
 
     def shutdown(self, state: ServerState) -> dict[str, Any]:
-        return self.request_json("POST", state, "/shutdown")
+        if state.launch_id is None:
+            raise ServiceClientError("daemon state has no launch identity")
+        return self.request_json(
+            "POST",
+            state,
+            "/shutdown",
+            headers={EXPECTED_LAUNCH_ID_HEADER: state.launch_id},
+        )
 
     def request_json(
         self,
@@ -43,11 +51,14 @@ class ServiceClient:
         state: ServerState,
         path: str,
         payload: dict[str, object] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(f"{state.base_url}{path}", data=data, method=method)
         if data is not None:
             request.add_header("Content-Type", "application/json")
+        for name, value in (headers or {}).items():
+            request.add_header(name, value)
         try:
             response_context = urllib.request.urlopen(request, timeout=self.timeout)
         except urllib.error.HTTPError as exc:

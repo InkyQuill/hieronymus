@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
+import socket
 import subprocess
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from unittest.mock import patch
@@ -24,6 +28,11 @@ from hieronymus.provider_config import (
     save_provider_catalog,
 )
 from hieronymus.release_config import ReleaseConfig, save_release_config
+from hieronymus.service_state import (
+    is_pid_running,
+    read_server_state,
+    remove_server_state,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -778,41 +787,78 @@ def test_no_subcommand_ensures_service_and_prints_greeting(tmp_path: Path) -> No
     assert "port: 32199" in result.output
 
 
+def _run_lifecycle_cli(data_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    command = ["uv", "run", "hiero", "--data-root", str(data_root), *args]
+    try:
+        return subprocess.run(
+            command,
+            check=False,
+            cwd=Path.cwd(),
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise AssertionError(
+            f"CLI lifecycle command timed out after 30s: {command!r}; "
+            f"stdout={error.stdout!r}; stderr={error.stderr!r}"
+        ) from error
+
+
+def _force_cleanup_lifecycle_daemon(data_root: Path) -> None:
+    config = load_config(str(data_root))
+    state = read_server_state(config)
+    if state is None:
+        return
+    try:
+        os.killpg(state.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + 2
+    while is_pid_running(state.pid) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    remove_server_state(config, expected_state=state)
+
+
 def test_status_start_stop_lifecycle_with_real_daemon(tmp_path: Path) -> None:
     data_root = tmp_path / "hieronymus"
+    data_root.mkdir()
+    start_result: subprocess.CompletedProcess[str] | None = None
 
     try:
-        start_result = subprocess.run(
-            ["uv", "run", "hiero", "--data-root", str(data_root)],
-            check=False,
-            cwd=Path.cwd(),
-            text=True,
-            capture_output=True,
-            timeout=10,
+        for _ in range(5):
+            with socket.socket() as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                port = reservation.getsockname()[1]
+                (data_root / "service.conf").write_text(
+                    f"[service]\nport = {port}\n", encoding="utf-8"
+                )
+            start_result = _run_lifecycle_cli(data_root)
+            if start_result.returncode == 0:
+                break
+            _run_lifecycle_cli(data_root, "stop", "--json")
+
+        assert start_result is not None
+        assert start_result.returncode == 0, (
+            "daemon failed to start after five reserved-port attempts; "
+            f"stdout={start_result.stdout!r}; stderr={start_result.stderr!r}"
         )
-        assert start_result.returncode == 0
         assert "🪶 Hieronymus v" in start_result.stdout
 
-        status_result = subprocess.run(
-            ["uv", "run", "hiero", "--data-root", str(data_root), "status", "--json"],
-            check=False,
-            cwd=Path.cwd(),
-            text=True,
-            capture_output=True,
-            timeout=10,
+        status_result = _run_lifecycle_cli(data_root, "status", "--json")
+        assert status_result.returncode == 0, (
+            f"status failed; stdout={status_result.stdout!r}; stderr={status_result.stderr!r}"
         )
-        assert status_result.returncode == 0
         status_payload = json.loads(status_result.stdout)
         assert status_payload["running"] is True
         assert status_payload["host"] == "127.0.0.1"
+        assert status_payload["port"] == port
         assert status_payload["database_path"] == str(data_root / "hieronymus.sqlite")
     finally:
-        stop_result = subprocess.run(
-            ["uv", "run", "hiero", "--data-root", str(data_root), "stop", "--json"],
-            check=False,
-            cwd=Path.cwd(),
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
-        assert stop_result.returncode == 0
+        try:
+            stop_result = _run_lifecycle_cli(data_root, "stop", "--json")
+            assert stop_result.returncode == 0, (
+                f"stop failed; stdout={stop_result.stdout!r}; stderr={stop_result.stderr!r}"
+            )
+        finally:
+            _force_cleanup_lifecycle_daemon(data_root)

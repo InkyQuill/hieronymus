@@ -63,7 +63,10 @@ class ServiceManager:
             health = self.client.health(state)
             if not self._health_attests_state(health, state):
                 return {"running": False, "reason": "identity-mismatch"}
-            return self.client.status(state)
+            status = self.client.status(state)
+            if not self._health_attests_state(status, state):
+                return {"running": False, "reason": "identity-mismatch"}
+            return status
         except (OSError, ServiceClientError):
             return {"running": False, "reason": "unreachable"}
 

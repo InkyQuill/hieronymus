@@ -27,7 +27,7 @@ from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS, mcp_transport_diag
 from hieronymus.mcp_server import build_http_mcp_server
 from hieronymus.provider_config import load_provider_catalog
 from hieronymus.secrets import redact_configured_secret_values
-from hieronymus.service_state import ServerState
+from hieronymus.service_state import EXPECTED_LAUNCH_ID_HEADER, ServerState
 from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.tui_bridge.config_api import ConfigBridge
 
@@ -235,6 +235,15 @@ async def _status(request: Request) -> JSONResponse:
 
 async def _shutdown(request: Request) -> JSONResponse:
     runtime = _runtime(request)
+    expected_launch_id = request.headers.get(EXPECTED_LAUNCH_ID_HEADER)
+    if runtime.state.launch_id is None or expected_launch_id != runtime.state.launch_id:
+        return _json(
+            {
+                "error": "launch_identity_mismatch",
+                "error_type": "launch_identity_mismatch",
+            },
+            412,
+        )
     runtime.shutdown_requested.set()
     if runtime.request_shutdown is not None:
         runtime.request_shutdown()
@@ -526,6 +535,7 @@ def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, An
         "host": state.host,
         "port": state.port,
         "version": state.version,
+        "launch_id": state.launch_id,
         "started_at": state.started_at,
         "data_root": str(config.data_root),
         "database_path": str(config.database_path),

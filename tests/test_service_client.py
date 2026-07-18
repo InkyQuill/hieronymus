@@ -33,6 +33,7 @@ def _make_state(config: HieronymusConfig) -> ServerState:
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
+        launch_id="test-launch",
     )
 
 
@@ -76,3 +77,25 @@ def test_service_client_rejects_wrong_health_identity(
 
     with pytest.raises(ServiceClientError, match="unexpected health response"):
         ServiceClient().health(state)
+
+
+def test_service_client_sends_shutdown_launch_precondition_without_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _make_state(HieronymusConfig(data_root=tmp_path / "hieronymus"))
+    seen: dict[str, Any] = {}
+
+    def fake_urlopen(request: Any, timeout: float) -> FakeResponse:
+        seen["headers"] = dict(request.header_items())
+        seen["method"] = request.method
+        return FakeResponse(b'{"ok": true, "stopping": true}')
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    ServiceClient().shutdown(state)
+
+    assert seen == {
+        "headers": {"X-hieronymus-expected-launch-id": "test-launch"},
+        "method": "POST",
+    }
+    assert "Authorization" not in seen["headers"]

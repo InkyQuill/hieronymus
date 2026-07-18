@@ -5,6 +5,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
@@ -14,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.service_client import ServiceClientError
+from hieronymus.service_client import ServiceClient, ServiceClientError
 from hieronymus.service_manager import ServiceManager
 from hieronymus.service_state import (
     ServerState,
@@ -67,7 +68,13 @@ class FakeClient:
         self.status_calls += 1
         if not self.healthy:
             raise OSError("connection refused")
-        return {"running": True, "pid": state.pid}
+        return {
+            "running": True,
+            "pid": state.pid,
+            "data_root": state.data_root,
+            "database_path": state.database_path,
+            "launch_id": state.launch_id,
+        }
 
     def shutdown(self, state: ServerState) -> dict[str, object]:
         self.shutdown_called = True
@@ -399,6 +406,66 @@ def _start_real_daemon_with_reserved_port(
     raise AssertionError(f"daemon startup failed after {attempts} attempts: {last_error}")
 
 
+class _ReplaceDaemonAfterHealth:
+    def __init__(self, manager: ServiceManager) -> None:
+        self._old_manager = manager
+        self._delegate = ServiceClient()
+        self.replacement: ServiceManager | None = None
+
+    def health(self, state: ServerState) -> dict[str, object]:
+        payload = self._delegate.health(state)
+        if self.replacement is None:
+            stopped = self._old_manager.stop()
+            assert stopped["stop_status"] in {"stopped", "forced"}
+            replacement = ServiceManager(
+                self._old_manager.config, startup_timeout=3, poll_interval=0.02
+            )
+            replacement.start()
+            self.replacement = replacement
+        return payload
+
+    def status(self, state: ServerState) -> dict[str, object]:
+        return self._delegate.status(state)
+
+    def shutdown(self, state: ServerState) -> dict[str, object]:
+        return self._delegate.shutdown(state)
+
+    def cleanup(self) -> None:
+        if self.replacement is not None:
+            self.replacement.stop()
+
+
+def test_status_rejects_replacement_daemon_between_health_and_status(tmp_path: Path) -> None:
+    old_manager, _old_state = _start_real_daemon_with_reserved_port(tmp_path / "status")
+    client = _ReplaceDaemonAfterHealth(old_manager)
+    try:
+        status = ServiceManager(old_manager.config, client=client).status()
+
+        assert status == {"running": False, "reason": "identity-mismatch"}
+        assert client.replacement is not None
+        assert client.replacement.status()["running"] is True
+    finally:
+        client.cleanup()
+
+
+def test_stop_does_not_terminate_replacement_between_health_and_shutdown(
+    tmp_path: Path,
+) -> None:
+    old_manager, _old_state = _start_real_daemon_with_reserved_port(tmp_path / "stop")
+    client = _ReplaceDaemonAfterHealth(old_manager)
+    try:
+        result = ServiceManager(old_manager.config, client=client).stop()
+
+        assert result["stop_status"] in {"stopped", "failed"}
+        assert client.replacement is not None
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            assert client.replacement.status()["running"] is True
+            time.sleep(0.02)
+    finally:
+        client.cleanup()
+
+
 def test_start_rejects_older_healthy_daemon_when_spawned_child_loses_bind(
     tmp_path: Path,
 ) -> None:
@@ -474,8 +541,13 @@ def test_stop_never_signals_or_removes_mismatched_process_state(tmp_path: Path) 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     process = _spawn_signal_test_process(ignore_term=False)
     try:
+        actual_identity = process_start_identity(process.pid)
+        if actual_identity is None:
+            pytest.skip("true PID identity mismatch requires Linux procfs")
         state = server_state(config, pid=process.pid)
-        state = replace(state, process_identity="different-process")
+        mismatched_identity = f"{actual_identity}-different"
+        assert mismatched_identity != actual_identity
+        state = replace(state, process_identity=mismatched_identity)
         write_server_state(config, state)
         manager = ServiceManager(
             config,
@@ -493,7 +565,11 @@ def test_stop_never_signals_or_removes_mismatched_process_state(tmp_path: Path) 
         assert read_server_state(config) == state
         killpg.assert_not_called()
     finally:
-        os.killpg(process.pid, signal.SIGKILL)
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         process.wait(timeout=2)
 
 

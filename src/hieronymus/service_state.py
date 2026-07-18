@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 from hieronymus.config import HieronymusConfig
 
+EXPECTED_LAUNCH_ID_HEADER = "X-Hieronymus-Expected-Launch-Id"
+
 
 @dataclass(frozen=True)
 class RuntimePaths:
