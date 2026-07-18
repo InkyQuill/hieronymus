@@ -218,15 +218,15 @@ def asset_map() -> dict[str, str]:
     }
 
 
-def render_agent_plugin_assets(
-    target: str,
-    *,
-    mcp_server_entry: dict[str, object] | None = None,
-) -> dict[str, str]:
+def render_agent_plugin_assets(target: str) -> dict[str, str]:
+    from hieronymus.agent_plugins import resolve_plugin
+
+    try:
+        plugin = resolve_plugin(target)
+    except ValueError as error:
+        raise ValueError(f"Unsupported agent plugin target: {target}") from error
     assets = asset_map()
-    mcp_config = {
-        "mcpServers": {"hieronymus": mcp_server_entry or MCP_CONFIG["mcpServers"]["hieronymus"]}
-    }
+    mcp_config = {"mcpServers": {"hieronymus": plugin.mcp_server_entry()}}
     assets["mcp/hieronymus.mcp.json"] = _json(mcp_config)
     plugin_json = {
         "name": "hieronymus",

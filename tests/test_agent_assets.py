@@ -138,11 +138,11 @@ def test_render_agent_plugin_assets_includes_agent_name() -> None:
 def test_rendered_asset_uses_confirmed_streamable_http_adapter_schema(
     target: str, expected: dict[str, object]
 ) -> None:
-    plugin = resolve_plugin(target)
-    assets = render_agent_plugin_assets(target, mcp_server_entry=plugin.mcp_server_entry())
+    assets = render_agent_plugin_assets(target)
     config = json.loads(assets["mcp/hieronymus.mcp.json"])
 
     assert config["mcpServers"]["hieronymus"] == expected
+    assert config["mcpServers"]["hieronymus"] == resolve_plugin(target).mcp_server_entry()
     assert "command" not in expected
 
 
@@ -202,6 +202,7 @@ def test_codex_generated_bundle_passes_local_validator(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_render_agent_plugin_assets_rejects_unknown_target() -> None:
+@pytest.mark.parametrize("target", ["", "unknown"])
+def test_render_agent_plugin_assets_rejects_missing_or_unknown_target(target: str) -> None:
     with pytest.raises(ValueError, match="Unsupported agent plugin target"):
-        render_agent_plugin_assets("unknown")
+        render_agent_plugin_assets(target)

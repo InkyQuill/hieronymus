@@ -24,7 +24,10 @@ The common bundle includes:
 - `opencode`: `opencode/plugin.json`.
 - `openclaw`: `openclaw/plugin.json`.
 
-The MCP config invokes `hieronymus-mcp`. Codex hooks currently invoke
+Current installers generate each host's native Streamable HTTP configuration for
+`http://127.0.0.1:9768/mcp`. The loopback registration does not add authentication fields.
+`hieronymus-mcp` remains available as a one-release stdio compatibility shim for existing callers;
+new agent registrations use Streamable HTTP. Codex hooks currently invoke
 `python -m hieronymus.agent_hooks session-start` and
 `python -m hieronymus.agent_hooks session-end`; the hook asset is packaged separately for later
 installer wiring and is not referenced from the Codex plugin manifest.

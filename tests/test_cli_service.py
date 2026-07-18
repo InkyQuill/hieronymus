@@ -142,6 +142,15 @@ def test_agent_workflows_documents_project_local_skills() -> None:
     assert "does not register MCP" in text
 
 
+def test_agent_workflows_documents_http_installers_and_stdio_compatibility() -> None:
+    text = (ROOT / "docs" / "agent-workflows.md").read_text(encoding="utf-8")
+
+    assert "native Streamable HTTP" in text
+    assert "http://127.0.0.1:9768/mcp" in text
+    assert "one-release stdio compatibility shim" in text
+    assert "does not add authentication" in text
+
+
 def test_click_help_describes_config_command() -> None:
     result = CliRunner().invoke(main, ["--help"])
 

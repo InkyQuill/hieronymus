@@ -73,7 +73,7 @@ class ClaudePlugin(BaseAgentPlugin):
         write_plugin_assets(
             config,
             self.name,
-            render_agent_plugin_assets(self.name, mcp_server_entry=self.mcp_server_entry()),
+            render_agent_plugin_assets(self.name),
         )
         patch_json_config(config, config_path, agent=self.name, payload=payload)
         plan = self.plan(config)
