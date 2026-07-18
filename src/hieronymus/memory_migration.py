@@ -90,6 +90,16 @@ _RETIREMENT_RELATIONSHIP_OWNERSHIP_COLUMNS = {
     "value",
     "created_at",
 }
+_RETIREMENT_ALIAS_PROVENANCE_COLUMNS = {
+    "source_table",
+    "source_id",
+    "term_id",
+    "alias_id",
+    "target_table",
+    "target_id",
+    "alias_kind",
+    "created_at",
+}
 
 
 class Database(Protocol):
@@ -591,7 +601,7 @@ class MemoryGraphMigrator:
             ):
                 if kind not in {"source_variant", "search_alias", "approved_variant"}:
                     continue
-                self._ensure_facet(
+                alias_facet_id = self._ensure_facet(
                     conn,
                     source_table="strict_terms",
                     source_id=f"{term['id']}:alias:{alias_id}",
@@ -603,6 +613,14 @@ class MemoryGraphMigrator:
                     is_canonical=False,
                     created=created,
                     exact_projection=True,
+                )
+                _record_alias_provenance(
+                    conn,
+                    term_id=int(term["id"]),
+                    alias_id=alias_id,
+                    target_table="concept_facets",
+                    target_id=alias_facet_id,
+                    alias_kind=kind,
                 )
             self._ensure_facet(
                 conn,
@@ -643,12 +661,21 @@ class MemoryGraphMigrator:
             )
             for alias_id, _, _, kind in self._strict_term_alias_rows(conn, int(term["id"])):
                 if kind == "forbidden_variant":
+                    alias_source_id = f"{term['id']}:alias:{alias_id}"
                     self._record_ledger(
                         conn,
                         "strict_terms",
-                        f"{term['id']}:alias:{alias_id}",
+                        alias_source_id,
                         "crystals",
                         crystal_id,
+                    )
+                    _record_alias_provenance(
+                        conn,
+                        term_id=int(term["id"]),
+                        alias_id=alias_id,
+                        target_table="crystals",
+                        target_id=crystal_id,
+                        alias_kind=kind,
                     )
             self._remove_stale_strict_term_alias_artifacts(
                 conn,
@@ -1500,6 +1527,14 @@ class MemoryGraphMigrator:
                 """,
                 (row["source_id"], row["target_table"]),
             )
+            conn.execute(
+                """
+                delete from strict_term_retirement_alias_provenance
+                where source_table = 'strict_terms' and source_id = ?
+                  and target_table = ? and target_id = ?
+                """,
+                (row["source_id"], row["target_table"], row["target_id"]),
+            )
             if row["target_table"] != "concept_facets":
                 continue
             owned_id = _owned_object_id(
@@ -2122,6 +2157,7 @@ def _validate_retirement_ownership_schema(conn: sqlite3.Connection, affected: st
         "strict_term_retirement_relationship_ownership": (
             _RETIREMENT_RELATIONSHIP_OWNERSHIP_COLUMNS
         ),
+        "strict_term_retirement_alias_provenance": _RETIREMENT_ALIAS_PROVENANCE_COLUMNS,
     }
     for table, columns in expected.items():
         if _has_table(conn, table) and not _has_columns(conn, table, set(columns)):
@@ -2143,8 +2179,8 @@ def _validate_retirement_ownership_schema(conn: sqlite3.Connection, affected: st
         raise StrictTermConversionBlocked(
             f"terms {affected}: strict term retirement object ownership must be unique"
         )
-    if _has_table(conn, "strict_term_retirement_relationship_ownership") and not (
-        _has_unique_columns(
+    if _has_table(conn, "strict_term_retirement_relationship_ownership") and (
+        not _has_unique_columns(
             conn,
             "strict_term_retirement_relationship_ownership",
             (
@@ -2174,6 +2210,21 @@ def _validate_retirement_ownership_schema(conn: sqlite3.Connection, affected: st
         raise StrictTermConversionBlocked(
             f"terms {affected}: strict term retirement relationship ownership must be unique"
         )
+    if _has_table(conn, "strict_term_retirement_alias_provenance") and (
+        not _has_unique_columns(
+            conn,
+            "strict_term_retirement_alias_provenance",
+            ("source_table", "source_id"),
+        )
+        or not _has_unique_columns(
+            conn,
+            "strict_term_retirement_alias_provenance",
+            ("term_id", "alias_id"),
+        )
+    ):
+        raise StrictTermConversionBlocked(
+            f"terms {affected}: strict term retirement alias ownership must be unique"
+        )
 
 
 def _has_unique_columns(conn: sqlite3.Connection, table: str, columns: tuple[str, ...]) -> bool:
@@ -2200,6 +2251,7 @@ def _has_unique_columns(conn: sqlite3.Connection, table: str, columns: tuple[str
 def _validate_retirement_ownership_integrity(
     conn: sqlite3.Connection, active_ids: tuple[int, ...], affected: str
 ) -> None:
+    _validate_alias_ownership_integrity(conn, active_ids, affected)
     has_objects = _has_table(conn, "strict_term_retirement_ownership")
     has_relationships = _has_table(conn, "strict_term_retirement_relationship_ownership")
     if not has_objects and not has_relationships:
@@ -2272,6 +2324,140 @@ def _validate_retirement_ownership_integrity(
         raise StrictTermConversionBlocked(
             f"terms {listed}: strict term retirement ownership integrity failed"
         )
+
+
+def _validate_alias_ownership_integrity(
+    conn: sqlite3.Connection, active_ids: tuple[int, ...], affected: str
+) -> None:
+    ledger_rows = conn.execute(
+        """
+        select source_id, target_table, target_id
+        from memory_graph_migration_ledger
+        where source_table = 'strict_terms'
+        order by source_id, target_table
+        """
+    ).fetchall()
+    alias_ledgers: set[tuple[str, str, int]] = set()
+    ledger_targets_valid = True
+    for row in ledger_rows:
+        target_id = _strict_positive_int(row["target_id"])
+        ledger_targets_valid = ledger_targets_valid and target_id is not None
+        if ":alias:" in str(row["source_id"]) and target_id is not None:
+            alias_ledgers.add((str(row["source_id"]), str(row["target_table"]), target_id))
+    has_provenance = _has_table(conn, "strict_term_retirement_alias_provenance")
+    if alias_ledgers and not has_provenance:
+        _raise_alias_ownership_blocked(active_ids, affected)
+    provenance: set[tuple[str, str, int]] = set()
+    valid = ledger_targets_valid
+    if has_provenance:
+        for row in conn.execute(
+            """
+            select source_table, source_id, term_id, alias_id, target_table,
+                   target_id, alias_kind
+            from strict_term_retirement_alias_provenance
+            order by source_id
+            """
+        ):
+            source_id = str(row["source_id"])
+            parsed = _canonical_alias_source(source_id)
+            term_id = _strict_positive_int(row["term_id"])
+            alias_id = _strict_positive_int(row["alias_id"])
+            target_table = str(row["target_table"])
+            target_id = _strict_positive_int(row["target_id"])
+            alias_kind = str(row["alias_kind"])
+            expected_table = {
+                "source_variant": "concept_facets",
+                "search_alias": "concept_facets",
+                "approved_variant": "concept_facets",
+                "forbidden_variant": "crystals",
+            }.get(alias_kind)
+            row_valid = (
+                row["source_table"] == "strict_terms"
+                and parsed == (term_id, alias_id)
+                and target_table == expected_table
+                and target_id is not None
+                and (source_id, target_table, target_id) in alias_ledgers
+                and _alias_target_matches_term(conn, source_id, term_id, target_table, target_id)
+                and _existing_alias_belongs_to_term(conn, alias_id, term_id)
+            )
+            valid = valid and row_valid
+            if row_valid:
+                provenance.add((source_id, target_table, target_id))
+    valid = valid and provenance == alias_ledgers
+    for row in ledger_rows:
+        valid = valid and _strict_term_ledger_source_is_canonical(conn, row)
+    if not valid:
+        _raise_alias_ownership_blocked(active_ids, affected)
+
+
+def _raise_alias_ownership_blocked(active_ids: tuple[int, ...], affected: str) -> None:
+    listed = ", ".join(str(term_id) for term_id in active_ids) or affected
+    raise StrictTermConversionBlocked(
+        f"terms {listed}: strict term alias ownership integrity failed"
+    )
+
+
+def _canonical_alias_source(source_id: str) -> tuple[int, int] | None:
+    parts = source_id.split(":")
+    if len(parts) != 3 or parts[1] != "alias":
+        return None
+    term_id = _canonical_positive_decimal(parts[0])
+    alias_id = _canonical_positive_decimal(parts[2])
+    if term_id is None or alias_id is None:
+        return None
+    return term_id, alias_id
+
+
+def _canonical_positive_decimal(value: str) -> int | None:
+    if not value.isdigit():
+        return None
+    parsed = int(value)
+    return parsed if parsed > 0 and str(parsed) == value else None
+
+
+def _existing_alias_belongs_to_term(
+    conn: sqlite3.Connection, alias_id: int | None, term_id: int | None
+) -> bool:
+    if alias_id is None or term_id is None:
+        return False
+    row = conn.execute(
+        "select term_id from strict_term_aliases where id = ?", (alias_id,)
+    ).fetchone()
+    return row is None or int(row["term_id"]) == term_id
+
+
+def _alias_target_matches_term(
+    conn: sqlite3.Connection,
+    source_id: str,
+    term_id: int | None,
+    target_table: str,
+    target_id: int,
+) -> bool:
+    if term_id is None:
+        return False
+    if target_table == "concept_facets":
+        return _object_is_owned_by_source(
+            conn, "strict_terms", source_id, "concept_facets", target_id
+        )
+    if target_table == "crystals":
+        return _object_is_owned_by_source(conn, "strict_terms", str(term_id), "crystals", target_id)
+    return False
+
+
+def _strict_term_ledger_source_is_canonical(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    source_id = str(row["source_id"])
+    target_table = str(row["target_table"])
+    term_id = _canonical_term_id_from_source(source_id)
+    if conn.execute("select 1 from strict_terms where id = ?", (term_id,)).fetchone() is None:
+        return False
+    if source_id == str(term_id):
+        return target_table in {"concepts", "crystals"}
+    if source_id in {f"{term_id}:source", f"{term_id}:rendering"}:
+        return target_table == "concept_facets"
+    return _canonical_alias_source(source_id) is not None and target_table in {
+        "concept_facets",
+        "crystals",
+    }
 
 
 def _canonical_term_id_from_source(source_id: str) -> int:
@@ -2422,6 +2608,24 @@ def _ensure_retirement_ownership_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        create table if not exists strict_term_retirement_alias_provenance(
+          source_table text not null check(source_table = 'strict_terms'),
+          source_id text not null,
+          term_id integer not null check(term_id > 0),
+          alias_id integer not null check(alias_id > 0),
+          target_table text not null check(target_table in ('concept_facets', 'crystals')),
+          target_id integer not null check(target_id > 0),
+          alias_kind text not null check(alias_kind in (
+            'source_variant', 'search_alias', 'approved_variant', 'forbidden_variant'
+          )),
+          created_at text not null,
+          primary key(source_table, source_id),
+          unique(term_id, alias_id)
+        )
+        """
+    )
 
 
 def _owned_object_id(
@@ -2470,6 +2674,33 @@ def _record_owned_object(
           object_id = excluded.object_id
         """,
         (source_table, source_id, object_type, str(object_id), _now(conn)),
+    )
+
+
+def _record_alias_provenance(
+    conn: sqlite3.Connection,
+    *,
+    term_id: int,
+    alias_id: int,
+    target_table: str,
+    target_id: int,
+    alias_kind: str,
+) -> None:
+    source_id = f"{term_id}:alias:{alias_id}"
+    conn.execute(
+        """
+        insert into strict_term_retirement_alias_provenance(
+          source_table, source_id, term_id, alias_id, target_table,
+          target_id, alias_kind, created_at
+        ) values ('strict_terms', ?, ?, ?, ?, ?, ?, ?)
+        on conflict(source_table, source_id) do update set
+          term_id = excluded.term_id,
+          alias_id = excluded.alias_id,
+          target_table = excluded.target_table,
+          target_id = excluded.target_id,
+          alias_kind = excluded.alias_kind
+        """,
+        (source_id, term_id, alias_id, target_table, target_id, alias_kind, _now(conn)),
     )
 
 

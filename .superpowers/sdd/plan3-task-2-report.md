@@ -34,6 +34,9 @@ SQL-only ordered runner, `DROP_PHASE_ENABLED` is false, and the legacy tables re
 | cross-term/spoofed ownership | deletion authorization | blocks all active IDs before mutation |
 | two-ledger shared facet | exclusive deletion proof | stale edge released; facet/reference preserved |
 | missing owned relationship | ownership integrity and parity | blocks; coverage remains incomplete |
+| relationship unique-key matrix | exact ordered schema contract | only both exact keys accepted |
+| forged cross-term alias ID | term/alias binding | facet and forbidden projections block |
+| genuinely removed alias | durable stale provenance | cleanup accepted without weakening binding |
 
 RED was established with `uv run pytest tests/test_strict_term_retirement.py -q`:
 collection failed with `ModuleNotFoundError: No module named 'hieronymus.legacy_terms'`.
@@ -54,6 +57,14 @@ cross-term relationship row selected another term's tag for deletion and stale c
 facet still targeted by another ledger. Relationship provenance is now structured rather than
 JSON-encoded, the complete ownership graph is validated before retirement writes, and focused
 retirement/ownership/graph verification passes 77/77.
+
+The final validation review established a fifth RED run: four targeted cases failed. Relationship
+ownership incorrectly accepted schemas with neither uniqueness key or only the source-scoped key,
+and existing cross-term alias IDs passed for both facet and forbidden/crystal projections. The
+validator now requires both exact ordered uniqueness contracts independently. A dedicated
+structured alias-provenance table binds canonical source ID, term ID, alias ID, stored kind,
+target table/ID, and exact ledger edge. All eight matrix/alias regressions and the 85-test focused
+retirement/ownership/graph/schema suite now pass.
 
 ## Backup format and durability
 
@@ -104,6 +115,11 @@ structured edge, its actual relationship, and its current migration-owned node. 
 deletion additionally requires exclusive ownership: no other ledger/ownership/current projection,
 source crystal, user language tag, story scope, or semantic tag may reference it. Otherwise only
 the stale ledger and ownership metadata are released, leaving every external target resolvable.
+Alias ownership separately validates every strict-term ledger source. Primary sources accept only
+the canonical decimal term ID; source/rendering roles and lowercase `alias` segments are exact;
+alias decimals reject leading zeros and case variants. An existing alias ID must belong to the
+encoded term. A removed alias is cleanup-eligible only while its migration-created provenance and
+same-source ledger still agree on term, alias, target kind, and target identity.
 Inactive audit events remain append-only: an exact snapshot is reused; changed or malformed
 history is preserved and a corrected event is appended.
 
@@ -121,8 +137,8 @@ SQL migration `0001`; all three legacy tables remain present after preparation.
 
 ## Verification
 
-- `uv run pytest tests/test_strict_term_retirement.py tests/test_memory_graph_migration.py tests/test_memory_schema_metadata.py -q` — 77 passed.
-- `uv run pytest` — 1403 passed in 146.50s.
+- `uv run pytest tests/test_strict_term_retirement.py tests/test_memory_graph_migration.py tests/test_memory_schema_metadata.py -q` — 100 passed.
+- `uv run pytest` — 1426 passed in 155.51s.
 - `uv run ruff check .` — passed.
 - `uv run ruff format --check .` — 180 files already formatted.
 - `git diff --check` — passed.
@@ -131,7 +147,9 @@ SQL migration `0001`; all three legacy tables remain present after preparation.
 
 Reviewed the complete diff for mutation ordering, transaction ownership, canonical term binding,
 structured ownership constraints, foreign-target and actual-edge validation, cross-term conflict
-blocking, deletion exclusivity, stranded ledger targets, best-effort graph repair compatibility,
+blocking, both ordered relationship uniqueness contracts, primary/source/rendering/alias source
+parsing, existing and stale alias binding, deletion exclusivity, stranded ledger targets,
+best-effort graph repair compatibility,
 shared relationship preservation, append-only audit history, backup identity/checksum scope,
 descriptor-relative publication, schema diagnostics, alias provenance, and accidental runner
 activation. The runtime still reads legacy tables, so destructive retirement remains unavailable.
@@ -144,3 +162,4 @@ Implementation and verification report: `10bf714 feat: prepare lossless strict t
 Reviewer Important findings are fixed in the subsequent dedicated remediation commit.
 Rereview findings are fixed in a separate ownership/backup hardening commit.
 Critical acceptance findings are fixed in a subsequent structured-ownership safety commit.
+Final validation findings are fixed in a subsequent alias/schema validation commit.

@@ -21,7 +21,11 @@ from hieronymus.legacy_terms import (
     verify_legacy_terms_backup,
     write_legacy_terms_backup,
 )
-from hieronymus.memory_migration import convert_strict_terms
+from hieronymus.memory_migration import (
+    _canonical_alias_source,
+    _is_canonical_facet_source,
+    convert_strict_terms,
+)
 
 NOW = "2026-07-19T12:00:00+00:00"
 
@@ -80,6 +84,43 @@ def _alias(
         values (?, ?, ?, ?, ?)
         """,
         (term_id, language, text, kind, int(case_sensitive)),
+    )
+
+
+def _recreate_relationship_ownership_schema(
+    conn: sqlite3.Connection,
+    *,
+    source_key: tuple[str, ...] | None,
+    edge_key: tuple[str, ...] | None,
+) -> None:
+    columns = (
+        "source_table",
+        "source_id",
+        "relationship_type",
+        "owner_type",
+        "owner_id",
+        "related_type",
+        "related_id",
+        "value",
+    )
+    definitions = [
+        "source_table text not null",
+        "source_id text not null",
+        "relationship_type text not null",
+        "owner_type text not null",
+        "owner_id integer not null",
+        "related_type text not null",
+        "related_id integer not null",
+        "value text not null",
+        "created_at text not null",
+    ]
+    for key in (source_key, edge_key):
+        if key is not None:
+            assert set(key) <= set(columns)
+            definitions.append(f"unique({', '.join(key)})")
+    conn.execute("drop table strict_term_retirement_relationship_ownership")
+    conn.execute(
+        "create table strict_term_retirement_relationship_ownership(" + ", ".join(definitions) + ")"
     )
 
 
@@ -1085,3 +1126,205 @@ def test_missing_owned_relationship_blocks_and_parity_cannot_report_complete(
         match=rf"terms {first_id}, {second_id}.*ownership integrity",
     ):
         prepare_strict_term_retirement(conn, backup_dir)
+
+
+_RELATIONSHIP_SOURCE_KEY = (
+    "source_table",
+    "source_id",
+    "relationship_type",
+    "owner_type",
+    "owner_id",
+    "related_type",
+    "related_id",
+    "value",
+)
+_RELATIONSHIP_EDGE_KEY = (
+    "relationship_type",
+    "owner_type",
+    "owner_id",
+    "related_type",
+    "related_id",
+    "value",
+)
+
+
+@pytest.mark.parametrize(
+    ("case", "source_key", "edge_key", "blocks"),
+    [
+        ("neither", None, None, True),
+        ("source-only", _RELATIONSHIP_SOURCE_KEY, None, True),
+        ("edge-only", None, _RELATIONSHIP_EDGE_KEY, True),
+        (
+            "wrong-order",
+            ("source_id", "source_table", *_RELATIONSHIP_SOURCE_KEY[2:]),
+            _RELATIONSHIP_EDGE_KEY,
+            True,
+        ),
+        ("exact", _RELATIONSHIP_SOURCE_KEY, _RELATIONSHIP_EDGE_KEY, False),
+    ],
+)
+def test_relationship_ownership_requires_both_exact_ordered_unique_keys(
+    legacy_database: tuple[sqlite3.Connection, Path],
+    case: str,
+    source_key: tuple[str, ...] | None,
+    edge_key: tuple[str, ...] | None,
+    blocks: bool,
+) -> None:
+    del case
+    conn, backup_dir = legacy_database
+    first_id = _term(conn, source="一", rendering="One")
+    second_id = _term(conn, source="二", rendering="Two")
+    conn.commit()
+    prepare_strict_term_retirement(conn, backup_dir)
+    _recreate_relationship_ownership_schema(conn, source_key=source_key, edge_key=edge_key)
+    conn.commit()
+    before = conn.execute("select count(*) from concepts").fetchone()[0]
+
+    if blocks:
+        with pytest.raises(
+            LegacyTermRetirementBlocked,
+            match=rf"terms {first_id}, {second_id}.*relationship ownership.*unique",
+        ):
+            prepare_strict_term_retirement(conn, backup_dir)
+        assert conn.execute("select count(*) from concepts").fetchone()[0] == before
+    else:
+        assert prepare_strict_term_retirement(conn, backup_dir).coverage.complete
+
+
+@pytest.mark.parametrize(
+    ("kind", "target_table"),
+    [("source_variant", "concept_facets"), ("forbidden_variant", "crystals")],
+)
+def test_cross_term_existing_alias_id_blocks_even_with_consistent_provenance(
+    legacy_database: tuple[sqlite3.Connection, Path], kind: str, target_table: str
+) -> None:
+    conn, backup_dir = legacy_database
+    first_id = _term(conn, source="一", rendering="One")
+    second_id = _term(conn, source="二", rendering="Two")
+    _alias(conn, first_id, text="first alias", kind=kind, language="en")
+    _alias(conn, second_id, text="second alias", kind=kind, language="en")
+    conn.commit()
+    prepare_strict_term_retirement(conn, backup_dir)
+    aliases = {
+        int(row["term_id"]): int(row["id"])
+        for row in conn.execute("select id, term_id from strict_term_aliases")
+    }
+    old_source = f"{first_id}:alias:{aliases[first_id]}"
+    forged_source = f"{first_id}:alias:{aliases[second_id]}"
+    conn.execute(
+        """
+        update memory_graph_migration_ledger set source_id = ?
+        where source_table = 'strict_terms' and source_id = ? and target_table = ?
+        """,
+        (forged_source, old_source, target_table),
+    )
+    if target_table == "concept_facets":
+        conn.execute(
+            """
+            update strict_term_retirement_ownership set source_id = ?
+            where source_table = 'strict_terms' and source_id = ?
+              and object_type = 'concept_facets'
+            """,
+            (forged_source, old_source),
+        )
+        conn.execute(
+            """
+            update strict_term_retirement_relationship_ownership set source_id = ?
+            where source_table = 'strict_terms' and source_id = ?
+            """,
+            (forged_source, old_source),
+        )
+    if conn.execute(
+        """
+        select 1 from sqlite_master
+        where type = 'table' and name = 'strict_term_retirement_alias_provenance'
+        """
+    ).fetchone():
+        conn.execute(
+            """
+            update strict_term_retirement_alias_provenance
+            set source_id = ?, alias_id = ?
+            where source_table = 'strict_terms' and source_id = ?
+            """,
+            (forged_source, aliases[second_id], old_source),
+        )
+    conn.commit()
+
+    with pytest.raises(
+        LegacyTermRetirementBlocked,
+        match=rf"terms {first_id}, {second_id}.*alias ownership",
+    ):
+        prepare_strict_term_retirement(conn, backup_dir)
+
+
+def test_genuinely_stale_alias_cleanup_uses_durable_same_source_provenance(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, backup_dir = legacy_database
+    term_id = _term(conn, source="用語", rendering="Term")
+    _alias(conn, term_id, text="stale", kind="source_variant", language="en")
+    conn.commit()
+    prepare_strict_term_retirement(conn, backup_dir)
+    alias_id = conn.execute(
+        "select id from strict_term_aliases where term_id = ?", (term_id,)
+    ).fetchone()[0]
+    source_id = f"{term_id}:alias:{alias_id}"
+    facet_id = conn.execute(
+        """
+        select target_id from memory_graph_migration_ledger
+        where source_table = 'strict_terms' and source_id = ?
+          and target_table = 'concept_facets'
+        """,
+        (source_id,),
+    ).fetchone()[0]
+    conn.execute("delete from strict_term_aliases where id = ?", (alias_id,))
+    conn.commit()
+
+    result = prepare_strict_term_retirement(conn, backup_dir)
+
+    assert result.coverage.complete
+    assert not conn.execute("select 1 from concept_facets where id = ?", (facet_id,)).fetchone()
+    assert not conn.execute(
+        """
+        select 1 from memory_graph_migration_ledger
+        where source_table = 'strict_terms' and source_id = ?
+        """,
+        (source_id,),
+    ).fetchone()
+
+
+@pytest.mark.parametrize(
+    ("source_id", "expected"),
+    [
+        ("1:alias:2", (1, 2)),
+        ("01:alias:2", None),
+        ("1:Alias:2", None),
+        ("1:alias:02", None),
+        ("1:aliases:2", None),
+        ("1:alias:2:extra", None),
+        ("1:alias:+2", None),
+    ],
+)
+def test_alias_source_parser_rejects_case_duplicate_and_numeric_variants(
+    source_id: str, expected: tuple[int, int] | None
+) -> None:
+    assert _canonical_alias_source(source_id) == expected
+
+
+@pytest.mark.parametrize(
+    ("source_id", "expected"),
+    [
+        ("1:source", True),
+        ("1:rendering", True),
+        ("1:alias:2", True),
+        ("1:Source", False),
+        ("1:Rendering", False),
+        ("1:Alias:2", False),
+        ("1:alias:02", False),
+        ("1:alias:2:duplicate", False),
+    ],
+)
+def test_facet_source_parser_requires_exact_primary_and_alias_roles(
+    source_id: str, expected: bool
+) -> None:
+    assert _is_canonical_facet_source(source_id, 1) is expected
