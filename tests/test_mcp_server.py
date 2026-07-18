@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import socket
 import tomllib
 from dataclasses import replace
 
+import httpx
 import pytest
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
 
 from hieronymus.concepts import ConceptProposalStore, ConceptStore
 from hieronymus.config import load_config
@@ -24,6 +30,8 @@ from hieronymus.provider_config import (
     save_provider_catalog,
 )
 from hieronymus.registry import Registry
+from hieronymus.service_manager import ServiceManager
+from hieronymus.service_state import read_server_state
 from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
@@ -356,6 +364,82 @@ def test_direct_and_proxy_mcp_servers_preserve_all_tool_contracts(config):
         }
 
     assert contracts(direct_tools) == contracts(proxy_tools)
+
+
+def test_real_stdio_server_preserves_http_tool_contracts_and_calls(config, monkeypatch) -> None:
+    def available_port() -> int:
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            return int(listener.getsockname()[1])
+
+    async def exercise() -> None:
+        monkeypatch.delenv("HIERONYMUS_HOST", raising=False)
+        monkeypatch.delenv("HIERONYMUS_PORT", raising=False)
+        config.data_root.mkdir(parents=True)
+        port = available_port()
+        (config.config_root / "service.conf").write_text(
+            f'[service]\nhost = "127.0.0.1"\nport = {port}\n',
+            encoding="utf-8",
+        )
+        manager = ServiceManager(config)
+        manager.start()
+        state = read_server_state(config)
+        assert state is not None
+        assert state.port == port
+
+        stdio_parameters = StdioServerParameters(
+            command="uv",
+            args=["run", "hieronymus-mcp"],
+            cwd=os.getcwd(),
+            env={**os.environ, "HIERONYMUS_DATA_ROOT": str(config.data_root)},
+        )
+        async with stdio_client(stdio_parameters) as (stdio_read, stdio_write):
+            async with ClientSession(stdio_read, stdio_write) as stdio_session:
+                await stdio_session.initialize()
+                async with httpx.AsyncClient() as http_client:
+                    async with streamable_http_client(
+                        f"http://{state.host}:{state.port}/mcp",
+                        http_client=http_client,
+                    ) as (http_read, http_write, _):
+                        async with ClientSession(http_read, http_write) as http_session:
+                            await http_session.initialize()
+                            stdio_tools = await stdio_session.list_tools()
+                            http_tools = await http_session.list_tools()
+
+                            assert [tool.model_dump() for tool in stdio_tools.tools] == [
+                                tool.model_dump() for tool in http_tools.tools
+                            ]
+                            assert len(stdio_tools.tools) == 39
+
+                            stdio_status = await stdio_session.call_tool("hieronymus_status", {})
+                            http_status = await http_session.call_tool("hieronymus_status", {})
+                            assert stdio_status.structuredContent == http_status.structuredContent
+                            assert stdio_status.structuredContent is not None
+                            assert stdio_status.structuredContent["mcp_transports"] == {
+                                "http": {"available": True, "mode": "streamable-http"},
+                                "stdio": {"available": True, "mode": "compatibility-proxy"},
+                            }
+
+                            stdio_created = await stdio_session.call_tool(
+                                "hieronymus_series_create",
+                                {"slug": "stdio", "title": "Stdio"},
+                            )
+                            http_created = await http_session.call_tool(
+                                "hieronymus_series_create",
+                                {"slug": "http", "title": "HTTP"},
+                            )
+                            assert stdio_created.isError is False
+                            assert http_created.isError is False
+
+                            stdio_listed = await stdio_session.call_tool(
+                                "hieronymus_series_list", {}
+                            )
+                            http_listed = await http_session.call_tool("hieronymus_series_list", {})
+                            assert stdio_listed.structuredContent == http_listed.structuredContent
+
+        manager.stop()
+
+    asyncio.run(exercise())
 
 
 def test_direct_mcp_backend_runs_sync_operations_outside_event_loop(config, monkeypatch):

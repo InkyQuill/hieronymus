@@ -10,14 +10,24 @@ type McpPayload = dict[str, object] | list[dict[str, object]]
 type McpOperation = Callable[[HieronymusConfig, dict[str, object]], McpPayload]
 
 
+def mcp_transport_diagnostics() -> dict[str, dict[str, object]]:
+    return {
+        "http": {"available": True, "mode": "streamable-http"},
+        "stdio": {"available": True, "mode": "compatibility-proxy"},
+    }
+
+
 def _status(config: HieronymusConfig, _: dict[str, object]) -> dict[str, object]:
     return {
         "service": discover_local_service(config),
         "data_root": str(config.data_root),
         "database_path": str(config.database_path),
+        "mcp_transports": mcp_transport_diagnostics(),
     }
 
 
+# Remove this private bridge registry with the stdio shim in 0.8.0, after the
+# 0.7.x compatibility release. The public HTTP server uses the same handlers.
 MCP_OPERATION_HANDLERS: dict[str, McpOperation] = {"status": _status}
 
 

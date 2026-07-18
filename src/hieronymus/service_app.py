@@ -23,7 +23,7 @@ from hieronymus.daemon_events import AdminEventHub
 from hieronymus.db import connect
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.dream_providers import ProviderRegistry
-from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS
+from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS, mcp_transport_diagnostics
 from hieronymus.mcp_server import build_http_mcp_server
 from hieronymus.provider_config import load_provider_catalog
 from hieronymus.secrets import redact_configured_secret_values
@@ -524,6 +524,7 @@ def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, An
         "providers_error": provider_status_error,
         "dreaming": dreaming_status,
         "mcp_adapter": {"available": True, "mode": "local-http"},
+        "mcp_transports": mcp_transport_diagnostics(),
         "housekeeping": {
             "last_cycle": None,
             "pending": int(dreaming_status.get("pending_short_term_memories", 0)) > 0,

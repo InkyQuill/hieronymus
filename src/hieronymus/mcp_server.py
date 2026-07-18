@@ -1074,6 +1074,8 @@ def build_http_mcp_server(config: HieronymusConfig):
     )
 
 
+# Remove the stdio proxy in 0.8.0, after the 0.7.x compatibility release.
+# Keep stdout protocol-only until then; diagnostics are exposed by the status tool.
 server = create_mcp_server(ProxyMcpBackend(lambda: _daemon_client()))
 
 

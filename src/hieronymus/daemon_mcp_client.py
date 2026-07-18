@@ -26,6 +26,12 @@ class _Client(Protocol):
 
 
 class DaemonMcpClient:
+    """Delegate stdio MCP calls to the fixed-address daemon.
+
+    Remove this compatibility client in 0.8.0, after the 0.7.x compatibility
+    release. Protocol diagnostics belong in MCP responses, never on stdout.
+    """
+
     def __init__(
         self,
         config: HieronymusConfig,

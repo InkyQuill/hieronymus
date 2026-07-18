@@ -110,6 +110,27 @@ def test_streamable_http_initializes_lists_and_calls_read_write_tools(
     asyncio.run(_exercise_protocol(config))
 
 
+def test_private_stdio_bridge_remains_tokenless_and_reports_both_modes(
+    config: HieronymusConfig,
+) -> None:
+    async def exercise() -> None:
+        app = build_app(config, _make_state(config))
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url=SERVICE_ORIGIN,
+            ) as client:
+                response = await client.post("/api/mcp/status", json={})
+
+        assert response.status_code == 200
+        assert response.json()["result"]["mcp_transports"] == {
+            "http": {"available": True, "mode": "streamable-http"},
+            "stdio": {"available": True, "mode": "compatibility-proxy"},
+        }
+
+    asyncio.run(exercise())
+
+
 def test_streamable_http_is_mounted_at_exact_mcp_path(config: HieronymusConfig) -> None:
     async def exercise() -> None:
         app = build_app(config, _make_state(config))
