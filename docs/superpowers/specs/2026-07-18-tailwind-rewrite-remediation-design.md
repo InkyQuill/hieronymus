@@ -83,7 +83,8 @@ Consequences for callers:
   to exactly `uv build`; the Hatch hook owns the frontend build.
 - `install.sh` runs `uv tool install` only after checkout/configuration; its separate
   `build_frontend` helper is removed. The two remaining “Hieronymus TUI” Bun error messages are
-  changed to “Hieronymus web console” as part of the same stale-migration cleanup.
+  changed to say that Bun `>=1.3` is required to build the Hieronymus web console as part of the
+  same stale-migration cleanup.
 - Backend PR/release verification keeps Bun setup before `uv sync`, but removes the explicit
   install/build steps after `uv sync`. Current GitHub jobs start from a fresh runner and do not
   restore `.venv`, so the editable project must be installed and the Hatch hook fires. The uv
@@ -152,7 +153,7 @@ needed to prove the error remains visible after the test harness changes.
 Build failures remain fail-fast: a failed frozen Bun install or Vite build makes the Hatch build
 fail, which in turn fails `uv sync`, `uv build`, or `uv tool install`. Before starting subprocesses,
 the hook checks `shutil.which("bun")` and raises a concise `RuntimeError` explaining that Bun
-`1.3.14` must be installed and available on `$PATH`; source installs must not fail with only a raw
+`>=1.3` must be installed and available on `$PATH`; source installs must not fail with only a raw
 `FileNotFoundError` traceback.
 
 ## Verification
