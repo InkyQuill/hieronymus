@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import fcntl
+import inspect
+import json
 import os
 from pathlib import Path
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.service_state import (
     ServerState,
-    allocate_loopback_port,
     cleanup_stale_state,
     is_pid_running,
     read_server_state,
@@ -39,12 +40,16 @@ def test_server_state_round_trips_as_json(tmp_path: Path) -> None:
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="local-test-token",
     )
 
     write_server_state(config, state)
 
     assert read_server_state(config) == state
+    assert "token" not in json.loads(runtime_paths(config).server_json.read_text(encoding="utf-8"))
+
+
+def test_server_state_has_no_token_field() -> None:
+    assert "token" not in inspect.signature(ServerState).parameters
 
 
 def test_cleanup_stale_state_removes_dead_pid_files(tmp_path: Path) -> None:
@@ -57,7 +62,6 @@ def test_cleanup_stale_state_removes_dead_pid_files(tmp_path: Path) -> None:
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="local-test-token",
     )
     paths = runtime_paths(config)
     write_server_state(config, state)
@@ -81,7 +85,6 @@ def test_remove_server_state_preserves_different_owner(tmp_path: Path) -> None:
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="old-token",
     )
     new_state = ServerState(
         pid=22222,
@@ -91,7 +94,6 @@ def test_remove_server_state_preserves_different_owner(tmp_path: Path) -> None:
         started_at="2026-06-06T12:00:01Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="new-token",
     )
     paths = runtime_paths(config)
     write_server_state(config, new_state)
@@ -114,7 +116,6 @@ def test_remove_server_state_removes_matching_owner(tmp_path: Path) -> None:
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="local-test-token",
     )
     paths = runtime_paths(config)
     write_server_state(config, state)
@@ -146,9 +147,3 @@ def test_server_start_lock_holds_advisory_lock_without_unlinking(tmp_path: Path)
 
 def test_current_process_pid_is_running() -> None:
     assert is_pid_running(os.getpid()) is True
-
-
-def test_allocate_loopback_port_returns_connectable_port_number() -> None:
-    port = allocate_loopback_port()
-
-    assert 1024 < port < 65536

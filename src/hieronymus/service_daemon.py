@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import secrets
 import threading
 from datetime import UTC, datetime
 from typing import Protocol
@@ -11,6 +10,7 @@ from typing import Protocol
 from hieronymus.config import HieronymusConfig, load_config
 from hieronymus.dream_autostart import DreamAutostart
 from hieronymus.presentation import package_version
+from hieronymus.service_config import load_service_config
 from hieronymus.service_http import build_server
 from hieronymus.service_state import (
     ServerState,
@@ -76,7 +76,8 @@ class DreamAutostartScheduler:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m hieronymus.service_daemon")
     parser.add_argument("--data-root", default=None)
-    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--host", default=None)
+    parser.add_argument("--port", type=int, default=None)
     return parser
 
 
@@ -84,15 +85,15 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     config = load_config(args.data_root)
     config.data_root.mkdir(parents=True, exist_ok=True)
+    service_config = load_service_config(config, host=args.host, port=args.port)
     state = ServerState(
         pid=os.getpid(),
-        host="127.0.0.1",
-        port=args.port if args.port > 0 else 0,
+        host=service_config.host,
+        port=service_config.port,
         version=package_version(),
         started_at=datetime.now(UTC).isoformat(),
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token=secrets.token_hex(16),
     )
     server = build_server(config, state)
     state = server.state

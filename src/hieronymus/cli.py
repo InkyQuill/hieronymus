@@ -197,7 +197,7 @@ def _launch_web_console(route: str, *, config: HieronymusConfig) -> None:
     state = read_server_state(config)
     if state is None:
         raise click.ClickException("local service did not publish its web-console address")
-    url = f"http://{state.host}:{state.port}{route}?token={state.token}"
+    url = f"http://{state.host}:{state.port}{route}"
     if not webbrowser.open(url):
         click.echo(f"Open this local address in a browser: {url}")
 

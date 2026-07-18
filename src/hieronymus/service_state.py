@@ -3,7 +3,6 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-import socket
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -30,7 +29,6 @@ class ServerState:
     started_at: str
     data_root: str
     database_path: str
-    token: str
 
     @property
     def base_url(self) -> str:
@@ -49,7 +47,6 @@ class ServerState:
             started_at=str(payload["started_at"]),
             data_root=str(payload["data_root"]),
             database_path=str(payload["database_path"]),
-            token=str(payload["token"]),
         )
 
 
@@ -123,7 +120,7 @@ def remove_server_state(
         current_state = read_server_state(config)
         if current_state is None:
             return False
-        if current_state.pid != expected_state.pid or current_state.token != expected_state.token:
+        if current_state != expected_state:
             return False
 
     paths = runtime_paths(config)
@@ -142,9 +139,3 @@ def cleanup_stale_state(config: HieronymusConfig) -> bool:
     if is_pid_running(state.pid):
         return False
     return remove_server_state(config, expected_state=state)
-
-
-def allocate_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])

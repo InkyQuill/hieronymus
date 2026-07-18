@@ -101,7 +101,6 @@ def test_hook_session_start_json_includes_discovered_service(
         started_at="2026-06-14T00:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="secret",
     )
     write_server_state(config, state)
     monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(data_root))

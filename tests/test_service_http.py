@@ -4,6 +4,7 @@ import json
 import re
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.cookiejar import CookieJar
 from pathlib import Path
@@ -20,10 +21,10 @@ def _request_json(
     url: str,
     *,
     method: str = "GET",
-    token: str = "local-test-token",
 ) -> dict[str, object]:
     request = urllib.request.Request(url, method=method)
-    request.add_header("X-Hieronymus-Token", token)
+    parsed = urllib.parse.urlparse(url)
+    request.add_header("Origin", f"{parsed.scheme}://{parsed.netloc}")
     with urllib.request.urlopen(request, timeout=2) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -35,23 +36,12 @@ def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "X-Hieronymus-Token": "local-test-token",
         },
     )
+    parsed = urllib.parse.urlparse(url)
+    request.add_header("Origin", f"{parsed.scheme}://{parsed.netloc}")
     with urllib.request.urlopen(request, timeout=2) as response:
         return json.loads(response.read().decode("utf-8"))
-
-
-def _assert_unauthorized(url: str, *, method: str = "GET", token: str | None = None) -> None:
-    request = urllib.request.Request(url, method=method)
-    if token is not None:
-        request.add_header("X-Hieronymus-Token", token)
-    try:
-        urllib.request.urlopen(request, timeout=2)
-    except urllib.error.HTTPError as exc:
-        assert exc.code == 401
-        return
-    raise AssertionError("request should have been rejected")
 
 
 def _make_state(config: HieronymusConfig) -> ServerState:
@@ -63,7 +53,6 @@ def _make_state(config: HieronymusConfig) -> ServerState:
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="local-test-token",
     )
 
 
@@ -126,7 +115,6 @@ def test_config_and_admin_memory_routes_serve_the_web_application_after_session_
         pages = []
         for path in ("/config/dreaming", "/admin/memory"):
             request = urllib.request.Request(f"{base_url}{path}")
-            request.add_header("X-Hieronymus-Token", "local-test-token")
             with urllib.request.urlopen(request, timeout=2) as response:
                 pages.append(response.read().decode("utf-8"))
     finally:
@@ -141,13 +129,11 @@ def test_web_assets_require_the_same_local_session(tmp_path: Path) -> None:
     thread, base_url = _serve(server)
     try:
         page_request = urllib.request.Request(f"{base_url}/config")
-        page_request.add_header("X-Hieronymus-Token", "local-test-token")
         with urllib.request.urlopen(page_request, timeout=2) as response:
             page = response.read().decode("utf-8")
         asset_path = re.search(r'src="(/assets/[^\"]+\.js)"', page)
         assert asset_path is not None
         request = urllib.request.Request(f"{base_url}{asset_path.group(1)}")
-        request.add_header("X-Hieronymus-Token", "local-test-token")
         with urllib.request.urlopen(request, timeout=2) as response:
             content_type = response.headers["Content-Type"]
             asset = response.read().decode("utf-8")
@@ -344,7 +330,7 @@ def test_admin_memory_actions_are_explicitly_allowlisted(tmp_path: Path) -> None
                 method="POST",
                 headers={
                     "Content-Type": "application/json",
-                    "X-Hieronymus-Token": "local-test-token",
+                    "Origin": base_url,
                 },
             )
             try:
@@ -372,7 +358,6 @@ def test_mcp_route_rejects_unknown_operation(tmp_path: Path) -> None:
             method="POST",
             headers={
                 "Content-Type": "application/json",
-                "X-Hieronymus-Token": "local-test-token",
             },
         )
         try:
@@ -526,14 +511,18 @@ def test_shutdown_endpoint_stops_server(tmp_path: Path) -> None:
     assert not thread.is_alive()
 
 
-def test_service_endpoints_reject_missing_or_wrong_token(tmp_path: Path) -> None:
+def test_service_endpoints_require_no_authentication_token(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     state = _make_state(config)
     server = build_server(config, state)
     thread, base_url = _serve(server)
     try:
-        _assert_unauthorized(f"{base_url}/health", token=None)
-        _assert_unauthorized(f"{base_url}/status", token="wrong-token")
-        _assert_unauthorized(f"{base_url}/shutdown", method="POST", token="wrong-token")
+        assert _request_json(f"{base_url}/health")["ok"] is True
+        assert _request_json(f"{base_url}/status")["running"] is True
+        assert _request_json(f"{base_url}/shutdown", method="POST")["stopping"] is True
+        thread.join(timeout=2)
     finally:
-        _stop_server(server, thread)
+        if thread.is_alive():
+            _stop_server(server, thread)
+        else:
+            server.server_close()

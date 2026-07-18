@@ -17,7 +17,6 @@ def _server_state(config: HieronymusConfig) -> ServerState:
         started_at="2026-06-14T00:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="secret",
     )
 
 

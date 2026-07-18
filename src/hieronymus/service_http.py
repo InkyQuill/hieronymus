@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import secrets
 import struct
 import threading
 import time
@@ -97,9 +96,6 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if path == "/health":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
-                return
             self._send_json(
                 {
                     "ok": True,
@@ -109,9 +105,6 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if path == "/status":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
-                return
             self._send_json(status_payload(self.server.config, self.server.state))
             return
         self._send_json({"error": "not_found", "path": path}, status=HTTPStatus.NOT_FOUND)
@@ -119,9 +112,6 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         if path == "/shutdown":
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
-                return
             self._send_json({"ok": True, "stopping": True})
             self.server.shutdown()
             return
@@ -159,9 +149,6 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
             self._send_admin_result(method, self._request_json())
             return
         if path.startswith("/api/mcp/"):
-            if not self._is_authorized():
-                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
-                return
             operation = path.removeprefix("/api/mcp/").strip("/")
             handler = MCP_OPERATION_HANDLERS.get(operation)
             if handler is None:
@@ -274,26 +261,15 @@ class HieronymusRequestHandler(BaseHTTPRequestHandler):
                 return
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
-    def _is_authorized(self) -> bool:
-        token = self.headers.get("X-Hieronymus-Token", "") or _session_token(
-            self.headers.get("Cookie", "")
-        )
-        return secrets.compare_digest(token, self.server.state.token)
-
     def _is_browser_authorized(self) -> bool:
-        if self._is_authorized():
-            return True
         origin = self.headers.get("Origin", "")
         expected = f"http://{self.server.state.host}:{self.server.state.port}"
         if origin:
-            return secrets.compare_digest(origin, expected)
+            return origin == expected
         if self.headers.get("Sec-Fetch-Site", "") != "same-origin":
             return False
         referer = urlparse(self.headers.get("Referer", ""))
-        return secrets.compare_digest(
-            f"{referer.scheme}://{referer.netloc}",
-            expected,
-        )
+        return f"{referer.scheme}://{referer.netloc}" == expected
 
     def _handle_admin_websocket(self) -> None:
         if not self._is_browser_authorized():
@@ -409,14 +385,6 @@ def _web_asset_roots() -> list[Path]:
         roots.append(ancestor / "frontend" / "dist")
         roots.append(ancestor / "frontend")
     return roots
-
-
-def _session_token(cookie_header: str) -> str:
-    for item in cookie_header.split(";"):
-        name, separator, value = item.strip().partition("=")
-        if separator and name == "hieronymus_token":
-            return value
-    return ""
 
 
 def _is_web_route(path: str) -> bool:

@@ -16,7 +16,6 @@ def server_state(
     config: HieronymusConfig,
     *,
     pid: int = 12345,
-    token: str = "local-test-token",
 ) -> ServerState:
     return ServerState(
         pid=pid,
@@ -26,7 +25,6 @@ def server_state(
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token=token,
     )
 
 
@@ -206,8 +204,8 @@ def test_stop_calls_shutdown_for_existing_state(tmp_path: Path) -> None:
 
 def test_stop_preserves_newer_state_written_during_shutdown(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    old_state = server_state(config, pid=11111, token="old-token")
-    new_state = server_state(config, pid=22222, token="new-token")
+    old_state = server_state(config, pid=11111)
+    new_state = server_state(config, pid=22222)
     write_server_state(config, old_state)
     client = ReplacingShutdownClient(config, new_state)
     manager = ServiceManager(config, client=client)

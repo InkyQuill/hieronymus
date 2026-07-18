@@ -356,6 +356,34 @@ def test_config_launch_opens_local_web_console(tmp_path: Path, monkeypatch) -> N
     assert launched == {"route": "/config", "data_root": data_root}
 
 
+def test_launch_web_console_opens_clean_route_without_query_parameters(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from hieronymus.cli import _launch_web_console
+    from hieronymus.config import HieronymusConfig
+    from hieronymus.service_state import ServerState, write_server_state
+
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = ServerState(
+        pid=12345,
+        host="127.0.0.1",
+        port=9768,
+        version="0.1.0",
+        started_at="2026-06-06T12:00:00Z",
+        data_root=str(config.data_root),
+        database_path=str(config.database_path),
+    )
+    write_server_state(config, state)
+    monkeypatch.setattr("hieronymus.cli.ServiceManager.ensure_running", lambda self: {})
+    opened: list[str] = []
+    monkeypatch.setattr("hieronymus.cli.webbrowser.open", lambda url: opened.append(url) or True)
+
+    _launch_web_console("/config", config=config)
+
+    assert opened == ["http://127.0.0.1:9768/config"]
+
+
 def test_dream_json_uses_provider_catalog_profile(tmp_path: Path) -> None:
     data_root = tmp_path / "hieronymus"
     config = load_config(str(data_root))

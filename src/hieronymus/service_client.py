@@ -46,7 +46,6 @@ class ServiceClient:
     ) -> dict[str, Any]:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(f"{state.base_url}{path}", data=data, method=method)
-        request.add_header("X-Hieronymus-Token", state.token)
         if data is not None:
             request.add_header("Content-Type", "application/json")
         try:

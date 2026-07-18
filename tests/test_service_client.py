@@ -33,11 +33,10 @@ def _make_state(config: HieronymusConfig) -> ServerState:
         started_at="2026-06-06T12:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="local-test-token",
     )
 
 
-def test_service_client_sends_state_token_header(
+def test_service_client_sends_no_authentication_header(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -47,7 +46,7 @@ def test_service_client_sends_state_token_header(
 
     def fake_urlopen(request: Any, timeout: float) -> FakeResponse:
         seen["timeout"] = timeout
-        seen["token"] = request.get_header("X-hieronymus-token")
+        seen["headers"] = dict(request.header_items())
         seen["url"] = request.full_url
         return FakeResponse(b'{"ok": true, "service": "hieronymus"}')
 
@@ -58,7 +57,7 @@ def test_service_client_sends_state_token_header(
     assert payload == {"ok": True, "service": "hieronymus"}
     assert seen == {
         "timeout": 1.5,
-        "token": "local-test-token",
+        "headers": {},
         "url": "http://127.0.0.1:32199/health",
     }
 

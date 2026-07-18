@@ -53,7 +53,6 @@ def test_daemon_mcp_client_starts_service_then_posts_operation(tmp_path: Path) -
         started_at="2026-07-16T00:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="test-token",
     )
     manager = FakeManager()
     client = FakeClient(calls=[])
@@ -86,7 +85,6 @@ def test_daemon_mcp_client_uses_manager_state_without_rereading_file(tmp_path: P
         started_at="2026-07-16T00:00:00Z",
         data_root=str(config.data_root),
         database_path=str(config.database_path),
-        token="test-token",
     )
     manager = StateManager(state)
     client = FakeClient(calls=[])
