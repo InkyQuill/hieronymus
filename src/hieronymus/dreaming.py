@@ -9,7 +9,7 @@ from typing import Protocol
 from hieronymus.concepts import VALID_FACET_KINDS, ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
-from hieronymus.db import apply_migration, connect
+from hieronymus.db import connect, ensure_schema
 from hieronymus.dream_audit import DreamAuditStore
 from hieronymus.dream_config import load_dream_config
 from hieronymus.dream_locks import DreamCycleAlreadyRunning, dream_cycle_lock
@@ -365,7 +365,7 @@ class DreamService:
         self.crystals = CrystalStore(config)
         self.audit = DreamAuditStore(config)
         with connect(self.config.database_path) as conn:
-            apply_migration(conn, "global.sql")
+            ensure_schema(conn)
 
     def select_ambient_decay_candidates(
         self,

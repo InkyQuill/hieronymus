@@ -1,8 +1,35 @@
 from __future__ import annotations
 
+import re
 import sqlite3
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
+
+MIGRATION_FILENAME = re.compile(r"^(?P<version>\d+)_(?P<name>[a-z0-9_]+)\.sql$")
+NON_TRANSACTIONAL_SQL = {
+    "attach",
+    "begin",
+    "commit",
+    "detach",
+    "end",
+    "pragma",
+    "release",
+    "rollback",
+    "savepoint",
+    "vacuum",
+}
+MIGRATION_LEDGER_SQL = """
+create table if not exists schema_migrations (
+  version text primary key,
+  name text not null,
+  checksum text not null,
+  applied_at text not null
+)
+"""
 
 GLOBAL_COMPATIBILITY_COLUMNS = {
     "concept_facets": {
@@ -31,6 +58,21 @@ GLOBAL_COMPATIBILITY_COLUMNS = {
 }
 
 
+class SchemaMigrationError(RuntimeError):
+    """Raised when ordered schema migration invariants are violated."""
+
+
+@dataclass(frozen=True)
+class SchemaMigration:
+    version: str
+    name: str
+    sql: str
+
+    @property
+    def checksum(self) -> str:
+        return sha256(self.sql.encode()).hexdigest()
+
+
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -47,6 +89,229 @@ def apply_migration(conn: sqlite3.Connection, name: str) -> None:
         conn.commit()
         ensure_global_compatibility_columns(conn)
     conn.commit()
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create or upgrade the global schema through the ordered migration ledger."""
+    _require_no_active_transaction(conn)
+    migrations = discover_schema_migrations()
+    if _table_exists(conn, "schema_migrations"):
+        apply_schema_migrations(conn, migrations)
+        return
+
+    is_fresh = not _has_application_schema(conn)
+    apply_migration(conn, "global.sql")
+    if is_fresh:
+        _baseline_schema_migrations(conn, migrations)
+    else:
+        apply_schema_migrations(conn, migrations)
+
+
+def discover_schema_migrations() -> list[SchemaMigration]:
+    """Read numbered SQL migrations from package resources in lexical order."""
+    migrations: list[SchemaMigration] = []
+    versions = files("hieronymus.migrations.versions")
+    for resource in sorted(versions.iterdir(), key=lambda item: item.name):
+        match = MIGRATION_FILENAME.fullmatch(resource.name)
+        if match is None:
+            continue
+        migrations.append(
+            SchemaMigration(
+                version=match.group("version"),
+                name=match.group("name"),
+                sql=resource.read_text(encoding="utf-8"),
+            )
+        )
+    _validate_migration_order(migrations)
+    return migrations
+
+
+def apply_schema_migrations(
+    conn: sqlite3.Connection,
+    migrations: Iterable[SchemaMigration],
+) -> None:
+    """Apply each pending migration atomically and record it after success."""
+    _require_no_active_transaction(conn)
+    ordered = sorted(migrations, key=lambda migration: migration.version)
+    _validate_migration_order(ordered)
+    _create_migration_ledger(conn)
+    applied = {
+        row["version"] if isinstance(row, sqlite3.Row) else row[0]: row
+        for row in conn.execute(
+            "select version, name, checksum, applied_at from schema_migrations"
+        ).fetchall()
+    }
+    for migration in ordered:
+        row = applied.get(migration.version)
+        if row is not None:
+            _validate_applied_migration(row, migration)
+
+    for migration in ordered:
+        if migration.version in applied:
+            continue
+        statements = _sql_statements(migration.sql)
+        _reject_non_transactional_statements(migration, statements)
+        try:
+            conn.execute("begin immediate")
+            for statement in statements:
+                conn.execute(statement)
+            conn.execute(
+                """
+                insert into schema_migrations(version, name, checksum, applied_at)
+                values (?, ?, ?, ?)
+                """,
+                (
+                    migration.version,
+                    migration.name,
+                    migration.checksum,
+                    _utc_timestamp(),
+                ),
+            )
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+
+
+def _require_no_active_transaction(conn: sqlite3.Connection) -> None:
+    if conn.in_transaction:
+        raise SchemaMigrationError("schema migrations cannot start inside an active transaction")
+
+
+def _validate_migration_order(migrations: list[SchemaMigration]) -> None:
+    versions = [migration.version for migration in migrations]
+    if len(versions) != len(set(versions)):
+        raise SchemaMigrationError("schema migration versions must be unique")
+    if versions != sorted(versions):
+        raise SchemaMigrationError("schema migrations must use lexical numeric order")
+
+
+def _create_migration_ledger(conn: sqlite3.Connection) -> None:
+    conn.execute(MIGRATION_LEDGER_SQL)
+    conn.commit()
+
+
+def _validate_applied_migration(row: sqlite3.Row | tuple, migration: SchemaMigration) -> None:
+    recorded_name = row["name"] if isinstance(row, sqlite3.Row) else row[1]
+    recorded_checksum = row["checksum"] if isinstance(row, sqlite3.Row) else row[2]
+    if recorded_name != migration.name:
+        raise SchemaMigrationError(
+            f"migration {migration.version} name mismatch: "
+            f"recorded {recorded_name!r}, packaged {migration.name!r}"
+        )
+    if recorded_checksum != migration.checksum:
+        raise SchemaMigrationError(f"migration {migration.version} checksum mismatch")
+
+
+def _sql_statements(sql: str) -> list[str]:
+    statements: list[str] = []
+    statement = ""
+    for character in sql:
+        statement += character
+        if character == ";" and sqlite3.complete_statement(statement):
+            statements.append(statement)
+            statement = ""
+    if statement.strip():
+        statements.append(statement)
+    return statements
+
+
+def _reject_non_transactional_statements(
+    migration: SchemaMigration,
+    statements: list[str],
+) -> None:
+    for statement in statements:
+        keyword = _leading_sql_keyword(statement)
+        if keyword in NON_TRANSACTIONAL_SQL:
+            raise SchemaMigrationError(
+                f"migration {migration.version} contains {keyword.upper()}, "
+                "which cannot run transactionally"
+            )
+
+
+def _leading_sql_keyword(statement: str) -> str:
+    remainder = statement.lstrip()
+    while remainder.startswith(("--", "/*")):
+        if remainder.startswith("--"):
+            _, separator, remainder = remainder.partition("\n")
+            if not separator:
+                return ""
+        else:
+            end = remainder.find("*/", 2)
+            if end == -1:
+                return ""
+            remainder = remainder[end + 2 :].lstrip()
+    match = re.match(r"[a-z]+", remainder, re.IGNORECASE)
+    return match.group(0).lower() if match is not None else ""
+
+
+def _baseline_schema_migrations(
+    conn: sqlite3.Connection,
+    migrations: list[SchemaMigration],
+) -> None:
+    validators = {"0001": _verify_memory_fts_trigger_state}
+    try:
+        conn.execute("begin immediate")
+        conn.execute(MIGRATION_LEDGER_SQL)
+        for migration in migrations:
+            validator = validators.get(migration.version)
+            if validator is None:
+                raise SchemaMigrationError(
+                    f"fresh schema has no baseline verifier for migration {migration.version}"
+                )
+            validator(conn)
+            conn.execute(
+                """
+                insert into schema_migrations(version, name, checksum, applied_at)
+                values (?, ?, ?, ?)
+                """,
+                (migration.version, migration.name, migration.checksum, _utc_timestamp()),
+            )
+        conn.commit()
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+
+
+def _verify_memory_fts_trigger_state(conn: sqlite3.Connection) -> None:
+    expected = {
+        "short_term_memories_ai",
+        "short_term_memories_ad",
+        "short_term_memories_au",
+        "crystals_ai",
+        "crystals_ad",
+        "crystals_au",
+    }
+    present = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[0]
+        for row in conn.execute("select name from sqlite_master where type = 'trigger'").fetchall()
+    }
+    missing = sorted(expected - present)
+    if missing:
+        raise SchemaMigrationError(
+            f"fresh schema does not represent migration 0001; missing triggers: {missing}"
+        )
+
+
+def _has_application_schema(conn: sqlite3.Connection) -> bool:
+    return (
+        conn.execute(
+            """
+            select 1 from sqlite_master
+            where type = 'table'
+              and name not like 'sqlite_%'
+              and name != 'schema_migrations'
+            limit 1
+            """
+        ).fetchone()
+        is not None
+    )
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -75,22 +340,6 @@ def ensure_global_compatibility_columns(conn: sqlite3.Connection) -> None:
     conn.commit()
     ensure_concepts_allow_duplicate_names(conn)
     ensure_concept_facet_compatibility(conn)
-    ensure_memory_fts_compatibility(conn)
-
-
-def ensure_memory_fts_compatibility(conn: sqlite3.Connection) -> None:
-    content_columns = {
-        "short_term_memories_fts": ("short_term_memories", {"id", "text"}),
-        "crystals_fts": ("crystals", {"id", "title", "text"}),
-    }
-    for table, (content_table, required_columns) in content_columns.items():
-        if not required_columns <= _column_names(conn, content_table):
-            continue
-        try:
-            conn.execute(f"insert into {table}({table}, rank) values ('integrity-check', 1)")
-        except sqlite3.DatabaseError:
-            conn.execute(f"insert into {table}({table}) values ('rebuild')")
-    conn.commit()
 
 
 def ensure_concept_facet_compatibility(conn: sqlite3.Connection) -> None:

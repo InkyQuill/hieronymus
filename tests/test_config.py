@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from hieronymus.config import HieronymusConfig, load_config
-from hieronymus.db import apply_migration, connect
+from hieronymus.db import apply_migration, connect, ensure_schema
 
 
 def test_config_exposes_single_global_database(tmp_path: Path) -> None:
@@ -39,7 +39,7 @@ def test_load_config_uses_environment_root(monkeypatch, tmp_path: Path) -> None:
 
 def test_global_migration_creates_memory_dreaming_schema(tmp_path: Path) -> None:
     with connect(tmp_path / "hieronymus.sqlite") as conn:
-        apply_migration(conn, "global.sql")
+        ensure_schema(conn)
         tables = {
             row["name"]
             for row in conn.execute(
@@ -81,7 +81,7 @@ def test_global_migration_creates_memory_dreaming_schema(tmp_path: Path) -> None
 
 def test_global_migration_allows_cycle_less_records(tmp_path: Path) -> None:
     with connect(tmp_path / "hieronymus.sqlite") as conn:
-        apply_migration(conn, "global.sql")
+        ensure_schema(conn)
         nullable = {
             table: {
                 row["name"]: not row["notnull"]
@@ -99,7 +99,7 @@ def test_global_memory_fts_triggers_track_raw_mutations_and_session_cascade(
     tmp_path: Path,
 ) -> None:
     with connect(tmp_path / "hieronymus.sqlite") as conn:
-        apply_migration(conn, "global.sql")
+        ensure_schema(conn)
         conn.execute(
             """
             insert into series(
@@ -172,6 +172,7 @@ def test_global_memory_fts_triggers_track_raw_mutations_and_session_cascade(
 def test_global_migration_repairs_legacy_memory_fts_drift(tmp_path: Path) -> None:
     with connect(tmp_path / "hieronymus.sqlite") as conn:
         apply_migration(conn, "global.sql")
+        conn.execute("drop table schema_migrations")
         conn.execute(
             """
             insert into series(
@@ -215,7 +216,7 @@ def test_global_migration_repairs_legacy_memory_fts_drift(tmp_path: Path) -> Non
         )
         conn.commit()
 
-        apply_migration(conn, "global.sql")
+        ensure_schema(conn)
 
         assert (
             conn.execute(

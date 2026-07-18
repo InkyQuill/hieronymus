@@ -18,7 +18,7 @@ from hieronymus.admin_models import (
 from hieronymus.concepts import ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
-from hieronymus.db import apply_migration, connect
+from hieronymus.db import connect, ensure_schema
 from hieronymus.dream_config import (
     DreamConfig,
     DreamConfigError,
@@ -272,7 +272,7 @@ class AdminStore:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
         with connect(self.config.database_path) as conn:
-            apply_migration(conn, "global.sql")
+            ensure_schema(conn)
         self._feedback = FeedbackStore(config)
 
     def status_payload(self) -> dict[str, object]:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import search_expression
-from hieronymus.db import apply_migration, connect
+from hieronymus.db import connect, ensure_schema
 from hieronymus.rag_conversion import normalize_rag_source
 from hieronymus.rag_models import (
     RagChunkRecord,
@@ -30,7 +30,7 @@ class RagStore:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
         with connect(self.config.database_path) as conn:
-            apply_migration(conn, "global.sql")
+            ensure_schema(conn)
 
     def import_file(
         self,

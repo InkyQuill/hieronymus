@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.db import apply_migration, connect
+from hieronymus.db import connect, ensure_schema
 from hieronymus.values import normalize_string_tuple
 from hieronymus.values import utc_now as _now
 
@@ -42,7 +42,7 @@ class Registry:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
         with connect(self.config.database_path) as conn:
-            apply_migration(conn, "global.sql")
+            ensure_schema(conn)
 
     def create_series(
         self,

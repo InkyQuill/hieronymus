@@ -1,3 +1,10 @@
+create table if not exists schema_migrations (
+  version text primary key,
+  name text not null,
+  checksum text not null,
+  applied_at text not null
+);
+
 create table if not exists series (
   id integer primary key,
   slug text not null unique,

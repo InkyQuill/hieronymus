@@ -7,7 +7,7 @@ from typing import Any
 
 from hieronymus.agent_plugins.base import atomic_write_text
 from hieronymus.config import HieronymusConfig
-from hieronymus.db import apply_migration, connect
+from hieronymus.db import connect, ensure_schema
 from hieronymus.dream_config import DreamConfig, load_dream_config
 from hieronymus.dream_locks import read_dream_cycle_state
 from hieronymus.dream_providers import resolve_provider
@@ -234,7 +234,7 @@ class DreamAutostart:
 
     def _pending_counts(self) -> tuple[int, int]:
         with connect(self.config.database_path) as conn:
-            apply_migration(conn, "global.sql")
+            ensure_schema(conn)
             row = conn.execute(
                 """
                 select

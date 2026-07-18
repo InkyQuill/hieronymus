@@ -8,7 +8,7 @@ from typing import Literal
 from hieronymus.concepts import ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore, search_expression
-from hieronymus.db import apply_migration, connect
+from hieronymus.db import connect, ensure_schema
 from hieronymus.memory_models import (
     CrystalRecord,
     RecallResult,
@@ -198,7 +198,7 @@ class RecallService:
         self.concepts = ConceptStore(config)
         self.rag = RagStore(config)
         with connect(self.config.database_path) as conn:
-            apply_migration(conn, "global.sql")
+            ensure_schema(conn)
 
     def recall(
         self,

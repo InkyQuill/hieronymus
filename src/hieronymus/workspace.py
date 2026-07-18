@@ -5,7 +5,7 @@ from collections.abc import Iterable, Mapping
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import search_expression
-from hieronymus.db import apply_migration, connect
+from hieronymus.db import connect, ensure_schema
 from hieronymus.ingest_config import load_ingest_config
 from hieronymus.memory_models import (
     ShortTermMemoryRecord,
@@ -144,7 +144,7 @@ class WorkspaceStore:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
         with connect(self.config.database_path) as conn:
-            apply_migration(conn, "global.sql")
+            ensure_schema(conn)
 
     def start_session(self, context: TranslationContext) -> TaskSessionRecord:
         now = _now()

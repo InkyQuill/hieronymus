@@ -63,14 +63,10 @@ def test_create_series_rejects_filename_unsafe_slugs(config, slug):
 
 
 def test_registry_raises_when_global_migration_fails(config, monkeypatch):
-    original_apply_migration = registry_module.apply_migration
+    def fail_schema_migration(conn):
+        raise RuntimeError("global migration failed")
 
-    def fail_global_migration(conn, name):
-        if name == "global.sql":
-            raise RuntimeError("global migration failed")
-        original_apply_migration(conn, name)
-
-    monkeypatch.setattr(registry_module, "apply_migration", fail_global_migration)
+    monkeypatch.setattr(registry_module, "ensure_schema", fail_schema_migration)
 
     with pytest.raises(RuntimeError, match="global migration failed"):
         Registry(config)

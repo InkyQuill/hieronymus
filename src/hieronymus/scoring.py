@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.db import apply_migration, connect
+from hieronymus.db import connect, ensure_schema
 from hieronymus.values import clamp_score as _clamp_score
 from hieronymus.values import utc_now as _now
 
@@ -44,7 +44,7 @@ class FeedbackStore:
     def __init__(self, config: HieronymusConfig) -> None:
         self.config = config
         with connect(self.config.database_path) as conn:
-            apply_migration(conn, "global.sql")
+            ensure_schema(conn)
 
     def record(
         self,

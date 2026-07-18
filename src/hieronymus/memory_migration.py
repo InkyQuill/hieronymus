@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from hieronymus.config import HieronymusConfig
-from hieronymus.db import apply_migration, connect
+from hieronymus.db import connect, ensure_schema
 from hieronymus.rule_crystals import parse_rule_crystal
 
 _UNSUPPORTED_RULE_ALIAS_KINDS = frozenset({"source_variant", "search_alias"})
@@ -150,7 +150,7 @@ class MemoryGraphMigrator:
     def __init__(self, db: Database) -> None:
         self.database_path = _database_path(db)
         with connect(self.database_path) as conn:
-            apply_migration(conn, "global.sql")
+            ensure_schema(conn)
 
     def run(self) -> MemoryGraphMigrationReport:
         created: Counter[str] = Counter()
