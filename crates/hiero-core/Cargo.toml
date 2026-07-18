@@ -12,6 +12,7 @@ chrono.workspace = true
 csv.workspace = true
 lancedb.workspace = true
 ort.workspace = true
+phf.workspace = true
 pulldown-cmark.workspace = true
 regex.workspace = true
 reqwest.workspace = true
