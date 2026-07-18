@@ -69,29 +69,47 @@ outside this PR's frontend styling/build scope.
 
 `hatch_build.py` is the authoritative packaging integration:
 
-1. The workflow provisions the Bun version declared by `frontend/package.json`.
+1. CI provisions Bun `1.3.14` with `oven-sh/setup-bun`; the same version is declared in
+   `frontend/package.json` for local tooling. The Hatch hook uses the `bun` executable from
+   `$PATH` and does not read or install the declared package-manager version itself.
 2. Any editable install or package build invokes the Hatch hook.
 3. The hook runs the frozen frontend dependency install and Vite build once.
 4. Hatch embeds `frontend/dist` in the Python artifact.
 
 Consequences for callers:
 
-- `python-semantic-release` runs `uv build` only; the Hatch hook owns the frontend build.
+- `pyproject.toml` changes semantic-release's `build_command` from
+  `bun install --cwd frontend --frozen-lockfile && bun run --cwd frontend build && uv build`
+  to exactly `uv build`; the Hatch hook owns the frontend build.
 - `install.sh` runs `uv tool install` only after checkout/configuration; its separate
-  `build_frontend` helper is removed.
+  `build_frontend` helper is removed. The two remaining “Hieronymus TUI” Bun error messages are
+  changed to “Hieronymus web console” as part of the same stale-migration cleanup.
 - Backend PR/release verification keeps Bun setup before `uv sync`, but removes the explicit
-  install/build steps after `uv sync`.
+  install/build steps after `uv sync`. Current GitHub jobs start from a fresh runner and do not
+  restore `.venv`, so the editable project must be installed and the Hatch hook fires. The uv
+  package cache does not make an editable install appear in a new virtual environment. CI does
+  not add `--reinstall-package hieronymus`; if `.venv` caching is introduced later, that decision
+  must be revisited and documented in the workflow.
 - The dedicated frontend CI job retains install, formatting, type checking, tests, and build.
-  It validates frontend development independently from Python packaging.
+  It validates frontend development independently from Python packaging. This intentionally
+  compiles the frontend once in backend packaging verification and once in frontend verification:
+  the first proves the wheel integration, while the second proves frontend-only quality gates.
 
 Tests around workflow and release configuration must assert this ownership explicitly so a
 second build recipe cannot be added unnoticed.
 
 ## Frontend Test Architecture
 
-Use Vitest with a jsdom environment and Svelte component testing support for browser behavior.
-The test suite should render components, interact with accessible controls, and assert visible
-state or callbacks rather than search source files for markup.
+Use `vitest`, `jsdom`, `@testing-library/svelte`, and `@testing-library/user-event` as frontend
+development dependencies. Add `vitest.config.ts` with the existing Svelte Vite plugin, a `jsdom`
+test environment, and a setup file that performs Testing Library cleanup. The test suite should
+render components, interact with accessible controls, and assert visible state or callbacks
+rather than search source files for markup.
+
+Keep browser-source and test types separate. `tsconfig.json` covers production browser files with
+`vite/client` types and excludes test files. A test TypeScript configuration extends it with
+Vitest and Node types for test and configuration files. The `typecheck` script runs both configs,
+and the `test` script runs `vitest run`. Bun still executes these package scripts.
 
 The first behavior coverage remains deliberately focused on migration-sensitive paths:
 
@@ -108,10 +126,13 @@ Static contract tests remain appropriate for facts that are inherently source/co
 contracts: importing Tailwind, defining the data-theme dark variant, exposing required semantic
 tokens/utilities, constraining the editor dialog rule, importing `app.css`, and deleting legacy
 stylesheet files. These tests must be named as configuration or source-contract tests rather than
-behavior tests.
+behavior tests. They use `node:fs/promises` (`readFile` and `access`) instead of `Bun.file`, so
+removing Bun globals from the test type environment does not remove this coverage.
 
-Network calls used by mounted components are mocked at the API-module boundary. Tests must assert
-component behavior and callback payloads, not mock call counts alone.
+Network calls used by mounted components are mocked at the API-module boundary. Mock functions
+are typed from the real API exports, fixtures use `satisfies` against the real response types, and
+tests assert exact request arguments or callback payloads. Tests must assert component behavior,
+not mock call counts alone.
 
 ## CSS Remediation
 
@@ -129,7 +150,10 @@ existing error strings are rendered and tested. Component tests cover rejected A
 needed to prove the error remains visible after the test harness changes.
 
 Build failures remain fail-fast: a failed frozen Bun install or Vite build makes the Hatch build
-fail, which in turn fails `uv sync`, `uv build`, or `uv tool install`.
+fail, which in turn fails `uv sync`, `uv build`, or `uv tool install`. Before starting subprocesses,
+the hook checks `shutil.which("bun")` and raises a concise `RuntimeError` explaining that Bun
+`1.3.14` must be installed and available on `$PATH`; source installs must not fail with only a raw
+`FileNotFoundError` traceback.
 
 ## Verification
 
