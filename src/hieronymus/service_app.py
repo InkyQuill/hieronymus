@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
@@ -125,9 +126,7 @@ class _ServiceRuntime:
                     "dream_completed", {"trigger": "manual", "result": payload["result"]}
                 )
             except Exception as error:
-                message = redact_configured_secret_values(
-                    str(error), load_provider_catalog(self.config)
-                )
+                message = _safe_dream_failure_message(self.config, error)
                 self.events.publish("dream_failed", {"trigger": "manual", "error": message})
             finally:
                 with self.dream_lock:
@@ -140,6 +139,13 @@ class _ServiceRuntime:
 
 def _json(payload: dict[str, Any], status_code: int = 200) -> JSONResponse:
     return JSONResponse(payload, status_code=status_code)
+
+
+async def _cancel_tasks(tasks: set[asyncio.Task[Any]]) -> None:
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _runtime(request: Request) -> _ServiceRuntime:
@@ -197,7 +203,8 @@ async def _health(request: Request) -> JSONResponse:
 
 async def _status(request: Request) -> JSONResponse:
     runtime = _runtime(request)
-    return _json(status_payload(runtime.config, runtime.state))
+    payload = await run_in_threadpool(status_payload, runtime.config, runtime.state)
+    return _json(payload)
 
 
 async def _shutdown(request: Request) -> JSONResponse:
@@ -213,8 +220,8 @@ async def _providers(request: Request) -> JSONResponse:
         return forbidden
     runtime = _runtime(request)
     if request.method == "GET":
-        return _json(ConfigBridge(runtime.config).provider_list({}))
-    return _config_result(runtime.config, "save_provider", await _request_json(request))
+        return await _config_result(runtime.config, "provider_list", {})
+    return await _config_result(runtime.config, "save_provider", await _request_json(request))
 
 
 async def _provider(request: Request) -> JSONResponse:
@@ -223,15 +230,15 @@ async def _provider(request: Request) -> JSONResponse:
     runtime = _runtime(request)
     provider_id = request.path_params["provider_id"]
     if request.method == "DELETE":
-        return _config_result(runtime.config, "delete_provider", {"provider_id": provider_id})
-    return _config_result(runtime.config, "provider_detail", {"provider_id": provider_id})
+        return await _config_result(runtime.config, "delete_provider", {"provider_id": provider_id})
+    return await _config_result(runtime.config, "provider_detail", {"provider_id": provider_id})
 
 
 async def _provider_models(request: Request) -> JSONResponse:
     if forbidden := _forbidden_unless_browser_authorized(request):
         return forbidden
     runtime = _runtime(request)
-    return _config_result(
+    return await _config_result(
         runtime.config, "provider_models", {"provider_id": request.path_params["provider_id"]}
     )
 
@@ -240,7 +247,7 @@ async def _provider_check(request: Request) -> JSONResponse:
     if forbidden := _forbidden_unless_browser_authorized(request):
         return forbidden
     runtime = _runtime(request)
-    return _config_result(
+    return await _config_result(
         runtime.config,
         "check_saved_provider",
         {"provider_id": request.path_params["provider_id"]},
@@ -257,19 +264,19 @@ async def _settings(request: Request) -> JSONResponse:
     if method is None:
         return _json({"error": "not_found", "path": request.url.path}, 404)
     params = {} if request.method == "GET" else await _request_json(request)
-    return _config_result(runtime.config, method, params)
+    return await _config_result(runtime.config, method, params)
 
 
 async def _admin_dashboard(request: Request) -> JSONResponse:
     if forbidden := _forbidden_unless_browser_authorized(request):
         return forbidden
-    return _admin_result(_runtime(request).config, "dashboard", {})
+    return await _admin_result(_runtime(request).config, "dashboard", {})
 
 
 async def _admin_snapshot(request: Request) -> JSONResponse:
     if forbidden := _forbidden_unless_browser_authorized(request):
         return forbidden
-    return _admin_result(
+    return await _admin_result(
         _runtime(request).config,
         "snapshot",
         {
@@ -289,15 +296,21 @@ async def _admin_action(request: Request) -> JSONResponse:
     runtime = _runtime(request)
     if method == "run_manual_dreaming":
         return _json(runtime.start_manual_dreaming())
-    return _admin_result(runtime.config, method, await _request_json(request))
+    return await _admin_result(runtime.config, method, await _request_json(request))
 
 
 async def _mcp_operation(request: Request) -> JSONResponse:
     handler = MCP_OPERATION_HANDLERS.get(request.path_params["operation"])
     if handler is None:
         return _json({"error": "unknown_mcp_operation"}, 404)
+    config = _runtime(request).config
+    params = await _request_json(request)
+    return await run_in_threadpool(_mcp_result, handler, config, params)
+
+
+def _mcp_result(handler: Any, config: HieronymusConfig, params: dict[str, object]) -> JSONResponse:
     try:
-        payload = handler(_runtime(request).config, await _request_json(request))
+        payload = handler(config, params)
     except ValueError as error:
         return _json({"error": str(error)}, 400)
     except KeyError as error:
@@ -323,11 +336,12 @@ async def _admin_websocket(websocket: WebSocket) -> None:
         while True:
             event_task = asyncio.create_task(events.get())
             receive_task = asyncio.create_task(websocket.receive())
-            done, pending = await asyncio.wait(
-                {event_task, receive_task}, return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in pending:
-                task.cancel()
+            race_tasks = {event_task, receive_task}
+            done: set[asyncio.Task[Any]] = set()
+            try:
+                done, _ = await asyncio.wait(race_tasks, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                await _cancel_tasks(race_tasks - done)
             if receive_task in done:
                 message = receive_task.result()
                 if message["type"] == "websocket.disconnect":
@@ -340,9 +354,13 @@ async def _admin_websocket(websocket: WebSocket) -> None:
         unsubscribe()
 
 
-def _config_result(
+async def _config_result(
     config: HieronymusConfig, method: str, params: dict[str, object]
 ) -> JSONResponse:
+    return await run_in_threadpool(_call_config, config, method, params)
+
+
+def _call_config(config: HieronymusConfig, method: str, params: dict[str, object]) -> JSONResponse:
     try:
         payload = getattr(ConfigBridge(config), method)(params)
     except ValueError as error:
@@ -350,12 +368,25 @@ def _config_result(
     return _json(payload, 400 if payload.get("error") else 200)
 
 
-def _admin_result(config: HieronymusConfig, method: str, params: dict[str, object]) -> JSONResponse:
+async def _admin_result(
+    config: HieronymusConfig, method: str, params: dict[str, object]
+) -> JSONResponse:
+    return await run_in_threadpool(_call_admin, config, method, params)
+
+
+def _call_admin(config: HieronymusConfig, method: str, params: dict[str, object]) -> JSONResponse:
     try:
         payload = getattr(AdminBridge(config), method)(params)
     except ValueError as error:
         return _json({"error": str(error)}, 400)
     return _json(payload)
+
+
+def _safe_dream_failure_message(config: HieronymusConfig, error: Exception) -> str:
+    try:
+        return redact_configured_secret_values(str(error), load_provider_catalog(config))
+    except Exception:
+        return "manual dreaming failed"
 
 
 async def _not_found(request: Request, _: Exception) -> JSONResponse:

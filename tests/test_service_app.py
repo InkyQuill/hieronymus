@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,7 +12,7 @@ from starlette.testclient import TestClient, WebSocketDenialResponse
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.dream_locks import dream_cycle_lock
-from hieronymus.service_app import build_app, status_payload
+from hieronymus.service_app import _cancel_tasks, build_app, status_payload
 from hieronymus.service_state import ServerState
 
 SERVICE_ORIGIN = "http://127.0.0.1:9768"
@@ -101,6 +103,38 @@ def test_assets_use_only_the_explicit_root(config: HieronymusConfig, tmp_path: P
     assert response.json() == {"error": "not_found"}
 
 
+def test_default_asset_root_is_the_packaged_distribution(
+    config: HieronymusConfig, tmp_path: Path
+) -> None:
+    package_module = tmp_path / "package" / "service_app.py"
+    packaged_root = package_module.parent / "frontend" / "dist"
+    packaged_root.mkdir(parents=True)
+    (packaged_root / "index.html").write_text("packaged console", encoding="utf-8")
+
+    with (
+        patch("hieronymus.service_app.__file__", str(package_module)),
+        TestClient(build_app(config, _make_state(config)), base_url=SERVICE_ORIGIN) as local_client,
+    ):
+        response = local_client.get("/config")
+
+    assert response.status_code == 200
+    assert response.text == "packaged console"
+
+
+def test_missing_console_index_has_stable_error(config: HieronymusConfig, tmp_path: Path) -> None:
+    empty_root = tmp_path / "empty-dist"
+    empty_root.mkdir()
+
+    with TestClient(
+        build_app(config, _make_state(config), asset_root=empty_root),
+        base_url=SERVICE_ORIGIN,
+    ) as local_client:
+        response = local_client.get("/config")
+
+    assert response.status_code == 404
+    assert response.json() == {"error": "web_console_not_built"}
+
+
 def test_provider_api_creates_lists_reads_and_deletes_profiles(
     client: TestClient,
 ) -> None:
@@ -147,6 +181,32 @@ def test_provider_check_returns_a_structured_failure(client: TestClient) -> None
     assert response.json()["check"]["error"] == "model suggestions unavailable"
 
 
+def test_provider_models_route_returns_model_suggestions(client: TestClient) -> None:
+    client.post(
+        "/api/providers",
+        json={
+            "provider": {
+                "id": "local-ollama",
+                "name": "Local Ollama",
+                "type": "ollama",
+                "url": "http://127.0.0.1:9",
+                "key": "",
+                "timeout_seconds": "1",
+            }
+        },
+        headers=_browser_headers(),
+    )
+
+    response = client.get("/api/providers/local-ollama/models", headers=_browser_headers())
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "models": ["gemma4-e3b"],
+        "source": "defaults",
+        "error": "model suggestions unavailable",
+    }
+
+
 @pytest.mark.parametrize("name", ["dream", "ingest", "release"])
 def test_settings_apis_are_scoped_to_their_files(client: TestClient, name: str) -> None:
     response = client.get(f"/api/settings/{name}", headers=_browser_headers())
@@ -169,6 +229,32 @@ def test_dream_settings_can_be_saved(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["dream"]["dreaming"]["enabled"] is True
+
+
+def test_ingest_and_release_settings_can_be_saved(client: TestClient) -> None:
+    ingest = client.post(
+        "/api/settings/ingest",
+        json={
+            "ingest": {
+                "short_memory": {
+                    "warning_sentence_count": 8,
+                    "rejection_sentence_count": 32,
+                },
+                "learn": {"max_block_chars": 1600},
+            }
+        },
+        headers=_browser_headers(),
+    )
+    release = client.post(
+        "/api/settings/release",
+        json={"release": {"update_channel": "dev"}},
+        headers=_browser_headers(),
+    )
+
+    assert ingest.status_code == 200
+    assert ingest.json()["ingest"]["learn"]["max_block_chars"] == 1600
+    assert release.status_code == 200
+    assert release.json() == {"release": {"update_channel": "dev"}, "error": ""}
 
 
 def test_admin_dashboard_and_snapshot_return_local_views(client: TestClient) -> None:
@@ -348,11 +434,19 @@ def test_status_survives_obsolete_dream_workflow_config(
 
 
 def test_shutdown_requests_server_termination(client: TestClient) -> None:
+    callback_invocations = 0
+
+    def request_shutdown() -> None:
+        nonlocal callback_invocations
+        callback_invocations += 1
+
+    client.app.state.runtime.request_shutdown = request_shutdown
     response = client.post("/shutdown")
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "stopping": True}
     assert client.app.state.shutdown_requested.is_set()
+    assert callback_invocations == 1
 
 
 def test_lifecycle_endpoints_require_no_authentication(client: TestClient) -> None:
@@ -361,15 +455,35 @@ def test_lifecycle_endpoints_require_no_authentication(client: TestClient) -> No
     assert client.post("/shutdown").status_code == 200
 
 
-def test_json_body_limit_is_enforced(client: TestClient) -> None:
-    response = client.post(
-        "/api/providers",
-        content=json.dumps({"padding": "x" * 1_000_001}),
-        headers={**_browser_headers(), "Content-Type": "application/json"},
-    )
+def test_oversized_json_preserves_legacy_empty_object_contract(
+    config: HieronymusConfig, asset_root: Path
+) -> None:
+    received: list[dict[str, object]] = []
+
+    class CapturingConfigBridge:
+        def __init__(self, _: HieronymusConfig) -> None:
+            pass
+
+        def save_provider(self, params: dict[str, object]) -> dict[str, object]:
+            received.append(params)
+            return {"error": "provider must be an object"}
+
+    with (
+        patch("hieronymus.service_app.ConfigBridge", CapturingConfigBridge),
+        TestClient(
+            build_app(config, _make_state(config), asset_root=asset_root),
+            base_url=SERVICE_ORIGIN,
+        ) as local_client,
+    ):
+        response = local_client.post(
+            "/api/providers",
+            content=json.dumps({"padding": "x" * 1_000_001}),
+            headers={**_browser_headers(), "Content-Type": "application/json"},
+        )
 
     assert response.status_code == 400
-    assert "error" in response.json()
+    assert response.json() == {"error": "provider must be an object"}
+    assert received == [{}]
 
 
 @pytest.mark.parametrize(
@@ -417,6 +531,63 @@ def test_value_and_key_errors_have_stable_payloads(
     assert key_response.json() == {"error": "'missing'", "error_type": "KeyError"}
 
 
+def test_sync_service_work_runs_outside_the_asgi_event_loop(
+    config: HieronymusConfig, asset_root: Path
+) -> None:
+    worker_calls: list[str] = []
+
+    def assert_worker_thread(label: str) -> None:
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        worker_calls.append(label)
+
+    class WorkerConfigBridge:
+        def __init__(self, _: HieronymusConfig) -> None:
+            pass
+
+        def provider_list(self, _: dict[str, object]) -> dict[str, object]:
+            assert_worker_thread("config")
+            return {"providers": []}
+
+        def check_saved_provider(self, _: dict[str, object]) -> dict[str, object]:
+            assert_worker_thread("provider-network")
+            return {"check": {"ok": True}}
+
+    class WorkerAdminBridge:
+        def __init__(self, _: HieronymusConfig) -> None:
+            pass
+
+        def dashboard(self, _: dict[str, object]) -> dict[str, object]:
+            assert_worker_thread("admin")
+            return {"default_view": "Crystals"}
+
+    def worker_mcp(_: HieronymusConfig, __: dict[str, object]) -> dict[str, object]:
+        assert_worker_thread("mcp")
+        return {"ok": True}
+
+    def worker_status(_: HieronymusConfig, __: ServerState) -> dict[str, object]:
+        assert_worker_thread("status")
+        return {"running": True}
+
+    with (
+        patch("hieronymus.service_app.ConfigBridge", WorkerConfigBridge),
+        patch("hieronymus.service_app.AdminBridge", WorkerAdminBridge),
+        patch("hieronymus.service_app.status_payload", worker_status),
+        patch.dict("hieronymus.service_app.MCP_OPERATION_HANDLERS", {"worker": worker_mcp}),
+    ):
+        local_client = TestClient(
+            build_app(config, _make_state(config), asset_root=asset_root),
+            base_url=SERVICE_ORIGIN,
+        )
+        assert local_client.get("/api/providers").status_code == 200
+        assert local_client.post("/api/providers/demo/check", json={}).status_code == 200
+        assert local_client.get("/api/admin/dashboard").status_code == 200
+        assert local_client.post("/api/mcp/worker", json={}).status_code == 200
+        assert local_client.get("/status").status_code == 200
+
+    assert worker_calls == ["config", "provider-network", "admin", "mcp", "status"]
+
+
 def test_manual_dreaming_failure_redacts_configured_secrets(
     config: HieronymusConfig, asset_root: Path
 ) -> None:
@@ -453,6 +624,53 @@ def test_manual_dreaming_failure_redacts_configured_secrets(
     assert started["type"] == "dream_started"
     assert failed["type"] == "dream_failed"
     assert "super-secret" not in failed["payload"]["error"]
+
+
+def test_manual_dreaming_failure_is_safe_when_sanitization_also_fails(
+    config: HieronymusConfig, asset_root: Path
+) -> None:
+    failure_received = threading.Event()
+    received: list[dict[str, object]] = []
+
+    class FailingAdminBridge:
+        def __init__(self, _: HieronymusConfig) -> None:
+            pass
+
+        def run_manual_dreaming(self, _: dict[str, object]) -> dict[str, object]:
+            raise RuntimeError("provider super-secret failed")
+
+    app = build_app(config, _make_state(config), asset_root=asset_root)
+
+    def receive_event(event: dict[str, object]) -> None:
+        if event["type"] == "dream_failed":
+            received.append(event)
+            failure_received.set()
+
+    app.state.runtime.events.subscribe(receive_event)
+    with (
+        patch("hieronymus.service_app.AdminBridge", FailingAdminBridge),
+        patch(
+            "hieronymus.service_app.load_provider_catalog",
+            side_effect=RuntimeError("catalog contains super-secret"),
+        ),
+    ):
+        app.state.runtime.start_manual_dreaming()
+        assert failure_received.wait(timeout=1)
+
+    assert received[0]["payload"] == {
+        "trigger": "manual",
+        "error": "manual dreaming failed",
+    }
+
+
+def test_cancel_tasks_awaits_task_cancellation() -> None:
+    async def exercise() -> None:
+        waiting = asyncio.create_task(asyncio.Event().wait())
+        await _cancel_tasks({waiting})
+        assert waiting.done()
+        assert waiting.cancelled()
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("method", ["get", "post", "delete"])
