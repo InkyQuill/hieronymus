@@ -251,6 +251,10 @@ def test_pyproject_configures_local_frontend_build_hook() -> None:
 
     build_hook = (ROOT / "hatch_build.py").read_text()
     assert "BuildHookInterface" in build_hook
+    assert "from shutil import which" in build_hook
+    assert 'which("bun") is None' in build_hook
+    assert "Bun >=1.3 is required to build the Hieronymus web console" in build_hook
+    assert "install it and ensure `bun` is on PATH" in build_hook
     assert '"bun install --frozen-lockfile"' in build_hook
     assert '"bun run build"' in build_hook
     assert "mise" not in build_hook
