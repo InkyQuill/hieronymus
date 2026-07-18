@@ -317,8 +317,22 @@ def test_failed_migration_rolls_back_changes_and_ledger_record() -> None:
     assert ledger_rows(conn) == []
 
 
-@pytest.mark.parametrize("statement", ["vacuum", "commit", "detach database aux"])
-def test_non_transactional_statement_fails_without_partial_commit(statement: str) -> None:
+@pytest.mark.parametrize(
+    ("statement", "keyword"),
+    [
+        ("-- comment\n  COMMIT", "COMMIT"),
+        ("  /* first */ \n -- second\n BeGiN", "BEGIN"),
+        ("\t-- first\n /* second */  ROLLBACK", "ROLLBACK"),
+        ("/* first */\n\t-- second\n VaCuUm", "VACUUM"),
+        ("-- comment\n ATTACH DATABASE ':memory:' AS aux", "ATTACH"),
+        ("/* comment */ \n DeTaCh DATABASE aux", "DETACH"),
+    ],
+)
+def test_non_transactional_statement_fails_without_partial_commit(
+    statement: str,
+    keyword: str,
+) -> None:
+    assert db._leading_sql_keyword(statement) == keyword.lower()
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("attach database ':memory:' as aux")
@@ -328,7 +342,7 @@ def test_non_transactional_statement_fails_without_partial_commit(statement: str
         f"create table partial(value integer); {statement};",
     )
 
-    with pytest.raises(db.SchemaMigrationError, match="cannot run transactionally"):
+    with pytest.raises(db.SchemaMigrationError, match=keyword):
         db.apply_schema_migrations(conn, [non_transactional])
 
     assert (
@@ -350,7 +364,6 @@ def test_non_transactional_statement_fails_without_partial_commit(statement: str
     [
         "pragma user_version = 7; create table effect(value integer);",
         "savepoint nested; create table effect(value integer); release nested;",
-        "attach database ':memory:' as aux; create table effect(value integer);",
     ],
 )
 def test_transactional_sql_statements_are_not_overbroadly_rejected(sql: str) -> None:
@@ -376,6 +389,62 @@ def test_detach_cannot_run_under_sqlites_required_write_transaction() -> None:
         conn.execute("detach database aux")
 
     conn.rollback()
+
+
+def test_attach_survives_rollback_and_creates_its_database_file(tmp_path: Path) -> None:
+    attached_path = tmp_path / "attached.sqlite"
+    conn = sqlite3.connect(":memory:")
+    conn.execute("begin immediate")
+    conn.execute(f"attach database '{attached_path}' as leaked")
+    conn.rollback()
+
+    assert attached_path.exists()
+    assert "leaked" in {row[1] for row in conn.execute("pragma database_list")}
+
+
+def test_runner_rejects_comment_prefixed_attach_without_connection_or_file_leak(
+    tmp_path: Path,
+) -> None:
+    attached_path = tmp_path / "rejected.sqlite"
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    sql = (
+        "create table partial(value integer); "
+        "-- connection state must not escape rollback\n  "
+        f"ATTACH DATABASE '{attached_path}' AS aux; "
+        "insert into missing_table values (1);"
+    )
+
+    with pytest.raises(db.SchemaMigrationError, match="ATTACH"):
+        db.apply_schema_migrations(conn, [migration("0001", "attach", sql)])
+
+    assert not attached_path.exists()
+    assert {row[1] for row in conn.execute("pragma database_list")} == {"main"}
+    assert (
+        conn.execute(
+            "select 1 from sqlite_master where type = 'table' and name = 'partial'"
+        ).fetchone()
+        is None
+    )
+
+
+def test_mixed_comments_before_trigger_body_remain_valid_sql() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    sql = """
+    create table source(value integer);
+    create table audit(value integer);
+    -- trigger comment
+      /* another comment */
+    create trigger source_ai after insert on source begin
+      insert into audit(value) values (new.value);
+    end;
+    """
+
+    db.apply_schema_migrations(conn, [migration("0001", "commented_trigger", sql)])
+    conn.execute("insert into source(value) values (7)")
+
+    assert conn.execute("select value from audit").fetchone()[0] == 7
 
 
 def test_runner_rejects_an_existing_transaction_before_any_schema_change() -> None:
@@ -411,6 +480,7 @@ def write_migration_resource(directory: Path, name: str, sql: str = "select 1;")
         "1_unpadded.sql",
         "001_mixed_width.sql",
         "00001_mixed_width.sql",
+        "٠٠٠١_arabic_indic.sql",
         "notes.sql",
         "0002_BadName.sql",
     ],
@@ -434,6 +504,17 @@ def test_discovery_rejects_duplicate_numeric_versions(tmp_path: Path, monkeypatc
 
     with pytest.raises(db.SchemaMigrationError, match="duplicate migration version 0001"):
         db.discover_schema_migrations()
+
+
+def test_runner_rejects_non_ascii_version_digits() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+
+    with pytest.raises(db.SchemaMigrationError, match="four zero-padded digits"):
+        db.apply_schema_migrations(
+            conn,
+            [migration("٠٠٠١", "arabic_indic", "select 1;")],
+        )
 
 
 def test_discovery_sorts_valid_resources_by_numeric_version(tmp_path: Path, monkeypatch) -> None:

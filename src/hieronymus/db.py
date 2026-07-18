@@ -12,10 +12,11 @@ from pathlib import Path
 
 MIGRATION_VERSION_WIDTH = 4
 MIGRATION_FILENAME = re.compile(
-    rf"^(?P<version>\d{{{MIGRATION_VERSION_WIDTH}}})_"
+    rf"^(?P<version>[0-9]{{{MIGRATION_VERSION_WIDTH}}})_"
     r"(?P<name>[a-z][a-z0-9]*(?:_[a-z0-9]+)*)\.sql$"
 )
 NON_TRANSACTIONAL_SQL = {
+    "attach",
     "begin",
     "commit",
     "detach",
@@ -197,7 +198,7 @@ def _require_no_active_transaction(conn: sqlite3.Connection) -> None:
 def _ordered_migrations(migrations: Iterable[SchemaMigration]) -> list[SchemaMigration]:
     candidates = list(migrations)
     for migration in candidates:
-        if not re.fullmatch(rf"\d{{{MIGRATION_VERSION_WIDTH}}}", migration.version):
+        if not re.fullmatch(rf"[0-9]{{{MIGRATION_VERSION_WIDTH}}}", migration.version):
             raise SchemaMigrationError(
                 f"migration version {migration.version!r} must use four zero-padded digits"
             )
@@ -284,8 +285,13 @@ def _reject_non_transactional_statements(
     statements: list[str],
 ) -> None:
     for statement in statements:
+        leading_sql = _leading_sql(statement)
         keyword = _leading_sql_keyword(statement)
-        if keyword == "rollback" and re.match(r"^\s*rollback\s+to\b", statement, re.IGNORECASE):
+        if keyword == "rollback" and re.match(
+            r"rollback\s+to\b",
+            leading_sql,
+            re.IGNORECASE | re.ASCII,
+        ):
             continue
         if keyword in NON_TRANSACTIONAL_SQL:
             raise SchemaMigrationError(
@@ -294,19 +300,28 @@ def _reject_non_transactional_statements(
             )
 
 
-def _leading_sql_keyword(statement: str) -> str:
-    remainder = statement.lstrip()
-    while remainder.startswith(("--", "/*")):
+def _leading_sql(statement: str) -> str:
+    remainder = statement
+    while True:
+        remainder = remainder.lstrip()
         if remainder.startswith("--"):
-            _, separator, remainder = remainder.partition("\n")
-            if not separator:
+            newline = remainder.find("\n", 2)
+            if newline == -1:
                 return ""
-        else:
+            remainder = remainder[newline + 1 :]
+            continue
+        if remainder.startswith("/*"):
             end = remainder.find("*/", 2)
             if end == -1:
                 return ""
-            remainder = remainder[end + 2 :].lstrip()
-    match = re.match(r"[a-z]+", remainder, re.IGNORECASE)
+            remainder = remainder[end + 2 :]
+            continue
+        return remainder
+
+
+def _leading_sql_keyword(statement: str) -> str:
+    leading_sql = _leading_sql(statement)
+    match = re.match(r"[A-Za-z]+", leading_sql)
     return match.group(0).lower() if match is not None else ""
 
 
