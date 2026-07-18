@@ -3,8 +3,8 @@ use std::str::FromStr;
 use sqlx::{SqliteConnection, sqlite::SqliteConnectOptions};
 
 use super::{
-    DbError, Fts5Probe, Fts5ProbeError, RequiredFts5, absolute_config_path, build_pool_with_probe,
-    config_path_options, connect_options, memory_settings,
+    DbError, Fts5Probe, Fts5ProbeError, RequiredFts5, build_pool_with_probe, config_path_options,
+    connect_options, memory_settings, resolve_config_path,
 };
 
 #[test]
@@ -64,7 +64,8 @@ async fn injected_preflight_failure_exits_pool_construction_as_missing_fts5() {
 async fn relative_file_prefix_path_is_resolved_as_a_literal_file() {
     let directory = tempfile::TempDir::new().expect("temporary directory should be created");
     let relative = std::path::Path::new("file:name?mode=memory#literal").join("hieronymus.db");
-    let absolute = absolute_config_path(&relative, directory.path());
+    let absolute = resolve_config_path(&relative, || Ok(directory.path().to_owned()))
+        .expect("relative test path should resolve");
     std::fs::create_dir_all(
         absolute
             .parent()
@@ -87,4 +88,26 @@ async fn relative_file_prefix_path_is_resolved_as_a_literal_file() {
     assert!(absolute.is_file());
     assert_eq!(journal_mode, "wal");
     pool.close().await;
+}
+
+#[test]
+fn absolute_config_path_bypasses_failing_cwd_provider() {
+    let absolute = std::env::temp_dir().join("absolute/hieronymus.db");
+    assert!(absolute.is_absolute());
+    let resolved = resolve_config_path(&absolute, || {
+        Err(std::io::Error::other("cwd lookup must not run"))
+    })
+    .expect("absolute path should bypass cwd lookup");
+
+    assert_eq!(resolved, absolute);
+}
+
+#[test]
+fn relative_config_path_maps_cwd_provider_failure() {
+    let error = resolve_config_path(std::path::Path::new("relative/hieronymus.db"), || {
+        Err(std::io::Error::other("injected cwd failure"))
+    })
+    .expect_err("relative path requires cwd lookup");
+
+    assert!(matches!(error, DbError::CurrentDirectory { .. }));
 }

@@ -165,6 +165,8 @@ async fn in_memory_pool_connections_share_one_database() {
     for url in [
         "sqlite::memory:",
         "sqlite://:memory:",
+        "sqlite://%3Amemory%3A",
+        "sqlite://%3amemory%3a",
         "sqlite://named-memory?mode=memory",
         "sqlite://encoded-memory?%6dode=mem%6fry&%63ache=shar%65d",
     ] {
@@ -277,6 +279,9 @@ async fn different_named_and_anonymous_memory_pools_are_isolated() {
     let anonymous_b = connect_url("sqlite://:memory:")
         .await
         .expect("second anonymous pool should connect");
+    let anonymous_encoded = connect_url("sqlite://%3Amemory%3A")
+        .await
+        .expect("encoded anonymous pool should connect");
 
     for pool in [&named_a, &anonymous_a] {
         sqlx::query("CREATE TABLE isolated (value TEXT NOT NULL)")
@@ -284,7 +289,7 @@ async fn different_named_and_anonymous_memory_pools_are_isolated() {
             .await
             .expect("source pool should create its own table");
     }
-    for pool in [&named_b, &anonymous_b] {
+    for pool in [&named_b, &anonymous_b, &anonymous_encoded] {
         let table_count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'isolated'",
         )
@@ -294,9 +299,67 @@ async fn different_named_and_anonymous_memory_pools_are_isolated() {
         assert_eq!(table_count, 0);
     }
 
-    for pool in [named_a, named_b, anonymous_a, anonymous_b] {
+    for pool in [
+        named_a,
+        named_b,
+        anonymous_a,
+        anonymous_b,
+        anonymous_encoded,
+    ] {
         pool.close().await;
     }
+}
+
+#[tokio::test]
+async fn immutable_named_memory_url_remains_memory_backed() {
+    let pool = connect_url("sqlite://immutable-memory?mode=memory&cache=shared&immutable=true")
+        .await
+        .expect("SQLx-supported immutable memory URL should connect");
+
+    let (schema, filename): (String, String) =
+        sqlx::query_as("SELECT name, file FROM pragma_database_list WHERE name = 'main'")
+            .fetch_one(&pool)
+            .await
+            .expect("database identity should be readable");
+    let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+        .fetch_one(&pool)
+        .await
+        .expect("journal mode should be readable");
+
+    assert_eq!(schema, "main");
+    assert!(
+        filename.is_empty(),
+        "memory database reported file {filename}"
+    );
+    assert_eq!(journal_mode, "memory");
+    pool.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn explicit_supported_memory_vfs_is_preserved() {
+    let pool = connect_url("sqlite://vfs-memory?mode=memory&cache=shared&vfs=unix")
+        .await
+        .expect("the platform SQLite unix VFS should remain supported");
+    let mut writer = pool.acquire().await.expect("writer should be acquired");
+    let mut reader = pool.acquire().await.expect("reader should be acquired");
+
+    sqlx::query("CREATE TABLE vfs_shared (value INTEGER NOT NULL)")
+        .execute(&mut *writer)
+        .await
+        .expect("writer should create shared table");
+    sqlx::query("INSERT INTO vfs_shared (value) VALUES (7)")
+        .execute(&mut *writer)
+        .await
+        .expect("writer should insert shared value");
+    let value: i64 = sqlx::query_scalar("SELECT value FROM vfs_shared")
+        .fetch_one(&mut *reader)
+        .await
+        .expect("reader should share the selected VFS database");
+
+    assert_eq!(value, 7);
+    drop((writer, reader));
+    pool.close().await;
 }
 
 #[tokio::test]

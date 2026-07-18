@@ -23,9 +23,7 @@ static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 
 pub async fn connect(config: &HieronymusConfig) -> Result<SqlitePool, DbError> {
     let configured_path = config.database_path();
-    let current_directory =
-        std::env::current_dir().map_err(|source| DbError::CurrentDirectory { source })?;
-    let database_path = absolute_config_path(&configured_path, &current_directory);
+    let database_path = resolve_config_path(&configured_path, std::env::current_dir)?;
     let parent = database_path
         .parent()
         .expect("the configured database path always has a data-root parent");
@@ -59,13 +57,18 @@ pub async fn connect_url(url: &str) -> Result<SqlitePool, DbError> {
 
     let mut options = configure_options(options, memory.is_memory);
     if memory.is_memory {
+        let vfs = memory
+            .vfs
+            .clone()
+            .unwrap_or_else(|| default_memory_vfs().to_owned());
         // SQLx's URL-generated in-memory filename is not guaranteed to share
-        // schema state across concurrently opened SQLite handles. Normalize
-        // every accepted form to one unique pool-local named memory database.
+        // state across handles. Normalize anonymous forms to a pool-local name
+        // and named forms to a stable digest shared by overlapping pools.
         options = options
             .filename(memory_filename(&memory))
-            .in_memory(false)
-            .shared_cache(true);
+            .in_memory(true)
+            .shared_cache(true)
+            .vfs(vfs);
     }
     connect_options(options, url.to_owned(), &RequiredFts5).await
 }
@@ -181,6 +184,7 @@ struct MemorySettings {
     is_memory: bool,
     shared_cache: bool,
     canonical_name: Option<String>,
+    vfs: Option<String>,
 }
 
 fn memory_settings(url: &str) -> Result<MemorySettings, DbError> {
@@ -198,11 +202,12 @@ fn memory_settings(url: &str) -> Result<MemorySettings, DbError> {
             reason: source.to_string(),
         })?;
     let is_anonymous_name = decoded_database.is_empty() || decoded_database == ":memory:";
-    let starts_in_memory = database == ":memory:";
+    let starts_in_memory = database == ":memory:" || decoded_database == ":memory:";
     let mut settings = MemorySettings {
         is_memory: starts_in_memory,
         shared_cache: starts_in_memory,
         canonical_name: None,
+        vfs: None,
     };
 
     for (key, value) in form_urlencoded::parse(query.as_bytes()) {
@@ -215,6 +220,7 @@ fn memory_settings(url: &str) -> Result<MemorySettings, DbError> {
             }
             ("cache", "private") => settings.shared_cache = false,
             ("cache", "shared") => settings.shared_cache = true,
+            ("vfs", value) => settings.vfs = Some(value.to_owned()),
             _ => {}
         }
     }
@@ -232,7 +238,7 @@ fn memory_filename(settings: &MemorySettings) -> String {
             format!("named-{digest:x}")
         },
     );
-    format!("file:hieronymus-memory-{identity}?mode=memory&cache=shared")
+    format!("hieronymus-memory-{identity}")
 }
 
 fn invalid_url(url: &str, reason: &str) -> DbError {
@@ -278,10 +284,25 @@ fn config_path_options(path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new().filename(path)
 }
 
-fn absolute_config_path(path: &Path, current_directory: &Path) -> std::path::PathBuf {
+fn resolve_config_path(
+    path: &Path,
+    current_directory: impl FnOnce() -> std::io::Result<std::path::PathBuf>,
+) -> Result<std::path::PathBuf, DbError> {
     if path.is_absolute() {
-        path.to_owned()
+        Ok(path.to_owned())
     } else {
-        current_directory.join(path)
+        current_directory()
+            .map(|directory| directory.join(path))
+            .map_err(|source| DbError::CurrentDirectory { source })
     }
+}
+
+#[cfg(unix)]
+fn default_memory_vfs() -> &'static str {
+    "unix"
+}
+
+#[cfg(windows)]
+fn default_memory_vfs() -> &'static str {
+    "win32"
 }
