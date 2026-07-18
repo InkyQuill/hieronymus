@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.service_client import ServiceClient, ServiceClientError
+from hieronymus.service_config import ServiceConfigError, load_service_config
 from hieronymus.service_deadlines import MANAGER_SHUTDOWN_TIMEOUT
 from hieronymus.service_logging import daemon_log_path, open_early_daemon_log
 from hieronymus.service_state import (
@@ -116,6 +117,7 @@ class ServiceManager:
 
     def _start_child_and_wait(self) -> None:
         log_path = daemon_log_path(self.config)
+        address = self._configured_address()
         with open_early_daemon_log(self.config) as early_log:
             process = subprocess.Popen(
                 [
@@ -151,7 +153,7 @@ class ServiceManager:
                 else:
                     detail = "published state but exited before becoming healthy"
                 raise RuntimeError(
-                    f"hieronymus service daemon {detail} (exit code {returncode}); "
+                    f"hieronymus service daemon at {address} {detail} (exit code {returncode}); "
                     f"see daemon log: {log_path}"
                 )
             time.sleep(self.poll_interval)
@@ -161,7 +163,16 @@ class ServiceManager:
             detail = "startup timed out before publishing state"
         else:
             detail = "published state but did not become healthy before startup timeout"
-        raise RuntimeError(f"hieronymus service daemon {detail}; see daemon log: {log_path}")
+        raise RuntimeError(
+            f"hieronymus service daemon at {address} {detail}; see daemon log: {log_path}"
+        )
+
+    def _configured_address(self) -> str:
+        try:
+            service = load_service_config(self.config)
+        except ServiceConfigError:
+            return "the configured address"
+        return f"{service.host}:{service.port}"
 
     def _remove_owned_state(
         self, process: subprocess.Popen[object], state: ServerState | None

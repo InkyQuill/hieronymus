@@ -376,8 +376,10 @@ def test_start_on_occupied_configured_port_fails_without_fallback(tmp_path: Path
         with pytest.raises(RuntimeError) as raised:
             manager.start()
 
-    assert "exited" in str(raised.value)
-    assert str(daemon_log_path(config)) in str(raised.value)
+    message = str(raised.value)
+    assert "exited" in message
+    assert f"127.0.0.1:{port}" in message
+    assert str(daemon_log_path(config)) in message
     assert read_server_state(config) is None
     assert f"{port}" in daemon_log_path(config).read_text(encoding="utf-8")
 

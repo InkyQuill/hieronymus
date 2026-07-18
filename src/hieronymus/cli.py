@@ -218,6 +218,19 @@ def main(ctx: click.Context, data_root: str | None) -> None:
         _echo_status_lines(status)
 
 
+@main.command("start")
+@click.pass_context
+def start(ctx: click.Context) -> None:
+    """Start the local service daemon."""
+    try:
+        result = ServiceManager(ctx.obj["config"]).ensure_running()
+    except RuntimeError as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(render_greeting())
+    click.echo()
+    _echo_status_lines(result["status"])
+
+
 _PROJECT_SKILL_TARGET_ORDER = ("agents", "claude")
 
 

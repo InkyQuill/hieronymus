@@ -796,6 +796,25 @@ def test_no_subcommand_ensures_service_and_prints_greeting(tmp_path: Path) -> No
     assert "port: 32199" in result.output
 
 
+def test_start_command_ensures_service_and_prints_greeting(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    with patch("hieronymus.cli.ServiceManager") as manager_class:
+        manager_class.return_value.ensure_running.return_value = {
+            "started": True,
+            "status": {"running": True, "pid": 1000, "port": 32199},
+        }
+        result = runner.invoke(
+            main,
+            ["--data-root", str(tmp_path / "hieronymus"), "start"],
+        )
+
+    assert result.exit_code == 0
+    assert "🪶 Hieronymus v" in result.output
+    assert "running: yes" in result.output
+    assert "port: 32199" in result.output
+
+
 def _run_lifecycle_cli(data_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     command = ["uv", "run", "hiero", "--data-root", str(data_root), *args]
     try:
