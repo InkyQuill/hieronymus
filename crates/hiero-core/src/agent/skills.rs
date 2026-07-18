@@ -2,18 +2,16 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use rust_embed::RustEmbed;
+use tempfile::{Builder, TempDir};
 
 use super::{AgentError, PathFailure};
 
 #[derive(RustEmbed)]
 #[folder = "../../assets/skills"]
 struct EmbeddedSkills;
-
-static STAGE_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillPlan {
@@ -56,7 +54,7 @@ pub fn install_skills(
     }
 
     let staged = stage_skill_directories(&roots, &assets)?;
-    replace_staged_directories(&staged)?;
+    replace_staged_directories(&staged.paths)?;
     Ok(SkillPlan {
         installed,
         skipped: Vec::new(),
@@ -167,15 +165,20 @@ fn validate_install_destinations(
 fn stage_skill_directories(
     roots: &[PathBuf],
     assets: &BTreeMap<String, BTreeMap<PathBuf, String>>,
-) -> Result<Vec<(PathBuf, PathBuf)>, AgentError> {
-    let mut staged = Vec::new();
+) -> Result<StagedBatch, AgentError> {
+    let mut paths = Vec::new();
+    let mut owners = Vec::new();
     let result = (|| {
         for root in roots {
             fs::create_dir_all(root).map_err(|source| io_error(root, source))?;
             for (directory, files) in assets {
-                let id = STAGE_ID.fetch_add(1, Ordering::Relaxed);
-                let stage = root.join(format!(".{directory}.stage-{}-{id}", std::process::id()));
-                staged.push((root.join(directory), stage.clone()));
+                let owner = Builder::new()
+                    .prefix(&format!(".{directory}.stage-"))
+                    .tempdir_in(root)
+                    .map_err(|source| io_error(root, source))?;
+                let stage = owner.path().to_path_buf();
+                paths.push((root.join(directory), stage.clone()));
+                owners.push(owner);
                 for (relative, contents) in files {
                     let path = stage.join(relative);
                     fs::create_dir_all(
@@ -190,7 +193,7 @@ fn stage_skill_directories(
         Ok(())
     })();
     if let Err(error) = result {
-        let failures = remove_stages_with(&staged, &SystemDirectoryOperations);
+        let failures = remove_stages_with(&paths, &SystemDirectoryOperations);
         return if failures.is_empty() {
             Err(error)
         } else {
@@ -200,7 +203,15 @@ fn stage_skill_directories(
             })
         };
     }
-    Ok(staged)
+    Ok(StagedBatch {
+        paths,
+        _owners: owners,
+    })
+}
+
+struct StagedBatch {
+    paths: Vec<(PathBuf, PathBuf)>,
+    _owners: Vec<TempDir>,
 }
 
 fn replace_staged_directories(staged: &[(PathBuf, PathBuf)]) -> Result<(), AgentError> {
@@ -211,6 +222,12 @@ trait DirectoryOperations {
     fn exists(&self, path: &Path) -> bool;
     fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()>;
     fn remove_dir_all(&self, path: &Path) -> std::io::Result<()>;
+    fn create_backup(&self, parent: &Path) -> std::io::Result<OwnedBackup>;
+}
+
+struct OwnedBackup {
+    path: PathBuf,
+    _owner: Option<TempDir>,
 }
 
 struct SystemDirectoryOperations;
@@ -227,23 +244,41 @@ impl DirectoryOperations for SystemDirectoryOperations {
     fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
         fs::remove_dir_all(path)
     }
+
+    fn create_backup(&self, parent: &Path) -> std::io::Result<OwnedBackup> {
+        let owner = Builder::new()
+            .prefix(".hiero-skill-backup-")
+            .tempdir_in(parent)?;
+        let path = owner.path().join("original");
+        Ok(OwnedBackup {
+            path,
+            _owner: Some(owner),
+        })
+    }
 }
 
 fn replace_staged_directories_with(
     staged: &[(PathBuf, PathBuf)],
     operations: &impl DirectoryOperations,
 ) -> Result<(), AgentError> {
-    let mut replaced = Vec::<(PathBuf, PathBuf, Option<PathBuf>)>::new();
+    let mut replaced = Vec::<(PathBuf, PathBuf, Option<OwnedBackup>)>::new();
     for (destination, stage) in staged {
         let backup = if operations.exists(destination) {
-            let id = STAGE_ID.fetch_add(1, Ordering::Relaxed);
-            let name = destination
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("skill");
-            let backup =
-                destination.with_file_name(format!(".{name}.backup-{}-{id}", std::process::id()));
-            if let Err(source) = operations.rename(destination, &backup) {
+            let parent = destination
+                .parent()
+                .ok_or_else(|| AgentError::MissingParent(destination.clone()))?;
+            let backup = match operations.create_backup(parent) {
+                Ok(backup) => backup,
+                Err(source) => {
+                    return rollback_or_error(
+                        io_error(parent, source),
+                        &replaced,
+                        staged,
+                        operations,
+                    );
+                }
+            };
+            if let Err(source) = operations.rename(destination, &backup.path) {
                 return rollback_or_error(
                     io_error(destination, source),
                     &replaced,
@@ -263,9 +298,13 @@ fn replace_staged_directories_with(
     let mut cleanup_failures = Vec::new();
     for (_, _, backup) in replaced {
         if let Some(backup) = backup
-            && let Err(source) = operations.remove_dir_all(&backup)
+            && let Err(source) = operations.remove_dir_all(&backup.path)
         {
-            cleanup_failures.push(path_failure("remove committed backup", &backup, source));
+            cleanup_failures.push(path_failure(
+                "remove committed backup",
+                &backup.path,
+                source,
+            ));
         }
     }
     if cleanup_failures.is_empty() {
@@ -279,7 +318,7 @@ fn replace_staged_directories_with(
 
 fn rollback_or_error(
     cause: AgentError,
-    replaced: &[(PathBuf, PathBuf, Option<PathBuf>)],
+    replaced: &[(PathBuf, PathBuf, Option<OwnedBackup>)],
     staged: &[(PathBuf, PathBuf)],
     operations: &impl DirectoryOperations,
 ) -> Result<(), AgentError> {
@@ -296,7 +335,7 @@ fn rollback_or_error(
 }
 
 fn rollback_replacements(
-    replaced: &[(PathBuf, PathBuf, Option<PathBuf>)],
+    replaced: &[(PathBuf, PathBuf, Option<OwnedBackup>)],
     operations: &impl DirectoryOperations,
 ) -> Vec<PathFailure> {
     let mut failures = Vec::new();
@@ -311,9 +350,9 @@ fn rollback_replacements(
             ));
         }
         if let Some(backup) = backup
-            && let Err(source) = operations.rename(backup, destination)
+            && let Err(source) = operations.rename(&backup.path, destination)
         {
-            failures.push(path_failure("restore original skill", backup, source));
+            failures.push(path_failure("restore original skill", &backup.path, source));
         }
     }
     failures
@@ -397,7 +436,10 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    use super::{DirectoryOperations, replace_staged_directories_with};
+    use super::{
+        DirectoryOperations, OwnedBackup, install_skills, replace_staged_directories,
+        replace_staged_directories_with,
+    };
     use crate::agent::AgentError;
 
     struct FakeOperations {
@@ -448,6 +490,13 @@ mod tests {
             }
             self.paths.borrow_mut().remove(path);
             Ok(())
+        }
+
+        fn create_backup(&self, parent: &Path) -> io::Result<OwnedBackup> {
+            Ok(OwnedBackup {
+                path: parent.join(format!(".fake-backup-{}/original", self.rename_calls.get())),
+                _owner: None,
+            })
         }
     }
 
@@ -518,5 +567,49 @@ mod tests {
             matches!(error, AgentError::CommittedSkillCleanup { ref failures } if failures.len() == 1)
         );
         assert!(operations.exists(&destination));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_never_follows_a_preexisting_predictable_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root = workspace.path().join(".agents/skills");
+        std::fs::create_dir_all(&root).unwrap();
+        let legacy_candidate = root.join(format!(
+            ".hieronymus-bootstrap.stage-{}-0",
+            std::process::id()
+        ));
+        symlink(outside.path(), &legacy_candidate).unwrap();
+
+        install_skills(workspace.path(), &["agents".into()], false).unwrap();
+
+        assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+        assert!(legacy_candidate.is_symlink());
+    }
+
+    #[test]
+    fn backup_creation_ignores_a_preexisting_legacy_candidate() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("a");
+        let stage = root.path().join("stage");
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(destination.join("value"), "old").unwrap();
+        std::fs::create_dir(&stage).unwrap();
+        std::fs::write(stage.join("value"), "new").unwrap();
+        let legacy_candidate = root
+            .path()
+            .join(format!(".a.backup-{}-0", std::process::id()));
+        std::fs::create_dir(&legacy_candidate).unwrap();
+
+        replace_staged_directories(&[(destination.clone(), stage)]).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(destination.join("value")).unwrap(),
+            "new"
+        );
+        assert!(legacy_candidate.is_dir());
     }
 }

@@ -27,6 +27,15 @@ pub enum AgentError {
         #[source]
         source: std::io::Error,
     },
+    #[error(
+        "failed to atomically replace `{destination}` from same-directory temporary file `{temporary}` before commit: {source}"
+    )]
+    PreCommitReplacement {
+        destination: PathBuf,
+        temporary: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("replacement of `{path}` committed, but syncing its parent directory failed: {source}")]
     CommittedDurability {
         path: PathBuf,

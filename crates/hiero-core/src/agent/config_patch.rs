@@ -154,8 +154,9 @@ fn atomic_write_text_with(
     let _persisted = operations.persist(temporary, path).map_err(|failure| {
         let temporary_path = failure.temporary.path().to_path_buf();
         drop(failure.temporary);
-        AgentError::Io {
-            path: temporary_path,
+        AgentError::PreCommitReplacement {
+            destination: path.to_path_buf(),
+            temporary: temporary_path,
             source: failure.source,
         }
     })?;
@@ -231,7 +232,14 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(error, AgentError::Io { .. }));
+        assert!(matches!(
+            error,
+            AgentError::PreCommitReplacement {
+                destination: ref actual,
+                ref temporary,
+                ..
+            } if actual == &path && temporary.parent() == path.parent()
+        ));
         assert_eq!(std::fs::read_to_string(path).unwrap(), "original");
     }
 

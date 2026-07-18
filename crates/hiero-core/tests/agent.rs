@@ -304,6 +304,53 @@ fn claude_detection_reports_host_directory_and_config_file() {
 }
 
 #[test]
+fn default_plugins_use_home_without_mutating_the_parent_test_environment() {
+    let home = workspace("default-plugin-home");
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "default_plugins_use_isolated_home_child",
+            "--nocapture",
+        ])
+        .env("HOME", &home)
+        .env("HIERO_DEFAULT_PLUGIN_CHILD", "1")
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn default_plugins_use_isolated_home_child() {
+    if std::env::var_os("HIERO_DEFAULT_PLUGIN_CHILD").is_none() {
+        return;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let context = ProjectAgentContext::for_workspace(&home, "oso");
+    let expected = [
+        ("claude", home.join(".claude.json")),
+        ("codex", home.join(".codex/config.toml")),
+        ("gemini", home.join(".gemini/settings.json")),
+        ("opencode", home.join(".config/opencode/plugin.json")),
+        ("openclaw", home.join(".openclaw/openclaw.json")),
+    ];
+    for plugin in agent_plugins() {
+        let path = expected
+            .iter()
+            .find(|(name, _)| *name == plugin.name())
+            .unwrap()
+            .1
+            .clone();
+        let plan = plugin.install_plan(&context).unwrap();
+        assert_eq!(plan.steps[0].path, path);
+        plugin.apply(&plan, true).unwrap();
+        assert!(!path.exists());
+        plugin.apply(&plan, false).unwrap();
+        plugin.apply(&plan, false).unwrap();
+        assert!(plugin.detect().installed);
+    }
+}
+
+#[test]
 fn skill_install_is_idempotent_and_uninstall_removes_only_owned_directories() {
     let root = workspace("skills");
     assert_eq!(skill_assets().len(), 8);
