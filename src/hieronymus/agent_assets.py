@@ -2,14 +2,6 @@ from __future__ import annotations
 
 import json
 
-MCP_CONFIG = {
-    "mcpServers": {
-        "hieronymus": {
-            "url": "http://127.0.0.1:9768/mcp",
-        }
-    }
-}
-
 CODEX_HOOKS = {
     "hooks": [
         {
@@ -213,7 +205,6 @@ def asset_map() -> dict[str, str]:
         "skills/hieronymus-translate/SKILL.md": TRANSLATE_SKILL,
         "skills/hieronymus-review/SKILL.md": REVIEW_SKILL,
         "skills/hieronymus-orchestrate/SKILL.md": ORCHESTRATE_SKILL,
-        "mcp/hieronymus.mcp.json": _json(MCP_CONFIG),
         "hooks/hooks.codex.json": _json(CODEX_HOOKS),
     }
 

@@ -10,13 +10,13 @@ with backups, and report installed status only when both assets and host config 
 
 ## Integrations
 
-The common bundle includes:
+The target-independent bundle includes:
 
 - Hieronymus workflow skills under `skills/`.
-- MCP config under `mcp/hieronymus.mcp.json`.
 - Codex hook config under `hooks/hooks.codex.json`.
 
-`render_agent_plugin_assets(target)` adds one target-specific manifest:
+`render_agent_plugin_assets(target)` resolves the target adapter, adds its native MCP config under
+`mcp/hieronymus.mcp.json`, and adds one target-specific manifest:
 
 - `codex`: `.codex-plugin/plugin.json`, plus a root `.mcp.json` for Codex plugin validation.
 - `claude`: `.claude-plugin/plugin.json`.

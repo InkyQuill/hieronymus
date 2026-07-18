@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import hieronymus.agent_assets as agent_assets
 from hieronymus.agent_assets import asset_map, render_agent_plugin_assets
 from hieronymus.agent_plugins import resolve_plugin
 
@@ -23,7 +24,6 @@ def test_asset_map_contains_required_skills() -> None:
     assert "skills/hieronymus-translate/SKILL.md" in assets
     assert "skills/hieronymus-review/SKILL.md" in assets
     assert "skills/hieronymus-orchestrate/SKILL.md" in assets
-    assert "mcp/hieronymus.mcp.json" in assets
     assert "hooks/hooks.codex.json" in assets
 
 
@@ -86,10 +86,9 @@ def test_read_learn_remember_skills_keep_judgment_out_of_mcp() -> None:
     assert "source_credibility `user_rule`" in remember
 
 
-def test_shared_mcp_asset_no_longer_embeds_command_transport() -> None:
-    config = json.loads(asset_map()["mcp/hieronymus.mcp.json"])
-
-    assert config == {"mcpServers": {"hieronymus": {"url": "http://127.0.0.1:9768/mcp"}}}
+def test_asset_map_has_no_targetless_mcp_schema_owner() -> None:
+    assert "mcp/hieronymus.mcp.json" not in asset_map()
+    assert not hasattr(agent_assets, "MCP_CONFIG")
 
 
 def test_codex_hooks_call_session_start_and_end_modules() -> None:
