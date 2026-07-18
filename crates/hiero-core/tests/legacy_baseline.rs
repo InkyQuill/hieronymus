@@ -8,6 +8,13 @@ use sqlx::{
 };
 
 async fn legacy_pool() -> SqlitePool {
+    legacy_pool_from_schema(include_str!(
+        "../../../src/hieronymus/migrations/global.sql"
+    ))
+    .await
+}
+
+async fn legacy_pool_from_schema(schema: &str) -> SqlitePool {
     let options = SqliteConnectOptions::from_str("sqlite::memory:")
         .expect("memory URL should parse")
         .foreign_keys(true);
@@ -16,11 +23,9 @@ async fn legacy_pool() -> SqlitePool {
         .connect_with(options)
         .await
         .expect("legacy fixture pool should connect");
-    pool.execute(sqlx::raw_sql(include_str!(
-        "../../../src/hieronymus/migrations/global.sql"
-    )))
-    .await
-    .expect("current Python global schema should install");
+    pool.execute(sqlx::raw_sql(sqlx::AssertSqlSafe(schema.to_owned())))
+        .await
+        .expect("current Python global schema should install");
     pool
 }
 
@@ -95,6 +100,52 @@ async fn historical_compatibility_pool_with_session_stage(
     pool.execute(sqlx::raw_sql(sqlx::AssertSqlSafe(session_stage.to_owned())))
         .await
         .expect("session activity ALTER stage should install");
+    pool
+}
+
+async fn pre_rebuild_concepts_pool(fresh_386_declaration: bool) -> SqlitePool {
+    let options = SqliteConnectOptions::from_str("sqlite::memory:")
+        .expect("memory URL should parse")
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("pre-rebuild concepts fixture pool should connect");
+    let mut schema = include_str!("../../../src/hieronymus/migrations/global.sql").to_owned();
+    replace_table_definition(&mut schema, "task_sessions", HISTORICAL_TASK_SESSIONS);
+    replace_table_definition(
+        &mut schema,
+        "short_term_memories",
+        HISTORICAL_SHORT_TERM_MEMORIES,
+    );
+    replace_table_definition(&mut schema, "crystals", HISTORICAL_CRYSTALS_OLDEST);
+    replace_table_definition(
+        &mut schema,
+        "concepts",
+        if fresh_386_declaration {
+            HISTORICAL_CONCEPTS_FRESH_386
+        } else {
+            HISTORICAL_CONCEPTS
+        },
+    );
+    replace_table_definition(&mut schema, "concept_facets", HISTORICAL_CONCEPT_FACETS);
+    pool.execute(sqlx::raw_sql(sqlx::AssertSqlSafe(schema)))
+        .await
+        .expect("pre-rebuild Python schema should install");
+    pool.execute(sqlx::raw_sql(if fresh_386_declaration {
+        PYTHON_COMPATIBILITY_STAGE_ONE_WITH_EXISTING_CONCEPT_COLUMN
+    } else {
+        PYTHON_COMPATIBILITY_STAGE_ONE
+    }))
+    .await
+    .expect("386d1e8 compatibility stage should install");
+    pool.execute(sqlx::raw_sql(PYTHON_COMPATIBILITY_STAGE_TWO))
+        .await
+        .expect("late crystal compatibility stage should install");
+    pool.execute(sqlx::raw_sql(PYTHON_COMPATIBILITY_STAGE_THREE))
+        .await
+        .expect("session compatibility stage should install");
     pool
 }
 
@@ -184,6 +235,22 @@ const HISTORICAL_CONCEPTS: &str = r#"create table if not exists concepts (
   unique(scope_type, scope_key, canonical_name)
 );"#;
 
+// Exact declaration introduced by 386d1e8 for databases created at that commit.
+const HISTORICAL_CONCEPTS_FRESH_386: &str = r#"create table if not exists concepts (
+  id integer primary key,
+  canonical_name text not null,
+  description text not null default '',
+  scope_type text not null default 'global',
+  scope_key text not null default '',
+  status text not null default 'vague',
+  confidence real not null default 0.2,
+  merged_into_concept_id integer references concepts(id),
+  created_at text not null,
+  updated_at text not null,
+  check ((scope_type = 'global' and scope_key = '') or (scope_type != 'global' and scope_key != '')),
+  unique(scope_type, scope_key, canonical_name)
+);"#;
+
 const HISTORICAL_CONCEPT_FACETS: &str = r#"create table if not exists concept_facets (
   id integer primary key,
   concept_id integer not null references concepts(id) on delete cascade,
@@ -200,6 +267,16 @@ const PYTHON_COMPATIBILITY_STAGE_ONE: &str = r#"
 alter table concept_facets add column is_canonical integer not null default 0;
 alter table concept_facets add column superseded_at text;
 alter table concepts add column merged_into_concept_id integer references concepts(id);
+alter table short_term_memories add column source_credibility text;
+alter table short_term_memories add column rule_intent text;
+alter table short_term_memories add column soft_origin text;
+alter table crystals add column soft_origin text;
+alter table crystals add column is_inferred integer not null default 0;
+"#;
+
+const PYTHON_COMPATIBILITY_STAGE_ONE_WITH_EXISTING_CONCEPT_COLUMN: &str = r#"
+alter table concept_facets add column is_canonical integer not null default 0;
+alter table concept_facets add column superseded_at text;
 alter table short_term_memories add column source_credibility text;
 alter table short_term_memories add column rule_intent text;
 alter table short_term_memories add column soft_origin text;
@@ -365,7 +442,7 @@ async fn seed_historical_compatibility_rows(pool: &SqlitePool) {
         INSERT INTO crystals(id, crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, is_inferred, malformed_penalty, supersedes_crystal_id, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at)
         VALUES (1, 'observation', 'legacy crystal', 'Crystal', 'series', 'legacy', 'legacy', 'en', 'ru', '[]', 0.8, 0.9, 'user_rule', 'correction', 'historical', 1, 0.25, NULL, 'active', 1, 2, 3, '2026-07-18 10:11:12', '2026-07-18 10:11:13');
         INSERT INTO concepts(id, canonical_name, description, scope_type, scope_key, status, confidence, merged_into_concept_id, created_at, updated_at)
-        VALUES (1, 'Legacy concept', 'fixture', 'series', 'legacy', 'solid', 0.9, NULL, '2026-07-18 10:11:12', '2026-07-18 10:11:13');
+        VALUES (1, 'Legacy concept', 'fixture', 'series', 'legacy', 'vague', 0.9, NULL, '2026-07-18 10:11:12', '2026-07-18 10:11:13');
         INSERT INTO concept_facets(id, concept_id, language, facet_type, value, source_crystal_id, confidence, is_canonical, superseded_at, created_at, updated_at)
         VALUES (1, 1, 'en', 'name', 'Legacy concept', 1, 0.9, 1, NULL, '2026-07-18 10:11:12', '2026-07-18 10:11:13');
         "#,
@@ -380,6 +457,9 @@ async fn assert_historical_compatibility_baselines(crystals: &str, add_late_crys
     migrate(&pool)
         .await
         .expect("real Python ALTER variant should baseline");
+    migrate(&pool)
+        .await
+        .expect("historical compatibility baseline should be idempotent");
 
     let crystal: (String, String, i64, f64) = sqlx::query_as(
         "SELECT source_credibility, soft_origin, is_inferred, malformed_penalty FROM crystals WHERE id = 1",
@@ -404,6 +484,21 @@ async fn assert_historical_compatibility_baselines(crystals: &str, add_late_crys
     .await
     .expect("final supersedes FK should inspect");
     assert_eq!(supersedes_delete, "SET NULL");
+    let concept: (String, String, String, String) = sqlx::query_as(
+        "SELECT canonical_name, status, created_at, updated_at FROM concepts WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("historical concept should survive");
+    assert_eq!(
+        concept,
+        (
+            "Legacy concept".to_owned(),
+            "candidate".to_owned(),
+            "2026-07-18T10:11:12Z".to_owned(),
+            "2026-07-18T10:11:13Z".to_owned(),
+        )
+    );
 }
 
 #[tokio::test]
@@ -414,6 +509,62 @@ async fn oldest_python_base_with_every_real_alter_stage_baselines_losslessly() {
 #[tokio::test]
 async fn mixed_age_python_schema_with_declared_and_appended_columns_baselines_losslessly() {
     assert_historical_compatibility_baselines(HISTORICAL_CRYSTALS_MID_AGE, false).await;
+}
+
+#[tokio::test]
+async fn fresh_386_concepts_with_in_place_merged_column_baseline_losslessly() {
+    let pool = pre_rebuild_concepts_pool(true).await;
+    seed_historical_compatibility_rows(&pool).await;
+    migrate(&pool)
+        .await
+        .expect("fresh 386d1e8 concepts declaration should baseline");
+    migrate(&pool)
+        .await
+        .expect("fresh 386d1e8 baseline should be idempotent");
+
+    let concept: (String, String, String, String) = sqlx::query_as(
+        "SELECT canonical_name, status, created_at, updated_at FROM concepts WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("fresh 386d1e8 concept should survive");
+    assert_eq!(
+        concept,
+        (
+            "Legacy concept".to_owned(),
+            "candidate".to_owned(),
+            "2026-07-18T10:11:12Z".to_owned(),
+            "2026-07-18T10:11:13Z".to_owned(),
+        )
+    );
+}
+
+#[tokio::test]
+async fn upgraded_386_concepts_with_appended_merged_column_baseline_losslessly() {
+    let pool = pre_rebuild_concepts_pool(false).await;
+    seed_historical_compatibility_rows(&pool).await;
+    migrate(&pool)
+        .await
+        .expect("386d1e8 appended concepts column should baseline");
+    migrate(&pool)
+        .await
+        .expect("appended 386d1e8 baseline should be idempotent");
+
+    let concept: (String, String, String, String) = sqlx::query_as(
+        "SELECT canonical_name, status, created_at, updated_at FROM concepts WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("upgraded 386d1e8 concept should survive");
+    assert_eq!(
+        concept,
+        (
+            "Legacy concept".to_owned(),
+            "candidate".to_owned(),
+            "2026-07-18T10:11:12Z".to_owned(),
+            "2026-07-18T10:11:13Z".to_owned(),
+        )
+    );
 }
 
 #[tokio::test]
@@ -429,6 +580,33 @@ async fn near_python_variant_with_wrong_compatibility_default_is_rejected_before
     )
     .await;
 
+    assert_unknown_shape_is_unchanged(&pool).await;
+}
+
+async fn concept_facet_value_variant(replacement: &str) -> SqlitePool {
+    let schema = include_str!("../../../src/hieronymus/migrations/global.sql").replacen(
+        "value text not null,",
+        replacement,
+        1,
+    );
+    legacy_pool_from_schema(&schema).await
+}
+
+#[tokio::test]
+async fn compatibility_column_unique_clause_is_rejected_before_mutation() {
+    let pool = concept_facet_value_variant("value text not null unique,").await;
+    assert_unknown_shape_is_unchanged(&pool).await;
+}
+
+#[tokio::test]
+async fn compatibility_column_collation_is_rejected_before_mutation() {
+    let pool = concept_facet_value_variant("value text not null collate nocase,").await;
+    assert_unknown_shape_is_unchanged(&pool).await;
+}
+
+#[tokio::test]
+async fn compatibility_column_check_is_rejected_before_mutation() {
+    let pool = concept_facet_value_variant("value text not null check(length(value) > 0),").await;
     assert_unknown_shape_is_unchanged(&pool).await;
 }
 
@@ -631,7 +809,7 @@ async fn unknown_partial_schema_returns_a_typed_error_without_mutation() {
 }
 
 #[tokio::test]
-async fn known_pre_compatibility_python_columns_are_upgraded_deliberately() {
+async fn synthetic_missing_compatibility_combination_is_rejected_before_mutation() {
     let pool = legacy_pool().await;
     pool.execute(sqlx::raw_sql(
         r#"
@@ -653,25 +831,7 @@ async fn known_pre_compatibility_python_columns_are_upgraded_deliberately() {
     .await
     .expect("known historical columns should be removable for the fixture");
 
-    migrate(&pool)
-        .await
-        .expect("known compatibility variants should baseline");
-    for (table, column) in [
-        ("task_sessions", "last_activity_at"),
-        ("short_term_memories", "source_credibility"),
-        ("crystals", "malformed_penalty"),
-        ("concepts", "merged_into_concept_id"),
-        ("concept_facets", "is_canonical"),
-    ] {
-        let present: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM pragma_table_info(?) WHERE name = ?")
-                .bind(table)
-                .bind(column)
-                .fetch_one(&pool)
-                .await
-                .expect("column should inspect");
-        assert_eq!(present, 1, "missing {table}.{column}");
-    }
+    assert_unknown_shape_is_unchanged(&pool).await;
 }
 
 #[tokio::test]

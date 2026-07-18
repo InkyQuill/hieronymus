@@ -269,8 +269,11 @@ schema or row mutation, Rust constructs the exact current `global.sql` logical o
 ordered columns/types/nullability/defaults/primary keys, foreign keys, named indexes, triggers,
 and FTS/auxiliary objects. Compatibility tables are accepted only in layouts produced by the real
 Python `db.py` history: the pre-patch base, the actual ordered `ALTER TABLE` stages and declarations,
-and the concepts rebuild, including their historical defaults and foreign-key actions. Arbitrary
-missing-column subsets and malformed near-variants are rejected. Only after that
+and the concepts rebuild, including both `386d1e8` pre-rebuild concept layouts, their historical
+`status DEFAULT 'vague'`, defaults, and foreign-key actions. Acceptance uses exact normalized
+`CREATE TABLE` signatures plus automatic-index origins, unique columns, sort directions, and
+collations; column-level `UNIQUE`, `CHECK`, `COLLATE`, generated clauses, and arbitrary
+missing-column subsets therefore cannot hide behind `table_xinfo`. Only after that
 proof may the compatibility patcher add those known columns and normalize timestamps, then rebuild
 ordinary tables through fixed shadow names into the authoritative STRICT schema, map
 `strict_concept_proposals` to `concept_proposals` and `memory_graph_migration_ledger` to

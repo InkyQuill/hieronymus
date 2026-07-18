@@ -115,6 +115,135 @@ const COMPATIBILITY_TABLES: &[&str] = &[
     "concept_facets",
 ];
 
+const LEGACY_TASK_SESSIONS_DDL: &str = r#"create table if not exists task_sessions (
+  id integer primary key,
+  series_slug text not null references series(slug),
+  source_language text not null,
+  target_language text not null,
+  task_type text not null,
+  volume text not null default '',
+  chapter text not null default '',
+  status text not null,
+  cycle_id integer,
+  created_at text not null,
+  completed_at text
+);"#;
+
+const LEGACY_SHORT_TERM_MEMORIES_DDL: &str = r#"create table if not exists short_term_memories (
+  id integer primary key,
+  session_id integer not null references task_sessions(id) on delete cascade,
+  source_role text not null,
+  kind text not null,
+  text text not null,
+  source_ref text not null default '',
+  metadata_json text not null default '{}',
+  created_at text not null,
+  archived_at text
+);"#;
+
+const LEGACY_CRYSTALS_DDL: &str = r#"create table if not exists crystals (
+  id integer primary key,
+  crystal_type text not null,
+  text text not null,
+  title text not null default '',
+  scope_type text not null,
+  scope_key text not null default '',
+  series_slug text not null default '',
+  source_language text not null default '',
+  target_language text not null default '',
+  tags_json text not null default '[]',
+  strength real not null,
+  confidence real not null,
+  status text not null,
+  created_cycle integer not null default 0,
+  last_activated_cycle integer,
+  last_reinforced_cycle integer,
+  created_at text not null,
+  updated_at text not null
+);"#;
+
+const LEGACY_CRYSTALS_MID_DDL: &str = r#"create table if not exists crystals (
+  id integer primary key,
+  crystal_type text not null,
+  text text not null,
+  title text not null default '',
+  scope_type text not null,
+  scope_key text not null default '',
+  series_slug text not null default '',
+  source_language text not null default '',
+  target_language text not null default '',
+  tags_json text not null default '[]',
+  strength real not null,
+  confidence real not null,
+  source_credibility text not null default 'observation',
+  rule_intent text not null default '',
+  malformed_penalty real not null default 0.0,
+  supersedes_crystal_id integer references crystals(id) on delete set null,
+  status text not null,
+  created_cycle integer not null default 0,
+  last_activated_cycle integer,
+  last_reinforced_cycle integer,
+  created_at text not null,
+  updated_at text not null
+);"#;
+
+const LEGACY_CONCEPTS_DDL: &str = r#"create table if not exists concepts (
+  id integer primary key,
+  canonical_name text not null,
+  description text not null default '',
+  scope_type text not null default 'global',
+  scope_key text not null default '',
+  status text not null default 'vague',
+  confidence real not null default 0.2,
+  created_at text not null,
+  updated_at text not null,
+  check ((scope_type = 'global' and scope_key = '') or (scope_type != 'global' and scope_key != '')),
+  unique(scope_type, scope_key, canonical_name)
+);"#;
+
+const LEGACY_CONCEPTS_386_DDL: &str = r#"create table if not exists concepts (
+  id integer primary key,
+  canonical_name text not null,
+  description text not null default '',
+  scope_type text not null default 'global',
+  scope_key text not null default '',
+  status text not null default 'vague',
+  confidence real not null default 0.2,
+  merged_into_concept_id integer references concepts(id),
+  created_at text not null,
+  updated_at text not null,
+  check ((scope_type = 'global' and scope_key = '') or (scope_type != 'global' and scope_key != '')),
+  unique(scope_type, scope_key, canonical_name)
+);"#;
+
+// SQLite places an ALTER-added column before existing table constraints in sqlite_schema.
+const LEGACY_CONCEPTS_APPENDED_386_DDL: &str = r#"create table if not exists concepts (
+  id integer primary key,
+  canonical_name text not null,
+  description text not null default '',
+  scope_type text not null default 'global',
+  scope_key text not null default '',
+  status text not null default 'vague',
+  confidence real not null default 0.2,
+  created_at text not null,
+  updated_at text not null,
+  merged_into_concept_id integer references concepts(id),
+  check ((scope_type = 'global' and scope_key = '') or (scope_type != 'global' and scope_key != '')),
+  unique(scope_type, scope_key, canonical_name)
+);"#;
+
+const LEGACY_CONCEPT_FACETS_DDL: &str = r#"create table if not exists concept_facets (
+  id integer primary key,
+  concept_id integer not null references concepts(id) on delete cascade,
+  language text not null default '',
+  facet_type text not null,
+  value text not null,
+  source_crystal_id integer references crystals(id) on delete set null,
+  confidence real not null default 0.2,
+  created_at text not null,
+  updated_at text not null
+);"#;
+
 const TIMESTAMP_COLUMNS: &[(&str, &[&str])] = &[
     ("series", &["created_at", "updated_at"]),
     ("series_language_tags", &["created_at"]),
@@ -546,7 +675,7 @@ async fn verify_compatibility_table(
     }
 
     verify_compatibility_foreign_keys(actual, reference, table, &actual_names).await?;
-    verify_compatibility_table_constraints(actual, table, &actual_names).await
+    verify_compatibility_table_signature(actual, reference, table).await
 }
 
 async fn table_columns(
@@ -632,6 +761,10 @@ fn column_shape_is_supported(table: &str, actual: &ColumnShape, expected: &Colum
         return false;
     }
     actual.4 == expected.4
+        || (table == "concepts"
+            && actual.1 == "status"
+            && actual.4.as_deref() == Some("'vague'")
+            && expected.4.as_deref() == Some("'candidate'"))
         || (table == "task_sessions"
             && actual.1 == "last_activity_at"
             && actual.4.as_deref() == Some("''")
@@ -745,60 +878,183 @@ async fn table_foreign_keys(
     .collect()
 }
 
-async fn verify_compatibility_table_constraints(
-    connection: &mut SqliteConnection,
+async fn verify_compatibility_table_signature(
+    actual: &mut SqliteConnection,
+    reference: &mut SqliteConnection,
     table: &str,
-    columns: &[String],
 ) -> Result<(), DbError> {
-    let sql: String =
+    let actual_sql: String =
         sqlx::query_scalar("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?")
             .bind(table)
-            .fetch_one(&mut *connection)
+            .fetch_one(&mut *actual)
             .await
             .map_err(|source| DbError::LegacyInspection { source })?;
-    let compact = compact_schema_sql(&sql);
-    if compact.contains("withoutrowid") || compact.ends_with("strict") {
+    let current_sql: String =
+        sqlx::query_scalar("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?")
+            .bind(table)
+            .fetch_one(&mut *reference)
+            .await
+            .map_err(|source| DbError::LegacyInspection { source })?;
+    let actual_signature = compact_schema_sql(&actual_sql);
+    let signatures = known_compatibility_signatures(table, &current_sql)?;
+    if !signatures.contains(&actual_signature) {
         return Err(DbError::UnsupportedLegacySchema {
-            reason: format!("unsupported table option on {table}"),
+            reason: format!("{table} does not match a reachable Python CREATE TABLE signature"),
         });
     }
-    let check_count = compact.matches("check(").count();
-    if table == "concepts" {
-        const SCOPE_CHECK: &str =
-            "check((scope_type='global'andscope_key='')or(scope_type!='global'andscope_key!=''))";
-        if check_count != 1 || !compact.contains(SCOPE_CHECK) {
-            return Err(DbError::UnsupportedLegacySchema {
-                reason: "concepts must retain the exact scope CHECK".to_owned(),
-            });
-        }
-        let has_unique = compact.contains("unique(scope_type,scope_key,canonical_name)");
-        let merged = columns
-            .iter()
-            .any(|column| column == "merged_into_concept_id");
-        if has_unique
-            && merged
-            && columns
-                .iter()
-                .position(|column| column == "merged_into_concept_id")
-                != columns.len().checked_sub(1)
-        {
-            return Err(DbError::UnsupportedLegacySchema {
-                reason:
-                    "concepts unique-name legacy shape has an impossible merged-column position"
-                        .to_owned(),
-            });
-        }
-        if compact.matches("unique(").count() != usize::from(has_unique) {
-            return Err(DbError::UnsupportedLegacySchema {
-                reason: "concepts has an unknown UNIQUE constraint".to_owned(),
-            });
-        }
-    } else if check_count != 0 || compact.contains("unique(") {
+    let actual_autoindexes = compatibility_autoindexes(actual, table).await?;
+    let expected_autoindexes = if table == "concepts"
+        && actual_signature.contains("unique(scope_type,scope_key,canonical_name)")
+    {
+        vec![(
+            "u".to_owned(),
+            1,
+            0,
+            vec![
+                ("scope_type".to_owned(), "BINARY".to_owned(), 0),
+                ("scope_key".to_owned(), "BINARY".to_owned(), 0),
+                ("canonical_name".to_owned(), "BINARY".to_owned(), 0),
+            ],
+        )]
+    } else {
+        Vec::new()
+    };
+    if actual_autoindexes != expected_autoindexes {
         return Err(DbError::UnsupportedLegacySchema {
-            reason: format!("{table} has an unknown table constraint"),
+            reason: format!("unsupported automatic indexes for {table}: {actual_autoindexes:?}"),
         });
     }
     Ok(())
+}
+
+fn known_compatibility_signatures(
+    table: &str,
+    current_sql: &str,
+) -> Result<HashSet<String>, DbError> {
+    let mut signatures = HashSet::from([compact_schema_sql(current_sql)]);
+    let variants: Vec<String> = match table {
+        "task_sessions" => vec![
+            LEGACY_TASK_SESSIONS_DDL.to_owned(),
+            append_columns(
+                LEGACY_TASK_SESSIONS_DDL,
+                &["last_activity_at text not null default ''"],
+            )?,
+        ],
+        "short_term_memories" => vec![
+            LEGACY_SHORT_TERM_MEMORIES_DDL.to_owned(),
+            append_columns(
+                LEGACY_SHORT_TERM_MEMORIES_DDL,
+                &[
+                    "source_credibility text",
+                    "rule_intent text",
+                    "soft_origin text",
+                ],
+            )?,
+        ],
+        "crystals" => {
+            let first_stage = ["soft_origin text", "is_inferred integer not null default 0"];
+            let late_stage = [
+                "source_credibility text not null default 'observation'",
+                "rule_intent text not null default ''",
+                "malformed_penalty real not null default 0",
+                "supersedes_crystal_id integer references crystals(id)",
+            ];
+            let mut all_stages = first_stage.to_vec();
+            all_stages.extend(late_stage);
+            vec![
+                LEGACY_CRYSTALS_DDL.to_owned(),
+                append_columns(LEGACY_CRYSTALS_DDL, &first_stage)?,
+                append_columns(LEGACY_CRYSTALS_DDL, &all_stages)?,
+                LEGACY_CRYSTALS_MID_DDL.to_owned(),
+                append_columns(LEGACY_CRYSTALS_MID_DDL, &first_stage)?,
+            ]
+        }
+        "concepts" => vec![
+            LEGACY_CONCEPTS_DDL.to_owned(),
+            LEGACY_CONCEPTS_386_DDL.to_owned(),
+            LEGACY_CONCEPTS_APPENDED_386_DDL.to_owned(),
+        ],
+        "concept_facets" => vec![
+            LEGACY_CONCEPT_FACETS_DDL.to_owned(),
+            append_columns(
+                LEGACY_CONCEPT_FACETS_DDL,
+                &[
+                    "is_canonical integer not null default 0",
+                    "superseded_at text",
+                ],
+            )?,
+        ],
+        _ => {
+            return Err(DbError::UnsupportedLegacySchema {
+                reason: format!("missing compatibility signature state machine for {table}"),
+            });
+        }
+    };
+    signatures.extend(variants.iter().map(|sql| compact_schema_sql(sql)));
+    Ok(signatures)
+}
+
+fn append_columns(base: &str, columns: &[&str]) -> Result<String, DbError> {
+    let trimmed = base.trim();
+    let prefix = trimmed
+        .strip_suffix(");")
+        .ok_or_else(|| DbError::UnsupportedLegacySchema {
+            reason: "embedded historical table declaration has no closing `);`".to_owned(),
+        })?;
+    Ok(format!("{prefix},\n  {}\n);", columns.join(",\n  ")))
+}
+
+type AutoIndexShape = (String, i64, i64, Vec<(String, String, i64)>);
+
+async fn compatibility_autoindexes(
+    connection: &mut SqliteConnection,
+    table: &str,
+) -> Result<Vec<AutoIndexShape>, DbError> {
+    let indexes = sqlx::query(
+        "SELECT name, \"unique\", origin, partial FROM pragma_index_list(?) WHERE name LIKE 'sqlite_autoindex_%' ORDER BY name",
+    )
+    .bind(table)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|source| DbError::LegacyInspection { source })?;
+    let mut shapes = Vec::with_capacity(indexes.len());
+    for index in indexes {
+        let name: String = index
+            .try_get("name")
+            .map_err(|source| DbError::LegacyInspection { source })?;
+        let columns = sqlx::query(
+            "SELECT name, coll, desc FROM pragma_index_xinfo(?) WHERE key = 1 ORDER BY seqno",
+        )
+        .bind(&name)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(|source| DbError::LegacyInspection { source })?
+        .into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get("name")
+                    .map_err(|source| DbError::LegacyInspection { source })?,
+                row.try_get("coll")
+                    .map_err(|source| DbError::LegacyInspection { source })?,
+                row.try_get("desc")
+                    .map_err(|source| DbError::LegacyInspection { source })?,
+            ))
+        })
+        .collect::<Result<Vec<_>, DbError>>()?;
+        shapes.push((
+            index
+                .try_get("origin")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            index
+                .try_get("unique")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            index
+                .try_get("partial")
+                .map_err(|source| DbError::LegacyInspection { source })?,
+            columns,
+        ));
+    }
+    Ok(shapes)
 }
 
 async fn object_manifest(
@@ -851,7 +1107,9 @@ fn compact_schema_sql(sql: &str) -> String {
     normalize_schema_sql(sql)
         .chars()
         .filter(|character| !character.is_whitespace() && *character != '"')
-        .collect()
+        .collect::<String>()
+        .trim_end_matches(';')
+        .to_owned()
 }
 
 fn is_known_legacy_table(name: &str) -> bool {
