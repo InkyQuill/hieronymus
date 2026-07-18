@@ -36,6 +36,9 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 only-include = ["src/hieronymus", "frontend/dist"]
 artifacts = ["frontend/dist/**"]
@@ -60,7 +63,7 @@ major_on_zero = false
 version_toml = ["pyproject.toml:project.version"]
 version_variables = ["src/hieronymus/__init__.py:__version__"]
 tag_format = "v{version}"
-build_command = "bun install --cwd frontend --frozen-lockfile && bun run --cwd frontend build && uv build"
+build_command = "uv build"
 commit_message = "chore(release): v{version}"
 
 [tool.semantic_release.branches.main]

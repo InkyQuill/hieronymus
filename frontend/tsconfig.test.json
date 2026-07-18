@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["vite/client", "node", "vitest/globals"]
+  },
+  "include": [
+    "src/web/**/*.test.ts",
+    "src/web/**/*.test.svelte.ts",
+    "src/web/**/*.svelte",
+    "vitest.config.ts"
+  ],
+  "exclude": []
+}

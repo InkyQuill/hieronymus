@@ -1,0 +1,201 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --font-serif: "Literata", georgia, "Times New Roman", serif;
+  --font-sans:
+    "Geist", -apple-system, blinkmacsystemfont, "Segoe UI", sans-serif;
+  --font-mono: "Inconsolata LGC", "Inconsolata", "Courier New", monospace;
+  --color-root: var(--hiero-bg-root);
+  --color-surface: var(--hiero-bg-surface);
+  --color-raised: var(--hiero-bg-raised);
+  --color-primary: var(--hiero-text-primary);
+  --color-secondary: var(--hiero-text-secondary);
+  --color-tertiary: var(--hiero-text-tertiary);
+  --color-accent: var(--hiero-accent);
+  --color-accent-text: var(--hiero-accent-text);
+  --color-danger: var(--hiero-danger);
+  --color-success: var(--hiero-success);
+  --color-default: var(--hiero-border-default);
+  --color-strong: var(--hiero-border-strong);
+  --breakpoint-xs: 30rem;
+  --breakpoint-sm: 45rem;
+  --breakpoint-md: 60rem;
+  --breakpoint-lg: 67.5rem;
+}
+
+@theme inline {
+  --animate-fade-in: fade-in 200ms ease-out;
+  --animate-slide-in: slide-in 200ms var(--hiero-ease-smooth);
+  --animate-toast-in: toast-in 250ms var(--hiero-ease-smooth);
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes slide-in {
+    from {
+      opacity: 0;
+      transform: translateX(100%);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+@utility text-display {
+  font: 400 clamp(28px, 4vw, 36px) / 1.15 var(--font-serif);
+}
+
+@utility text-h2 {
+  font: 400 clamp(20px, 2.5vw, 24px) / 1.25 var(--font-serif);
+}
+
+@utility text-h3 {
+  font: 600 15px / 1.3 var(--font-sans);
+}
+
+@utility text-body {
+  font: 400 14px / 1.55 var(--font-sans);
+}
+
+@utility text-body-sm {
+  font: 400 13px / 1.5 var(--font-sans);
+}
+
+@utility text-mono {
+  font: 400 13px / 1.5 var(--font-mono);
+}
+
+@utility text-eyebrow {
+  font: 500 10px / 1 var(--font-sans);
+}
+
+@utility text-caption {
+  font: 400 11px / 1.4 var(--font-sans);
+}
+
+:root,
+[data-theme="light"] {
+  --hiero-bg-root: #fdfaf2;
+  --hiero-bg-surface: #f5f0e5;
+  --hiero-bg-raised: #ede7d8;
+  --hiero-bg-overlay: rgb(253 250 242 / 90%);
+  --hiero-border-default: #e0d9c5;
+  --hiero-border-strong: #c4b998;
+  --hiero-border-accent: #b88820;
+  --hiero-text-primary: #2d2618;
+  --hiero-text-secondary: #6b6040;
+  --hiero-text-tertiary: #9e9470;
+  --hiero-accent: #b88820;
+  --hiero-accent-text: #7f5f10;
+  --hiero-accent-soft: #d4a84b;
+  --hiero-accent-bg: rgb(184 136 32 / 8%);
+  --hiero-danger: #b83030;
+  --hiero-danger-text: #b83030;
+  --hiero-danger-bg: rgb(184 48 48 / 6%);
+  --hiero-success: #4a8e5a;
+  --hiero-success-text: #3a6e45;
+  --hiero-success-bg: rgb(74 142 90 / 8%);
+  --hiero-ease-smooth: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+[data-theme="dark"] {
+  --hiero-bg-root: #0e0d0a;
+  --hiero-bg-surface: #141310;
+  --hiero-bg-raised: #1a1814;
+  --hiero-bg-overlay: rgb(14 13 10 / 85%);
+  --hiero-border-default: #252218;
+  --hiero-border-strong: #3a3628;
+  --hiero-border-accent: #d4a84b;
+  --hiero-text-primary: #e8dec4;
+  --hiero-text-secondary: #9e9678;
+  --hiero-text-tertiary: #6b6450;
+  --hiero-accent: #d4a84b;
+  --hiero-accent-text: #d4a84b;
+  --hiero-accent-soft: #f0d78c;
+  --hiero-accent-bg: rgb(212 168 75 / 10%);
+  --hiero-danger: #c84040;
+  --hiero-danger-text: #ff8a8a;
+  --hiero-danger-bg: rgb(200 64 64 / 10%);
+  --hiero-success: #5ea870;
+  --hiero-success-text: #5ea870;
+  --hiero-success-bg: rgb(94 168 112 / 10%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--hiero-bg-root);
+}
+
+body {
+  margin: 0;
+  background: var(--hiero-bg-root);
+  color: var(--hiero-text-primary);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 2px solid var(--hiero-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer components {
+  .data-table {
+    width: 100%;
+    margin: 0;
+    border-collapse: collapse;
+  }
+
+  .editor-dialog {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: min(420px, 100%);
+    height: 100dvh;
+    margin: 0;
+    padding: 24px;
+    border: 0;
+    border-left: 1px solid var(--hiero-border-default);
+    background: var(--hiero-bg-root);
+    box-shadow: -16px 0 40px rgb(0 0 0 / 15%);
+  }
+}

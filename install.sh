@@ -102,7 +102,7 @@ install_bun() {
     require_command curl
     require_command bash
     if ! confirm "Bun is missing. Install Bun >= 1.3 now?"; then
-        echo "error: Bun >= 1.3 is required to build and run the Hieronymus TUI" >&2
+        echo "error: Bun >= 1.3 is required to build the Hieronymus web console" >&2
         exit 1
     fi
     curl -fsSL https://bun.sh/install | bash
@@ -129,7 +129,7 @@ ensure_bun() {
     case "$BUN_MINOR" in ""|*[!0-9]*) BUN_MAJOR=0; BUN_MINOR=0 ;; esac
     if [ "$BUN_MAJOR" -lt 1 ] || { [ "$BUN_MAJOR" -eq 1 ] && [ "$BUN_MINOR" -lt 3 ]; }; then
         if ! confirm "Bun version is ${BUN_VER}. Upgrade Bun to >= 1.3 now?"; then
-            echo "error: Bun >= 1.3 is required to build and run the Hieronymus TUI" >&2
+            echo "error: Bun >= 1.3 is required to build the Hieronymus web console" >&2
             exit 1
         fi
         bun upgrade
@@ -145,15 +145,6 @@ ensure_bun() {
             exit 1
         fi
     fi
-}
-
-build_frontend() {
-    echo "Building OpenTUI frontend..."
-    (
-        cd "$APP_DIR/frontend"
-        bun install --frozen-lockfile
-        bun run build
-    )
 }
 
 require_command git
@@ -229,7 +220,6 @@ else
 fi
 write_release_config "$INSTALL_CHANNEL"
 
-build_frontend
 uv tool install --force --reinstall "$APP_DIR"
 
 echo "Hieronymus installed successfully from ${SELECTED_REF} (${INSTALL_CHANNEL})."
