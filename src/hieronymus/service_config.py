@@ -86,6 +86,8 @@ def _parse_environment_port(value: str) -> int:
 def _validate_service_config(config: ServiceConfig) -> ServiceConfig:
     if type(config.host) is not str or not config.host.strip():
         raise ServiceConfigError("service host must be a non-blank string")
+    if ":" in config.host:
+        raise ServiceConfigError("IPv6 hosts are not supported; use an IPv4 address or hostname")
     if type(config.port) is not int or not 1 <= config.port <= 65535:
         raise ServiceConfigError("service port must be an integer from 1 to 65535")
     return config

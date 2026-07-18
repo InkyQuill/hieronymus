@@ -74,6 +74,32 @@ def test_service_config_rejects_blank_hosts(tmp_path: Path, host: str) -> None:
         load_service_config(config, environ={}, host=host)
 
 
+def test_service_config_rejects_ipv6_host_from_config_file(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.config_root.mkdir(parents=True)
+    (config.config_root / "service.conf").write_text(
+        '[service]\nhost = "::1"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ServiceConfigError, match="IPv6 hosts are not supported"):
+        load_service_config(config, environ={})
+
+
+def test_service_config_rejects_ipv6_host_from_environment(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    with pytest.raises(ServiceConfigError, match="IPv6 hosts are not supported"):
+        load_service_config(config, environ={"HIERONYMUS_HOST": "::1"})
+
+
+def test_service_config_rejects_ipv6_host_from_explicit_argument(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    with pytest.raises(ServiceConfigError, match="IPv6 hosts are not supported"):
+        load_service_config(config, environ={}, host="::1")
+
+
 def test_service_config_rejects_explicit_port_zero(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
