@@ -88,6 +88,35 @@ fn chunking_is_unicode_safe_and_never_exceeds_limit() {
 }
 
 #[test]
+fn chunking_prefers_sentences_and_whitespace_only_blank_lines_split_paragraphs() {
+    let first = format!("{}.", "A".repeat(700));
+    let second = format!("{}!", "B".repeat(700));
+    assert_eq!(
+        split_chunk_text(&format!("{first} {second}")),
+        vec![first, second]
+    );
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("spaces.txt");
+    fs::write(&path, "First paragraph.\n \t\nSecond paragraph.").unwrap();
+    assert_eq!(
+        load_rag_file(&path, SourceType::Auto).unwrap().chunks.len(),
+        2
+    );
+}
+
+#[test]
+fn markdown_long_fences_and_indented_code_cannot_create_headings() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("fences.md");
+    fs::write(&path, "# Real\n\n````rust\n# code\n```\n# still code\n````\n\n    # indented\n    value\n\n## After\n\nDone.").unwrap();
+    let parsed = load_rag_file(&path, SourceType::Auto).unwrap();
+    assert_eq!(parsed.chunks[0].location, "Real paragraph 1");
+    assert!(parsed.chunks[0].text.contains("# still code"));
+    assert_eq!(parsed.chunks[1].location, "Real paragraph 2");
+    assert_eq!(parsed.chunks[2].location, "Real > After paragraph 3");
+}
+
+#[test]
 fn oversized_glossary_entries_are_split_without_losing_metadata() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("large.json");
@@ -148,13 +177,67 @@ fn html_and_docx_normalize_to_managed_markdown() {
     let mut zip = ZipWriter::new(file);
     zip.start_file("word/document.xml", SimpleFileOptions::default())
         .unwrap();
-    zip.write_all(br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Important detail.</w:t></w:r></w:p></w:body></w:document>"#).unwrap();
+    zip.write_all(r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Important detail.</w:t></w:r></w:p><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Bold</w:t><w:tab/><w:br/></w:r><w:hyperlink r:id="rId1"><w:r><w:t>Docs</w:t></w:r></w:hyperlink></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Sense</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Сенс</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#.as_bytes()).unwrap();
+    zip.start_file("word/_rels/document.xml.rels", SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="https://example.test"/></Relationships>"#).unwrap();
     zip.finish().unwrap();
     let normalized = normalize_rag_source(&docx, &managed).unwrap();
-    assert!(
-        fs::read_to_string(normalized.path)
+    let output = fs::read_to_string(normalized.path).unwrap();
+    assert!(output.contains("# Important detail."));
+    assert!(output.contains("**Bold**"));
+    assert!(output.contains("[Docs](https://example.test)"));
+    assert!(output.contains("Sense"));
+    assert!(output.contains("Сенс"));
+}
+
+#[test]
+fn html_conversion_preserves_inline_links_emphasis_lists_and_tables_once() {
+    let dir = tempdir().unwrap();
+    let source = dir.path().join("rich.html");
+    fs::write(&source, "<h1>Guide</h1><p>Use <strong>Sense</strong> with <em>care</em> and <a href='https://example.test'>docs</a>.</p><ul><li>One</li><li>Two</li></ul><table><tr><th>Name</th><th>Value</th></tr><tr><td>Sense</td><td>Сенс</td></tr></table>").unwrap();
+    let output = fs::read_to_string(
+        normalize_rag_source(&source, &dir.path().join("managed"))
             .unwrap()
-            .contains("Important detail.")
+            .path,
+    )
+    .unwrap();
+    assert!(output.contains("**Sense**"));
+    assert!(output.contains("*care*"));
+    assert!(output.contains("[docs](https://example.test)"));
+    assert_eq!(output.matches("- One").count(), 1);
+    assert!(output.contains("| Name | Value |"));
+}
+
+#[test]
+fn managed_output_rejects_symlinks_and_concurrent_publication_is_complete() {
+    let dir = tempdir().unwrap();
+    let source = dir.path().join("source.html");
+    fs::write(&source, "<p>Complete content.</p>").unwrap();
+    let outside = dir.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let link = dir.path().join("managed-link");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    #[cfg(unix)]
+    assert!(matches!(
+        normalize_rag_source(&source, &link),
+        Err(RagError::UnsafeManagedPath(_))
+    ));
+
+    let managed = dir.path().join("managed");
+    let paths: Vec<_> = std::thread::scope(|scope| {
+        (0..8)
+            .map(|_| scope.spawn(|| normalize_rag_source(&source, &managed).unwrap().path))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect()
+    });
+    assert!(paths.windows(2).all(|pair| pair[0] == pair[1]));
+    assert_eq!(
+        fs::read_to_string(&paths[0]).unwrap(),
+        "Complete content.\n"
     );
 }
 
@@ -192,6 +275,20 @@ fn source_file_size_limit_is_enforced_before_parsing() {
         load_rag_file(&path, SourceType::Auto),
         Err(RagError::ResourceLimit {
             resource: "source bytes",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn chunk_count_limit_rejects_before_materializing_all_text_chunks() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("too-many.txt");
+    fs::write(&path, "x\n\n".repeat(hiero_core::rag::MAX_RAG_CHUNKS + 1)).unwrap();
+    assert!(matches!(
+        load_rag_file(&path, SourceType::Auto),
+        Err(RagError::ResourceLimit {
+            resource: "chunks",
             ..
         })
     ));
@@ -249,6 +346,71 @@ async fn import_search_reimport_and_tag_refresh_are_atomic() {
             .unwrap()
             .len(),
         1
+    );
+}
+
+#[tokio::test]
+async fn canonical_default_identity_deduplicates_relative_dot_absolute_and_symlink_aliases() {
+    let pool = pool().await;
+    let store = RagStore::new(&pool);
+    let dir = tempdir().unwrap();
+    let source = dir.path().join("chapter.txt");
+    fs::write(&source, "Canonical Sense.").unwrap();
+    #[cfg(unix)]
+    {
+        let alias = dir.path().join("alias.txt");
+        std::os::unix::fs::symlink(&source, &alias).unwrap();
+        let first = store
+            .import_file("oso", &source, ImportOptions::default())
+            .await
+            .unwrap();
+        let second = store
+            .import_file("oso", &alias, ImportOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(first.source_id, second.source_id);
+        assert!(second.skipped);
+        assert_eq!(
+            first.source.source_ref,
+            fs::canonicalize(&source).unwrap().to_string_lossy()
+        );
+    }
+}
+
+#[tokio::test]
+async fn changed_indexed_source_clears_old_semantic_state_and_enqueues_new_job() {
+    let pool = pool().await;
+    let store = RagStore::new(&pool);
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("chapter.txt");
+    fs::write(&path, "Old Sense.").unwrap();
+    store
+        .import_file("oso", &path, options("chapter.txt"))
+        .await
+        .unwrap();
+    let old_id: i64 = sqlx::query_scalar("SELECT id FROM rag_chunks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO semantic_chunk_state(chunk_id, checksum, generation_id, indexed_at) VALUES (?, 'old', 'g1', '2026-07-19T00:00:00Z')").bind(old_id).execute(&pool).await.unwrap();
+    fs::write(&path, "New Moonstone.").unwrap();
+    store
+        .import_file("oso", &path, options("chapter.txt"))
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM semantic_chunk_state")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM semantic_index_jobs")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        2
     );
 }
 
@@ -343,6 +505,93 @@ async fn search_is_stable_bounded_and_applies_metadata_boosts() {
     assert_eq!(hits.len(), 50);
     assert_eq!(hits[0].chunk.source_ref, "source-50.txt");
     assert!(hits[0].score > hits[1].score);
+}
+
+#[tokio::test]
+async fn tag_normalization_is_trimmed_deduplicated_and_unicode_casefolded_for_boosts() {
+    let pool = pool().await;
+    let store = RagStore::new(&pool);
+    let dir = tempdir().unwrap();
+    for name in ["plain", "tagged"] {
+        fs::write(dir.path().join(format!("{name}.txt")), "Sense evidence.").unwrap();
+    }
+    store
+        .import_file("oso", &dir.path().join("plain.txt"), options("plain"))
+        .await
+        .unwrap();
+    let mut tagged = options("tagged");
+    tagged.story_scopes = vec!["  STRASSE  ".into(), "strasse".into(), "".into()];
+    tagged.semantic_tags = vec!["  SKİLL  ".into(), "ski̇ll".into()];
+    store
+        .import_file("oso", &dir.path().join("tagged.txt"), tagged)
+        .await
+        .unwrap();
+    let hits = store
+        .search(
+            "oso",
+            "Sense",
+            SearchOptions {
+                story_scopes: vec!["Straße".into()],
+                semantic_tags: vec!["SKİLL".into()],
+                limit: 2,
+                ..SearchOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(hits[0].chunk.source_ref, "tagged");
+    assert_eq!(hits[0].chunk.story_scopes, vec!["strasse"]);
+    assert_eq!(hits[0].chunk.semantic_tags, vec!["ski̇ll"]);
+}
+
+#[tokio::test]
+async fn unchanged_receipt_matches_authoritative_metadata_and_markdown_reason_is_exact() {
+    let pool = pool().await;
+    let store = RagStore::new(&pool);
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("chapter.md");
+    fs::write(&path, "# Sense\n\nEvidence.").unwrap();
+    let first = store
+        .import_file("oso", &path, options("chapter.md"))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE rag_sources SET metadata_json = '{\"stale\":true}' WHERE id = ?")
+        .bind(first.source_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let second = store
+        .import_file("oso", &path, options("chapter.md"))
+        .await
+        .unwrap();
+    let stored: String = sqlx::query_scalar("SELECT metadata_json FROM rag_sources WHERE id = ?")
+        .bind(first.source_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stored).unwrap(),
+        serde_json::to_value(&second.source.metadata).unwrap()
+    );
+    assert_eq!(
+        store
+            .search("oso", "Evidence", SearchOptions::default())
+            .await
+            .unwrap()[0]
+            .reason,
+        "rag markdown section match"
+    );
+}
+
+#[test]
+fn blank_delimited_rows_are_skipped() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("blank.csv");
+    fs::write(&path, "source,target\n,\nSense,Сенс\n").unwrap();
+    assert_eq!(
+        load_rag_file(&path, SourceType::Auto).unwrap().chunks.len(),
+        1
+    );
 }
 
 #[tokio::test]

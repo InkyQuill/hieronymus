@@ -13,6 +13,7 @@ csv.workspace = true
 fs4.workspace = true
 icu_casemap.workspace = true
 libc.workspace = true
+lopdf.workspace = true
 lancedb.workspace = true
 ort.workspace = true
 percent-encoding.workspace = true

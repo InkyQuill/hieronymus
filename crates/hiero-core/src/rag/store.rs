@@ -4,6 +4,7 @@ use std::{
 };
 
 use chrono::Utc;
+use icu_casemap::CaseMapper;
 use sqlx::{FromRow, QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
 use crate::{
@@ -33,11 +34,16 @@ impl<'a> RagStore<'a> {
         path: &Path,
         options: ImportOptions,
     ) -> Result<RagImportResult, RagError> {
-        let path = path.to_owned();
+        let path = tokio::fs::canonicalize(path)
+            .await
+            .map_err(|source| RagError::Io {
+                path: path.to_owned(),
+                source,
+            })?;
         let managed = options
             .managed_root
             .clone()
-            .unwrap_or_else(|| std::env::temp_dir().join("hieronymus-rag-normalized"));
+            .unwrap_or_else(super::default_managed_root);
         let requested = options.source_type.unwrap_or(SourceType::Auto);
         let parse_path = path.clone();
         let parsed = tokio::task::spawn_blocking(move || {
@@ -123,6 +129,8 @@ impl<'a> RagStore<'a> {
                 && row.get::<String, _>("content_type") == parsed.content_type
             {
                 let id: i64 = row.get("id");
+                sqlx::query("UPDATE rag_sources SET metadata_json = ?, updated_at = ? WHERE id = ? AND series_slug = ?")
+                    .bind(serde_json::to_string(metadata)?).bind(Utc::now()).bind(id).bind(series_slug).execute(&mut **connection).await?;
                 let ids: Vec<i64> = sqlx::query_scalar(
                     "SELECT id FROM rag_chunks WHERE source_id = ? AND series_slug = ? ORDER BY id",
                 )
@@ -142,8 +150,11 @@ impl<'a> RagStore<'a> {
                     normalized,
                 ));
             }
+            let old_source_id = row.get::<i64, _>("id");
+            sqlx::query("DELETE FROM semantic_chunk_state WHERE chunk_id IN (SELECT id FROM rag_chunks WHERE source_id = ? AND series_slug = ?)")
+                .bind(old_source_id).bind(series_slug).execute(&mut **connection).await?;
             sqlx::query("DELETE FROM rag_sources WHERE id = ? AND series_slug = ?")
-                .bind(row.get::<i64, _>("id"))
+                .bind(old_source_id)
                 .bind(series_slug)
                 .execute(&mut **connection)
                 .await?;
@@ -228,6 +239,8 @@ impl<'a> RagStore<'a> {
                     source: MemorySource::Rag,
                     reason: if kind == "glossary_entry" {
                         "rag glossary match".into()
+                    } else if kind == "markdown_section" {
+                        "rag markdown section match".into()
                     } else {
                         "rag project text match".into()
                     },
@@ -270,7 +283,12 @@ fn result_from(
 }
 
 fn clean(values: &[String]) -> Vec<String> {
-    crate::values::normalize_tuple(values)
+    let folded = values
+        .iter()
+        .map(|value| CaseMapper::new().fold_string(value.trim()).into_owned())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    crate::values::normalize_tuple(&folded)
 }
 
 async fn replace_tags(

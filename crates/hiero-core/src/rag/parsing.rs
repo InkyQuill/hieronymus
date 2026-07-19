@@ -1,7 +1,9 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
 use csv::StringRecord;
+use regex::Regex;
 use sha2::{Digest, Sha256};
+use std::sync::OnceLock;
 
 use super::{
     RagError, SourceType,
@@ -32,6 +34,9 @@ pub fn load_rag_file(path: &Path, requested: SourceType) -> Result<ParsedRagFile
     })?;
     let source_type = resolve(path, requested)?;
     let content_type = extension(path)?;
+    if matches!(source_type, SourceType::Text | SourceType::Markdown) {
+        preflight_text_chunks(decode(path, &bytes)?, source_type)?;
+    }
     let chunks = match source_type {
         SourceType::Text => parse_text(decode(path, &bytes)?),
         SourceType::Markdown => parse_markdown(decode(path, &bytes)?),
@@ -65,6 +70,27 @@ pub fn load_rag_file(path: &Path, requested: SourceType) -> Result<ParsedRagFile
         chunks,
         metadata: BTreeMap::new(),
     })
+}
+
+fn preflight_text_chunks(text: &str, source_type: SourceType) -> Result<(), RagError> {
+    static BLANK: OnceLock<Regex> = OnceLock::new();
+    let blank = BLANK.get_or_init(|| Regex::new(r"\n\s*\n").expect("constant regex"));
+    let paragraph_upper_bound = blank.find_iter(text).take(MAX_RAG_CHUNKS + 1).count() + 1;
+    let heading_upper_bound = if source_type == SourceType::Markdown {
+        text.lines()
+            .filter(|line| line.trim_start().starts_with('#'))
+            .take(MAX_RAG_CHUNKS + 1)
+            .count()
+    } else {
+        0
+    };
+    if paragraph_upper_bound.saturating_add(heading_upper_bound) > MAX_RAG_CHUNKS {
+        return Err(RagError::ResourceLimit {
+            resource: "chunks",
+            limit: MAX_RAG_CHUNKS,
+        });
+    }
+    Ok(())
 }
 
 fn enforce_chunk_boundaries(chunks: Vec<ParsedRagChunk>) -> Vec<ParsedRagChunk> {
@@ -142,7 +168,7 @@ fn parse_markdown(text: &str) -> Vec<ParsedRagChunk> {
     let mut paragraphs = Vec::new();
     let mut lines = Vec::new();
     let mut count = 0;
-    let mut fence = None;
+    let mut fence: Option<(char, usize)> = None;
     let flush = |lines: &mut Vec<String>,
                  headings: &[(usize, String)],
                  count: &mut usize,
@@ -174,16 +200,27 @@ fn parse_markdown(text: &str) -> Vec<ParsedRagChunk> {
     };
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some(marker) = fence {
+        if let Some((marker, length)) = fence {
             lines.push(line.to_owned());
-            if trimmed.chars().all(|ch| ch == marker) && trimmed.chars().count() >= 3 {
+            if line.len().saturating_sub(line.trim_start().len()) <= 3
+                && trimmed.chars().all(|ch| ch == marker)
+                && trimmed.chars().count() >= length
+            {
                 fence = None;
             }
             continue;
         }
         let leading = line.len().saturating_sub(line.trim_start().len());
         if leading <= 3 && (trimmed.starts_with("```") || trimmed.starts_with("~~~")) {
-            fence = trimmed.chars().next();
+            let marker = trimmed.chars().next().expect("checked marker");
+            fence = Some((
+                marker,
+                trimmed.chars().take_while(|ch| *ch == marker).count(),
+            ));
+            lines.push(line.to_owned());
+            continue;
+        }
+        if line.starts_with("    ") || line.starts_with('\t') {
             lines.push(line.to_owned());
             continue;
         }
@@ -206,7 +243,10 @@ fn parse_markdown(text: &str) -> Vec<ParsedRagChunk> {
 }
 
 fn paragraphs(text: &str) -> Vec<String> {
-    text.split("\n\n")
+    static BLANK: OnceLock<Regex> = OnceLock::new();
+    BLANK
+        .get_or_init(|| Regex::new(r"\n\s*\n").expect("constant regex"))
+        .split(text)
         .map(|block| {
             block
                 .lines()
@@ -251,17 +291,24 @@ fn parse_delimited(bytes: &[u8], delimiter: u8) -> Result<Vec<ParsedRagChunk>, R
         })?
         .clone();
     validate_headers(&headers)?;
-    reader
-        .records()
-        .enumerate()
-        .map(|(index, row)| match row {
-            Ok(row) => row_to_chunk(&headers, &row, format!("row {}", index + 2)),
-            Err(error) => Err(RagError::Parse {
-                path: None,
-                message: error.to_string(),
-            }),
-        })
-        .collect()
+    let mut chunks = Vec::new();
+    for (index, row) in reader.records().enumerate() {
+        let row = row.map_err(|error| RagError::Parse {
+            path: None,
+            message: error.to_string(),
+        })?;
+        if row.iter().all(|value| value.trim().is_empty()) {
+            continue;
+        }
+        chunks.push(row_to_chunk(&headers, &row, format!("row {}", index + 2))?);
+        if chunks.len() > MAX_RAG_CHUNKS {
+            return Err(RagError::ResourceLimit {
+                resource: "chunks",
+                limit: MAX_RAG_CHUNKS,
+            });
+        }
+    }
+    Ok(chunks)
 }
 
 fn validate_headers(headers: &StringRecord) -> Result<(), RagError> {
@@ -327,6 +374,12 @@ fn parse_structured(value: serde_json::Value) -> Result<Vec<ParsedRagChunk>, Rag
             });
         }
     };
+    if entries.len() > MAX_RAG_CHUNKS {
+        return Err(RagError::ResourceLimit {
+            resource: "chunks",
+            limit: MAX_RAG_CHUNKS,
+        });
+    }
     entries
         .into_iter()
         .enumerate()

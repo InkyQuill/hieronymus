@@ -4,13 +4,21 @@ mod models;
 mod parsing;
 mod store;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::OnceLock};
 
 pub use chunking::{MAX_RAG_CHUNK_CHARS, split_chunk_text};
-pub use conversion::normalize_rag_source;
+pub use conversion::{MAX_CONVERTED_TEXT_BYTES, normalize_rag_source};
 pub use models::*;
 pub use parsing::{MAX_RAG_CHUNKS, MAX_RAG_FILE_BYTES, load_rag_file};
 pub use store::RagStore;
+
+pub(crate) fn default_managed_root() -> PathBuf {
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        std::env::temp_dir().join(format!("hieronymus-rag-{}", uuid::Uuid::new_v4()))
+    })
+    .clone()
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RagError {
@@ -53,4 +61,6 @@ pub enum RagError {
     InvalidLimit,
     #[error("semantic retrieval is introduced by migration Phase 003 Task 7; use lexical mode")]
     SemanticUnavailable,
+    #[error("unsafe managed RAG path: {0}")]
+    UnsafeManagedPath(PathBuf),
 }
