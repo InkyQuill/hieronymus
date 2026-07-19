@@ -6,20 +6,7 @@ from typing import Any
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import connect, ensure_schema
-from hieronymus.values import utc_now as _now
-
-_REDACTED = "[REDACTED]"
-_SECRET_KEYS = frozenset(
-    {
-        "apikey",
-        "authorization",
-        "xapikey",
-        "xgoogapikey",
-        "anthropicversion",
-        "token",
-        "bearer",
-    }
-)
+from hieronymus.dream_persistence import append_audit_entry
 
 
 @dataclass(frozen=True)
@@ -50,37 +37,18 @@ class DreamAuditStore:
         summary: str,
         payload: Any,
     ) -> int:
-        payload_json = json.dumps(
-            _redact_payload(payload),
-            ensure_ascii=False,
-            sort_keys=True,
-        )
         with connect(self.config.database_path) as conn:
-            cursor = conn.execute(
-                """
-                insert into dream_audit_entries(
-                  dream_run_id,
-                  phase_run_id,
-                  event_type,
-                  severity,
-                  summary,
-                  payload_json,
-                  created_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    dream_run_id,
-                    phase_run_id,
-                    event_type,
-                    severity,
-                    summary,
-                    payload_json,
-                    _now(),
-                ),
+            audit_id = append_audit_entry(
+                conn,
+                dream_run_id=dream_run_id,
+                phase_run_id=phase_run_id,
+                event_type=event_type,
+                severity=severity,
+                summary=summary,
+                payload=payload,
             )
             conn.commit()
-        return int(cursor.lastrowid)
+        return audit_id
 
     def list_for_run(self, dream_run_id: int) -> list[DreamAuditEntry]:
         with connect(self.config.database_path) as conn:
@@ -106,21 +74,3 @@ class DreamAuditStore:
             )
             for row in rows
         ]
-
-
-def _redact_payload(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _REDACTED if _is_secret_key(key) else _redact_payload(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list | tuple):
-        return [_redact_payload(item) for item in value]
-    return value
-
-
-def _is_secret_key(key: object) -> bool:
-    if not isinstance(key, str):
-        return False
-    normalized = key.replace("-", "").replace("_", "").lower()
-    return normalized in _SECRET_KEYS or "token" in normalized or "bearer" in normalized
