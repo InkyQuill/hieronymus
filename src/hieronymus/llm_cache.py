@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -69,9 +70,8 @@ class CachedModels:
 
 
 def load_model_cache(config: HieronymusConfig) -> CachedModels:
-    adoption = adopt_legacy_model_cache(config)
     path = config.llm_cache_path
-    if adoption.status == "adoption-failed":
+    if not path.exists():
         path = _legacy_model_cache_path(config)
     if not path.exists():
         return CachedModels()
@@ -79,21 +79,43 @@ def load_model_cache(config: HieronymusConfig) -> CachedModels:
     return cache if valid else CachedModels()
 
 
-def adopt_legacy_model_cache(config: HieronymusConfig) -> ModelCacheAdoption:
+def inspect_legacy_model_cache(config: HieronymusConfig) -> ModelCacheAdoption:
     legacy_path = _legacy_model_cache_path(config)
     if not legacy_path.exists():
         return ModelCacheAdoption(status="not-needed")
     if config.llm_cache_path.exists():
         return ModelCacheAdoption(status="conflict", legacy_path=str(legacy_path))
 
-    _, valid = _read_cache(legacy_path)
+    _, valid = _read_cache(legacy_path, require_complete=True)
     if not valid:
         return ModelCacheAdoption(status="invalid-legacy", legacy_path=str(legacy_path))
+    return ModelCacheAdoption(status="ready", legacy_path=str(legacy_path))
+
+
+def adopt_legacy_model_cache(config: HieronymusConfig) -> ModelCacheAdoption:
+    inspection = inspect_legacy_model_cache(config)
+    if inspection.status != "ready":
+        return inspection
+
+    legacy_path = _legacy_model_cache_path(config)
     try:
-        legacy_path.replace(config.llm_cache_path)
+        os.link(legacy_path, config.llm_cache_path)
+    except FileExistsError:
+        return ModelCacheAdoption(status="conflict", legacy_path=str(legacy_path))
     except OSError as error:
-        if config.llm_cache_path.exists() and not legacy_path.exists():
-            return ModelCacheAdoption(status="not-needed")
+        if config.llm_cache_path.exists():
+            return ModelCacheAdoption(status="conflict", legacy_path=str(legacy_path))
+        return ModelCacheAdoption(
+            status="adoption-failed",
+            legacy_path=str(legacy_path),
+            error=str(error),
+        )
+
+    try:
+        _fsync_directory(config.data_root)
+        legacy_path.unlink()
+        _fsync_directory(config.data_root)
+    except OSError as error:
         return ModelCacheAdoption(
             status="adoption-failed",
             legacy_path=str(legacy_path),
@@ -156,14 +178,41 @@ def _legacy_model_cache_path(config: HieronymusConfig) -> Path:
     return config.data_root / ("llm" + "cache.tmp")
 
 
-def _read_cache(path: Path) -> tuple[CachedModels, bool]:
+def _read_cache(path: Path, *, require_complete: bool = False) -> tuple[CachedModels, bool]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return CachedModels(), False
     if type(payload) is not dict or type(payload.get("providers")) is not dict:
         return CachedModels(), False
-    return _cache_from_payload(payload), True
+    cache = _cache_from_payload(payload)
+    if require_complete and not _is_complete_cache_payload(payload, cache):
+        return CachedModels(), False
+    return cache, True
+
+
+def _is_complete_cache_payload(payload: dict[str, Any], cache: CachedModels) -> bool:
+    providers = payload["providers"]
+    if len(cache.providers) != len(providers):
+        return False
+    for provider, raw_entry in providers.items():
+        if type(provider) is not str or not provider or type(raw_entry) is not dict:
+            return False
+        raw_provider = raw_entry.get("provider", provider)
+        raw_models = raw_entry.get("models")
+        if type(raw_provider) is not str or type(raw_models) is not list:
+            return False
+        if any(type(model) is not str for model in raw_models):
+            return False
+    return True
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _entry_from_payload(provider: str, payload: dict[str, Any]) -> ModelCacheEntry | None:

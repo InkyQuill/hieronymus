@@ -19,6 +19,7 @@ from hieronymus.dream_providers import ProviderProfile as RuntimeProviderProfile
 from hieronymus.llm_cache import (
     adopt_legacy_model_cache,
     dream_profile_cache_identity,
+    inspect_legacy_model_cache,
     load_model_cache,
     model_cache_identity,
 )
@@ -62,7 +63,7 @@ class Doctor:
         self._check_bun_runtime(report)
         self._check_dream_config_file(report)
         self._check_dream_config_readiness(report)
-        self._check_llm_cache_adoption(report)
+        self._check_llm_cache_adoption(report, autofix=autofix)
         self._check_llm_model_cache(report)
         self._check_agent_plugins(report)
 
@@ -100,14 +101,28 @@ class Doctor:
                 )
             )
 
-    def _check_llm_cache_adoption(self, report: DoctorReport) -> None:
-        adoption = adopt_legacy_model_cache(self.config)
+    def _check_llm_cache_adoption(self, report: DoctorReport, *, autofix: bool) -> None:
+        adoption = inspect_legacy_model_cache(self.config)
+        if adoption.status == "ready" and autofix:
+            adoption = adopt_legacy_model_cache(self.config)
         if adoption.status == "adopted":
-            report["info"].append(
+            report["autofixed"].append(
                 DoctorFinding(
                     level="info",
                     code="llm-cache-legacy-adopted",
                     message=f"Legacy model cache adopted at {self.config.llm_cache_path}",
+                    autofixed=True,
+                )
+            )
+        elif adoption.status == "ready":
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="llm-cache-legacy-ready",
+                    message=(
+                        f"Legacy model cache is ready to adopt from {adoption.legacy_path}; "
+                        "run hiero doctor --fix"
+                    ),
                 )
             )
         elif adoption.status == "conflict":

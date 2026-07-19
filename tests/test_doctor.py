@@ -71,13 +71,13 @@ def runtime_profile(profile: ProviderProfile) -> RuntimeProviderProfile:
     )
 
 
-def run_doctor_without_daemon(config: HieronymusConfig):
+def run_doctor_without_daemon(config: HieronymusConfig, *, autofix: bool = False):
     with patch("hieronymus.doctor.ServiceManager") as manager_class:
         manager_class.return_value.status.return_value = {
             "running": False,
             "reason": "no-state",
         }
-        return Doctor(config).run(autofix=False)
+        return Doctor(config).run(autofix=autofix)
 
 
 def test_doctor_reports_running_daemon_as_information(config) -> None:
@@ -699,15 +699,31 @@ def _valid_cache_payload() -> str:
     )
 
 
-def test_doctor_reports_legacy_model_cache_adoption(tmp_path: Path) -> None:
+def test_doctor_reports_legacy_model_cache_without_mutating_by_default(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     config.data_root.mkdir(parents=True)
-    _legacy_cache_path(config).write_text(_valid_cache_payload(), encoding="utf-8")
+    legacy_path = _legacy_cache_path(config)
+    original = _valid_cache_payload().encode()
+    legacy_path.write_bytes(original)
 
     report = run_doctor_without_daemon(config)
 
-    assert any(finding.code == "llm-cache-legacy-adopted" for finding in report["info"])
+    assert any(finding.code == "llm-cache-legacy-ready" for finding in report["warnings"])
+    assert legacy_path.read_bytes() == original
+    assert not config.llm_cache_path.exists()
+
+
+def test_doctor_autofix_adopts_legacy_model_cache(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.write_text(_valid_cache_payload(), encoding="utf-8")
+
+    report = run_doctor_without_daemon(config, autofix=True)
+
+    assert any(finding.code == "llm-cache-legacy-adopted" for finding in report["autofixed"])
     assert config.llm_cache_path.exists()
+    assert not legacy_path.exists()
 
 
 def test_doctor_reports_legacy_model_cache_conflict_and_keeps_new(tmp_path: Path) -> None:
@@ -734,13 +750,31 @@ def test_doctor_reports_malformed_legacy_model_cache(tmp_path: Path) -> None:
     assert not config.llm_cache_path.exists()
 
 
+def test_doctor_reports_legacy_model_cache_with_malformed_provider_schema(
+    tmp_path: Path,
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    payload = json.loads(_valid_cache_payload())
+    payload["providers"]["openai"]["models"] = 123
+    legacy_path = _legacy_cache_path(config)
+    original = json.dumps(payload).encode()
+    legacy_path.write_bytes(original)
+
+    report = run_doctor_without_daemon(config, autofix=True)
+
+    assert any(finding.code == "llm-cache-legacy-invalid" for finding in report["warnings"])
+    assert legacy_path.read_bytes() == original
+    assert not config.llm_cache_path.exists()
+
+
 def test_doctor_reports_interrupted_legacy_model_cache_adoption(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     config.data_root.mkdir(parents=True)
     _legacy_cache_path(config).write_text(_valid_cache_payload(), encoding="utf-8")
 
-    with patch.object(Path, "replace", side_effect=OSError("interrupted")):
-        report = run_doctor_without_daemon(config)
+    with patch("hieronymus.llm_cache.os.link", side_effect=OSError("interrupted")):
+        report = run_doctor_without_daemon(config, autofix=True)
 
     assert any(finding.code == "llm-cache-legacy-adoption-failed" for finding in report["warnings"])
     assert _legacy_cache_path(config).exists()
