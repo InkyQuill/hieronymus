@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use chrono::Utc;
+use icu_casemap::CaseMapper;
 use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 use super::{
@@ -141,18 +142,18 @@ impl<'a> Termbase<'a> {
         let mut findings = resolved.findings;
         for matched in resolved.matched {
             for forbidden in &matched.rule.parsed.forbidden {
-                if translated.contains(forbidden) {
+                if let Some(observed) = first_casefold_match(translated, forbidden) {
                     findings.push(ValidationFinding {
                         crystal_id: matched.rule.id,
                         kind: "forbidden_variant_used".into(),
                         severity: "high".into(),
                         expected: matched.rule.parsed.canonical.clone(),
-                        observed: forbidden.clone(),
+                        observed,
                         detail: "forbidden rendering was used for a contracted source form".into(),
                     });
                 }
             }
-            if !translated.contains(&matched.rule.parsed.canonical) {
+            if first_casefold_match(translated, &matched.rule.parsed.canonical).is_none() {
                 findings.push(ValidationFinding {
                     crystal_id: matched.rule.id,
                     kind: "canonical_missing".into(),
@@ -369,42 +370,42 @@ fn resolve_rules<'a>(
     rules: &'a [ActiveRule],
     context: &TranslationContext,
 ) -> ResolvedRules<'a> {
-    let folded = raw_text.to_lowercase();
-    let mut occurrences = Vec::<(usize, usize, String, &'a ActiveRule)>::new();
+    let folded = FoldedText::new(raw_text);
+    let mut occurrences = Vec::<(usize, usize, usize, String, String, &'a ActiveRule)>::new();
     for rule in rules {
         for surface in &rule.source_forms {
-            let needle = surface.to_lowercase();
+            let needle = casefold(surface);
             if needle.is_empty() {
                 continue;
             }
-            for (start, _) in folded.match_indices(&needle) {
-                let end = start + needle.len();
-                occurrences.push((start, end, surface.clone(), rule));
+            let folded_length = needle.chars().count();
+            for (start, end, observed) in folded.matches(&needle) {
+                occurrences.push((start, end, folded_length, needle.clone(), observed, rule));
             }
         }
     }
     occurrences.sort_by(|left, right| {
-        (right.1 - right.0)
-            .cmp(&(left.1 - left.0))
+        right
+            .2
+            .cmp(&left.2)
+            .then_with(|| (right.1 - right.0).cmp(&(left.1 - left.0)))
             .then_with(|| left.0.cmp(&right.0))
-            .then_with(|| left.3.id.cmp(&right.3.id))
+            .then_with(|| left.5.id.cmp(&right.5.id))
     });
     let mut accepted = Vec::new();
     for occurrence in occurrences {
-        if accepted.iter().any(|(start, end, _, _)| {
-            *start <= occurrence.0
-                && occurrence.1 <= *end
-                && (*end - *start) > (occurrence.1 - occurrence.0)
+        if accepted.iter().any(|(start, end, folded_length, _, _, _)| {
+            *start <= occurrence.0 && occurrence.1 <= *end && *folded_length > occurrence.2
         }) {
             continue;
         }
         accepted.push(occurrence);
     }
     let mut grouped: BTreeMap<String, (String, Vec<&ActiveRule>)> = BTreeMap::new();
-    for (_, _, surface, rule) in accepted {
+    for (_, _, _, folded_surface, observed, rule) in accepted {
         let entry = grouped
-            .entry(surface.to_lowercase())
-            .or_insert_with(|| (surface, Vec::new()));
+            .entry(folded_surface)
+            .or_insert_with(|| (observed, Vec::new()));
         if !entry.1.iter().any(|seen| seen.id == rule.id) {
             entry.1.push(rule);
         }
@@ -425,9 +426,9 @@ fn resolve_rules<'a>(
                 .map(|rule| rule.concept_ids.clone())
                 .collect();
         }
-        let renderings: BTreeSet<&str> = candidates
+        let renderings: BTreeSet<String> = candidates
             .iter()
-            .map(|rule| rule.parsed.canonical.as_str())
+            .map(|rule| casefold(&rule.parsed.canonical))
             .collect();
         if concepts.len() != 1 {
             findings.push(ambiguity_finding(&surface, &unresolved_candidates));
@@ -873,13 +874,94 @@ fn dedupe_folded(values: Vec<String>) -> Vec<String> {
         .into_iter()
         .filter_map(|value| {
             let value = value.trim().to_owned();
-            if value.is_empty() || !seen.insert(value.to_lowercase()) {
+            if value.is_empty() || !seen.insert(casefold(&value)) {
                 None
             } else {
                 Some(value)
             }
         })
         .collect()
+}
+
+fn casefold(value: &str) -> String {
+    CaseMapper::new().fold_string(value).into_owned()
+}
+
+fn first_casefold_match(haystack: &str, needle: &str) -> Option<String> {
+    FoldedText::new(haystack)
+        .matches(&casefold(needle))
+        .into_iter()
+        .next()
+        .map(|(_, _, observed)| observed)
+}
+
+struct FoldSegment {
+    folded_start: usize,
+    folded_end: usize,
+    original_start: usize,
+    original_end: usize,
+}
+
+struct FoldedText<'a> {
+    original: &'a str,
+    folded: String,
+    segments: Vec<FoldSegment>,
+}
+
+impl<'a> FoldedText<'a> {
+    fn new(original: &'a str) -> Self {
+        let mut folded = String::new();
+        let mut segments = Vec::new();
+        for (original_start, character) in original.char_indices() {
+            let folded_start = folded.len();
+            let mut encoded = [0_u8; 4];
+            folded.push_str(
+                CaseMapper::new()
+                    .fold_string(character.encode_utf8(&mut encoded))
+                    .as_ref(),
+            );
+            let folded_end = folded.len();
+            if folded_start != folded_end {
+                segments.push(FoldSegment {
+                    folded_start,
+                    folded_end,
+                    original_start,
+                    original_end: original_start + character.len_utf8(),
+                });
+            }
+        }
+        Self {
+            original,
+            folded,
+            segments,
+        }
+    }
+
+    fn matches(&self, needle: &str) -> Vec<(usize, usize, String)> {
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let mut matches = Vec::new();
+        let mut seen = HashSet::new();
+        for (folded_start, _) in self.folded.match_indices(needle) {
+            let folded_end = folded_start + needle.len();
+            let Some(first) = self.segments.iter().find(|segment| {
+                segment.folded_start <= folded_start && folded_start < segment.folded_end
+            }) else {
+                continue;
+            };
+            let Some(last) = self.segments.iter().find(|segment| {
+                segment.folded_start < folded_end && folded_end <= segment.folded_end
+            }) else {
+                continue;
+            };
+            let span = (first.original_start, last.original_end);
+            if seen.insert(span) {
+                matches.push((span.0, span.1, self.original[span.0..span.1].to_owned()));
+            }
+        }
+        matches
+    }
 }
 fn clean_values(values: &[String]) -> Vec<String> {
     let values: Vec<String> = values

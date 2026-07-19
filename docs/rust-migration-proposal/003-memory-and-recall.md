@@ -33,6 +33,11 @@ pub struct TranslationContext {
     pub tags: Vec<String>,
 }
 
+impl TranslationContext {
+    pub fn new(series_slug: impl Into<String>, source_language: impl Into<String>, target_language: impl Into<String>) -> Self;
+    pub fn with_metadata(self, language_tags: &[String], story_scopes: &[String], semantic_tags: &[String], tags: &[String]) -> Self;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemorySource { LongTerm, ShortTerm, Rag }
 
@@ -244,20 +249,54 @@ dedicated terminology entry, but the recall-time and decay-time special-casing (
 ```rust
 pub struct TermProposal { pub series_slug: String, pub source_language: String, pub target_language: String, pub category: String, pub source_text: String, pub canonical_translation: String, pub tags: Vec<String> }
 
-pub struct Termbase<'a> { pool: &'a SqlitePool }
+pub struct Termbase<'a> { pool: &'a SqlitePool, context: TranslationContext }
 impl<'a> Termbase<'a> {
+    pub fn new(pool: &'a SqlitePool, context: TranslationContext) -> Self;
     pub async fn propose(&self, input: TermProposal) -> Result<i64>;   // writes a crystal_type="rule" crystal with source_credibility="user_rule", rule_intent=category — see 002 §4's migration 0005 for the equivalent bulk conversion
-    pub async fn approve_term(&self, id: i64) -> Result<()>;           // idempotent via BEGIN IMMEDIATE, flips status to 'active'
-    pub async fn contract(&self, raw_text: &str) -> Result<Vec<ContractTerm>>;                                              // matches active rule-intent crystals' text against raw_text
-    pub async fn validate(&self, translated: &str, raw: Option<&str>, source: Option<&str>) -> Result<Vec<ValidationFinding>>;  // reports forbidden/missing canonical renderings
+    pub async fn approve_term(&self, id: i64) -> Result<()>;           // candidate approval is atomic; active reapproval validates the existing graph without repairing/replacing it
+    pub async fn contract(&self, raw_text: &str) -> Result<Vec<ContractTerm>>;
+    pub async fn validate(&self, translated: &str, raw: Option<&str>, source: Option<&str>) -> Result<Vec<ValidationFinding>>;
 }
 
 pub struct ContractTerm { pub crystal_id: i64, pub source_text: String, pub canonical_translation: String }
-pub struct ValidationFinding { pub crystal_id: i64, pub kind: String, pub detail: String }  // kind: "forbidden_variant_used" | "canonical_missing"
+pub struct ValidationFinding {
+    pub crystal_id: i64,
+    pub kind: String,
+    pub severity: String,
+    pub expected: String,
+    pub observed: String,
+    pub detail: String,
+}
 
 pub struct ParsedRule { pub source_text: String, pub canonical: String, pub forbidden: Vec<String> }
-pub fn parse_rule(text: &str) -> Option<ParsedRule>;  // regex: "X is translated as Y[, not Z]" — for free-text agent-authored rules; NOT used for strict_terms migration (002 §4), which maps structured fields directly
+pub fn parse_rule(text: &str) -> Option<ParsedRule>;
 ```
+
+`Termbase` is never context-free. Callers construct it with `TranslationContext::new(...)` and
+optionally `with_metadata(...)`. Proposal and approval dimensions must exactly match that context.
+Contract and validation load coherent global fallback rules plus the exact series and source/target
+language direction; story-scoped rules require an intersecting context story scope. Multilingual
+name/alias/former-label facets are source forms only under the Python-compatible source-vs-target
+language rule. Ambiguous concepts are resolved only by matching story, semantic, or extra-language
+metadata; unresolved ambiguity is reported rather than guessed.
+
+`ValidationFinding` has `crystal_id` plus five diagnostic fields. Its complete stable contract is:
+
+| `kind` | `severity` | `expected` / `observed` meaning |
+|---|---|---|
+| `ambiguous_source` | `warning` | sorted candidate renderings / exact observed source slice |
+| `conflicting_active_rules` | `warning` | sorted conflicting renderings / exact observed source slice |
+| `forbidden_variant_used` | `high` | canonical rendering / exact observed forbidden slice |
+| `canonical_missing` | `medium` | canonical rendering / empty string |
+
+Source-form deduplication, matching, ambiguity grouping, canonical recognition, and forbidden
+variant recognition use full Unicode default case folding (non-Turkic), with no NFC/NFKC
+normalization. Fold expansions are mapped back to original UTF-8 spans, so diagnostics preserve the
+exact observed spelling. The parser grammar is the case-sensitive ASCII
+`X is translated as Y[, not Z][.]`: it removes at most one optional ASCII full stop, then rejects
+a target or forbidden rendering ending in any Unicode General Category Punctuation code point.
+Internal punctuation remains valid. Structured `strict_terms` migration (002 §4) maps typed fields
+directly and never calls this free-text parser.
 
 ### 2.5 `FeedbackStore` (scoring)
 
@@ -458,9 +497,13 @@ pub struct LearningBlock { pub text: String }
 pub struct IngestionService<'a> { pool: &'a SqlitePool }
 impl<'a> IngestionService<'a> {
     pub async fn learn(&self, session_id: i64, input: LearnInput) -> Result<LearnResult>;   // splits text into blocks, stores as short-term memories
-    pub async fn read(&self, session_id: i64, input: ReadInput) -> Result<ReadResult>;       // extracts candidate terms, validates against Termbase; when store_observation is true, persists the read as a short-term memory (source_role = "observation") in addition to returning findings — this wiring did not exist in the original Python ReadInput either and is added here, not carried over as a gap
+    pub async fn read(&self, session_id: i64, input: ReadInput) -> Result<ReadResult>;       // loads the session's complete TranslationContext, constructs Termbase::new(pool, context), extracts candidate terms, and validates; when store_observation is true, persists the read as a short-term memory (source_role = "observation") in addition to returning findings
 }
 
 pub fn split_blocks(text: &str, max_chars: usize) -> Vec<LearningBlock>;
 pub fn extract_terms(text: &str) -> Vec<String>;  // capitalized-term extraction regex
 ```
+
+`IngestionService::read` must derive the exact series, language direction, and metadata context from
+the stored session before termbase validation. It must not construct a context-free termbase or
+reconstruct a partial context from `ReadInput`.

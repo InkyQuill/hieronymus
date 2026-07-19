@@ -97,7 +97,7 @@ names, corrected backing query per §3's rule-intent model in 003.
 | `hieronymus_crystal_link_concept` | 003 §2.3 `ConceptStore::link_crystal` |
 | `hieronymus_crystal_story_scopes_set`, `hieronymus_crystal_semantic_tags_set` | 003 §2.1 `CrystalStore` |
 | `hieronymus_rule_crystals_list`, `_archive`, `_validate` | 003 §2.1/§2.4 (`list_rule_intent`, `archive`, `validate_rule`) |
-| `hieronymus_termbase_contract`, `_validate`, `_propose`, `_approve` | 003 §2.4 `Termbase` |
+| `hieronymus_termbase_contract`, `_validate`, `_propose`, `_approve` | Resolve the request/session's complete 003 §1 `TranslationContext`, then construct 003 §2.4 `Termbase::new(pool, context)`; no context-free termbase call is valid |
 | `hieronymus_memory_search` | 003 §3 `RecallService` |
 | `hieronymus_memory_add` | 003 §2.2 `WorkspaceStore::add_short_term` |
 | `hieronymus_session_start`, `_complete` | 003 §2.2 `WorkspaceStore` |
@@ -113,6 +113,14 @@ Each tool's JSON schema mirrors the corresponding store method's input struct �
 are mechanically derived from the Rust types in 003/004, not independent design surface, except
 `hieronymus_recall_feedback`'s description text, which is deliberately written to prompt the
 calling agent's behavior (003 §3).
+
+Every termbase handler resolves source/target languages and optional language/story/semantic tags
+before constructing `Termbase`. Contract and validation use the active session context when a
+session is supplied; otherwise the handler resolves the series' canonical language direction and
+request metadata into a complete `TranslationContext`. Propose rejects a proposal whose series or
+language pair differs from that context. Approve loads the candidate dimensions to resolve the same
+context before calling `approve_term`; active reapproval validates rather than repairs its graph.
+Handlers serialize all six `ValidationFinding` fields and all four kinds/severities from 003 §2.4.
 
 ---
 

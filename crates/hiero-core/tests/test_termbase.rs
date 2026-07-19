@@ -473,3 +473,105 @@ async fn story_context_resolves_ambiguity_and_multilingual_facets_respect_direct
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn unicode_casefold_matches_python_without_normalizing_and_preserves_observed_slices() {
+    let pool = pool().await;
+    let termbase = Termbase::new(&pool, context("oso", "de", "en"));
+
+    let street = termbase
+        .propose(proposal_for("oso", "de", "en", "Straße", "Street"))
+        .await
+        .unwrap();
+    let sigma = termbase
+        .propose(proposal_for("oso", "de", "en", "ΟΣ", "Sigma"))
+        .await
+        .unwrap();
+    let dotted = termbase
+        .propose(proposal_for("oso", "de", "en", "İ", "Dotted"))
+        .await
+        .unwrap();
+    let dotless = termbase
+        .propose(proposal_for("oso", "de", "en", "ı", "Dotless"))
+        .await
+        .unwrap();
+    let composed = termbase
+        .propose(proposal_for("oso", "de", "en", "é", "Composed"))
+        .await
+        .unwrap();
+    let expansion = termbase
+        .propose(proposal_for("oso", "de", "en", "ss", "DoubleS"))
+        .await
+        .unwrap();
+    for id in [street, sigma, dotted, dotless, composed, expansion] {
+        termbase.approve_term(id).await.unwrap();
+    }
+
+    let contract = termbase
+        .contract("STRASSE ος i\u{307} ı e\u{301} aßb")
+        .await
+        .unwrap();
+    let observed: Vec<&str> = contract
+        .iter()
+        .map(|term| term.source_text.as_str())
+        .collect();
+    assert!(observed.contains(&"STRASSE"));
+    assert!(observed.contains(&"ος"));
+    assert!(observed.contains(&"i\u{307}"));
+    assert!(observed.contains(&"ı"));
+    assert!(observed.contains(&"ß"));
+    assert!(!observed.contains(&"e\u{301}"));
+    assert_eq!(
+        contract
+            .iter()
+            .find(|term| term.canonical_translation == "DoubleS")
+            .unwrap()
+            .source_text,
+        "ß"
+    );
+    assert_eq!(termbase.contract("οσ").await.unwrap()[0].source_text, "οσ");
+    assert!(termbase.contract("i").await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn unicode_casefold_drives_ambiguity_and_case_insensitive_validation() {
+    let pool = pool().await;
+    let termbase = Termbase::new(&pool, context("oso", "de", "en"));
+    let first = termbase
+        .propose(proposal_for("oso", "de", "en", "Straße", "Street"))
+        .await
+        .unwrap();
+    let second = termbase
+        .propose(proposal_for("oso", "de", "en", "STRASSE", "Road"))
+        .await
+        .unwrap();
+    termbase.approve_term(first).await.unwrap();
+    termbase.approve_term(second).await.unwrap();
+    let findings = termbase
+        .validate("unchanged", Some("sTrAsSe"), None)
+        .await
+        .unwrap();
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].kind, "ambiguous_source");
+    assert_eq!(findings[0].observed, "sTrAsSe");
+
+    let house = termbase
+        .propose(proposal_for("oso", "de", "en", "Haus", "House"))
+        .await
+        .unwrap();
+    termbase.approve_term(house).await.unwrap();
+    sqlx::query(
+        "UPDATE crystals SET text = 'Haus is translated as House, not Straße.' WHERE id = ?",
+    )
+    .bind(house)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let findings = termbase
+        .validate("HOUSE and STRASSE", Some("HAUS"), None)
+        .await
+        .unwrap();
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].kind, "forbidden_variant_used");
+    assert_eq!(findings[0].observed, "STRASSE");
+}

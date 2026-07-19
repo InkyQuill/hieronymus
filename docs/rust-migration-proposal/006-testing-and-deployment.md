@@ -73,7 +73,9 @@ Integration tests ingest fixed sample datasets (former `strict_terms` fixtures, 
 translation contexts) and assert:
 1. Rule crystal extraction matches the Python reference output exactly.
 2. Recall ranking matches Python's within a documented tolerance (RRF/BM25 floating-point drift).
-3. Termbase validation reports identical findings for the same input.
+3. Termbase validation under the same complete `TranslationContext` reports identical six-field
+   findings for the same input, including ambiguity/conflict warnings and exact case-folded observed
+   slices; cross-series, cross-language, and mismatched-story rules never leak into the result.
 4. Concept graph construction matches the expected structure after a dream cycle.
 
 ---

@@ -6,7 +6,7 @@
 
 **Architecture:** Focused stores own SQL transactions; `RecallService` composes lexical, graph, and optional semantic evidence without letting semantic results override rule-intent crystals. SQLite owns source text and index jobs; LanceDB and ONNX state are replaceable adapters behind small traits.
 
-**Tech Stack:** Rust 2024, SQLx/FTS5, Tokio, LanceDB 0.30, ort 2.0.0-rc.12, Arrow, pulldown-cmark, docx-rs, pdf-extract, scraper.
+**Tech Stack:** Rust 2024, SQLx/FTS5, Tokio, ICU4X `icu_casemap`, `unicode-properties`, LanceDB 0.30, ort 2.0.0-rc.12, Arrow, pulldown-cmark, docx-rs, pdf-extract, scraper.
 
 ## Global Constraints
 
@@ -54,11 +54,11 @@
 
 **Files:** Create `domain/{concepts.rs,termbase.rs,rule_parser.rs}`, `tests/test_concepts.rs`, `tests/test_rule_crystals.rs`, `tests/test_termbase.rs`.
 
-**Interfaces:** Produce all proposal 003 §2.3 concept/facet/link/merge/rename methods; `ParsedRule`; `parse_rule(&str) -> Option<ParsedRule>`; and `Termbase::{propose,approve_term,contract,validate}` over rule-intent crystals only.
+**Interfaces:** Produce all proposal 003 §2.3 concept/facet/link/merge/rename methods; `ParsedRule`; `parse_rule(&str) -> Option<ParsedRule>`; six-field `ValidationFinding`; and contextual `Termbase::new(&SqlitePool, TranslationContext)` plus `{propose,approve_term,contract,validate}` over rule-intent crystals only.
 
-- [ ] Port all concept lifecycle/facet/multilingual tests and termbase contract/validation fixtures. Add ambiguous free-text rule, forbidden variant, concept-specific rule, and archived-rule cases.
+- [ ] Port all concept lifecycle/facet/multilingual tests and termbase contract/validation fixtures. Add ambiguous/conflicting source warnings, forbidden variant, concept-specific rule, archived/corrupt active reapproval, cross-series/language/story isolation, Unicode default-casefold expansion and non-normalization, and Unicode terminal-punctuation cases.
 - [ ] Run three focused tests; expect RED.
-- [ ] Implement concept mutations transactionally and free-text parsing as a pure deterministic parser. Structured legacy conversion must not call this parser. Termbase contract queries only active non-empty `rule_intent` crystals.
+- [ ] Implement concept mutations transactionally and free-text parsing as the exact 003 §2.4 pure grammar. Structured legacy conversion must not call this parser. Termbase contract queries only context-compatible active non-empty `rule_intent` crystals; every consumer must supply a complete `TranslationContext`.
 - [ ] Run focused tests; expect GREEN. Commit `feat: port concepts and deterministic termbase`.
 
 ### Task 4: Centralize Feedback and Scoring
@@ -108,7 +108,7 @@
 
 **Files:** Create `ingest/{mod.rs,config.rs,service.rs}`, `tests/test_ingest.rs`; modify `lib.rs` exports.
 
-**Interfaces:** Produce `IngestConfig::load/save/validate`, consuming Task 2's existing `ShortMemoryLimits` through `WorkspaceStore::with_limits`, plus `LearnInput`, `LearnResult`, `ReadInput`, `ReadResult`, `LearningBlock`, `IngestionService::{learn,read}`, `split_blocks`, and `extract_terms`.
+**Interfaces:** Produce `IngestConfig::load/save/validate`, consuming Task 2's existing `ShortMemoryLimits` through `WorkspaceStore::with_limits`, plus `LearnInput`, `LearnResult`, `ReadInput`, `ReadResult`, `LearningBlock`, `IngestionService::{learn,read}`, `split_blocks`, and `extract_terms`. `read(session_id, ..)` must load the session's complete `TranslationContext` and call `Termbase::new(pool, context)`; a context-free or request-only partial termbase is forbidden.
 
 - [ ] Port ingest config/default/invalid-value and agent-ingestion tests; expect RED.
 - [ ] Implement atomic config persistence and orchestration without duplicating store logic; expect GREEN.

@@ -39,6 +39,13 @@ fn rejects_ambiguous_or_noncanonical_free_text_without_guessing() {
         "A is translated as B, not C?",
         "A is translated as B, not C!",
         "A is translated as B, not C。",
+        "A is translated as B;",
+        "A is translated as B,",
+        "A is translated as B…",
+        "A is translated as B،",
+        "A is translated as B、",
+        "A is translated as B, not C;",
+        "A is translated as B, not C…",
     ] {
         assert_eq!(parse_rule(text), None, "{text:?} must be rejected");
     }
@@ -54,4 +61,8 @@ fn preserves_supported_internal_punctuation() {
             forbidden: vec!["D-E".into()],
         })
     );
+    assert!(parse_rule("A is translated as B²").is_some());
+    assert!(parse_rule("A is translated as B★").is_some());
+    assert!(parse_rule("A is translated as BΩ").is_some());
+    assert!(parse_rule("Who? is translated as Кто").is_some());
 }

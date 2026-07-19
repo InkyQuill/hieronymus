@@ -18,6 +18,7 @@ clap = { version = "4.6", features = ["derive"] }
 colored = "2"
 csv = "1"
 fs4 = "0.8"
+icu_casemap = "2.2"
 indicatif = "0.17"
 libc = "0.2"
 lancedb = "0.17"
@@ -44,6 +45,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
 winapi-util = "0.1"

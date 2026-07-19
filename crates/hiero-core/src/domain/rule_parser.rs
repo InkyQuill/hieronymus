@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};
 
 const DELIMITER: &str = " is translated as ";
 const FORBIDDEN_DELIMITER: &str = ", not ";
@@ -33,7 +34,6 @@ pub fn parse_rule(text: &str) -> Option<ParsedRule> {
     if source.is_empty()
         || canonical.is_empty()
         || forbidden.iter().any(|value| value.is_empty())
-        || has_terminal_punctuation(source)
         || has_terminal_punctuation(canonical)
         || forbidden
             .iter()
@@ -49,5 +49,7 @@ pub fn parse_rule(text: &str) -> Option<ParsedRule> {
 }
 
 fn has_terminal_punctuation(value: &str) -> bool {
-    value.ends_with(['.', '?', '!', '。', '！', '？', '｡', '؟', '։'])
+    value.chars().next_back().is_some_and(|character| {
+        character.general_category_group() == GeneralCategoryGroup::Punctuation
+    })
 }
