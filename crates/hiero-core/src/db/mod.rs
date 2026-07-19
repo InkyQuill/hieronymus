@@ -20,6 +20,7 @@ use crate::config::HieronymusConfig;
 
 const MISSING_FTS5_PROTOCOL_ERROR: &str = "hieronymus: SQLite FTS5 support is unavailable";
 
+// Keep one compile-time manifest for the ordered authoritative migrations.
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 
 pub async fn connect(config: &HieronymusConfig) -> Result<SqlitePool, DbError> {

@@ -189,7 +189,7 @@ async fn every_current_embedded_history_prefix_is_valid() {
     .expect("current history should read");
     assert_eq!(
         history.iter().map(|row| row.0).collect::<Vec<_>>(),
-        [1, 3, 4]
+        [1, 2, 3, 4]
     );
 
     for prefix_len in 0..=history.len() {
@@ -200,6 +200,7 @@ async fn every_current_embedded_history_prefix_is_valid() {
         for (version, description, checksum) in &history[..prefix_len] {
             let sql = match version {
                 1 => include_str!("../../../migrations/0001_initial_schema.sql"),
+                2 => include_str!("../../../migrations/0002_fts_triggers.sql"),
                 3 => include_str!("../../../migrations/0003_compound_indexes.sql"),
                 4 => include_str!("../../../migrations/0004_semantic_index_state.sql"),
                 _ => panic!("unexpected embedded migration {version}"),

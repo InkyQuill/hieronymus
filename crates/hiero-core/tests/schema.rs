@@ -47,11 +47,6 @@ const REQUIRED_TABLES: &[&str] = &[
 ];
 
 const ABSENT_OBJECTS: &[&str] = &[
-    "concept_facet_fts",
-    "concepts_fts",
-    "crystals_fts",
-    "rag_chunks_fts",
-    "short_term_memories_fts",
     "strict_term_aliases",
     "strict_term_tags",
     "strict_terms",
@@ -176,15 +171,15 @@ async fn exact_schema_manifest_matches_every_column_constraint_foreign_key_and_i
 }
 
 #[tokio::test]
-async fn fresh_schema_contains_every_authoritative_table_and_no_owned_fts_yet() {
+async fn fresh_schema_contains_every_authoritative_table_and_no_retired_strict_terms() {
     let pool = migrated_pool().await;
     let actual = schema_names(&pool, "table").await;
-    let expected = REQUIRED_TABLES
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect::<BTreeSet<_>>();
-
-    assert_eq!(actual, expected);
+    for table in REQUIRED_TABLES {
+        assert!(
+            actual.contains(*table),
+            "missing authoritative table {table}"
+        );
+    }
     for name in ABSENT_OBJECTS {
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM sqlite_schema WHERE name = ?")
             .bind(name)
@@ -193,7 +188,6 @@ async fn fresh_schema_contains_every_authoritative_table_and_no_owned_fts_yet() 
             .expect("absence query should succeed");
         assert_eq!(count, 0, "{name} belongs to another task or is retired");
     }
-    assert!(schema_names(&pool, "trigger").await.is_empty());
 }
 
 #[tokio::test]
@@ -567,7 +561,7 @@ fn maintenance_proposal_names_the_configurable_staleness_threshold() {
 }
 
 #[tokio::test]
-async fn migration_versions_preserve_the_intentional_fts_gap_and_are_idempotent() {
+async fn migration_versions_include_fts_and_are_idempotent() {
     let pool = migrated_pool().await;
     migrate(&pool)
         .await
@@ -579,5 +573,5 @@ async fn migration_versions_preserve_the_intentional_fts_gap_and_are_idempotent(
     .await
     .expect("migration versions should be readable");
 
-    assert_eq!(versions, vec![1, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
 }
