@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sys
 from collections.abc import Iterable
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from hieronymus.embeddings import (
     EmbeddingUnavailableError,
     FastEmbedProvider,
     UnsupportedEmbeddingProviderError,
+    UnsupportedEmbeddingRevisionError,
     create_embedding_provider,
 )
 from hieronymus.semantic_config import SemanticConfig
@@ -42,7 +44,7 @@ def _semantic(**changes: object) -> SemanticConfig:
         "enabled": True,
         "provider": "local",
         "model": "test/model",
-        "revision": "r1",
+        "revision": None,
         "dimensions": 3,
         "batch_size": 2,
         "candidate_multiplier": 4,
@@ -67,7 +69,7 @@ def test_fastembed_provider_exposes_stable_identity_without_loading_model(
     provider = _provider(tmp_path, monkeypatch)
 
     assert provider.identity == EmbeddingIdentity(
-        provider="local", model="test/model", revision="r1", dimensions=3
+        provider="local", model="test/model", revision=None, dimensions=3
     )
     assert StubTextEmbedding.constructions == 0
 
@@ -145,6 +147,30 @@ def test_provider_rejects_wrong_vector_dimensions(
     provider = _provider(tmp_path, monkeypatch, dimensions=4)
 
     with pytest.raises(EmbeddingResultError, match="expected 4 dimensions, received 3"):
+        provider.embed_query("query")
+
+
+def test_local_provider_rejects_unenforced_revision_without_loading_model(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(UnsupportedEmbeddingRevisionError, match="does not support revisions"):
+        _provider(tmp_path, monkeypatch, revision="main")
+    assert StubTextEmbedding.constructions == 0
+
+
+@pytest.mark.parametrize("component", [math.nan, math.inf, -math.inf])
+def test_provider_rejects_non_finite_vector_components(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, component: float
+) -> None:
+    provider = _provider(tmp_path, monkeypatch)
+
+    class NonFiniteModel:
+        def query_embed(self, _query: str) -> Iterable[list[float]]:
+            return iter(([component, 1.0, 2.0],))
+
+    provider._model = NonFiniteModel()
+
+    with pytest.raises(EmbeddingResultError, match="non-finite component at index 0"):
         provider.embed_query("query")
 
 

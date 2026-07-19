@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,10 @@ class EmbeddingResultError(EmbeddingError):
 
 class UnsupportedEmbeddingProviderError(EmbeddingError):
     """Raised when no factory is registered for a configured provider."""
+
+
+class UnsupportedEmbeddingRevisionError(EmbeddingError):
+    """Raised when a provider cannot enforce the configured model revision."""
 
 
 @dataclass(frozen=True)
@@ -80,6 +85,11 @@ class FastEmbedProvider:
 
     def __init__(self, config: SemanticConfig, *, cache_root: Path) -> None:
         self._config = validate_semantic_config(config)
+        if self._config.revision is not None:
+            raise UnsupportedEmbeddingRevisionError(
+                "the local FastEmbed provider does not support revisions; "
+                "remove semantic.revision or choose a provider that can enforce it"
+            )
         self._cache_root = cache_root
         self._model: Any | None = None
 
@@ -191,6 +201,11 @@ class FastEmbedProvider:
             raise EmbeddingResultError(
                 f"expected {self.identity.dimensions} dimensions, received {len(vector)}"
             )
+        for index, value in enumerate(vector):
+            if not math.isfinite(value):
+                raise EmbeddingResultError(
+                    f"embedding provider returned a non-finite component at index {index}"
+                )
         return vector
 
 
