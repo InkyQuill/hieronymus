@@ -6,6 +6,7 @@ pub mod db;
 pub mod doctor;
 pub mod domain;
 pub mod ingest;
+pub mod provider;
 pub mod rag;
 pub mod recall;
 pub mod registry;
