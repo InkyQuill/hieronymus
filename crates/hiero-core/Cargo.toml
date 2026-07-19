@@ -18,6 +18,8 @@ ort.workspace = true
 percent-encoding.workspace = true
 phf.workspace = true
 pulldown-cmark.workspace = true
+pdf-extract.workspace = true
+quick-xml.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 rust-embed.workspace = true
@@ -25,6 +27,7 @@ secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+scraper.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 tempfile.workspace = true
@@ -34,6 +37,7 @@ toml.workspace = true
 unicode-properties.workspace = true
 uuid.workspace = true
 url.workspace = true
+zip.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winapi-util.workspace = true
