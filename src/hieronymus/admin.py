@@ -1593,7 +1593,7 @@ class AdminStore:
         with connect(self.config.database_path) as conn:
             rows = conn.execute(
                 """
-                with rule_rows as (
+                with rule_rows as materialized (
                   select crystal.id, crystal.title, crystal.status, crystal.series_slug,
                          crystal.source_language, crystal.target_language, cc.concept_id
                   from crystals crystal
@@ -1601,21 +1601,21 @@ class AdminStore:
                   where crystal.crystal_type = 'rule'
                   order by crystal.id
                   limit 200
-                ), tag_rows as (
-                  select crystal_id, group_concat(tag, char(31)) as tags
-                  from (select crystal_id, tag from crystal_semantic_tags order by tag)
-                  group by crystal_id
                 )
                 select rule_rows.*,
                        rendering.value as canonical_translation,
-                       coalesce(tag_rows.tags, '') as tags
+                       coalesce((
+                         select group_concat(tag, char(31))
+                         from crystal_semantic_tags
+                           indexed by sqlite_autoindex_crystal_semantic_tags_1
+                         where crystal_id = rule_rows.id
+                       ), '') as tags
                 from rule_rows
                 join concept_facets rendering
                   on rendering.concept_id = rule_rows.concept_id
                  and rendering.facet_type = 'rendering'
                  and rendering.language = rule_rows.target_language
                  and rendering.superseded_at is null
-                left join tag_rows on tag_rows.crystal_id = rule_rows.id
                 order by rule_rows.id
                 """
             ).fetchall()

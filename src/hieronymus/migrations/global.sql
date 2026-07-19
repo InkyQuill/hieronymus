@@ -377,6 +377,12 @@ create table if not exists crystal_concepts (
   primary key(crystal_id, concept_id, link_type)
 );
 
+create table if not exists rule_crystal_proposals (
+  crystal_id integer primary key references crystals(id) on delete cascade,
+  concept_id integer not null unique references concepts(id) on delete cascade,
+  created_at text not null
+);
+
 create table if not exists crystal_story_scopes (
   crystal_id integer not null references crystals(id) on delete cascade,
   scope text not null,

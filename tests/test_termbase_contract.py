@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from hieronymus.concepts import CONCEPT_ESTABLISHED, ConceptStore
@@ -245,6 +247,69 @@ def test_propose_creates_rule_and_concept_graph_in_one_transaction(config):
     assert row["link_type"] == "defines"
     assert row["source_facet"] == "攻撃力上昇"
     assert row["rendering_facet"] == "ATK Up"
+
+
+def test_pending_proposal_metadata_does_not_leak_into_existing_active_rule(config):
+    termbase = _create_termbase(config)
+    active_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+        tags=["active-tag"],
+    )
+    termbase.approve(active_id)
+
+    pending_id = termbase.propose(
+        category="ability_name",
+        source_text="攻撃力上昇",
+        canonical_translation="ATK Up",
+        tags=["pending-tag"],
+    )
+    termbase.add_alias(pending_id, kind="source_variant", text="未承認別名", language="ja")
+
+    contract = termbase.contract("攻撃力上昇")
+    assert [term.tags for term in contract] == [["active-tag"]]
+    assert termbase.contract("未承認別名") == []
+
+    termbase.approve(pending_id)
+
+    assert [term.id for term in termbase.contract("未承認別名")] == [pending_id]
+
+
+def test_concurrent_pending_proposals_have_distinct_owned_concepts(config):
+    termbase = _create_termbase(config)
+
+    def propose(tag: str) -> int:
+        return termbase.propose(
+            category="ability_name",
+            source_text="同名能力",
+            canonical_translation="Shared Ability",
+            tags=[tag],
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        proposal_ids = list(executor.map(propose, ("first", "second")))
+
+    with connect(config.database_path) as conn:
+        ownership = conn.execute(
+            """
+            select crystal_id, concept_id from rule_crystal_proposals
+            where crystal_id in (?, ?) order by crystal_id
+            """,
+            proposal_ids,
+        ).fetchall()
+
+    assert len(ownership) == 2
+    assert len({row["concept_id"] for row in ownership}) == 2
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(termbase.approve, proposal_ids))
+
+    contract = termbase.contract("同名能力")
+    assert {term.id: term.tags for term in contract} == {
+        proposal_ids[0]: ["first"],
+        proposal_ids[1]: ["second"],
+    }
 
 
 def test_fresh_termbase_schema_has_no_legacy_term_tables(config):

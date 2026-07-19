@@ -1991,6 +1991,7 @@ def convert_strict_terms(
         _validate_ledger_uniqueness(conn, affected)
     _validate_retirement_ownership_schema(conn, affected)
     if require_retirement_schema:
+        _discard_repairable_stale_retirement_ownership(conn)
         _validate_retirement_ownership_integrity(conn, active_ids, affected)
 
     active_rows = conn.execute(
@@ -2323,6 +2324,94 @@ def _validate_retirement_ownership_integrity(
         listed = ", ".join(str(term_id) for term_id in active_ids) or affected
         raise StrictTermConversionBlocked(
             f"terms {listed}: strict term retirement ownership integrity failed"
+        )
+
+
+def _discard_repairable_stale_retirement_ownership(conn: sqlite3.Connection) -> None:
+    """Forget stale projection metadata without mutating any surviving graph row."""
+    if not _has_table(conn, "strict_term_retirement_ownership"):
+        return
+    term_ids = {int(row["id"]) for row in conn.execute("select id from strict_terms")}
+    rows = conn.execute(
+        """
+        select source_table, source_id, object_type, object_id
+        from strict_term_retirement_ownership
+        order by source_table, source_id, object_type
+        """
+    ).fetchall()
+    objects = {
+        (str(row["source_id"]), str(row["object_type"])): int(row["object_id"])
+        for row in rows
+        if _strict_positive_int(row["object_id"]) is not None
+    }
+    stale: list[tuple[str, str, str, int]] = []
+    for row in rows:
+        source_table = str(row["source_table"])
+        source_id = str(row["source_id"])
+        object_type = str(row["object_type"])
+        object_id = _strict_positive_int(row["object_id"])
+        term_id = _canonical_term_id_from_source(source_id)
+        source_valid = (
+            source_id == str(term_id)
+            if object_type in {"concepts", "crystals"}
+            else _is_canonical_facet_source(source_id, term_id)
+        )
+        ledger_exists = (
+            object_id is not None
+            and conn.execute(
+                """
+            select 1 from memory_graph_migration_ledger
+            where source_table = ? and source_id = ? and target_table = ? and target_id = ?
+            """,
+                (source_table, source_id, object_type, object_id),
+            ).fetchone()
+        )
+        if not (
+            source_table == "strict_terms"
+            and term_id in term_ids
+            and source_valid
+            and object_type in {"concepts", "concept_facets", "crystals"}
+            and object_id is not None
+            and ledger_exists is not None
+        ):
+            continue
+        row_missing = not _row_exists(conn, object_type, object_id)
+        wrong_concept = False
+        if object_type == "concept_facets" and not row_missing:
+            expected_concept = objects.get((str(term_id), "concepts"))
+            facet = conn.execute(
+                "select concept_id from concept_facets where id = ?", (object_id,)
+            ).fetchone()
+            wrong_concept = (
+                expected_concept is not None
+                and facet is not None
+                and int(facet["concept_id"]) != expected_concept
+            )
+        if row_missing or wrong_concept:
+            stale.append((source_table, source_id, object_type, object_id))
+
+    for source_table, source_id, object_type, object_id in stale:
+        conn.execute(
+            """
+            delete from strict_term_retirement_relationship_ownership
+            where (owner_type = ? and owner_id = ?)
+               or (related_type = ? and related_id = ?)
+            """,
+            (object_type, object_id, object_type, object_id),
+        )
+        conn.execute(
+            """
+            delete from memory_graph_migration_ledger
+            where source_table = ? and source_id = ? and target_table = ? and target_id = ?
+            """,
+            (source_table, source_id, object_type, object_id),
+        )
+        conn.execute(
+            """
+            delete from strict_term_retirement_ownership
+            where source_table = ? and source_id = ? and object_type = ? and object_id = ?
+            """,
+            (source_table, source_id, object_type, object_id),
         )
 
 

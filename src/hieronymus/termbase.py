@@ -271,10 +271,17 @@ class Termbase:
                 "target_language": self.target_language,
                 "notes": notes,
             }
-            concept_id = self._ensure_concept_for_strict_term(conn, term, tags=tags_tuple, now=now)
+            concept_id = self._create_proposal_concept(conn, term, now=now)
             self._ensure_crystal_semantic_tags(conn, term_id, tags=tags_tuple, now=now)
             self._link_rule_crystal_to_concept(
                 conn, crystal_id=term_id, concept_id=concept_id, now=now
+            )
+            conn.execute(
+                """
+                insert into rule_crystal_proposals(crystal_id, concept_id, created_at)
+                values (?, ?, ?)
+                """,
+                (term_id, concept_id, now),
             )
             conn.commit()
         return term_id
@@ -284,9 +291,10 @@ class Termbase:
             conn.execute("begin immediate")
             term = conn.execute(
                 """
-                select crystal.*, cc.concept_id
+                select crystal.*, cc.concept_id, proposal.concept_id as proposal_concept_id
                 from crystals crystal
                 join crystal_concepts cc on cc.crystal_id = crystal.id
+                left join rule_crystal_proposals proposal on proposal.crystal_id = crystal.id
                 where crystal.id = ? and crystal.crystal_type = 'rule'
                   and crystal.series_slug = ?
                   and crystal.source_language = ? and crystal.target_language = ?
@@ -304,13 +312,16 @@ class Termbase:
             if term["status"] == "active":
                 conn.commit()
                 return
+            if term["proposal_concept_id"] is None:
+                raise ValueError("pending rule is missing proposal ownership")
+            proposal_concept_id = int(term["proposal_concept_id"])
             source_text, canonical_translation = self._proposal_surfaces(
                 conn,
-                int(term["concept_id"]),
+                proposal_concept_id,
                 source_language=term["source_language"],
                 target_language=term["target_language"],
             )
-            alias_rows = self._proposal_aliases(conn, int(term["concept_id"]))
+            alias_rows = self._proposal_aliases(conn, proposal_concept_id)
             approved_variants = [
                 row["value"] for row in alias_rows if row["facet_type"] == "approved_variant"
             ]
@@ -326,6 +337,68 @@ class Termbase:
                 approved_variants=approved_variants,
                 forbidden_variants=forbidden_variants,
             )
+            tags = tuple(
+                row["tag"]
+                for row in conn.execute(
+                    "select tag from crystal_semantic_tags where crystal_id = ? order by tag",
+                    (term_id,),
+                )
+            )
+            concept_id = (
+                None
+                if alias_rows
+                else self._matching_concept_id_for_strict_term(conn, source_text, tags=tags)
+            )
+            if concept_id is not None:
+                conflicting_rendering = conn.execute(
+                    """
+                    select 1 from concept_facets
+                    where concept_id = ? and facet_type = 'rendering'
+                      and superseded_at is null and language = ? and value != ?
+                    limit 1
+                    """,
+                    (concept_id, term["target_language"], canonical_translation),
+                ).fetchone()
+                if conflicting_rendering is not None:
+                    concept_id = None
+            if concept_id is None:
+                concept_id = proposal_concept_id
+            elif concept_id != proposal_concept_id:
+                for row in conn.execute(
+                    """
+                    select facet_type, value, language, confidence, is_canonical
+                    from concept_facets
+                    where concept_id = ? and superseded_at is null
+                    order by id
+                    """,
+                    (proposal_concept_id,),
+                ):
+                    self._ensure_concept_facet(
+                        conn,
+                        concept_id=concept_id,
+                        value=row["value"],
+                        facet_type=row["facet_type"],
+                        language_tag=row["language"],
+                        is_canonical=bool(row["is_canonical"]),
+                        confidence=float(row["confidence"]),
+                        now=_now(),
+                    )
+                conn.execute("delete from crystal_concepts where crystal_id = ?", (term_id,))
+                self._link_rule_crystal_to_concept(
+                    conn, crystal_id=term_id, concept_id=concept_id, now=_now()
+                )
+                conn.execute("delete from concepts where id = ?", (proposal_concept_id,))
+
+            for tag in tags:
+                conn.execute(
+                    """
+                    insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
+                    values (?, ?, 0.95, ?)
+                    on conflict(concept_id, tag) do update set
+                      confidence = max(concept_semantic_tags.confidence, excluded.confidence)
+                    """,
+                    (concept_id, tag, _now()),
+                )
             conn.execute(
                 """
                 update crystals set text = ?, status = 'active', updated_at = ? where id = ?
@@ -339,8 +412,9 @@ class Termbase:
             conn.execute(
                 "update concepts set status = 'established', confidence = max(confidence, 0.95), "
                 "updated_at = ? where id = ?",
-                (_now(), int(term["concept_id"])),
+                (_now(), concept_id),
             )
+            conn.execute("delete from rule_crystal_proposals where crystal_id = ?", (term_id,))
             conn.commit()
 
     def add_alias(
@@ -556,34 +630,15 @@ class Termbase:
             (concept_id,),
         ).fetchall()
 
-    def _ensure_concept_for_strict_term(
+    def _create_proposal_concept(
         self,
         conn: sqlite3.Connection,
         term: Mapping[str, object],
         *,
-        tags: tuple[str, ...],
         now: str,
     ) -> int:
-        concept_id = self._matching_concept_id_for_strict_term(
-            conn,
-            term["source_text"],
-            tags=tags,
-        )
-        if concept_id is not None:
-            conflicting_rendering = conn.execute(
-                """
-                select 1 from concept_facets
-                where concept_id = ? and facet_type = 'rendering' and superseded_at is null
-                  and language = ? and value != ?
-                limit 1
-                """,
-                (concept_id, term["target_language"], term["canonical_translation"]),
-            ).fetchone()
-            if conflicting_rendering is not None:
-                concept_id = None
-        if concept_id is None:
-            cursor = conn.execute(
-                """
+        cursor = conn.execute(
+            """
                 insert into concepts(
                   canonical_name,
                   description,
@@ -594,28 +649,17 @@ class Termbase:
                   created_at,
                   updated_at
                 )
-                values (?, ?, 'series', ?, 'established', 0.95, ?, ?)
+                values (?, ?, 'series', ?, 'candidate', 0.95, ?, ?)
                 """,
-                (
-                    term["source_text"],
-                    term["notes"],
-                    self.context.scope_key,
-                    now,
-                    now,
-                ),
-            )
-            concept_id = int(cursor.lastrowid)
-
-        for tag in tags:
-            conn.execute(
-                """
-                insert into concept_semantic_tags(concept_id, tag, confidence, created_at)
-                values (?, ?, 0.95, ?)
-                on conflict(concept_id, tag) do update set
-                  confidence = max(concept_semantic_tags.confidence, excluded.confidence)
-                """,
-                (concept_id, tag, now),
-            )
+            (
+                term["source_text"],
+                term["notes"],
+                self.context.scope_key,
+                now,
+                now,
+            ),
+        )
+        concept_id = int(cursor.lastrowid)
 
         self._ensure_concept_facet(
             conn,
@@ -651,7 +695,7 @@ class Termbase:
             where canonical_name = ?
               and scope_type = 'series'
               and scope_key = ?
-              and status not in ('archived', 'merged')
+              and status = 'established'
             order by id
             """,
             (source_text, self.context.scope_key),

@@ -125,6 +125,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
     with _schema_transaction(conn, disable_foreign_keys=True):
         if _table_exists(conn, "schema_migrations"):
+            ensure_global_compatibility_columns(conn)
             _apply_pending_migrations(conn, migrations, context=context)
             return
 
@@ -283,7 +284,7 @@ def _schema_transaction(
                     f"schema migration introduced foreign key violations: {violations!r}"
                 )
         conn.commit()
-    except Exception:
+    except BaseException:
         if conn.in_transaction:
             conn.rollback()
         raise
@@ -444,6 +445,15 @@ def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def ensure_global_compatibility_columns(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        create table if not exists rule_crystal_proposals (
+          crystal_id integer primary key references crystals(id) on delete cascade,
+          concept_id integer not null unique references concepts(id) on delete cascade,
+          created_at text not null
+        )
+        """
+    )
     for table, columns in GLOBAL_COMPATIBILITY_COLUMNS.items():
         for column, definition in columns.items():
             ensure_column(conn, table, column, definition)

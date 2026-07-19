@@ -370,6 +370,119 @@ def test_python_retirement_drop_failure_rolls_back_schema_and_data(
     assert len(list((backup_dir / "strict-terms").glob("*.json"))) == 1
 
 
+def test_python_retirement_base_exception_restores_transaction_fk_schema_and_ledger(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, _ = legacy_database
+    term_id = _term(conn, source="攻撃力上昇", rendering="ATK Up")
+    conn.commit()
+    module = importlib.import_module("hieronymus.migrations.versions.0002_retire_strict_terms")
+
+    def interrupt_during_drop(connection: sqlite3.Connection) -> None:
+        connection.execute("drop table strict_terms_fts")
+        raise KeyboardInterrupt("injected base exception")
+
+    with (
+        patch.object(module, "drop_legacy_tables", side_effect=interrupt_during_drop),
+        pytest.raises(KeyboardInterrupt, match="injected base exception"),
+    ):
+        ensure_schema(conn)
+
+    names = {row["name"] for row in conn.execute("select name from sqlite_master")}
+    legacy_tables = {"strict_terms", "strict_term_tags", "strict_term_aliases", "strict_terms_fts"}
+    assert legacy_tables <= names
+    assert conn.execute("select id from strict_terms").fetchone()[0] == term_id
+    assert conn.execute("select 1 from schema_migrations where version = '0002'").fetchone() is None
+    assert not conn.in_transaction
+    assert conn.execute("pragma foreign_keys").fetchone()[0] == 1
+
+
+def test_python_retirement_reconciles_dangling_owned_rule_crystal(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, _ = legacy_database
+    term_id = _term(conn, source="攻撃力上昇", rendering="ATK Up")
+    conn.commit()
+    convert_strict_terms(conn)
+    crystal_id = conn.execute(
+        """
+        select target_id from memory_graph_migration_ledger
+        where source_table = 'strict_terms' and source_id = ? and target_table = 'crystals'
+        """,
+        (str(term_id),),
+    ).fetchone()[0]
+    conn.execute("delete from crystals where id = ?", (crystal_id,))
+    conn.commit()
+
+    ensure_schema(conn)
+
+    assert (
+        conn.execute(
+            "select 1 from sqlite_master where type = 'table' and name = 'strict_terms'"
+        ).fetchone()
+        is None
+    )
+    replacement = conn.execute(
+        "select id from crystals where crystal_type = 'rule' and status = 'active'"
+    ).fetchone()
+    assert replacement is not None
+
+
+def test_python_retirement_reconciles_owned_facet_moved_to_wrong_concept(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, _ = legacy_database
+    term_id = _term(conn, source="攻撃力上昇", rendering="ATK Up")
+    conn.commit()
+    convert_strict_terms(conn)
+    original_concept_id = conn.execute(
+        """
+        select target_id from memory_graph_migration_ledger
+        where source_table = 'strict_terms' and source_id = ? and target_table = 'concepts'
+        """,
+        (str(term_id),),
+    ).fetchone()[0]
+    source_facet_id = conn.execute(
+        """
+        select target_id from memory_graph_migration_ledger
+        where source_table = 'strict_terms' and source_id = ? and target_table = 'concept_facets'
+        """,
+        (f"{term_id}:source",),
+    ).fetchone()[0]
+    other_concept_id = conn.execute(
+        """
+        insert into concepts(
+          canonical_name, scope_type, scope_key, status, confidence, created_at, updated_at
+        ) values ('Other', 'series', 'series:book', 'established', 0.9, ?, ?)
+        """,
+        (NOW, NOW),
+    ).lastrowid
+    conn.execute(
+        "update concept_facets set concept_id = ? where id = ?",
+        (other_concept_id, source_facet_id),
+    )
+    conn.commit()
+
+    ensure_schema(conn)
+
+    repaired = conn.execute(
+        """
+        select concept_id from concept_facets
+        where concept_id = ? and value = '攻撃力上昇'
+          and facet_type = 'name' and superseded_at is null
+        """,
+        (original_concept_id,),
+    ).fetchone()
+    assert repaired is not None
+    assert repaired[0] == original_concept_id
+    assert (
+        conn.execute(
+            "select 1 from sqlite_master where type = 'table' and name = 'strict_terms'"
+        ).fetchone()
+        is None
+    )
+
+
 def test_rerun_reconciles_changed_legacy_projection_exactly(
     legacy_database: tuple[sqlite3.Connection, Path],
 ) -> None:

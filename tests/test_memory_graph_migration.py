@@ -852,34 +852,6 @@ def test_dry_report_counts_missing_task_session_semantic_tag_pairs_from_csv(
     assert report.pending["task_session_semantic_tags"] == 1
 
 
-@pytest.mark.skip(reason="retired strict terms are no longer a runtime repair source")
-def test_dry_report_counts_strict_term_when_ledger_rule_target_is_dangling(
-    config: HieronymusConfig,
-) -> None:
-    _seed_base(config)
-    with connect(config.database_path) as conn:
-        _insert_strict_term(conn)
-        conn.commit()
-
-    MemoryGraphMigrator(config).run()
-    with connect(config.database_path) as conn:
-        crystal_id = conn.execute(
-            """
-            select target_id
-            from memory_graph_migration_ledger
-            where source_table = 'strict_terms'
-              and target_table = 'crystals'
-            """
-        ).fetchone()["target_id"]
-        conn.execute("delete from crystal_concepts where crystal_id = ?", (crystal_id,))
-        conn.execute("delete from crystals where id = ?", (crystal_id,))
-        conn.commit()
-
-    report = MemoryGraphMigrator.inspect(config)
-
-    assert report.pending["strict_terms"] == 1
-
-
 def test_dry_report_counts_proposal_when_ledger_facet_target_is_dangling(
     config: HieronymusConfig,
 ) -> None:
@@ -939,86 +911,6 @@ def test_dry_report_counts_proposal_when_ledger_facet_target_is_dangling(
     report = MemoryGraphMigrator.inspect(config)
 
     assert report.pending["strict_concept_proposals"] == 1
-
-
-@pytest.mark.skip(reason="retired strict terms are no longer a runtime repair source")
-def test_run_repairs_strict_term_ledger_facet_with_wrong_concept(
-    config: HieronymusConfig,
-) -> None:
-    _seed_base(config)
-    with connect(config.database_path) as conn:
-        term_id = _insert_strict_term(conn)
-        conn.commit()
-
-    MemoryGraphMigrator(config).run()
-    with connect(config.database_path) as conn:
-        original_concept_id = conn.execute(
-            """
-            select target_id
-            from memory_graph_migration_ledger
-            where source_table = 'strict_terms'
-              and source_id = ?
-              and target_table = 'concepts'
-            """,
-            (str(term_id),),
-        ).fetchone()["target_id"]
-        source_facet_id = conn.execute(
-            """
-            select target_id
-            from memory_graph_migration_ledger
-            where source_table = 'strict_terms'
-              and source_id = ?
-              and target_table = 'concept_facets'
-            """,
-            (f"{term_id}:source",),
-        ).fetchone()["target_id"]
-        other_concept_id = conn.execute(
-            """
-            insert into concepts(
-              canonical_name,
-              description,
-              scope_type,
-              scope_key,
-              status,
-              confidence,
-              created_at,
-              updated_at
-            )
-            values ('Other', '', 'series', 'series:book', 'established', 0.5, ?, ?)
-            """,
-            (NOW, NOW),
-        ).lastrowid
-        conn.execute(
-            "update concept_facets set concept_id = ? where id = ?",
-            (other_concept_id, source_facet_id),
-        )
-        conn.commit()
-
-    pending_report = MemoryGraphMigrator.inspect(config)
-    repair_report = MemoryGraphMigrator(config).run()
-    final_report = MemoryGraphMigrator.inspect(config)
-
-    assert pending_report.pending["strict_terms"] == 1
-    assert repair_report.created["concept_facets"] == 1
-    assert final_report.pending.get("strict_terms", 0) == 0
-    with connect(config.database_path) as conn:
-        repaired_facet_id = conn.execute(
-            """
-            select target_id
-            from memory_graph_migration_ledger
-            where source_table = 'strict_terms'
-              and source_id = ?
-              and target_table = 'concept_facets'
-            """,
-            (f"{term_id}:source",),
-        ).fetchone()["target_id"]
-        repaired_concept_id = conn.execute(
-            "select concept_id from concept_facets where id = ?",
-            (repaired_facet_id,),
-        ).fetchone()["concept_id"]
-
-    assert repaired_facet_id != source_facet_id
-    assert repaired_concept_id == original_concept_id
 
 
 def test_strict_term_generation_skips_when_destination_graph_schema_is_partial(

@@ -208,6 +208,71 @@ def test_rendering_rows_use_bounded_set_queries(config: HieronymusConfig) -> Non
     assert len(selects) == 1
 
 
+def test_rendering_query_work_is_independent_of_unselected_crystal_tags(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    termbase = Termbase(config, context)
+    term_id = termbase.propose(
+        category="ability_name",
+        source_text="能力",
+        canonical_translation="Ability",
+        tags=["selected"],
+    )
+    termbase.approve(term_id)
+
+    with connect(config.database_path) as conn:
+        now = "2026-07-19T00:00:00+00:00"
+        concept_id = conn.execute(
+            "select concept_id from crystal_concepts where crystal_id = ?", (term_id,)
+        ).fetchone()[0]
+        excluded_crystal_id = 0
+        for index in range(200):
+            crystal_id = conn.execute(
+                """
+                insert into crystals(
+                  crystal_type, text, scope_type, scope_key, strength, confidence,
+                  status, created_at, updated_at
+                ) values ('rule', ?, 'global', '', 0.5, 0.5, 'archived', ?, ?)
+                """,
+                (f"unselected-{index}", now, now),
+            ).lastrowid
+            conn.execute(
+                """
+                insert into crystal_concepts(
+                  crystal_id, concept_id, link_type, confidence, created_at
+                ) values (?, ?, 'mentions', 0.5, ?)
+                """,
+                (crystal_id, concept_id, now),
+            )
+            excluded_crystal_id = crystal_id
+        conn.commit()
+        for index in range(1000):
+            conn.execute(
+                """
+                insert into crystal_semantic_tags(crystal_id, tag, confidence, created_at)
+                values (?, ?, 0.5, ?)
+                """,
+                (excluded_crystal_id, f"unselected:{index}", now),
+            )
+        conn.commit()
+        traced: list[str] = []
+        conn.set_trace_callback(traced.append)
+        with patch("hieronymus.admin.connect", return_value=conn):
+            AdminStore(config)._list_rule_renderings()
+        conn.set_trace_callback(None)
+        query = next(
+            statement for statement in traced if statement.lstrip().lower().startswith("with")
+        )
+        plan = [row["detail"] for row in conn.execute("explain query plan " + query).fetchall()]
+
+    assert "MATERIALIZE rule_rows" in plan
+    assert any(
+        "SEARCH crystal_semantic_tags" in detail and "(crystal_id=?)" in detail for detail in plan
+    )
+    assert not any("SCAN crystal_semantic_tags" in detail for detail in plan)
+
+
 def test_status_payload_survives_malformed_dream_config(
     config: HieronymusConfig,
 ) -> None:

@@ -131,15 +131,12 @@ def load_active_rule_crystals(
             ).fetchone()
             if concept_row is not None:
                 source_forms.append(concept_row["canonical_name"])
-            semantic_tags.update(_concept_semantic_tags(conn, concept_id))
 
             for facet in _concept_facets(conn, concept_id):
                 facet_language_tags = _facet_language_tags(conn, int(facet["id"]))
                 facet_story_scopes = _facet_story_scopes(conn, int(facet["id"]))
-                facet_semantic_tags = _facet_semantic_tags(conn, int(facet["id"]))
                 language_tags.update(facet_language_tags)
                 story_scopes.update(facet_story_scopes)
-                semantic_tags.update(facet_semantic_tags)
                 if _is_source_facet(
                     facet,
                     facet_language_tags=facet_language_tags,
