@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, fs, io::Write, path::Path};
 use hiero_core::{
     db::connect_url,
     rag::{
-        ImportOptions, MAX_RAG_CHUNK_CHARS, MAX_RAG_METADATA_BYTES, RagError, RagStore,
-        SearchOptions, SourceType, load_rag_file, normalize_rag_source, split_chunk_text,
+        ImportOptions, MAX_RAG_CHUNK_CHARS, MAX_RAG_CSV_COLUMNS, MAX_RAG_METADATA_BYTES, RagError,
+        RagStore, SearchOptions, SourceType, load_rag_file, normalize_rag_source, split_chunk_text,
     },
 };
 use sqlx::Row;
@@ -232,6 +232,43 @@ fn many_unique_csv_headers_validate_linearly_and_trimmed_duplicates_reject() {
         load_rag_file(&duplicate, SourceType::Auto),
         Err(RagError::Parse { .. })
     ));
+}
+
+#[test]
+fn csv_header_cardinality_is_bounded_with_real_quote_state() {
+    let dir = tempdir().unwrap();
+    let over_cap = dir.path().join("over-cap.csv");
+    let mut header = "h,".repeat(MAX_RAG_CSV_COLUMNS);
+    header.push_str("last\n");
+    fs::write(&over_cap, header).unwrap();
+    assert!(matches!(
+        load_rag_file(&over_cap, SourceType::Auto),
+        Err(RagError::ResourceLimit {
+            resource: "CSV columns",
+            limit: MAX_RAG_CSV_COLUMNS,
+        })
+    ));
+
+    let at_cap = dir.path().join("quoted-at-cap.csv");
+    let mut headers = Vec::with_capacity(MAX_RAG_CSV_COLUMNS);
+    headers.push("\"source,alias\"".to_owned());
+    headers.push("\"line one\nline two\"".to_owned());
+    headers.extend((2..MAX_RAG_CSV_COLUMNS).map(|index| format!("h{index}")));
+    fs::write(&at_cap, format!("{}\n", headers.join(","))).unwrap();
+    assert!(matches!(
+        load_rag_file(&at_cap, SourceType::Auto),
+        Err(RagError::NoExtractableText(_))
+    ));
+
+    let escaped = dir.path().join("escaped.csv");
+    fs::write(&escaped, "\"source \"\"name\"\"\",target\nSense,Сенс\n").unwrap();
+    assert_eq!(
+        load_rag_file(&escaped, SourceType::Auto)
+            .unwrap()
+            .chunks
+            .len(),
+        1
+    );
 }
 
 #[test]

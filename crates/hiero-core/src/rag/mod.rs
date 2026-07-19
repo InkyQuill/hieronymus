@@ -9,7 +9,9 @@ use std::{path::PathBuf, sync::OnceLock};
 pub use chunking::{MAX_RAG_CHUNK_CHARS, split_chunk_text};
 pub use conversion::{MAX_CONVERTED_TEXT_BYTES, normalize_rag_source};
 pub use models::*;
-pub use parsing::{MAX_RAG_CHUNKS, MAX_RAG_FILE_BYTES, MAX_RAG_METADATA_BYTES, load_rag_file};
+pub use parsing::{
+    MAX_RAG_CHUNKS, MAX_RAG_CSV_COLUMNS, MAX_RAG_FILE_BYTES, MAX_RAG_METADATA_BYTES, load_rag_file,
+};
 pub use store::RagStore;
 
 pub(crate) fn default_managed_root() -> PathBuf {

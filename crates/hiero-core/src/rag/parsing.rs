@@ -19,6 +19,7 @@ use super::{
 pub const MAX_RAG_FILE_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_RAG_CHUNKS: usize = 100_000;
 pub const MAX_RAG_METADATA_BYTES: usize = 16 * 1024;
+pub const MAX_RAG_CSV_COLUMNS: usize = 4_096;
 
 pub fn load_rag_file(path: &Path, requested: SourceType) -> Result<ParsedRagFile, RagError> {
     let file = fs::File::open(path).map_err(|source| RagError::Io {
@@ -287,6 +288,7 @@ fn flush_markdown(
 }
 
 fn parse_delimited(bytes: &[u8], delimiter: u8) -> Result<Vec<ParsedRagChunk>, RagError> {
+    validate_delimited_header_columns(bytes, delimiter)?;
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(delimiter)
         .from_reader(bytes);
@@ -312,8 +314,53 @@ fn parse_delimited(bytes: &[u8], delimiter: u8) -> Result<Vec<ParsedRagChunk>, R
     Ok(collector.chunks)
 }
 
+fn validate_delimited_header_columns(bytes: &[u8], delimiter: u8) -> Result<(), RagError> {
+    let resource = if delimiter == b',' {
+        "CSV columns"
+    } else {
+        "TSV columns"
+    };
+    let mut columns = 1;
+    let mut at_field_start = true;
+    let mut quoted = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if quoted {
+            if byte == b'"' {
+                if bytes.get(index + 1) == Some(&b'"') {
+                    index += 2;
+                    continue;
+                }
+                quoted = false;
+            }
+            index += 1;
+            continue;
+        }
+        if at_field_start && byte == b'"' {
+            quoted = true;
+            at_field_start = false;
+        } else if byte == delimiter {
+            columns += 1;
+            if columns > MAX_RAG_CSV_COLUMNS {
+                return Err(RagError::ResourceLimit {
+                    resource,
+                    limit: MAX_RAG_CSV_COLUMNS,
+                });
+            }
+            at_field_start = true;
+        } else if matches!(byte, b'\r' | b'\n') {
+            break;
+        } else {
+            at_field_start = false;
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
 fn validate_headers(headers: &StringRecord) -> Result<(), RagError> {
-    let mut seen = HashSet::with_capacity(headers.len());
+    let mut seen = HashSet::new();
     if headers.is_empty()
         || headers
             .iter()
