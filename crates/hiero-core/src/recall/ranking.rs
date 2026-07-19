@@ -57,10 +57,12 @@ pub(crate) fn rank_and_limit(
 ) -> Vec<Candidate> {
     let mut long_term = BTreeMap::<i64, Candidate>::new();
     let mut short_term = BTreeMap::<i64, Candidate>::new();
+    let mut rag = BTreeMap::<i64, Candidate>::new();
     for candidate in candidates {
         let target = match candidate.source {
             MemorySource::LongTerm => &mut long_term,
-            MemorySource::ShortTerm | MemorySource::Rag => &mut short_term,
+            MemorySource::ShortTerm => &mut short_term,
+            MemorySource::Rag => &mut rag,
         };
         target
             .entry(candidate.id)
@@ -82,6 +84,7 @@ pub(crate) fn rank_and_limit(
                 .source_crystal_id
                 .is_none_or(|crystal_id| !long_ids.contains(&crystal_id))
         }))
+        .chain(rag.into_values())
         .collect::<Vec<_>>();
     ranked.sort_by(candidate_order);
     ranked.truncate(limit);

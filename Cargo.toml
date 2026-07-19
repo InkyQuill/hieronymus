@@ -12,18 +12,22 @@ rust-version = "1.94"
 anyhow = "1"
 async-openai = "0.27"
 async-trait = "0.1"
+arrow-array = "53.4"
+arrow-schema = "53.4"
 axum = { version = "0.8", features = ["ws"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6", features = ["derive"] }
 colored = "2"
 csv = "1"
 fs4 = "0.8"
+futures = "0.3"
 icu_casemap = "2.2"
 indicatif = "0.17"
 libc = "0.2"
 lopdf = "0.38"
 lancedb = "0.17"
 mime_guess = "2"
+# ort rc.12 requires Rust 1.88; the workspace's Rust 1.94 floor above is stricter.
 ort = "2.0.0-rc.12"
 percent-encoding = "2"
 phf = { version = "0.12", features = ["macros"] }
@@ -44,6 +48,7 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
+tokenizers = "=0.21.4"
 toml = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors", "fs"] }

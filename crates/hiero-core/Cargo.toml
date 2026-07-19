@@ -8,9 +8,12 @@ rust-version.workspace = true
 [dependencies]
 async-openai.workspace = true
 async-trait.workspace = true
+arrow-array.workspace = true
+arrow-schema.workspace = true
 chrono.workspace = true
 csv.workspace = true
 fs4.workspace = true
+futures.workspace = true
 icu_casemap.workspace = true
 libc.workspace = true
 lopdf.workspace = true
@@ -39,6 +42,7 @@ unicode-properties.workspace = true
 uuid.workspace = true
 url.workspace = true
 zip.workspace = true
+tokenizers.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winapi-util.workspace = true

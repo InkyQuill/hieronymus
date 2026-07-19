@@ -8,4 +8,5 @@ pub mod domain;
 pub mod rag;
 pub mod recall;
 pub mod registry;
+pub mod semantic;
 pub mod values;

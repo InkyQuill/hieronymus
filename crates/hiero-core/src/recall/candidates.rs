@@ -5,6 +5,7 @@ use crate::domain::{
     Crystal, CrystalStore, MemorySource, RecallResult, ShortTermMemory, TranslationContext,
     WorkspaceStore,
 };
+use crate::rag::RagSearchResult;
 
 use super::Result;
 
@@ -77,6 +78,23 @@ impl Candidate {
             language_tags,
             story_scopes,
             semantic_tags,
+        }
+    }
+
+    pub fn rag(result: RagSearchResult) -> Self {
+        let metadata = serde_json::to_value(&result.chunk).unwrap_or_else(|_| json!({}));
+        Self {
+            source: MemorySource::Rag,
+            id: result.chunk.id,
+            score: result.score,
+            text: result.chunk.text.clone(),
+            reason: result.reason,
+            metadata,
+            crystal: None,
+            source_crystal_id: None,
+            language_tags: result.chunk.language_tags,
+            story_scopes: result.chunk.story_scopes,
+            semantic_tags: result.chunk.semantic_tags,
         }
     }
 

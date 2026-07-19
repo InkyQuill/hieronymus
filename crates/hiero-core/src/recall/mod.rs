@@ -2,11 +2,17 @@ mod candidates;
 mod graph;
 mod ranking;
 
+use std::sync::{Arc, RwLock};
+
 use chrono::Utc;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::domain::{
     FeedbackEvent, FeedbackStore, StoreError, TranslationContext, WorkspaceError, WorkspaceStore,
+};
+use crate::{
+    rag::{RagStore, RetrievalMode, SearchOptions},
+    semantic::{EmbeddingProvider, SemanticDiagnostic, SemanticIndex},
 };
 
 use self::{
@@ -48,18 +54,49 @@ pub enum RecallError {
         #[source]
         source: sqlx::Error,
     },
+    #[error("RAG recall failed: {0}")]
+    Rag(#[from] crate::rag::RagError),
 }
 
 pub type Result<T> = std::result::Result<T, RecallError>;
 
 pub struct RecallService<'a> {
     pool: &'a SqlitePool,
+    semantic: Option<(Arc<dyn EmbeddingProvider>, Arc<dyn SemanticIndex>)>,
+    semantic_diagnostic: Arc<RwLock<SemanticDiagnostic>>,
 }
 
 impl<'a> RecallService<'a> {
     #[must_use]
-    pub const fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self {
+            pool,
+            semantic: None,
+            semantic_diagnostic: Arc::new(RwLock::new(SemanticDiagnostic::degraded(
+                "semantic retrieval is not configured",
+            ))),
+        }
+    }
+
+    #[must_use]
+    pub fn with_semantic(
+        pool: &'a SqlitePool,
+        embedding: Arc<dyn EmbeddingProvider>,
+        index: Arc<dyn SemanticIndex>,
+    ) -> Self {
+        Self {
+            pool,
+            semantic: Some((embedding, index)),
+            semantic_diagnostic: Arc::new(RwLock::new(SemanticDiagnostic::healthy())),
+        }
+    }
+
+    #[must_use]
+    pub fn semantic_diagnostic(&self) -> SemanticDiagnostic {
+        self.semantic_diagnostic.read().map_or_else(
+            |_| SemanticDiagnostic::degraded("semantic diagnostic lock is poisoned"),
+            |value| value.clone(),
+        )
     }
 
     pub async fn recall(
@@ -74,7 +111,40 @@ impl<'a> RecallService<'a> {
         let candidate_limit = long_term_candidate_limit(limit);
         let base =
             collect_base_candidates(self.pool, session_id, ctx, query, candidate_limit).await?;
-        let scored = score_base_candidates(ctx, base);
+        let rag_store = self.semantic.as_ref().map_or_else(
+            || RagStore::new(self.pool),
+            |(embedding, index)| {
+                RagStore::with_semantic(self.pool, embedding.clone(), index.clone())
+            },
+        );
+        let rag = rag_store
+            .search(
+                &ctx.series_slug,
+                query,
+                SearchOptions {
+                    limit: candidate_limit,
+                    language_tags: ctx.language_tags.clone(),
+                    story_scopes: ctx.story_scopes.clone(),
+                    semantic_tags: ctx.semantic_tags.clone(),
+                    retrieval_mode: if self.semantic.is_some() {
+                        RetrievalMode::Hybrid
+                    } else {
+                        RetrievalMode::Lexical
+                    },
+                },
+            )
+            .await?;
+        if self.semantic.is_some()
+            && let Ok(mut diagnostic) = self.semantic_diagnostic.write()
+        {
+            *diagnostic = rag_store.semantic_diagnostic();
+        }
+        let scored = score_base_candidates(
+            ctx,
+            base.into_iter()
+                .chain(rag.into_iter().map(candidates::Candidate::rag))
+                .collect(),
+        );
         let expanded = expand_one_hop(self.pool, ctx, &scored, candidate_limit).await?;
         let ranked = rank_and_limit(scored.into_iter().chain(expanded), limit);
 

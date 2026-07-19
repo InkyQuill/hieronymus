@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
+    sync::{Arc, RwLock},
 };
 
 use chrono::Utc;
@@ -8,7 +9,12 @@ use icu_casemap::CaseMapper;
 use sqlx::{FromRow, QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
 use crate::{
-    db::RagChunkRecord as RawRagChunkRecord, domain::search_expression, recall::MemorySource,
+    db::RagChunkRecord as RawRagChunkRecord,
+    domain::search_expression,
+    recall::MemorySource,
+    semantic::{
+        EmbeddingProvider, SearchFilter, SemanticDiagnostic, SemanticIndex, reciprocal_rank_fusion,
+    },
 };
 
 use super::{
@@ -21,12 +27,47 @@ const MAX_SEARCH_LIMIT: usize = 50;
 
 pub struct RagStore<'a> {
     pool: &'a SqlitePool,
+    semantic: Option<SemanticRuntime>,
+    semantic_diagnostic: Arc<RwLock<SemanticDiagnostic>>,
+}
+
+#[derive(Clone)]
+struct SemanticRuntime {
+    embedding: Arc<dyn EmbeddingProvider>,
+    index: Arc<dyn SemanticIndex>,
 }
 
 impl<'a> RagStore<'a> {
     #[must_use]
-    pub const fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self {
+            pool,
+            semantic: None,
+            semantic_diagnostic: Arc::new(RwLock::new(SemanticDiagnostic::degraded(
+                "semantic retrieval is not configured",
+            ))),
+        }
+    }
+
+    #[must_use]
+    pub fn with_semantic(
+        pool: &'a SqlitePool,
+        embedding: Arc<dyn EmbeddingProvider>,
+        index: Arc<dyn SemanticIndex>,
+    ) -> Self {
+        Self {
+            pool,
+            semantic: Some(SemanticRuntime { embedding, index }),
+            semantic_diagnostic: Arc::new(RwLock::new(SemanticDiagnostic::healthy())),
+        }
+    }
+
+    #[must_use]
+    pub fn semantic_diagnostic(&self) -> SemanticDiagnostic {
+        self.semantic_diagnostic.read().map_or_else(
+            |_| SemanticDiagnostic::degraded("semantic diagnostic lock is poisoned"),
+            |value| value.clone(),
+        )
     }
 
     pub async fn import_file(
@@ -193,9 +234,76 @@ impl<'a> RagStore<'a> {
         if options.limit == 0 {
             return Err(RagError::InvalidLimit);
         }
-        if options.retrieval_mode != RetrievalMode::Lexical {
-            return Err(RagError::SemanticUnavailable);
+        let mode = options.retrieval_mode;
+        let lexical = self.lexical_search(series_slug, query, &options).await?;
+        if mode == RetrievalMode::Lexical {
+            return Ok(lexical);
         }
+        let Some(semantic) = &self.semantic else {
+            self.set_semantic_degraded("semantic retrieval is not configured");
+            return Ok(lexical);
+        };
+        let vector_results = match semantic.embedding.embed_query(query).await {
+            Ok(vector) => {
+                semantic
+                    .index
+                    .search(
+                        &vector,
+                        &SearchFilter {
+                            series_slug: series_slug.to_owned(),
+                        },
+                        options.limit.min(MAX_SEARCH_LIMIT),
+                    )
+                    .await
+            }
+            Err(error) => {
+                self.set_semantic_degraded(error.to_string());
+                return Ok(lexical);
+            }
+        };
+        let vector_results = match vector_results {
+            Ok(results) => results,
+            Err(error) => {
+                self.set_semantic_degraded(error.to_string());
+                return Ok(lexical);
+            }
+        };
+        self.set_semantic_healthy();
+        let lexical_lane = lexical
+            .iter()
+            .map(|result| (result.chunk.id, result.score))
+            .collect::<Vec<_>>();
+        let vector_lane = vector_results
+            .iter()
+            .map(|result| (result.chunk_id, result.distance))
+            .collect::<Vec<_>>();
+        let fused = reciprocal_rank_fusion(&lexical_lane, &vector_lane, 60.0);
+        let ids = fused.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let chunks = self.load_chunks(series_slug, &ids, &options).await?;
+        let by_id = chunks
+            .into_iter()
+            .map(|chunk| (chunk.id, chunk))
+            .collect::<HashMap<_, _>>();
+        Ok(fused
+            .into_iter()
+            .filter_map(|(id, score)| {
+                by_id.get(&id).cloned().map(|chunk| RagSearchResult {
+                    chunk,
+                    score,
+                    source: MemorySource::Rag,
+                    reason: "rag hybrid reciprocal-rank fusion".into(),
+                })
+            })
+            .take(options.limit.min(MAX_SEARCH_LIMIT))
+            .collect())
+    }
+
+    async fn lexical_search(
+        &self,
+        series_slug: &str,
+        query: &str,
+        options: &SearchOptions,
+    ) -> Result<Vec<RagSearchResult>, RagError> {
         let expression = search_expression(query);
         if expression.is_empty() {
             return Ok(vec![]);
@@ -243,6 +351,72 @@ impl<'a> RagStore<'a> {
                 })
             })
             .collect()
+    }
+
+    async fn load_chunks(
+        &self,
+        series_slug: &str,
+        ids: &[i64],
+        options: &SearchOptions,
+    ) -> Result<Vec<RagChunkRecord>, RagError> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut builder = QueryBuilder::new(
+            "SELECT c.*, s.source_ref FROM rag_chunks c JOIN rag_sources s ON s.id = c.source_id AND s.series_slug = c.series_slug WHERE c.series_slug = ",
+        );
+        builder.push_bind(series_slug).push(" AND c.id IN (");
+        let mut separated = builder.separated(",");
+        for id in ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(")");
+        let rows = builder
+            .build_query_as::<SearchChunkRow>()
+            .fetch_all(self.pool)
+            .await?;
+        let loaded_ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
+        let tags = hydrate_tags(self.pool, &loaded_ids).await?;
+        let language = clean(&options.language_tags);
+        let stories = clean(&options.story_scopes);
+        let semantic = clean(&options.semantic_tags);
+        rows.into_iter()
+            .filter_map(|row| {
+                let values = tags.get(&row.id).cloned().unwrap_or_default();
+                if (!language.is_empty() && !values.0.iter().any(|value| language.contains(value)))
+                    || (!stories.is_empty()
+                        && !values.1.iter().any(|value| stories.contains(value)))
+                    || (!semantic.is_empty()
+                        && !values.2.iter().any(|value| semantic.contains(value)))
+                {
+                    return None;
+                }
+                let metadata = match serde_json::from_str(&row.metadata_json) {
+                    Ok(value) => value,
+                    Err(error) => return Some(Err(RagError::Json(error))),
+                };
+                Some(Ok(RagChunkRecord {
+                    record: row.clone().into_raw(),
+                    source_ref: row.source_ref,
+                    metadata,
+                    language_tags: values.0,
+                    story_scopes: values.1,
+                    semantic_tags: values.2,
+                }))
+            })
+            .collect()
+    }
+
+    fn set_semantic_degraded(&self, message: impl Into<String>) {
+        if let Ok(mut diagnostic) = self.semantic_diagnostic.write() {
+            *diagnostic = SemanticDiagnostic::degraded(message);
+        }
+    }
+
+    fn set_semantic_healthy(&self) {
+        if let Ok(mut diagnostic) = self.semantic_diagnostic.write() {
+            *diagnostic = SemanticDiagnostic::healthy();
+        }
     }
 }
 
@@ -404,6 +578,36 @@ struct SearchRow {
     created_at: chrono::DateTime<Utc>,
     source_ref: String,
     score: f64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct SearchChunkRow {
+    id: i64,
+    source_id: i64,
+    series_slug: String,
+    chunk_kind: String,
+    text: String,
+    display_text: String,
+    location: String,
+    metadata_json: String,
+    created_at: chrono::DateTime<Utc>,
+    source_ref: String,
+}
+
+impl SearchChunkRow {
+    fn into_raw(self) -> RawRagChunkRecord {
+        RawRagChunkRecord {
+            id: self.id,
+            source_id: self.source_id,
+            series_slug: self.series_slug,
+            chunk_kind: self.chunk_kind,
+            text: self.text,
+            display_text: self.display_text,
+            location: self.location,
+            metadata_json: self.metadata_json,
+            created_at: self.created_at,
+        }
+    }
 }
 impl SearchRow {
     fn into_raw(self) -> RawRagChunkRecord {
