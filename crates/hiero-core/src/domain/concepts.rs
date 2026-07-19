@@ -12,6 +12,8 @@ use super::models::{
 const CONCEPT_COLUMNS: &str = "id, canonical_name, description, scope_type, scope_key, status, confidence, merged_into_concept_id, created_at, updated_at";
 const FACET_COLUMNS: &str = "id, concept_id, language, facet_type, value, source_crystal_id, confidence, is_canonical, superseded_at, created_at, updated_at";
 const PROPOSAL_COLUMNS: &str = "id, dream_run_id, series_slug, source_language, target_language, concept_text, source_form, canonical_rendering, approved_variants_json, forbidden_variants_json, rationale, status, created_at, updated_at";
+const HYDRATION_CHUNK_SIZE: usize = 500;
+const RECALL_IN_CHUNK_SIZE: usize = 240;
 
 pub type Result<T> = std::result::Result<T, ConceptError>;
 
@@ -366,19 +368,35 @@ impl<'a> ConceptStore<'a> {
         }
         let expression = super::search_expression(query);
         let scopes = clean_values(story_scopes, false);
-        let mut builder = QueryBuilder::<Sqlite>::new(
-            "SELECT DISTINCT cc.crystal_id, CASE WHEN EXISTS(SELECT 1 FROM concept_facets sf JOIN concept_facet_story_scopes ss ON ss.facet_id = sf.id WHERE sf.concept_id = c.id AND sf.superseded_at IS NULL AND ss.story_scope IN (",
-        );
-        push_strings(&mut builder, &scopes);
-        builder.push(")) THEN 0.40 ELSE 0.15 END AS boost FROM crystal_concepts cc JOIN concepts c ON c.id = cc.concept_id LEFT JOIN concept_facets f ON f.concept_id = c.id AND f.superseded_at IS NULL WHERE cc.crystal_id IN (");
-        push_ids(&mut builder, crystal_ids);
-        builder.push(") AND c.status NOT IN ('archived','merged') AND (c.canonical_name IN (SELECT canonical_name FROM concepts_fts JOIN concepts x ON x.id=concepts_fts.rowid WHERE concepts_fts MATCH ").push_bind(&expression).push(") OR f.value IN (SELECT value FROM concept_facet_fts JOIN concept_facets fx ON fx.id=concept_facet_fts.rowid WHERE concept_facet_fts MATCH ").push_bind(&expression).push(")) ORDER BY cc.crystal_id");
-        let rows: Vec<(i64, f64)> = builder
-            .build_query_as()
-            .fetch_all(self.pool)
-            .await
-            .map_err(|source| database("recall boosts", source))?;
-        Ok(rows.into_iter().collect())
+        let mut boosts = HashMap::<i64, f64>::new();
+        let scope_chunks: Vec<&[String]> = if scopes.is_empty() {
+            vec![&[]]
+        } else {
+            scopes.chunks(RECALL_IN_CHUNK_SIZE).collect()
+        };
+        for id_chunk in crystal_ids.chunks(RECALL_IN_CHUNK_SIZE) {
+            for scope_chunk in &scope_chunks {
+                let mut builder = QueryBuilder::<Sqlite>::new(
+                    "SELECT DISTINCT cc.crystal_id, CASE WHEN EXISTS(SELECT 1 FROM concept_facets sf JOIN concept_facet_story_scopes ss ON ss.facet_id = sf.id WHERE sf.concept_id = c.id AND sf.superseded_at IS NULL AND ss.story_scope IN (",
+                );
+                push_strings(&mut builder, scope_chunk);
+                builder.push(")) THEN 0.40 ELSE 0.15 END AS boost FROM crystal_concepts cc JOIN concepts c ON c.id = cc.concept_id LEFT JOIN concept_facets f ON f.concept_id = c.id AND f.superseded_at IS NULL WHERE cc.crystal_id IN (");
+                push_ids(&mut builder, id_chunk);
+                builder.push(") AND c.status NOT IN ('archived','merged') AND (c.canonical_name IN (SELECT canonical_name FROM concepts_fts JOIN concepts x ON x.id=concepts_fts.rowid WHERE concepts_fts MATCH ").push_bind(&expression).push(") OR f.value IN (SELECT value FROM concept_facet_fts JOIN concept_facets fx ON fx.id=concept_facet_fts.rowid WHERE concept_facet_fts MATCH ").push_bind(&expression).push(")) ORDER BY cc.crystal_id");
+                let rows: Vec<(i64, f64)> = builder
+                    .build_query_as()
+                    .fetch_all(self.pool)
+                    .await
+                    .map_err(|source| database("recall boosts", source))?;
+                for (id, boost) in rows {
+                    boosts
+                        .entry(id)
+                        .and_modify(|current| *current = current.max(boost))
+                        .or_insert(boost);
+                }
+            }
+        }
+        Ok(boosts)
     }
 }
 
@@ -479,8 +497,8 @@ async fn merge_facets(connection: &mut SqliteConnection, source: i64, target: i6
     .await
     .map_err(|source| database("merge", source))?;
     for facet in facets {
-        let duplicate: Option<i64> = sqlx::query_scalar("SELECT id FROM concept_facets WHERE concept_id = ? AND facet_type = ? AND value = ? AND superseded_at IS ? ORDER BY id LIMIT 1")
-            .bind(target).bind(&facet.facet_type).bind(&facet.value).bind(facet.superseded_at).fetch_optional(&mut *connection).await.map_err(|source| database("merge", source))?;
+        let duplicate: Option<i64> = sqlx::query_scalar("SELECT id FROM concept_facets WHERE concept_id = ? AND facet_type = ? AND value = ? AND language = ? AND superseded_at IS ? ORDER BY id LIMIT 1")
+            .bind(target).bind(&facet.facet_type).bind(&facet.value).bind(&facet.language).bind(facet.superseded_at).fetch_optional(&mut *connection).await.map_err(|source| database("merge", source))?;
         if let Some(existing) = duplicate {
             for (table, column) in [
                 ("concept_facet_language_tags", "language_tag"),
@@ -503,11 +521,7 @@ async fn merge_facets(connection: &mut SqliteConnection, source: i64, target: i6
                 .await
                 .map_err(|source| database("merge", source))?;
         } else {
-            if facet.is_canonical {
-                sqlx::query("UPDATE concept_facets SET is_canonical = 0 WHERE concept_id = ? AND facet_type = ? AND language = ? AND superseded_at IS NULL")
-                    .bind(target).bind(&facet.facet_type).bind(&facet.language).execute(&mut *connection).await.map_err(|source| database("merge", source))?;
-            }
-            sqlx::query("UPDATE concept_facets SET concept_id = ?, updated_at = ? WHERE id = ?")
+            sqlx::query("UPDATE concept_facets SET concept_id = ?, is_canonical = 0, updated_at = ? WHERE id = ?")
                 .bind(target)
                 .bind(Utc::now())
                 .bind(facet.id)
@@ -576,16 +590,21 @@ async fn hydrate_concepts(pool: &SqlitePool, rows: Vec<ConceptRecord>) -> Result
         return Ok(Vec::new());
     }
     let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
-    let mut builder = QueryBuilder::<Sqlite>::new(
-        "SELECT concept_id, tag FROM concept_semantic_tags WHERE concept_id IN (",
-    );
-    push_ids(&mut builder, &ids);
-    builder.push(") ORDER BY concept_id, tag");
-    let tags: Vec<(i64, String)> = builder
-        .build_query_as()
-        .fetch_all(pool)
-        .await
-        .map_err(|source| database("hydrate concepts", source))?;
+    let mut tags = Vec::<(i64, String)>::new();
+    for chunk in ids.chunks(HYDRATION_CHUNK_SIZE) {
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            "SELECT concept_id, tag FROM concept_semantic_tags WHERE concept_id IN (",
+        );
+        push_ids(&mut builder, chunk);
+        builder.push(") ORDER BY concept_id, tag");
+        tags.extend(
+            builder
+                .build_query_as()
+                .fetch_all(pool)
+                .await
+                .map_err(|source| database("hydrate concepts", source))?,
+        );
+    }
     let mut grouped: BTreeMap<i64, Vec<String>> = BTreeMap::new();
     for (id, value) in tags {
         grouped.entry(id).or_default().push(value);
@@ -636,16 +655,21 @@ async fn load_facet_texts(
     table: &str,
     column: &str,
 ) -> Result<BTreeMap<i64, Vec<String>>> {
-    let mut builder = QueryBuilder::<Sqlite>::new(format!(
-        "SELECT facet_id, {column} FROM {table} WHERE facet_id IN ("
-    ));
-    push_ids(&mut builder, ids);
-    builder.push(format!(") ORDER BY facet_id, {column}"));
-    let rows: Vec<(i64, String)> = builder
-        .build_query_as()
-        .fetch_all(pool)
-        .await
-        .map_err(|source| database("hydrate facets", source))?;
+    let mut rows = Vec::<(i64, String)>::new();
+    for chunk in ids.chunks(HYDRATION_CHUNK_SIZE) {
+        let mut builder = QueryBuilder::<Sqlite>::new(format!(
+            "SELECT facet_id, {column} FROM {table} WHERE facet_id IN ("
+        ));
+        push_ids(&mut builder, chunk);
+        builder.push(format!(") ORDER BY facet_id, {column}"));
+        rows.extend(
+            builder
+                .build_query_as()
+                .fetch_all(pool)
+                .await
+                .map_err(|source| database("hydrate facets", source))?,
+        );
+    }
     let mut values = BTreeMap::new();
     for (id, value) in rows {
         values.entry(id).or_insert_with(Vec::new).push(value);

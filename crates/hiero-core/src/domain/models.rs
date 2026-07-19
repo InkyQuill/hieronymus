@@ -363,6 +363,9 @@ pub struct ContractTerm {
 pub struct ValidationFinding {
     pub crystal_id: i64,
     pub kind: String,
+    pub severity: String,
+    pub expected: String,
+    pub observed: String,
     pub detail: String,
 }
 

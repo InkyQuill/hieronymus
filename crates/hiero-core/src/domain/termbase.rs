@@ -4,11 +4,12 @@ use chrono::Utc;
 use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 use super::{
-    ContractTerm, TermProposal, ValidationFinding,
+    ContractTerm, TermProposal, TranslationContext, ValidationFinding,
     rule_parser::{ParsedRule, parse_rule},
 };
 
 const MIN_DETERMINISTIC_SCORE: f64 = 0.8;
+const HYDRATION_CHUNK_SIZE: usize = 500;
 
 pub type Result<T> = std::result::Result<T, TermbaseError>;
 
@@ -39,16 +40,26 @@ pub enum TermbaseError {
 
 pub struct Termbase<'a> {
     pool: &'a SqlitePool,
+    context: TranslationContext,
 }
 
 impl<'a> Termbase<'a> {
     #[must_use]
-    pub const fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: &'a SqlitePool, context: TranslationContext) -> Self {
+        Self { pool, context }
     }
 
     pub async fn propose(&self, input: TermProposal) -> Result<i64> {
         let input = validate_proposal(input)?;
+        if input.series_slug != self.context.series_slug
+            || input.source_language != self.context.source_language
+            || input.target_language != self.context.target_language
+        {
+            return Err(conflict(
+                "propose",
+                "proposal series and language pair must match the termbase context",
+            ));
+        }
         let tags_json =
             serde_json::to_string(&input.tags).map_err(|source| TermbaseError::Json { source })?;
         let text = rule_text(&input.source_text, &input.canonical_translation, None);
@@ -83,8 +94,9 @@ impl<'a> Termbase<'a> {
             }
             let parsed = parse_rule(&term.text)
                 .ok_or_else(|| invalid("text", "does not use the supported rule grammar"))?;
+            validate_term_context(&term, &self.context)?;
             if term.status == "active" {
-                ensure_approved_relationships(&mut transaction, &term, &parsed).await?;
+                validate_existing_relationships(&mut transaction, &term, &parsed).await?;
                 return Ok(());
             }
             ensure_approved_relationships(&mut transaction, &term, &parsed).await?;
@@ -101,8 +113,9 @@ impl<'a> Termbase<'a> {
     }
 
     pub async fn contract(&self, raw_text: &str) -> Result<Vec<ContractTerm>> {
-        let rules = load_active_rules(self.pool).await?;
-        Ok(resolve_rules(raw_text, &rules)
+        let rules = load_active_rules(self.pool, &self.context).await?;
+        Ok(resolve_rules(raw_text, &rules, &self.context)
+            .matched
             .into_iter()
             .map(|matched| ContractTerm {
                 crystal_id: matched.rule.id,
@@ -123,18 +136,19 @@ impl<'a> Termbase<'a> {
             (None, None) => return Err(invalid("source", "raw or source is required")),
             (Some(value), None) | (None, Some(value)) => value,
         };
-        let rules = load_active_rules(self.pool).await?;
-        let mut findings = Vec::new();
-        for matched in resolve_rules(source, &rules) {
+        let rules = load_active_rules(self.pool, &self.context).await?;
+        let resolved = resolve_rules(source, &rules, &self.context);
+        let mut findings = resolved.findings;
+        for matched in resolved.matched {
             for forbidden in &matched.rule.parsed.forbidden {
                 if translated.contains(forbidden) {
                     findings.push(ValidationFinding {
                         crystal_id: matched.rule.id,
                         kind: "forbidden_variant_used".into(),
-                        detail: format!(
-                            "use {:?}; forbidden rendering {:?} was used for {:?}",
-                            matched.rule.parsed.canonical, forbidden, matched.surface
-                        ),
+                        severity: "high".into(),
+                        expected: matched.rule.parsed.canonical.clone(),
+                        observed: forbidden.clone(),
+                        detail: "forbidden rendering was used for a contracted source form".into(),
                     });
                 }
             }
@@ -142,10 +156,10 @@ impl<'a> Termbase<'a> {
                 findings.push(ValidationFinding {
                     crystal_id: matched.rule.id,
                     kind: "canonical_missing".into(),
-                    detail: format!(
-                        "source form {:?} requires canonical rendering {:?}",
-                        matched.surface, matched.rule.parsed.canonical
-                    ),
+                    severity: "medium".into(),
+                    expected: matched.rule.parsed.canonical.clone(),
+                    observed: String::new(),
+                    detail: "contracted source form is missing its canonical rendering".into(),
                 });
             }
         }
@@ -180,6 +194,9 @@ struct ActiveRule {
     parsed: ParsedRule,
     concept_ids: Vec<i64>,
     source_forms: Vec<String>,
+    language_tags: Vec<String>,
+    story_scopes: Vec<String>,
+    semantic_tags: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -188,39 +205,90 @@ struct MatchedRule<'a> {
     surface: String,
 }
 
-async fn load_active_rules(pool: &SqlitePool) -> Result<Vec<ActiveRule>> {
-    let rows = sqlx::query_as::<_, TermRow>("SELECT id, text, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, rule_intent, status FROM crystals WHERE status = 'active' AND trim(rule_intent) <> '' AND strength >= ? AND confidence >= ? AND ((scope_type = 'global' AND scope_key = '' AND series_slug = '') OR (scope_type = 'series' AND series_slug <> '' AND scope_key = 'series:' || series_slug)) AND NOT EXISTS (SELECT 1 FROM crystals successor WHERE successor.supersedes_crystal_id = crystals.id AND successor.status = 'active' AND trim(successor.rule_intent) <> '') ORDER BY id")
-        .bind(MIN_DETERMINISTIC_SCORE).bind(MIN_DETERMINISTIC_SCORE).fetch_all(pool).await.map_err(|source| database("load active rules", source))?;
+#[derive(Debug, Clone, FromRow)]
+struct FacetHydration {
+    id: i64,
+    concept_id: i64,
+    language: String,
+    facet_type: String,
+    value: String,
+}
+
+struct ResolvedRules<'a> {
+    matched: Vec<MatchedRule<'a>>,
+    findings: Vec<ValidationFinding>,
+}
+
+async fn load_active_rules(
+    pool: &SqlitePool,
+    context: &TranslationContext,
+) -> Result<Vec<ActiveRule>> {
+    let rows = sqlx::query_as::<_, TermRow>("SELECT id, text, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, rule_intent, status FROM crystals WHERE status = 'active' AND trim(rule_intent) <> '' AND strength >= ? AND confidence >= ? AND ((scope_type = 'global' AND scope_key = '' AND series_slug = '') OR (scope_type = 'series' AND series_slug = ? AND scope_key = ?)) AND (source_language = '' OR source_language = ?) AND (target_language = '' OR target_language = ?) AND NOT EXISTS (SELECT 1 FROM crystals successor WHERE successor.supersedes_crystal_id = crystals.id AND successor.status = 'active' AND trim(successor.rule_intent) <> '') ORDER BY id")
+        .bind(MIN_DETERMINISTIC_SCORE)
+        .bind(MIN_DETERMINISTIC_SCORE)
+        .bind(&context.series_slug)
+        .bind(&context.scope_key)
+        .bind(&context.source_language)
+        .bind(&context.target_language)
+        .fetch_all(pool)
+        .await
+        .map_err(|source| database("load active rules", source))?;
     let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut concept_query = QueryBuilder::<Sqlite>::new(
-        "SELECT cc.crystal_id, cc.concept_id, c.canonical_name FROM crystal_concepts cc JOIN concepts c ON c.id = cc.concept_id WHERE c.status NOT IN ('archived','merged') AND cc.crystal_id IN (",
-    );
-    push_ids(&mut concept_query, &ids);
-    concept_query.push(") ORDER BY cc.crystal_id, cc.concept_id");
-    let concepts: Vec<(i64, i64, String)> = concept_query
-        .build_query_as()
-        .fetch_all(pool)
-        .await
-        .map_err(|source| database("load active rules", source))?;
-    let concept_ids: Vec<i64> = concepts.iter().map(|(_, id, _)| *id).collect();
-    let mut facets_by_concept: HashMap<i64, Vec<String>> = HashMap::new();
-    if !concept_ids.is_empty() {
-        let mut facet_query = QueryBuilder::<Sqlite>::new(
-            "SELECT concept_id, value FROM concept_facets WHERE superseded_at IS NULL AND facet_type IN ('name','alias','former_label') AND concept_id IN (",
+    let mut concepts = Vec::<(i64, i64, String)>::new();
+    for chunk in ids.chunks(HYDRATION_CHUNK_SIZE) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT cc.crystal_id, cc.concept_id, c.canonical_name FROM crystal_concepts cc JOIN concepts c ON c.id = cc.concept_id WHERE c.status NOT IN ('archived','merged') AND cc.crystal_id IN (",
         );
-        push_ids(&mut facet_query, &concept_ids);
-        facet_query.push(") ORDER BY concept_id, id");
-        let facets: Vec<(i64, String)> = facet_query
-            .build_query_as()
-            .fetch_all(pool)
-            .await
-            .map_err(|source| database("load active rules", source))?;
-        for (concept_id, value) in facets {
-            facets_by_concept.entry(concept_id).or_default().push(value);
+        push_ids(&mut query, chunk);
+        query.push(") ORDER BY cc.crystal_id, cc.concept_id");
+        concepts.extend(
+            query
+                .build_query_as()
+                .fetch_all(pool)
+                .await
+                .map_err(|source| database("load active rules", source))?,
+        );
+    }
+    let mut concept_ids: Vec<i64> = concepts.iter().map(|(_, id, _)| *id).collect();
+    concept_ids.sort_unstable();
+    concept_ids.dedup();
+    let mut facets = Vec::<FacetHydration>::new();
+    if !concept_ids.is_empty() {
+        for chunk in concept_ids.chunks(HYDRATION_CHUNK_SIZE) {
+            let mut query = QueryBuilder::<Sqlite>::new(
+                "SELECT id, concept_id, language, facet_type, value FROM concept_facets WHERE superseded_at IS NULL AND concept_id IN (",
+            );
+            push_ids(&mut query, chunk);
+            query.push(") ORDER BY concept_id, id");
+            facets.extend(
+                query
+                    .build_query_as()
+                    .fetch_all(pool)
+                    .await
+                    .map_err(|source| database("load active rules", source))?,
+            );
         }
+    }
+    let facet_ids: Vec<i64> = facets.iter().map(|facet| facet.id).collect();
+    let crystal_languages = load_text_metadata(pool, &ids, MetadataTable::CrystalLanguage).await?;
+    let crystal_stories = load_text_metadata(pool, &ids, MetadataTable::CrystalStory).await?;
+    let crystal_semantics = load_text_metadata(pool, &ids, MetadataTable::CrystalSemantic).await?;
+    let concept_semantics =
+        load_text_metadata(pool, &concept_ids, MetadataTable::ConceptSemantic).await?;
+    let facet_languages =
+        load_text_metadata(pool, &facet_ids, MetadataTable::FacetLanguage).await?;
+    let facet_stories = load_text_metadata(pool, &facet_ids, MetadataTable::FacetStory).await?;
+    let facet_semantics =
+        load_text_metadata(pool, &facet_ids, MetadataTable::FacetSemantic).await?;
+    let mut facets_by_concept: HashMap<i64, Vec<&FacetHydration>> = HashMap::new();
+    for facet in &facets {
+        facets_by_concept
+            .entry(facet.concept_id)
+            .or_default()
+            .push(facet);
     }
     let mut concepts_by_rule: HashMap<i64, Vec<(i64, String)>> = HashMap::new();
     for (rule_id, concept_id, name) in concepts {
@@ -241,30 +309,66 @@ async fn load_active_rules(pool: &SqlitePool) -> Result<Vec<ActiveRule>> {
             continue;
         }
         let mut forms = vec![parsed.source_text.clone()];
-        let mut ids = Vec::new();
+        let mut linked_ids = Vec::new();
+        let mut language_tags = crystal_languages.get(&row.id).cloned().unwrap_or_default();
+        language_tags.extend(
+            [row.source_language.clone(), row.target_language.clone()]
+                .into_iter()
+                .filter(|value| !value.is_empty()),
+        );
+        let mut story_scopes = crystal_stories.get(&row.id).cloned().unwrap_or_default();
+        let mut semantic_tags = crystal_semantics.get(&row.id).cloned().unwrap_or_default();
         for (concept_id, name) in concepts {
-            ids.push(concept_id);
+            linked_ids.push(concept_id);
             forms.push(name);
-            forms.extend(
-                facets_by_concept
+            semantic_tags.extend(
+                concept_semantics
                     .get(&concept_id)
                     .cloned()
                     .unwrap_or_default(),
             );
+            for facet in facets_by_concept.get(&concept_id).into_iter().flatten() {
+                let mut facet_language_tags =
+                    facet_languages.get(&facet.id).cloned().unwrap_or_default();
+                if facet_language_tags.is_empty() && !facet.language.is_empty() {
+                    facet_language_tags.push(facet.language.clone());
+                }
+                language_tags.extend(facet_language_tags.iter().cloned());
+                story_scopes.extend(facet_stories.get(&facet.id).cloned().unwrap_or_default());
+                semantic_tags.extend(facet_semantics.get(&facet.id).cloned().unwrap_or_default());
+                if is_source_facet(facet, &facet_language_tags, context) {
+                    forms.push(facet.value.clone());
+                }
+            }
         }
-        ids.sort_unstable();
-        ids.dedup();
+        linked_ids.sort_unstable();
+        linked_ids.dedup();
+        let story_scopes = sorted_texts(story_scopes);
+        if !story_scopes.is_empty()
+            && !story_scopes
+                .iter()
+                .any(|scope| context.story_scopes.contains(scope))
+        {
+            continue;
+        }
         rules.push(ActiveRule {
             id: row.id,
             parsed,
-            concept_ids: ids,
+            concept_ids: linked_ids,
             source_forms: dedupe_folded(forms),
+            language_tags: sorted_texts(language_tags),
+            story_scopes,
+            semantic_tags: sorted_texts(semantic_tags),
         });
     }
     Ok(rules)
 }
 
-fn resolve_rules<'a>(raw_text: &str, rules: &'a [ActiveRule]) -> Vec<MatchedRule<'a>> {
+fn resolve_rules<'a>(
+    raw_text: &str,
+    rules: &'a [ActiveRule],
+    context: &TranslationContext,
+) -> ResolvedRules<'a> {
     let folded = raw_text.to_lowercase();
     let mut occurrences = Vec::<(usize, usize, String, &'a ActiveRule)>::new();
     for rule in rules {
@@ -306,17 +410,31 @@ fn resolve_rules<'a>(raw_text: &str, rules: &'a [ActiveRule]) -> Vec<MatchedRule
         }
     }
     let mut selected = Vec::new();
+    let mut findings = Vec::new();
     for (_, (surface, mut candidates)) in grouped {
         candidates.sort_by_key(|rule| rule.id);
-        let concepts: BTreeSet<Vec<i64>> = candidates
+        let mut concepts: BTreeSet<Vec<i64>> = candidates
             .iter()
             .map(|rule| rule.concept_ids.clone())
             .collect();
+        let unresolved_candidates = candidates.clone();
+        if concepts.len() > 1 {
+            candidates = context_resolved_rules(&candidates, context);
+            concepts = candidates
+                .iter()
+                .map(|rule| rule.concept_ids.clone())
+                .collect();
+        }
         let renderings: BTreeSet<&str> = candidates
             .iter()
             .map(|rule| rule.parsed.canonical.as_str())
             .collect();
-        if concepts.len() != 1 || renderings.len() != 1 {
+        if concepts.len() != 1 {
+            findings.push(ambiguity_finding(&surface, &unresolved_candidates));
+            continue;
+        }
+        if renderings.len() != 1 {
+            findings.push(conflict_finding(&surface, &candidates));
             continue;
         }
         for rule in candidates {
@@ -327,7 +445,183 @@ fn resolve_rules<'a>(raw_text: &str, rules: &'a [ActiveRule]) -> Vec<MatchedRule
         }
     }
     selected.sort_by_key(|matched| matched.rule.id);
-    selected
+    findings.sort_by(|left, right| {
+        left.crystal_id
+            .cmp(&right.crystal_id)
+            .then_with(|| finding_order(&left.kind).cmp(&finding_order(&right.kind)))
+    });
+    ResolvedRules {
+        matched: selected,
+        findings,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MetadataTable {
+    CrystalLanguage,
+    CrystalStory,
+    CrystalSemantic,
+    ConceptSemantic,
+    FacetLanguage,
+    FacetStory,
+    FacetSemantic,
+}
+
+impl MetadataTable {
+    fn select_prefix(self) -> &'static str {
+        match self {
+            Self::CrystalLanguage => {
+                "SELECT crystal_id, language_tag FROM crystal_language_tags WHERE crystal_id IN ("
+            }
+            Self::CrystalStory => {
+                "SELECT crystal_id, scope FROM crystal_story_scopes WHERE crystal_id IN ("
+            }
+            Self::CrystalSemantic => {
+                "SELECT crystal_id, tag FROM crystal_semantic_tags WHERE crystal_id IN ("
+            }
+            Self::ConceptSemantic => {
+                "SELECT concept_id, tag FROM concept_semantic_tags WHERE concept_id IN ("
+            }
+            Self::FacetLanguage => {
+                "SELECT facet_id, language_tag FROM concept_facet_language_tags WHERE facet_id IN ("
+            }
+            Self::FacetStory => {
+                "SELECT facet_id, story_scope FROM concept_facet_story_scopes WHERE facet_id IN ("
+            }
+            Self::FacetSemantic => {
+                "SELECT facet_id, semantic_tag FROM concept_facet_semantic_tags WHERE facet_id IN ("
+            }
+        }
+    }
+}
+
+async fn load_text_metadata(
+    pool: &SqlitePool,
+    ids: &[i64],
+    table: MetadataTable,
+) -> Result<HashMap<i64, Vec<String>>> {
+    let mut grouped = HashMap::<i64, Vec<String>>::new();
+    for chunk in ids.chunks(HYDRATION_CHUNK_SIZE) {
+        let mut query = QueryBuilder::<Sqlite>::new(table.select_prefix());
+        push_ids(&mut query, chunk);
+        query.push(") ORDER BY 1, 2");
+        let rows: Vec<(i64, String)> = query
+            .build_query_as()
+            .fetch_all(pool)
+            .await
+            .map_err(|source| database("hydrate active rules", source))?;
+        for (id, value) in rows {
+            grouped.entry(id).or_default().push(value);
+        }
+    }
+    Ok(grouped)
+}
+
+fn is_source_facet(
+    facet: &FacetHydration,
+    language_tags: &[String],
+    context: &TranslationContext,
+) -> bool {
+    if !matches!(facet.facet_type.as_str(), "name" | "alias" | "former_label") {
+        return false;
+    }
+    language_tags.is_empty()
+        || language_tags.contains(&context.source_language)
+        || !language_tags.contains(&context.target_language)
+}
+
+fn sorted_texts(values: Vec<String>) -> Vec<String> {
+    let mut values: Vec<String> = values
+        .into_iter()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect();
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn context_resolved_rules<'a>(
+    candidates: &[&'a ActiveRule],
+    context: &TranslationContext,
+) -> Vec<&'a ActiveRule> {
+    let default_languages = BTreeSet::from([
+        context.source_language.as_str(),
+        context.target_language.as_str(),
+    ]);
+    let extra_languages: BTreeSet<&str> = context
+        .language_tags
+        .iter()
+        .map(String::as_str)
+        .filter(|tag| !default_languages.contains(tag))
+        .collect();
+    let mut scored = Vec::new();
+    for candidate in candidates {
+        let mut score = 0_u8;
+        if candidate
+            .semantic_tags
+            .iter()
+            .any(|tag| context.semantic_tags.contains(tag))
+        {
+            score += 1;
+        }
+        if candidate
+            .story_scopes
+            .iter()
+            .any(|scope| context.story_scopes.contains(scope))
+        {
+            score += 1;
+        }
+        if candidate
+            .language_tags
+            .iter()
+            .map(String::as_str)
+            .any(|tag| extra_languages.contains(tag))
+        {
+            score += 1;
+        }
+        scored.push((score, *candidate));
+    }
+    let best = scored.iter().map(|(score, _)| *score).max().unwrap_or(0);
+    if best == 0 {
+        Vec::new()
+    } else {
+        scored
+            .into_iter()
+            .filter_map(|(score, candidate)| (score == best).then_some(candidate))
+            .collect()
+    }
+}
+
+fn ambiguity_finding(surface: &str, candidates: &[&ActiveRule]) -> ValidationFinding {
+    ValidationFinding {
+        crystal_id: candidates.iter().map(|rule| rule.id).min().unwrap_or(0),
+        kind: "ambiguous_source".into(),
+        severity: "warning".into(),
+        expected: renderings(candidates),
+        observed: surface.to_owned(),
+        detail: "source form maps to multiple active rule concepts; add context before enforcing a rendering".into(),
+    }
+}
+
+fn conflict_finding(surface: &str, candidates: &[&ActiveRule]) -> ValidationFinding {
+    ValidationFinding {
+        crystal_id: candidates.iter().map(|rule| rule.id).min().unwrap_or(0),
+        kind: "conflicting_active_rules".into(),
+        severity: "warning".into(),
+        expected: renderings(candidates),
+        observed: surface.to_owned(),
+        detail: "source form has conflicting active rules for the same concept; consolidate before enforcing a rendering".into(),
+    }
+}
+
+fn renderings(candidates: &[&ActiveRule]) -> String {
+    let values: BTreeSet<&str> = candidates
+        .iter()
+        .map(|rule| rule.parsed.canonical.as_str())
+        .filter(|value| !value.is_empty())
+        .collect();
+    values.into_iter().collect::<Vec<_>>().join(", ")
 }
 
 async fn ensure_approved_relationships(
@@ -368,6 +662,94 @@ async fn ensure_approved_relationships(
     Ok(())
 }
 
+fn validate_term_context(term: &TermRow, context: &TranslationContext) -> Result<()> {
+    if term.scope_type != "series"
+        || term.series_slug != context.series_slug
+        || term.scope_key != context.scope_key
+        || term.source_language != context.source_language
+        || term.target_language != context.target_language
+    {
+        return Err(conflict(
+            "approve",
+            "term series and language pair do not match the termbase context",
+        ));
+    }
+    Ok(())
+}
+
+async fn validate_existing_relationships(
+    connection: &mut SqliteConnection,
+    term: &TermRow,
+    parsed: &ParsedRule,
+) -> Result<()> {
+    validate_persisted_term(term)
+        .map_err(|_| conflict("approve", "active term has invalid persisted fields"))?;
+    serde_json::from_str::<Vec<String>>(&term.tags_json)
+        .map_err(|_| conflict("approve", "active term has invalid tag metadata"))?;
+
+    let concepts: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT c.id, c.status FROM crystal_concepts cc JOIN concepts c ON c.id = cc.concept_id WHERE cc.crystal_id = ? AND cc.link_type = 'defines' ORDER BY c.id",
+    )
+    .bind(term.id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|source| database("validate active approval", source))?;
+    let [(concept_id, status)] = concepts.as_slice() else {
+        return Err(conflict(
+            "approve",
+            "active term must define exactly one concept",
+        ));
+    };
+    if matches!(status.as_str(), "archived" | "merged") {
+        return Err(conflict(
+            "approve",
+            "active term points to an inactive concept",
+        ));
+    }
+
+    let source_id = term.id.to_string();
+    for (target_table, expected_id) in [("crystals", term.id), ("concepts", *concept_id)] {
+        let target_id: Option<i64> = sqlx::query_scalar(
+            "SELECT target_id FROM migration_ledger WHERE source_table = 'term_proposals' AND source_id = ? AND target_table = ?",
+        )
+        .bind(&source_id)
+        .bind(target_table)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(|source| database("validate active approval", source))?;
+        if target_id != Some(expected_id) {
+            return Err(conflict(
+                "approve",
+                "active term migration ledger is missing or inconsistent",
+            ));
+        }
+    }
+
+    for (language, facet_type, value) in [
+        (&term.source_language, "name", &parsed.source_text),
+        (&term.target_language, "rendering", &parsed.canonical),
+    ] {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM concept_facets f WHERE f.concept_id = ? AND f.language = ? AND f.facet_type = ? AND f.value = ? AND f.superseded_at IS NULL AND EXISTS(SELECT 1 FROM concept_facet_language_tags lt WHERE lt.facet_id = f.id AND lt.language_tag = ?))",
+        )
+        .bind(concept_id)
+        .bind(language)
+        .bind(facet_type)
+        .bind(value)
+        .bind(language)
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(|source| database("validate active approval", source))?;
+        if !exists {
+            return Err(conflict(
+                "approve",
+                "active term concept facets are missing or inconsistent",
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn find_or_create_concept(
     connection: &mut SqliteConnection,
     term: &TermRow,
@@ -376,7 +758,17 @@ async fn find_or_create_concept(
 ) -> Result<i64> {
     let candidates:Vec<i64>=sqlx::query_scalar("SELECT id FROM concepts WHERE canonical_name = ? AND scope_type = ? AND scope_key = ? AND status NOT IN ('archived','merged') ORDER BY id").bind(&parsed.source_text).bind(&term.scope_type).bind(&term.scope_key).fetch_all(&mut *connection).await.map_err(|source|database("approve",source))?;
     let selected = if candidates.len() == 1 {
-        candidates.first().copied()
+        let candidate = candidates[0];
+        let renderings: Vec<String> = sqlx::query_scalar(
+            "SELECT value FROM concept_facets WHERE concept_id = ? AND language = ? AND facet_type = 'rendering' AND superseded_at IS NULL ORDER BY id",
+        )
+        .bind(candidate)
+        .bind(&term.target_language)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(|source| database("approve", source))?;
+        (renderings.is_empty() || renderings.iter().any(|value| value == &parsed.canonical))
+            .then_some(candidate)
     } else if candidates.len() > 1 && !tags.is_empty() {
         let mut scored = Vec::new();
         for id in &candidates {
@@ -408,7 +800,7 @@ async fn ensure_facet(
     value: &str,
     canonical: bool,
 ) -> Result<()> {
-    let existing:Option<i64>=sqlx::query_scalar("SELECT id FROM concept_facets WHERE concept_id=? AND facet_type=? AND value=? AND superseded_at IS NULL ORDER BY id LIMIT 1").bind(concept_id).bind(facet_type).bind(value).fetch_optional(&mut *connection).await.map_err(|source|database("approve",source))?;
+    let existing:Option<i64>=sqlx::query_scalar("SELECT id FROM concept_facets WHERE concept_id=? AND language=? AND facet_type=? AND value=? AND superseded_at IS NULL ORDER BY id LIMIT 1").bind(concept_id).bind(language).bind(facet_type).bind(value).fetch_optional(&mut *connection).await.map_err(|source|database("approve",source))?;
     let id = if let Some(id) = existing {
         id
     } else {
@@ -524,9 +916,11 @@ fn valid_slug(value: &str) -> bool {
 }
 fn finding_order(kind: &str) -> u8 {
     match kind {
-        "forbidden_variant_used" => 0,
-        "canonical_missing" => 1,
-        _ => 2,
+        "ambiguous_source" => 0,
+        "conflicting_active_rules" => 1,
+        "forbidden_variant_used" => 2,
+        "canonical_missing" => 3,
+        _ => 4,
     }
 }
 fn push_ids(builder: &mut QueryBuilder<Sqlite>, ids: &[i64]) {

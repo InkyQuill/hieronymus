@@ -104,14 +104,35 @@ async fn merge_is_atomic_preserves_relationships_and_rejects_cycles() {
         .create(concept("Sense skill", "series", "series:oso"))
         .await
         .unwrap();
-    store
+    let source_ja = store
         .add_facet(source.id, "ja", "name", "センス")
+        .await
+        .unwrap();
+    let source_en = store
+        .add_facet(source.id, "en", "name", "センス")
         .await
         .unwrap();
     let duplicate = store
         .add_facet(target.id, "ja", "name", "センス")
         .await
         .unwrap();
+    store.set_canonical_facet(source_ja.id).await.unwrap();
+    store.set_canonical_facet(source_en.id).await.unwrap();
+    store.set_canonical_facet(duplicate.id).await.unwrap();
+    sqlx::query(
+        "INSERT INTO concept_facet_story_scopes(facet_id, story_scope) VALUES (?, 'volume:5')",
+    )
+    .bind(source_ja.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO concept_facet_semantic_tags(facet_id, semantic_tag) VALUES (?, 'role:skill')",
+    )
+    .bind(source_ja.id)
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO crystals(crystal_type,text,title,scope_type,scope_key,series_slug,source_language,target_language,tags_json,strength,confidence,source_credibility,rule_intent,status,created_at,updated_at) VALUES('lesson','sense','', 'series','series:oso','oso','ja','ru','[]',0.5,0.5,'observation','','active',?,?)")
         .bind(chrono::Utc::now()).bind(chrono::Utc::now()).execute(&pool).await.unwrap();
     let crystal_id: i64 = sqlx::query_scalar("SELECT max(id) FROM crystals")
@@ -135,10 +156,25 @@ async fn merge_is_atomic_preserves_relationships_and_rejects_cycles() {
         [target.id]
     );
     let active_facets = store.list_facets(target.id).await.unwrap();
-    assert_eq!(active_facets.len(), 2);
-    assert_eq!(active_facets[0].id, duplicate.id);
-    assert_eq!(active_facets[1].facet_type, "former_label");
-    assert_eq!(active_facets[1].value, "Sense");
+    assert_eq!(active_facets.len(), 3);
+    let duplicate = active_facets
+        .iter()
+        .find(|facet| facet.id == duplicate.id)
+        .unwrap();
+    assert!(duplicate.is_canonical);
+    assert_eq!(duplicate.story_scopes, ["volume:5"]);
+    assert_eq!(duplicate.semantic_tags, ["role:skill"]);
+    let moved = active_facets
+        .iter()
+        .find(|facet| facet.id == source_en.id)
+        .unwrap();
+    assert_eq!(moved.language, "en");
+    assert!(!moved.is_canonical);
+    let former = active_facets
+        .iter()
+        .find(|facet| facet.facet_type == "former_label")
+        .unwrap();
+    assert_eq!(former.value, "Sense");
     assert!(
         store
             .merge_concepts(target.id, source.id, "cycle")
@@ -250,4 +286,43 @@ async fn canonical_facets_are_unique_per_concept_language_and_kind() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn hydration_chunks_more_than_sqlite_variable_limit_without_n_plus_one() {
+    let pool = pool().await;
+    let now = chrono::Utc::now();
+    let mut transaction = pool.begin().await.unwrap();
+    for index in 0..1_001 {
+        let concept_id = sqlx::query(
+            "INSERT INTO concepts(canonical_name, created_at, updated_at) VALUES (?, ?, ?)",
+        )
+        .bind(format!("Concept {index}"))
+        .bind(now)
+        .bind(now)
+        .execute(&mut *transaction)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+        sqlx::query("INSERT INTO concept_semantic_tags(concept_id, tag, confidence, created_at) VALUES (?, ?, 0.5, ?)")
+            .bind(concept_id)
+            .bind(format!("tag:{index}"))
+            .bind(now)
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+    }
+    transaction.commit().await.unwrap();
+
+    let records = ConceptStore::new(&pool)
+        .list(ConceptFilter {
+            scope_type: "global".into(),
+            scope_key: String::new(),
+            status: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1_001);
+    assert_eq!(records[500].semantic_tags, ["tag:500"]);
+    assert_eq!(records[1_000].semantic_tags, ["tag:1000"]);
 }

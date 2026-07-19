@@ -2,6 +2,7 @@ use hiero_core::{
     db::connect_url,
     domain::{
         AddCrystalInput, ConceptStore, CreateConceptInput, CrystalStore, TermProposal, Termbase,
+        TermbaseError, TranslationContext,
     },
 };
 use uuid::Uuid;
@@ -27,10 +28,32 @@ fn proposal(source: &str, canonical: &str) -> TermProposal {
     }
 }
 
+fn proposal_for(
+    series: &str,
+    source_language: &str,
+    target_language: &str,
+    source: &str,
+    canonical: &str,
+) -> TermProposal {
+    TermProposal {
+        series_slug: series.into(),
+        source_language: source_language.into(),
+        target_language: target_language.into(),
+        category: "name".into(),
+        source_text: source.into(),
+        canonical_translation: canonical.into(),
+        tags: vec![],
+    }
+}
+
+fn context(series: &str, source: &str, target: &str) -> TranslationContext {
+    TranslationContext::new(series, source, target)
+}
+
 #[tokio::test]
 async fn proposed_terms_are_inert_until_atomic_idempotent_approval() {
     let pool = pool().await;
-    let termbase = Termbase::new(&pool);
+    let termbase = Termbase::new(&pool, context("oso", "ja", "en"));
     let id = termbase.propose(proposal("ガンツ", "Gantz")).await.unwrap();
     assert!(
         termbase
@@ -95,7 +118,7 @@ async fn contract_and_validation_use_only_active_linked_rule_intent_crystals() {
         .await
         .unwrap();
 
-    let termbase = Termbase::new(&pool);
+    let termbase = Termbase::new(&pool, context("oso", "ja", "en"));
     let contract = termbase.contract("攻撃力上昇 and Hidden").await.unwrap();
     assert_eq!(
         contract
@@ -120,7 +143,7 @@ async fn contract_and_validation_use_only_active_linked_rule_intent_crystals() {
 #[tokio::test]
 async fn ambiguous_concepts_are_not_guessed_and_longer_surfaces_win() {
     let pool = pool().await;
-    let termbase = Termbase::new(&pool);
+    let termbase = Termbase::new(&pool, context("oso", "ja", "en"));
     let first = termbase.propose(proposal("Sense", "Talent")).await.unwrap();
     let second = termbase
         .propose(proposal("Sense", "Meaning"))
@@ -146,7 +169,7 @@ async fn ambiguous_concepts_are_not_guessed_and_longer_surfaces_win() {
 #[tokio::test]
 async fn malformed_unknown_and_nonfinite_inputs_are_rejected_without_partial_writes() {
     let pool = pool().await;
-    let termbase = Termbase::new(&pool);
+    let termbase = Termbase::new(&pool, context("oso", "ja", "en"));
     for invalid in [
         proposal("", "ok"),
         proposal("ok", ""),
@@ -167,7 +190,7 @@ async fn concurrent_and_cancelled_approval_is_serialized_and_rollback_safe() {
     use std::time::Duration;
 
     let pool = pool().await;
-    let termbase = Termbase::new(&pool);
+    let termbase = Termbase::new(&pool, context("oso", "ja", "en"));
     let id = termbase.propose(proposal("ユン", "Yun")).await.unwrap();
     let first = termbase.approve_term(id);
     let second = termbase.approve_term(id);
@@ -199,7 +222,7 @@ async fn concurrent_and_cancelled_approval_is_serialized_and_rollback_safe() {
 #[tokio::test]
 async fn contract_serialization_and_fts_integrity_are_stable() {
     let pool = pool().await;
-    let termbase = Termbase::new(&pool);
+    let termbase = Termbase::new(&pool, context("oso", "ja", "en"));
     let id = termbase.propose(proposal("ガンツ", "Gantz")).await.unwrap();
     termbase.approve_term(id).await.unwrap();
     let contract = termbase.contract("ガンツ").await.unwrap();
@@ -215,4 +238,238 @@ async fn contract_serialization_and_fts_integrity_are_stable() {
         .execute(&pool)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn context_blocks_cross_series_and_language_leakage_but_allows_global_fallback() {
+    let pool = pool().await;
+    let oso = Termbase::new(&pool, context("oso", "ja", "en"));
+    let other = Termbase::new(&pool, context("other", "ja", "en"));
+    let french = Termbase::new(&pool, context("oso", "en", "fr"));
+    let oso_id = oso.propose(proposal("共通", "Shared")).await.unwrap();
+    let other_id = other
+        .propose(proposal_for("other", "ja", "en", "他", "Other"))
+        .await
+        .unwrap();
+    let french_id = french
+        .propose(proposal_for("oso", "en", "fr", "English", "Français"))
+        .await
+        .unwrap();
+    oso.approve_term(oso_id).await.unwrap();
+    other.approve_term(other_id).await.unwrap();
+    french.approve_term(french_id).await.unwrap();
+
+    let concepts = ConceptStore::new(&pool);
+    let crystals = CrystalStore::new(&pool);
+    let global_concept = concepts
+        .create(CreateConceptInput {
+            canonical_name: "Global".into(),
+            scope_type: "global".into(),
+            scope_key: String::new(),
+        })
+        .await
+        .unwrap();
+    let global_id = crystals
+        .add(AddCrystalInput {
+            crystal_type: "lesson".into(),
+            text: "Global is translated as Universal.".into(),
+            source_credibility: "user_rule".into(),
+            rule_intent: "name".into(),
+            strength: 0.9,
+            confidence: 0.9,
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
+    concepts
+        .link_crystal(global_id, global_concept.id, "defines", 0.95)
+        .await
+        .unwrap();
+
+    let terms = oso.contract("共通 他 English Global").await.unwrap();
+    assert_eq!(
+        terms.iter().map(|term| term.crystal_id).collect::<Vec<_>>(),
+        [oso_id, global_id]
+    );
+}
+
+#[tokio::test]
+async fn active_reapproval_rejects_archived_or_corrupted_graph_without_replacement() {
+    let pool = pool().await;
+    let termbase = Termbase::new(&pool, context("oso", "ja", "en"));
+    let archived_rule = termbase.propose(proposal("ユン", "Yun")).await.unwrap();
+    termbase.approve_term(archived_rule).await.unwrap();
+    let archived_concept: i64 = sqlx::query_scalar(
+        "SELECT concept_id FROM crystal_concepts WHERE crystal_id = ? AND link_type = 'defines'",
+    )
+    .bind(archived_rule)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE concepts SET status = 'archived' WHERE id = ?")
+        .bind(archived_concept)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        termbase.approve_term(archived_rule).await,
+        Err(TermbaseError::Conflict { .. })
+    ));
+    let concept_count: i64 = sqlx::query_scalar("SELECT count(*) FROM concepts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(concept_count, 1);
+
+    let corrupt_rule = termbase.propose(proposal("センス", "Sense")).await.unwrap();
+    termbase.approve_term(corrupt_rule).await.unwrap();
+    sqlx::query("DELETE FROM migration_ledger WHERE source_table = 'term_proposals' AND source_id = ? AND target_table = 'concepts'")
+        .bind(corrupt_rule.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        termbase.approve_term(corrupt_rule).await,
+        Err(TermbaseError::Conflict { .. })
+    ));
+    let links: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM crystal_concepts WHERE crystal_id = ? AND link_type = 'defines'",
+    )
+    .bind(corrupt_rule)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(links, 1);
+}
+
+#[tokio::test]
+async fn validation_reports_ambiguity_and_same_concept_conflicts_without_enforcement() {
+    let pool = pool().await;
+    let termbase = Termbase::new(&pool, context("oso", "ja", "en"));
+    let talent = termbase.propose(proposal("Sense", "Talent")).await.unwrap();
+    let meaning = termbase
+        .propose(proposal("Sense", "Meaning"))
+        .await
+        .unwrap();
+    termbase.approve_term(talent).await.unwrap();
+    termbase.approve_term(meaning).await.unwrap();
+    let ambiguous = termbase
+        .validate("unchanged", Some("Sense"), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&ambiguous).unwrap(),
+        serde_json::json!([{
+            "crystal_id": talent.min(meaning),
+            "kind": "ambiguous_source",
+            "severity": "warning",
+            "expected": "Meaning, Talent",
+            "observed": "Sense",
+            "detail": "source form maps to multiple active rule concepts; add context before enforcing a rendering"
+        }])
+    );
+
+    let concept_id: i64 = sqlx::query_scalar(
+        "SELECT concept_id FROM crystal_concepts WHERE crystal_id = ? AND link_type = 'defines'",
+    )
+    .bind(talent)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM crystal_concepts WHERE crystal_id = ?")
+        .bind(meaning)
+        .execute(&pool)
+        .await
+        .unwrap();
+    ConceptStore::new(&pool)
+        .link_crystal(meaning, concept_id, "defines", 0.95)
+        .await
+        .unwrap();
+    let conflict = termbase
+        .validate("unchanged", Some("Sense"), None)
+        .await
+        .unwrap();
+    assert_eq!(conflict.len(), 1);
+    assert_eq!(conflict[0].kind, "conflicting_active_rules");
+    assert_eq!(conflict[0].expected, "Meaning, Talent");
+    assert!(termbase.contract("Sense").await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn story_context_resolves_ambiguity_and_multilingual_facets_respect_direction() {
+    let pool = pool().await;
+    let base = Termbase::new(&pool, context("oso", "ja", "en"));
+    let scoped = base.propose(proposal("Sense", "Talent")).await.unwrap();
+    let unscoped = base.propose(proposal("Sense", "Meaning")).await.unwrap();
+    base.approve_term(scoped).await.unwrap();
+    base.approve_term(unscoped).await.unwrap();
+    let scoped_concept: i64 = sqlx::query_scalar(
+        "SELECT concept_id FROM crystal_concepts WHERE crystal_id = ? AND link_type = 'defines'",
+    )
+    .bind(scoped)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let source_facet: i64 = sqlx::query_scalar(
+        "SELECT id FROM concept_facets WHERE concept_id = ? AND facet_type = 'name' ORDER BY id LIMIT 1",
+    )
+    .bind(scoped_concept)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO concept_facet_story_scopes(facet_id, story_scope) VALUES (?, 'volume:5')",
+    )
+    .bind(source_facet)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let concepts = ConceptStore::new(&pool);
+    concepts
+        .add_facet(scoped_concept, "ja", "name", "センス")
+        .await
+        .unwrap();
+    concepts
+        .add_facet(scoped_concept, "en", "name", "EnglishAlias")
+        .await
+        .unwrap();
+    concepts
+        .add_facet(scoped_concept, "ru", "name", "ThirdAlias")
+        .await
+        .unwrap();
+    concepts
+        .add_facet(scoped_concept, "en", "rendering", "TargetOnly")
+        .await
+        .unwrap();
+
+    let story = vec!["volume:5".to_owned()];
+    let contextual = Termbase::new(
+        &pool,
+        context("oso", "ja", "en").with_metadata(&[], &story, &[], &[]),
+    );
+    let terms = contextual
+        .contract("Sense センス ThirdAlias EnglishAlias TargetOnly")
+        .await
+        .unwrap();
+    assert!(terms.iter().all(|term| term.crystal_id == scoped));
+    assert_eq!(
+        terms
+            .iter()
+            .map(|term| term.source_text.as_str())
+            .collect::<Vec<_>>(),
+        ["Sense", "ThirdAlias", "センス"]
+    );
+
+    let other_story = vec!["volume:6".to_owned()];
+    let mismatched = Termbase::new(
+        &pool,
+        context("oso", "ja", "en").with_metadata(&[], &other_story, &[], &[]),
+    );
+    assert!(
+        mismatched
+            .contract("センス ThirdAlias")
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

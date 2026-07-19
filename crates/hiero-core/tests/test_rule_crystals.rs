@@ -32,7 +32,26 @@ fn rejects_ambiguous_or_noncanonical_free_text_without_guessing() {
         "A is translated as .",
         " is translated as B.",
         "A is translated as B。",
+        "A is translated as B..",
+        "A is translated as B?",
+        "A is translated as B!",
+        "A is translated as B, not C..",
+        "A is translated as B, not C?",
+        "A is translated as B, not C!",
+        "A is translated as B, not C。",
     ] {
         assert_eq!(parse_rule(text), None, "{text:?} must be rejected");
     }
+}
+
+#[test]
+fn preserves_supported_internal_punctuation() {
+    assert_eq!(
+        parse_rule("Mr. A is translated as B/C, not D-E."),
+        Some(ParsedRule {
+            source_text: "Mr. A".into(),
+            canonical: "B/C".into(),
+            forbidden: vec!["D-E".into()],
+        })
+    );
 }

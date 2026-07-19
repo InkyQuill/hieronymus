@@ -33,9 +33,11 @@ pub fn parse_rule(text: &str) -> Option<ParsedRule> {
     if source.is_empty()
         || canonical.is_empty()
         || forbidden.iter().any(|value| value.is_empty())
-        || source.ends_with('。')
-        || canonical.ends_with('。')
-        || forbidden.iter().any(|value| value.ends_with('。'))
+        || has_terminal_punctuation(source)
+        || has_terminal_punctuation(canonical)
+        || forbidden
+            .iter()
+            .any(|value| has_terminal_punctuation(value))
     {
         return None;
     }
@@ -44,4 +46,8 @@ pub fn parse_rule(text: &str) -> Option<ParsedRule> {
         canonical: canonical.to_owned(),
         forbidden,
     })
+}
+
+fn has_terminal_punctuation(value: &str) -> bool {
+    value.ends_with(['.', '?', '!', '。', '！', '？', '｡', '؟', '։'])
 }
