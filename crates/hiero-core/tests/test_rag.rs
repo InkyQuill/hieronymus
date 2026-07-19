@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, fs, io::Write, path::Path};
 use hiero_core::{
     db::connect_url,
     rag::{
-        ImportOptions, MAX_RAG_CHUNK_CHARS, RagError, RagStore, SearchOptions, SourceType,
-        load_rag_file, normalize_rag_source, split_chunk_text,
+        ImportOptions, MAX_RAG_CHUNK_CHARS, MAX_RAG_METADATA_BYTES, RagError, RagStore,
+        SearchOptions, SourceType, load_rag_file, normalize_rag_source, split_chunk_text,
     },
 };
 use sqlx::Row;
@@ -139,6 +139,54 @@ fn oversized_glossary_entries_are_split_without_losing_metadata() {
             .iter()
             .all(|chunk| chunk.metadata["source"] == "Sense")
     );
+}
+
+#[test]
+fn oversized_glossary_metadata_is_rejected_before_split_amplification() {
+    let dir = tempdir().unwrap();
+    let oversized = "x".repeat(MAX_RAG_METADATA_BYTES + 1);
+    let fixtures = [
+        (
+            "large.json",
+            serde_json::to_vec(&serde_json::json!([{"note": oversized.clone()}])).unwrap(),
+        ),
+        (
+            "large.csv",
+            format!("source,note\nSense,{oversized}\n").into_bytes(),
+        ),
+    ];
+    for (name, bytes) in fixtures {
+        let path = dir.path().join(name);
+        fs::write(&path, bytes).unwrap();
+        assert!(matches!(
+            load_rag_file(&path, SourceType::Auto),
+            Err(RagError::ResourceLimit {
+                resource: "chunk metadata bytes",
+                limit: MAX_RAG_METADATA_BYTES,
+            })
+        ));
+    }
+}
+
+#[test]
+fn overlong_unicode_word_splits_exactly_without_losing_scalars() {
+    let input = "界".repeat(MAX_RAG_CHUNK_CHARS * 4 + 17);
+    let chunks = split_chunk_text(&input);
+    assert_eq!(chunks.len(), 5);
+    assert_eq!(
+        chunks
+            .iter()
+            .map(|chunk| chunk.chars().count())
+            .collect::<Vec<_>>(),
+        vec![
+            MAX_RAG_CHUNK_CHARS,
+            MAX_RAG_CHUNK_CHARS,
+            MAX_RAG_CHUNK_CHARS,
+            MAX_RAG_CHUNK_CHARS,
+            17
+        ]
+    );
+    assert_eq!(chunks.concat(), input);
 }
 
 #[test]

@@ -13,6 +13,7 @@ use super::{
 
 pub const MAX_RAG_FILE_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_RAG_CHUNKS: usize = 100_000;
+pub const MAX_RAG_METADATA_BYTES: usize = 16 * 1024;
 
 pub fn load_rag_file(path: &Path, requested: SourceType) -> Result<ParsedRagFile, RagError> {
     let file = fs::File::open(path).map_err(|source| RagError::Io {
@@ -399,6 +400,12 @@ fn glossary_chunk(
             message: "empty glossary entry".into(),
         });
     }
+    if retained_metadata_bytes(&metadata) > MAX_RAG_METADATA_BYTES {
+        return Err(RagError::ResourceLimit {
+            resource: "chunk metadata bytes",
+            limit: MAX_RAG_METADATA_BYTES,
+        });
+    }
     let text = metadata
         .iter()
         .map(|(key, value)| {
@@ -418,6 +425,33 @@ fn glossary_chunk(
         location,
         metadata,
     })
+}
+
+fn retained_metadata_bytes(metadata: &BTreeMap<String, serde_json::Value>) -> usize {
+    let mut total: usize = 0;
+    for (key, value) in metadata {
+        total = total.saturating_add(key.len());
+        total = total.saturating_add(retained_value_bytes(value));
+        if total > MAX_RAG_METADATA_BYTES {
+            break;
+        }
+    }
+    total
+}
+
+fn retained_value_bytes(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => 0,
+        serde_json::Value::String(value) => value.len(),
+        serde_json::Value::Array(values) => values.iter().fold(0usize, |total, value| {
+            total.saturating_add(retained_value_bytes(value))
+        }),
+        serde_json::Value::Object(values) => values.iter().fold(0usize, |total, (key, value)| {
+            total
+                .saturating_add(key.len())
+                .saturating_add(retained_value_bytes(value))
+        }),
+    }
 }
 
 fn parse_error(path: &Path, error: impl std::fmt::Display) -> RagError {

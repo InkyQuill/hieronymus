@@ -314,18 +314,29 @@ fn verify_managed_artifact(path: &Path, expected: &[u8]) -> Result<(), RagError>
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     let file = options.open(path).map_err(|source| RagError::Io {
         path: path.to_owned(),
         source,
     })?;
-    if !file
-        .metadata()
-        .map_err(|source| RagError::Io {
-            path: path.to_owned(),
-            source,
-        })?
-        .is_file()
-    {
+    let metadata = file.metadata().map_err(|source| RagError::Io {
+        path: path.to_owned(),
+        source,
+    })?;
+    #[cfg(windows)]
+    let is_reparse_point = {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    };
+    #[cfg(not(windows))]
+    let is_reparse_point = false;
+    if !metadata.is_file() || is_reparse_point {
         return Err(RagError::UnsafeManagedPath(path.to_owned()));
     }
     let mut actual = Vec::with_capacity(expected.len().saturating_add(1));
@@ -363,34 +374,38 @@ fn html_to_markdown_bounded(input: &str, limit: usize) -> Result<String, RagErro
         {
             continue;
         }
-        let text = if name == "table" {
-            table_markdown(&element)
-        } else {
-            inline_markdown(&element.inner_html())
-        };
+        if name == "table" {
+            table_markdown_bounded(&element, &mut output, limit)?;
+            continue;
+        }
+        let remaining = limit.saturating_sub(output.len());
+        let text = inline_markdown_bounded(&element.inner_html(), remaining)
+            .map_err(|error| normalize_converted_limit(error, limit))?;
         if text.is_empty() {
             continue;
         }
-        let block = match name {
-            "h1" => format!("# {text}"),
-            "h2" => format!("## {text}"),
-            "h3" => format!("### {text}"),
-            "h4" => format!("#### {text}"),
-            "h5" => format!("##### {text}"),
-            "h6" => format!("###### {text}"),
-            "li" => format!("- {text}"),
-            "pre" => format!("```\n{text}\n```"),
-            _ => text,
-        };
         if !output.is_empty() {
             push_bounded_with_limit(&mut output, "\n\n", limit)?;
         }
-        push_bounded_with_limit(&mut output, &block, limit)?;
+        let (prefix, suffix) = match name {
+            "h1" => ("# ", ""),
+            "h2" => ("## ", ""),
+            "h3" => ("### ", ""),
+            "h4" => ("#### ", ""),
+            "h5" => ("##### ", ""),
+            "h6" => ("###### ", ""),
+            "li" => ("- ", ""),
+            "pre" => ("```\n", "\n```"),
+            _ => ("", ""),
+        };
+        push_bounded_with_limit(&mut output, prefix, limit)?;
+        push_bounded_with_limit(&mut output, &text, limit)?;
+        push_bounded_with_limit(&mut output, suffix, limit)?;
     }
     Ok(output)
 }
 
-fn inline_markdown(html: &str) -> String {
+fn inline_markdown_bounded(html: &str, limit: usize) -> Result<String, RagError> {
     static LINK: OnceLock<Regex> = OnceLock::new();
     static STRONG: OnceLock<Regex> = OnceLock::new();
     static EMPHASIS: OnceLock<Regex> = OnceLock::new();
@@ -402,59 +417,104 @@ fn inline_markdown(html: &str) -> String {
         })
         .replace_all(html, "[$2]($1)")
         .into_owned();
+    ensure_converted_limit(value.len(), limit)?;
     value = STRONG
         .get_or_init(|| Regex::new(r"(?is)</?(?:strong|b)[^>]*>").expect("constant regex"))
         .replace_all(&value, "**")
         .into_owned();
+    ensure_converted_limit(value.len(), limit)?;
     value = EMPHASIS
         .get_or_init(|| Regex::new(r"(?is)</?(?:em|i)[^>]*>").expect("constant regex"))
         .replace_all(&value, "*")
         .into_owned();
+    ensure_converted_limit(value.len(), limit)?;
     value = BREAK
         .get_or_init(|| Regex::new(r"(?is)<br\s*/?>").expect("constant regex"))
         .replace_all(&value, "\n")
         .into_owned();
-    Html::parse_fragment(&value)
-        .root_element()
-        .text()
-        .collect::<Vec<_>>()
-        .join("")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    ensure_converted_limit(value.len(), limit)?;
+    let fragment = Html::parse_fragment(&value);
+    let mut output = String::new();
+    for text in fragment.root_element().text() {
+        for word in text.split_whitespace() {
+            if !output.is_empty() {
+                push_bounded_with_limit(&mut output, " ", limit)?;
+            }
+            push_bounded_with_limit(&mut output, word, limit)?;
+        }
+    }
+    Ok(output)
 }
 
-fn table_markdown(table: &ElementRef<'_>) -> String {
+fn table_markdown_bounded(
+    table: &ElementRef<'_>,
+    output: &mut String,
+    limit: usize,
+) -> Result<(), RagError> {
     let row_selector = Selector::parse("tr").expect("constant selector");
     let cell_selector = Selector::parse("th, td").expect("constant selector");
-    let rows = table
-        .select(&row_selector)
-        .map(|row| {
-            row.select(&cell_selector)
-                .map(|cell| inline_markdown(&cell.inner_html()))
-                .collect::<Vec<_>>()
-        })
-        .filter(|row| !row.is_empty())
-        .collect::<Vec<_>>();
-    if rows.is_empty() {
-        return String::new();
+    let mut wrote_row = false;
+    for row in table.select(&row_selector) {
+        let mut cells = row.select(&cell_selector).peekable();
+        if cells.peek().is_none() {
+            continue;
+        }
+        if !wrote_row {
+            if !output.is_empty() {
+                push_bounded_with_limit(output, "\n\n", limit)?;
+            }
+        } else {
+            push_bounded_with_limit(output, "\n", limit)?;
+        }
+        push_bounded_with_limit(output, "| ", limit)?;
+        let mut cell_count = 0;
+        for cell in cells {
+            if cell_count > 0 {
+                push_bounded_with_limit(output, " | ", limit)?;
+            }
+            let remaining = limit.saturating_sub(output.len());
+            let text = inline_markdown_bounded(&cell.inner_html(), remaining)
+                .map_err(|error| normalize_converted_limit(error, limit))?;
+            push_bounded_with_limit(output, &text, limit)?;
+            cell_count += 1;
+        }
+        push_bounded_with_limit(output, " |", limit)?;
+        if !wrote_row {
+            push_bounded_with_limit(output, "\n| ", limit)?;
+            for index in 0..cell_count {
+                if index > 0 {
+                    push_bounded_with_limit(output, " | ", limit)?;
+                }
+                push_bounded_with_limit(output, "---", limit)?;
+            }
+            push_bounded_with_limit(output, " |", limit)?;
+        }
+        wrote_row = true;
     }
-    let mut output = Vec::new();
-    output.push(format!("| {} |", rows[0].join(" | ")));
-    output.push(format!(
-        "| {} |",
-        rows[0]
-            .iter()
-            .map(|_| "---")
-            .collect::<Vec<_>>()
-            .join(" | ")
-    ));
-    output.extend(
-        rows.iter()
-            .skip(1)
-            .map(|row| format!("| {} |", row.join(" | "))),
-    );
-    output.join("\n")
+    Ok(())
+}
+
+fn ensure_converted_limit(length: usize, limit: usize) -> Result<(), RagError> {
+    if length > limit {
+        return Err(RagError::ResourceLimit {
+            resource: "converted text bytes",
+            limit,
+        });
+    }
+    Ok(())
+}
+
+fn normalize_converted_limit(error: RagError, limit: usize) -> RagError {
+    match error {
+        RagError::ResourceLimit {
+            resource: "converted text bytes",
+            ..
+        } => RagError::ResourceLimit {
+            resource: "converted text bytes",
+            limit,
+        },
+        error => error,
+    }
 }
 
 fn docx_to_markdown(bytes: &[u8], path: &Path) -> Result<String, RagError> {
@@ -721,5 +781,22 @@ mod tests {
                 limit: 8,
             })
         ));
+    }
+
+    #[test]
+    fn table_builder_stops_while_collecting_an_oversized_cell() {
+        let document =
+            Html::parse_fragment("<table><tr><td>abcdefghijklmnopqrstuvwxyz</td></tr></table>");
+        let selector = Selector::parse("table").unwrap();
+        let table = document.select(&selector).next().unwrap();
+        let mut output = String::new();
+        assert!(matches!(
+            table_markdown_bounded(&table, &mut output, 16),
+            Err(RagError::ResourceLimit {
+                resource: "converted text bytes",
+                limit: 16,
+            })
+        ));
+        assert!(output.len() <= 16);
     }
 }

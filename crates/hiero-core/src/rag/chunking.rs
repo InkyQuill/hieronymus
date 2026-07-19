@@ -69,11 +69,14 @@ fn emit_word_chunks<E>(
         if word.chars().count() > MAX_RAG_CHUNK_CHARS {
             emit_current(&mut current, emit)?;
             let mut part = String::new();
+            let mut part_chars = 0;
             for character in word.chars() {
-                if part.chars().count() == MAX_RAG_CHUNK_CHARS {
+                if part_chars == MAX_RAG_CHUNK_CHARS {
                     emit(std::mem::take(&mut part))?;
+                    part_chars = 0;
                 }
                 part.push(character);
+                part_chars += 1;
             }
             emit_current(&mut part, emit)?;
             continue;
