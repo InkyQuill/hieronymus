@@ -17,6 +17,7 @@ const MAX_SEARCH_LIMIT: usize = 50;
 const CRYSTAL_COLUMNS: &str = "id, crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, is_inferred, malformed_penalty, supersedes_crystal_id, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at";
 const SELECT_CRYSTAL_BY_ID: &str = "SELECT id, crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, is_inferred, malformed_penalty, supersedes_crystal_id, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at FROM crystals WHERE id = ?";
 const SEARCH_CRYSTALS: &str = "SELECT crystals.id, crystals.crystal_type, crystals.text, crystals.title, crystals.scope_type, crystals.scope_key, crystals.series_slug, crystals.source_language, crystals.target_language, crystals.tags_json, crystals.strength, crystals.confidence, crystals.source_credibility, crystals.rule_intent, crystals.soft_origin, crystals.is_inferred, crystals.malformed_penalty, crystals.supersedes_crystal_id, crystals.status, crystals.created_cycle, crystals.last_activated_cycle, crystals.last_reinforced_cycle, crystals.created_at, crystals.updated_at, (max(-bm25(crystals_fts), 0.0) + crystals.strength * 0.35 + crystals.confidence * 0.20 + CASE WHEN crystals.scope_type = 'series' THEN 0.05 ELSE 0.0 END) AS search_score FROM crystals_fts JOIN crystals ON crystals.id = crystals_fts.rowid WHERE crystals_fts MATCH ? AND crystals.status IN ('active', 'candidate') AND ((crystals.scope_type = 'series' AND crystals.series_slug = ? AND crystals.scope_key = ?) OR (crystals.scope_type = 'global' AND crystals.scope_key = '' AND crystals.series_slug = '')) AND (crystals.source_language = ? OR crystals.source_language = '') AND (crystals.target_language = ? OR crystals.target_language = '') ORDER BY search_score DESC, crystals.id ASC LIMIT ?";
+const SEARCH_ACTIVE_RULE_INTENT_CRYSTALS: &str = "SELECT crystals.id, crystals.crystal_type, crystals.text, crystals.title, crystals.scope_type, crystals.scope_key, crystals.series_slug, crystals.source_language, crystals.target_language, crystals.tags_json, crystals.strength, crystals.confidence, crystals.source_credibility, crystals.rule_intent, crystals.soft_origin, crystals.is_inferred, crystals.malformed_penalty, crystals.supersedes_crystal_id, crystals.status, crystals.created_cycle, crystals.last_activated_cycle, crystals.last_reinforced_cycle, crystals.created_at, crystals.updated_at, (max(-bm25(crystals_fts), 0.0) + crystals.strength * 0.35 + crystals.confidence * 0.20 + CASE WHEN crystals.scope_type = 'series' THEN 0.05 ELSE 0.0 END) AS search_score FROM crystals_fts JOIN crystals ON crystals.id = crystals_fts.rowid WHERE crystals_fts MATCH ? AND crystals.status = 'active' AND trim(crystals.rule_intent) <> '' AND ((crystals.scope_type = 'series' AND crystals.series_slug = ? AND crystals.scope_key = ?) OR (crystals.scope_type = 'global' AND crystals.scope_key = '' AND crystals.series_slug = '')) AND (crystals.source_language = ? OR crystals.source_language = '') AND (crystals.target_language = ? OR crystals.target_language = '') ORDER BY search_score DESC, crystals.id ASC LIMIT ?";
 const METADATA_CHUNK_SIZE: usize = 500;
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -244,6 +245,55 @@ impl<'a> CrystalStore<'a> {
         .map_err(|source| database("list linked crystals", source))
     }
 
+    pub(crate) async fn linked_bounded(
+        &self,
+        crystal_id: i64,
+        limit: usize,
+    ) -> Result<Vec<(Crystal, CrystalLinkRecord, f64)>> {
+        let limit = bounded_limit(limit)?;
+        let mut query = QueryBuilder::<Sqlite>::new(format!(
+            "SELECT {CRYSTAL_COLUMNS}, links.source_crystal_id, links.target_crystal_id, links.link_type FROM crystal_links AS links JOIN crystals ON crystals.id = CASE WHEN links.source_crystal_id = "
+        ));
+        query
+            .push_bind(crystal_id)
+            .push(" THEN links.target_crystal_id ELSE links.source_crystal_id END WHERE links.source_crystal_id = ")
+            .push_bind(crystal_id)
+            .push(" OR links.target_crystal_id = ")
+            .push_bind(crystal_id)
+            .push(" ORDER BY crystals.id, links.source_crystal_id, links.target_crystal_id, links.link_type LIMIT ")
+            .push_bind(limit as i64);
+        let rows = query
+            .build()
+            .fetch_all(self.pool)
+            .await
+            .map_err(|source| database("list bounded linked crystals", source))?;
+        let mut records = Vec::with_capacity(rows.len());
+        let mut links = Vec::with_capacity(rows.len());
+        for row in rows {
+            records.push(
+                CrystalRecord::from_row(&row)
+                    .map_err(|source| database("decode linked crystal", source))?,
+            );
+            links.push(CrystalLinkRecord {
+                source_crystal_id: row
+                    .try_get("source_crystal_id")
+                    .map_err(|source| database("decode linked source", source))?,
+                target_crystal_id: row
+                    .try_get("target_crystal_id")
+                    .map_err(|source| database("decode linked target", source))?,
+                link_type: row
+                    .try_get("link_type")
+                    .map_err(|source| database("decode linked type", source))?,
+            });
+        }
+        Ok(hydrate(self.pool, records)
+            .await?
+            .into_iter()
+            .zip(links)
+            .map(|(crystal, link)| (crystal, link, 1.0))
+            .collect())
+    }
+
     pub async fn validate_rule(&self, id: i64) -> Result<ValidationReport> {
         let crystal = self.get(id).await?;
         let mut findings = Vec::new();
@@ -374,6 +424,21 @@ impl<'a> CrystalStore<'a> {
         self.search_expression(ctx, &expression, limit).await
     }
 
+    pub(crate) async fn search_rule_intent_scored(
+        &self,
+        ctx: &TranslationContext,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<(Crystal, f64)>> {
+        let expression = search_expression(query);
+        if expression.is_empty() {
+            bounded_limit(limit)?;
+            return Ok(Vec::new());
+        }
+        self.search_expression_with_sql(ctx, &expression, limit, SEARCH_ACTIVE_RULE_INTENT_CRYSTALS)
+            .await
+    }
+
     /// Executes an intentional raw FTS5 expression. Use [`Self::search`] for untrusted plain text.
     pub async fn search_expression(
         &self,
@@ -381,12 +446,23 @@ impl<'a> CrystalStore<'a> {
         expression: &str,
         limit: usize,
     ) -> Result<Vec<(Crystal, f64)>> {
+        self.search_expression_with_sql(ctx, expression, limit, SEARCH_CRYSTALS)
+            .await
+    }
+
+    async fn search_expression_with_sql(
+        &self,
+        ctx: &TranslationContext,
+        expression: &str,
+        limit: usize,
+        sql: &'static str,
+    ) -> Result<Vec<(Crystal, f64)>> {
         let limit = bounded_limit(limit)?;
         validate_context(ctx)?;
         if expression.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query(SEARCH_CRYSTALS)
+        let rows = sqlx::query(sql)
             .bind(expression)
             .bind(&ctx.series_slug)
             .bind(&ctx.scope_key)
