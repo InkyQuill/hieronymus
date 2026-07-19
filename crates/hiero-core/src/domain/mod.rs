@@ -1,12 +1,15 @@
 mod concepts;
 mod crystals;
+mod feedback;
 mod models;
 mod rule_parser;
+mod scoring;
 mod termbase;
 mod workspace;
 
 pub use concepts::{ConceptError, ConceptProposalStore, ConceptStore};
 pub use crystals::{CrystalStore, StoreError, search_expression};
+pub use feedback::{FeedbackError, FeedbackEvent, FeedbackStore};
 pub use models::{
     AddCrystalInput, AddMemoryInput, AddMemoryResult, Concept, ConceptFacet, ConceptFilter,
     ConceptProposal, ContractTerm, CreateConceptInput, CreateProposalInput, Crystal, MemorySource,
@@ -14,5 +17,6 @@ pub use models::{
     TranslationContext, ValidationFinding, ValidationReport,
 };
 pub use rule_parser::{ParsedRule, parse_rule};
+pub use scoring::{IMMEDIATE_EVENT_DELTAS, PASSIVE_EVENT_DELTAS, ScoreDelta, apply_score_delta};
 pub use termbase::{Termbase, TermbaseError};
 pub use workspace::{WorkspaceError, WorkspaceStore, complete_stale_sessions};
