@@ -44,6 +44,8 @@ frontend/coverage/
 *.log
 tmp/
 temp/
+/semantic-index/
+/embedding-models/
 
 # Project-local worktrees
 .worktrees/
