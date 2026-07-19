@@ -13,7 +13,7 @@ use hiero_core::{
         acquire_dream_cycle_lock, dream_cycle_paths,
     },
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 fn config(root: &TempDir) -> HieronymusConfig {
@@ -199,6 +199,34 @@ fn data_root_reached_through_symlink_ancestor_is_rejected() {
     assert!(acquire_dream_cycle_lock(&config, "manual", false).is_err());
 }
 
+#[cfg(unix)]
+#[test]
+fn nested_symlink_ancestor_is_rejected_without_touching_external_directory() {
+    use std::os::unix::fs::symlink;
+
+    let outer = TempDir::new().unwrap();
+    let external = TempDir::new().unwrap();
+    let external_child = external.path().join("child");
+    fs::create_dir(&external_child).unwrap();
+    let alias = outer.path().join("alias");
+    symlink(external.path(), &alias).unwrap();
+    let config = HieronymusConfig::load(Some(alias.join("child"))).unwrap();
+
+    assert!(acquire_dream_cycle_lock(&config, "manual", false).is_err());
+    assert!(fs::read_dir(external_child).unwrap().next().is_none());
+}
+
+#[test]
+fn windows_lock_validation_uses_the_shared_file_identity_helper() {
+    let lock_source = include_str!("../src/dreaming/lock.rs");
+    let identity_source = include_str!("../src/file_identity.rs");
+
+    assert!(lock_source.contains("file_identity::{"));
+    assert!(identity_source.contains("volume_serial_number"));
+    assert!(identity_source.contains("file_index"));
+    assert!(identity_source.contains("number_of_links"));
+}
+
 fn child_command(root: &std::path::Path, mode: &str) -> Command {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
@@ -328,6 +356,195 @@ async fn audit_lifecycle_is_transactional_redacted_and_monotonic() {
             .fail_run(run.id, DreamRunCompletion::new(2, 1, 0), "late")
             .await
             .is_err()
+    );
+}
+
+#[tokio::test]
+async fn audit_redacts_extended_secret_keys_and_sensitive_string_values() {
+    let root = TempDir::new().unwrap();
+    let config = config(&root);
+    let pool = db::connect(&config).await.unwrap();
+    let store = DreamAuditStore::new(&pool);
+    let run = store.start_run(49, "fake").await.unwrap();
+    store
+        .record(
+            run.id,
+            None,
+            "secrets",
+            "safe",
+            &json!({
+                "password": "p",
+                "client-secret": "c",
+                "private_key": "k",
+                "sessionCookie": "cookie",
+                "credential": "cred",
+                "nested": [{"accessKey": "key"}],
+                "message": "Authorization: Bearer plain-value-secret",
+                "safe": "ordinary"
+            }),
+        )
+        .await
+        .unwrap();
+
+    let payload: Value = serde_json::from_str(
+        &sqlx::query_scalar::<_, String>(
+            "SELECT payload_json FROM dream_audit_entries WHERE event_type = 'secrets'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(payload["safe"], "ordinary");
+    assert_eq!(payload["password"], "[REDACTED]");
+    assert_eq!(payload["client-secret"], "[REDACTED]");
+    assert_eq!(payload["private_key"], "[REDACTED]");
+    assert_eq!(payload["sessionCookie"], "[REDACTED]");
+    assert_eq!(payload["credential"], "[REDACTED]");
+    assert_eq!(payload["nested"][0]["accessKey"], "[REDACTED]");
+    assert_eq!(payload["message"], "[REDACTED]");
+}
+
+#[tokio::test]
+async fn audit_rejects_deep_wide_and_huge_values_before_append() {
+    let root = TempDir::new().unwrap();
+    let config = config(&root);
+    let pool = db::connect(&config).await.unwrap();
+    let store = DreamAuditStore::new(&pool);
+    let run = store.start_run(50, "fake").await.unwrap();
+
+    let mut deep = Value::Null;
+    for _ in 0..80 {
+        deep = json!({"next": deep});
+    }
+    let wide = Value::Array((0..5_000).map(|_| Value::Null).collect());
+    let huge_string = json!({"safe": "x".repeat(70_000)});
+    let huge_key = Value::Object([("k".repeat(70_000), Value::Null)].into_iter().collect());
+    for (event, payload) in [
+        ("too_deep", deep),
+        ("too_wide", wide),
+        ("huge_string", huge_string),
+        ("huge_key", huge_key),
+    ] {
+        assert!(
+            store
+                .record(run.id, None, event, "bounded", &payload)
+                .await
+                .is_err()
+        );
+    }
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM dream_audit_entries WHERE event_type IN ('too_deep', 'too_wide', 'huge_string', 'huge_key')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn error_redaction_scans_full_input_then_truncates_on_utf8_boundary() {
+    let root = TempDir::new().unwrap();
+    let config = config(&root);
+    let pool = db::connect(&config).await.unwrap();
+    let store = DreamAuditStore::new(&pool);
+
+    let late_secret_run = store.start_run(51, "fake").await.unwrap();
+    let late_secret = format!("{} client_secret=late", "x".repeat(5_000));
+    store
+        .fail_run(
+            late_secret_run.id,
+            DreamRunCompletion::new(0, 0, 0),
+            &late_secret,
+        )
+        .await
+        .unwrap();
+    let late: String = sqlx::query_scalar("SELECT error FROM dream_runs WHERE id = ?")
+        .bind(late_secret_run.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(late, "[REDACTED]");
+
+    let unicode_run = store.start_run(52, "fake").await.unwrap();
+    store
+        .fail_run(
+            unicode_run.id,
+            DreamRunCompletion::new(0, 0, 0),
+            &"я".repeat(3_000),
+        )
+        .await
+        .unwrap();
+    let unicode: String = sqlx::query_scalar("SELECT error FROM dream_runs WHERE id = ?")
+        .bind(unicode_run.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(unicode.len() <= 4_096);
+    assert!(unicode.is_char_boundary(unicode.len()));
+}
+
+#[tokio::test]
+async fn negative_cycle_and_counts_are_rejected_without_writes_or_transitions() {
+    let root = TempDir::new().unwrap();
+    let config = config(&root);
+    let pool = db::connect(&config).await.unwrap();
+    let store = DreamAuditStore::new(&pool);
+    assert!(store.start_run(-1, "fake").await.is_err());
+    let run = store.start_run(53, "fake").await.unwrap();
+    assert!(
+        store
+            .start_phase(PhaseRunStart {
+                dream_run_id: run.id,
+                phase: "crystallization",
+                provider_profile: "default",
+                provider_type: "fake",
+                model: "test-model",
+                input_count: -1,
+                prompt_hash: "",
+            })
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .complete_run(run.id, DreamRunCompletion::new(-1, 0, 0))
+            .await
+            .is_err()
+    );
+    let phase = store
+        .start_phase(PhaseRunStart {
+            dream_run_id: run.id,
+            phase: "crystallization",
+            provider_profile: "default",
+            provider_type: "fake",
+            model: "test-model",
+            input_count: 0,
+            prompt_hash: "",
+        })
+        .await
+        .unwrap();
+    assert!(store.complete_phase(phase.id, -1).await.is_err());
+
+    let run_status: String = sqlx::query_scalar("SELECT status FROM dream_runs WHERE id = ?")
+        .bind(run.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let phase_status: String =
+        sqlx::query_scalar("SELECT status FROM dream_phase_runs WHERE id = ?")
+            .bind(phase.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let negative_cycles: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM dream_runs WHERE cycle_id < 0")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (run_status, phase_status, negative_cycles),
+        ("running".into(), "running".into(), 0)
     );
 }
 

@@ -13,3 +13,5 @@ pub mod recall;
 pub mod registry;
 pub mod semantic;
 pub mod values;
+
+mod file_identity;

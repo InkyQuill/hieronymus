@@ -6,6 +6,9 @@ use crate::db::DreamRunRecord;
 
 const MAX_DETAIL_BYTES: usize = 4_096;
 const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
+const MAX_PAYLOAD_DEPTH: usize = 32;
+const MAX_PAYLOAD_NODES: usize = 4_096;
+const MAX_PAYLOAD_STRING_BYTES: usize = MAX_PAYLOAD_BYTES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DreamRunCompletion {
@@ -103,6 +106,7 @@ impl<'a> DreamAuditStore<'a> {
         cycle_id: i64,
         provider: &str,
     ) -> Result<DreamRunRecord, DreamAuditError> {
+        validate_nonnegative("cycle id", cycle_id)?;
         validate_detail(provider)?;
         let now = Utc::now();
         let mut tx = self.pool.begin().await?;
@@ -133,6 +137,7 @@ impl<'a> DreamAuditStore<'a> {
         run_id: i64,
         counts: DreamRunCompletion,
     ) -> Result<(), DreamAuditError> {
+        validate_completion(counts)?;
         finish_run(self.pool, run_id, counts, "completed", "", "run_completed").await
     }
 
@@ -142,6 +147,7 @@ impl<'a> DreamAuditStore<'a> {
         counts: DreamRunCompletion,
         error: &str,
     ) -> Result<(), DreamAuditError> {
+        validate_completion(counts)?;
         finish_run(
             self.pool,
             run_id,
@@ -157,6 +163,7 @@ impl<'a> DreamAuditStore<'a> {
         &self,
         input: PhaseRunStart<'_>,
     ) -> Result<DreamPhaseRunRecord, DreamAuditError> {
+        validate_nonnegative("phase input count", input.input_count)?;
         for detail in [
             input.phase,
             input.provider_profile,
@@ -206,6 +213,7 @@ impl<'a> DreamAuditStore<'a> {
         phase_run_id: i64,
         output_count: i64,
     ) -> Result<(), DreamAuditError> {
+        validate_nonnegative("phase output count", output_count)?;
         finish_phase(
             self.pool,
             phase_run_id,
@@ -409,10 +417,10 @@ async fn insert_audit(
     summary: &str,
     payload: &Value,
 ) -> Result<i64, DreamAuditError> {
-    for detail in [event_type, severity, summary] {
+    for detail in [event_type, severity] {
         validate_detail(detail)?;
     }
-    let summary = redact_error(summary);
+    let summary = redact_and_bound_text(summary);
     if let Some(phase_run_id) = phase_run_id {
         let phase_parent: i64 =
             sqlx::query_scalar("SELECT dream_run_id FROM dream_phase_runs WHERE id = ?")
@@ -425,6 +433,7 @@ async fn insert_audit(
             ));
         }
     }
+    validate_payload_budget(payload)?;
     let payload = redact_payload(payload);
     let payload_json = serde_json::to_string(&payload)
         .map_err(|_| DreamAuditError::InvalidDetail("payload is not serializable"))?;
@@ -452,26 +461,78 @@ fn validate_detail(detail: &str) -> Result<(), DreamAuditError> {
     }
 }
 
+fn validate_nonnegative(label: &'static str, value: i64) -> Result<(), DreamAuditError> {
+    if value < 0 {
+        Err(DreamAuditError::InvalidDetail(label))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_completion(counts: DreamRunCompletion) -> Result<(), DreamAuditError> {
+    validate_nonnegative("run input count", counts.input_count)?;
+    validate_nonnegative("created crystal count", counts.created_crystal_count)?;
+    validate_nonnegative("proposal count", counts.proposal_count)
+}
+
+fn validate_payload_budget(root: &Value) -> Result<(), DreamAuditError> {
+    let mut stack = vec![(root, 0_usize)];
+    let mut nodes = 0_usize;
+    let mut estimated_bytes = 0_usize;
+    while let Some((value, depth)) = stack.pop() {
+        if depth > MAX_PAYLOAD_DEPTH {
+            return Err(DreamAuditError::InvalidDetail(
+                "payload exceeds maximum depth",
+            ));
+        }
+        nodes = nodes.saturating_add(1);
+        if nodes > MAX_PAYLOAD_NODES {
+            return Err(DreamAuditError::InvalidDetail("payload has too many nodes"));
+        }
+        estimated_bytes = estimated_bytes.saturating_add(1);
+        match value {
+            Value::Object(map) => {
+                for (key, value) in map {
+                    if key.len() > MAX_DETAIL_BYTES {
+                        return Err(DreamAuditError::InvalidDetail("payload key exceeds 4 KiB"));
+                    }
+                    estimated_bytes = estimated_bytes.saturating_add(key.len()).saturating_add(4);
+                    stack.push((value, depth.saturating_add(1)));
+                }
+            }
+            Value::Array(values) => {
+                estimated_bytes = estimated_bytes.saturating_add(values.len());
+                stack.extend(values.iter().map(|value| (value, depth.saturating_add(1))));
+            }
+            Value::String(value) => {
+                if value.len() > MAX_PAYLOAD_STRING_BYTES {
+                    return Err(DreamAuditError::InvalidDetail(
+                        "payload string exceeds 64 KiB",
+                    ));
+                }
+                estimated_bytes = estimated_bytes
+                    .saturating_add(value.len())
+                    .saturating_add(2);
+            }
+            Value::Number(_) => estimated_bytes = estimated_bytes.saturating_add(32),
+            Value::Bool(_) => estimated_bytes = estimated_bytes.saturating_add(5),
+            Value::Null => estimated_bytes = estimated_bytes.saturating_add(4),
+        }
+        if estimated_bytes > MAX_PAYLOAD_BYTES {
+            return Err(DreamAuditError::InvalidDetail("payload exceeds 64 KiB"));
+        }
+    }
+    Ok(())
+}
+
 fn redact_payload(value: &Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
                 .map(|(key, value)| {
-                    let normalized = key.replace(['-', '_'], "").to_lowercase();
-                    let secret = matches!(
-                        normalized.as_str(),
-                        "apikey"
-                            | "authorization"
-                            | "xapikey"
-                            | "xgoogapikey"
-                            | "anthropicversion"
-                            | "token"
-                            | "bearer"
-                    ) || normalized.contains("token")
-                        || normalized.contains("bearer");
                     (
                         key.clone(),
-                        if secret {
+                        if is_sensitive_name(key) {
                             Value::String("[REDACTED]".to_owned())
                         } else {
                             redact_payload(value)
@@ -481,28 +542,87 @@ fn redact_payload(value: &Value) -> Value {
                 .collect(),
         ),
         Value::Array(values) => Value::Array(values.iter().map(redact_payload).collect()),
+        Value::String(value) if contains_sensitive_value(value) => {
+            Value::String("[REDACTED]".to_owned())
+        }
         _ => value.clone(),
     }
 }
 
 fn redact_error(error: &str) -> String {
-    let bounded: String = error.chars().take(MAX_DETAIL_BYTES).collect();
-    let normalized = bounded.to_lowercase();
-    if [
-        "api_key",
-        "apikey",
-        "authorization",
-        "token",
-        "bearer",
-        "secret",
-    ]
-    .iter()
-    .any(|marker| normalized.contains(marker))
-    {
+    redact_and_bound_text(error)
+}
+
+fn redact_and_bound_text(value: &str) -> String {
+    if contains_sensitive_value(value) {
         "[REDACTED]".to_owned()
     } else {
-        bounded
+        truncate_utf8(value, MAX_DETAIL_BYTES).to_owned()
     }
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+fn is_sensitive_name(name: &str) -> bool {
+    let normalized: String = name
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    normalized == "key"
+        || normalized.ends_with("key")
+        || [
+            "apikey",
+            "token",
+            "bearer",
+            "secret",
+            "password",
+            "credential",
+            "cookie",
+            "authorization",
+            "privatekey",
+            "clientsecret",
+            "anthropicversion",
+        ]
+        .iter()
+        .any(|marker| normalized.contains(marker))
+}
+
+fn contains_sensitive_value(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    [
+        "api_key",
+        "api-key",
+        "apikey",
+        "authorization",
+        "bearer ",
+        "bearer=",
+        "token=",
+        "token:",
+        "secret=",
+        "secret:",
+        "password=",
+        "password:",
+        "credential=",
+        "credential:",
+        "cookie=",
+        "cookie:",
+        "private_key",
+        "private-key",
+        "client_secret",
+        "client-secret",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
 }
 
 fn lifecycle(

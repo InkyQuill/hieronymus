@@ -12,6 +12,7 @@ use sqlx::{Row, SqlitePool};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use super::DbError;
+use crate::file_identity::{FileIdentity, identity_and_link_count, identity_for_handle};
 
 static MEMORY_MIGRATION_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
 const LOCK_RETRY_DELAY: Duration = Duration::from_millis(10);
@@ -42,12 +43,6 @@ struct DatabaseIdentityGuard {
 enum LockAttempt {
     Acquired(FileMigrationLock),
     Contended(FileLockCandidate),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FileIdentity {
-    first: u64,
-    second: u64,
 }
 
 impl MigrationProtocolLock {
@@ -140,7 +135,8 @@ fn prepare_file_lock(database_path: &Path) -> Result<FileLockCandidate, DbError>
             source,
         })?;
     let database = open_database_identity(&canonical)?;
-    let (links, database_identity) = identity_and_link_count(&database.file, &canonical)?;
+    let (links, database_identity) = identity_and_link_count(&database.file)
+        .map_err(|source| identity_error(&canonical, source))?;
     if links > 1 {
         return Err(DbError::UnsupportedDatabaseAlias { links });
     }
@@ -158,7 +154,7 @@ fn prepare_file_lock(database_path: &Path) -> Result<FileLockCandidate, DbError>
     let digest = hasher.finalize();
     let path = parent.join(format!(".hieronymus-migrate-{digest:x}.lock"));
     let file = open_sidecar(&path)?;
-    let identity = identity_for_handle(&file, &path)?;
+    let identity = identity_for_handle(&file).map_err(|source| lock_open_error(&path, source))?;
     validate_path_identity(&path, identity)?;
     Ok(FileLockCandidate {
         file,
@@ -205,7 +201,8 @@ fn open_database_identity(path: &Path) -> Result<DatabaseIdentityGuard, DbError>
             path: path.to_owned(),
             source,
         })?;
-    let (_, identity) = identity_and_link_count(&file, path)?;
+    let (_, identity) =
+        identity_and_link_count(&file).map_err(|source| identity_error(path, source))?;
     Ok(DatabaseIdentityGuard {
         file,
         path: path.to_owned(),
@@ -214,7 +211,8 @@ fn open_database_identity(path: &Path) -> Result<DatabaseIdentityGuard, DbError>
 }
 
 fn validate_database_identity(database: &DatabaseIdentityGuard) -> Result<(), DbError> {
-    let (links, handle_identity) = identity_and_link_count(&database.file, &database.path)?;
+    let (links, handle_identity) = identity_and_link_count(&database.file)
+        .map_err(|source| identity_error(&database.path, source))?;
     if links > 1 {
         return Err(DbError::UnsupportedDatabaseAlias { links });
     }
@@ -388,68 +386,6 @@ fn enforce_sidecar_properties(path: &Path, file: &File, _created: bool) -> Resul
 }
 
 #[cfg(unix)]
-fn identity_and_link_count(file: &File, path: &Path) -> Result<(u64, FileIdentity), DbError> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = file.metadata().map_err(|source| DbError::MigrationLockIo {
-        operation: "inspect database identity for",
-        path: path.to_owned(),
-        source,
-    })?;
-    if !metadata.file_type().is_file() {
-        return Err(DbError::MigrationLockIo {
-            operation: "validate database file type for",
-            path: path.to_owned(),
-            source: io::Error::new(
-                io::ErrorKind::InvalidData,
-                "database is not a regular local file",
-            ),
-        });
-    }
-    Ok((
-        metadata.nlink(),
-        FileIdentity {
-            first: metadata.dev(),
-            second: metadata.ino(),
-        },
-    ))
-}
-
-#[cfg(windows)]
-fn identity_and_link_count(file: &File, path: &Path) -> Result<(u64, FileIdentity), DbError> {
-    let information = windows_file_information(file, path)?;
-    validate_windows_regular_file(path, &information)?;
-    Ok((
-        information.number_of_links(),
-        FileIdentity {
-            first: information.volume_serial_number(),
-            second: information.file_index(),
-        },
-    ))
-}
-
-#[cfg(unix)]
-fn identity_for_handle(file: &File, path: &Path) -> Result<FileIdentity, DbError> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = file
-        .metadata()
-        .map_err(|source| lock_open_error(path, source))?;
-    Ok(FileIdentity {
-        first: metadata.dev(),
-        second: metadata.ino(),
-    })
-}
-
-#[cfg(windows)]
-fn identity_for_handle(file: &File, path: &Path) -> Result<FileIdentity, DbError> {
-    let information = windows_file_information(file, path)?;
-    validate_windows_regular_file(path, &information)?;
-    Ok(FileIdentity {
-        first: information.volume_serial_number(),
-        second: information.file_index(),
-    })
-}
-
-#[cfg(unix)]
 fn validate_path_identity(path: &Path, expected: FileIdentity) -> Result<(), DbError> {
     use std::os::unix::fs::MetadataExt;
     validate_path_file_type(path)?;
@@ -480,7 +416,7 @@ fn validate_path_identity(path: &Path, expected: FileIdentity) -> Result<(), DbE
     let file = options
         .open(path)
         .map_err(|source| lock_open_error(path, source))?;
-    let observed = identity_for_handle(&file, path)?;
+    let observed = identity_for_handle(&file).map_err(|source| lock_open_error(path, source))?;
     if observed == expected {
         Ok(())
     } else {
@@ -494,31 +430,10 @@ fn validate_path_identity(path: &Path, expected: FileIdentity) -> Result<(), DbE
     }
 }
 
-#[cfg(windows)]
-fn windows_file_information(
-    file: &File,
-    path: &Path,
-) -> Result<winapi_util::file::Information, DbError> {
-    winapi_util::file::information(file).map_err(|source| lock_open_error(path, source))
-}
-
-#[cfg(windows)]
-fn validate_windows_regular_file(
-    path: &Path,
-    information: &winapi_util::file::Information,
-) -> Result<(), DbError> {
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
-    let attributes = information.file_attributes();
-    if attributes & u64::from(FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) == 0 {
-        Ok(())
-    } else {
-        Err(lock_open_error(
-            path,
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "migration lock sidecar handle is not a regular non-reparse file",
-            ),
-        ))
+fn identity_error(path: &Path, source: io::Error) -> DbError {
+    DbError::MigrationLockIo {
+        operation: "inspect file identity for",
+        path: path.to_owned(),
+        source,
     }
 }
