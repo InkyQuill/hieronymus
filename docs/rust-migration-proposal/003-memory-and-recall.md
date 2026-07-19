@@ -57,6 +57,22 @@ kind of memory a crystal is; it is **independent** of `rule_intent` (a freeform 
 signaling deterministic intent that can be set on *any* crystal type, not just `Rule`) and of
 `source_credibility` (a freeform text label from a fixed small set — see §3.1).
 
+`CrystalRecord` remains the raw schema-row contract defined by 002. Public crystal reads return an
+enriched domain view so callers never issue side-table queries themselves:
+
+```rust
+pub struct Crystal {
+    pub record: CrystalRecord,
+    pub language_tags: Vec<String>,
+    pub story_scopes: Vec<String>,
+    pub semantic_tags: Vec<String>,
+    pub concept_ids: Vec<i64>,
+}
+```
+
+`Crystal` dereferences to its `CrystalRecord` for field access. Store hydration batches each
+side-table query over bounded ID chunks; query count is proportional to chunks, never records.
+
 ---
 
 ## 2. Store Implementations
@@ -78,8 +94,8 @@ pub struct AddCrystalInput {
 pub struct CrystalStore<'a> { pool: &'a SqlitePool }
 impl<'a> CrystalStore<'a> {
     pub async fn add(&self, input: AddCrystalInput) -> Result<i64>;
-    pub async fn get(&self, id: i64) -> Result<CrystalRecord>;
-    pub async fn list_rule_intent(&self, filter: RuleFilter) -> Result<Vec<CrystalRecord>>;  // crystals with non-empty rule_intent, not crystal_type == 'rule'
+    pub async fn get(&self, id: i64) -> Result<Crystal>;
+    pub async fn list_rule_intent(&self, filter: RuleFilter) -> Result<Vec<Crystal>>;  // crystals with non-empty rule_intent, not crystal_type == 'rule'
     pub async fn archive(&self, id: i64) -> Result<CrystalRecord>;                             // general archive, any crystal_type — atomic, transaction-safe
     pub async fn supersede(&self, old_id: i64, new: AddCrystalInput) -> Result<CrystalRecord>;  // inserts new crystal with supersedes_crystal_id = old_id, flips old to 'superseded'
     pub async fn link(&self, source_id: i64, target_id: i64, link_type: &str) -> Result<CrystalLinkRecord>;  // crystal_links row, insert-or-ignore semantics
@@ -88,13 +104,20 @@ impl<'a> CrystalStore<'a> {
     pub async fn set_story_scopes(&self, id: i64, scopes: &[String]) -> Result<CrystalRecord>;
     pub async fn set_semantic_tags(&self, id: i64, tags: &[String]) -> Result<CrystalRecord>;
     pub async fn lowest_confidence(&self, ids: &[i64], limit: usize) -> Result<Vec<i64>>;
-    pub async fn search(&self, ctx: &TranslationContext, query: &str, limit: usize) -> Result<Vec<CrystalRecord>>;               // FTS5 via crystals_fts
-    pub async fn search_scored(&self, ctx: &TranslationContext, query: &str, limit: usize) -> Result<Vec<(CrystalRecord, f64)>>; // weighted BM25 + strength + confidence, before the recall-time boost in §3
+    pub async fn search(&self, ctx: &TranslationContext, query: &str, limit: usize) -> Result<Vec<Crystal>>;               // FTS5 via crystals_fts
+    pub async fn search_scored(&self, ctx: &TranslationContext, query: &str, limit: usize) -> Result<Vec<(Crystal, f64)>>; // weighted BM25 + strength + confidence, before the recall-time boost in §3
+    pub async fn search_expression(&self, ctx: &TranslationContext, expression: &str, limit: usize) -> Result<Vec<(Crystal, f64)>>; // intentional raw FTS5 boundary; parser errors are typed
 }
 pub fn search_expression(query: &str) -> String;  // tokenizes and quotes for FTS5, standalone fn
 
 pub struct ValidationReport { pub ok: bool, pub findings: Vec<String> }
 ```
+
+User-created crystals support exactly two coherent base scopes: global means empty
+`scope_key`/`series_slug`; series means a canonical registry slug and
+`scope_key == format!("series:{series_slug}")`. Reads exclude incoherent legacy rows from list and
+search visibility. All read-before-write paths use SQLx tracked `BEGIN IMMEDIATE` transactions so
+cancellation/drop rolls back before a pooled connection can be reused.
 
 `link_type` values include at minimum `"related"` (general association, populated by
 `LinkReinforcer` — §3.4) and any dreaming-assigned relation types; `linked()`'s derived
@@ -121,7 +144,7 @@ impl<'a> WorkspaceStore<'a> {
     /// Reconsolidation working-copy dedup, called from RecallService (§3), not exposed as a
     /// standalone CLI/MCP operation. Looks up an existing row with source_crystal_id = crystal_id
     /// for this session; inserts one seeded from the crystal's text if absent.
-    pub(crate) async fn get_or_create_working_copy(&self, session_id: i64, crystal: &CrystalRecord) -> Result<(ShortTermMemoryRecord, bool)>;  // bool = was newly created
+    pub(crate) async fn get_or_create_working_copy(&self, session_id: i64, crystal: &Crystal) -> Result<(ShortTermMemoryRecord, bool)>;  // bool = was newly created
     pub async fn archive(&self, id: i64) -> Result<()>;  // sets archived_at; used by 004's Reconsolidator once a working copy is processed
 }
 

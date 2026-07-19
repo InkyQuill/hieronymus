@@ -1,4 +1,8 @@
+use std::ops::Deref;
+
 use serde::{Deserialize, Serialize};
+
+use crate::db::CrystalRecord;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TranslationContext {
@@ -69,6 +73,27 @@ pub struct RecallResult {
     pub reason: String,
     pub id: i64,
     pub metadata: serde_json::Value,
+}
+
+/// A persisted crystal enriched with its normalized public metadata.
+///
+/// The raw schema row remains [`CrystalRecord`]; stores return this domain view
+/// so callers never need side-table queries or N+1 hydration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Crystal {
+    pub record: CrystalRecord,
+    pub language_tags: Vec<String>,
+    pub story_scopes: Vec<String>,
+    pub semantic_tags: Vec<String>,
+    pub concept_ids: Vec<i64>,
+}
+
+impl Deref for Crystal {
+    type Target = CrystalRecord;
+
+    fn deref(&self) -> &Self::Target {
+        &self.record
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,8 +172,8 @@ pub struct ValidationReport {
     pub findings: Vec<String>,
 }
 
-fn normalize_texts(values: &[String], lowercase: bool) -> Vec<String> {
-    let mut values: Vec<String> = values
+pub(super) fn normalize_texts(values: &[String], lowercase: bool) -> Vec<String> {
+    let values: Vec<String> = values
         .iter()
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
@@ -160,7 +185,5 @@ fn normalize_texts(values: &[String], lowercase: bool) -> Vec<String> {
             }
         })
         .collect();
-    values.sort();
-    values.dedup();
-    values
+    crate::values::normalize_tuple(&values)
 }

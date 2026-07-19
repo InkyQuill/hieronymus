@@ -1,19 +1,23 @@
-use std::{collections::BTreeSet, sync::OnceLock};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::OnceLock,
+};
 
 use chrono::Utc;
 use regex::Regex;
-use sqlx::{
-    FromRow, QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool, pool::PoolConnection,
-};
+use sqlx::{FromRow, QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 use crate::db::{CrystalLinkRecord, CrystalRecord, CrystalStatus, CrystalType};
 
-use super::models::{AddCrystalInput, RuleFilter, TranslationContext, ValidationReport};
+use super::models::{
+    AddCrystalInput, Crystal, RuleFilter, TranslationContext, ValidationReport, normalize_texts,
+};
 
 const MAX_SEARCH_LIMIT: usize = 50;
 const CRYSTAL_COLUMNS: &str = "id, crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, is_inferred, malformed_penalty, supersedes_crystal_id, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at";
 const SELECT_CRYSTAL_BY_ID: &str = "SELECT id, crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, is_inferred, malformed_penalty, supersedes_crystal_id, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at FROM crystals WHERE id = ?";
-const SEARCH_CRYSTALS: &str = "SELECT crystals.id, crystals.crystal_type, crystals.text, crystals.title, crystals.scope_type, crystals.scope_key, crystals.series_slug, crystals.source_language, crystals.target_language, crystals.tags_json, crystals.strength, crystals.confidence, crystals.source_credibility, crystals.rule_intent, crystals.soft_origin, crystals.is_inferred, crystals.malformed_penalty, crystals.supersedes_crystal_id, crystals.status, crystals.created_cycle, crystals.last_activated_cycle, crystals.last_reinforced_cycle, crystals.created_at, crystals.updated_at, (max(-bm25(crystals_fts), 0.0) + crystals.strength * 0.35 + crystals.confidence * 0.20 + CASE WHEN crystals.scope_type = 'series' THEN 0.05 ELSE 0.0 END) AS search_score FROM crystals_fts JOIN crystals ON crystals.id = crystals_fts.rowid WHERE crystals_fts MATCH ? AND crystals.status IN ('active', 'candidate') AND ((crystals.scope_type = 'series' AND crystals.scope_key = ?) OR crystals.scope_type = 'global') AND (crystals.source_language = ? OR crystals.source_language = '') AND (crystals.target_language = ? OR crystals.target_language = '') ORDER BY search_score DESC, crystals.id ASC LIMIT ?";
+const SEARCH_CRYSTALS: &str = "SELECT crystals.id, crystals.crystal_type, crystals.text, crystals.title, crystals.scope_type, crystals.scope_key, crystals.series_slug, crystals.source_language, crystals.target_language, crystals.tags_json, crystals.strength, crystals.confidence, crystals.source_credibility, crystals.rule_intent, crystals.soft_origin, crystals.is_inferred, crystals.malformed_penalty, crystals.supersedes_crystal_id, crystals.status, crystals.created_cycle, crystals.last_activated_cycle, crystals.last_reinforced_cycle, crystals.created_at, crystals.updated_at, (max(-bm25(crystals_fts), 0.0) + crystals.strength * 0.35 + crystals.confidence * 0.20 + CASE WHEN crystals.scope_type = 'series' THEN 0.05 ELSE 0.0 END) AS search_score FROM crystals_fts JOIN crystals ON crystals.id = crystals_fts.rowid WHERE crystals_fts MATCH ? AND crystals.status IN ('active', 'candidate') AND ((crystals.scope_type = 'series' AND crystals.series_slug = ? AND crystals.scope_key = ?) OR (crystals.scope_type = 'global' AND crystals.scope_key = '' AND crystals.series_slug = '')) AND (crystals.source_language = ? OR crystals.source_language = '') AND (crystals.target_language = ? OR crystals.target_language = '') ORDER BY search_score DESC, crystals.id ASC LIMIT ?";
+const METADATA_CHUNK_SIZE: usize = 500;
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
@@ -37,19 +41,12 @@ pub enum StoreError {
         #[source]
         source: sqlx::Error,
     },
-    #[error("invalid raw FTS5 expression `{expression}`: {message}")]
+    #[error("invalid raw FTS5 expression: {message}")]
     FtsExpression { expression: String, message: String },
     #[error("failed to serialize normalized crystal tags: {source}")]
     Json {
         #[source]
         source: serde_json::Error,
-    },
-    #[error("failed to roll back crystal {operation} after `{original}`: {source}")]
-    Rollback {
-        operation: &'static str,
-        original: String,
-        #[source]
-        source: sqlx::Error,
     },
 }
 
@@ -67,40 +64,52 @@ impl<'a> CrystalStore<'a> {
         let input = ValidatedInput::try_from(input)?;
         let mut connection = begin_immediate(self.pool, "add").await?;
         let result = add_in_transaction(&mut connection, &input).await;
-        finish_write(&mut connection, "add", result).await
+        commit_write(connection, "add", result).await
     }
 
-    pub async fn get(&self, id: i64) -> Result<CrystalRecord> {
-        sqlx::query_as::<_, CrystalRecord>(SELECT_CRYSTAL_BY_ID)
+    pub async fn get(&self, id: i64) -> Result<Crystal> {
+        let record = sqlx::query_as::<_, CrystalRecord>(SELECT_CRYSTAL_BY_ID)
             .bind(id)
             .fetch_optional(self.pool)
             .await
             .map_err(|source| database("get", source))?
+            .ok_or(StoreError::NotFound { id })?;
+        hydrate(self.pool, vec![record])
+            .await?
+            .pop()
             .ok_or(StoreError::NotFound { id })
     }
 
-    pub async fn list_rule_intent(&self, filter: RuleFilter) -> Result<Vec<CrystalRecord>> {
+    pub async fn list_rule_intent(&self, filter: RuleFilter) -> Result<Vec<Crystal>> {
         let limit = bounded_limit(filter.limit)?;
         if let Some(status) = filter.status.as_deref() {
             validate_status(status)?;
         }
         let mut query = QueryBuilder::<Sqlite>::new(format!(
-            "SELECT {CRYSTAL_COLUMNS} FROM crystals WHERE trim(rule_intent) <> ''"
+            "SELECT {CRYSTAL_COLUMNS} FROM crystals WHERE trim(rule_intent) <> '' AND ((scope_type = 'global' AND scope_key = '' AND series_slug = '') OR (scope_type = 'series' AND series_slug <> '' AND series_slug NOT GLOB '*[^a-z0-9-]*' AND substr(series_slug, 1, 1) GLOB '[a-z0-9]' AND scope_key = 'series:' || series_slug))"
         ));
         if let Some(status) = filter.status {
             query.push(" AND status = ").push_bind(status);
         }
         if let Some(series_slug) = filter.series_slug {
-            query.push(" AND series_slug = ").push_bind(series_slug);
+            if !valid_series_slug(&series_slug) {
+                return Err(invalid("series_slug", "is not a valid canonical slug"));
+            }
+            query
+                .push(" AND scope_type = 'series' AND series_slug = ")
+                .push_bind(&series_slug)
+                .push(" AND scope_key = ")
+                .push_bind(format!("series:{series_slug}"));
         }
         query
             .push(" ORDER BY id DESC LIMIT ")
             .push_bind(limit as i64);
-        query
+        let records = query
             .build_query_as::<CrystalRecord>()
             .fetch_all(self.pool)
             .await
-            .map_err(|source| database("list rule-intent crystals", source))
+            .map_err(|source| database("list rule-intent crystals", source))?;
+        hydrate(self.pool, records).await
     }
 
     pub async fn archive(&self, id: i64) -> Result<CrystalRecord> {
@@ -118,7 +127,7 @@ impl<'a> CrystalStore<'a> {
             get_on(&mut connection, id, "archive").await
         }
         .await;
-        finish_write(&mut connection, "archive", result).await
+        commit_write(connection, "archive", result).await
     }
 
     pub async fn supersede(&self, old_id: i64, mut new: AddCrystalInput) -> Result<CrystalRecord> {
@@ -184,7 +193,7 @@ impl<'a> CrystalStore<'a> {
             get_on(&mut connection, new_id, "supersede").await
         }
         .await;
-        finish_write(&mut connection, "supersede", result).await
+        commit_write(connection, "supersede", result).await
     }
 
     pub async fn link(
@@ -218,7 +227,7 @@ impl<'a> CrystalStore<'a> {
             })
         }
         .await;
-        finish_write(&mut connection, "link", result).await
+        commit_write(connection, "link", result).await
     }
 
     pub async fn linked(&self, crystal_id: i64) -> Result<Vec<(CrystalLinkRecord, f64)>> {
@@ -274,7 +283,7 @@ impl<'a> CrystalStore<'a> {
             touch_and_get(&mut connection, id, "set story scopes").await
         }
         .await;
-        finish_write(&mut connection, "set story scopes", result).await
+        commit_write(connection, "set story scopes", result).await
     }
 
     pub async fn set_semantic_tags(&self, id: i64, tags: &[String]) -> Result<CrystalRecord> {
@@ -310,13 +319,18 @@ impl<'a> CrystalStore<'a> {
             get_on(&mut connection, id, "set semantic tags").await
         }
         .await;
-        finish_write(&mut connection, "set semantic tags", result).await
+        commit_write(connection, "set semantic tags", result).await
     }
 
     pub async fn lowest_confidence(&self, ids: &[i64], limit: usize) -> Result<Vec<i64>> {
-        if ids.is_empty() || limit == 0 {
+        if limit == 0 {
+            return Err(invalid("limit", "must be at least 1"));
+        }
+        if ids.is_empty() {
             return Ok(Vec::new());
         }
+        let limit =
+            i64::try_from(limit).map_err(|_| invalid("limit", "is too large for SQLite"))?;
         let ids: BTreeSet<i64> = ids.iter().copied().collect();
         let mut query = QueryBuilder::<Sqlite>::new("SELECT id FROM crystals WHERE id IN (");
         let mut separated = query.separated(", ");
@@ -324,7 +338,7 @@ impl<'a> CrystalStore<'a> {
             separated.push_bind(id);
         }
         separated.push_unseparated(") AND NOT (status = 'active' AND trim(rule_intent) <> '') ORDER BY confidence ASC, strength ASC, id ASC LIMIT ");
-        query.push_bind(limit.min(MAX_SEARCH_LIMIT) as i64);
+        query.push_bind(limit);
         query
             .build_query_scalar::<i64>()
             .fetch_all(self.pool)
@@ -337,7 +351,7 @@ impl<'a> CrystalStore<'a> {
         ctx: &TranslationContext,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<CrystalRecord>> {
+    ) -> Result<Vec<Crystal>> {
         Ok(self
             .search_scored(ctx, query, limit)
             .await?
@@ -351,7 +365,7 @@ impl<'a> CrystalStore<'a> {
         ctx: &TranslationContext,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<(CrystalRecord, f64)>> {
+    ) -> Result<Vec<(Crystal, f64)>> {
         let expression = search_expression(query);
         if expression.is_empty() {
             bounded_limit(limit)?;
@@ -366,13 +380,15 @@ impl<'a> CrystalStore<'a> {
         ctx: &TranslationContext,
         expression: &str,
         limit: usize,
-    ) -> Result<Vec<(CrystalRecord, f64)>> {
+    ) -> Result<Vec<(Crystal, f64)>> {
         let limit = bounded_limit(limit)?;
+        validate_context(ctx)?;
         if expression.trim().is_empty() {
             return Ok(Vec::new());
         }
         let rows = sqlx::query(SEARCH_CRYSTALS)
             .bind(expression)
+            .bind(&ctx.series_slug)
             .bind(&ctx.scope_key)
             .bind(&ctx.source_language)
             .bind(&ctx.target_language)
@@ -380,7 +396,8 @@ impl<'a> CrystalStore<'a> {
             .fetch_all(self.pool)
             .await
             .map_err(|source| fts_error(expression, source))?;
-        rows.into_iter()
+        let decoded: Result<Vec<(CrystalRecord, f64)>> = rows
+            .into_iter()
             .map(|row| {
                 let score = row
                     .try_get::<f64, _>("search_score")
@@ -389,7 +406,13 @@ impl<'a> CrystalStore<'a> {
                     .map_err(|source| database("decode crystal search result", source))?;
                 Ok((crystal, score))
             })
-            .collect()
+            .collect();
+        let (records, scores): (Vec<_>, Vec<_>) = decoded?.into_iter().unzip();
+        Ok(hydrate(self.pool, records)
+            .await?
+            .into_iter()
+            .zip(scores)
+            .collect())
     }
 }
 
@@ -457,17 +480,7 @@ impl TryFrom<AddCrystalInput> for ValidatedInput {
         if text.is_empty() {
             return Err(invalid("text", "must not be empty"));
         }
-        let scope_type = input.scope_type.trim().to_owned();
-        let scope_key = input.scope_key.trim().to_owned();
-        if scope_type.is_empty() {
-            return Err(invalid("scope_type", "must not be empty"));
-        }
-        if (scope_type == "global") != scope_key.is_empty() {
-            return Err(invalid(
-                "scope_key",
-                "must be empty for global scope and non-empty otherwise",
-            ));
-        }
+        validate_scope(&input.scope_type, &input.scope_key, &input.series_slug)?;
         if !crate::values::SOURCE_CREDIBILITY_CONFIDENCE
             .contains_key(input.source_credibility.trim())
         {
@@ -481,9 +494,9 @@ impl TryFrom<AddCrystalInput> for ValidatedInput {
             crystal_type: input.crystal_type,
             title: input.title.trim().to_owned(),
             text,
-            scope_type,
-            scope_key,
-            series_slug: input.series_slug.trim().to_owned(),
+            scope_type: input.scope_type,
+            scope_key: input.scope_key,
+            series_slug: input.series_slug,
             source_language: input.source_language.trim().to_lowercase(),
             target_language: input.target_language.trim().to_lowercase(),
             source_credibility: input.source_credibility.trim().to_owned(),
@@ -578,37 +591,26 @@ async fn add_in_transaction(
 async fn begin_immediate(
     pool: &SqlitePool,
     operation: &'static str,
-) -> Result<PoolConnection<Sqlite>> {
-    let mut connection = pool
-        .acquire()
+) -> Result<Transaction<'static, Sqlite>> {
+    pool.begin_with("BEGIN IMMEDIATE")
         .await
-        .map_err(|source| database(operation, source))?;
-    sqlx::query("BEGIN IMMEDIATE")
-        .execute(&mut *connection)
-        .await
-        .map_err(|source| database(operation, source))?;
-    Ok(connection)
+        .map_err(|source| database(operation, source))
 }
 
-async fn finish_write<T>(
-    connection: &mut SqliteConnection,
+async fn commit_write<T>(
+    transaction: Transaction<'static, Sqlite>,
     operation: &'static str,
     result: Result<T>,
 ) -> Result<T> {
     match result {
-        Ok(value) => sqlx::query("COMMIT")
-            .execute(&mut *connection)
+        Ok(value) => transaction
+            .commit()
             .await
-            .map(|_| value)
+            .map(|()| value)
             .map_err(|source| database(operation, source)),
-        Err(error) => match sqlx::query("ROLLBACK").execute(&mut *connection).await {
-            Ok(_) => Err(error),
-            Err(source) => Err(StoreError::Rollback {
-                operation,
-                original: error.to_string(),
-                source,
-            }),
-        },
+        // SQLx queues a rollback on drop and prevents this connection from
+        // returning to the pool with an open transaction.
+        Err(error) => Err(error),
     }
 }
 
@@ -639,6 +641,113 @@ async fn touch_and_get(
     get_on(connection, id, operation).await
 }
 
+async fn hydrate(pool: &SqlitePool, records: Vec<CrystalRecord>) -> Result<Vec<Crystal>> {
+    if records.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<i64> = records.iter().map(|record| record.id).collect();
+    let language_tags = load_text_metadata(pool, &ids, TextMetadata::LanguageTag).await?;
+    let story_scopes = load_text_metadata(pool, &ids, TextMetadata::StoryScope).await?;
+    let semantic_tags = load_text_metadata(pool, &ids, TextMetadata::SemanticTag).await?;
+    let concept_ids = load_concept_ids(pool, &ids).await?;
+
+    Ok(records
+        .into_iter()
+        .map(|record| {
+            let id = record.id;
+            Crystal {
+                record,
+                language_tags: language_tags.get(&id).cloned().unwrap_or_default(),
+                story_scopes: story_scopes.get(&id).cloned().unwrap_or_default(),
+                semantic_tags: semantic_tags.get(&id).cloned().unwrap_or_default(),
+                concept_ids: concept_ids.get(&id).cloned().unwrap_or_default(),
+            }
+        })
+        .collect())
+}
+
+#[derive(Clone, Copy)]
+enum TextMetadata {
+    LanguageTag,
+    StoryScope,
+    SemanticTag,
+}
+
+async fn load_text_metadata(
+    pool: &SqlitePool,
+    ids: &[i64],
+    metadata: TextMetadata,
+) -> Result<BTreeMap<i64, Vec<String>>> {
+    let mut values: BTreeMap<i64, Vec<String>> = BTreeMap::new();
+    for chunk in metadata_chunks(ids) {
+        let mut query = match metadata {
+            TextMetadata::LanguageTag => QueryBuilder::<Sqlite>::new(
+                "SELECT crystal_id, language_tag AS value FROM crystal_language_tags WHERE crystal_id IN (",
+            ),
+            TextMetadata::StoryScope => QueryBuilder::<Sqlite>::new(
+                "SELECT crystal_id, scope AS value FROM crystal_story_scopes WHERE crystal_id IN (",
+            ),
+            TextMetadata::SemanticTag => QueryBuilder::<Sqlite>::new(
+                "SELECT crystal_id, tag AS value FROM crystal_semantic_tags WHERE crystal_id IN (",
+            ),
+        };
+        push_ids(&mut query, chunk);
+        query.push(") ORDER BY crystal_id, value");
+        let rows = query
+            .build()
+            .fetch_all(pool)
+            .await
+            .map_err(|source| database("hydrate crystal metadata", source))?;
+        for row in rows {
+            values
+                .entry(row.get("crystal_id"))
+                .or_default()
+                .push(row.get("value"));
+        }
+    }
+    Ok(values)
+}
+
+async fn load_concept_ids(pool: &SqlitePool, ids: &[i64]) -> Result<BTreeMap<i64, Vec<i64>>> {
+    let mut values: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
+    for chunk in metadata_chunks(ids) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT DISTINCT crystal_id, concept_id FROM crystal_concepts WHERE crystal_id IN (",
+        );
+        push_ids(&mut query, chunk);
+        query.push(") ORDER BY crystal_id, concept_id");
+        let rows = query
+            .build()
+            .fetch_all(pool)
+            .await
+            .map_err(|source| database("hydrate crystal concepts", source))?;
+        for row in rows {
+            values
+                .entry(row.get("crystal_id"))
+                .or_default()
+                .push(row.get("concept_id"));
+        }
+    }
+    Ok(values)
+}
+
+fn push_ids(query: &mut QueryBuilder<Sqlite>, ids: &[i64]) {
+    let mut separated = query.separated(", ");
+    for id in ids {
+        separated.push_bind(*id);
+    }
+}
+
+fn metadata_chunks(ids: &[i64]) -> std::slice::Chunks<'_, i64> {
+    ids.chunks(METADATA_CHUNK_SIZE)
+}
+
+#[cfg(test)]
+fn metadata_query_count(record_count: usize) -> usize {
+    let ids = vec![0; record_count];
+    metadata_chunks(&ids).count() * 4
+}
+
 fn bounded_limit(limit: usize) -> Result<usize> {
     if limit == 0 {
         Err(invalid("limit", "must be at least 1"))
@@ -660,24 +769,6 @@ fn validate_status(status: &str) -> Result<()> {
         .parse::<CrystalStatus>()
         .map(|_| ())
         .map_err(|error| invalid("status", error.to_string()))
-}
-
-fn normalize_texts(values: &[String], lowercase: bool) -> Vec<String> {
-    let mut values: Vec<String> = values
-        .iter()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            if lowercase {
-                value.to_lowercase()
-            } else {
-                value.to_owned()
-            }
-        })
-        .collect();
-    values.sort();
-    values.dedup();
-    values
 }
 
 fn invalid(field: &'static str, reason: impl Into<String>) -> StoreError {
@@ -705,16 +796,86 @@ fn database(operation: &'static str, source: sqlx::Error) -> StoreError {
 }
 
 fn fts_error(expression: &str, source: sqlx::Error) -> StoreError {
-    let message = source.to_string();
-    if message.contains("fts5")
-        || message.contains("syntax error")
-        || message.contains("unterminated")
-    {
+    let is_sqlite_expression_error = source
+        .as_database_error()
+        .and_then(|error| error.code())
+        .and_then(|code| code.parse::<i32>().ok())
+        .is_some_and(|code| code & 0xff == 1);
+    if is_sqlite_expression_error {
         StoreError::FtsExpression {
             expression: expression.to_owned(),
-            message,
+            message: "SQLite rejected the MATCH expression".to_owned(),
         }
     } else {
         database("search", source)
+    }
+}
+
+fn validate_scope(scope_type: &str, scope_key: &str, series_slug: &str) -> Result<()> {
+    match scope_type {
+        "global" => {
+            if !scope_key.is_empty() {
+                return Err(invalid("scope_key", "global scope requires an empty key"));
+            }
+            if !series_slug.is_empty() {
+                return Err(invalid(
+                    "series_slug",
+                    "global scope requires an empty series slug",
+                ));
+            }
+        }
+        "series" => {
+            if !valid_series_slug(series_slug) {
+                return Err(invalid(
+                    "series_slug",
+                    "use lowercase letters, numbers, and hyphens, starting with a letter or number",
+                ));
+            }
+            if scope_key != format!("series:{series_slug}") {
+                return Err(invalid(
+                    "scope_key",
+                    "series scope key must be exactly `series:{series_slug}`",
+                ));
+            }
+        }
+        _ => {
+            return Err(invalid("scope_type", "must be either `global` or `series`"));
+        }
+    }
+    Ok(())
+}
+
+fn valid_series_slug(slug: &str) -> bool {
+    let mut bytes = slug.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn validate_context(ctx: &TranslationContext) -> Result<()> {
+    if !valid_series_slug(&ctx.series_slug) {
+        return Err(invalid("series_slug", "context has an invalid series slug"));
+    }
+    if ctx.scope_key != format!("series:{}", ctx.series_slug) {
+        return Err(invalid(
+            "scope_key",
+            "context scope key does not match its series slug",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::metadata_query_count;
+
+    #[test]
+    fn metadata_query_count_is_fixed_per_chunk_not_per_record() {
+        assert_eq!(metadata_query_count(0), 0);
+        assert_eq!(metadata_query_count(1), 4);
+        assert_eq!(metadata_query_count(500), 4);
+        assert_eq!(metadata_query_count(501), 8);
+        assert_eq!(metadata_query_count(5_000), 40);
     }
 }

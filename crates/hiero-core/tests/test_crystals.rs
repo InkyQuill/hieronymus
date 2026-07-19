@@ -146,11 +146,15 @@ async fn add_round_trips_every_scalar_and_normalizes_side_metadata_atomically() 
     assert_eq!(record.confidence, 0.8);
     assert_eq!(record.source_credibility, "expert");
     assert_eq!(record.rule_intent, "supporting_context");
-    assert_eq!(record.tags_json, r#"["alpha","zeta"]"#);
+    assert_eq!(record.tags_json, r#"["zeta","alpha"]"#);
     assert_eq!(record.soft_origin.as_deref(), Some("source note"));
     assert!(record.is_inferred);
     assert_eq!(record.malformed_penalty, 0.25);
     assert_eq!(record.status, "candidate");
+    assert_eq!(record.language_tags, ["ja", "ru"]);
+    assert_eq!(record.story_scopes, ["chapter:2", "volume:1"]);
+    assert_eq!(record.semantic_tags, ["alpha", "zeta"]);
+    assert!(record.concept_ids.is_empty());
     assert_eq!(
         side_values(&pool, "crystal_language_tags", "language_tag", id).await,
         ["ja", "ru"]
@@ -177,7 +181,7 @@ async fn add_defaults_and_legacy_tags_are_explicit_and_stable() {
     assert_eq!(record.strength, 0.5);
     assert_eq!(record.confidence, 0.5);
     assert_eq!(record.status, "active");
-    assert_eq!(record.tags_json, r#"["alpha","beta"]"#);
+    assert_eq!(record.tags_json, r#"["beta","alpha"]"#);
     assert_eq!(record.soft_origin, None);
     assert!(!record.is_inferred);
     assert_eq!(record.supersedes_crystal_id, None);
@@ -221,6 +225,91 @@ async fn add_rejects_invalid_types_statuses_scores_scope_and_text_without_rows()
         .await
         .expect("count should work");
     assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn add_enforces_canonical_global_and_series_scope_identity() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let mut cases = Vec::new();
+    let mut arbitrary = input("arbitrary");
+    arbitrary.scope_type = "project".into();
+    cases.push(arbitrary);
+    let mut mismatched = input("mismatch");
+    mismatched.scope_key = "series:other".into();
+    cases.push(mismatched);
+    let mut invalid_slug = input("invalid slug");
+    invalid_slug.series_slug = "Bad Slug".into();
+    invalid_slug.scope_key = "series:Bad Slug".into();
+    cases.push(invalid_slug);
+    let mut ambiguous = input("ambiguous");
+    ambiguous.series_slug = "oso\nother".into();
+    ambiguous.scope_key = "series:oso\nother".into();
+    cases.push(ambiguous);
+    let mut global_with_series = input("global mismatch");
+    global_with_series.scope_type = "global".into();
+    global_with_series.scope_key.clear();
+    cases.push(global_with_series);
+
+    for value in cases {
+        assert!(matches!(
+            store.add(value).await.unwrap_err(),
+            StoreError::Validation {
+                field: "scope_type" | "scope_key" | "series_slug",
+                ..
+            }
+        ));
+    }
+    let global = AddCrystalInput {
+        text: "global".into(),
+        ..AddCrystalInput::default()
+    };
+    assert!(store.add(global).await.is_ok());
+}
+
+#[tokio::test]
+async fn list_and_search_hide_incoherent_legacy_scope_rows() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let now = chrono::Utc::now();
+    sqlx::query("INSERT INTO crystals(crystal_type, text, scope_type, scope_key, series_slug, strength, confidence, rule_intent, status, created_at, updated_at) VALUES ('observation', 'Incoherent hidden token', 'series', 'series:other', 'oso', 0.5, 0.5, 'correction', 'active', ?, ?)")
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .list_rule_intent(RuleFilter::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .search(
+                &TranslationContext::new("oso", "ja", "ru"),
+                "Incoherent hidden",
+                10,
+            )
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn translation_context_metadata_normalization_preserves_first_seen_order() {
+    let context = TranslationContext::new("oso", "JA", "RU").with_metadata(
+        &[" RU ".into(), "ja".into(), "ru".into()],
+        &["volume:2".into(), "chapter:1".into(), "volume:2".into()],
+        &["zeta".into(), "alpha".into(), "zeta".into()],
+        &["second".into(), "first".into(), "second".into()],
+    );
+    assert_eq!(context.language_tags, ["ru", "ja"]);
+    assert_eq!(context.story_scopes, ["volume:2", "chapter:1"]);
+    assert_eq!(context.semantic_tags, ["zeta", "alpha"]);
+    assert_eq!(context.tags, ["second", "first"]);
 }
 
 #[tokio::test]
@@ -390,7 +479,7 @@ async fn replacing_scopes_and_tags_is_normalized_atomic_and_preserves_other_meta
         .unwrap();
 
     assert_eq!(record.title, "Preserved");
-    assert_eq!(record.tags_json, r#"["y","z"]"#);
+    assert_eq!(record.tags_json, r#"["z","y"]"#);
     assert_eq!(
         side_values(&pool, "crystal_story_scopes", "scope", id).await,
         ["a", "b"]
@@ -412,6 +501,65 @@ async fn failed_metadata_replacement_rolls_back_without_touching_existing_rows()
     assert_eq!(
         side_values(&pool, "crystal_semantic_tags", "tag", id).await,
         ["old"]
+    );
+}
+
+#[tokio::test]
+async fn enriched_metadata_is_returned_by_get_list_and_search_for_multiple_rows() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let mut ids = Vec::new();
+    for index in 0..3 {
+        let mut value = input(&format!("Batched metadata token {index}"));
+        value.rule_intent = "correction".into();
+        value.language_tags = vec![format!("lang-{index}"), "shared".into()];
+        value.story_scopes = vec![format!("chapter:{index}")];
+        value.semantic_tags = vec![format!("tag-{index}")];
+        ids.push(store.add(value).await.unwrap());
+    }
+    let now = chrono::Utc::now();
+    let concept_id = sqlx::query("INSERT INTO concepts(canonical_name, scope_type, scope_key, status, confidence, created_at, updated_at) VALUES ('Inventory', 'global', '', 'established', 0.9, ?, ?)")
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+    sqlx::query("INSERT INTO crystal_concepts(crystal_id, concept_id, link_type, confidence, created_at) VALUES (?, ?, 'mentions', 0.9, ?)")
+        .bind(ids[1])
+        .bind(concept_id)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let fetched = store.get(ids[1]).await.unwrap();
+    assert_eq!(fetched.language_tags, ["lang-1", "shared"]);
+    assert_eq!(fetched.story_scopes, ["chapter:1"]);
+    assert_eq!(fetched.semantic_tags, ["tag-1"]);
+    assert_eq!(fetched.concept_ids, [concept_id]);
+
+    let listed = store.list_rule_intent(RuleFilter::default()).await.unwrap();
+    assert_eq!(listed.len(), 3);
+    assert!(
+        listed
+            .iter()
+            .all(|crystal| !crystal.language_tags.is_empty())
+    );
+
+    let searched = store
+        .search(
+            &TranslationContext::new("oso", "ja", "ru"),
+            "Batched metadata",
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(searched.len(), 3);
+    assert!(
+        searched
+            .iter()
+            .all(|crystal| !crystal.semantic_tags.is_empty())
     );
 }
 
@@ -451,6 +599,7 @@ async fn search_is_scope_language_status_rank_and_tie_break_deterministic() {
     high.strength = 0.9;
     let high_id = store.add(high).await.unwrap();
     let mut other = input("Guarded crafting phrase");
+    other.series_slug = "other".into();
     other.scope_key = "series:other".into();
     store.add(other).await.unwrap();
 
@@ -485,6 +634,98 @@ async fn raw_search_expression_reports_syntax_errors_as_typed_failures() {
             .await
             .is_ok()
     );
+}
+
+#[tokio::test]
+async fn raw_search_classifies_all_match_parser_errors_without_hiding_operational_errors() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    store.add(input("Guarded crafting")).await.unwrap();
+    let ctx = TranslationContext::new("oso", "ja", "ru");
+    for expression in [
+        "unknown:term",
+        "\"unterminated",
+        "AND guarded",
+        "guarded OR",
+    ] {
+        assert!(matches!(
+            store
+                .search_expression(&ctx, expression, 10)
+                .await
+                .unwrap_err(),
+            StoreError::FtsExpression { .. }
+        ));
+    }
+    pool.close().await;
+    assert!(matches!(
+        store
+            .search_expression(&ctx, "guarded", 10)
+            .await
+            .unwrap_err(),
+        StoreError::Database { .. }
+    ));
+}
+
+#[tokio::test]
+async fn lowest_confidence_honors_limits_above_fifty() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let mut ids = Vec::new();
+    for index in 0..60 {
+        let mut value = input(&format!("candidate {index}"));
+        value.confidence = f64::from(index) / 100.0;
+        ids.push(store.add(value).await.unwrap());
+    }
+    let selected = store.lowest_confidence(&ids, 55).await.unwrap();
+    assert_eq!(selected.len(), 55);
+    assert_eq!(selected, ids[..55]);
+    assert!(matches!(
+        store.lowest_confidence(&ids, 0).await.unwrap_err(),
+        StoreError::Validation { field: "limit", .. }
+    ));
+}
+
+#[tokio::test]
+async fn dropped_immediate_transaction_rolls_back_and_releases_the_pooled_connection() {
+    let pool = pool().await;
+    {
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        sqlx::query("INSERT INTO crystals(crystal_type, text, scope_type, strength, confidence, status, created_at, updated_at) VALUES ('lesson', 'cancelled', 'global', 0.5, 0.5, 'active', ?, ?)")
+            .bind(chrono::Utc::now())
+            .bind(chrono::Utc::now())
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM crystals")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    assert!(
+        CrystalStore::new(&pool)
+            .add(input("next mutation succeeds"))
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn side_table_failure_after_base_insert_is_rolled_back_by_transaction_drop() {
+    let pool = pool().await;
+    sqlx::query("CREATE TRIGGER reject_tag BEFORE INSERT ON crystal_semantic_tags BEGIN SELECT RAISE(ABORT, 'injected tag failure'); END")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let store = CrystalStore::new(&pool);
+    let mut value = input("must roll back");
+    value.semantic_tags = vec!["tag".into()];
+    assert!(store.add(value).await.is_err());
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM crystals")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[tokio::test]

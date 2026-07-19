@@ -33,11 +33,11 @@
 
 **Files:** Create `domain/{mod.rs,models.rs,crystals.rs}`, `tests/test_crystals.rs`.
 
-**Interfaces:** Produce `AddCrystalInput`, `CrystalStore<'a> { pool: &'a SqlitePool }`, `add`, `get`, `list_rule_intent`, `archive`, `supersede`, `link`, `linked`, `validate_rule`, `set_story_scopes`, `set_semantic_tags`, `lowest_confidence`, `search`, `search_scored`, and `search_expression` exactly as proposal 003 §1/§2.1.
+**Interfaces:** Produce `AddCrystalInput`, enriched `Crystal` reads over raw `CrystalRecord`, `CrystalStore<'a> { pool: &'a SqlitePool }`, `add`, `get`, `list_rule_intent`, `archive`, `supersede`, `link`, `linked`, `validate_rule`, `set_story_scopes`, `set_semantic_tags`, `lowest_confidence`, `search`, `search_scored`, and safe/plain plus intentional/raw `search_expression` boundaries exactly as proposal 003 §1/§2.1.
 
 - [ ] Port representative tests from `tests/test_crystals.py`, `test_memory_search.py`, and rule-crystal tests, including invalid score/type/status, FTS updates/deletes, supersession, batched metadata, and rule-intent filtering.
 - [ ] Run `cargo test -p hiero-core --test test_crystals`; expect RED.
-- [ ] Implement bound queries and transactions; normalize/deduplicate tags before writes; clamp only at the explicit scoring boundary and reject invalid user inputs elsewhere.
+- [ ] Implement bound queries and SQLx tracked immediate transactions; normalize/deduplicate tags in first-seen order before writes; batch public metadata hydration by bounded ID chunks; enforce coherent global/series scopes; clamp only at the explicit scoring boundary and reject invalid user inputs elsewhere.
 - [ ] Run focused tests; expect GREEN. Commit `feat: port crystal domain store`.
 
 ### Task 2: Port Sessions and Short-Term Memory

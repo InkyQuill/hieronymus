@@ -136,7 +136,7 @@ impl DreamPhase for DecayManager {
 
 pub struct Reconsolidator;  // NEW, purely algorithmic — no DreamProvider dependency; see §4
 impl DreamPhase for Reconsolidator {
-    type Input = Vec<(ShortTermMemoryRecord, CrystalRecord)>;  // (working copy, its source crystal)
+    type Input = Vec<(ShortTermMemoryRecord, Crystal)>;  // (working copy, its enriched source crystal)
     type Output = Vec<ReconsolidationOutcome>;
 }
 
@@ -186,7 +186,7 @@ pub enum LinkOutcome {
     Strengthened { source_id: i64, target_id: i64 },
     Combined { survivor_id: i64, absorbed_id: i64 },
 }
-pub fn similarity(a: &CrystalRecord, b: &CrystalRecord, a_concepts: &[i64], b_concepts: &[i64]) -> f64;  // shared crystal_concepts overlap + text similarity
+pub fn similarity(a: &Crystal, b: &Crystal) -> f64;  // shared concept_ids overlap + text similarity
 ```
 
 - **Hebbian strengthening**: crystals with `outcome = 'useful'` in the same session are
