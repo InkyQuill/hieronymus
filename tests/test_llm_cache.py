@@ -7,7 +7,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -80,15 +79,22 @@ def test_adopt_legacy_model_cache_fsyncs_parent_directory(tmp_path, monkeypatch)
     legacy_path.parent.mkdir(parents=True)
     legacy_path.write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
     fsynced_directories = 0
+    fsynced_files = 0
 
     def record_fsync(descriptor: int) -> None:
-        nonlocal fsynced_directories
-        assert stat.S_ISDIR(os.fstat(descriptor).st_mode)
-        fsynced_directories += 1
+        nonlocal fsynced_directories, fsynced_files
+        mode = os.fstat(descriptor).st_mode
+        if stat.S_ISDIR(mode):
+            fsynced_directories += 1
+        elif stat.S_ISREG(mode):
+            fsynced_files += 1
+        else:
+            pytest.fail("cache adoption fsynced an unexpected descriptor type")
 
     monkeypatch.setattr(os, "fsync", record_fsync)
 
     assert adopt_legacy_model_cache(config).status == "adopted"
+    assert fsynced_files == 1
     assert fsynced_directories == 2
 
 
@@ -130,99 +136,228 @@ def test_load_model_cache_does_not_adopt_malformed_legacy_cache(tmp_path) -> Non
     assert not config.llm_cache_path.exists()
 
 
-def test_adopt_model_cache_preserves_data_when_atomic_publication_is_interrupted(
-    tmp_path,
-) -> None:
+def test_adoption_uses_stable_bytes_when_legacy_path_is_replaced(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.parent.mkdir(parents=True)
+    original = json.dumps(_cache().to_payload()).encode()
+    legacy_path.write_bytes(original)
+    replacement = b'{"providers": {}}'
+    original_open = os.open
+
+    def replacing_open(path, flags, mode=0o777):
+        if Path(path) == config.llm_cache_path and flags & os.O_EXCL:
+            replacement_path = legacy_path.with_name("replacement-cache")
+            replacement_path.write_bytes(replacement)
+            replacement_path.replace(legacy_path)
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", replacing_open)
+
+    adoption = adopt_legacy_model_cache(config)
+
+    assert adoption.status == "published-cleanup-pending"
+    assert config.llm_cache_path.read_bytes() == original
+    assert legacy_path.read_bytes() == replacement
+
+    assert adopt_legacy_model_cache(config).status == "conflict"
+    assert config.llm_cache_path.read_bytes() == original
+    assert legacy_path.read_bytes() == replacement
+
+
+def test_adoption_exclusive_create_never_clobbers_racing_canonical(tmp_path, monkeypatch) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     legacy_path = _legacy_cache_path(config)
     legacy_path.parent.mkdir(parents=True)
     legacy_path.write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
+    newer = b'{"providers": {}}'
+    original_open = os.open
 
-    with patch("hieronymus.llm_cache.os.link", side_effect=OSError("interrupted")):
-        adoption = adopt_legacy_model_cache(config)
+    def racing_open(path, flags, mode=0o777):
+        if Path(path) == config.llm_cache_path and flags & os.O_EXCL:
+            config.llm_cache_path.write_bytes(newer)
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", racing_open)
+
+    assert adopt_legacy_model_cache(config).status == "conflict"
+    assert config.llm_cache_path.read_bytes() == newer
+    assert legacy_path.exists()
+
+
+def test_concurrent_exclusive_adopters_publish_one_complete_cache(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.parent.mkdir(parents=True)
+    original = json.dumps(_cache().to_payload()).encode()
+    legacy_path.write_bytes(original)
+    original_open = os.open
+    barrier = threading.Barrier(2)
+
+    def synchronized_open(path, flags, mode=0o777):
+        if Path(path) == config.llm_cache_path and flags & os.O_EXCL:
+            barrier.wait(timeout=2)
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", synchronized_open)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: adopt_legacy_model_cache(config), range(2)))
+
+    assert all(
+        result.status in {"adopted", "published-cleanup-pending", "conflict"} for result in results
+    )
+    assert config.llm_cache_path.read_bytes() == original
+    if legacy_path.exists():
+        assert adopt_legacy_model_cache(config).status == "adopted"
+    assert not legacy_path.exists()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["open", "read", "write", "file-fsync", "directory-fsync"],
+)
+def test_failed_publication_removes_partial_canonical_and_preserves_legacy(
+    tmp_path, monkeypatch, failure
+) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.parent.mkdir(parents=True)
+    original = json.dumps(_cache().to_payload()).encode()
+    legacy_path.write_bytes(original)
+
+    if failure == "open":
+        original_open = os.open
+
+        def fail_legacy_open(path, flags, mode=0o777):
+            if Path(path) == legacy_path and flags == os.O_RDONLY:
+                raise OSError("open")
+            return original_open(path, flags, mode)
+
+        monkeypatch.setattr(os, "open", fail_legacy_open)
+    elif failure == "read":
+        monkeypatch.setattr(os, "read", lambda *_: (_ for _ in ()).throw(OSError("read")))
+    elif failure == "write":
+        monkeypatch.setattr(os, "write", lambda *_: (_ for _ in ()).throw(OSError("write")))
+    elif failure == "file-fsync":
+        original_fsync = os.fsync
+
+        def fail_file_fsync(descriptor):
+            if stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise OSError("file fsync")
+            original_fsync(descriptor)
+
+        monkeypatch.setattr(os, "fsync", fail_file_fsync)
+    else:
+        monkeypatch.setattr(
+            "hieronymus.llm_cache._fsync_directory",
+            lambda *_: (_ for _ in ()).throw(OSError("directory fsync")),
+        )
+
+    adoption = adopt_legacy_model_cache(config)
 
     assert adoption.status == "adoption-failed"
-    assert load_model_cache(config) == _cache()
-    assert legacy_path.exists()
+    assert legacy_path.read_bytes() == original
     assert not config.llm_cache_path.exists()
 
 
-def test_adopt_model_cache_does_not_clobber_canonical_cache_created_in_race(
+def test_failed_publisher_does_not_remove_replacement_canonical(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
+    replacement = b'{"providers": {}}'
+
+    def replace_then_fail(_descriptor, _content):
+        config.llm_cache_path.unlink()
+        config.llm_cache_path.write_bytes(replacement)
+        raise OSError("publisher lost ownership")
+
+    monkeypatch.setattr("hieronymus.llm_cache._write_all", replace_then_fail)
+
+    adoption = adopt_legacy_model_cache(config)
+
+    assert adoption.status == "adoption-failed"
+    assert config.llm_cache_path.read_bytes() == replacement
+    assert legacy_path.exists()
+
+
+def test_unlink_failure_is_reported_as_cleanup_pending(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.parent.mkdir(parents=True)
+    original = json.dumps(_cache().to_payload()).encode()
+    legacy_path.write_bytes(original)
+    original_unlink = os.unlink
+
+    def fail_legacy_unlink(path, *args, **kwargs):
+        if Path(path) == legacy_path:
+            raise OSError("unlink")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", fail_legacy_unlink)
+
+    adoption = adopt_legacy_model_cache(config)
+
+    assert adoption.status == "published-cleanup-pending"
+    assert config.llm_cache_path.read_bytes() == original
+    assert legacy_path.read_bytes() == original
+
+    monkeypatch.undo()
+    assert adopt_legacy_model_cache(config).status == "adopted"
+    assert not legacy_path.exists()
+
+
+def test_cleanup_fsync_failure_is_not_reported_as_publication_failure(
     tmp_path, monkeypatch
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     legacy_path = _legacy_cache_path(config)
     legacy_path.parent.mkdir(parents=True)
-    legacy_path.write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
+    original = json.dumps(_cache().to_payload()).encode()
+    legacy_path.write_bytes(original)
+    calls = 0
 
-    newer_cache = CachedModels().with_entry(
-        ModelCacheEntry(
-            provider="gemini",
-            models=("gemini-2.5-flash",),
-            fetched_at="2026-06-09T12:00:00+00:00",
-        )
-    )
-    original_link = os.link
+    def fail_second_fsync(_path):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("cleanup fsync")
 
-    def racing_link(source, target) -> None:
-        Path(target).write_text(json.dumps(newer_cache.to_payload()), encoding="utf-8")
-        original_link(source, target)
-
-    monkeypatch.setattr(os, "link", racing_link)
+    monkeypatch.setattr("hieronymus.llm_cache._fsync_directory", fail_second_fsync)
 
     adoption = adopt_legacy_model_cache(config)
 
-    assert adoption.status == "conflict"
-    assert load_model_cache(config) == newer_cache
-    assert legacy_path.exists()
+    assert adoption.status == "published-cleanup-pending"
+    assert config.llm_cache_path.read_bytes() == original
+    assert not legacy_path.exists()
 
 
-def test_adopter_losing_source_race_recognizes_canonical_winner(tmp_path, monkeypatch) -> None:
+def test_retry_with_identical_canonical_finishes_legacy_cleanup(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    legacy_path = _legacy_cache_path(config)
-    legacy_path.parent.mkdir(parents=True)
-    legacy_path.write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
-
-    def completed_adoption(source, target) -> None:
-        Path(target).write_bytes(Path(source).read_bytes())
-        Path(source).unlink()
-        raise FileNotFoundError("source adopted by winner")
-
-    monkeypatch.setattr(os, "link", completed_adoption)
+    config.data_root.mkdir(parents=True)
+    original = json.dumps(_cache().to_payload()).encode()
+    _legacy_cache_path(config).write_bytes(original)
+    config.llm_cache_path.write_bytes(original)
 
     adoption = adopt_legacy_model_cache(config)
 
-    assert adoption.status == "conflict"
-    assert load_model_cache(config) == _cache()
-    assert not legacy_path.exists()
+    assert adoption.status == "adopted"
+    assert not _legacy_cache_path(config).exists()
+    assert config.llm_cache_path.read_bytes() == original
 
 
-def test_concurrent_cache_adopters_never_overwrite_canonical_cache(tmp_path, monkeypatch) -> None:
+def test_retry_with_different_canonical_remains_conflict(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    legacy_path = _legacy_cache_path(config)
-    legacy_path.parent.mkdir(parents=True)
-    legacy_path.write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
-    original_link = os.link
-    barrier = threading.Barrier(2)
-    link_calls = 0
-    link_calls_lock = threading.Lock()
+    config.data_root.mkdir(parents=True)
+    original = json.dumps(_cache().to_payload()).encode()
+    _legacy_cache_path(config).write_bytes(original)
+    different = b'{"providers": {}}'
+    config.llm_cache_path.write_bytes(different)
 
-    def synchronized_link(source, target) -> None:
-        nonlocal link_calls
-        with link_calls_lock:
-            link_calls += 1
-        barrier.wait(timeout=2)
-        original_link(source, target)
-
-    monkeypatch.setattr(os, "link", synchronized_link)
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(lambda _: adopt_legacy_model_cache(config), range(2)))
-
-    assert link_calls == 2
-    assert {result.status for result in results} == {"adopted", "conflict"}
-    assert load_model_cache(config) == _cache()
-    assert not legacy_path.exists()
+    assert adopt_legacy_model_cache(config).status == "conflict"
+    assert _legacy_cache_path(config).read_bytes() == original
+    assert config.llm_cache_path.read_bytes() == different
 
 
 @pytest.mark.parametrize(

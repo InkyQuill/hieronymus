@@ -28,6 +28,7 @@ from hieronymus.provider_config import (
     ProviderProfile,
     save_provider_catalog,
 )
+from hieronymus.service_state import ServerState, read_server_state, write_server_state
 
 
 def write_dream_config(config: HieronymusConfig, raw_config: str) -> None:
@@ -95,6 +96,42 @@ def test_doctor_reports_running_daemon_as_information(config) -> None:
     assert "pid 12" in finding.message
     assert "port 8765" in finding.message
     assert str(config.data_root) in finding.message
+
+
+def test_read_only_doctor_preserves_stale_daemon_state(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = ServerState(
+        pid=99999999,
+        host="127.0.0.1",
+        port=9768,
+        version="0.6.0",
+        started_at="2026-07-19T00:00:00+00:00",
+        data_root=str(config.data_root),
+        database_path=str(config.database_path),
+    )
+    write_server_state(config, state)
+
+    Doctor(config).run(autofix=False)
+
+    assert read_server_state(config) == state
+
+
+def test_doctor_autofix_explicitly_cleans_stale_daemon_state(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = ServerState(
+        pid=99999999,
+        host="127.0.0.1",
+        port=9768,
+        version="0.6.0",
+        started_at="2026-07-19T00:00:00+00:00",
+        data_root=str(config.data_root),
+        database_path=str(config.database_path),
+    )
+    write_server_state(config, state)
+
+    Doctor(config).run(autofix=True)
+
+    assert read_server_state(config) is None
 
 
 def test_doctor_reports_missing_data_root_as_autofixable(tmp_path: Path) -> None:
@@ -773,7 +810,7 @@ def test_doctor_reports_interrupted_legacy_model_cache_adoption(tmp_path: Path) 
     config.data_root.mkdir(parents=True)
     _legacy_cache_path(config).write_text(_valid_cache_payload(), encoding="utf-8")
 
-    with patch("hieronymus.llm_cache.os.link", side_effect=OSError("interrupted")):
+    with patch("hieronymus.llm_cache._write_all", side_effect=OSError("interrupted")):
         report = run_doctor_without_daemon(config, autofix=True)
 
     assert any(finding.code == "llm-cache-legacy-adoption-failed" for finding in report["warnings"])

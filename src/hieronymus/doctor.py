@@ -59,7 +59,7 @@ class Doctor:
         self._check_data_root(report, autofix=autofix)
         self._check_database(report)
         self._check_memory_graph_migration(report)
-        self._check_daemon(report)
+        self._check_daemon(report, autofix=autofix)
         self._check_bun_runtime(report)
         self._check_dream_config_file(report)
         self._check_dream_config_readiness(report)
@@ -103,7 +103,7 @@ class Doctor:
 
     def _check_llm_cache_adoption(self, report: DoctorReport, *, autofix: bool) -> None:
         adoption = inspect_legacy_model_cache(self.config)
-        if adoption.status == "ready" and autofix:
+        if adoption.status in {"ready", "cleanup-ready"} and autofix:
             adoption = adopt_legacy_model_cache(self.config)
         if adoption.status == "adopted":
             report["autofixed"].append(
@@ -122,6 +122,17 @@ class Doctor:
                     message=(
                         f"Legacy model cache is ready to adopt from {adoption.legacy_path}; "
                         "run hiero doctor --fix"
+                    ),
+                )
+            )
+        elif adoption.status == "cleanup-ready":
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="llm-cache-legacy-cleanup-ready",
+                    message=(
+                        f"Published model cache still has legacy cleanup at "
+                        f"{adoption.legacy_path}; run hiero doctor --fix"
                     ),
                 )
             )
@@ -152,6 +163,17 @@ class Doctor:
                     message=(
                         f"Legacy model cache could not be adopted: {adoption.legacy_path}: "
                         f"{adoption.error}"
+                    ),
+                )
+            )
+        elif adoption.status == "published-cleanup-pending":
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="llm-cache-legacy-cleanup-pending",
+                    message=(
+                        f"Model cache was published, but legacy cleanup is pending at "
+                        f"{adoption.legacy_path}: {adoption.error}"
                     ),
                 )
             )
@@ -195,8 +217,8 @@ class Doctor:
             )
         )
 
-    def _check_daemon(self, report: DoctorReport) -> None:
-        status = ServiceManager(self.config).status()
+    def _check_daemon(self, report: DoctorReport, *, autofix: bool) -> None:
+        status = ServiceManager(self.config).status(cleanup_stale=autofix)
         if status.get("running") is True:
             report["info"].append(
                 DoctorFinding(

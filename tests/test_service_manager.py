@@ -116,6 +116,28 @@ def test_status_reports_not_running_without_state(tmp_path: Path) -> None:
     assert status["reason"] == "no-state"
 
 
+def test_status_can_peek_without_cleaning_stale_state(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    state = server_state(config, pid=99999999)
+    write_server_state(config, state)
+    manager = ServiceManager(config, client=FakeClient(healthy=False))
+
+    status = manager.status(cleanup_stale=False)
+
+    assert status == {"running": False, "reason": "unreachable"}
+    assert read_server_state(config) == state
+
+
+def test_status_cleans_stale_state_by_default(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    write_server_state(config, server_state(config, pid=99999999))
+
+    status = ServiceManager(config).status()
+
+    assert status == {"running": False, "reason": "no-state"}
+    assert read_server_state(config) is None
+
+
 def test_status_uses_existing_healthy_state(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     state = server_state(config, pid=os.getpid())

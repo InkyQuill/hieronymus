@@ -55,8 +55,9 @@ class ServiceManager:
         self.kill_timeout = kill_timeout
         self._process: subprocess.Popen[object] | None = None
 
-    def status(self) -> dict[str, Any]:
-        cleanup_stale_state(self.config)
+    def status(self, *, cleanup_stale: bool = True) -> dict[str, Any]:
+        if cleanup_stale:
+            cleanup_stale_state(self.config)
         state = read_server_state(self.config)
         if state is None:
             return {"running": False, "reason": "no-state"}
