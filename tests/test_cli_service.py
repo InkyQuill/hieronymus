@@ -341,7 +341,7 @@ def test_config_json_returns_real_settings_and_paths(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["config_root"] == str(data_root)
+    assert payload["data_root"] == str(data_root)
     assert payload["database_path"] == str(data_root / "hieronymus.sqlite")
     assert payload["dream_config_path"] == str(data_root / "dream.conf")
     assert payload["release_config_path"] == str(data_root / "release.conf")

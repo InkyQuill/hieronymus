@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,7 +31,7 @@ from hieronymus.provider_config import (
 
 
 def write_dream_config(config: HieronymusConfig, raw_config: str) -> None:
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
     config.dream_config_path.write_text(raw_config, encoding="utf-8")
 
 
@@ -96,7 +97,7 @@ def test_doctor_reports_running_daemon_as_information(config) -> None:
     assert str(config.data_root) in finding.message
 
 
-def test_doctor_reports_missing_config_root_as_autofixable(tmp_path: Path) -> None:
+def test_doctor_reports_missing_data_root_as_autofixable(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
     with patch("hieronymus.doctor.ServiceManager") as manager_class:
@@ -109,8 +110,8 @@ def test_doctor_reports_missing_config_root_as_autofixable(tmp_path: Path) -> No
     assert (
         DoctorFinding(
             level="warning",
-            code="config-root-missing",
-            message=f"Config root does not exist: {config.config_root}",
+            code="data-root-missing",
+            message=f"Data root does not exist: {config.data_root}",
             autofixed=False,
         )
         in report["warnings"]
@@ -510,7 +511,7 @@ def test_doctor_reports_fresh_dream_provider_cache_errors(
     assert DoctorFinding(level=severity, code=code, message=message) in report[f"{severity}s"]
 
 
-def test_doctor_autofix_creates_config_root(tmp_path: Path) -> None:
+def test_doctor_autofix_creates_data_root(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
     with patch("hieronymus.doctor.ServiceManager") as manager_class:
@@ -520,8 +521,8 @@ def test_doctor_autofix_creates_config_root(tmp_path: Path) -> None:
         }
         report = Doctor(config).run(autofix=True)
 
-    assert config.config_root.is_dir()
-    assert report["autofixed"][0].code == "config-root-created"
+    assert config.data_root.is_dir()
+    assert report["autofixed"][0].code == "data-root-created"
 
 
 def test_doctor_reports_database_file_when_present(tmp_path: Path) -> None:
@@ -666,7 +667,7 @@ def test_doctor_ignores_llm_model_cache_error_for_obsolete_provider_profile(
 
 def test_doctor_ignores_malformed_llm_model_cache(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.llm_cache_path.write_text("{not json", encoding="utf-8")
 
     with patch("hieronymus.doctor.ServiceManager") as manager_class:
@@ -677,6 +678,73 @@ def test_doctor_ignores_malformed_llm_model_cache(tmp_path: Path) -> None:
         report = Doctor(config).run(autofix=False)
 
     assert all(warning.code != "llm-model-cache-refresh-failed" for warning in report["warnings"])
+
+
+def _legacy_cache_path(config: HieronymusConfig) -> Path:
+    return config.data_root / ("llmcache" + ".tmp")
+
+
+def _valid_cache_payload() -> str:
+    return json.dumps(
+        {
+            "providers": {
+                "openai": {
+                    "provider": "openai",
+                    "models": ["gpt-4.1-mini"],
+                    "fetched_at": datetime.now(UTC).isoformat(),
+                    "error": "",
+                }
+            }
+        }
+    )
+
+
+def test_doctor_reports_legacy_model_cache_adoption(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    _legacy_cache_path(config).write_text(_valid_cache_payload(), encoding="utf-8")
+
+    report = run_doctor_without_daemon(config)
+
+    assert any(finding.code == "llm-cache-legacy-adopted" for finding in report["info"])
+    assert config.llm_cache_path.exists()
+
+
+def test_doctor_reports_legacy_model_cache_conflict_and_keeps_new(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    config.llm_cache_path.write_text(_valid_cache_payload(), encoding="utf-8")
+    _legacy_cache_path(config).write_text(_valid_cache_payload(), encoding="utf-8")
+
+    report = run_doctor_without_daemon(config)
+
+    assert any(finding.code == "llm-cache-legacy-conflict" for finding in report["warnings"])
+    assert config.llm_cache_path.exists()
+    assert _legacy_cache_path(config).exists()
+
+
+def test_doctor_reports_malformed_legacy_model_cache(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    _legacy_cache_path(config).write_text("{not json", encoding="utf-8")
+
+    report = run_doctor_without_daemon(config)
+
+    assert any(finding.code == "llm-cache-legacy-invalid" for finding in report["warnings"])
+    assert not config.llm_cache_path.exists()
+
+
+def test_doctor_reports_interrupted_legacy_model_cache_adoption(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    _legacy_cache_path(config).write_text(_valid_cache_payload(), encoding="utf-8")
+
+    with patch.object(Path, "replace", side_effect=OSError("interrupted")):
+        report = run_doctor_without_daemon(config)
+
+    assert any(finding.code == "llm-cache-legacy-adoption-failed" for finding in report["warnings"])
+    assert _legacy_cache_path(config).exists()
+    assert not config.llm_cache_path.exists()
 
 
 def test_doctor_json_does_not_include_raw_api_key_value(config):

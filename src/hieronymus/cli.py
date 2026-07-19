@@ -392,7 +392,7 @@ def config_command(ctx: click.Context, json_output: bool) -> None:
         ingest_config = load_ingest_config(config)
         raw_provider_catalog = redacted_provider_catalog_payload(provider_catalog)
         payload = {
-            "config_root": str(config.config_root),
+            "data_root": str(config.data_root),
             "database_path": str(config.database_path),
             "dream_config_path": str(config.dream_config_path),
             "provider_config_path": str(config.provider_config_path),

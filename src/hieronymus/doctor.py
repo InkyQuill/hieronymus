@@ -17,6 +17,7 @@ from hieronymus.dream_config import (
 )
 from hieronymus.dream_providers import ProviderProfile as RuntimeProviderProfile
 from hieronymus.llm_cache import (
+    adopt_legacy_model_cache,
     dream_profile_cache_identity,
     load_model_cache,
     model_cache_identity,
@@ -54,28 +55,29 @@ class Doctor:
     def run(self, autofix: bool = False) -> DoctorReport:
         report: DoctorReport = {"info": [], "autofixed": [], "warnings": [], "errors": []}
 
-        self._check_config_root(report, autofix=autofix)
+        self._check_data_root(report, autofix=autofix)
         self._check_database(report)
         self._check_memory_graph_migration(report)
         self._check_daemon(report)
         self._check_bun_runtime(report)
         self._check_dream_config_file(report)
         self._check_dream_config_readiness(report)
+        self._check_llm_cache_adoption(report)
         self._check_llm_model_cache(report)
         self._check_agent_plugins(report)
 
         return report
 
-    def _check_config_root(self, report: DoctorReport, *, autofix: bool) -> None:
-        config_root = self.config.config_root
-        if not config_root.exists():
+    def _check_data_root(self, report: DoctorReport, *, autofix: bool) -> None:
+        data_root = self.config.data_root
+        if not data_root.exists():
             if autofix:
-                config_root.mkdir(parents=True, exist_ok=True)
+                data_root.mkdir(parents=True, exist_ok=True)
                 report["autofixed"].append(
                     DoctorFinding(
                         level="info",
-                        code="config-root-created",
-                        message=f"Config root created: {config_root}",
+                        code="data-root-created",
+                        message=f"Data root created: {data_root}",
                         autofixed=True,
                     )
                 )
@@ -83,18 +85,59 @@ class Doctor:
             report["warnings"].append(
                 DoctorFinding(
                     level="warning",
-                    code="config-root-missing",
-                    message=f"Config root does not exist: {config_root}",
+                    code="data-root-missing",
+                    message=f"Data root does not exist: {data_root}",
                 )
             )
             return
 
-        if not config_root.is_dir():
+        if not data_root.is_dir():
             report["errors"].append(
                 DoctorFinding(
                     level="error",
-                    code="config-root-not-directory",
-                    message=f"Config root is not a directory: {config_root}",
+                    code="data-root-not-directory",
+                    message=f"Data root is not a directory: {data_root}",
+                )
+            )
+
+    def _check_llm_cache_adoption(self, report: DoctorReport) -> None:
+        adoption = adopt_legacy_model_cache(self.config)
+        if adoption.status == "adopted":
+            report["info"].append(
+                DoctorFinding(
+                    level="info",
+                    code="llm-cache-legacy-adopted",
+                    message=f"Legacy model cache adopted at {self.config.llm_cache_path}",
+                )
+            )
+        elif adoption.status == "conflict":
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="llm-cache-legacy-conflict",
+                    message=(
+                        f"Both model cache files exist; using {self.config.llm_cache_path} "
+                        f"and leaving {adoption.legacy_path} unchanged"
+                    ),
+                )
+            )
+        elif adoption.status == "invalid-legacy":
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="llm-cache-legacy-invalid",
+                    message=f"Legacy model cache is malformed: {adoption.legacy_path}",
+                )
+            )
+        elif adoption.status == "adoption-failed":
+            report["warnings"].append(
+                DoctorFinding(
+                    level="warning",
+                    code="llm-cache-legacy-adoption-failed",
+                    message=(
+                        f"Legacy model cache could not be adopted: {adoption.legacy_path}: "
+                        f"{adoption.error}"
+                    ),
                 )
             )
 

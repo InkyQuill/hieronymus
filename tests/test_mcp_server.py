@@ -89,7 +89,7 @@ def _start_temporary_daemon(
 
     for attempt in range(1, attempts + 1):
         port = port_factory()
-        (config.config_root / "service.conf").write_text(
+        (config.data_root / "service.conf").write_text(
             f'[service]\nhost = "127.0.0.1"\nport = {port}\n',
             encoding="utf-8",
         )

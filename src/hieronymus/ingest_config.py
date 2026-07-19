@@ -74,7 +74,7 @@ def load_ingest_config(config: HieronymusConfig) -> IngestConfig:
 
 def save_ingest_config(config: HieronymusConfig, ingest_config: IngestConfig) -> None:
     ingest_config = validate_ingest_config(ingest_config)
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
     atomic_write_text(config.ingest_config_path, tomli_w.dumps(ingest_config.to_payload()))
 
 

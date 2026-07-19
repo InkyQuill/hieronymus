@@ -19,14 +19,50 @@ def test_load_config_uses_explicit_data_root(tmp_path: Path) -> None:
     assert config.database_path == tmp_path / "hieronymus.sqlite"
 
 
+def test_load_config_explicit_root_overrides_environment(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", str(tmp_path / "environment"))
+
+    config = load_config(tmp_path / "explicit")
+
+    assert config.data_root == (tmp_path / "explicit").resolve()
+
+
 def test_load_config_defaults_to_xdg_config_home_when_unset(
     monkeypatch,
 ) -> None:
     monkeypatch.delenv("HIERONYMUS_DATA_ROOT", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
 
     config = load_config()
 
     assert config.data_root == Path.home() / ".config" / "hieronymus"
+
+
+def test_load_config_uses_xdg_config_home(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("HIERONYMUS_DATA_ROOT", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    config = load_config()
+
+    assert config.data_root == (tmp_path / "xdg" / "hieronymus").resolve()
+
+
+def test_load_config_ignores_blank_xdg_config_home(monkeypatch) -> None:
+    monkeypatch.delenv("HIERONYMUS_DATA_ROOT", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", "   ")
+
+    config = load_config()
+
+    assert config.data_root == (Path.home() / ".config" / "hieronymus").resolve()
+
+
+def test_load_config_ignores_blank_environment_root(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", "   ")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    config = load_config()
+
+    assert config.data_root == (tmp_path / "xdg" / "hieronymus").resolve()
 
 
 def test_load_config_uses_environment_root(monkeypatch, tmp_path: Path) -> None:
@@ -35,6 +71,23 @@ def test_load_config_uses_environment_root(monkeypatch, tmp_path: Path) -> None:
     config = load_config()
 
     assert config.data_root == tmp_path
+
+
+def test_load_config_expands_and_absolutizes_relative_environment_root(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HIERONYMUS_DATA_ROOT", "relative/root")
+
+    config = load_config()
+
+    assert config.data_root == (tmp_path / "relative" / "root").resolve()
+
+
+def test_config_has_no_data_root_alias(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path)
+
+    assert not hasattr(config, "config" + "_root")
 
 
 def test_global_migration_creates_memory_dreaming_schema(tmp_path: Path) -> None:

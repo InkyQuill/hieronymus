@@ -23,7 +23,7 @@ def _config(tmp_path: Path) -> HieronymusConfig:
 
 
 def _write_provider_config(config: HieronymusConfig, raw_config: str) -> None:
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.provider_config_path.write_text(raw_config, encoding="utf-8")
 
 
@@ -38,7 +38,7 @@ def test_load_provider_catalog_migrates_legacy_dream_providers_on_disk(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path)
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.dream_config_path.write_text(
         """
 [providers.openai]

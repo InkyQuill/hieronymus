@@ -714,7 +714,7 @@ def test_dreaming_does_not_skip_provider_lock_error_after_acquiring_lock(
 def test_dreaming_rejects_invalid_dream_config(
     config: HieronymusConfig,
 ) -> None:
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
     config.dream_config_path.write_text("not valid toml = [", encoding="utf-8")
 
     with pytest.raises(DreamConfigError, match="dream.conf is not valid TOML"):
@@ -724,7 +724,7 @@ def test_dreaming_rejects_invalid_dream_config(
 def test_dreaming_rejects_missing_workflow_provider_without_deterministic_fallback(
     config: HieronymusConfig,
 ) -> None:
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
     config.dream_config_path.write_text(
         """
 [dreaming]

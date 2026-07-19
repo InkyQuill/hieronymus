@@ -368,7 +368,7 @@ def test_start_on_occupied_configured_port_fails_without_fallback(tmp_path: Path
     with socket.socket() as occupied:
         occupied.bind(("127.0.0.1", 0))
         port = occupied.getsockname()[1]
-        (config.config_root / "service.conf").write_text(
+        (config.data_root / "service.conf").write_text(
             f"[service]\nport = {port}\n", encoding="utf-8"
         )
         manager = ServiceManager(config, startup_timeout=3, poll_interval=0.02)
@@ -474,7 +474,7 @@ def test_start_rejects_older_healthy_daemon_when_spawned_child_loses_bind(
     old_manager, old_state = _start_real_daemon_with_reserved_port(tmp_path / "old")
     new_config = HieronymusConfig(data_root=tmp_path / "new")
     new_config.data_root.mkdir()
-    (new_config.config_root / "service.conf").write_text(
+    (new_config.data_root / "service.conf").write_text(
         f"[service]\nport = {old_state.port}\n", encoding="utf-8"
     )
     new_manager = ServiceManager(new_config, startup_timeout=3, poll_interval=0.02)

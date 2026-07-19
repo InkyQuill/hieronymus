@@ -276,7 +276,7 @@ def test_rendering_query_work_is_independent_of_unselected_crystal_tags(
 def test_status_payload_survives_malformed_dream_config(
     config: HieronymusConfig,
 ) -> None:
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
 
     payload = AdminStore(config).status_payload()

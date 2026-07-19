@@ -11,10 +11,10 @@ from hieronymus.release_config import (
 )
 
 
-def test_release_config_path_lives_under_config_root(tmp_path: Path) -> None:
+def test_release_config_path_lives_under_data_root(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
-    assert config.release_config_path == config.config_root / "release.conf"
+    assert config.release_config_path == config.data_root / "release.conf"
 
 
 def test_default_release_config_uses_stable_channel(tmp_path: Path) -> None:
@@ -38,7 +38,7 @@ def test_save_release_config_round_trips_dev_channel(tmp_path: Path) -> None:
 
 def test_load_release_config_rejects_unknown_channel(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.release_config_path.write_text('[updates]\nchannel = "nightly"\n', encoding="utf-8")
 
     with pytest.raises(ReleaseConfigError, match="updates.channel"):

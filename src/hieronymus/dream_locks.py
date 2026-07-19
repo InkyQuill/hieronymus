@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - exercised only on non-Unix platforms.
 
 @dataclass(frozen=True)
 class DreamCyclePaths:
-    config_root: Path
+    data_root: Path
     lock_file: Path
     state_json: Path
 
@@ -59,9 +59,9 @@ class PlatformNotSupportedError(RuntimeError):
 
 
 def dream_cycle_paths(config: HieronymusConfig) -> DreamCyclePaths:
-    root = config.config_root
+    root = config.data_root
     return DreamCyclePaths(
-        config_root=root,
+        data_root=root,
         lock_file=root / "dream-cycle.lock",
         state_json=root / "dream-cycle.json",
     )
@@ -141,7 +141,7 @@ def dream_cycle_lock(
     wait: bool = False,
 ) -> Iterator[DreamCycleState]:
     paths = dream_cycle_paths(config)
-    paths.config_root.mkdir(parents=True, exist_ok=True)
+    paths.data_root.mkdir(parents=True, exist_ok=True)
     local_lock = _local_lock(paths.lock_file)
     local_acquired = local_lock.acquire(blocking=wait)
     if not local_acquired:

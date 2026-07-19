@@ -46,7 +46,7 @@ def load_service_config(
 
 
 def _load_service_config_file(config: HieronymusConfig) -> ServiceConfig:
-    path = config.config_root / "service.conf"
+    path = config.data_root / "service.conf"
     if not path.exists():
         return ServiceConfig()
     try:

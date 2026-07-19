@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from hieronymus.agent_plugins.base import atomic_write_text
@@ -13,6 +14,13 @@ if TYPE_CHECKING:
     from hieronymus.dream_providers import ProviderProfile
 
 CACHE_TTL = timedelta(hours=24)
+
+
+@dataclass(frozen=True)
+class ModelCacheAdoption:
+    status: str
+    legacy_path: str = ""
+    error: str = ""
 
 
 @dataclass(frozen=True)
@@ -61,13 +69,37 @@ class CachedModels:
 
 
 def load_model_cache(config: HieronymusConfig) -> CachedModels:
-    if not config.llm_cache_path.exists():
+    adoption = adopt_legacy_model_cache(config)
+    path = config.llm_cache_path
+    if adoption.status == "adoption-failed":
+        path = _legacy_model_cache_path(config)
+    if not path.exists():
         return CachedModels()
+    cache, valid = _read_cache(path)
+    return cache if valid else CachedModels()
+
+
+def adopt_legacy_model_cache(config: HieronymusConfig) -> ModelCacheAdoption:
+    legacy_path = _legacy_model_cache_path(config)
+    if not legacy_path.exists():
+        return ModelCacheAdoption(status="not-needed")
+    if config.llm_cache_path.exists():
+        return ModelCacheAdoption(status="conflict", legacy_path=str(legacy_path))
+
+    _, valid = _read_cache(legacy_path)
+    if not valid:
+        return ModelCacheAdoption(status="invalid-legacy", legacy_path=str(legacy_path))
     try:
-        payload = json.loads(config.llm_cache_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return CachedModels()
-    return _cache_from_payload(payload)
+        legacy_path.replace(config.llm_cache_path)
+    except OSError as error:
+        if config.llm_cache_path.exists() and not legacy_path.exists():
+            return ModelCacheAdoption(status="not-needed")
+        return ModelCacheAdoption(
+            status="adoption-failed",
+            legacy_path=str(legacy_path),
+            error=str(error),
+        )
+    return ModelCacheAdoption(status="adopted", legacy_path=str(legacy_path))
 
 
 def save_model_cache(config: HieronymusConfig, cache: CachedModels) -> None:
@@ -118,6 +150,20 @@ def _cache_from_payload(payload: Any) -> CachedModels:
         if entry is not None:
             entries[provider] = entry
     return CachedModels(providers=entries)
+
+
+def _legacy_model_cache_path(config: HieronymusConfig) -> Path:
+    return config.data_root / ("llm" + "cache.tmp")
+
+
+def _read_cache(path: Path) -> tuple[CachedModels, bool]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return CachedModels(), False
+    if type(payload) is not dict or type(payload.get("providers")) is not dict:
+        return CachedModels(), False
+    return _cache_from_payload(payload), True
 
 
 def _entry_from_payload(provider: str, payload: dict[str, Any]) -> ModelCacheEntry | None:

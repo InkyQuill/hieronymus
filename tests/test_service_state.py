@@ -19,12 +19,12 @@ from hieronymus.service_state import (
 )
 
 
-def test_runtime_paths_stay_under_config_root(tmp_path: Path) -> None:
+def test_runtime_paths_stay_under_data_root(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
     paths = runtime_paths(config)
 
-    assert paths.config_root == tmp_path / "hieronymus"
+    assert paths.data_root == tmp_path / "hieronymus"
     assert paths.server_json == tmp_path / "hieronymus" / "server.json"
     assert paths.server_pid == tmp_path / "hieronymus" / "server.pid"
     assert paths.server_lock == tmp_path / "hieronymus" / "server.lock"

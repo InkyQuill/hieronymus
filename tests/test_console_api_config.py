@@ -964,7 +964,7 @@ def test_config_model_suggestions_accepts_legacy_draft_without_provider_catalog(
 
 def test_config_bootstrap_survives_malformed_dream_config(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
 
     payload = ConfigBridge(config).bootstrap({})
@@ -982,7 +982,7 @@ def test_config_bootstrap_survives_malformed_dream_config(tmp_path: Path) -> Non
 
 def test_config_bootstrap_survives_malformed_ingest_config(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.ingest_config_path.write_text("[short_memory\n", encoding="utf-8")
 
     payload = ConfigBridge(config).bootstrap({})
@@ -1208,7 +1208,7 @@ def test_config_save_rejects_invalid_release_update_channel(tmp_path: Path) -> N
 
 def test_config_bootstrap_survives_malformed_release_config(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.release_config_path.write_text("[updates\n", encoding="utf-8")
 
     payload = ConfigBridge(config).bootstrap({})
@@ -1271,7 +1271,7 @@ def test_config_save_valid_draft_ignores_stale_file_load_error(tmp_path: Path) -
     config = _config(tmp_path)
     bridge = ConfigBridge(config)
     draft = bridge.bootstrap({})["draft"]
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
     config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
 
     payload = bridge.save({"draft": draft})

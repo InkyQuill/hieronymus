@@ -18,8 +18,8 @@ def test_service_config_uses_stable_loopback_defaults(tmp_path: Path) -> None:
 
 def test_service_config_file_overrides_defaults(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
-    (config.config_root / "service.conf").write_text(
+    config.data_root.mkdir(parents=True)
+    (config.data_root / "service.conf").write_text(
         '[service]\nhost = "192.0.2.10"\nport = 19768\n',
         encoding="utf-8",
     )
@@ -31,8 +31,8 @@ def test_service_config_file_overrides_defaults(tmp_path: Path) -> None:
 
 def test_service_environment_overrides_service_config(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
-    (config.config_root / "service.conf").write_text(
+    config.data_root.mkdir(parents=True)
+    (config.data_root / "service.conf").write_text(
         '[service]\nhost = "192.0.2.10"\nport = 19768\n',
         encoding="utf-8",
     )
@@ -76,8 +76,8 @@ def test_service_config_rejects_blank_hosts(tmp_path: Path, host: str) -> None:
 
 def test_service_config_rejects_ipv6_host_from_config_file(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
-    (config.config_root / "service.conf").write_text(
+    config.data_root.mkdir(parents=True)
+    (config.data_root / "service.conf").write_text(
         '[service]\nhost = "::1"\n',
         encoding="utf-8",
     )

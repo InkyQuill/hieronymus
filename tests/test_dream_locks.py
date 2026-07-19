@@ -100,7 +100,7 @@ def test_dream_cycle_lock_fails_across_processes(config):
 
 def test_stale_state_with_dead_pid_is_cleaned_conservatively(config):
     paths = dream_cycle_paths(config)
-    paths.config_root.mkdir(parents=True, exist_ok=True)
+    paths.data_root.mkdir(parents=True, exist_ok=True)
     paths.state_json.write_text(
         (
             '{"owner":"manual","pid":-1,"started_at":"'
@@ -116,7 +116,7 @@ def test_stale_state_with_dead_pid_is_cleaned_conservatively(config):
 
 def test_stale_cleanup_does_not_remove_replaced_state(config, monkeypatch):
     paths = dream_cycle_paths(config)
-    paths.config_root.mkdir(parents=True, exist_ok=True)
+    paths.data_root.mkdir(parents=True, exist_ok=True)
     stale = DreamCycleState(
         owner="manual",
         pid=-1,

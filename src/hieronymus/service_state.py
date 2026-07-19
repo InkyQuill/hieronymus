@@ -16,7 +16,7 @@ EXPECTED_LAUNCH_ID_HEADER = "X-Hieronymus-Expected-Launch-Id"
 
 @dataclass(frozen=True)
 class RuntimePaths:
-    config_root: Path
+    data_root: Path
     server_json: Path
     server_pid: Path
     server_lock: Path
@@ -61,9 +61,9 @@ class ServerState:
 
 
 def runtime_paths(config: HieronymusConfig) -> RuntimePaths:
-    root = config.config_root
+    root = config.data_root
     return RuntimePaths(
-        config_root=root,
+        data_root=root,
         server_json=root / "server.json",
         server_pid=root / "server.pid",
         server_lock=root / "server.lock",
@@ -136,7 +136,7 @@ def read_server_state(config: HieronymusConfig) -> ServerState | None:
 
 def write_server_state(config: HieronymusConfig, state: ServerState) -> None:
     paths = runtime_paths(config)
-    paths.config_root.mkdir(parents=True, exist_ok=True)
+    paths.data_root.mkdir(parents=True, exist_ok=True)
     tmp = paths.server_json.with_name(f"{paths.server_json.name}.tmp-{os.getpid()}")
     tmp.write_text(
         json.dumps(state.to_json_dict(), ensure_ascii=False, indent=2) + "\n",
@@ -149,7 +149,7 @@ def write_server_state(config: HieronymusConfig, state: ServerState) -> None:
 @contextmanager
 def server_start_lock(config: HieronymusConfig) -> Iterator[None]:
     paths = runtime_paths(config)
-    paths.config_root.mkdir(parents=True, exist_ok=True)
+    paths.data_root.mkdir(parents=True, exist_ok=True)
     with paths.server_lock.open("a+", encoding="utf-8") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:

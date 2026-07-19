@@ -198,7 +198,7 @@ def test_status_degrades_when_provider_catalog_defaults_are_invalid(
             },
         ),
     )
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
     config.provider_config_path.write_text(
         '[defaults]\nprovider = "missing-profile"\nmodel = "gpt-missing"\n',
         encoding="utf-8",
@@ -476,7 +476,7 @@ def test_threshold_run_ignores_schedule_when_minimum_is_met(config: HieronymusCo
 
 def test_autostart_state_loads_legacy_payload(config: HieronymusConfig) -> None:
     last_started_at = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
-    state_path = config.config_root / "dream-autostart.json"
+    state_path = config.data_root / "dream-autostart.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
         json.dumps(
@@ -509,7 +509,7 @@ def test_run_due_persists_last_error_for_corrupt_autostart_state(
         max_pending_short_term_memories=25,
     )
     _completed_session(config, _context(config), memories=1)
-    state_path = config.config_root / "dream-autostart.json"
+    state_path = config.data_root / "dream-autostart.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text("{not valid json", encoding="utf-8")
 

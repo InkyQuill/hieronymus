@@ -15,15 +15,15 @@ from hieronymus.dream_config import (
 
 
 def write_dream_config(config: HieronymusConfig, raw_config: str) -> None:
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.dream_config_path.write_text(raw_config, encoding="utf-8")
 
 
-def test_dream_config_paths_live_under_config_root(tmp_path: Path) -> None:
+def test_dream_config_paths_live_under_data_root(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
-    assert config.dream_config_path == config.config_root / "dream.conf"
-    assert config.llm_cache_path == config.config_root / "llmcache.tmp"
+    assert config.dream_config_path == config.data_root / "dream.conf"
+    assert config.llm_cache_path == config.data_root / "llm-cache.json"
 
 
 def test_default_dream_config_matches_memory_spec(tmp_path: Path) -> None:
@@ -305,7 +305,7 @@ def test_load_dream_config_migrates_removed_workflow_names(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.dream_config_path.write_text(
         """
 [providers.openai]

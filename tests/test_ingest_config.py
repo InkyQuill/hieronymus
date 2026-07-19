@@ -15,10 +15,10 @@ from hieronymus.ingest_config import (
 )
 
 
-def test_ingest_config_path_lives_under_config_root(tmp_path: Path) -> None:
+def test_ingest_config_path_lives_under_data_root(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
 
-    assert config.ingest_config_path == config.config_root / "ingest.conf"
+    assert config.ingest_config_path == config.data_root / "ingest.conf"
 
 
 def test_default_ingest_config_preserves_current_behavior(tmp_path: Path) -> None:
@@ -62,7 +62,7 @@ def test_load_ingest_config_rejects_invalid_sentence_threshold_order(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.ingest_config_path.write_text(
         "[short_memory]\nwarning_sentence_count = 30\nrejection_sentence_count = 6\n",
         encoding="utf-8",
@@ -76,7 +76,7 @@ def test_load_ingest_config_rejects_invalid_symbol_threshold_order(
     tmp_path: Path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.ingest_config_path.write_text(
         "[short_memory]\nwarning_symbol_count = 100\nrejection_symbol_count = 50\n",
         encoding="utf-8",
@@ -109,7 +109,7 @@ def test_load_ingest_config_rejects_unknown_keys(
     error: str,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.ingest_config_path.write_text(raw_config, encoding="utf-8")
 
     with pytest.raises(IngestConfigError, match=error):
@@ -139,7 +139,7 @@ def test_load_ingest_config_rejects_non_integer_values(
     error: str,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.ingest_config_path.write_text(raw_config, encoding="utf-8")
 
     with pytest.raises(IngestConfigError, match=error):
@@ -177,7 +177,7 @@ def test_load_ingest_config_rejects_minimum_value_failures(
     error: str,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.ingest_config_path.write_text(raw_config, encoding="utf-8")
 
     with pytest.raises(IngestConfigError, match=error):

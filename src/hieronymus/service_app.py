@@ -512,7 +512,6 @@ def status_payload(config: HieronymusConfig, state: ServerState) -> dict[str, An
         "started_at": state.started_at,
         "data_root": str(config.data_root),
         "database_path": str(config.database_path),
-        "config_path": str(config.config_root),
         "providers": provider_statuses,
         "providers_error": provider_status_error,
         "dreaming": dreaming_status,

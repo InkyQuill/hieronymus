@@ -173,7 +173,7 @@ def _migrate_workflow_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
 
 def save_dream_config(config: HieronymusConfig, dream_config: DreamConfig) -> None:
     dream_config = validate_dream_config(dream_config)
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
 
     atomic_write_text(config.dream_config_path, tomli_w.dumps(dream_config.to_payload()))
 

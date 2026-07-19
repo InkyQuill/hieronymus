@@ -99,7 +99,7 @@ def test_admin_bridge_survives_malformed_dream_config(
 ) -> None:
     config = _config(tmp_path)
     _seed(config)
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
     config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
     api = AdminBridge(config)
 
@@ -118,7 +118,7 @@ def test_admin_bridge_survives_malformed_dream_config(
 def test_admin_bridge_survives_malformed_provider_config(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _seed(config)
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
     config.provider_config_path.write_text("[openai\n", encoding="utf-8")
 
     bootstrap = AdminBridge(config).bootstrap({})

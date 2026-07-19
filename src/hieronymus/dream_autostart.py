@@ -43,7 +43,7 @@ class AutostartState:
 
 
 def _state_path(config: HieronymusConfig):
-    return config.config_root / "dream-autostart.json"
+    return config.data_root / "dream-autostart.json"
 
 
 def load_autostart_state(config: HieronymusConfig) -> AutostartState:

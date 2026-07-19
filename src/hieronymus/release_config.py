@@ -53,7 +53,7 @@ def load_release_config(config: HieronymusConfig) -> ReleaseConfig:
 
 def save_release_config(config: HieronymusConfig, release_config: ReleaseConfig) -> None:
     release_config = validate_release_config(release_config)
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
     atomic_write_text(config.release_config_path, tomli_w.dumps(release_config.to_payload()))
 
 

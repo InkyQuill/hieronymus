@@ -642,7 +642,7 @@ def test_openai_model_suggestions_use_models_endpoint(tmp_path, monkeypatch) -> 
 
 def test_deterministic_model_suggestions_ignore_malformed_dream_config(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
 
     result = ProviderRegistry().list_model_suggestions(config, "deterministic")
@@ -660,7 +660,7 @@ def test_anthropic_model_suggestions_ignore_malformed_dream_config(
     tmp_path,
 ) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.dream_config_path.write_text("[dreaming\n", encoding="utf-8")
 
     result = ProviderRegistry().list_model_suggestions(config, "anthropic")
@@ -711,7 +711,7 @@ def test_model_suggestions_use_fresh_cache_without_network(tmp_path, monkeypatch
     assert result.to_json_dict() == {
         "provider": "openai",
         "models": ["cached-a", "cached-b"],
-        "source": "llmcache.tmp",
+        "source": "llm-cache.json",
         "error": "",
     }
 

@@ -471,7 +471,7 @@ def test_status_endpoint_returns_paths_pid_and_active_cycle(
     assert payload["launch_id"] == "test-launch"
     assert payload["data_root"] == str(config.data_root)
     assert payload["database_path"] == str(config.database_path)
-    assert payload["config_path"] == str(config.config_root)
+    assert "config_path" not in payload
     assert {provider["name"] for provider in payload["providers"]} == {
         "deterministic",
         "openai",

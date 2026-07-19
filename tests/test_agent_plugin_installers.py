@@ -154,7 +154,7 @@ def test_write_plugin_assets_rejects_symlink_agent_plugins_root(tmp_path: Path) 
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     escaped_root = tmp_path / "escaped"
     escaped_root.mkdir()
-    config.config_root.mkdir(parents=True)
+    config.data_root.mkdir(parents=True)
     config.agent_plugins_root.symlink_to(escaped_root, target_is_directory=True)
 
     with pytest.raises(ValueError, match="agent plugins root must not be a symlink"):

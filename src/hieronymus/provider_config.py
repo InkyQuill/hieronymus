@@ -128,7 +128,7 @@ def _legacy_dream_provider_payload(config: HieronymusConfig) -> dict[str, object
 
 def save_provider_catalog(config: HieronymusConfig, catalog: ProviderCatalog) -> None:
     catalog = validate_provider_catalog(catalog)
-    config.config_root.mkdir(parents=True, exist_ok=True)
+    config.data_root.mkdir(parents=True, exist_ok=True)
     atomic_write_text(config.provider_config_path, tomli_w.dumps(catalog.to_payload()))
 
 

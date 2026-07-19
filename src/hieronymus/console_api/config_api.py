@@ -906,7 +906,6 @@ class ConfigBridge:
         return {
             "config_paths": {
                 "data_root": str(self.config.data_root),
-                "config_root": str(self.config.config_root),
                 "dream_config_path": str(self.config.dream_config_path),
                 "provider_config_path": str(self.config.provider_config_path),
                 "ingest_config_path": str(self.config.ingest_config_path),
