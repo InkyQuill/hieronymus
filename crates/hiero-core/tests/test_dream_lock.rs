@@ -219,9 +219,13 @@ fn nested_symlink_ancestor_is_rejected_without_touching_external_directory() {
 #[test]
 fn windows_lock_validation_uses_the_shared_file_identity_helper() {
     let lock_source = include_str!("../src/dreaming/lock.rs");
+    let migration_lock_source = include_str!("../src/db/migration_lock.rs");
     let identity_source = include_str!("../src/file_identity.rs");
 
     assert!(lock_source.contains("file_identity::{"));
+    assert!(migration_lock_source.contains("identity_and_link_count"));
+    assert!(!migration_lock_source.contains("windows_file_information"));
+    assert!(!migration_lock_source.contains("validate_windows_regular_file"));
     assert!(identity_source.contains("volume_serial_number"));
     assert!(identity_source.contains("file_index"));
     assert!(identity_source.contains("number_of_links"));
@@ -380,6 +384,9 @@ async fn audit_redacts_extended_secret_keys_and_sensitive_string_values() {
                 "credential": "cred",
                 "nested": [{"accessKey": "key"}],
                 "message": "Authorization: Bearer plain-value-secret",
+                "spaced_api": "API key: plain-value-secret",
+                "spaced_client": "client secret=plain-value-secret",
+                "spaced_private": "private key: plain-value-secret",
                 "safe": "ordinary"
             }),
         )
@@ -403,6 +410,19 @@ async fn audit_redacts_extended_secret_keys_and_sensitive_string_values() {
     assert_eq!(payload["credential"], "[REDACTED]");
     assert_eq!(payload["nested"][0]["accessKey"], "[REDACTED]");
     assert_eq!(payload["message"], "[REDACTED]");
+    assert_eq!(payload["spaced_api"], "[REDACTED]");
+    assert_eq!(payload["spaced_client"], "[REDACTED]");
+    assert_eq!(payload["spaced_private"], "[REDACTED]");
+}
+
+#[test]
+fn audit_validation_does_not_allocate_proportionally_to_rejected_width_or_input_text() {
+    let audit_source = include_str!("../src/dreaming/audit.rs");
+
+    assert!(audit_source.contains("values.len() > remaining_nodes"));
+    assert!(audit_source.contains("map.len() > remaining_nodes"));
+    assert!(!audit_source.contains("stack.extend(values.iter()"));
+    assert!(!audit_source.contains("value.to_lowercase()"));
 }
 
 #[tokio::test]
@@ -419,11 +439,13 @@ async fn audit_rejects_deep_wide_and_huge_values_before_append() {
     }
     let wide = Value::Array((0..5_000).map(|_| Value::Null).collect());
     let huge_string = json!({"safe": "x".repeat(70_000)});
+    let escape_heavy_string = json!({"safe": "\\".repeat(40_000)});
     let huge_key = Value::Object([("k".repeat(70_000), Value::Null)].into_iter().collect());
     for (event, payload) in [
         ("too_deep", deep),
         ("too_wide", wide),
         ("huge_string", huge_string),
+        ("escape_heavy_string", escape_heavy_string),
         ("huge_key", huge_key),
     ] {
         assert!(

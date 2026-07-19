@@ -369,9 +369,8 @@ fn enforce_sidecar_properties(path: &Path, file: &File, created: bool) -> Result
 
 #[cfg(windows)]
 fn enforce_sidecar_properties(path: &Path, file: &File, _created: bool) -> Result<(), DbError> {
-    let information = windows_file_information(file, path)?;
-    validate_windows_regular_file(path, &information)?;
-    let links = information.number_of_links();
+    let (links, _) =
+        identity_and_link_count(file).map_err(|source| lock_open_error(path, source))?;
     if links == 1 {
         Ok(())
     } else {

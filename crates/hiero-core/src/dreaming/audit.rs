@@ -477,32 +477,41 @@ fn validate_completion(counts: DreamRunCompletion) -> Result<(), DreamAuditError
 
 fn validate_payload_budget(root: &Value) -> Result<(), DreamAuditError> {
     let mut stack = vec![(root, 0_usize)];
-    let mut nodes = 0_usize;
-    let mut estimated_bytes = 0_usize;
+    let mut scheduled_nodes = 1_usize;
+    let mut estimated_bytes = 1_usize;
     while let Some((value, depth)) = stack.pop() {
         if depth > MAX_PAYLOAD_DEPTH {
             return Err(DreamAuditError::InvalidDetail(
                 "payload exceeds maximum depth",
             ));
         }
-        nodes = nodes.saturating_add(1);
-        if nodes > MAX_PAYLOAD_NODES {
-            return Err(DreamAuditError::InvalidDetail("payload has too many nodes"));
-        }
-        estimated_bytes = estimated_bytes.saturating_add(1);
+        let remaining_nodes = MAX_PAYLOAD_NODES.saturating_sub(scheduled_nodes);
         match value {
             Value::Object(map) => {
+                if map.len() > remaining_nodes {
+                    return Err(DreamAuditError::InvalidDetail("payload has too many nodes"));
+                }
                 for (key, value) in map {
                     if key.len() > MAX_DETAIL_BYTES {
                         return Err(DreamAuditError::InvalidDetail("payload key exceeds 4 KiB"));
                     }
-                    estimated_bytes = estimated_bytes.saturating_add(key.len()).saturating_add(4);
+                    consume_payload_bytes(
+                        &mut estimated_bytes,
+                        json_encoded_string_len(key).saturating_add(3),
+                    )?;
+                    scheduled_nodes += 1;
                     stack.push((value, depth.saturating_add(1)));
                 }
             }
             Value::Array(values) => {
-                estimated_bytes = estimated_bytes.saturating_add(values.len());
-                stack.extend(values.iter().map(|value| (value, depth.saturating_add(1))));
+                if values.len() > remaining_nodes {
+                    return Err(DreamAuditError::InvalidDetail("payload has too many nodes"));
+                }
+                consume_payload_bytes(&mut estimated_bytes, values.len().saturating_mul(2))?;
+                for value in values {
+                    scheduled_nodes += 1;
+                    stack.push((value, depth.saturating_add(1)));
+                }
             }
             Value::String(value) => {
                 if value.len() > MAX_PAYLOAD_STRING_BYTES {
@@ -510,19 +519,34 @@ fn validate_payload_budget(root: &Value) -> Result<(), DreamAuditError> {
                         "payload string exceeds 64 KiB",
                     ));
                 }
-                estimated_bytes = estimated_bytes
-                    .saturating_add(value.len())
-                    .saturating_add(2);
+                consume_payload_bytes(&mut estimated_bytes, json_encoded_string_len(value))?;
             }
-            Value::Number(_) => estimated_bytes = estimated_bytes.saturating_add(32),
-            Value::Bool(_) => estimated_bytes = estimated_bytes.saturating_add(5),
-            Value::Null => estimated_bytes = estimated_bytes.saturating_add(4),
-        }
-        if estimated_bytes > MAX_PAYLOAD_BYTES {
-            return Err(DreamAuditError::InvalidDetail("payload exceeds 64 KiB"));
+            Value::Number(_) => consume_payload_bytes(&mut estimated_bytes, 32)?,
+            Value::Bool(_) => consume_payload_bytes(&mut estimated_bytes, 5)?,
+            Value::Null => consume_payload_bytes(&mut estimated_bytes, 4)?,
         }
     }
     Ok(())
+}
+
+fn consume_payload_bytes(total: &mut usize, amount: usize) -> Result<(), DreamAuditError> {
+    *total = total.saturating_add(amount);
+    if *total > MAX_PAYLOAD_BYTES {
+        Err(DreamAuditError::InvalidDetail("payload exceeds 64 KiB"))
+    } else {
+        Ok(())
+    }
+}
+
+fn json_encoded_string_len(value: &str) -> usize {
+    value.chars().fold(2_usize, |total, character| {
+        let encoded = match character {
+            '"' | '\\' | '\u{0008}' | '\t' | '\n' | '\u{000C}' | '\r' => 2,
+            '\u{0000}'..='\u{001F}' => 6,
+            _ => character.len_utf8(),
+        };
+        total.saturating_add(encoded)
+    })
 }
 
 fn redact_payload(value: &Value) -> Value {
@@ -598,10 +622,10 @@ fn is_sensitive_name(name: &str) -> bool {
 }
 
 fn contains_sensitive_value(value: &str) -> bool {
-    let lower = value.to_lowercase();
     [
         "api_key",
         "api-key",
+        "api key",
         "apikey",
         "authorization",
         "bearer ",
@@ -618,11 +642,20 @@ fn contains_sensitive_value(value: &str) -> bool {
         "cookie:",
         "private_key",
         "private-key",
+        "private key",
         "client_secret",
         "client-secret",
+        "client secret",
     ]
     .iter()
-    .any(|marker| lower.contains(marker))
+    .any(|marker| contains_ascii_case_insensitive(value, marker))
+}
+
+fn contains_ascii_case_insensitive(value: &str, marker: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(marker.len())
+        .any(|window| window.eq_ignore_ascii_case(marker.as_bytes()))
 }
 
 fn lifecycle(
@@ -636,5 +669,16 @@ fn lifecycle(
         id,
         expected,
         actual,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::json_encoded_string_len;
+
+    #[test]
+    fn json_encoded_string_length_accounts_for_quotes_slashes_controls_and_unicode() {
+        assert_eq!(json_encoded_string_len("plain"), 7);
+        assert_eq!(json_encoded_string_len("\"\\\n\u{0001}é"), 16);
     }
 }
