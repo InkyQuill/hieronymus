@@ -180,6 +180,13 @@ in the same order. Warnings are both returned in `AddMemoryResult` and joined in
 `metadata.validation_warning`. Task 8 loads/validates persisted config and passes these already-
 defined limits to `with_limits`; it does not redefine validation behavior.
 
+Those limits apply only to external `add_short_term` and `add_short_term_batch` inputs. RecallService
+creates a trusted derived working copy from a crystal that has already passed crystal validation, so
+that path bypasses short-memory size warnings and rejection. It still performs the same trimming,
+normalization, metadata projection, sentence/symbol counting, and exact source-field persistence, but
+does not fabricate `validation_warning`; otherwise a valid long-term crystal could become impossible
+to recall solely because the short-memory input policy is stricter.
+
 Every read-before-write workspace path uses a SQLx-tracked `BEGIN IMMEDIATE` transaction. Working
 copy identity is the logical pair `(session_id, source_crystal_id)`: lookup and insert remain in
 one immediate transaction. Tests prove serialization across independently constructed pools to the

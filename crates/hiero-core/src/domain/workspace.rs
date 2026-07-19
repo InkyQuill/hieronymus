@@ -305,7 +305,7 @@ impl<'a> WorkspaceStore<'a> {
         session_id: i64,
         crystal: &Crystal,
     ) -> Result<(ShortTermMemory, bool)> {
-        let expected = PreparedMemory::from_crystal(crystal, self.limits)?;
+        let expected = PreparedMemory::from_crystal(crystal)?;
         let mut transaction = begin_immediate(self.pool, "get or create working copy").await?;
         let result = async {
             let session =
@@ -456,22 +456,28 @@ struct PreparedMemory {
 
 impl PreparedMemory {
     fn new(input: AddMemoryInput, limits: ShortMemoryLimits) -> Result<Self> {
+        Self::prepare(input, Some(limits))
+    }
+
+    fn prepare(input: AddMemoryInput, limits: Option<ShortMemoryLimits>) -> Result<Self> {
         let source_role = non_empty("source_role", &input.source_role)?;
         let kind = non_empty("kind", &input.kind)?;
         let text = non_empty("text", &input.text)?;
         let sentence_count = sentence_count(&text);
         let symbol_count = text.chars().count();
-        if sentence_count > limits.rejection_sentence_count {
-            return Err(invalid("text", "short-term memory is too large"));
-        }
-        if limits.rejection_symbol_count != 0 && symbol_count > limits.rejection_symbol_count {
-            return Err(invalid(
-                "text",
-                format!(
-                    "short-term memory exceeds {} symbols",
-                    limits.rejection_symbol_count
-                ),
-            ));
+        if let Some(limits) = limits {
+            if sentence_count > limits.rejection_sentence_count {
+                return Err(invalid("text", "short-term memory is too large"));
+            }
+            if limits.rejection_symbol_count != 0 && symbol_count > limits.rejection_symbol_count {
+                return Err(invalid(
+                    "text",
+                    format!(
+                        "short-term memory exceeds {} symbols",
+                        limits.rejection_symbol_count
+                    ),
+                ));
+            }
         }
         let source_credibility = input.source_credibility.trim();
         if !SOURCE_CREDIBILITY_CONFIDENCE.contains_key(source_credibility) {
@@ -517,14 +523,16 @@ impl PreparedMemory {
         metadata.insert("sentence_count".into(), serde_json::json!(sentence_count));
         metadata.insert("symbol_count".into(), serde_json::json!(symbol_count));
         let mut warnings = Vec::new();
-        if sentence_count > limits.warning_sentence_count {
-            warnings.push("short-term memory is large; prefer 1-6 sentences".to_owned());
-        }
-        if limits.warning_symbol_count != 0 && symbol_count > limits.warning_symbol_count {
-            warnings.push(format!(
-                "short-term memory is large; prefer <= {} symbols",
-                limits.warning_symbol_count
-            ));
+        if let Some(limits) = limits {
+            if sentence_count > limits.warning_sentence_count {
+                warnings.push("short-term memory is large; prefer 1-6 sentences".to_owned());
+            }
+            if limits.warning_symbol_count != 0 && symbol_count > limits.warning_symbol_count {
+                warnings.push(format!(
+                    "short-term memory is large; prefer <= {} symbols",
+                    limits.warning_symbol_count
+                ));
+            }
         }
         if !warnings.is_empty() {
             metadata.insert(
@@ -553,8 +561,10 @@ impl PreparedMemory {
         dead_code,
         reason = "used by the pending crate-private working-copy consumer"
     )]
-    fn from_crystal(crystal: &Crystal, limits: ShortMemoryLimits) -> Result<Self> {
-        Self::new(
+    fn from_crystal(crystal: &Crystal) -> Result<Self> {
+        // Recall copies trusted persisted crystals. External size limits protect new user/agent
+        // input and must not make an already-valid source crystal impossible to recall.
+        Self::prepare(
             AddMemoryInput {
                 source_role: "recall".into(),
                 kind: "working_copy".into(),
@@ -568,7 +578,7 @@ impl PreparedMemory {
                 rule_intent: crystal.rule_intent.clone(),
                 soft_origin: crystal.soft_origin.clone(),
             },
-            limits,
+            None,
         )
     }
 }
@@ -1104,7 +1114,9 @@ mod tests {
 
     use crate::{
         db::connect_url,
-        domain::{AddCrystalInput, CrystalStore, TranslationContext},
+        domain::{
+            AddCrystalInput, AddMemoryInput, CrystalStore, ShortMemoryLimits, TranslationContext,
+        },
         registry::SeriesRegistry,
     };
 
@@ -1141,7 +1153,7 @@ mod tests {
             .unwrap();
         let crystal_id = CrystalStore::new(pool)
             .add(AddCrystalInput {
-                text: "Remember canonical inventory wording.".into(),
+                text: "Remember canonical inventory wording. Preserve every source detail. Keep the exact trusted text.".into(),
                 title: "Inventory".into(),
                 scope_type: "series".into(),
                 scope_key: "series:oso".into(),
@@ -1151,12 +1163,73 @@ mod tests {
                 language_tags: vec!["ja".into(), "ru".into()],
                 story_scopes: vec!["chapter:2".into()],
                 semantic_tags: vec!["ui".into()],
+                source_credibility: "expert".into(),
+                rule_intent: "terminology_override".into(),
+                soft_origin: Some("dream_cycle:7".into()),
                 ..AddCrystalInput::default()
             })
             .await
             .unwrap();
         let crystal = CrystalStore::new(pool).get(crystal_id).await.unwrap();
         (session.id, crystal)
+    }
+
+    fn restrictive_limits() -> ShortMemoryLimits {
+        ShortMemoryLimits {
+            warning_sentence_count: 1,
+            rejection_sentence_count: 2,
+            warning_symbol_count: 8,
+            rejection_symbol_count: 16,
+        }
+    }
+
+    #[tokio::test]
+    async fn trusted_crystal_working_copy_bypasses_external_size_limits_without_warnings() {
+        let (pool, session_id, crystal) = working_copy_fixture().await;
+        let store = WorkspaceStore::with_limits(&pool, restrictive_limits()).unwrap();
+
+        let external_error = store
+            .add_short_term(
+                session_id,
+                AddMemoryInput {
+                    text: crystal.text.clone(),
+                    ..AddMemoryInput::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            external_error,
+            WorkspaceError::Validation { field: "text", .. }
+        ));
+
+        let (copy, created) = store
+            .get_or_create_working_copy(session_id, &crystal)
+            .await
+            .unwrap();
+
+        assert!(created);
+        assert_eq!(copy.source_role, "recall");
+        assert_eq!(copy.kind, "working_copy");
+        assert_eq!(copy.text, crystal.text);
+        assert_eq!(copy.source_ref, format!("crystal:{}", crystal.id));
+        assert_eq!(copy.source_crystal_id, Some(crystal.id));
+        assert_eq!(copy.metadata["source_crystal_id"], crystal.id);
+        assert_eq!(copy.metadata["sentence_count"], 3);
+        assert_eq!(copy.metadata["symbol_count"], crystal.text.chars().count());
+        assert!(!copy.metadata.contains_key("validation_warning"));
+        assert_eq!(copy.language_tags, crystal.language_tags);
+        assert_eq!(copy.story_scopes, crystal.story_scopes);
+        assert_eq!(copy.semantic_tags, crystal.semantic_tags);
+        assert_eq!(
+            copy.source_credibility.as_deref(),
+            Some(crystal.source_credibility.as_str())
+        );
+        assert_eq!(
+            copy.rule_intent.as_deref(),
+            Some(crystal.rule_intent.as_str())
+        );
+        assert_eq!(copy.soft_origin, crystal.soft_origin);
     }
 
     #[tokio::test]
@@ -1177,13 +1250,15 @@ mod tests {
         let second_crystal = crystal.clone();
         let first = tokio::spawn(async move {
             first_barrier.wait().await;
-            WorkspaceStore::new(&first_pool)
+            WorkspaceStore::with_limits(&first_pool, restrictive_limits())
+                .unwrap()
                 .get_or_create_working_copy(session_id, &first_crystal)
                 .await
         });
         let second = tokio::spawn(async move {
             second_barrier.wait().await;
-            WorkspaceStore::new(&second_pool)
+            WorkspaceStore::with_limits(&second_pool, restrictive_limits())
+                .unwrap()
                 .get_or_create_working_copy(session_id, &second_crystal)
                 .await
         });
