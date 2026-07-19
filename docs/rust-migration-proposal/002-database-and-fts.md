@@ -352,6 +352,23 @@ then `run()` to validate the same embedded checksums and apply `0005`. A plain S
 call typed Rust or perform this structured validation. `0005` therefore contains guarded DDL only;
 it never performs data conversion and cannot be recorded after a failed converter.
 
+The entire sequence — Python baseline preparation, `run_to(4)`, conversion, and final `run()` — is
+one serialized migration protocol. SQLx's SQLite migration lock is a no-op, so file databases use a
+cross-process `fs4` exclusive advisory lock. Rust reads the main filename from
+`PRAGMA database_list`, canonicalizes it, hashes its OS-native absolute path, and keeps a private
+`.hieronymus-migrate-<sha256>.lock` sidecar in the database directory (`0600` with one link on Unix;
+the database-directory ACL on Windows). The sidecar is never
+deleted (deleting a lock file permits two processes to lock different inodes), rejects observed
+symlinks/non-files, and remains open across every await; OS close-on-drop releases it after crashes
+or cancellation. Blocking acquisition/release runs through `spawn_blocking`, and unlock failures are
+typed. In-memory databases use a process-wide Tokio mutex because cross-process sharing is not
+possible. Concurrent callers therefore cannot baseline, convert, or record `0005` out of order.
+
+Existing-target equivalence covers every converter-owned persisted field, including zero versus
+`NULL` lifecycle fields (`is_inferred`, `malformed_penalty`, `supersedes_crystal_id`, cycle fields),
+and every semantic-tag row's text, confidence, and timestamp. Fixed finite scores use exact SQLite
+`f64` bit equality; NaN/non-finite values never compare equivalent.
+
 Existing (Python-created) databases missing rows in `migration_ledger` for this migration are
 detected by absence of a `source_table = "strict_terms"` row before `0005` runs; a fresh
 database (or one already migrated) has none to convert and the migration is a no-op past the

@@ -10,6 +10,7 @@ async-openai.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 csv.workspace = true
+fs4.workspace = true
 lancedb.workspace = true
 ort.workspace = true
 percent-encoding.workspace = true

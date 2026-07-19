@@ -2837,6 +2837,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "csv",
+ "fs4",
  "lancedb",
  "ort",
  "percent-encoding",

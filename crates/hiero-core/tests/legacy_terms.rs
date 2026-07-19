@@ -1,11 +1,13 @@
-use std::str::FromStr;
+use std::{path::Path, str::FromStr, sync::Arc};
 
 use hiero_core::db::{DbError, convert_legacy_strict_terms, migrate};
 use sqlx::{
-    Executor, Row, SqlitePool,
+    AssertSqlSafe, Executor, Row, SqlitePool,
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
+use tempfile::TempDir;
+use tokio::sync::Barrier;
 
 static TEST_MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 
@@ -29,6 +31,38 @@ async fn pre_drop_pool() -> SqlitePool {
         .await
         .expect("fixture series should insert");
     pool
+}
+
+async fn file_pool(path: &Path) -> SqlitePool {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .foreign_keys(true)
+        .pragma("recursive_triggers", "ON");
+    SqlitePoolOptions::new()
+        .max_connections(8)
+        .connect_with(options)
+        .await
+        .expect("file fixture pool should connect")
+}
+
+async fn run_concurrent_migrations(pools: &[SqlitePool]) {
+    let barrier = Arc::new(Barrier::new(13));
+    let mut tasks = tokio::task::JoinSet::new();
+    for index in 0..12 {
+        let pool = pools[index % pools.len()].clone();
+        let barrier = Arc::clone(&barrier);
+        tasks.spawn(async move {
+            barrier.wait().await;
+            migrate(&pool).await
+        });
+    }
+    barrier.wait().await;
+    while let Some(result) = tasks.join_next().await {
+        result
+            .expect("migration task should not panic")
+            .expect("every concurrent migration should succeed");
+    }
 }
 
 async fn insert_term(pool: &SqlitePool, id: i64, status: &str, source: &str, target: &str) {
@@ -170,6 +204,88 @@ async fn conflicting_ledger_target_rolls_back_and_preserves_every_legacy_object(
 }
 
 #[tokio::test]
+async fn every_converter_owned_field_and_tag_attribute_must_match_for_existing_targets() {
+    let cases = [
+        (
+            "is_inferred",
+            "UPDATE crystals SET is_inferred = 1 WHERE id = ?",
+        ),
+        (
+            "malformed_penalty",
+            "UPDATE crystals SET malformed_penalty = 0.1 WHERE id = ?",
+        ),
+        (
+            "supersedes_crystal_id",
+            "UPDATE crystals SET supersedes_crystal_id = id WHERE id = ?",
+        ),
+        (
+            "created_cycle",
+            "UPDATE crystals SET created_cycle = 1 WHERE id = ?",
+        ),
+        (
+            "last_activated_cycle",
+            "UPDATE crystals SET last_activated_cycle = 0 WHERE id = ?",
+        ),
+        (
+            "last_reinforced_cycle",
+            "UPDATE crystals SET last_reinforced_cycle = 0 WHERE id = ?",
+        ),
+        (
+            "tag confidence",
+            "UPDATE crystal_semantic_tags SET confidence = 0.5 WHERE crystal_id = ?",
+        ),
+        (
+            "tag timestamp",
+            "UPDATE crystal_semantic_tags SET created_at = '2026-07-18T13:00:00Z' WHERE crystal_id = ?",
+        ),
+    ];
+
+    for (label, mutation) in cases {
+        let pool = pre_drop_pool().await;
+        insert_term(&pool, 70, "approved", "雷", "Thunder").await;
+        sqlx::query("INSERT INTO strict_term_tags(term_id, tag) VALUES (70, 'element')")
+            .execute(&pool)
+            .await
+            .expect("tag should insert");
+        let target_id = sqlx::query("INSERT INTO crystals(crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, is_inferred, malformed_penalty, supersedes_crystal_id, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at) VALUES ('rule', '雷 is translated as Thunder', '雷', 'series', 'series:book', 'book', 'ja', 'en', '[\"element\"]', 0.8, 0.95, 'user_rule', 'correction', 'note-70', 0, 0.0, NULL, 'active', 0, NULL, NULL, '2026-07-18T11:00:00Z', '2026-07-18T12:00:00Z')")
+            .execute(&pool).await.expect("equivalent crystal should insert").last_insert_rowid();
+        sqlx::query("INSERT INTO crystal_semantic_tags(crystal_id, tag, confidence, created_at) VALUES (?, 'element', 0.95, '2026-07-18T11:00:00Z')")
+            .bind(target_id).execute(&pool).await.expect("equivalent tag should insert");
+        sqlx::query("INSERT INTO migration_ledger(source_table, source_id, target_table, target_id) VALUES ('strict_terms', '70', 'crystals', ?)")
+            .bind(target_id).execute(&pool).await.expect("ledger should insert");
+        sqlx::query(AssertSqlSafe(mutation.to_owned()))
+            .bind(target_id)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("{label} mutation should apply: {error}"));
+
+        let error = match migrate(&pool).await {
+            Ok(()) => panic!("{label} drift unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, DbError::LegacyTermConflict { .. }),
+            "{label} returned {error:?}"
+        );
+        assert!(object_exists(&pool, "strict_terms").await, "{label}");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM strict_terms")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            1,
+            "{label}"
+        );
+        let versions: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(versions, [1, 2, 3, 4], "{label}");
+    }
+}
+
+#[tokio::test]
 async fn invalid_alias_decode_rolls_back_without_partial_targets_or_ledger() {
     let pool = pre_drop_pool().await;
     insert_term(&pool, 30, "approved", "氷", "Ice").await;
@@ -274,6 +390,178 @@ async fn failed_conversion_never_records_drop_migration() {
             .unwrap(),
         0
     );
+}
+
+#[tokio::test]
+async fn concurrent_fresh_file_migrations_are_serialized_across_pools() {
+    let directory = TempDir::new().expect("temporary directory should be created");
+    let path = directory.path().join("fresh.sqlite");
+    let first = file_pool(&path).await;
+    let second = file_pool(&path).await;
+
+    run_concurrent_migrations(&[first.clone(), second]).await;
+
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&first)
+            .await
+            .expect("migration history should read");
+    assert_eq!(versions, [1, 2, 3, 4, 5]);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("PRAGMA integrity_check")
+            .fetch_one(&first)
+            .await
+            .unwrap(),
+        "ok"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_python_file_migrations_convert_once_across_pools() {
+    let directory = TempDir::new().expect("temporary directory should be created");
+    let path = directory.path().join("legacy.sqlite");
+    let first = file_pool(&path).await;
+    first
+        .execute(sqlx::raw_sql(include_str!(
+            "../../../src/hieronymus/migrations/global.sql"
+        )))
+        .await
+        .expect("Python schema should install");
+    first.execute(sqlx::raw_sql(
+        r#"
+        INSERT INTO series(id, slug, title, default_source_language, default_target_language, created_at, updated_at)
+        VALUES (1, 'book', 'Book', 'ja', 'en', '2026-07-18T10:00:00Z', '2026-07-18T10:00:00Z');
+        INSERT INTO strict_terms(id, series_slug, source_language, target_language, category, source_text, canonical_translation, status, notes, created_at, updated_at)
+        VALUES (80, 'book', 'ja', 'en', 'correction', '星', 'Star', 'approved', 'stellar', '2026-07-18T11:00:00Z', '2026-07-18T12:00:00Z');
+        INSERT INTO strict_term_tags(term_id, tag) VALUES (80, 'astral');
+        INSERT INTO strict_terms_fts(rowid, source_text, canonical_translation, notes)
+        VALUES (80, '星', 'Star', 'stellar');
+        "#,
+    )).await.expect("Python rows should install");
+    let second = file_pool(&path).await;
+
+    run_concurrent_migrations(&[first.clone(), second]).await;
+
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&first)
+            .await
+            .expect("migration history should read");
+    assert_eq!(versions, [1, 2, 3, 4, 5]);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM migration_ledger WHERE source_table = 'strict_terms' AND source_id = '80' AND target_table = 'crystals'",
+        )
+        .fetch_one(&first)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM crystals WHERE crystal_type = 'rule'")
+            .fetch_one(&first)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(!object_exists(&first, "strict_terms").await);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pragma_foreign_key_check")
+            .fetch_one(&first)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("PRAGMA integrity_check")
+            .fetch_one(&first)
+            .await
+            .unwrap(),
+        "ok"
+    );
+}
+
+#[tokio::test]
+async fn failed_file_migration_releases_protocol_lock_for_retry() {
+    let directory = TempDir::new().expect("temporary directory should be created");
+    let path = directory.path().join("retry.sqlite");
+    let first = file_pool(&path).await;
+    TEST_MIGRATOR
+        .run_to(4, &first)
+        .await
+        .expect("pre-conversion migrations should install");
+    first
+        .execute(sqlx::raw_sql(LEGACY_SCHEMA))
+        .await
+        .expect("legacy schema should install");
+    first.execute("INSERT INTO series(id, slug, title, default_source_language, default_target_language, created_at, updated_at) VALUES (1, 'book', 'Book', 'ja', 'en', '2026-07-18T10:00:00Z', '2026-07-18T10:00:00Z')")
+        .await.unwrap();
+    insert_term(&first, 90, "invented", "月", "Moon").await;
+    let second = file_pool(&path).await;
+
+    migrate(&first)
+        .await
+        .expect_err("mid-protocol validation failure should escape");
+    sqlx::query("UPDATE strict_terms SET status = 'approved' WHERE id = 90")
+        .execute(&second)
+        .await
+        .expect("invalid fixture should be repairable");
+    migrate(&second)
+        .await
+        .expect("a second pool should acquire the released lock and finish");
+
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&second)
+            .await
+            .unwrap();
+    assert_eq!(versions, [1, 2, 3, 4, 5]);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM crystals WHERE crystal_type = 'rule'")
+            .fetch_one(&second)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn file_migration_sidecar_is_private_persistent_and_never_follows_a_symlink() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let directory = TempDir::new().expect("temporary directory should be created");
+    let path = directory.path().join("protected.sqlite");
+    let pool = file_pool(&path).await;
+    migrate(&pool)
+        .await
+        .expect("initial migration should succeed");
+    let lock_path = std::fs::read_dir(directory.path())
+        .expect("fixture directory should read")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".hieronymus-migrate-"))
+        })
+        .expect("persistent migration lock sidecar should exist");
+    let mode = std::fs::metadata(&lock_path)
+        .expect("lock sidecar metadata should read")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600);
+
+    std::fs::remove_file(&lock_path).expect("released fixture lock should be removable");
+    let victim = directory.path().join("victim");
+    std::fs::write(&victim, b"untouched").expect("victim should be created");
+    symlink(&victim, &lock_path).expect("symlink fixture should be created");
+
+    let error = migrate(&pool)
+        .await
+        .expect_err("migration lock must reject a sidecar symlink");
+    assert!(matches!(error, DbError::MigrationLockIo { .. }));
+    assert_eq!(std::fs::read(&victim).unwrap(), b"untouched");
 }
 
 const LEGACY_SCHEMA: &str = r#"

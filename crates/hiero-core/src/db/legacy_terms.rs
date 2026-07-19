@@ -55,9 +55,22 @@ struct TargetCrystal {
     source_credibility: String,
     rule_intent: String,
     soft_origin: Option<String>,
+    is_inferred: bool,
+    malformed_penalty: f64,
+    supersedes_crystal_id: Option<i64>,
     status: String,
+    created_cycle: i64,
+    last_activated_cycle: Option<i64>,
+    last_reinforced_cycle: Option<i64>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, FromRow)]
+struct TargetTag {
+    tag: String,
+    confidence: f64,
+    created_at: DateTime<Utc>,
 }
 
 pub async fn convert_legacy_strict_terms(
@@ -349,7 +362,7 @@ async fn ensure_equivalent(
     conflict: bool,
 ) -> Result<(), DbError> {
     let target = sqlx::query_as::<_, TargetCrystal>(
-        "SELECT id, crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, status, created_at, updated_at FROM crystals WHERE id = ?",
+        "SELECT id, crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, is_inferred, malformed_penalty, supersedes_crystal_id, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at FROM crystals WHERE id = ?",
     )
     .bind(target_id)
     .fetch_optional(&mut *connection)
@@ -362,13 +375,23 @@ async fn ensure_equivalent(
             "ledger target does not exist",
         ));
     };
-    let tags: Vec<String> = sqlx::query_scalar(
-        "SELECT tag FROM crystal_semantic_tags WHERE crystal_id = ? ORDER BY tag",
+    let tags = sqlx::query_as::<_, TargetTag>(
+        "SELECT tag, confidence, created_at FROM crystal_semantic_tags WHERE crystal_id = ? ORDER BY tag",
     )
     .bind(target_id)
     .fetch_all(&mut *connection)
     .await
     .map_err(conversion_error)?;
+    let tags_match = tags.len() == expected.tags.len()
+        && tags
+            .iter()
+            .zip(&expected.tags)
+            .all(|(actual, expected_tag)| {
+                actual.tag == *expected_tag
+                    && actual.confidence.is_finite()
+                    && actual.confidence.to_bits() == 0.95_f64.to_bits()
+                    && actual.created_at == expected.created_at
+            });
     let equivalent = target.id == target_id
         && target.crystal_type == "rule"
         && target.text == expected.text
@@ -379,15 +402,24 @@ async fn ensure_equivalent(
         && target.source_language == expected.source_language
         && target.target_language == expected.target_language
         && target.tags_json == expected.tags_json
-        && target.strength == 0.8
-        && target.confidence == 0.95
+        && target.strength.is_finite()
+        && target.strength.to_bits() == 0.8_f64.to_bits()
+        && target.confidence.is_finite()
+        && target.confidence.to_bits() == 0.95_f64.to_bits()
         && target.source_credibility == "user_rule"
         && target.rule_intent == expected.rule_intent
         && target.soft_origin.as_deref() == Some(expected.notes.as_str())
+        && !target.is_inferred
+        && target.malformed_penalty.is_finite()
+        && target.malformed_penalty.to_bits() == 0.0_f64.to_bits()
+        && target.supersedes_crystal_id.is_none()
         && target.status == expected.status
+        && target.created_cycle == 0
+        && target.last_activated_cycle.is_none()
+        && target.last_reinforced_cycle.is_none()
         && target.created_at == expected.created_at
         && target.updated_at == expected.updated_at
-        && tags == expected.tags;
+        && tags_match;
     if equivalent {
         Ok(())
     } else if conflict {

@@ -43,6 +43,38 @@ pub enum DbError {
         source: MigrateError,
     },
 
+    #[error("failed to identify the SQLite database for migration locking: {source}")]
+    MigrationLockIdentity {
+        #[source]
+        source: sqlx::Error,
+    },
+
+    #[error("failed to decode the SQLite database path for migration locking: {reason}")]
+    MigrationLockPath { reason: String },
+
+    #[error("failed to {operation} migration lock `{path}`: {source}")]
+    MigrationLockIo {
+        operation: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("migration-lock {operation} worker failed: {source}")]
+    MigrationLockWorker {
+        operation: &'static str,
+        #[source]
+        source: tokio::task::JoinError,
+    },
+
+    #[error("failed to release migration lock `{path}` after {outcome}: {source}")]
+    MigrationLockRelease {
+        path: PathBuf,
+        outcome: String,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("failed to inspect legacy SQLite schema: {source}")]
     LegacyInspection {
         #[source]

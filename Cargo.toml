@@ -17,6 +17,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6", features = ["derive"] }
 colored = "2"
 csv = "1"
+fs4 = "0.8"
 indicatif = "0.17"
 lancedb = "0.17"
 mime_guess = "2"

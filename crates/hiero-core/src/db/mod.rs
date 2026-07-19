@@ -1,6 +1,7 @@
 mod error;
 mod legacy_baseline;
 mod legacy_terms;
+mod migration_lock;
 mod models;
 
 #[cfg(test)]
@@ -85,6 +86,12 @@ pub async fn connect_url(url: &str) -> Result<SqlitePool, DbError> {
 }
 
 pub async fn migrate(pool: &SqlitePool) -> Result<(), DbError> {
+    let protocol_lock = migration_lock::MigrationProtocolLock::acquire(pool).await?;
+    let result = migrate_locked(pool).await;
+    protocol_lock.finish(result).await
+}
+
+async fn migrate_locked(pool: &SqlitePool) -> Result<(), DbError> {
     legacy_baseline::prepare(pool, &MIGRATOR).await?;
     // SQL migrations cannot call the typed Rust converter. Stop at the last
     // pre-conversion schema, convert under BEGIN IMMEDIATE, then let the same

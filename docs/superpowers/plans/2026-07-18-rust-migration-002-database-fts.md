@@ -14,6 +14,7 @@
 - Fresh databases start at the final schema; existing Python databases upgrade without loss.
 - Enable `foreign_keys = ON`, `recursive_triggers = ON`, and a five-second busy timeout on every connection; enable WAL for file databases. Recursive triggers are required so `INSERT OR REPLACE` fires FTS delete triggers.
 - Every transaction that reads before writing begins with `BEGIN IMMEDIATE` semantics.
+- Serialize the complete baseline/migration/conversion protocol. File databases hold one canonical-path-derived, crash-releasing cross-process advisory sidecar lock continuously from preflight through `0005`; memory databases hold a process-wide async mutex. Never rely on SQLx's no-op SQLite migration lock.
 - FTS indexes are external-content tables maintained only by triggers; stores never dual-write FTS rows.
 - Store timestamps as uniform RFC 3339 UTC text.
 - Never run fresh-only `0001` directly against a Python database. Baseline it first, retain every strict-term object for Task 5, restore `foreign_keys = ON`, then let the single SQLx migrator continue.
@@ -85,7 +86,7 @@
 
 - [ ] Build a Python-era fixture with active/inactive terms, tags, aliases, duplicate ledger entries, an injected invalid row, and no legacy tables. Assert direct structured mapping, semantic-tag union/deduplication, traceable ledger rows, idempotence, rollback on mismatch, and drop only after exact source/target count parity.
 - [ ] Run `cargo test -p hiero-core --test legacy_terms`; expect RED.
-- [ ] In one acquired connection, execute `BEGIN IMMEDIATE`, consume the strict-term objects retained by the pre-0001 baseline, read structured rows, insert rule crystals and semantic tags with bound parameters, record ledger rows, verify counts, then drop legacy FTS/triggers/child/parent objects in safe order and commit. Do not call the free-text `parse_rule` path.
+- [ ] In one acquired connection, execute `BEGIN IMMEDIATE`, consume the strict-term objects retained by the pre-0001 baseline, read structured rows, insert rule crystals and semantic tags with bound parameters, record ledger rows, verify exact counts and every converter-owned target/tag field (including NULL-vs-zero lifecycle fields, tag confidence, and timestamps), then drop legacy FTS/triggers/child/parent objects in safe order and commit. Do not call the free-text `parse_rule` path.
 - [ ] Keep `0005_drop_strict_terms.sql` limited to guarded DDL for fresh/empty cases. Use the one embedded migrator as `run_to(4)`, invoke the Rust converter, then `run()` the same manifest through `0005`; document why a plain SQLx migration cannot call typed Rust and why this preserves the embedded checksums without filesystem or duplicated-manifest dependencies.
 - [ ] Run focused tests against both fresh and copied Python schemas; expect GREEN. Commit `feat: retire legacy strict terms safely`.
 
