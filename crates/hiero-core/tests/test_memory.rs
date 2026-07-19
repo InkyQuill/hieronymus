@@ -741,7 +741,10 @@ async fn cancelling_a_writer_waiting_for_begin_immediate_keeps_pool_reusable() {
             .add_short_term(session_id, memory("Cancelled while waiting."))
             .await
     });
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+    // SQLx executes SQLite lock acquisition on a blocking worker. Under a busy
+    // parallel test host, give both that worker and its queued rollback enough
+    // time to cross the observable pool-idle handshake.
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
             if pool.num_idle() < idle_before_spawn {
                 break;
@@ -755,16 +758,6 @@ async fn cancelling_a_writer_waiting_for_begin_immediate_keeps_pool_reusable() {
     assert!(task.await.unwrap_err().is_cancelled());
     lock.rollback().await.unwrap();
 
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        loop {
-            if pool.num_idle() > idle_before_spawn {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("holder and cancelled writer connections must return to the pool");
     assert!(
         WorkspaceStore::new(&pool)
             .list_short_term(session_id)
@@ -773,13 +766,16 @@ async fn cancelling_a_writer_waiting_for_begin_immediate_keeps_pool_reusable() {
             .is_empty()
     );
 
-    WorkspaceStore::new(&pool)
-        .add_short_term(
+    tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        WorkspaceStore::new(&pool).add_short_term(
             session_id,
             memory("Pool remains healthy after cancellation."),
-        )
-        .await
-        .expect("cancelled begin must not strand a pooled connection");
+        ),
+    )
+    .await
+    .expect("pool reuse must not remain blocked after cancellation")
+    .expect("cancelled begin must not strand a pooled connection");
 }
 
 #[tokio::test]

@@ -2,7 +2,10 @@ use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::{CrystalRecord, ShortTermMemoryRecord, TaskSessionRecord};
+use crate::db::{
+    ConceptFacetRecord, ConceptProposalRecord, ConceptRecord, CrystalRecord, ShortTermMemoryRecord,
+    TaskSessionRecord,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TranslationContext {
@@ -267,6 +270,100 @@ impl Default for RuleFilter {
 pub struct ValidationReport {
     pub ok: bool,
     pub findings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateConceptInput {
+    pub canonical_name: String,
+    pub scope_type: String,
+    pub scope_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConceptFilter {
+    pub scope_type: String,
+    pub scope_key: String,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Concept {
+    pub record: ConceptRecord,
+    pub semantic_tags: Vec<String>,
+}
+
+impl Deref for Concept {
+    type Target = ConceptRecord;
+
+    fn deref(&self) -> &Self::Target {
+        &self.record
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConceptFacet {
+    pub record: ConceptFacetRecord,
+    pub language_tags: Vec<String>,
+    pub story_scopes: Vec<String>,
+    pub semantic_tags: Vec<String>,
+}
+
+impl Deref for ConceptFacet {
+    type Target = ConceptFacetRecord;
+
+    fn deref(&self) -> &Self::Target {
+        &self.record
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateProposalInput {
+    pub series_slug: String,
+    pub source_language: String,
+    pub target_language: String,
+    pub concept_text: String,
+    pub source_form: String,
+    pub canonical_rendering: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConceptProposal {
+    pub record: ConceptProposalRecord,
+    pub approved_variants: Vec<String>,
+    pub forbidden_variants: Vec<String>,
+}
+
+impl Deref for ConceptProposal {
+    type Target = ConceptProposalRecord;
+
+    fn deref(&self) -> &Self::Target {
+        &self.record
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TermProposal {
+    pub series_slug: String,
+    pub source_language: String,
+    pub target_language: String,
+    pub category: String,
+    pub source_text: String,
+    pub canonical_translation: String,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContractTerm {
+    pub crystal_id: i64,
+    pub source_text: String,
+    pub canonical_translation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidationFinding {
+    pub crystal_id: i64,
+    pub kind: String,
+    pub detail: String,
 }
 
 pub(super) fn normalize_texts(values: &[String], lowercase: bool) -> Vec<String> {
