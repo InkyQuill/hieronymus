@@ -166,14 +166,21 @@ class Doctor:
                     ),
                 )
             )
-        elif adoption.status == "published-cleanup-pending":
+        elif adoption.status in {
+            "publication-sync-pending",
+            "cleanup-pending",
+            "cleanup-sync-pending",
+            "recovery-pending",
+            "adoption-in-progress",
+        }:
             report["warnings"].append(
                 DoctorFinding(
                     level="warning",
-                    code="llm-cache-legacy-cleanup-pending",
+                    code=f"llm-cache-legacy-{adoption.status}",
                     message=(
-                        f"Model cache was published, but legacy cleanup is pending at "
-                        f"{adoption.legacy_path}: {adoption.error}"
+                        f"Legacy model cache adoption requires another retry"
+                        f"{f' at {adoption.legacy_path}' if adoption.legacy_path else ''}"
+                        f"{f': {adoption.error}' if adoption.error else ''}"
                     ),
                 )
             )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import uuid
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -99,6 +100,8 @@ def inspect_legacy_model_cache(config: HieronymusConfig) -> ModelCacheAdoption:
             error=str(error),
         )
     if snapshot is None:
+        if config.llm_cache_path.exists() and _recovery_paths(config):
+            return ModelCacheAdoption(status="cleanup-ready")
         return ModelCacheAdoption(status="not-needed")
     if not snapshot.valid:
         return ModelCacheAdoption(status="invalid-legacy", legacy_path=str(legacy_path))
@@ -112,62 +115,74 @@ def inspect_legacy_model_cache(config: HieronymusConfig) -> ModelCacheAdoption:
 def adopt_legacy_model_cache(config: HieronymusConfig) -> ModelCacheAdoption:
     legacy_path = _legacy_model_cache_path(config)
     try:
-        snapshot = _read_legacy_snapshot(legacy_path)
+        claim_path = _claim_legacy_path(config, legacy_path)
     except OSError as error:
         return ModelCacheAdoption(
             status="adoption-failed",
             legacy_path=str(legacy_path),
             error=str(error),
         )
+    if claim_path is None:
+        return _converge_without_public_legacy(config)
+
+    try:
+        snapshot = _read_legacy_snapshot(claim_path)
+    except OSError as error:
+        return _prepublication_failure(config, claim_path, error=str(error))
     if snapshot is None:
-        return ModelCacheAdoption(status="not-needed")
+        return ModelCacheAdoption(status="adoption-failed", error="legacy claim disappeared")
     if not snapshot.valid:
-        return ModelCacheAdoption(status="invalid-legacy", legacy_path=str(legacy_path))
+        restored = _restore_claim(config, claim_path)
+        return ModelCacheAdoption(
+            status="invalid-legacy" if restored else "recovery-pending",
+            legacy_path=str(legacy_path),
+            error="legacy cache is malformed",
+        )
 
-    if config.llm_cache_path.exists():
-        return _finish_existing_publication(config, snapshot)
-
+    temp_path = _unique_adoption_path(config, "canonical")
     descriptor: int | None = None
     try:
-        descriptor = os.open(
-            config.llm_cache_path,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-        )
-    except FileExistsError:
-        return _finish_existing_publication(config, snapshot)
-    except OSError as error:
-        return ModelCacheAdoption(
-            status="adoption-failed",
-            legacy_path=str(legacy_path),
-            error=str(error),
-        )
-
-    publication_metadata = os.fstat(descriptor)
-    publication_identity = (publication_metadata.st_dev, publication_metadata.st_ino)
-    try:
+        descriptor = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         _write_all(descriptor, snapshot.content)
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = None
-        _fsync_directory(config.data_root)
     except OSError as error:
         if descriptor is not None:
             try:
                 os.close(descriptor)
             except OSError:
                 pass
-        _remove_partial_publication(
-            config.llm_cache_path,
-            config.data_root,
-            publication_identity,
+        return _prepublication_failure(
+            config,
+            claim_path,
+            error=str(error),
+            temp_path=temp_path,
         )
+
+    try:
+        os.link(temp_path, config.llm_cache_path)
+    except FileExistsError:
+        if _read_bytes(config.llm_cache_path) != snapshot.content:
+            _restore_claim(config, claim_path)
+            return ModelCacheAdoption(status="conflict", legacy_path=str(legacy_path))
+    except OSError as error:
+        return _prepublication_failure(
+            config,
+            claim_path,
+            error=str(error),
+            temp_path=temp_path,
+        )
+
+    try:
+        _fsync_directory(config.data_root)
+    except OSError as error:
         return ModelCacheAdoption(
-            status="adoption-failed",
-            legacy_path=str(legacy_path),
+            status="publication-sync-pending",
+            legacy_path=str(claim_path),
             error=str(error),
         )
-    return _cleanup_legacy_snapshot(config, snapshot)
+    return _cleanup_private_adoption_files(config, claim_path, temp_path)
 
 
 def save_model_cache(config: HieronymusConfig, cache: CachedModels) -> None:
@@ -224,6 +239,102 @@ def _legacy_model_cache_path(config: HieronymusConfig) -> Path:
     return config.data_root / ("llm" + "cache.tmp")
 
 
+def _unique_adoption_path(config: HieronymusConfig, kind: str) -> Path:
+    return config.data_root / f".llm-cache-adoption-{uuid.uuid4().hex}.{kind}"
+
+
+def _recovery_paths(config: HieronymusConfig) -> tuple[Path, ...]:
+    return tuple(sorted(config.data_root.glob(".llm-cache-adoption-*")))
+
+
+def _claim_legacy_path(config: HieronymusConfig, legacy_path: Path) -> Path | None:
+    claim_path = _unique_adoption_path(config, "legacy")
+    try:
+        os.rename(legacy_path, claim_path)
+    except FileNotFoundError:
+        return None
+    return claim_path
+
+
+def _restore_claim(config: HieronymusConfig, claim_path: Path) -> bool:
+    legacy_path = _legacy_model_cache_path(config)
+    try:
+        os.link(claim_path, legacy_path)
+    except FileExistsError:
+        return False
+    except OSError:
+        return False
+    try:
+        _fsync_directory(config.data_root)
+        os.unlink(claim_path)
+        _fsync_directory(config.data_root)
+    except OSError:
+        return False
+    return True
+
+
+def _prepublication_failure(
+    config: HieronymusConfig,
+    claim_path: Path,
+    *,
+    error: str,
+    temp_path: Path | None = None,
+) -> ModelCacheAdoption:
+    restored = _restore_claim(config, claim_path)
+    recovery = str(temp_path) if temp_path is not None and temp_path.exists() else ""
+    if not restored:
+        recovery = ", ".join(filter(None, (str(claim_path), recovery)))
+    detail = error if not recovery else f"{error}; recovery files: {recovery}"
+    return ModelCacheAdoption(
+        status="adoption-failed" if restored else "recovery-pending",
+        legacy_path=str(_legacy_model_cache_path(config)),
+        error=detail,
+    )
+
+
+def _cleanup_private_adoption_files(
+    config: HieronymusConfig,
+    *paths: Path,
+) -> ModelCacheAdoption:
+    for path in paths:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            return ModelCacheAdoption(
+                status="cleanup-pending",
+                legacy_path=str(path),
+                error=str(error),
+            )
+    try:
+        _fsync_directory(config.data_root)
+    except OSError as error:
+        return ModelCacheAdoption(
+            status="cleanup-sync-pending",
+            error=str(error),
+        )
+    return ModelCacheAdoption(status="adopted")
+
+
+def _converge_without_public_legacy(config: HieronymusConfig) -> ModelCacheAdoption:
+    recoveries = _recovery_paths(config)
+    if not config.llm_cache_path.exists():
+        return ModelCacheAdoption(status="adoption-in-progress" if recoveries else "not-needed")
+    try:
+        _fsync_directory(config.data_root)
+    except OSError as error:
+        return ModelCacheAdoption(status="publication-sync-pending", error=str(error))
+
+    canonical = _read_bytes(config.llm_cache_path)
+    matching = tuple(path for path in recoveries if _read_bytes(path) == canonical)
+    if matching:
+        cleanup = _cleanup_private_adoption_files(config, *matching)
+        if cleanup.status != "adopted":
+            return cleanup
+    return ModelCacheAdoption(status="adopted")
+
+
 def _read_legacy_snapshot(path: Path) -> _LegacyCacheSnapshot | None:
     try:
         descriptor = os.open(path, os.O_RDONLY)
@@ -264,53 +375,6 @@ def _read_bytes(path: Path) -> bytes | None:
         return None
 
 
-def _finish_existing_publication(
-    config: HieronymusConfig,
-    snapshot: _LegacyCacheSnapshot,
-) -> ModelCacheAdoption:
-    if _read_bytes(config.llm_cache_path) != snapshot.content:
-        return ModelCacheAdoption(status="conflict", legacy_path=str(snapshot.path))
-    return _cleanup_legacy_snapshot(config, snapshot)
-
-
-def _cleanup_legacy_snapshot(
-    config: HieronymusConfig,
-    snapshot: _LegacyCacheSnapshot,
-) -> ModelCacheAdoption:
-    try:
-        current = snapshot.path.stat(follow_symlinks=False)
-    except FileNotFoundError:
-        return ModelCacheAdoption(status="adopted", legacy_path=str(snapshot.path))
-    except OSError as error:
-        return ModelCacheAdoption(
-            status="published-cleanup-pending",
-            legacy_path=str(snapshot.path),
-            error=str(error),
-        )
-    if (current.st_dev, current.st_ino) != (snapshot.device, snapshot.inode):
-        return ModelCacheAdoption(
-            status="published-cleanup-pending",
-            legacy_path=str(snapshot.path),
-            error="legacy cache path changed during adoption",
-        )
-    if _read_bytes(snapshot.path) != snapshot.content:
-        return ModelCacheAdoption(
-            status="published-cleanup-pending",
-            legacy_path=str(snapshot.path),
-            error="legacy cache content changed during adoption",
-        )
-    try:
-        os.unlink(snapshot.path)
-        _fsync_directory(config.data_root)
-    except OSError as error:
-        return ModelCacheAdoption(
-            status="published-cleanup-pending",
-            legacy_path=str(snapshot.path),
-            error=str(error),
-        )
-    return ModelCacheAdoption(status="adopted", legacy_path=str(snapshot.path))
-
-
 def _write_all(descriptor: int, content: bytes) -> None:
     written = 0
     while written < len(content):
@@ -318,29 +382,6 @@ def _write_all(descriptor: int, content: bytes) -> None:
         if count <= 0:
             raise OSError("model cache publication write made no progress")
         written += count
-
-
-def _remove_partial_publication(
-    path: Path,
-    parent: Path,
-    expected_identity: tuple[int, int],
-) -> None:
-    try:
-        current = path.stat(follow_symlinks=False)
-    except OSError:
-        return
-    if (current.st_dev, current.st_ino) != expected_identity:
-        return
-    try:
-        os.unlink(path)
-    except FileNotFoundError:
-        pass
-    except OSError:
-        return
-    try:
-        _fsync_directory(parent)
-    except OSError:
-        pass
 
 
 def _read_cache(path: Path, *, require_complete: bool = False) -> tuple[CachedModels, bool]:
