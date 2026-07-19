@@ -42,6 +42,7 @@ async fn setup_test_db() -> SqlitePool {
 | `test_concepts.rs` | Concept lifecycle, facets, linking, merging, `rename_concept` | `tests/test_concepts.py` |
 | `test_recall.rs` | Multi-source recall, rule-intent/credibility boost, spreading activation, `crystal_activations` logging | `tests/test_recall.py` |
 | `test_scoring.rs` | Immediate/passive deltas, `rule_intent` decay dampening (no immunity — see 003 §2.5), archival, `record_recall_outcome` | `tests/test_scoring.py` |
+| `test_ingest.rs` | Strict ingest config, block splitting, atomic Learn batches, contextual Read validation, observation storage | `tests/test_ingest_config.py`, `tests/test_agent_ingestion.py`, `tests/test_mcp_agent_ingestion.py`, `tests/test_mcp_read_learn_compatibility.py` |
 | `test_reconsolidation.rs` | `Reconsolidator`: diff-threshold reinforce-vs-supersede, concept-link inheritance, working-copy archival | none (new behavior — see `docs/superpowers/specs/2026-07-18-memory-reconsolidation-design.md`) |
 | `test_link_reinforcement.rs` | `LinkReinforcer`: Hebbian strengthening, pairwise combination, `combined_into` events | none (new behavior — same design doc) |
 | `test_rag.rs` | RAG import, FTS search, parsing, conversion | `tests/test_rag_store.py` |

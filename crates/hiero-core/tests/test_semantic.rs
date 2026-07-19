@@ -846,6 +846,78 @@ async fn lancedb_with_sqlite_excludes_stale_vectors_and_wrong_series() {
 }
 
 #[tokio::test]
+async fn deleting_lancedb_and_rebuilding_from_sqlite_reproduces_semantic_results() {
+    let pool = semantic_pool().await;
+    let root = tempfile::tempdir().unwrap().keep();
+    let embeddings = FakeEmbeddingProvider::new(4);
+    let query = embeddings.embed_query("alpha").await.unwrap();
+
+    async fn rebuild(
+        root: &std::path::Path,
+        pool: &sqlx::SqlitePool,
+        embeddings: &FakeEmbeddingProvider,
+    ) -> LanceDbIndex {
+        let rows =
+            sqlx::query_as::<_, (i64, String)>("SELECT id, text FROM rag_chunks ORDER BY id")
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        let texts = rows
+            .iter()
+            .map(|(_, text)| text.clone())
+            .collect::<Vec<_>>();
+        let vectors = embeddings.embed_documents(&texts).await.unwrap();
+        let index = LanceDbIndex::open_with_pool(root, pool.clone())
+            .await
+            .unwrap();
+        let generation = index.begin_rebuild().await.unwrap();
+        index
+            .upsert_vectors(
+                generation,
+                rows.into_iter()
+                    .zip(vectors)
+                    .map(|((chunk_id, _), embedding)| VectorRecord {
+                        chunk_id,
+                        embedding,
+                    })
+                    .collect(),
+            )
+            .await
+            .unwrap();
+        index.activate_generation(generation).await.unwrap();
+        index
+    }
+
+    let first = rebuild(&root, &pool, &embeddings).await;
+    let expected = first
+        .search(
+            &query,
+            &SearchFilter {
+                series_slug: "book".into(),
+            },
+            3,
+        )
+        .await
+        .unwrap();
+    first.close().await.unwrap();
+    drop(first);
+    tokio::fs::remove_dir_all(&root).await.unwrap();
+
+    let rebuilt = rebuild(&root, &pool, &embeddings).await;
+    let actual = rebuilt
+        .search(
+            &query,
+            &SearchFilter {
+                series_slug: "book".into(),
+            },
+            3,
+        )
+        .await
+        .unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[tokio::test]
 async fn partial_rebuild_state_does_not_invalidate_the_active_generation() {
     let pool = semantic_pool().await;
     let temp = tempfile::tempdir().unwrap();

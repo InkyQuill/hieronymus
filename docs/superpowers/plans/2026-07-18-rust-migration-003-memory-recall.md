@@ -4,14 +4,14 @@
 
 **Goal:** Port all memory stores, deterministic termbase, recall, RAG ingestion/search, semantic indexing, and hybrid ranking to `hiero-core`.
 
-**Architecture:** Focused stores own SQL transactions; `RecallService` composes lexical, graph, and optional semantic evidence without letting semantic results override rule-intent crystals. SQLite owns source text and index jobs; LanceDB and ONNX state are replaceable adapters behind small traits.
+**Architecture:** Focused stores own SQL transactions; `RecallService` composes lexical, graph, and optional semantic evidence with a deterministic rule-intent boost, while contextual `Termbase` validation remains the strict terminology boundary. SQLite owns source text and index jobs; LanceDB and ONNX state are replaceable adapters behind small traits.
 
 **Tech Stack:** Rust 2024, SQLx/FTS5, Tokio, ICU4X `icu_casemap`, `unicode-properties`, LanceDB 0.30, ort 2.0.0-rc.12, Arrow, pulldown-cmark, docx-rs, pdf-extract, scraper.
 
 ## Global Constraints
 
 - Port every public behavior covered by current crystal, workspace, concept, termbase, recall, RAG, and scoring tests.
-- Active non-empty `rule_intent` crystals form a mandatory deterministic recall lane.
+- Active non-empty `rule_intent` crystals receive a deterministic score boost before truncation; they are not guaranteed a result lane and a stronger non-rule match may outrank them.
 - SQLite is authoritative; deleting LanceDB/model caches loses no domain data.
 - Semantic failure degrades to FTS5-only and is observable; it never fails recall.
 - Use bounded channels and `spawn_blocking` for ONNX inference/document parsing that blocks or is CPU-heavy.
@@ -77,7 +77,7 @@
 
 **Interfaces:** Produce `TranslationContext`, `MemorySource`, `RecallResult`, and `RecallService::recall(session_id: i64, ctx: &TranslationContext, query: &str, limit: usize) -> Result<Vec<RecallResult>>` from proposal 003 §3.
 
-- [ ] Port combined recall/enriched memory/RAG tests. Assert rule lane inclusion before limit truncation, source-credibility boost, bounded graph expansion, stable tie-breaking, deduplication, and one activation row per returned crystal.
+- [ ] Port combined recall/enriched memory/RAG tests. Assert the rule-intent boost is applied before limit truncation without making rules unbeatable, plus source-credibility boost, bounded graph expansion, stable tie-breaking, deduplication, and one activation row per returned crystal.
 - [ ] Run focused test; expect RED.
 - [ ] Implement lane queries concurrently only when independent, fuse in a synchronous pure ranker, then log returned activations transactionally. Never hold a lock/transaction across semantic inference.
 - [ ] Run focused tests; expect GREEN. Commit `feat: port deterministic recall service`.
@@ -118,5 +118,5 @@
 
 - [ ] All eight Rust integration tests pass with no network/model download.
 - [ ] Deleting the temporary LanceDB directory and rerunning rebuild reproduces semantic results from SQLite.
-- [ ] Termbase and recall tests prove semantic evidence cannot displace an active rule-intent result.
+- [ ] Termbase tests prove semantic evidence cannot bypass contextual deterministic terminology validation; recall tests separately prove rule intent is boosted before truncation but is not globally unbeatable.
 - [ ] Every Python parity file named in proposal 006 §1.2 maps to at least one Rust assertion.
