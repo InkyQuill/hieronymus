@@ -467,11 +467,19 @@ touching call sites.
 ```rust
 pub struct SemanticJobQueue<'a> { pool: &'a SqlitePool }
 pub struct ClaimedSemanticBatch { /* private claim token, job/generation binding, chunks */ }
+pub struct SemanticLeaseGuard { /* token-scoped renewable lease and write fence */ }
 impl<'a> SemanticJobQueue<'a> {
     pub async fn enqueue_rebuild(&self) -> Result<i64>;
     pub async fn claim_next_batch(&self, batch_size: usize) -> Result<ClaimedSemanticBatch>;
+    pub async fn lease_guard(&self, batch: &ClaimedSemanticBatch) -> Result<SemanticLeaseGuard>;
     pub async fn mark_indexed(&self, batch: &ClaimedSemanticBatch, generation_id: &str) -> Result<usize>;
     pub async fn mark_failed(&self, batch: &ClaimedSemanticBatch, error: &str) -> Result<()>;
+}
+impl SemanticLeaseGuard {
+    pub async fn ensure_owned(&self) -> Result<()>;
+    pub async fn renew(&self) -> Result<()>;
+    pub async fn run_with_lease<F, T>(&self, future: F) -> Result<T>;
+    pub async fn fence_write<F, T>(&self, future: F) -> Result<T>;
 }
 ```
 
@@ -484,6 +492,17 @@ error and releases the job's claims. Late or expired-token success/failure is re
 complete only when no stale/pending chunks and no live claims remain. Claim hydration is
 database-only and stays inside the short `BEGIN IMMEDIATE` claim transaction, so decode errors or
 cancellation roll back ownership; embedding and LanceDB work never run under that transaction.
+
+The default lease is 15 minutes, deliberately longer than the provider's 600-second total download
+timeout, while `SemanticLeaseGuard::run_with_lease` renews at one third of the lease so legitimate
+download, embedding, and indexing work can continue without a fixed upper bound. Renewal succeeds
+only while every row remains owned by the same token, its lease is live, and the job is `running`;
+expired or replaced tokens receive a typed lost-ownership error. Dropping or cancelling the wrapper
+stops renewal, and process death therefore leaves the claim to expire naturally without consuming an
+attempt until another worker actually reclaims it. Worker orchestration must keep all external work
+inside `run_with_lease` and must wrap every Lance upsert and activation in `fence_write`, which calls
+`ensure_owned` immediately before and after the mutation. Task 7 exposes this mandatory safe API but
+does not yet contain a concrete job-to-index worker loop.
 
 The active generation's stored series/checksum metadata is compared directly with authoritative
 SQLite rows during search. `semantic_chunk_state.generation_id` tracks rebuild progress only:

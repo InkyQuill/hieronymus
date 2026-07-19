@@ -50,6 +50,8 @@ pub enum SemanticError {
     CorruptIndex { reason: String },
     #[error("invalid semantic vector: {reason}")]
     InvalidVector { reason: String },
+    #[error("semantic claim {token} for job {job_id} is no longer owned")]
+    LostClaim { job_id: i64, token: String },
     #[error("semantic operation was cancelled")]
     Cancelled,
     #[error("semantic filesystem operation failed: {0}")]

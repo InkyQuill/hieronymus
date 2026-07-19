@@ -382,6 +382,20 @@ async fn job_queue_claims_bounded_distinct_batches_and_tracks_checksums() {
         second.iter().map(|chunk| chunk.id).collect::<Vec<_>>(),
         vec![30]
     );
+    let (created_at, lease_expires_at): (
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+    ) = sqlx::query_as(
+        "SELECT job.created_at, min(claim.lease_expires_at) FROM semantic_index_jobs job JOIN semantic_batch_claims claim ON claim.job_id = job.id WHERE job.id = ?",
+    )
+    .bind(job)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        lease_expires_at - created_at >= chrono::Duration::minutes(15),
+        "the default lease must exceed the provider's 600-second download timeout"
+    );
 
     let unassigned: Option<String> =
         sqlx::query_scalar("SELECT generation_id FROM semantic_index_jobs WHERE id = ?")
@@ -458,7 +472,7 @@ async fn mark_failed_is_terminal_observable_and_old_tokens_cannot_mutate() {
 #[tokio::test]
 async fn expired_claims_are_reowned_but_live_leases_and_max_attempts_are_enforced() {
     let pool = semantic_pool().await;
-    sqlx::query("DELETE FROM rag_chunks WHERE id IN (20, 30)")
+    sqlx::query("DELETE FROM rag_chunks WHERE id = 30")
         .execute(&pool)
         .await
         .unwrap();
@@ -472,7 +486,8 @@ async fn expired_claims_are_reowned_but_live_leases_and_max_attempts_are_enforce
         Arc::new(move || *instant.lock().unwrap())
     });
     let job = queue.enqueue_rebuild().await.unwrap();
-    let first = queue.claim_next_batch(1).await.unwrap();
+    let first = queue.claim_next_batch(2).await.unwrap();
+    assert_eq!(first.len(), 2);
     assert!(queue.claim_next_batch(1).await.unwrap().is_empty());
 
     *instant.lock().unwrap() += chrono::Duration::seconds(6);
@@ -509,6 +524,47 @@ async fn expired_claims_are_reowned_but_live_leases_and_max_attempts_are_enforce
             .unwrap();
     assert_eq!(status, "failed");
     assert!(error.contains("exceeded 3 claim attempts"));
+    let claims: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM semantic_batch_claims WHERE job_id = ?")
+            .bind(job)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(claims, 0, "terminal failure removes every stale job claim");
+    assert!(queue.claim_next_batch(1).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn heartbeat_preserves_a_long_claim_without_consuming_attempts_then_stops_cleanly() {
+    let pool = semantic_pool().await;
+    sqlx::query("DELETE FROM rag_chunks WHERE id IN (20, 30)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let instant = Arc::new(std::sync::Mutex::new(
+        "2026-07-19T00:00:00Z"
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .unwrap(),
+    ));
+    let queue = SemanticJobQueue::with_clock(&pool, chrono::Duration::milliseconds(90), {
+        let instant = instant.clone();
+        Arc::new(move || *instant.lock().unwrap())
+    });
+    let job = queue.enqueue_rebuild().await.unwrap();
+    let claim = queue.claim_next_batch(1).await.unwrap();
+    let guard = queue.lease_guard(&claim).await.unwrap();
+
+    guard
+        .run_with_lease(async {
+            for _ in 0..8 {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                *instant.lock().unwrap() += chrono::Duration::milliseconds(25);
+            }
+            Ok::<_, SemanticError>(())
+        })
+        .await
+        .unwrap();
+    assert!(queue.claim_next_batch(1).await.unwrap().is_empty());
     let attempts: i64 = sqlx::query_scalar(
         "SELECT attempts FROM semantic_batch_claims WHERE job_id = ? AND chunk_id = 10",
     )
@@ -516,8 +572,96 @@ async fn expired_claims_are_reowned_but_live_leases_and_max_attempts_are_enforce
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(attempts, 3);
-    assert!(queue.claim_next_batch(1).await.unwrap().is_empty());
+    assert_eq!(attempts, 1, "heartbeats do not redeliver legitimate work");
+
+    *instant.lock().unwrap() += chrono::Duration::milliseconds(100);
+    let reclaimed = queue.claim_next_batch(1).await.unwrap();
+    assert_ne!(claim.token(), reclaimed.token());
+    assert!(matches!(
+        guard.renew().await,
+        Err(SemanticError::LostClaim { .. })
+    ));
+}
+
+#[tokio::test]
+async fn lease_wrapper_and_write_fence_observe_lost_ownership() {
+    let pool = semantic_pool().await;
+    sqlx::query("DELETE FROM rag_chunks WHERE id IN (20, 30)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let queue = SemanticJobQueue::with_clock(
+        &pool,
+        chrono::Duration::milliseconds(90),
+        Arc::new(chrono::Utc::now),
+    );
+    queue.enqueue_rebuild().await.unwrap();
+    let claim = queue.claim_next_batch(1).await.unwrap();
+    let guard = queue.lease_guard(&claim).await.unwrap();
+    let mutator_pool = pool.clone();
+    let job_id = claim.job_id();
+    let mutator = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        sqlx::query("UPDATE semantic_batch_claims SET claim_token = ? WHERE job_id = ?")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(job_id)
+            .execute(&mutator_pool)
+            .await
+            .unwrap();
+    });
+    assert!(matches!(
+        guard
+            .run_with_lease(async {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                Ok::<_, SemanticError>(())
+            })
+            .await,
+        Err(SemanticError::LostClaim { .. })
+    ));
+    mutator.await.unwrap();
+
+    let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    assert!(matches!(
+        guard
+            .fence_write({
+                let ran = ran.clone();
+                async move {
+                    ran.store(true, Ordering::SeqCst);
+                    Ok::<_, SemanticError>(())
+                }
+            })
+            .await,
+        Err(SemanticError::LostClaim { .. })
+    ));
+    assert!(
+        !ran.load(Ordering::SeqCst),
+        "the pre-write fence must abort the write"
+    );
+
+    sqlx::query(
+        "UPDATE semantic_batch_claims SET claim_token = ?, lease_expires_at = ? WHERE job_id = ?",
+    )
+    .bind(claim.token())
+    .bind(chrono::Utc::now() + chrono::Duration::seconds(1))
+    .bind(claim.job_id())
+    .execute(&pool)
+    .await
+    .unwrap();
+    guard.ensure_owned().await.unwrap();
+    assert!(matches!(
+        guard
+            .fence_write(async {
+                sqlx::query("UPDATE semantic_batch_claims SET claim_token = ? WHERE job_id = ?")
+                    .bind(uuid::Uuid::new_v4().to_string())
+                    .bind(claim.job_id())
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                Ok::<_, SemanticError>(())
+            })
+            .await,
+        Err(SemanticError::LostClaim { .. })
+    ));
 }
 
 #[tokio::test]

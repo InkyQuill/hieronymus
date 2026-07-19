@@ -97,11 +97,11 @@
 
 **Files:** Create `semantic/{mod.rs,embedding.rs,index.rs,lancedb.rs,jobs.rs,rrf.rs}`, `tests/test_semantic.rs`.
 
-**Interfaces:** Produce `EmbeddingProvider`, `SemanticIndex`, `IndexHealth`, `GenerationId`, `GenerationInfo`, `VectorRecord`, `SearchFilter`, `SearchHit`, `SemanticJobQueue`, ownership-bearing `ClaimedSemanticBatch`, test-only `FakeEmbeddingProvider`/`FakeSemanticIndex`, and `reciprocal_rank_fusion` from proposal 003 §5. Queue completion/failure must accept a live leased batch claim rather than caller-supplied chunk/job IDs; expired claims are re-owned up to a bounded terminal-attempt limit with persisted diagnostics.
+**Interfaces:** Produce `EmbeddingProvider`, `SemanticIndex`, `IndexHealth`, `GenerationId`, `GenerationInfo`, `VectorRecord`, `SearchFilter`, `SearchHit`, `SemanticJobQueue`, ownership-bearing `ClaimedSemanticBatch`, token-scoped `SemanticLeaseGuard`, test-only `FakeEmbeddingProvider`/`FakeSemanticIndex`, and `reciprocal_rank_fusion` from proposal 003 §5. Queue completion/failure must accept a live leased batch claim rather than caller-supplied chunk/job IDs; expired claims are re-owned up to a bounded terminal-attempt limit with persisted diagnostics. The default lease must exceed the provider's 600-second download timeout, while the guard heartbeats at a fraction of the lease for unbounded legitimate work, reports lost ownership, and fences every Lance upsert/activation with checks immediately before and after the write.
 
 - [ ] Write contract tests that run the same insert/delete/search corpus against fake and temporary LanceDB indexes; test deterministic embeddings, generation swap, checksum skip, cancellation, missing model, corrupt index, and FTS fallback.
 - [ ] Run focused test; expect RED.
-- [ ] Implement bounded job claiming in SQLite, ORT inference behind `spawn_blocking`, LanceDB generation directories, and atomic active-generation switch only after complete indexing. Pin `ort` explicitly because it is a release candidate and record its Rust 1.88 floor under the workspace's 1.94 floor.
+- [ ] Implement bounded job claiming in SQLite, mandatory `run_with_lease` wrapping around download/embed/index work, pre/post ownership fencing around each Lance write, ORT inference behind `spawn_blocking`, LanceDB generation directories, and atomic active-generation switch only after complete indexing. Pin `ort` explicitly because it is a release candidate and record its Rust 1.88 floor under the workspace's 1.94 floor.
 - [ ] Add hybrid RRF to recall with rule-lane preservation and stable ID tie-break. Run tests; expect GREEN. Commit `feat: add rebuildable semantic recall`.
 
 ### Task 8: Implement Ingestion Configuration and Phase Gate

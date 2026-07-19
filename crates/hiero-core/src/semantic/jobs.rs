@@ -1,6 +1,8 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    future::Future,
     ops::Deref,
+    sync::Arc,
 };
 
 use chrono::{DateTime, Duration, Utc};
@@ -13,7 +15,7 @@ use crate::{db::RagChunkRecord as RawRagChunkRecord, rag::RagChunkRecord};
 const MAX_BATCH_SIZE: usize = 500;
 const SCAN_PAGE_SIZE: i64 = 256;
 const MAX_CLAIM_ATTEMPTS: i64 = 3;
-const DEFAULT_LEASE_SECONDS: i64 = 300;
+const DEFAULT_LEASE_SECONDS: i64 = 900;
 
 type Clock = dyn Fn() -> DateTime<Utc> + Send + Sync;
 
@@ -50,8 +52,116 @@ impl Deref for ClaimedSemanticBatch {
 
 pub struct SemanticJobQueue<'a> {
     pool: &'a SqlitePool,
-    clock: std::sync::Arc<Clock>,
+    clock: Arc<Clock>,
     lease_duration: Duration,
+}
+
+/// A token-scoped renewable lease for one claimed semantic batch.
+///
+/// Worker orchestration must keep download, embedding, and indexing inside
+/// [`Self::run_with_lease`], and wrap every Lance upsert or activation in
+/// [`Self::fence_write`] so ownership is checked immediately around the write.
+#[derive(Clone)]
+pub struct SemanticLeaseGuard {
+    pool: SqlitePool,
+    job_id: i64,
+    token: uuid::Uuid,
+    claim_count: usize,
+    clock: Arc<Clock>,
+    lease_duration: Duration,
+}
+
+impl SemanticLeaseGuard {
+    fn now(&self) -> DateTime<Utc> {
+        (self.clock)()
+    }
+
+    fn lost_claim(&self) -> SemanticError {
+        SemanticError::LostClaim {
+            job_id: self.job_id,
+            token: self.token.to_string(),
+        }
+    }
+
+    fn heartbeat_interval(&self) -> std::time::Duration {
+        self.lease_duration
+            .to_std()
+            .unwrap_or(std::time::Duration::from_secs(1))
+            .div_f64(3.0)
+            .max(std::time::Duration::from_millis(1))
+    }
+
+    /// Fails if this token no longer owns every row in its live, running job.
+    pub async fn ensure_owned(&self) -> Result<(), SemanticError> {
+        let owned: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM semantic_batch_claims claim JOIN semantic_index_jobs job ON job.id = claim.job_id WHERE claim.claim_token = ? AND claim.job_id = ? AND claim.lease_expires_at > ? AND job.status = 'running'",
+        )
+        .bind(self.token.to_string())
+        .bind(self.job_id)
+        .bind(self.now())
+        .fetch_one(&self.pool)
+        .await?;
+        if usize::try_from(owned).ok() == Some(self.claim_count) {
+            Ok(())
+        } else {
+            Err(self.lost_claim())
+        }
+    }
+
+    /// Atomically extends this token's lease while its job remains live and running.
+    pub async fn renew(&self) -> Result<(), SemanticError> {
+        let now = self.now();
+        let changed = sqlx::query(
+            "UPDATE semantic_batch_claims SET lease_expires_at = ? WHERE claim_token = ? AND job_id = ? AND lease_expires_at > ? AND EXISTS (SELECT 1 FROM semantic_index_jobs WHERE id = ? AND status = 'running')",
+        )
+        .bind(now + self.lease_duration)
+        .bind(self.token.to_string())
+        .bind(self.job_id)
+        .bind(now)
+        .bind(self.job_id)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if usize::try_from(changed).ok() == Some(self.claim_count) {
+            Ok(())
+        } else {
+            Err(self.lost_claim())
+        }
+    }
+
+    /// Runs arbitrary external work while renewing this claim at one third of its lease.
+    ///
+    /// Losing ownership cancels the supplied future and returns [`SemanticError::LostClaim`].
+    /// Dropping or cancelling this wrapper stops renewal, so process death naturally permits reclaim.
+    pub async fn run_with_lease<F, T>(&self, future: F) -> Result<T, SemanticError>
+    where
+        F: Future<Output = Result<T, SemanticError>>,
+    {
+        self.ensure_owned().await?;
+        let mut heartbeat = tokio::time::interval(self.heartbeat_interval());
+        heartbeat.tick().await;
+        tokio::pin!(future);
+        loop {
+            tokio::select! {
+                result = &mut future => {
+                    self.ensure_owned().await?;
+                    return result;
+                }
+                _ = heartbeat.tick() => self.renew().await?,
+            }
+        }
+    }
+
+    /// Fences one Lance mutation with ownership checks immediately before and after it.
+    pub async fn fence_write<F, T>(&self, future: F) -> Result<T, SemanticError>
+    where
+        F: Future<Output = Result<T, SemanticError>>,
+    {
+        self.ensure_owned().await?;
+        let result = future.await;
+        self.ensure_owned().await?;
+        result
+    }
 }
 
 struct ClaimPause {
@@ -64,7 +174,7 @@ impl<'a> SemanticJobQueue<'a> {
     pub fn new(pool: &'a SqlitePool) -> Self {
         Self {
             pool,
-            clock: std::sync::Arc::new(Utc::now),
+            clock: Arc::new(Utc::now),
             lease_duration: Duration::seconds(DEFAULT_LEASE_SECONDS),
         }
     }
@@ -72,11 +182,7 @@ impl<'a> SemanticJobQueue<'a> {
     /// Injects lease time for deterministic worker-death and expiry tests.
     #[doc(hidden)]
     #[must_use]
-    pub fn with_clock(
-        pool: &'a SqlitePool,
-        lease_duration: Duration,
-        clock: std::sync::Arc<Clock>,
-    ) -> Self {
+    pub fn with_clock(pool: &'a SqlitePool, lease_duration: Duration, clock: Arc<Clock>) -> Self {
         Self {
             pool,
             clock,
@@ -86,6 +192,26 @@ impl<'a> SemanticJobQueue<'a> {
 
     fn now(&self) -> DateTime<Utc> {
         (self.clock)()
+    }
+
+    /// Creates the mandatory heartbeat and write-fencing guard for a live batch.
+    pub async fn lease_guard(
+        &self,
+        batch: &ClaimedSemanticBatch,
+    ) -> Result<SemanticLeaseGuard, SemanticError> {
+        if batch.chunks.is_empty() {
+            return Err(invalid_claim(batch));
+        }
+        let guard = SemanticLeaseGuard {
+            pool: self.pool.clone(),
+            job_id: batch.job_id,
+            token: batch.token,
+            claim_count: batch.chunks.len(),
+            clock: self.clock.clone(),
+            lease_duration: self.lease_duration,
+        };
+        guard.ensure_owned().await?;
+        Ok(guard)
     }
 
     pub async fn enqueue_rebuild(&self) -> Result<i64, SemanticError> {
@@ -146,8 +272,8 @@ impl<'a> SemanticJobQueue<'a> {
                     sqlx::query("UPDATE semantic_index_jobs SET status = 'failed', last_error = ?, failed_at = ?, completed_at = ? WHERE id = ? AND status = 'running'")
                         .bind(&diagnostic).bind(now).bind(now).bind(job_id)
                         .execute(&mut *tx).await?;
-                    sqlx::query("DELETE FROM semantic_batch_claims WHERE claim_token = ?")
-                        .bind(token.to_string())
+                    sqlx::query("DELETE FROM semantic_batch_claims WHERE job_id = ?")
+                        .bind(job_id)
                         .execute(&mut *tx)
                         .await?;
                     tx.commit().await?;
