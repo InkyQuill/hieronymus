@@ -174,6 +174,7 @@ fn configure_options(mut options: SqliteConnectOptions, is_memory: bool) -> Sqli
     options = options
         .create_if_missing(!is_memory)
         .foreign_keys(true)
+        .pragma("recursive_triggers", "ON")
         .busy_timeout(Duration::from_secs(5));
     if is_memory {
         options

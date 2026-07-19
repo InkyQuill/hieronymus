@@ -53,6 +53,14 @@ const ABSENT_OBJECTS: &[&str] = &[
     "strict_terms_fts",
 ];
 
+const FTS_TABLES: &[&str] = &[
+    "concept_facet_fts",
+    "concepts_fts",
+    "crystals_fts",
+    "rag_chunks_fts",
+    "short_term_memories_fts",
+];
+
 async fn migrated_pool() -> SqlitePool {
     connect_url("sqlite::memory:")
         .await
@@ -171,15 +179,24 @@ async fn exact_schema_manifest_matches_every_column_constraint_foreign_key_and_i
 }
 
 #[tokio::test]
-async fn fresh_schema_contains_every_authoritative_table_and_no_retired_strict_terms() {
+async fn fresh_schema_has_the_exact_authoritative_and_fts_object_set() {
     let pool = migrated_pool().await;
     let actual = schema_names(&pool, "table").await;
-    for table in REQUIRED_TABLES {
-        assert!(
-            actual.contains(*table),
-            "missing authoritative table {table}"
-        );
+    let mut expected = REQUIRED_TABLES
+        .iter()
+        .map(|table| (*table).to_owned())
+        .collect::<BTreeSet<_>>();
+    for fts_table in FTS_TABLES {
+        expected.insert((*fts_table).to_owned());
+        for suffix in ["data", "idx", "docsize", "config"] {
+            expected.insert(format!("{fts_table}_{suffix}"));
+        }
     }
+    assert_eq!(
+        actual, expected,
+        "unexpected or missing schema table object"
+    );
+
     for name in ABSENT_OBJECTS {
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM sqlite_schema WHERE name = ?")
             .bind(name)

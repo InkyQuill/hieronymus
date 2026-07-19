@@ -33,6 +33,7 @@ pub async fn connect(config: &HieronymusConfig) -> Result<SqlitePool> {
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .foreign_keys(true)
+        .pragma("recursive_triggers", "ON")
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new().max_connections(8).connect_with(opts).await?;
     sqlx::migrate!("../../migrations").run(&pool).await?;
@@ -214,11 +215,15 @@ currently have **no** triggers (the actual bug Plan 1 fixes: `workspace.py`/`cry
 insert into their FTS tables manually and never delete, so cascade deletes and admin edits
 orphan entries). `strict_terms_fts` triggers aren't needed since the table is dropped.
 
-All six trigger sets are scoped with `UPDATE OF <indexed columns>`, not a blanket
+All five trigger sets are scoped with `UPDATE OF id, <indexed columns>`, not a blanket
 `AFTER UPDATE` — the current Python schema's three existing trigger sets fire on *any* column
 update (including `crystals.strength`/`confidence`/`last_reinforced_cycle`, which change on
 every reinforcement/decay pass), causing a wasteful full FTS delete+reinsert on writes that
-never touch indexed text. This migration fixes that for all six tables, not just the two new
+never touch indexed text. The primary key is the one non-text exception: changing `id` changes
+the external-content rowid, so every update trigger must delete the old rowid and insert the new
+one. `recursive_triggers = ON` is required on every pooled connection so SQLite's implicit delete
+during `INSERT OR REPLACE` fires the delete trigger before the replacement insert. This migration
+fixes trigger ownership for all five tables, not just the two new
 ones — carried-forward triggers get the same efficiency fix while they're being touched anyway:
 
 ```sql
@@ -228,7 +233,7 @@ END;
 CREATE TRIGGER crystals_ad AFTER DELETE ON crystals BEGIN
   INSERT INTO crystals_fts(crystals_fts, rowid, title, text) VALUES ('delete', old.id, old.title, old.text);
 END;
-CREATE TRIGGER crystals_au AFTER UPDATE OF title, text ON crystals BEGIN
+CREATE TRIGGER crystals_au AFTER UPDATE OF id, title, text ON crystals BEGIN
   INSERT INTO crystals_fts(crystals_fts, rowid, title, text) VALUES ('delete', old.id, old.title, old.text);
   INSERT INTO crystals_fts(rowid, title, text) VALUES (new.id, new.title, new.text);
 END;
@@ -239,15 +244,15 @@ END;
 CREATE TRIGGER short_term_memories_ad AFTER DELETE ON short_term_memories BEGIN
   INSERT INTO short_term_memories_fts(short_term_memories_fts, rowid, text) VALUES ('delete', old.id, old.text);
 END;
-CREATE TRIGGER short_term_memories_au AFTER UPDATE OF text ON short_term_memories BEGIN
+CREATE TRIGGER short_term_memories_au AFTER UPDATE OF id, text ON short_term_memories BEGIN
   INSERT INTO short_term_memories_fts(short_term_memories_fts, rowid, text) VALUES ('delete', old.id, old.text);
   INSERT INTO short_term_memories_fts(rowid, text) VALUES (new.id, new.text);
 END;
 
 -- concepts_ai/ad/au, concept_facets_ai/ad/au, rag_chunks_ai/ad/au: carried forward from the
 -- current schema unchanged in insert/delete shape; their AU triggers narrow from blanket
--- `AFTER UPDATE` to `AFTER UPDATE OF canonical_name, description` / `AFTER UPDATE OF value` /
--- `AFTER UPDATE OF text, display_text, location` respectively.
+-- `AFTER UPDATE` to `AFTER UPDATE OF id, canonical_name, description` /
+-- `AFTER UPDATE OF id, value` / `AFTER UPDATE OF id, text, display_text, location` respectively.
 ```
 
 ---

@@ -12,7 +12,7 @@
 
 - Preserve every `global.sql` table except `strict_terms`, `strict_term_tags`, `strict_term_aliases`, and `strict_terms_fts`.
 - Fresh databases start at the final schema; existing Python databases upgrade without loss.
-- Enable `foreign_keys = ON` and a five-second busy timeout on every connection; enable WAL for file databases.
+- Enable `foreign_keys = ON`, `recursive_triggers = ON`, and a five-second busy timeout on every connection; enable WAL for file databases. Recursive triggers are required so `INSERT OR REPLACE` fires FTS delete triggers.
 - Every transaction that reads before writing begins with `BEGIN IMMEDIATE` semantics.
 - FTS indexes are external-content tables maintained only by triggers; stores never dual-write FTS rows.
 - Store timestamps as uniform RFC 3339 UTC text.
@@ -61,9 +61,9 @@
 
 **Interfaces:** Produces trigger sets `{table}_ai`, `{table}_ad`, `{table}_au` for crystals, short-term memories, concepts, concept facets, and RAG chunks.
 
-- [ ] Write tests that insert/update/delete each content row through only its base table, then query FTS. Assert non-text updates do not change FTS content and cascade deletes leave no orphan rowids.
+- [ ] Write tests that insert/update/delete/replace each content row through only its base table, then query FTS and run FTS5 `integrity-check`. Assert metadata-only non-ID updates do not change FTS content, primary-key updates move the external-content rowid, and direct/multiple-path cascade deletes leave no orphan rowids.
 - [ ] Run `cargo test -p hiero-core --test fts`; expect RED.
-- [ ] Implement external-content FTS5 tables and insert/delete/update triggers. Narrow updates to `title,text`; `text`; `canonical_name,description`; `value`; and `text,display_text,location` respectively. Finish migration with each FTS table's `rebuild` command.
+- [ ] Implement external-content FTS5 tables and insert/delete/update triggers. Narrow updates to `id,title,text`; `id,text`; `id,canonical_name,description`; `id,value`; and `id,text,display_text,location` respectively. Finish migration with each FTS table's `rebuild` command.
 - [ ] Delete no Python FTS code yet; Phase 006 removes Python only after parity. Run focused tests; expect GREEN. Commit `feat: maintain FTS indexes with triggers`.
 
 ### Task 4: Add Typed Row Models and Conversion Types

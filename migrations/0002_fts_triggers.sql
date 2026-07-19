@@ -23,7 +23,7 @@ BEGIN
 END;
 
 CREATE TRIGGER crystals_au
-AFTER UPDATE OF title, text ON crystals
+AFTER UPDATE OF id, title, text ON crystals
 BEGIN
   INSERT INTO crystals_fts(crystals_fts, rowid, title, text)
   VALUES ('delete', old.id, old.title, old.text);
@@ -52,7 +52,7 @@ BEGIN
 END;
 
 CREATE TRIGGER short_term_memories_au
-AFTER UPDATE OF text ON short_term_memories
+AFTER UPDATE OF id, text ON short_term_memories
 BEGIN
   INSERT INTO short_term_memories_fts(short_term_memories_fts, rowid, text)
   VALUES ('delete', old.id, old.text);
@@ -82,7 +82,7 @@ BEGIN
 END;
 
 CREATE TRIGGER concepts_au
-AFTER UPDATE OF canonical_name, description ON concepts
+AFTER UPDATE OF id, canonical_name, description ON concepts
 BEGIN
   INSERT INTO concepts_fts(concepts_fts, rowid, canonical_name, description)
   VALUES ('delete', old.id, old.canonical_name, old.description);
@@ -111,7 +111,7 @@ BEGIN
 END;
 
 CREATE TRIGGER concept_facets_au
-AFTER UPDATE OF value ON concept_facets
+AFTER UPDATE OF id, value ON concept_facets
 BEGIN
   INSERT INTO concept_facet_fts(concept_facet_fts, rowid, value)
   VALUES ('delete', old.id, old.value);
@@ -142,7 +142,7 @@ BEGIN
 END;
 
 CREATE TRIGGER rag_chunks_au
-AFTER UPDATE OF text, display_text, location ON rag_chunks
+AFTER UPDATE OF id, text, display_text, location ON rag_chunks
 BEGIN
   INSERT INTO rag_chunks_fts(rag_chunks_fts, rowid, text, display_text, location)
   VALUES ('delete', old.id, old.text, old.display_text, old.location);

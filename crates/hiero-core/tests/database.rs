@@ -46,6 +46,10 @@ async fn connect_configures_each_connection_and_uses_wal_for_files() {
             .fetch_one(&mut **connection)
             .await
             .expect("busy_timeout should be readable");
+        let recursive_triggers: i64 = sqlx::query_scalar("PRAGMA recursive_triggers")
+            .fetch_one(&mut **connection)
+            .await
+            .expect("recursive_triggers should be readable");
         let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
             .fetch_one(&mut **connection)
             .await
@@ -59,6 +63,7 @@ async fn connect_configures_each_connection_and_uses_wal_for_files() {
 
         assert_eq!(foreign_keys, 1);
         assert_eq!(busy_timeout, 5_000);
+        assert_eq!(recursive_triggers, 1);
         assert_eq!(journal_mode, "wal");
         assert_eq!(probe_artifacts, 0);
     }
@@ -71,9 +76,15 @@ async fn connect_configures_each_connection_and_uses_wal_for_files() {
     }
 
     drop(connections.pop());
-    pool.acquire()
+    let mut delayed = pool
+        .acquire()
         .await
         .expect("a released pool slot should be reusable");
+    let recursive_triggers: i64 = sqlx::query_scalar("PRAGMA recursive_triggers")
+        .fetch_one(&mut *delayed)
+        .await
+        .expect("recursive_triggers should persist on a delayed acquisition");
+    assert_eq!(recursive_triggers, 1);
 }
 
 #[tokio::test]

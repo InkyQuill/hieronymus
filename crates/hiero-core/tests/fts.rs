@@ -144,8 +144,16 @@ async fn shadow_snapshot(pool: &SqlitePool, fts_table: &str) -> Vec<(i64, Vec<u8
     .unwrap_or_else(|error| panic!("{fts_table} shadow data should be readable: {error}"))
 }
 
-async fn assert_no_fts_orphans(pool: &SqlitePool) {
+async fn assert_fts_integrity(pool: &SqlitePool) {
     for (fts_table, content_table, _) in FTS_TABLES {
+        let quoted = format!("\"{}\"", fts_table.replace('"', "\"\""));
+        sqlx::query(AssertSqlSafe(format!(
+            "INSERT INTO {quoted}({quoted}, rank) VALUES ('integrity-check', 1)"
+        )))
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("{fts_table} integrity-check failed: {error}"));
+
         let orphan_rowids: Vec<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
             "SELECT id FROM {fts_table}_docsize EXCEPT SELECT id FROM {content_table}"
         )))
@@ -155,6 +163,16 @@ async fn assert_no_fts_orphans(pool: &SqlitePool) {
         assert!(
             orphan_rowids.is_empty(),
             "{fts_table} has orphan index rowids {orphan_rowids:?}"
+        );
+        let missing_rowids: Vec<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
+            "SELECT id FROM {content_table} EXCEPT SELECT id FROM {fts_table}_docsize"
+        )))
+        .fetch_all(pool)
+        .await
+        .unwrap_or_else(|error| panic!("{fts_table} missing-row query should succeed: {error}"));
+        assert!(
+            missing_rowids.is_empty(),
+            "{fts_table} is missing base rowids {missing_rowids:?}"
         );
     }
 
@@ -264,7 +282,10 @@ async fn migration_creates_exact_external_content_tables_and_narrow_triggers() {
         assert!(
             update_sql.contains(&format!(
                 "after update of {} on {content_table}",
-                columns.join(", ")
+                std::iter::once("id")
+                    .chain(columns.iter().copied())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )),
             "{update_name} must have the exact UPDATE OF list: {update_sql}"
         );
@@ -276,6 +297,7 @@ async fn migration_creates_exact_external_content_tables_and_narrow_triggers() {
             .await
             .expect("trigger names should read");
     assert_eq!(trigger_names.len(), 15);
+    assert_fts_integrity(&pool).await;
 }
 
 #[tokio::test]
@@ -327,7 +349,7 @@ async fn upgrade_rebuilds_every_preexisting_row_and_preserves_legacy_strict_fts(
     .await
     .expect("migration history should read");
     assert_eq!(versions, [1, 2, 3, 4]);
-    assert_no_fts_orphans(&pool).await;
+    assert_fts_integrity(&pool).await;
 }
 
 #[tokio::test]
@@ -346,6 +368,7 @@ async fn crystals_fts_tracks_each_text_change_ignores_metadata_and_deletes() {
     .expect("crystal should insert");
     assert_match(&pool, "crystals_fts", "crystaltitleold", 2).await;
     assert_match(&pool, "crystals_fts", "crystaltextold", 2).await;
+    assert_fts_integrity(&pool).await;
 
     sqlx::query("UPDATE crystals SET title = 'crystaltitlenew' WHERE id = 2")
         .execute(&pool)
@@ -353,12 +376,14 @@ async fn crystals_fts_tracks_each_text_change_ignores_metadata_and_deletes() {
         .expect("title should update");
     assert_no_match(&pool, "crystals_fts", "crystaltitleold").await;
     assert_match(&pool, "crystals_fts", "crystaltitlenew", 2).await;
+    assert_fts_integrity(&pool).await;
     sqlx::query("UPDATE crystals SET text = 'crystaltextnew' WHERE id = 2")
         .execute(&pool)
         .await
         .expect("text should update");
     assert_no_match(&pool, "crystals_fts", "crystaltextold").await;
     assert_match(&pool, "crystals_fts", "crystaltextnew", 2).await;
+    assert_fts_integrity(&pool).await;
 
     let before = shadow_snapshot(&pool, "crystals_fts").await;
     sqlx::query("UPDATE crystals SET confidence = 0.7 WHERE id = 2")
@@ -366,6 +391,7 @@ async fn crystals_fts_tracks_each_text_change_ignores_metadata_and_deletes() {
         .await
         .expect("metadata should update");
     assert_eq!(shadow_snapshot(&pool, "crystals_fts").await, before);
+    assert_fts_integrity(&pool).await;
 
     sqlx::query("DELETE FROM crystals WHERE id = 2")
         .execute(&pool)
@@ -373,7 +399,7 @@ async fn crystals_fts_tracks_each_text_change_ignores_metadata_and_deletes() {
         .expect("crystal should delete");
     assert_no_match(&pool, "crystals_fts", "crystaltitlenew").await;
     assert_no_match(&pool, "crystals_fts", "crystaltextnew").await;
-    assert_no_fts_orphans(&pool).await;
+    assert_fts_integrity(&pool).await;
 }
 
 #[tokio::test]
@@ -393,12 +419,14 @@ async fn short_term_memory_fts_tracks_text_ignores_metadata_and_handles_direct_a
         .await
         .expect("memory should insert");
     }
+    assert_fts_integrity(&pool).await;
     sqlx::query("UPDATE short_term_memories SET text = 'memorydirectnew' WHERE id = 2")
         .execute(&pool)
         .await
         .expect("memory text should update");
     assert_no_match(&pool, "short_term_memories_fts", "memorydirectold").await;
     assert_match(&pool, "short_term_memories_fts", "memorydirectnew", 2).await;
+    assert_fts_integrity(&pool).await;
 
     let before = shadow_snapshot(&pool, "short_term_memories_fts").await;
     sqlx::query("UPDATE short_term_memories SET source_ref = 'ref' WHERE id = 2")
@@ -409,18 +437,20 @@ async fn short_term_memory_fts_tracks_text_ignores_metadata_and_handles_direct_a
         shadow_snapshot(&pool, "short_term_memories_fts").await,
         before
     );
+    assert_fts_integrity(&pool).await;
 
     sqlx::query("DELETE FROM short_term_memories WHERE id = 2")
         .execute(&pool)
         .await
         .expect("memory should delete directly");
     assert_no_match(&pool, "short_term_memories_fts", "memorydirectnew").await;
+    assert_fts_integrity(&pool).await;
     sqlx::query("DELETE FROM task_sessions WHERE id = 1")
         .execute(&pool)
         .await
         .expect("session should cascade");
     assert_no_match(&pool, "short_term_memories_fts", "memorycascadeold").await;
-    assert_no_fts_orphans(&pool).await;
+    assert_fts_integrity(&pool).await;
 }
 
 #[tokio::test]
@@ -434,18 +464,21 @@ async fn concepts_fts_tracks_each_text_change_ignores_metadata_and_deletes() {
     .execute(&pool)
     .await
     .expect("concept should insert");
+    assert_fts_integrity(&pool).await;
     sqlx::query("UPDATE concepts SET canonical_name = 'conceptnamenew' WHERE id = 2")
         .execute(&pool)
         .await
         .expect("concept name should update");
     assert_no_match(&pool, "concepts_fts", "conceptnameold").await;
     assert_match(&pool, "concepts_fts", "conceptnamenew", 2).await;
+    assert_fts_integrity(&pool).await;
     sqlx::query("UPDATE concepts SET description = 'conceptdescriptionnew' WHERE id = 2")
         .execute(&pool)
         .await
         .expect("concept description should update");
     assert_no_match(&pool, "concepts_fts", "conceptdescriptionold").await;
     assert_match(&pool, "concepts_fts", "conceptdescriptionnew", 2).await;
+    assert_fts_integrity(&pool).await;
 
     let before = shadow_snapshot(&pool, "concepts_fts").await;
     sqlx::query("UPDATE concepts SET confidence = 0.7 WHERE id = 2")
@@ -453,13 +486,14 @@ async fn concepts_fts_tracks_each_text_change_ignores_metadata_and_deletes() {
         .await
         .expect("concept metadata should update");
     assert_eq!(shadow_snapshot(&pool, "concepts_fts").await, before);
+    assert_fts_integrity(&pool).await;
     sqlx::query("DELETE FROM concepts WHERE id = 2")
         .execute(&pool)
         .await
         .expect("concept should delete");
     assert_no_match(&pool, "concepts_fts", "conceptnamenew").await;
     assert_no_match(&pool, "concepts_fts", "conceptdescriptionnew").await;
-    assert_no_fts_orphans(&pool).await;
+    assert_fts_integrity(&pool).await;
 }
 
 #[tokio::test]
@@ -483,12 +517,14 @@ async fn concept_facet_fts_tracks_text_ignores_metadata_and_handles_direct_and_c
         .await
         .expect("facet should insert");
     }
+    assert_fts_integrity(&pool).await;
     sqlx::query("UPDATE concept_facets SET value = 'facetdirectnew' WHERE id = 2")
         .execute(&pool)
         .await
         .expect("facet value should update");
     assert_no_match(&pool, "concept_facet_fts", "facetdirectold").await;
     assert_match(&pool, "concept_facet_fts", "facetdirectnew", 2).await;
+    assert_fts_integrity(&pool).await;
 
     let before = shadow_snapshot(&pool, "concept_facet_fts").await;
     sqlx::query("UPDATE concept_facets SET confidence = 0.7 WHERE id = 2")
@@ -496,17 +532,19 @@ async fn concept_facet_fts_tracks_text_ignores_metadata_and_handles_direct_and_c
         .await
         .expect("facet metadata should update");
     assert_eq!(shadow_snapshot(&pool, "concept_facet_fts").await, before);
+    assert_fts_integrity(&pool).await;
     sqlx::query("DELETE FROM concept_facets WHERE id = 2")
         .execute(&pool)
         .await
         .expect("facet should delete directly");
     assert_no_match(&pool, "concept_facet_fts", "facetdirectnew").await;
+    assert_fts_integrity(&pool).await;
     sqlx::query("DELETE FROM concepts WHERE id = 2")
         .execute(&pool)
         .await
         .expect("concept should cascade to facets");
     assert_no_match(&pool, "concept_facet_fts", "facetcascadeold").await;
-    assert_no_fts_orphans(&pool).await;
+    assert_fts_integrity(&pool).await;
 }
 
 #[tokio::test]
@@ -527,6 +565,7 @@ async fn rag_fts_tracks_each_text_change_ignores_metadata_and_handles_direct_and
         .await
         .expect("RAG chunk should insert");
     }
+    assert_fts_integrity(&pool).await;
     for (column, old, new) in [
         ("text", "ragtextdirectold", "ragtextdirectnew"),
         ("display_text", "ragdisplaydirectold", "ragdisplaydirectnew"),
@@ -541,6 +580,7 @@ async fn rag_fts_tracks_each_text_change_ignores_metadata_and_handles_direct_and
         .expect("RAG text column should update");
         assert_no_match(&pool, "rag_chunks_fts", old).await;
         assert_match(&pool, "rag_chunks_fts", new, 2).await;
+        assert_fts_integrity(&pool).await;
     }
 
     let before = shadow_snapshot(&pool, "rag_chunks_fts").await;
@@ -549,6 +589,7 @@ async fn rag_fts_tracks_each_text_change_ignores_metadata_and_handles_direct_and
         .await
         .expect("RAG metadata should update");
     assert_eq!(shadow_snapshot(&pool, "rag_chunks_fts").await, before);
+    assert_fts_integrity(&pool).await;
     sqlx::query("DELETE FROM rag_chunks WHERE id = 2")
         .execute(&pool)
         .await
@@ -560,12 +601,195 @@ async fn rag_fts_tracks_each_text_change_ignores_metadata_and_handles_direct_and
     ] {
         assert_no_match(&pool, "rag_chunks_fts", token).await;
     }
+    assert_fts_integrity(&pool).await;
     sqlx::query("DELETE FROM rag_sources WHERE id = 1")
         .execute(&pool)
         .await
         .expect("RAG source should cascade to chunks");
     assert_no_match(&pool, "rag_chunks_fts", "ragtextcascadeold").await;
-    assert_no_fts_orphans(&pool).await;
+    assert_fts_integrity(&pool).await;
+}
+
+#[tokio::test]
+async fn every_fts_index_tracks_primary_key_updates() {
+    let pool = connect_url("sqlite::memory:")
+        .await
+        .expect("schema should migrate");
+    seed_preexisting_content(&pool).await;
+    sqlx::query(
+        "INSERT INTO concepts (id, canonical_name, description, created_at, updated_at) VALUES (2, 'conceptidentity', 'identitydescription', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .expect("independent concept should insert");
+    assert_fts_integrity(&pool).await;
+
+    for (sql, fts_table, token, old_id, new_id) in [
+        (
+            "UPDATE crystals SET id = 11 WHERE id = 1",
+            "crystals_fts",
+            "crystalpretitle",
+            1,
+            11,
+        ),
+        (
+            "UPDATE short_term_memories SET id = 11 WHERE id = 1",
+            "short_term_memories_fts",
+            "memorypretext",
+            1,
+            11,
+        ),
+        (
+            "UPDATE concepts SET id = 12 WHERE id = 2",
+            "concepts_fts",
+            "conceptidentity",
+            2,
+            12,
+        ),
+        (
+            "UPDATE concept_facets SET id = 11 WHERE id = 1",
+            "concept_facet_fts",
+            "facetprevalue",
+            1,
+            11,
+        ),
+        (
+            "UPDATE rag_chunks SET id = 11 WHERE id = 1",
+            "rag_chunks_fts",
+            "ragpretext",
+            1,
+            11,
+        ),
+    ] {
+        sqlx::query(sql)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("identity update failed: {error}"));
+        let rowids = matching_rowids(&pool, fts_table, token).await;
+        assert!(!rowids.contains(&old_id), "{fts_table} retained old rowid");
+        assert_eq!(rowids, [new_id]);
+        assert_fts_integrity(&pool).await;
+    }
+}
+
+#[tokio::test]
+async fn insert_or_replace_replaces_old_terms_in_every_fts_index() {
+    let pool = connect_url("sqlite::memory:")
+        .await
+        .expect("schema should migrate");
+    seed_preexisting_content(&pool).await;
+    sqlx::query(
+        "INSERT INTO concepts (id, canonical_name, description, created_at, updated_at) VALUES (2, 'replaceconceptold', 'replaceconceptdescriptionold', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .expect("independent concept should insert");
+    assert_fts_integrity(&pool).await;
+
+    let replacements = [
+        (
+            r#"INSERT OR REPLACE INTO crystals (
+              id, crystal_type, title, text, scope_type, strength, confidence, status, created_at, updated_at
+            ) VALUES (1, 'lesson', 'crystalreplacenew', 'crystalreplacebodynew', 'global', 0.5, 0.5,
+              'active', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z')"#,
+            "crystals_fts",
+            "crystalpretitle",
+            "crystalreplacenew",
+            1,
+        ),
+        (
+            "INSERT OR REPLACE INTO short_term_memories (id, session_id, source_role, kind, text, created_at) VALUES (1, 1, 'agent', 'note', 'memoryreplacenew', '2026-07-19T00:00:00Z')",
+            "short_term_memories_fts",
+            "memorypretext",
+            "memoryreplacenew",
+            1,
+        ),
+        (
+            "INSERT OR REPLACE INTO concepts (id, canonical_name, description, created_at, updated_at) VALUES (2, 'replaceconceptnew', 'replaceconceptdescriptionnew', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z')",
+            "concepts_fts",
+            "replaceconceptold",
+            "replaceconceptnew",
+            2,
+        ),
+        (
+            "INSERT OR REPLACE INTO concept_facets (id, concept_id, facet_type, value, created_at, updated_at) VALUES (1, 1, 'name', 'facetreplacenew', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z')",
+            "concept_facet_fts",
+            "facetprevalue",
+            "facetreplacenew",
+            1,
+        ),
+        (
+            "INSERT OR REPLACE INTO rag_chunks (id, source_id, series_slug, chunk_kind, text, display_text, location, created_at) VALUES (1, 1, 'series', 'paragraph', 'ragreplacenew', 'ragdisplayreplacenew', 'raglocationreplacenew', '2026-07-19T00:00:00Z')",
+            "rag_chunks_fts",
+            "ragpretext",
+            "ragreplacenew",
+            1,
+        ),
+    ];
+
+    for (sql, fts_table, old_token, new_token, rowid) in replacements {
+        sqlx::query(sql)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("REPLACE failed for {fts_table}: {error}"));
+        assert_no_match(&pool, fts_table, old_token).await;
+        assert_match(&pool, fts_table, new_token, rowid).await;
+        assert_fts_integrity(&pool).await;
+    }
+}
+
+#[tokio::test]
+async fn rag_fts_survives_source_and_multiple_path_series_cascades() {
+    let pool = connect_url("sqlite::memory:")
+        .await
+        .expect("schema should migrate");
+    pool.execute(sqlx::raw_sql(
+        r#"
+        INSERT INTO series (
+          id, slug, title, default_source_language, default_target_language, created_at, updated_at
+        ) VALUES (7, 'cascade-series', 'Cascade', 'en', 'ru',
+          '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+        INSERT INTO rag_sources (
+          id, series_slug, source_ref, source_type, content_type, checksum, created_at, updated_at
+        ) VALUES (7, 'cascade-series', 'source-7', 'text', 'text/plain', 'checksum-7',
+          '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+        INSERT INTO rag_chunks (
+          id, source_id, series_slug, chunk_kind, text, display_text, location, created_at
+        ) VALUES (7, 7, 'cascade-series', 'paragraph', 'ragsourcecascade', 'display', 'location',
+          '2026-07-19T00:00:00Z');
+        "#,
+    ))
+    .await
+    .expect("first cascade fixture should insert");
+    assert_fts_integrity(&pool).await;
+    sqlx::query("DELETE FROM rag_sources WHERE id = 7")
+        .execute(&pool)
+        .await
+        .expect("source cascade should delete chunk");
+    assert_no_match(&pool, "rag_chunks_fts", "ragsourcecascade").await;
+    assert_fts_integrity(&pool).await;
+
+    pool.execute(sqlx::raw_sql(
+        r#"
+        INSERT INTO rag_sources (
+          id, series_slug, source_ref, source_type, content_type, checksum, created_at, updated_at
+        ) VALUES (8, 'cascade-series', 'source-8', 'text', 'text/plain', 'checksum-8',
+          '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+        INSERT INTO rag_chunks (
+          id, source_id, series_slug, chunk_kind, text, display_text, location, created_at
+        ) VALUES (8, 8, 'cascade-series', 'paragraph', 'ragseriescascade', 'display', 'location',
+          '2026-07-19T00:00:00Z');
+        "#,
+    ))
+    .await
+    .expect("series cascade fixture should insert");
+    assert_fts_integrity(&pool).await;
+    sqlx::query("DELETE FROM series WHERE id = 7")
+        .execute(&pool)
+        .await
+        .expect("series cascade should follow both RAG foreign-key paths");
+    assert_no_match(&pool, "rag_chunks_fts", "ragseriescascade").await;
+    assert_fts_integrity(&pool).await;
 }
 
 #[tokio::test]
