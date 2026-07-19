@@ -164,6 +164,35 @@ impl Default for AddMemoryInput {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShortMemoryLimits {
+    pub warning_sentence_count: usize,
+    pub rejection_sentence_count: usize,
+    pub warning_symbol_count: usize,
+    pub rejection_symbol_count: usize,
+}
+
+impl ShortMemoryLimits {
+    pub const DEFAULT: Self = Self {
+        warning_sentence_count: 6,
+        rejection_sentence_count: 30,
+        warning_symbol_count: 0,
+        rejection_symbol_count: 0,
+    };
+}
+
+impl Default for ShortMemoryLimits {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AddMemoryResult {
+    pub memory: ShortTermMemory,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AddCrystalInput {
     pub crystal_type: String,

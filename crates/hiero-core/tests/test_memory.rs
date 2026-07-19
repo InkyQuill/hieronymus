@@ -4,7 +4,8 @@ use chrono::{Duration, Utc};
 use hiero_core::{
     db::connect_url,
     domain::{
-        AddMemoryInput, TranslationContext, WorkspaceError, WorkspaceStore, complete_stale_sessions,
+        AddMemoryInput, AddMemoryResult, ShortMemoryLimits, TranslationContext, WorkspaceError,
+        WorkspaceStore, complete_stale_sessions,
     },
     registry::SeriesRegistry,
 };
@@ -41,6 +42,274 @@ fn memory(text: &str) -> AddMemoryInput {
         source_ref: "v1c2".into(),
         metadata: json!({"importance": 4}),
         ..AddMemoryInput::default()
+    }
+}
+
+fn assert_add_result_contract(result: &AddMemoryResult) {
+    assert!(result.memory.id > 0);
+}
+
+#[tokio::test]
+async fn sentence_limits_cover_below_equal_above_warning_and_rejection_boundaries() {
+    let pool = pool().await;
+    let context = context(&pool).await;
+    let limits = ShortMemoryLimits {
+        warning_sentence_count: 2,
+        rejection_sentence_count: 4,
+        warning_symbol_count: 0,
+        rejection_symbol_count: 0,
+    };
+    let store = WorkspaceStore::with_limits(&pool, limits).expect("valid limits should configure");
+    let session = store
+        .start_session(&context, "translate", "", "")
+        .await
+        .unwrap();
+
+    let below = store
+        .add_short_term(session.id, memory("One."))
+        .await
+        .unwrap();
+    assert_add_result_contract(&below);
+    assert!(below.warnings.is_empty());
+    let equal_warning = store
+        .add_short_term(session.id, memory("One. Two."))
+        .await
+        .unwrap();
+    assert!(equal_warning.warnings.is_empty());
+    let above_warning = store
+        .add_short_term(session.id, memory("One. Two. Three."))
+        .await
+        .unwrap();
+    assert_eq!(
+        above_warning.warnings,
+        ["short-term memory is large; prefer 1-6 sentences"]
+    );
+    let equal_rejection = store
+        .add_short_term(session.id, memory("One. Two. Three. Four."))
+        .await
+        .unwrap();
+    assert_eq!(equal_rejection.warnings.len(), 1);
+    let sentence_error = store
+        .add_short_term(session.id, memory("One. Two. Three. Four. Five."))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        sentence_error,
+        WorkspaceError::Validation { field: "text", .. }
+    ));
+}
+
+#[tokio::test]
+async fn symbol_limits_use_unicode_character_counts_and_exact_boundaries() {
+    let pool = pool().await;
+    let context = context(&pool).await;
+    let store = WorkspaceStore::with_limits(
+        &pool,
+        ShortMemoryLimits {
+            warning_sentence_count: 10,
+            rejection_sentence_count: 20,
+            warning_symbol_count: 8,
+            rejection_symbol_count: 16,
+        },
+    )
+    .unwrap();
+    let session = store
+        .start_session(&context, "translate", "", "")
+        .await
+        .unwrap();
+
+    assert!(
+        store
+            .add_short_term(session.id, memory("1234567"))
+            .await
+            .unwrap()
+            .warnings
+            .is_empty()
+    );
+    assert!(
+        store
+            .add_short_term(session.id, memory("12345678"))
+            .await
+            .unwrap()
+            .warnings
+            .is_empty()
+    );
+    let above_warning = store
+        .add_short_term(session.id, memory("123456789"))
+        .await
+        .unwrap();
+    assert_eq!(
+        above_warning.warnings,
+        ["short-term memory is large; prefer <= 8 symbols"]
+    );
+    let equal_rejection = store
+        .add_short_term(session.id, memory("1234567890123456"))
+        .await
+        .unwrap();
+    assert_eq!(equal_rejection.warnings.len(), 1);
+    let symbol_error = store
+        .add_short_term(session.id, memory("abcdefghijklmnopq"))
+        .await
+        .unwrap_err();
+    assert!(symbol_error.to_string().contains("exceeds 16 symbols"));
+    let unicode = WorkspaceStore::with_limits(
+        &pool,
+        ShortMemoryLimits {
+            warning_sentence_count: 10,
+            rejection_sentence_count: 20,
+            warning_symbol_count: 2,
+            rejection_symbol_count: 4,
+        },
+    )
+    .unwrap()
+    .add_short_term(session.id, memory("я界🙂"))
+    .await
+    .unwrap();
+    assert_eq!(unicode.memory.metadata["symbol_count"], 3);
+    assert_eq!(
+        unicode.warnings,
+        ["short-term memory is large; prefer <= 2 symbols"]
+    );
+}
+
+#[tokio::test]
+async fn combined_warnings_are_ordered_and_batch_rejection_writes_nothing() {
+    let pool = pool().await;
+    let context = context(&pool).await;
+    let store = WorkspaceStore::with_limits(
+        &pool,
+        ShortMemoryLimits {
+            warning_sentence_count: 2,
+            rejection_sentence_count: 4,
+            warning_symbol_count: 8,
+            rejection_symbol_count: 32,
+        },
+    )
+    .unwrap();
+    let session = store
+        .start_session(&context, "translate", "", "")
+        .await
+        .unwrap();
+    let combined = store
+        .add_short_term(session.id, memory("One. Two. Three."))
+        .await
+        .unwrap();
+    assert_eq!(
+        combined.warnings,
+        [
+            "short-term memory is large; prefer 1-6 sentences",
+            "short-term memory is large; prefer <= 8 symbols",
+        ]
+    );
+    assert_eq!(
+        combined.memory.metadata["validation_warning"],
+        "short-term memory is large; prefer 1-6 sentences; short-term memory is large; prefer <= 8 symbols"
+    );
+
+    let ordered = store
+        .add_short_term_batch(session.id, &[memory("Brief."), memory("One. Two. Three.")])
+        .await
+        .unwrap();
+    assert_eq!(ordered[0].memory.text, "Brief.");
+    assert!(ordered[0].warnings.is_empty());
+    assert_eq!(ordered[1].memory.text, "One. Two. Three.");
+    assert_eq!(ordered[1].warnings.len(), 2);
+
+    let before = store.list_short_term(session.id).await.unwrap().len();
+    let error = store
+        .add_short_term_batch(
+            session.id,
+            &[memory("Valid."), memory("One. Two. Three. Four. Five.")],
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("too large"));
+    assert_eq!(
+        store.list_short_term(session.id).await.unwrap().len(),
+        before
+    );
+}
+
+#[tokio::test]
+async fn default_limits_match_python_and_disabled_symbol_thresholds() {
+    assert_eq!(
+        ShortMemoryLimits::default(),
+        ShortMemoryLimits {
+            warning_sentence_count: 6,
+            rejection_sentence_count: 30,
+            warning_symbol_count: 0,
+            rejection_symbol_count: 0,
+        }
+    );
+    let pool = pool().await;
+    let context = context(&pool).await;
+    let store = WorkspaceStore::new(&pool);
+    let session = store
+        .start_session(&context, "translate", "", "")
+        .await
+        .unwrap();
+    assert!(
+        store
+            .add_short_term(session.id, memory("One. Two. Three. Four. Five. Six."))
+            .await
+            .unwrap()
+            .warnings
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .add_short_term(
+                session.id,
+                memory("One. Two. Three. Four. Five. Six. Seven.")
+            )
+            .await
+            .unwrap()
+            .warnings
+            .len(),
+        1
+    );
+    store
+        .add_short_term(session.id, memory(&"界".repeat(10_000)))
+        .await
+        .expect("zero symbol limits are disabled");
+    store
+        .add_short_term(session.id, memory(&"One. ".repeat(30)))
+        .await
+        .expect("equal rejection boundary is accepted");
+    assert!(
+        store
+            .add_short_term(session.id, memory(&"One. ".repeat(31)))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("too large")
+    );
+}
+
+#[tokio::test]
+async fn invalid_limit_relationships_are_rejected_before_store_use() {
+    let pool = pool().await;
+    for limits in [
+        ShortMemoryLimits {
+            warning_sentence_count: 0,
+            ..ShortMemoryLimits::default()
+        },
+        ShortMemoryLimits {
+            rejection_sentence_count: 0,
+            ..ShortMemoryLimits::default()
+        },
+        ShortMemoryLimits {
+            warning_sentence_count: 7,
+            rejection_sentence_count: 6,
+            ..ShortMemoryLimits::default()
+        },
+        ShortMemoryLimits {
+            warning_symbol_count: 10,
+            rejection_symbol_count: 9,
+            ..ShortMemoryLimits::default()
+        },
+    ] {
+        assert!(WorkspaceStore::with_limits(&pool, limits).is_err());
     }
 }
 
@@ -201,6 +470,74 @@ async fn inactive_completion_uses_strict_cutoff_and_is_concurrency_idempotent() 
 }
 
 #[tokio::test]
+async fn inactive_completion_updates_more_than_conventional_sqlite_variable_limit_at_once() {
+    let pool = pool().await;
+    let context = context(&pool).await;
+    let cutoff = Utc::now() - Duration::minutes(30);
+    let stale_at = cutoff - Duration::seconds(1);
+    sqlx::query(
+        "WITH RECURSIVE seq(value) AS (VALUES(1) UNION ALL SELECT value + 1 FROM seq WHERE value < 1200) INSERT INTO task_sessions(series_slug, source_language, target_language, task_type, volume, chapter, status, created_at, last_activity_at) SELECT 'oso', 'ja', 'ru', 'translate', '', '', 'active', ?, ? FROM seq",
+    )
+    .bind(stale_at)
+    .bind(stale_at)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let equal = WorkspaceStore::new(&pool)
+        .start_session(&context, "translate", "", "")
+        .await
+        .unwrap();
+    let fresh = WorkspaceStore::new(&pool)
+        .start_session(&context, "translate", "", "")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE task_sessions SET last_activity_at = ? WHERE id = ?")
+        .bind(cutoff)
+        .bind(equal.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE task_sessions SET last_activity_at = ? WHERE id = ?")
+        .bind(cutoff + Duration::seconds(1))
+        .bind(fresh.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let completed = WorkspaceStore::new(&pool)
+        .complete_inactive(cutoff)
+        .await
+        .unwrap();
+
+    assert_eq!(completed.len(), 1200);
+    assert_eq!(completed.first(), Some(&1));
+    assert_eq!(completed.last(), Some(&1200));
+    let completion_timestamps: i64 = sqlx::query_scalar(
+        "SELECT count(DISTINCT completed_at) FROM task_sessions WHERE id <= 1200",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(completion_timestamps, 1);
+    assert_eq!(
+        WorkspaceStore::new(&pool)
+            .get_session(equal.id)
+            .await
+            .unwrap()
+            .status,
+        "active"
+    );
+    assert_eq!(
+        WorkspaceStore::new(&pool)
+            .get_session(fresh.id)
+            .await
+            .unwrap()
+            .status,
+        "active"
+    );
+}
+
+#[tokio::test]
 async fn memory_add_list_search_and_archive_hydrate_all_public_metadata() {
     let pool = pool().await;
     let context = context(&pool).await;
@@ -218,7 +555,8 @@ async fn memory_add_list_search_and_archive_hydrate_all_public_metadata() {
     input.soft_origin = Some(" inline-correction ".into());
     let before = session.last_activity_at;
 
-    let id = store.add_short_term(session.id, input).await.unwrap();
+    let added = store.add_short_term(session.id, input).await.unwrap();
+    let id = added.memory.id;
     let listed = store.list_short_term(session.id).await.unwrap();
     let found = store
         .search_short_term(session.id, "inventory OR labels", 10)
@@ -330,7 +668,7 @@ async fn batch_is_atomic_preserves_input_order_accepts_duplicates_and_reuses_poo
         .await
         .unwrap();
     assert_eq!(ids.len(), 2);
-    assert!(ids[0] < ids[1]);
+    assert!(ids[0].memory.id < ids[1].memory.id);
 
     sqlx::query(
         "CREATE TRIGGER reject_exploding_tag BEFORE INSERT ON short_term_memory_semantic_tags WHEN new.semantic_tag = 'explode' BEGIN SELECT RAISE(ABORT, 'injected side-table failure'); END",
@@ -383,10 +721,19 @@ async fn cancelling_a_writer_waiting_for_begin_immediate_keeps_pool_reusable() {
         .start_session(&context, "translate", "", "")
         .await
         .unwrap();
+    let first = pool.acquire().await.unwrap();
+    let second = pool.acquire().await.unwrap();
+    drop(first);
+    drop(second);
     let lock = pool
         .begin_with("BEGIN IMMEDIATE")
         .await
         .expect("test should hold the writer lock");
+    let idle_before_spawn = pool.num_idle();
+    assert!(
+        idle_before_spawn >= 1,
+        "a second prewarmed connection must be idle"
+    );
     let task_pool = Arc::clone(&pool);
     let session_id = session.id;
     let task = tokio::spawn(async move {
@@ -394,10 +741,37 @@ async fn cancelling_a_writer_waiting_for_begin_immediate_keeps_pool_reusable() {
             .add_short_term(session_id, memory("Cancelled while waiting."))
             .await
     });
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if pool.num_idle() < idle_before_spawn {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("writer must check out the second connection and reach the contended boundary");
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     lock.rollback().await.unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if pool.num_idle() > idle_before_spawn {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("holder and cancelled writer connections must return to the pool");
+    assert!(
+        WorkspaceStore::new(&pool)
+            .list_short_term(session_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     WorkspaceStore::new(&pool)
         .add_short_term(
@@ -480,8 +854,8 @@ async fn concurrent_batches_are_serialized_without_lost_writes() {
         .await
         .unwrap();
 
-    assert!(first_ids[0] < first_ids[1]);
-    assert!(second_ids[0] < second_ids[1]);
+    assert!(first_ids[0].memory.id < first_ids[1].memory.id);
+    assert!(second_ids[0].memory.id < second_ids[1].memory.id);
     assert_eq!(rows.len(), 4);
 }
 
@@ -497,7 +871,9 @@ async fn fts_is_trigger_owned_tracks_base_updates_and_deletes_and_escapes_plain_
     let id = store
         .add_short_term(session.id, memory("Original inventory wording."))
         .await
-        .unwrap();
+        .unwrap()
+        .memory
+        .id;
 
     assert_eq!(
         store
@@ -581,7 +957,9 @@ async fn hydration_chunks_beyond_sqlite_variable_limit_without_n_plus_one() {
             },
         )
         .await
-        .unwrap();
+        .unwrap()
+        .memory
+        .id;
 
     let rows = store.list_short_term(session.id).await.unwrap();
     assert_eq!(rows.len(), 501);

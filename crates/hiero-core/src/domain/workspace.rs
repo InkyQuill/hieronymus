@@ -10,8 +10,8 @@ use crate::{
 };
 
 use super::{
-    AddMemoryInput, Crystal, ShortTermMemory, TaskSession, TranslationContext,
-    models::normalize_texts, search_expression,
+    AddMemoryInput, AddMemoryResult, Crystal, ShortMemoryLimits, ShortTermMemory, TaskSession,
+    TranslationContext, models::normalize_texts, search_expression,
 };
 
 const MAX_BATCH_SIZE: usize = 500;
@@ -19,6 +19,7 @@ const MAX_SEARCH_LIMIT: usize = 50;
 const METADATA_CHUNK_SIZE: usize = 500;
 const SELECT_SESSION: &str = "SELECT id, series_slug, source_language, target_language, task_type, volume, chapter, status, cycle_id, created_at, last_activity_at, completed_at FROM task_sessions WHERE id = ?";
 const SELECT_MEMORY: &str = "SELECT id, session_id, source_role, kind, text, source_ref, metadata_json, source_credibility, rule_intent, soft_origin, source_crystal_id, created_at, archived_at FROM short_term_memories WHERE id = ?";
+const MEMORY_COLUMNS: &str = "id, session_id, source_role, kind, text, source_ref, metadata_json, source_credibility, rule_intent, soft_origin, source_crystal_id, created_at, archived_at";
 const LIST_MEMORIES: &str = "SELECT id, session_id, source_role, kind, text, source_ref, metadata_json, source_credibility, rule_intent, soft_origin, source_crystal_id, created_at, archived_at FROM short_term_memories WHERE session_id = ? AND archived_at IS NULL ORDER BY id";
 const SEARCH_MEMORIES: &str = "SELECT short_term_memories.id, short_term_memories.session_id, short_term_memories.source_role, short_term_memories.kind, short_term_memories.text, short_term_memories.source_ref, short_term_memories.metadata_json, short_term_memories.source_credibility, short_term_memories.rule_intent, short_term_memories.soft_origin, short_term_memories.source_crystal_id, short_term_memories.created_at, short_term_memories.archived_at FROM short_term_memories_fts JOIN short_term_memories ON short_term_memories.id = short_term_memories_fts.rowid WHERE short_term_memories_fts MATCH ? AND short_term_memories.session_id = ? AND short_term_memories.archived_at IS NULL ORDER BY bm25(short_term_memories_fts), short_term_memories.id LIMIT ?";
 #[allow(
@@ -69,12 +70,21 @@ pub enum WorkspaceError {
 #[derive(Debug, Clone, Copy)]
 pub struct WorkspaceStore<'a> {
     pool: &'a SqlitePool,
+    limits: ShortMemoryLimits,
 }
 
 impl<'a> WorkspaceStore<'a> {
     #[must_use]
     pub const fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            limits: ShortMemoryLimits::DEFAULT,
+        }
+    }
+
+    pub fn with_limits(pool: &'a SqlitePool, limits: ShortMemoryLimits) -> Result<Self> {
+        validate_limits(limits)?;
+        Ok(Self { pool, limits })
     }
 
     pub async fn start_session(
@@ -182,27 +192,13 @@ impl<'a> WorkspaceStore<'a> {
         let mut transaction = begin_immediate(self.pool, "complete inactive sessions").await?;
         let result = async {
             let mut ids = sqlx::query_scalar::<_, i64>(
-                "SELECT id FROM task_sessions WHERE status = 'active' AND last_activity_at < ? ORDER BY id",
+                "UPDATE task_sessions SET status = 'completed', completed_at = ? WHERE status = 'active' AND last_activity_at < ? RETURNING id",
             )
+            .bind(Utc::now())
             .bind(cutoff)
             .fetch_all(&mut *transaction)
             .await
             .map_err(|source| database("complete inactive sessions", source))?;
-            if ids.is_empty() {
-                return Ok(ids);
-            }
-            let now = Utc::now();
-            let mut query = QueryBuilder::<Sqlite>::new(
-                "UPDATE task_sessions SET status = 'completed', completed_at = ",
-            );
-            query.push_bind(now).push(" WHERE status = 'active' AND id IN (");
-            push_ids(&mut query, &ids);
-            query.push(")");
-            query
-                .build()
-                .execute(&mut *transaction)
-                .await
-                .map_err(|source| database("complete inactive sessions", source))?;
             ids.sort_unstable();
             Ok(ids)
         }
@@ -210,9 +206,14 @@ impl<'a> WorkspaceStore<'a> {
         commit_write(transaction, "complete inactive sessions", result).await
     }
 
-    pub async fn add_short_term(&self, session_id: i64, input: AddMemoryInput) -> Result<i64> {
-        let ids = self.add_short_term_batch(session_id, &[input]).await?;
-        ids.into_iter()
+    pub async fn add_short_term(
+        &self,
+        session_id: i64,
+        input: AddMemoryInput,
+    ) -> Result<AddMemoryResult> {
+        let results = self.add_short_term_batch(session_id, &[input]).await?;
+        results
+            .into_iter()
             .next()
             .ok_or_else(|| invalid("items", "single insertion returned no id"))
     }
@@ -221,7 +222,7 @@ impl<'a> WorkspaceStore<'a> {
         &self,
         session_id: i64,
         items: &[AddMemoryInput],
-    ) -> Result<Vec<i64>> {
+    ) -> Result<Vec<AddMemoryResult>> {
         if items.is_empty() {
             return Err(invalid("items", "must not be empty"));
         }
@@ -234,7 +235,7 @@ impl<'a> WorkspaceStore<'a> {
         let prepared = items
             .iter()
             .cloned()
-            .map(PreparedMemory::try_from)
+            .map(|input| PreparedMemory::new(input, self.limits))
             .collect::<Result<Vec<_>>>()?;
         let mut transaction = begin_immediate(self.pool, "add short-term memory batch").await?;
         let result = async {
@@ -254,7 +255,16 @@ impl<'a> WorkspaceStore<'a> {
             Ok(ids)
         }
         .await;
-        commit_write(transaction, "add short-term memory batch", result).await
+        let ids = commit_write(transaction, "add short-term memory batch", result).await?;
+        let memories = load_memories_by_ids(self.pool, &ids).await?;
+        Ok(memories
+            .into_iter()
+            .zip(prepared)
+            .map(|(memory, prepared)| AddMemoryResult {
+                memory,
+                warnings: prepared.warnings,
+            })
+            .collect())
     }
 
     pub async fn list_short_term(&self, session_id: i64) -> Result<Vec<ShortTermMemory>> {
@@ -295,7 +305,7 @@ impl<'a> WorkspaceStore<'a> {
         session_id: i64,
         crystal: &Crystal,
     ) -> Result<(ShortTermMemory, bool)> {
-        let expected = PreparedMemory::from_crystal(crystal)?;
+        let expected = PreparedMemory::from_crystal(crystal, self.limits)?;
         let mut transaction = begin_immediate(self.pool, "get or create working copy").await?;
         let result = async {
             let session =
@@ -441,18 +451,27 @@ struct PreparedMemory {
     source_credibility: String,
     rule_intent: String,
     soft_origin: Option<String>,
+    warnings: Vec<String>,
 }
 
-impl TryFrom<AddMemoryInput> for PreparedMemory {
-    type Error = WorkspaceError;
-
-    fn try_from(input: AddMemoryInput) -> Result<Self> {
+impl PreparedMemory {
+    fn new(input: AddMemoryInput, limits: ShortMemoryLimits) -> Result<Self> {
         let source_role = non_empty("source_role", &input.source_role)?;
         let kind = non_empty("kind", &input.kind)?;
         let text = non_empty("text", &input.text)?;
         let sentence_count = sentence_count(&text);
-        if sentence_count > 30 {
+        let symbol_count = text.chars().count();
+        if sentence_count > limits.rejection_sentence_count {
             return Err(invalid("text", "short-term memory is too large"));
+        }
+        if limits.rejection_symbol_count != 0 && symbol_count > limits.rejection_symbol_count {
+            return Err(invalid(
+                "text",
+                format!(
+                    "short-term memory exceeds {} symbols",
+                    limits.rejection_symbol_count
+                ),
+            ));
         }
         let source_credibility = input.source_credibility.trim();
         if !SOURCE_CREDIBILITY_CONFIDENCE.contains_key(source_credibility) {
@@ -496,14 +515,21 @@ impl TryFrom<AddMemoryInput> for PreparedMemory {
             metadata.insert("soft_origin".into(), Value::String(value.clone()));
         }
         metadata.insert("sentence_count".into(), serde_json::json!(sentence_count));
-        metadata.insert(
-            "symbol_count".into(),
-            serde_json::json!(text.chars().count()),
-        );
-        if sentence_count > 6 {
+        metadata.insert("symbol_count".into(), serde_json::json!(symbol_count));
+        let mut warnings = Vec::new();
+        if sentence_count > limits.warning_sentence_count {
+            warnings.push("short-term memory is large; prefer 1-6 sentences".to_owned());
+        }
+        if limits.warning_symbol_count != 0 && symbol_count > limits.warning_symbol_count {
+            warnings.push(format!(
+                "short-term memory is large; prefer <= {} symbols",
+                limits.warning_symbol_count
+            ));
+        }
+        if !warnings.is_empty() {
             metadata.insert(
                 "validation_warning".into(),
-                Value::String("short-term memory is large; prefer 1-6 sentences".into()),
+                Value::String(warnings.join("; ")),
             );
         }
         let metadata_json =
@@ -520,30 +546,30 @@ impl TryFrom<AddMemoryInput> for PreparedMemory {
             source_credibility: source_credibility.to_owned(),
             rule_intent,
             soft_origin,
+            warnings,
         })
     }
-}
-
-impl PreparedMemory {
     #[allow(
         dead_code,
         reason = "used by the pending crate-private working-copy consumer"
     )]
-    fn from_crystal(crystal: &Crystal) -> Result<Self> {
-        AddMemoryInput {
-            source_role: "recall".into(),
-            kind: "working_copy".into(),
-            text: crystal.text.clone(),
-            source_ref: format!("crystal:{}", crystal.id),
-            metadata: serde_json::json!({"source_crystal_id": crystal.id}),
-            language_tags: crystal.language_tags.clone(),
-            story_scopes: crystal.story_scopes.clone(),
-            semantic_tags: crystal.semantic_tags.clone(),
-            source_credibility: crystal.source_credibility.clone(),
-            rule_intent: crystal.rule_intent.clone(),
-            soft_origin: crystal.soft_origin.clone(),
-        }
-        .try_into()
+    fn from_crystal(crystal: &Crystal, limits: ShortMemoryLimits) -> Result<Self> {
+        Self::new(
+            AddMemoryInput {
+                source_role: "recall".into(),
+                kind: "working_copy".into(),
+                text: crystal.text.clone(),
+                source_ref: format!("crystal:{}", crystal.id),
+                metadata: serde_json::json!({"source_crystal_id": crystal.id}),
+                language_tags: crystal.language_tags.clone(),
+                story_scopes: crystal.story_scopes.clone(),
+                semantic_tags: crystal.semantic_tags.clone(),
+                source_credibility: crystal.source_credibility.clone(),
+                rule_intent: crystal.rule_intent.clone(),
+                soft_origin: crystal.soft_origin.clone(),
+            },
+            limits,
+        )
     }
 }
 
@@ -709,6 +735,36 @@ async fn hydrate_memories(
                 story_scopes: story_scopes.get(&id).cloned().unwrap_or_default(),
                 semantic_tags: semantic_tags.get(&id).cloned().unwrap_or_default(),
             })
+        })
+        .collect()
+}
+
+async fn load_memories_by_ids(pool: &SqlitePool, ids: &[i64]) -> Result<Vec<ShortTermMemory>> {
+    let mut records = Vec::with_capacity(ids.len());
+    for chunk in ids.chunks(METADATA_CHUNK_SIZE) {
+        let mut query = QueryBuilder::<Sqlite>::new(format!(
+            "SELECT {MEMORY_COLUMNS} FROM short_term_memories WHERE id IN ("
+        ));
+        push_ids(&mut query, chunk);
+        query.push(")");
+        records.extend(
+            query
+                .build_query_as::<ShortTermMemoryRecord>()
+                .fetch_all(pool)
+                .await
+                .map_err(|source| database("load added short-term memories", source))?,
+        );
+    }
+    let mut by_id = hydrate_memories(pool, records)
+        .await?
+        .into_iter()
+        .map(|memory| (memory.id, memory))
+        .collect::<BTreeMap<_, _>>();
+    ids.iter()
+        .map(|id| {
+            by_id
+                .remove(id)
+                .ok_or(WorkspaceError::MemoryNotFound { id: *id })
         })
         .collect()
 }
@@ -958,6 +1014,31 @@ fn bounded_limit(limit: usize) -> Result<usize> {
     }
 }
 
+fn validate_limits(limits: ShortMemoryLimits) -> Result<()> {
+    if limits.warning_sentence_count == 0 {
+        return Err(invalid("warning_sentence_count", "must be at least 1"));
+    }
+    if limits.rejection_sentence_count == 0 {
+        return Err(invalid("rejection_sentence_count", "must be at least 1"));
+    }
+    if limits.rejection_sentence_count < limits.warning_sentence_count {
+        return Err(invalid(
+            "rejection_sentence_count",
+            "must be greater than or equal to warning_sentence_count",
+        ));
+    }
+    if limits.warning_symbol_count != 0
+        && limits.rejection_symbol_count != 0
+        && limits.rejection_symbol_count < limits.warning_symbol_count
+    {
+        return Err(invalid(
+            "rejection_symbol_count",
+            "must be greater than or equal to warning_symbol_count",
+        ));
+    }
+    Ok(())
+}
+
 fn non_empty(field: &'static str, value: &str) -> Result<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -1034,6 +1115,7 @@ mod tests {
         assert_eq!(sentence_count("One. Two! Three?"), 3);
         assert_eq!(sentence_count("一つ。二つ！三つ？"), 3);
         assert_eq!(sentence_count("No terminator"), 1);
+        assert_eq!(sentence_count("One... Two?! trailing fragment"), 3);
     }
 
     async fn working_copy_fixture() -> (sqlx::SqlitePool, i64, crate::domain::Crystal) {
@@ -1043,16 +1125,21 @@ mod tests {
         ))
         .await
         .expect("test database should migrate");
-        SeriesRegistry::new(&pool)
+        let (session_id, crystal) = seed_working_copy(&pool).await;
+        (pool, session_id, crystal)
+    }
+
+    async fn seed_working_copy(pool: &sqlx::SqlitePool) -> (i64, crate::domain::Crystal) {
+        SeriesRegistry::new(pool)
             .create("oso", "Only Sense Online", "ja", "ru")
             .await
             .unwrap();
         let context = TranslationContext::new("oso", "ja", "ru");
-        let session = WorkspaceStore::new(&pool)
+        let session = WorkspaceStore::new(pool)
             .start_session(&context, "translate", "1", "2")
             .await
             .unwrap();
-        let crystal_id = CrystalStore::new(&pool)
+        let crystal_id = CrystalStore::new(pool)
             .add(AddCrystalInput {
                 text: "Remember canonical inventory wording.".into(),
                 title: "Inventory".into(),
@@ -1068,39 +1155,50 @@ mod tests {
             })
             .await
             .unwrap();
-        let crystal = CrystalStore::new(&pool).get(crystal_id).await.unwrap();
-        (pool, session.id, crystal)
+        let crystal = CrystalStore::new(pool).get(crystal_id).await.unwrap();
+        (session.id, crystal)
     }
 
     #[tokio::test]
-    async fn concurrent_working_copy_creation_returns_one_logical_row() {
-        let (pool, session_id, crystal) = working_copy_fixture().await;
-        let pool = Arc::new(pool);
-        let first_pool = Arc::clone(&pool);
-        let second_pool = Arc::clone(&pool);
+    async fn independent_file_pools_create_one_equivalent_working_copy() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let url = format!(
+            "sqlite://{}",
+            directory.path().join("working-copy.sqlite").display()
+        );
+        let first_pool = connect_url(&url).await.unwrap();
+        let second_pool = connect_url(&url).await.unwrap();
+        let observer_pool = connect_url(&url).await.unwrap();
+        let (session_id, crystal) = seed_working_copy(&first_pool).await;
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+        let first_barrier = Arc::clone(&barrier);
+        let second_barrier = Arc::clone(&barrier);
         let first_crystal = crystal.clone();
         let second_crystal = crystal.clone();
         let first = tokio::spawn(async move {
+            first_barrier.wait().await;
             WorkspaceStore::new(&first_pool)
                 .get_or_create_working_copy(session_id, &first_crystal)
                 .await
         });
         let second = tokio::spawn(async move {
+            second_barrier.wait().await;
             WorkspaceStore::new(&second_pool)
                 .get_or_create_working_copy(session_id, &second_crystal)
                 .await
         });
+        barrier.wait().await;
         let first = first.await.unwrap().unwrap();
         let second = second.await.unwrap().unwrap();
 
-        assert_eq!(first.0.id, second.0.id);
+        assert_eq!(first.0, second.0);
         assert_ne!(first.1, second.1);
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM short_term_memories WHERE session_id = ? AND source_crystal_id = ?",
         )
         .bind(session_id)
         .bind(crystal.id)
-        .fetch_one(&*pool)
+        .fetch_one(&observer_pool)
         .await
         .unwrap();
         assert_eq!(count, 1);

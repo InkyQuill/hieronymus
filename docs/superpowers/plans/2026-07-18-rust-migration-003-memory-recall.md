@@ -44,7 +44,7 @@
 
 **Files:** Create `domain/workspace.rs`, `tests/test_memory.rs`.
 
-**Interfaces:** Produce the proposal's complete `AddMemoryInput`, enriched `TaskSession` and `ShortTermMemory` views over raw rows, `WorkspaceStore::{start_session,get_session,complete_session,complete_inactive,add_short_term,add_short_term_batch,list_short_term,search_short_term,archive}`, and transaction-serialized working-copy creation keyed by `(session_id, source_crystal_id)`.
+**Interfaces:** Produce the proposal's complete `AddMemoryInput`, `ShortMemoryLimits`, `AddMemoryResult`, enriched `TaskSession` and `ShortTermMemory` views over raw rows, default/configured `WorkspaceStore::{new,with_limits,start_session,get_session,complete_session,complete_inactive,add_short_term,add_short_term_batch,list_short_term,search_short_term,archive}`, and transaction-serialized working-copy creation keyed by `(session_id, source_crystal_id)`.
 
 - [ ] Port `test_workspace.py`, `test_short_memory.py`, `test_short_term_metadata.py`, session language/story/semantic tag behavior, batch atomicity, and working-copy deduplication.
 - [ ] Run focused test; expect RED. Implement session and memory transactions with base-table-only writes; expect GREEN.
@@ -108,7 +108,7 @@
 
 **Files:** Create `ingest/{mod.rs,config.rs,service.rs}`, `tests/test_ingest.rs`; modify `lib.rs` exports.
 
-**Interfaces:** Produce `IngestConfig::load/save/validate`, `ShortMemoryLimits`, `LearnInput`, `LearnResult`, `ReadInput`, `ReadResult`, `LearningBlock`, `IngestionService::{learn,read}`, `split_blocks`, and `extract_terms`.
+**Interfaces:** Produce `IngestConfig::load/save/validate`, consuming Task 2's existing `ShortMemoryLimits` through `WorkspaceStore::with_limits`, plus `LearnInput`, `LearnResult`, `ReadInput`, `ReadResult`, `LearningBlock`, `IngestionService::{learn,read}`, `split_blocks`, and `extract_terms`.
 
 - [ ] Port ingest config/default/invalid-value and agent-ingestion tests; expect RED.
 - [ ] Implement atomic config persistence and orchestration without duplicating store logic; expect GREEN.

@@ -141,15 +141,24 @@ pub struct AddMemoryInput {
     pub language_tags: Vec<String>, pub story_scopes: Vec<String>, pub semantic_tags: Vec<String>,
     pub source_credibility: String, pub rule_intent: String, pub soft_origin: Option<String>,
 }
+pub struct ShortMemoryLimits {
+    pub warning_sentence_count: usize,   // default 6
+    pub rejection_sentence_count: usize, // default 30
+    pub warning_symbol_count: usize,     // default 0 = disabled
+    pub rejection_symbol_count: usize,   // default 0 = disabled
+}
+pub struct AddMemoryResult { pub memory: ShortTermMemory, pub warnings: Vec<String> }
 
-pub struct WorkspaceStore<'a> { pool: &'a SqlitePool }
+pub struct WorkspaceStore<'a> { pool: &'a SqlitePool, limits: ShortMemoryLimits }
 impl<'a> WorkspaceStore<'a> {
+    pub const fn new(pool: &'a SqlitePool) -> Self; // Python-compatible default limits
+    pub fn with_limits(pool: &'a SqlitePool, limits: ShortMemoryLimits) -> Result<Self>;
     pub async fn start_session(&self, ctx: &TranslationContext, task_type: &str, volume: &str, chapter: &str) -> Result<TaskSession>;
     pub async fn get_session(&self, id: i64) -> Result<TaskSession>;
     pub async fn complete_session(&self, id: i64) -> Result<bool>;
     pub async fn complete_inactive(&self, cutoff: DateTime<Utc>) -> Result<Vec<i64>>;   // runs in 004's interval loop, not a separate thread
-    pub async fn add_short_term(&self, session_id: i64, input: AddMemoryInput) -> Result<i64>;              // FTS trigger handles index (002 §3)
-    pub async fn add_short_term_batch(&self, session_id: i64, items: &[AddMemoryInput]) -> Result<Vec<i64>>; // batch up to 500
+    pub async fn add_short_term(&self, session_id: i64, input: AddMemoryInput) -> Result<AddMemoryResult>;              // FTS trigger handles index (002 §3)
+    pub async fn add_short_term_batch(&self, session_id: i64, items: &[AddMemoryInput]) -> Result<Vec<AddMemoryResult>>; // batch up to 500, input order
     pub async fn list_short_term(&self, session_id: i64) -> Result<Vec<ShortTermMemory>>;
     pub async fn search_short_term(&self, session_id: i64, query: &str, limit: usize) -> Result<Vec<ShortTermMemory>>;
 
@@ -164,10 +173,19 @@ impl<'a> WorkspaceStore<'a> {
 pub async fn complete_stale_sessions(pool: &SqlitePool, cutoff: DateTime<Utc>) -> Result<Vec<i64>>;
 ```
 
+Short-memory validation trims before counting, rejects empty text, counts grouped runs of
+`[.!?。！？]+` plus any non-empty trailing fragment as sentences, and counts Unicode scalar values
+(Rust `char`, Python `len`) as symbols. Rejection checks run sentence then symbol; warning checks run
+in the same order. Warnings are both returned in `AddMemoryResult` and joined into
+`metadata.validation_warning`. Task 8 loads/validates persisted config and passes these already-
+defined limits to `with_limits`; it does not redefine validation behavior.
+
 Every read-before-write workspace path uses a SQLx-tracked `BEGIN IMMEDIATE` transaction. Working
 copy identity is the logical pair `(session_id, source_crystal_id)`: lookup and insert remain in
-one immediate transaction, so all cooperating writers across independent pools/processes serialize
-before observing absence. The Phase 002 schema intentionally remains unchanged; direct SQL writes
+one immediate transaction. Tests prove serialization across independently constructed pools to the
+same file; SQLite's process-level writer lock provides the same safety to cooperating processes,
+though this task does not claim a separate process integration test. The Phase 002 schema
+intentionally remains unchanged; direct SQL writes
 outside `WorkspaceStore` are not part of this domain invariant. An existing row is reused only when
 its persisted source-derived fields are exactly equivalent; otherwise the store returns a typed
 conflict. Deleting a source crystal preserves the working copy and clears its marker through the
