@@ -242,6 +242,22 @@ fn managed_output_rejects_symlinks_and_concurrent_publication_is_complete() {
 }
 
 #[test]
+fn corrupt_existing_managed_artifact_is_never_authoritative() {
+    let dir = tempdir().unwrap();
+    let source = dir.path().join("source.html");
+    let managed = dir.path().join("managed");
+    fs::write(&source, "<p>Expected content.</p>").unwrap();
+    let normalized = normalize_rag_source(&source, &managed).unwrap();
+    fs::write(&normalized.path, "corrupt\n").unwrap();
+
+    assert!(matches!(
+        normalize_rag_source(&source, &managed),
+        Err(RagError::ManagedArtifactMismatch(path)) if path == normalized.path
+    ));
+    assert_eq!(fs::read_to_string(normalized.path).unwrap(), "corrupt\n");
+}
+
+#[test]
 fn real_pdf_fixture_normalizes_and_broken_pdf_is_typed() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rag");
     let dir = tempdir().unwrap();
@@ -292,6 +308,27 @@ fn chunk_count_limit_rejects_before_materializing_all_text_chunks() {
             ..
         })
     ));
+}
+
+#[test]
+fn markdown_chunk_limit_uses_real_fence_state_without_false_rejection() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("many-code-headings.md");
+    let mut input = String::from("# Real\n\n```text\n");
+    for _ in 0..=hiero_core::rag::MAX_RAG_CHUNKS {
+        input.push_str("# x\n");
+    }
+    input.push_str("```\n");
+    fs::write(&path, input).unwrap();
+
+    let parsed = load_rag_file(&path, SourceType::Auto).unwrap();
+    assert!(parsed.chunks.len() < hiero_core::rag::MAX_RAG_CHUNKS);
+    assert!(
+        parsed
+            .chunks
+            .iter()
+            .all(|chunk| chunk.location.starts_with("Real paragraph"))
+    );
 }
 
 #[tokio::test]

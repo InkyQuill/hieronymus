@@ -63,4 +63,6 @@ pub enum RagError {
     SemanticUnavailable,
     #[error("unsafe managed RAG path: {0}")]
     UnsafeManagedPath(PathBuf),
+    #[error("managed RAG artifact does not match expected content: {0}")]
+    ManagedArtifactMismatch(PathBuf),
 }

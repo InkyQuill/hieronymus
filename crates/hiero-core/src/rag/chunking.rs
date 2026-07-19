@@ -2,40 +2,31 @@ pub const MAX_RAG_CHUNK_CHARS: usize = 1_200;
 
 #[must_use]
 pub fn split_chunk_text(text: &str) -> Vec<String> {
-    let text = text.trim();
-    if text.chars().count() <= MAX_RAG_CHUNK_CHARS {
-        return vec![text.to_owned()];
-    }
     let mut chunks = Vec::new();
-    let mut current = String::new();
-    for segment in sentence_segments(text) {
-        if segment.chars().count() > MAX_RAG_CHUNK_CHARS {
-            push_current(&mut chunks, &mut current);
-            chunks.extend(word_chunks(segment));
-            continue;
-        }
-        let extra = usize::from(!current.is_empty()) + segment.chars().count();
-        if current.chars().count() + extra > MAX_RAG_CHUNK_CHARS {
-            push_current(&mut chunks, &mut current);
-        }
-        if !current.is_empty() {
-            current.push(' ');
-        }
-        current.push_str(segment);
-    }
-    push_current(&mut chunks, &mut current);
+    emit_chunk_text(text, |chunk| {
+        chunks.push(chunk);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .expect("infallible chunk collector");
     chunks
 }
 
-fn sentence_segments(text: &str) -> Vec<&str> {
-    let mut segments = Vec::new();
+pub(crate) fn emit_chunk_text<E>(
+    text: &str,
+    mut emit: impl FnMut(String) -> Result<(), E>,
+) -> Result<(), E> {
+    let text = text.trim();
+    if text.chars().count() <= MAX_RAG_CHUNK_CHARS {
+        return emit(text.to_owned());
+    }
+    let mut current = String::new();
     let mut start = 0;
     let mut previous = None;
     for (index, character) in text.char_indices() {
         if character.is_whitespace() && previous.is_some_and(|ch| matches!(ch, '.' | '!' | '?')) {
             let segment = text[start..index].trim();
             if !segment.is_empty() {
-                segments.push(segment);
+                push_segment(segment, &mut current, &mut emit)?;
             }
             start = index + character.len_utf8();
         }
@@ -43,40 +34,68 @@ fn sentence_segments(text: &str) -> Vec<&str> {
     }
     let tail = text[start..].trim();
     if !tail.is_empty() {
-        segments.push(tail);
+        push_segment(tail, &mut current, &mut emit)?;
     }
-    segments
+    emit_current(&mut current, &mut emit)
 }
 
-fn word_chunks(text: &str) -> Vec<String> {
-    let mut chunks = Vec::new();
+fn push_segment<E>(
+    segment: &str,
+    current: &mut String,
+    emit: &mut impl FnMut(String) -> Result<(), E>,
+) -> Result<(), E> {
+    if segment.chars().count() > MAX_RAG_CHUNK_CHARS {
+        emit_current(current, emit)?;
+        emit_word_chunks(segment, emit)?;
+        return Ok(());
+    }
+    let extra = usize::from(!current.is_empty()) + segment.chars().count();
+    if current.chars().count() + extra > MAX_RAG_CHUNK_CHARS {
+        emit_current(current, emit)?;
+    }
+    if !current.is_empty() {
+        current.push(' ');
+    }
+    current.push_str(segment);
+    Ok(())
+}
+
+fn emit_word_chunks<E>(
+    text: &str,
+    emit: &mut impl FnMut(String) -> Result<(), E>,
+) -> Result<(), E> {
     let mut current = String::new();
     for word in text.split_whitespace() {
         if word.chars().count() > MAX_RAG_CHUNK_CHARS {
-            push_current(&mut chunks, &mut current);
-            let chars: Vec<char> = word.chars().collect();
-            chunks.extend(
-                chars
-                    .chunks(MAX_RAG_CHUNK_CHARS)
-                    .map(|part| part.iter().collect()),
-            );
+            emit_current(&mut current, emit)?;
+            let mut part = String::new();
+            for character in word.chars() {
+                if part.chars().count() == MAX_RAG_CHUNK_CHARS {
+                    emit(std::mem::take(&mut part))?;
+                }
+                part.push(character);
+            }
+            emit_current(&mut part, emit)?;
             continue;
         }
         let extra = usize::from(!current.is_empty()) + word.chars().count();
         if current.chars().count() + extra > MAX_RAG_CHUNK_CHARS {
-            push_current(&mut chunks, &mut current);
+            emit_current(&mut current, emit)?;
         }
         if !current.is_empty() {
             current.push(' ');
         }
         current.push_str(word);
     }
-    push_current(&mut chunks, &mut current);
-    chunks
+    emit_current(&mut current, emit)
 }
 
-fn push_current(chunks: &mut Vec<String>, current: &mut String) {
+fn emit_current<E>(
+    current: &mut String,
+    emit: &mut impl FnMut(String) -> Result<(), E>,
+) -> Result<(), E> {
     if !current.is_empty() {
-        chunks.push(std::mem::take(current));
+        emit(std::mem::take(current))?;
     }
+    Ok(())
 }

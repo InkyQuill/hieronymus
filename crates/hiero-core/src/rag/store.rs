@@ -13,7 +13,8 @@ use crate::{
 
 use super::{
     ImportOptions, RagChunkRecord, RagError, RagImportResult, RagSearchResult, RagSourceRecord,
-    RetrievalMode, SearchOptions, SourceType, load_rag_file, normalize_rag_source,
+    RetrievalMode, SearchOptions, SourceType, conversion::prepare_rag_source,
+    parsing::load_rag_bytes,
 };
 
 const MAX_SEARCH_LIMIT: usize = 50;
@@ -34,31 +35,26 @@ impl<'a> RagStore<'a> {
         path: &Path,
         options: ImportOptions,
     ) -> Result<RagImportResult, RagError> {
-        let path = tokio::fs::canonicalize(path)
-            .await
-            .map_err(|source| RagError::Io {
-                path: path.to_owned(),
-                source,
-            })?;
         let managed = options
             .managed_root
             .clone()
             .unwrap_or_else(super::default_managed_root);
         let requested = options.source_type.unwrap_or(SourceType::Auto);
-        let parse_path = path.clone();
+        let parse_path = path.to_owned();
         let parsed = tokio::task::spawn_blocking(move || {
-            let normalized = normalize_rag_source(&parse_path, &managed)?;
-            let source_type = if normalized.path == parse_path {
+            let prepared = prepare_rag_source(&parse_path, &managed)?;
+            let source_type = if prepared.normalized.path == prepared.normalized.original_path {
                 requested
             } else {
                 SourceType::Auto
             };
-            let parsed = load_rag_file(&normalized.path, source_type)?;
-            Ok::<_, RagError>((normalized, parsed))
+            let parsed = load_rag_bytes(&prepared.normalized.path, &prepared.bytes, source_type)?;
+            Ok::<_, RagError>((prepared.normalized, parsed))
         })
         .await
         .map_err(RagError::Join)??;
         let (normalized, parsed) = parsed;
+        let path = normalized.original_path.clone();
         let source_ref = options
             .source_ref
             .clone()

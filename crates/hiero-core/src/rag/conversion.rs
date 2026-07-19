@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{Read, Write},
+    io::{Cursor, Read, Write},
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -15,16 +15,78 @@ use super::{NormalizedRagSource, RagError, SourceType, parsing::MAX_RAG_FILE_BYT
 const MAX_DOCX_XML_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_CONVERTED_TEXT_BYTES: usize = 32 * 1024 * 1024;
 
+pub(crate) struct PreparedRagSource {
+    pub normalized: NormalizedRagSource,
+    pub bytes: Vec<u8>,
+}
+
+struct SourceSnapshot {
+    path: PathBuf,
+    bytes: Vec<u8>,
+    checksum: String,
+}
+
+impl SourceSnapshot {
+    fn capture(path: &Path) -> Result<Self, RagError> {
+        let path = fs::canonicalize(path).map_err(|source| RagError::Io {
+            path: path.to_owned(),
+            source,
+        })?;
+        let file = fs::File::open(&path).map_err(|source| RagError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let metadata = file.metadata().map_err(|source| RagError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if !metadata.is_file() {
+            return Err(RagError::NotAFile(path));
+        }
+        let mut bytes = Vec::with_capacity(
+            usize::try_from(metadata.len().min(MAX_RAG_FILE_BYTES)).unwrap_or_default(),
+        );
+        file.take(MAX_RAG_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|source| RagError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        if bytes.len() as u64 > MAX_RAG_FILE_BYTES {
+            return Err(RagError::ResourceLimit {
+                resource: "source bytes",
+                limit: MAX_RAG_FILE_BYTES as usize,
+            });
+        }
+        let checksum = format!("{:x}", Sha256::digest(&bytes));
+        Ok(Self {
+            path,
+            bytes,
+            checksum,
+        })
+    }
+}
+
 pub fn normalize_rag_source(
     path: &Path,
     managed_root: &Path,
 ) -> Result<NormalizedRagSource, RagError> {
-    let path = fs::canonicalize(path).map_err(|source| RagError::Io {
-        path: path.to_owned(),
-        source,
-    })?;
-    let path = path.as_path();
-    let suffix = path
+    Ok(prepare_rag_source(path, managed_root)?.normalized)
+}
+
+pub(crate) fn prepare_rag_source(
+    path: &Path,
+    managed_root: &Path,
+) -> Result<PreparedRagSource, RagError> {
+    normalize_snapshot(SourceSnapshot::capture(path)?, managed_root)
+}
+
+fn normalize_snapshot(
+    snapshot: SourceSnapshot,
+    managed_root: &Path,
+) -> Result<PreparedRagSource, RagError> {
+    let suffix = snapshot
+        .path
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or_default()
@@ -39,31 +101,34 @@ pub fn normalize_rag_source(
         _ => None,
     };
     if let Some((source_type, format)) = direct {
-        validate_file(path)?;
-        return Ok(NormalizedRagSource {
-            path: path.to_owned(),
-            original_path: path.to_owned(),
-            source_type,
-            format: format.into(),
+        return Ok(PreparedRagSource {
+            normalized: NormalizedRagSource {
+                path: snapshot.path.clone(),
+                original_path: snapshot.path,
+                source_type,
+                format: format.into(),
+            },
+            bytes: snapshot.bytes,
         });
     }
     if suffix == "epub" {
         return Err(RagError::UnsupportedEpub);
     }
     let markdown = match suffix.as_str() {
-        "html" | "htm" => html_to_markdown(&read_bounded(path)?),
-        "docx" => docx_to_markdown(path)?,
-        "pdf" => {
-            validate_file(path)?;
-            pdf_to_markdown(path)?
-        }
-        _ => return Err(RagError::UnsupportedExtension(path.to_owned())),
+        "html" | "htm" => html_to_markdown_bounded(
+            std::str::from_utf8(&snapshot.bytes)
+                .map_err(|error| parse_error(&snapshot.path, error))?,
+            MAX_CONVERTED_TEXT_BYTES,
+        )?,
+        "docx" => docx_to_markdown(&snapshot.bytes, &snapshot.path)?,
+        "pdf" => pdf_to_markdown(&snapshot.bytes, &snapshot.path)?,
+        _ => return Err(RagError::UnsupportedExtension(snapshot.path.clone())),
     };
-    write_managed(path, managed_root, &markdown)
+    write_managed(snapshot, managed_root, &markdown)
 }
 
-fn pdf_to_markdown(path: &Path) -> Result<String, RagError> {
-    let mut document = lopdf::Document::load(path).map_err(|error| RagError::Parse {
+fn pdf_to_markdown(bytes: &[u8], path: &Path) -> Result<String, RagError> {
+    let mut document = lopdf::Document::load_mem(bytes).map_err(|error| RagError::Parse {
         path: Some(path.to_owned()),
         message: error.to_string(),
     })?;
@@ -124,48 +189,28 @@ impl Write for BoundedWriter {
     }
 }
 
-fn validate_file(path: &Path) -> Result<(), RagError> {
-    let metadata = fs::metadata(path).map_err(|source| RagError::Io {
-        path: path.to_owned(),
-        source,
-    })?;
-    if !metadata.is_file() {
-        return Err(RagError::NotAFile(path.to_owned()));
-    }
-    if metadata.len() > MAX_RAG_FILE_BYTES {
-        return Err(RagError::ResourceLimit {
-            resource: "source bytes",
-            limit: MAX_RAG_FILE_BYTES as usize,
-        });
-    }
-    Ok(())
-}
-
-fn read_bounded(path: &Path) -> Result<String, RagError> {
-    validate_file(path)?;
-    fs::read_to_string(path).map_err(|source| RagError::Io {
-        path: path.to_owned(),
-        source,
-    })
-}
-
 fn write_managed(
-    source: &Path,
+    snapshot: SourceSnapshot,
     root: &Path,
     markdown: &str,
-) -> Result<NormalizedRagSource, RagError> {
-    let normalized = format!("{}\n", markdown.trim());
-    if normalized.trim().is_empty() {
-        return Err(RagError::NoExtractableText(source.to_owned()));
+) -> Result<PreparedRagSource, RagError> {
+    let trimmed = markdown.trim();
+    if trimmed.len().saturating_add(1) > MAX_CONVERTED_TEXT_BYTES {
+        return Err(RagError::ResourceLimit {
+            resource: "converted text bytes",
+            limit: MAX_CONVERTED_TEXT_BYTES,
+        });
     }
-    let bytes = fs::read(source).map_err(|error| RagError::Io {
-        path: source.to_owned(),
-        source: error,
-    })?;
+    let normalized = format!("{trimmed}\n");
+    if normalized.trim().is_empty() {
+        return Err(RagError::NoExtractableText(snapshot.path));
+    }
     let root = prepare_managed_root(root)?;
-    let path = root.join(format!("{:x}.md", Sha256::digest(bytes)));
+    let path = root.join(format!("{}.md", snapshot.checksum));
     reject_symlink(&path)?;
-    if !path.exists() {
+    if path.exists() {
+        verify_managed_artifact(&path, normalized.as_bytes())?;
+    } else {
         let mut temporary =
             tempfile::NamedTempFile::new_in(&root).map_err(|source| RagError::Io {
                 path: root.clone(),
@@ -182,7 +227,7 @@ fn write_managed(
         match temporary.persist_noclobber(&path) {
             Ok(_) => {}
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                reject_symlink(&path)?
+                verify_managed_artifact(&path, normalized.as_bytes())?
             }
             Err(error) => {
                 return Err(RagError::Io {
@@ -192,11 +237,14 @@ fn write_managed(
             }
         }
     }
-    Ok(NormalizedRagSource {
-        path,
-        original_path: source.to_owned(),
-        source_type: SourceType::Markdown,
-        format: "markdown".into(),
+    Ok(PreparedRagSource {
+        normalized: NormalizedRagSource {
+            path,
+            original_path: snapshot.path,
+            source_type: SourceType::Markdown,
+            format: "markdown".into(),
+        },
+        bytes: normalized.into_bytes(),
     })
 }
 
@@ -257,9 +305,45 @@ fn reject_symlink(path: &Path) -> Result<(), RagError> {
     }
 }
 
-fn html_to_markdown(input: &str) -> String {
+fn verify_managed_artifact(path: &Path, expected: &[u8]) -> Result<(), RagError> {
+    reject_symlink(path)?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(path).map_err(|source| RagError::Io {
+        path: path.to_owned(),
+        source,
+    })?;
+    if !file
+        .metadata()
+        .map_err(|source| RagError::Io {
+            path: path.to_owned(),
+            source,
+        })?
+        .is_file()
+    {
+        return Err(RagError::UnsafeManagedPath(path.to_owned()));
+    }
+    let mut actual = Vec::with_capacity(expected.len().saturating_add(1));
+    file.take(expected.len() as u64 + 1)
+        .read_to_end(&mut actual)
+        .map_err(|source| RagError::Io {
+            path: path.to_owned(),
+            source,
+        })?;
+    if actual != expected {
+        return Err(RagError::ManagedArtifactMismatch(path.to_owned()));
+    }
+    Ok(())
+}
+
+fn html_to_markdown_bounded(input: &str, limit: usize) -> Result<String, RagError> {
     let document = Html::parse_document(input);
-    let mut blocks = Vec::new();
+    let mut output = String::new();
     for node in document.tree.root().descendants() {
         let Some(element) = ElementRef::wrap(node) else {
             continue;
@@ -298,9 +382,12 @@ fn html_to_markdown(input: &str) -> String {
             "pre" => format!("```\n{text}\n```"),
             _ => text,
         };
-        blocks.push(block);
+        if !output.is_empty() {
+            push_bounded_with_limit(&mut output, "\n\n", limit)?;
+        }
+        push_bounded_with_limit(&mut output, &block, limit)?;
     }
-    blocks.join("\n\n")
+    Ok(output)
 }
 
 fn inline_markdown(html: &str) -> String {
@@ -370,16 +457,12 @@ fn table_markdown(table: &ElementRef<'_>) -> String {
     output.join("\n")
 }
 
-fn docx_to_markdown(path: &Path) -> Result<String, RagError> {
-    validate_file(path)?;
-    let file = fs::File::open(path).map_err(|source| RagError::Io {
-        path: path.to_owned(),
-        source,
-    })?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|error| RagError::Parse {
-        path: Some(path.to_owned()),
-        message: error.to_string(),
-    })?;
+fn docx_to_markdown(bytes: &[u8], path: &Path) -> Result<String, RagError> {
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| RagError::Parse {
+            path: Some(path.to_owned()),
+            message: error.to_string(),
+        })?;
     let relationships = {
         let mut xml = String::new();
         if let Ok(file) = archive.by_name("word/_rels/document.xml.rels") {
@@ -562,19 +645,31 @@ fn attribute(
 }
 
 fn push_bounded(output: &mut String, text: &str, _path: &Path) -> Result<(), RagError> {
-    if output.len().saturating_add(text.len()) > MAX_CONVERTED_TEXT_BYTES {
+    push_bounded_with_limit(output, text, MAX_CONVERTED_TEXT_BYTES)
+}
+
+fn push_bounded_with_limit(output: &mut String, text: &str, limit: usize) -> Result<(), RagError> {
+    if output.len().saturating_add(text.len()) > limit {
         return Err(RagError::ResourceLimit {
             resource: "converted text bytes",
-            limit: MAX_CONVERTED_TEXT_BYTES,
+            limit,
         });
     }
     output.push_str(text);
     Ok(())
 }
 
+fn parse_error(path: &Path, error: impl std::fmt::Display) -> RagError {
+    RagError::Parse {
+        path: Some(path.to_owned()),
+        message: error.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn bounded_writer_rejects_before_allocating_beyond_limit() {
@@ -583,5 +678,48 @@ mod tests {
         assert!(writer.write_all(b"9").is_err());
         assert_eq!(writer.value.len(), 8);
         assert!(writer.exceeded);
+    }
+
+    #[test]
+    fn captured_snapshot_remains_self_consistent_after_source_replacement() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.html");
+        fs::write(&source, "<p>first snapshot</p>").unwrap();
+        let snapshot = SourceSnapshot::capture(&source).unwrap();
+        fs::write(&source, "<p>replacement</p>").unwrap();
+
+        let prepared = normalize_snapshot(snapshot, &dir.path().join("managed")).unwrap();
+        assert_eq!(
+            prepared
+                .normalized
+                .path
+                .file_stem()
+                .unwrap()
+                .to_string_lossy(),
+            format!("{:x}", Sha256::digest(b"<p>first snapshot</p>"))
+        );
+        assert_eq!(prepared.bytes, b"first snapshot\n");
+        assert_eq!(fs::read(&prepared.normalized.path).unwrap(), prepared.bytes);
+        let parsed = crate::rag::parsing::load_rag_bytes(
+            &prepared.normalized.path,
+            &prepared.bytes,
+            SourceType::Auto,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.checksum,
+            format!("{:x}", Sha256::digest(&prepared.bytes))
+        );
+    }
+
+    #[test]
+    fn html_builder_stops_at_limit_before_returning_oversized_output() {
+        assert!(matches!(
+            html_to_markdown_bounded("<h1>one</h1><h1>two</h1>", 8),
+            Err(RagError::ResourceLimit {
+                resource: "converted text bytes",
+                limit: 8,
+            })
+        ));
     }
 }
