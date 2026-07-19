@@ -1,10 +1,7 @@
 use std::{
     io::Read,
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
 };
-
-#[cfg(windows)]
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -37,12 +34,14 @@ pub struct IngestConfig {
 
 impl IngestConfig {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
-        load_anchored(path.as_ref())
+        let path = prepare_config_path(path.as_ref())?;
+        load_anchored(&path)
     }
 
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let config = self.validate()?;
-        save_anchored(&config, path.as_ref())
+        let path = prepare_config_path(path.as_ref())?;
+        save_anchored(&config, &path)
     }
 
     pub fn validate(&self) -> Result<Self> {
@@ -82,6 +81,94 @@ impl IngestConfig {
         }
         Ok(*self)
     }
+}
+
+#[cfg(windows)]
+fn prepare_config_path(path: &Path) -> Result<PathBuf> {
+    let current = std::env::current_dir().map_err(|source| io_error(path, source))?;
+    normalize_absolute_lexically(path, &current)
+}
+
+#[cfg(not(windows))]
+fn prepare_config_path(path: &Path) -> Result<PathBuf> {
+    Ok(path.to_path_buf())
+}
+
+#[cfg(any(windows, test))]
+fn normalize_absolute_lexically(path: &Path, current: &Path) -> Result<PathBuf> {
+    validate_platform_path(path)?;
+    validate_platform_path(current)?;
+    if !current.is_absolute() {
+        return Err(unsafe_path(
+            path,
+            "configuration path base must be absolute",
+        ));
+    }
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        current.join(path)
+    };
+    if !candidate.is_absolute() {
+        return Err(unsafe_path(
+            path,
+            "configuration path cannot be normalized safely",
+        ));
+    }
+    let mut normalized = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(unsafe_path(
+                        path,
+                        "configuration path escapes the filesystem root",
+                    ));
+                }
+            }
+            Component::Normal(component) => normalized.push(component),
+        }
+    }
+    Ok(normalized)
+}
+
+#[cfg(all(not(windows), test))]
+fn validate_platform_path(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_platform_path(path: &Path) -> Result<()> {
+    use std::path::Prefix;
+
+    let prefix = path.components().find_map(|component| match component {
+        Component::Prefix(prefix) => Some(prefix.kind()),
+        _ => None,
+    });
+    if prefix.is_some() && !path.is_absolute() {
+        return Err(unsafe_path(
+            path,
+            "drive-relative configuration paths are not supported",
+        ));
+    }
+    if path.has_root() && !path.is_absolute() {
+        return Err(unsafe_path(
+            path,
+            "root-relative configuration paths are not supported",
+        ));
+    }
+    if let Some(prefix) = prefix
+        && !matches!(prefix, Prefix::Disk(_) | Prefix::UNC(_, _))
+    {
+        return Err(unsafe_path(
+            path,
+            "configuration path uses an unsupported Windows prefix",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_config(contents: &str) -> Result<IngestConfig> {
@@ -210,14 +297,17 @@ fn load_anchored(path: &Path) -> Result<IngestConfig> {
     let descriptor = match rustix::fs::openat(
         anchor.parent(),
         &anchor.file_name,
-        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::NONBLOCK
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
         rustix::fs::Mode::empty(),
     ) {
         Ok(descriptor) => descriptor,
         Err(source) if source == rustix::io::Errno::NOENT => {
             return IngestConfig::default().validate();
         }
-        Err(source) => return Err(unix_open_error(path, source)),
+        Err(source) => return Err(unix_final_open_error(path, source)),
     };
     let mut file = std::fs::File::from(descriptor);
     if !file
@@ -378,6 +468,15 @@ fn reject_unix_destination_symlink(anchor: &UnixAnchor, path: &Path) -> Result<(
 }
 
 #[cfg(unix)]
+fn unix_final_open_error(path: &Path, source: rustix::io::Errno) -> IngestError {
+    if source == rustix::io::Errno::NXIO {
+        unsafe_path(path, "configuration is not a regular file")
+    } else {
+        unix_open_error(path, source)
+    }
+}
+
+#[cfg(unix)]
 fn unix_open_error(path: &Path, source: rustix::io::Errno) -> IngestError {
     if matches!(source, rustix::io::Errno::LOOP | rustix::io::Errno::NOTDIR) {
         unsafe_path(
@@ -497,6 +596,12 @@ struct WindowsAnchor {
 #[cfg(windows)]
 impl WindowsAnchor {
     fn open(path: &Path, create: bool) -> Result<Self> {
+        if !path.is_absolute() {
+            return Err(unsafe_path(
+                path,
+                "Windows configuration paths must be normalized to absolute paths",
+            ));
+        }
         let file_name = path
             .file_name()
             .ok_or_else(|| unsafe_path(path, "configuration path has no filename"))?;
@@ -627,11 +732,72 @@ fn is_missing_error(error: &IngestError) -> bool {
     )
 }
 
+#[cfg(test)]
+mod normalization_tests {
+    use super::{IngestError, normalize_absolute_lexically};
+
+    #[test]
+    fn lexical_normalization_captures_one_absolute_base_and_resolves_dots() {
+        let root = tempfile::tempdir().unwrap();
+        let current = root.path().join("workspace").join("project");
+
+        assert_eq!(
+            normalize_absolute_lexically(std::path::Path::new("./one/../ingest.conf"), &current)
+                .unwrap(),
+            current.join("ingest.conf")
+        );
+        assert_eq!(
+            normalize_absolute_lexically(&current.join("one/../ingest.conf"), root.path()).unwrap(),
+            current.join("ingest.conf")
+        );
+    }
+
+    #[test]
+    fn lexical_normalization_rejects_escape_above_the_absolute_root() {
+        let root = tempfile::tempdir().unwrap();
+        let current = root.path().join("workspace");
+        let excessive_parents = std::iter::repeat_n("..", current.components().count() + 1)
+            .collect::<std::path::PathBuf>();
+
+        assert!(matches!(
+            normalize_absolute_lexically(&excessive_parents, &current),
+            Err(IngestError::UnsafePath { .. })
+        ));
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
-    use std::os::unix::fs::symlink;
+    use std::{os::unix::fs::symlink, sync::mpsc, time::Duration};
 
-    use super::{IngestConfig, save_unix_with_hook};
+    use super::{IngestConfig, IngestError, save_unix_with_hook, unix_final_open_error};
+
+    #[test]
+    fn loading_fifo_returns_unsafe_path_without_waiting_for_a_writer() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("ingest.conf");
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            &path,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .unwrap();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || sender.send(IngestConfig::load(path)).unwrap());
+
+        let result = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("FIFO config load must not block waiting for a writer");
+        assert!(matches!(result, Err(IngestError::UnsafePath { .. })));
+    }
+
+    #[test]
+    fn unix_socket_open_failure_is_typed_as_unsafe_path() {
+        assert!(matches!(
+            unix_final_open_error(std::path::Path::new("ingest.conf"), rustix::io::Errno::NXIO),
+            IngestError::UnsafePath { .. }
+        ));
+    }
 
     #[test]
     fn anchored_save_cannot_be_redirected_by_ancestor_swap() {
@@ -677,5 +843,18 @@ mod windows_tests {
         assert!(is_windows_reparse(WINDOWS_REPARSE_ATTRIBUTE | 0x20));
         assert!(!is_windows_reparse(0x20));
         let _: fn(&std::path::Path, &std::path::Path) -> std::io::Result<()> = move_file_replace;
+    }
+
+    #[test]
+    fn windows_anchor_consumers_store_only_absolute_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config").join("ingest.conf");
+        let anchor = super::WindowsAnchor::open(&path, true).unwrap();
+        assert!(anchor.parent.is_absolute());
+        assert!(anchor.final_path.is_absolute());
+        assert!(matches!(
+            super::WindowsAnchor::open(std::path::Path::new("relative/ingest.conf"), false),
+            Err(super::IngestError::UnsafePath { .. })
+        ));
     }
 }
