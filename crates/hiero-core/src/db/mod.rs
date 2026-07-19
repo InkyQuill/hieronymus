@@ -1,5 +1,6 @@
 mod error;
 mod legacy_baseline;
+mod models;
 
 #[cfg(test)]
 mod test_support;
@@ -7,6 +8,12 @@ mod test_support;
 use std::{path::Path, str::FromStr, time::Duration};
 
 pub use error::DbError;
+pub use models::{
+    ConceptFacetRecord, ConceptProposalRecord, ConceptProposalStatus, ConceptRecord, ConceptStatus,
+    CrystalActivationRecord, CrystalLinkRecord, CrystalRecord, CrystalStatus, CrystalType,
+    DreamRunRecord, DreamRunStatus, MemoryEventRecord, PersistedLabelError, RagChunkRecord,
+    RecallOutcome, SeriesRecord, ShortTermMemoryRecord, TaskSessionRecord, TaskSessionStatus,
+};
 use sha2::{Digest, Sha256};
 use sqlx::{
     Connection, SqliteConnection, SqlitePool,

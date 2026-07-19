@@ -7,18 +7,9 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
-#[derive(Debug, Clone, PartialEq, Eq, FromRow, Serialize, Deserialize)]
-pub struct SeriesRecord {
-    pub id: i64,
-    pub slug: String,
-    pub title: String,
-    pub default_source_language: String,
-    pub default_target_language: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
+pub use crate::db::SeriesRecord;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SeriesWithLanguageTags {

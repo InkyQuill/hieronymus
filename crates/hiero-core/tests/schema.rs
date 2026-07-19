@@ -1,8 +1,338 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
-use hiero_core::db::{connect_url, migrate};
+use hiero_core::db::{
+    ConceptFacetRecord, ConceptProposalRecord, ConceptProposalStatus, ConceptRecord, ConceptStatus,
+    CrystalActivationRecord, CrystalLinkRecord, CrystalRecord, CrystalStatus, CrystalType,
+    DreamRunRecord, DreamRunStatus, MemoryEventRecord, RagChunkRecord, RecallOutcome, SeriesRecord,
+    ShortTermMemoryRecord, TaskSessionRecord, TaskSessionStatus, connect_url, migrate,
+};
 use sqlx::{AssertSqlSafe, Executor, Row, SqlitePool};
+
+mod models {
+    use super::*;
+    use serde_json::Value;
+    use std::str::FromStr;
+
+    const CREATED: &str = "2026-07-18T12:34:56.789012Z";
+    const UPDATED: &str = "2026-07-18T13:34:56Z";
+
+    async fn seeded_pool() -> SqlitePool {
+        let pool = migrated_pool().await;
+        sqlx::raw_sql(AssertSqlSafe(format!(
+            r#"
+            INSERT INTO series VALUES (1, 'book', 'Book', 'en', 'ru', '{CREATED}', '{UPDATED}');
+            INSERT INTO task_sessions VALUES (1, 'book', 'en', 'ru', 'translation', '1', '2', 'active', NULL, '{CREATED}', '{UPDATED}', NULL);
+            INSERT INTO crystals VALUES (1, 'rule', 'Use X', 'Rule', 'series', 'book', 'book', 'en', 'ru', '["tag"]', 0.8, 0.9, 'user_explicit', 'term_rule', NULL, 1, 0.0, NULL, 'active', 3, NULL, 4, '{CREATED}', '{UPDATED}');
+            INSERT INTO short_term_memories VALUES (1, 1, 'translator', 'observation', 'Text', 'chapter.md:1', '{{not-json', NULL, NULL, NULL, 1, '{CREATED}', NULL);
+            INSERT INTO crystal_activations VALUES (1, 1, 1, 'query', 2, 0.75, 'fts', NULL, NULL, '{CREATED}');
+            INSERT INTO crystal_links VALUES (1, 1, 'supports');
+            INSERT INTO dream_runs VALUES (1, 8, 'running', 'deterministic', 4, 1, 2, '', '{CREATED}', NULL);
+            INSERT INTO concepts VALUES (1, 'Name', 'Description', 'global', '', 'candidate', 0.4, NULL, '{CREATED}', '{UPDATED}');
+            INSERT INTO concept_facets VALUES (1, 1, 'ru', 'rendering', 'Имя', 1, 0.8, 0, NULL, '{CREATED}', '{UPDATED}');
+            INSERT INTO concept_proposals VALUES (1, 1, 'book', 'en', 'ru', 'name', 'Name', 'Имя', '["Имя"]', '{{broken', 'why', 'pending', '{CREATED}', '{UPDATED}');
+            INSERT INTO memory_events VALUES (1, NULL, NULL, 'reinforce', 'translator', 'used', 0.1, 0.2, 0, NULL, '{CREATED}');
+            INSERT INTO rag_sources VALUES (1, 'book', 'glossary.md', 'markdown', 'text/markdown', 'abc', '{{}}', '{CREATED}', '{UPDATED}');
+            INSERT INTO rag_chunks VALUES (1, 1, 'book', 'paragraph', 'Source', 'Display', 'line:1', '{{malformed', '{CREATED}');
+            "#
+        )))
+        .execute(&pool)
+        .await
+        .expect("representative model rows should insert");
+        pool
+    }
+
+    macro_rules! assert_row {
+        ($name:ident, $record:ty, $table:literal, $assertion:expr) => {
+            #[tokio::test]
+            async fn $name() {
+                let pool = seeded_pool().await;
+                let row = sqlx::query_as::<_, $record>(concat!("SELECT * FROM ", $table))
+                    .fetch_one(&pool)
+                    .await
+                    .expect(concat!($table, " should decode"));
+                ($assertion)(row);
+            }
+        };
+    }
+
+    assert_row!(
+        series_record_decodes,
+        SeriesRecord,
+        "series",
+        |row: SeriesRecord| {
+            assert_eq!(row.slug, "book");
+            assert_eq!(
+                row.created_at.to_rfc3339(),
+                "2026-07-18T12:34:56.789012+00:00"
+            );
+        }
+    );
+    assert_row!(
+        task_session_record_decodes,
+        TaskSessionRecord,
+        "task_sessions",
+        |row: TaskSessionRecord| {
+            assert_eq!(row.status, "active");
+            assert!(row.cycle_id.is_none() && row.completed_at.is_none());
+        }
+    );
+    assert_row!(
+        short_term_memory_record_decodes,
+        ShortTermMemoryRecord,
+        "short_term_memories",
+        |row: ShortTermMemoryRecord| {
+            assert_eq!(row.metadata_json, "{not-json");
+            assert!(
+                row.source_credibility.is_none()
+                    && row.rule_intent.is_none()
+                    && row.soft_origin.is_none()
+                    && row.archived_at.is_none()
+            );
+        }
+    );
+    assert_row!(
+        crystal_record_decodes,
+        CrystalRecord,
+        "crystals",
+        |row: CrystalRecord| {
+            assert_eq!(row.tags_json, "[\"tag\"]");
+            assert!(row.is_inferred);
+            assert!(
+                row.soft_origin.is_none()
+                    && row.supersedes_crystal_id.is_none()
+                    && row.last_activated_cycle.is_none()
+            );
+        }
+    );
+    assert_row!(
+        crystal_activation_record_decodes,
+        CrystalActivationRecord,
+        "crystal_activations",
+        |row: CrystalActivationRecord| {
+            assert!(row.outcome.is_none() && row.cycle_id.is_none());
+        }
+    );
+    assert_row!(
+        crystal_link_record_decodes,
+        CrystalLinkRecord,
+        "crystal_links",
+        |row: CrystalLinkRecord| {
+            assert_eq!(row.link_type, "supports");
+        }
+    );
+    assert_row!(
+        concept_record_decodes,
+        ConceptRecord,
+        "concepts",
+        |row: ConceptRecord| {
+            assert!(row.merged_into_concept_id.is_none());
+        }
+    );
+    assert_row!(
+        concept_facet_record_decodes,
+        ConceptFacetRecord,
+        "concept_facets",
+        |row: ConceptFacetRecord| {
+            assert!(!row.is_canonical);
+            assert!(row.superseded_at.is_none());
+        }
+    );
+    assert_row!(
+        concept_proposal_record_decodes,
+        ConceptProposalRecord,
+        "concept_proposals",
+        |row: ConceptProposalRecord| {
+            assert_eq!(row.forbidden_variants_json, "{broken");
+            assert_eq!(row.dream_run_id, Some(1));
+        }
+    );
+    assert_row!(
+        memory_event_record_decodes,
+        MemoryEventRecord,
+        "memory_events",
+        |row: MemoryEventRecord| {
+            assert!(!row.applied);
+            assert!(row.crystal_id.is_none() && row.session_id.is_none() && row.cycle_id.is_none());
+        }
+    );
+    assert_row!(
+        rag_chunk_record_decodes,
+        RagChunkRecord,
+        "rag_chunks",
+        |row: RagChunkRecord| {
+            assert_eq!(row.metadata_json, "{malformed");
+        }
+    );
+    assert_row!(
+        dream_run_record_decodes,
+        DreamRunRecord,
+        "dream_runs",
+        |row: DreamRunRecord| {
+            assert!(row.completed_at.is_none());
+        }
+    );
+
+    #[tokio::test]
+    async fn nullable_timestamps_decode_when_present() {
+        let pool = seeded_pool().await;
+        sqlx::raw_sql(AssertSqlSafe(format!(
+            "UPDATE task_sessions SET completed_at = '{UPDATED}'; UPDATE short_term_memories SET archived_at = '{UPDATED}'; UPDATE concept_facets SET superseded_at = '{UPDATED}'; UPDATE dream_runs SET completed_at = '{UPDATED}';"
+        )))
+        .execute(&pool)
+        .await
+        .expect("nullable timestamps should update");
+        let session: TaskSessionRecord = sqlx::query_as("SELECT * FROM task_sessions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let memory: ShortTermMemoryRecord = sqlx::query_as("SELECT * FROM short_term_memories")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let facet: ConceptFacetRecord = sqlx::query_as("SELECT * FROM concept_facets")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let dream: DreamRunRecord = sqlx::query_as("SELECT * FROM dream_runs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            session.completed_at.is_some()
+                && memory.archived_at.is_some()
+                && facet.superseded_at.is_some()
+                && dream.completed_at.is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn integer_booleans_accept_zero_and_one_but_reject_other_values() {
+        let pool = seeded_pool().await;
+        let false_event: MemoryEventRecord = sqlx::query_as("SELECT id, crystal_id, session_id, event_type, source_role, evidence, strength_delta, confidence_delta, 0 AS applied, cycle_id, created_at FROM memory_events").fetch_one(&pool).await.unwrap();
+        let true_event: MemoryEventRecord = sqlx::query_as("SELECT id, crystal_id, session_id, event_type, source_role, evidence, strength_delta, confidence_delta, 1 AS applied, cycle_id, created_at FROM memory_events").fetch_one(&pool).await.unwrap();
+        assert!(!false_event.applied && true_event.applied);
+        let error = sqlx::query_as::<_, MemoryEventRecord>("SELECT id, crystal_id, session_id, event_type, source_role, evidence, strength_delta, confidence_delta, 2 AS applied, cycle_id, created_at FROM memory_events").fetch_one(&pool).await.expect_err("invalid boolean must not decode");
+        assert!(error.to_string().contains("applied") && error.to_string().contains("0 or 1"));
+
+        let crystal_error = sqlx::query_as::<_, CrystalRecord>(
+            "SELECT id, crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, -1 AS is_inferred, malformed_penalty, supersedes_crystal_id, status, created_cycle, last_activated_cycle, last_reinforced_cycle, created_at, updated_at FROM crystals",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect_err("invalid crystal boolean must not decode");
+        assert!(crystal_error.to_string().contains("is_inferred"));
+
+        let facet_error = sqlx::query_as::<_, ConceptFacetRecord>(
+            "SELECT id, concept_id, language, facet_type, value, source_crystal_id, confidence, 3 AS is_canonical, superseded_at, created_at, updated_at FROM concept_facets",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect_err("invalid facet boolean must not decode");
+        assert!(facet_error.to_string().contains("is_canonical"));
+    }
+
+    #[tokio::test]
+    async fn malformed_timestamp_reports_the_column_context() {
+        let pool = seeded_pool().await;
+        let error = sqlx::query_as::<_, SeriesRecord>("SELECT id, slug, title, default_source_language, default_target_language, 'yesterday' AS created_at, updated_at FROM series").fetch_one(&pool).await.expect_err("malformed timestamp must fail");
+        assert!(error.to_string().contains("created_at"));
+    }
+
+    #[test]
+    fn closed_enums_accept_all_known_labels_and_reject_unknown_labels() {
+        assert_eq!(
+            CrystalType::from_str("lesson").unwrap(),
+            CrystalType::Lesson
+        );
+        assert_eq!(CrystalType::from_str("rule").unwrap(), CrystalType::Rule);
+        assert_eq!(
+            CrystalType::from_str("thought").unwrap(),
+            CrystalType::Thought
+        );
+        assert_eq!(
+            CrystalType::from_str("observation").unwrap(),
+            CrystalType::Observation
+        );
+        assert_eq!(
+            CrystalType::from_str("concept_note").unwrap(),
+            CrystalType::ConceptNote
+        );
+        assert_eq!(
+            CrystalType::from_str("concept").unwrap(),
+            CrystalType::Concept
+        );
+        assert_eq!(
+            CrystalType::from_str("erudition").unwrap(),
+            CrystalType::Erudition
+        );
+        for label in ["active", "completed", "dreamed"] {
+            TaskSessionStatus::from_str(label).unwrap();
+        }
+        for label in ["active", "candidate", "archived", "rejected", "superseded"] {
+            CrystalStatus::from_str(label).unwrap();
+        }
+        for label in ["candidate", "established", "archived", "merged"] {
+            ConceptStatus::from_str(label).unwrap();
+        }
+        for label in ["pending", "approved", "rejected"] {
+            ConceptProposalStatus::from_str(label).unwrap();
+        }
+        for label in ["running", "completed", "failed", "skipped"] {
+            DreamRunStatus::from_str(label).unwrap();
+        }
+        for label in ["useful", "miss"] {
+            RecallOutcome::from_str(label).unwrap();
+        }
+        for error in [
+            CrystalType::from_str("future").unwrap_err().to_string(),
+            TaskSessionStatus::from_str("future")
+                .unwrap_err()
+                .to_string(),
+            CrystalStatus::from_str("future").unwrap_err().to_string(),
+            ConceptStatus::from_str("future").unwrap_err().to_string(),
+            ConceptProposalStatus::from_str("future")
+                .unwrap_err()
+                .to_string(),
+            DreamRunStatus::from_str("future").unwrap_err().to_string(),
+            RecallOutcome::from_str("future").unwrap_err().to_string(),
+        ] {
+            assert!(error.contains("future"));
+        }
+    }
+
+    #[tokio::test]
+    async fn closed_enums_decode_from_sql_and_reject_unknown_labels() {
+        let pool = seeded_pool().await;
+        let value: CrystalType = sqlx::query_scalar("SELECT crystal_type FROM crystals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(value, CrystalType::Rule);
+        let error = sqlx::query_scalar::<_, CrystalType>("SELECT 'future'")
+            .fetch_one(&pool)
+            .await
+            .expect_err("unknown SQL label must fail");
+        assert!(error.to_string().contains("future"));
+    }
+
+    #[tokio::test]
+    async fn serde_exposes_public_records_as_raw_storage_contracts() {
+        let pool = seeded_pool().await;
+        let memory: ShortTermMemoryRecord = sqlx::query_as("SELECT * FROM short_term_memories")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let json = serde_json::to_value(memory).expect("public record should serialize");
+        assert_eq!(json["metadata_json"], Value::String("{not-json".to_owned()));
+        assert_eq!(json["source_crystal_id"], Value::from(1));
+        assert_eq!(json["archived_at"], Value::Null);
+        assert_eq!(
+            serde_json::to_value(CrystalType::ConceptNote).unwrap(),
+            "concept_note"
+        );
+    }
+}
 
 const REQUIRED_TABLES: &[&str] = &[
     "audit_log",
