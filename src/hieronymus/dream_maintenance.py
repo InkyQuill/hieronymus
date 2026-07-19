@@ -28,10 +28,16 @@ _DECAY_CANDIDATE_SQL = f"""
 select id, crystal_type, strength, confidence, status
 from crystals indexed by {DREAM_MAINTENANCE_INDEX}
 where (status = 'candidate' or (status = 'active' and crystal_type != 'rule'))
-  and created_cycle != ?
-  and coalesce(last_activated_cycle, -1) != ?
-  and coalesce(last_reinforced_cycle, -1) != ?
-order by id
+  and max(
+    coalesce(last_reinforced_cycle, -1),
+    coalesce(last_activated_cycle, -1),
+    coalesce(created_cycle, -1)
+  ) < ?
+order by max(
+  coalesce(last_reinforced_cycle, -1),
+  coalesce(last_activated_cycle, -1),
+  coalesce(created_cycle, -1)
+), id
 limit ?
 """
 
@@ -101,7 +107,7 @@ class DreamMaintenance:
         cap = max(limit, 0)
         rows = self.conn.execute(
             _DECAY_CANDIDATE_SQL,
-            (cycle_id, cycle_id, cycle_id, cap + 1),
+            (cycle_id, cap + 1),
         ).fetchall()
         candidates = tuple(self._decay_candidate(row) for row in rows[:cap])
         sentinel = self._decay_candidate(rows[cap]) if len(rows) > cap else None
@@ -110,7 +116,7 @@ class DreamMaintenance:
     def explain_decay_candidate_query(self, *, cycle_id: int, limit: int) -> tuple[str, ...]:
         rows = self.conn.execute(
             f"explain query plan {_DECAY_CANDIDATE_SQL}",
-            (cycle_id, cycle_id, cycle_id, max(limit, 0) + 1),
+            (cycle_id, max(limit, 0) + 1),
         ).fetchall()
         return tuple(str(row[3]) for row in rows)
 

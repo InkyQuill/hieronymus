@@ -83,6 +83,36 @@ def test_decay_selection_uses_named_composite_index(config: HieronymusConfig) ->
         plan = DreamMaintenance(conn).explain_decay_candidate_query(cycle_id=2, limit=3)
 
     assert any(DREAM_MAINTENANCE_INDEX in detail for detail in plan)
+    assert not any("TEMP B-TREE" in detail.upper() for detail in plan)
+
+
+def test_decay_selection_bounds_vm_work_across_large_excluded_prefix(
+    config: HieronymusConfig,
+) -> None:
+    with connect(config.database_path) as conn:
+        ensure_schema(conn)
+        _insert_crystals(conn, 50_000, cycle_id=12)
+        eligible_ids = _insert_crystals(conn, 4, cycle_id=3)[-4:]
+        future_id = _insert_crystals(conn, 1, cycle_id=13)[-1]
+
+        progress_calls = 0
+
+        def stop_unbounded_scan() -> int:
+            nonlocal progress_calls
+            progress_calls += 1
+            return int(progress_calls > 500)
+
+        conn.set_progress_handler(stop_unbounded_scan, 100)
+        try:
+            selection = DreamMaintenance(conn).select_decay_candidates(cycle_id=12, limit=3)
+        finally:
+            conn.set_progress_handler(None, 0)
+
+    assert tuple(row.id for row in selection.candidates) == tuple(eligible_ids[:3])
+    assert selection.sentinel is not None
+    assert selection.sentinel.id == eligible_ids[3]
+    assert future_id not in {row.id for row in selection.candidates}
+    assert progress_calls <= 500
 
 
 def test_cycle_decay_reports_magnitude_safe_overflow_and_uses_caller_transaction(
