@@ -61,6 +61,13 @@ def test_load_model_cache_reads_legacy_cache_without_adopting_it(tmp_path) -> No
     assert legacy_path.exists()
 
 
+def test_load_model_cache_of_missing_root_is_empty_and_non_mutating(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    assert load_model_cache(config) == CachedModels()
+    assert not config.data_root.exists()
+
+
 def test_adopt_legacy_model_cache_publishes_without_overwriting(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     legacy_path = _legacy_cache_path(config)
@@ -244,6 +251,56 @@ def test_observer_waits_for_publisher_and_never_cleans_live_adoption(tmp_path, m
     assert config.llm_cache_path.read_bytes() == original
     assert adopt_legacy_model_cache(config).status == "adopted"
     assert not legacy_path.exists()
+
+
+def test_reader_waits_for_publication_and_returns_canonical_cache(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
+    original_link = os.link
+    publication_ready = threading.Event()
+    allow_publication = threading.Event()
+    reader_started = threading.Event()
+
+    def synchronized_link(source, target):
+        if Path(target) == config.llm_cache_path:
+            publication_ready.set()
+            assert allow_publication.wait(timeout=2)
+        return original_link(source, target)
+
+    monkeypatch.setattr(os, "link", synchronized_link)
+
+    def load_after_start():
+        reader_started.set()
+        return load_model_cache(config)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        publisher = executor.submit(adopt_legacy_model_cache, config)
+        assert publication_ready.wait(timeout=2)
+        reader = executor.submit(load_after_start)
+        assert reader_started.wait(timeout=2)
+        with pytest.raises(TimeoutError):
+            reader.result(timeout=0.2)
+        allow_publication.set()
+
+        assert publisher.result(timeout=2).status == "adopted"
+        assert reader.result(timeout=2) == _cache()
+
+
+def test_model_cache_read_reuses_held_adoption_lock_without_deadlock(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    save_model_cache(config, _cache())
+
+    def nested_read():
+        with llm_cache_module._adoption_lock(config) as locked:
+            assert locked
+            return load_model_cache(config)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = executor.submit(nested_read).result(timeout=2)
+
+    assert result == _cache()
 
 
 def test_inspection_locks_existing_directory_without_mutating_it(tmp_path, monkeypatch) -> None:

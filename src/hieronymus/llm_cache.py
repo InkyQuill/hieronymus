@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import local
 from typing import TYPE_CHECKING, Any
 
 from hieronymus.agent_plugins.base import atomic_write_text
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from hieronymus.dream_providers import ProviderProfile
 
 CACHE_TTL = timedelta(hours=24)
+_ADOPTION_LOCK_STATE = local()
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,16 @@ class CachedModels:
 
 
 def load_model_cache(config: HieronymusConfig) -> CachedModels:
+    try:
+        with _adoption_lock(config) as locked:
+            if not locked:
+                return CachedModels()
+            return _load_model_cache_locked(config)
+    except OSError:
+        return CachedModels()
+
+
+def _load_model_cache_locked(config: HieronymusConfig) -> CachedModels:
     path = config.llm_cache_path
     if not path.exists():
         path = _legacy_model_cache_path(config)
@@ -305,13 +317,31 @@ def _adoption_lock(config: HieronymusConfig) -> Iterator[bool]:
     except FileNotFoundError:
         yield False
         return
+    try:
+        metadata = os.fstat(descriptor)
+    except OSError:
+        os.close(descriptor)
+        raise
+    identity = (metadata.st_dev, metadata.st_ino)
+    held: dict[tuple[int, int], int] = getattr(_ADOPTION_LOCK_STATE, "held", {})
+    if identity in held:
+        held[identity] += 1
+        try:
+            yield True
+        finally:
+            held[identity] -= 1
+            os.close(descriptor)
+        return
     locked = False
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         locked = True
+        held[identity] = 1
+        _ADOPTION_LOCK_STATE.held = held
         yield True
     finally:
         try:
+            held.pop(identity, None)
             if locked:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
         finally:
