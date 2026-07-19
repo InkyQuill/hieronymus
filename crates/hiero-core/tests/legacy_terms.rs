@@ -400,7 +400,7 @@ async fn migrate_applies_conversion_before_recording_drop_migration() {
             .fetch_all(&pool)
             .await
             .expect("migration history should be readable");
-    assert_eq!(versions, [1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7]);
     assert!(!object_exists(&pool, "strict_terms").await);
     assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM migration_ledger WHERE source_table = 'strict_terms' AND source_id = '50' AND target_table = 'crystals'").fetch_one(&pool).await.unwrap(), 1);
 }
@@ -449,7 +449,7 @@ async fn concurrent_fresh_file_migrations_are_serialized_across_pools() {
             .fetch_all(&first)
             .await
             .expect("migration history should read");
-    assert_eq!(versions, [1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7]);
     assert_eq!(
         sqlx::query_scalar::<_, String>("PRAGMA integrity_check")
             .fetch_one(&first)
@@ -490,7 +490,7 @@ async fn concurrent_python_file_migrations_convert_once_across_pools() {
             .fetch_all(&first)
             .await
             .expect("migration history should read");
-    assert_eq!(versions, [1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7]);
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM migration_ledger WHERE source_table = 'strict_terms' AND source_id = '80' AND target_table = 'crystals'",
@@ -558,7 +558,7 @@ async fn failed_file_migration_releases_protocol_lock_for_retry() {
             .fetch_all(&second)
             .await
             .unwrap();
-    assert_eq!(versions, [1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7]);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM crystals WHERE crystal_type = 'rule'")
             .fetch_one(&second)

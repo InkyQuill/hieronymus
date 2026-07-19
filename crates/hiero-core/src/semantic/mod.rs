@@ -32,7 +32,7 @@ pub use index::{
     FakeSemanticIndex, GenerationId, GenerationInfo, IndexHealth, SearchFilter, SearchHit,
     SemanticError, SemanticIndex, VectorRecord,
 };
-pub use jobs::SemanticJobQueue;
+pub use jobs::{ClaimedSemanticBatch, SemanticJobQueue};
 pub use lancedb::LanceDbIndex;
 pub use rrf::reciprocal_rank_fusion;
 

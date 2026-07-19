@@ -1,4 +1,7 @@
-use std::{cmp::Ordering, collections::BTreeMap};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, HashSet},
+};
 
 /// Fuses rank positions without comparing incomparable lexical and vector scores.
 #[must_use]
@@ -9,10 +12,20 @@ pub fn reciprocal_rank_fusion(
 ) -> Vec<(i64, f64)> {
     let k = if k.is_finite() && k >= 0.0 { k } else { 60.0 };
     let mut scores = BTreeMap::<i64, f64>::new();
-    for (rank, (id, _)) in fts_results.iter().enumerate() {
+    let mut seen = HashSet::new();
+    for (rank, (id, _)) in fts_results
+        .iter()
+        .filter(|(id, _)| seen.insert(*id))
+        .enumerate()
+    {
         *scores.entry(*id).or_default() += 1.0 / (k + rank as f64 + 1.0);
     }
-    for (rank, (id, _)) in vector_results.iter().enumerate() {
+    seen.clear();
+    for (rank, (id, _)) in vector_results
+        .iter()
+        .filter(|(id, _)| seen.insert(*id))
+        .enumerate()
+    {
         *scores.entry(*id).or_default() += 1.0 / (k + rank as f64 + 1.0);
     }
     let mut fused = scores.into_iter().collect::<Vec<_>>();

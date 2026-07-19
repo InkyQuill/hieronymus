@@ -170,11 +170,12 @@ impl SemanticIndex for FakeSemanticIndex {
             .generations
             .get_mut(&generation)
             .ok_or(SemanticError::MissingGeneration(generation))?;
+        let input_count = vectors.len();
         for vector in vectors {
             values.retain(|existing| existing.chunk_id != vector.chunk_id);
             values.push(vector);
         }
-        Ok(values.len())
+        Ok(input_count)
     }
 
     async fn search(

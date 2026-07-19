@@ -36,7 +36,7 @@ pub async fn connect(config: &HieronymusConfig) -> Result<SqlitePool> {
         .pragma("recursive_triggers", "ON")
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new().max_connections(8).connect_with(opts).await?;
-    migrate(&pool).await?; // applies 0001..0004, runs typed conversion, then applies 0005..0006
+    migrate(&pool).await?; // applies 0001..0004, runs typed conversion, then applies 0005..0007
     Ok(pool)
 }
 ```
@@ -192,6 +192,7 @@ create virtual table rag_chunks_fts using fts5(text, display_text, location, con
 -- Semantic index state (new, Plan 4 / 003 §5)
 create table semantic_index_jobs (id integer primary key, status text not null default 'pending', generation_id text, created_at text not null, completed_at text);
 create table semantic_chunk_state (chunk_id integer primary key references rag_chunks(id), checksum text not null, generation_id text not null, indexed_at text not null);
+create table semantic_batch_claims (claim_token text not null, job_id integer not null references semantic_index_jobs(id) on delete cascade, chunk_id integer not null references rag_chunks(id) on delete cascade, generation_id text, created_at text not null, primary key (claim_token, chunk_id), unique (job_id, chunk_id));
 
 -- Partial cursor/range index for bounded dream maintenance (004 §5)
 create index idx_crystals_maintenance
@@ -305,6 +306,7 @@ pooled connection is returned on every success or error path.
 | between `0004`/`0005` | Rust strict-term converter | Converts and verifies every structured row under `BEGIN IMMEDIATE`, then drops the legacy objects |
 | `0005` | `drop_strict_terms.sql` | Guarded DDL only, making fresh/empty/already-converted databases converge safely |
 | `0006` | `crystal_link_target_index.sql` | Adds the target-first covering index used by bounded reverse graph traversal |
+| `0007` | `semantic_batch_claims.sql` | Adds uniquely-owned in-flight batch claims so concurrent semantic workers cannot complete or mutate one another's work |
 
 **The pre-`0005` Rust conversion in detail.** `strict_terms` rows are *structured* data (`source_text`,
 `canonical_translation`, `category`, `notes`, plus `strict_term_tags`/`strict_term_aliases`) —

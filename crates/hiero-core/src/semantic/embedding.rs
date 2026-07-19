@@ -64,6 +64,8 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
 }
 
 type BlockingEmbed = dyn Fn(&[String]) -> Result<Vec<Vec<f32>>> + Send + Sync;
+type RuntimeInitializer =
+    dyn Fn(&std::path::Path, &std::path::Path, usize) -> Result<Arc<BlockingEmbed>> + Send + Sync;
 
 /// Lazy local ONNX provider. Model files are not touched until the first embedding call.
 ///
@@ -71,7 +73,8 @@ type BlockingEmbed = dyn Fn(&[String]) -> Result<Vec<Vec<f32>>> + Send + Sync;
 pub struct OrtEmbeddingProvider {
     model_dir: PathBuf,
     dimensions: usize,
-    inference: Option<Arc<BlockingEmbed>>,
+    runtime: tokio::sync::OnceCell<Arc<BlockingEmbed>>,
+    initializer: Arc<RuntimeInitializer>,
     allow_download: bool,
     download_lock: Arc<tokio::sync::Mutex<()>>,
 }
@@ -84,7 +87,8 @@ impl OrtEmbeddingProvider {
         Self {
             model_dir: model_dir.into(),
             dimensions: 384,
-            inference: None,
+            runtime: tokio::sync::OnceCell::new(),
+            initializer: Arc::new(load_ort_runtime),
             allow_download: true,
             download_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
@@ -96,7 +100,8 @@ impl OrtEmbeddingProvider {
         Self {
             model_dir: model_dir.into(),
             dimensions: 384,
-            inference: None,
+            runtime: tokio::sync::OnceCell::new(),
+            initializer: Arc::new(load_ort_runtime),
             allow_download: false,
             download_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
@@ -112,7 +117,26 @@ impl OrtEmbeddingProvider {
         Self {
             model_dir: model_dir.into(),
             dimensions,
-            inference: Some(inference),
+            runtime: tokio::sync::OnceCell::new_with(Some(inference)),
+            initializer: Arc::new(load_ort_runtime),
+            allow_download: false,
+            download_lock: Arc::new(tokio::sync::Mutex::new(())),
+        }
+    }
+
+    /// Injects runtime construction for deterministic initialization and retry tests.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_initializer(
+        model_dir: impl Into<PathBuf>,
+        dimensions: usize,
+        initializer: Arc<RuntimeInitializer>,
+    ) -> Self {
+        Self {
+            model_dir: model_dir.into(),
+            dimensions,
+            runtime: tokio::sync::OnceCell::new(),
+            initializer,
             allow_download: false,
             download_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
@@ -135,13 +159,21 @@ impl OrtEmbeddingProvider {
             });
         }
         let input = texts.to_vec();
-        let vectors = if let Some(inference) = self.inference.clone() {
-            tokio::task::spawn_blocking(move || inference(&input)).await??
-        } else {
-            let dimensions = self.dimensions;
-            tokio::task::spawn_blocking(move || run_ort(&model, &tokenizer, &input, dimensions))
-                .await??
-        };
+        // Successful initialization is retained for the provider lifetime. Failed initialization
+        // is deliberately not cached, so a repaired/downloaded artifact can be retried.
+        let initializer = self.initializer.clone();
+        let dimensions = self.dimensions;
+        let inference = self
+            .runtime
+            .get_or_try_init(|| async {
+                let model = model.clone();
+                let tokenizer = tokenizer.clone();
+                tokio::task::spawn_blocking(move || initializer(&model, &tokenizer, dimensions))
+                    .await?
+            })
+            .await?
+            .clone();
+        let vectors = tokio::task::spawn_blocking(move || inference(&input)).await??;
         if vectors.len() != texts.len() {
             return Err(SemanticError::InvalidVector {
                 reason: "embedding batch cardinality mismatch".into(),
@@ -164,6 +196,12 @@ async fn download_model_artifacts(model_dir: &std::path::Path) -> Result<()> {
     tokio::fs::create_dir_all(model_dir)
         .await
         .map_err(SemanticError::Io)?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .read_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .map_err(|error| SemanticError::Download(error.to_string()))?;
     for (relative, name) in [
         ("onnx/model.onnx", "model.onnx"),
         ("tokenizer.json", "tokenizer.json"),
@@ -172,7 +210,9 @@ async fn download_model_artifacts(model_dir: &std::path::Path) -> Result<()> {
         if artifact_ready(&target).await {
             continue;
         }
-        let mut response = reqwest::get(format!("{BASE}/{relative}"))
+        let mut response = client
+            .get(format!("{BASE}/{relative}"))
+            .send()
             .await
             .map_err(|error| SemanticError::Download(error.to_string()))?
             .error_for_status()
@@ -186,6 +226,7 @@ async fn download_model_artifacts(model_dir: &std::path::Path) -> Result<()> {
             )));
         }
         let temporary = model_dir.join(format!(".{name}.{}", uuid::Uuid::new_v4()));
+        let mut temporary_guard = TemporaryArtifact::new(temporary.clone());
         let mut file = tokio::fs::File::create(&temporary)
             .await
             .map_err(SemanticError::Io)?;
@@ -198,38 +239,51 @@ async fn download_model_artifacts(model_dir: &std::path::Path) -> Result<()> {
         {
             written = written.saturating_add(chunk.len() as u64);
             if written > MAX_MODEL_BYTES {
-                let _ = tokio::fs::remove_file(&temporary).await;
                 return Err(SemanticError::Download(format!(
                     "model artifact {name} exceeds {MAX_MODEL_BYTES} bytes"
                 )));
             }
-            if let Err(error) = file.write_all(&chunk).await {
-                drop(file);
-                let _ = tokio::fs::remove_file(&temporary).await;
-                return Err(SemanticError::Io(error));
-            }
+            file.write_all(&chunk).await.map_err(SemanticError::Io)?;
         }
         if written == 0 {
-            drop(file);
-            let _ = tokio::fs::remove_file(&temporary).await;
             return Err(SemanticError::Download(format!(
                 "model artifact {name} was empty"
             )));
         }
-        if let Err(error) = file.flush().await {
-            drop(file);
-            let _ = tokio::fs::remove_file(&temporary).await;
-            return Err(SemanticError::Io(error));
-        }
+        file.flush().await.map_err(SemanticError::Io)?;
         drop(file);
         if artifact_ready(&target).await {
-            let _ = tokio::fs::remove_file(&temporary).await;
-        } else if let Err(error) = tokio::fs::rename(&temporary, target).await {
-            let _ = tokio::fs::remove_file(&temporary).await;
-            return Err(SemanticError::Io(error));
+            continue;
         }
+        tokio::fs::rename(&temporary, target)
+            .await
+            .map_err(SemanticError::Io)?;
+        temporary_guard.disarm();
     }
     Ok(())
+}
+
+struct TemporaryArtifact {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl TemporaryArtifact {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TemporaryArtifact {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 }
 
 async fn artifact_ready(path: &std::path::Path) -> bool {
@@ -238,18 +292,16 @@ async fn artifact_ready(path: &std::path::Path) -> bool {
         .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
 }
 
-fn run_ort(
+struct OrtRuntime {
+    tokenizer: tokenizers::Tokenizer,
+    session: std::sync::Mutex<ort::session::Session>,
+}
+
+fn load_ort_runtime(
     model: &std::path::Path,
     tokenizer_path: &std::path::Path,
-    texts: &[String],
     dimensions: usize,
-) -> Result<Vec<Vec<f32>>> {
-    if texts.is_empty() {
-        return Ok(vec![]);
-    }
-    // Hugging Face does not publish stable checksums in the proposal. Integrity is therefore
-    // bounded by HTTPS/status/size/atomic-file checks here and by fully parsing both the tokenizer
-    // and ONNX graph before an artifact is accepted for inference.
+) -> Result<Arc<BlockingEmbed>> {
     let mut tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path)
         .map_err(|error| SemanticError::Ort(format!("load tokenizer: {error}")))?;
     tokenizer
@@ -258,101 +310,126 @@ fn run_ort(
             ..Default::default()
         }))
         .map_err(|error| SemanticError::Ort(format!("configure tokenizer truncation: {error}")))?;
-    let encodings = tokenizer
-        .encode_batch(texts.to_vec(), true)
-        .map_err(|error| SemanticError::Ort(format!("tokenize input: {error}")))?;
-    let sequence = encodings
-        .iter()
-        .map(tokenizers::Encoding::len)
-        .max()
-        .unwrap_or(1)
-        .max(1);
-    let batch = encodings.len();
-    let mut input_ids = vec![0_i64; batch * sequence];
-    let mut attention = vec![0_i64; batch * sequence];
-    let mut token_types = vec![0_i64; batch * sequence];
-    for (row, encoding) in encodings.iter().enumerate() {
-        for (column, &id) in encoding.get_ids().iter().enumerate() {
-            input_ids[row * sequence + column] = i64::from(id);
-            attention[row * sequence + column] = i64::from(encoding.get_attention_mask()[column]);
-            token_types[row * sequence + column] = i64::from(encoding.get_type_ids()[column]);
-        }
-    }
-    let ids = ort::value::Tensor::from_array(([batch, sequence], input_ids))
-        .map_err(|error| SemanticError::Ort(error.to_string()))?;
-    let mask = ort::value::Tensor::from_array(([batch, sequence], attention.clone()))
-        .map_err(|error| SemanticError::Ort(error.to_string()))?;
-    let types = ort::value::Tensor::from_array(([batch, sequence], token_types))
-        .map_err(|error| SemanticError::Ort(error.to_string()))?;
-    let mut session = ort::session::Session::builder()
+    let session = ort::session::Session::builder()
         .map_err(|error| SemanticError::Ort(error.to_string()))?
         .commit_from_file(model)
         .map_err(|error| SemanticError::Ort(error.to_string()))?;
-    let has_token_types = session
-        .inputs()
-        .iter()
-        .any(|input| input.name() == "token_type_ids");
-    let outputs = if has_token_types {
-        session.run(
-            ort::inputs!["input_ids" => ids, "attention_mask" => mask, "token_type_ids" => types],
-        )
-    } else {
-        session.run(ort::inputs!["input_ids" => ids, "attention_mask" => mask])
-    }
-    .map_err(|error| SemanticError::Ort(error.to_string()))?;
-    let (shape, data) = outputs[0]
-        .try_extract_tensor::<f32>()
-        .map_err(|error| SemanticError::Ort(error.to_string()))?;
-    let shape = shape.to_vec();
-    let expected_batch = i64::try_from(batch).map_err(|_| SemanticError::InvalidVector {
-        reason: "embedding batch is too large".into(),
-    })?;
-    let expected_sequence = i64::try_from(sequence).map_err(|_| SemanticError::InvalidVector {
-        reason: "embedding sequence is too large".into(),
-    })?;
-    let expected_dimensions =
-        i64::try_from(dimensions).map_err(|_| SemanticError::InvalidVector {
-            reason: "embedding dimensions are too large".into(),
-        })?;
-    let mut vectors = if shape.as_slice() == [expected_batch, expected_dimensions] {
-        data.chunks_exact(dimensions)
-            .map(<[f32]>::to_vec)
-            .collect::<Vec<_>>()
-    } else if shape.as_slice() == [expected_batch, expected_sequence, expected_dimensions] {
-        (0..batch)
-            .map(|row| {
-                let mut vector = vec![0.0_f32; dimensions];
-                let mut weight = 0.0_f32;
-                for token in 0..sequence {
-                    let mask = attention[row * sequence + token] as f32;
-                    weight += mask;
-                    let start = (row * sequence + token) * dimensions;
-                    for (target, value) in vector.iter_mut().zip(&data[start..start + dimensions]) {
-                        *target += *value * mask;
-                    }
-                }
-                if weight > 0.0 {
-                    for value in &mut vector {
-                        *value /= weight;
-                    }
-                }
-                vector
-            })
-            .collect()
-    } else {
-        return Err(SemanticError::InvalidVector {
-            reason: format!("unexpected ONNX output shape {shape:?}"),
-        });
-    };
-    for vector in &mut vectors {
-        let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
-        if norm > 0.0 {
-            for value in vector {
-                *value /= norm;
+    let runtime = Arc::new(OrtRuntime {
+        tokenizer,
+        session: std::sync::Mutex::new(session),
+    });
+    Ok(Arc::new(move |texts| runtime.embed(texts, dimensions)))
+}
+
+impl OrtRuntime {
+    fn embed(&self, texts: &[String], dimensions: usize) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+        // Hugging Face does not publish stable checksums in the proposal. Integrity is therefore
+        // bounded by HTTPS/status/size/atomic-file checks here and by fully parsing both the tokenizer
+        // and ONNX graph before an artifact is accepted for inference.
+        let encodings = self
+            .tokenizer
+            .encode_batch(texts.to_vec(), true)
+            .map_err(|error| SemanticError::Ort(format!("tokenize input: {error}")))?;
+        let sequence = encodings
+            .iter()
+            .map(tokenizers::Encoding::len)
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let batch = encodings.len();
+        let mut input_ids = vec![0_i64; batch * sequence];
+        let mut attention = vec![0_i64; batch * sequence];
+        let mut token_types = vec![0_i64; batch * sequence];
+        for (row, encoding) in encodings.iter().enumerate() {
+            for (column, &id) in encoding.get_ids().iter().enumerate() {
+                input_ids[row * sequence + column] = i64::from(id);
+                attention[row * sequence + column] =
+                    i64::from(encoding.get_attention_mask()[column]);
+                token_types[row * sequence + column] = i64::from(encoding.get_type_ids()[column]);
             }
         }
+        let ids = ort::value::Tensor::from_array(([batch, sequence], input_ids))
+            .map_err(|error| SemanticError::Ort(error.to_string()))?;
+        let mask = ort::value::Tensor::from_array(([batch, sequence], attention.clone()))
+            .map_err(|error| SemanticError::Ort(error.to_string()))?;
+        let types = ort::value::Tensor::from_array(([batch, sequence], token_types))
+            .map_err(|error| SemanticError::Ort(error.to_string()))?;
+        let mut session = self
+            .session
+            .lock()
+            .map_err(|_| SemanticError::Ort("ONNX Runtime session lock was poisoned".into()))?;
+        let has_token_types = session
+            .inputs()
+            .iter()
+            .any(|input| input.name() == "token_type_ids");
+        let outputs = if has_token_types {
+            session.run(
+            ort::inputs!["input_ids" => ids, "attention_mask" => mask, "token_type_ids" => types],
+        )
+        } else {
+            session.run(ort::inputs!["input_ids" => ids, "attention_mask" => mask])
+        }
+        .map_err(|error| SemanticError::Ort(error.to_string()))?;
+        let (shape, data) = outputs[0]
+            .try_extract_tensor::<f32>()
+            .map_err(|error| SemanticError::Ort(error.to_string()))?;
+        let shape = shape.to_vec();
+        let expected_batch = i64::try_from(batch).map_err(|_| SemanticError::InvalidVector {
+            reason: "embedding batch is too large".into(),
+        })?;
+        let expected_sequence =
+            i64::try_from(sequence).map_err(|_| SemanticError::InvalidVector {
+                reason: "embedding sequence is too large".into(),
+            })?;
+        let expected_dimensions =
+            i64::try_from(dimensions).map_err(|_| SemanticError::InvalidVector {
+                reason: "embedding dimensions are too large".into(),
+            })?;
+        let mut vectors = if shape.as_slice() == [expected_batch, expected_dimensions] {
+            data.chunks_exact(dimensions)
+                .map(<[f32]>::to_vec)
+                .collect::<Vec<_>>()
+        } else if shape.as_slice() == [expected_batch, expected_sequence, expected_dimensions] {
+            (0..batch)
+                .map(|row| {
+                    let mut vector = vec![0.0_f32; dimensions];
+                    let mut weight = 0.0_f32;
+                    for token in 0..sequence {
+                        let mask = attention[row * sequence + token] as f32;
+                        weight += mask;
+                        let start = (row * sequence + token) * dimensions;
+                        for (target, value) in
+                            vector.iter_mut().zip(&data[start..start + dimensions])
+                        {
+                            *target += *value * mask;
+                        }
+                    }
+                    if weight > 0.0 {
+                        for value in &mut vector {
+                            *value /= weight;
+                        }
+                    }
+                    vector
+                })
+                .collect()
+        } else {
+            return Err(SemanticError::InvalidVector {
+                reason: format!("unexpected ONNX output shape {shape:?}"),
+            });
+        };
+        for vector in &mut vectors {
+            let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                for value in vector {
+                    *value /= norm;
+                }
+            }
+        }
+        Ok(vectors)
     }
-    Ok(vectors)
 }
 
 #[async_trait]
@@ -373,5 +450,26 @@ impl EmbeddingProvider for OrtEmbeddingProvider {
         self.embed_many(&[text.to_owned()])
             .await
             .map(|mut values| values.remove(0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TemporaryArtifact;
+
+    #[test]
+    fn temporary_artifact_guard_removes_files_unless_disarmed() {
+        let directory = tempfile::tempdir().unwrap();
+        let removed = directory.path().join("removed");
+        std::fs::write(&removed, b"partial").unwrap();
+        drop(TemporaryArtifact::new(removed.clone()));
+        assert!(!removed.exists());
+
+        let retained = directory.path().join("retained");
+        std::fs::write(&retained, b"complete").unwrap();
+        let mut guard = TemporaryArtifact::new(retained.clone());
+        guard.disarm();
+        drop(guard);
+        assert!(retained.exists());
     }
 }

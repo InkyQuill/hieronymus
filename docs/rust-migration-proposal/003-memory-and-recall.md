@@ -466,16 +466,21 @@ touching call sites.
 
 ```rust
 pub struct SemanticJobQueue<'a> { pool: &'a SqlitePool }
+pub struct ClaimedSemanticBatch { /* private claim token, job/generation binding, chunks */ }
 impl<'a> SemanticJobQueue<'a> {
     pub async fn enqueue_rebuild(&self) -> Result<i64>;
-    pub async fn claim_next_batch(&self, batch_size: usize) -> Result<Vec<RagChunkRecord>>;  // orders by chunk id, validates checksum against semantic_chunk_state before each batch
-    pub async fn mark_indexed(&self, chunk_ids: &[i64], generation_id: &str) -> Result<()>;
-    pub async fn mark_failed(&self, job_id: i64, error: &str) -> Result<()>;
+    pub async fn claim_next_batch(&self, batch_size: usize) -> Result<ClaimedSemanticBatch>;
+    pub async fn mark_indexed(&self, batch: &ClaimedSemanticBatch, generation_id: &str) -> Result<usize>;
+    pub async fn mark_failed(&self, batch: &ClaimedSemanticBatch, error: &str) -> Result<()>;
 }
 ```
 
-Durable state lives in `semantic_index_jobs` / `semantic_chunk_state` (002 §2). The worker
-never holds a SQLite write transaction while embedding or writing LanceDB.
+Durable state lives in `semantic_index_jobs`, `semantic_batch_claims`, and
+`semantic_chunk_state` (002 §2). Each claim has a unique ownership token. Late success/failure may
+only mutate rows owned by that token and must revalidate the job's generation binding. A job is
+complete only when no stale/pending chunks and no in-flight claims remain. Claim hydration is
+database-only and stays inside the short `BEGIN IMMEDIATE` claim transaction, so decode errors or
+cancellation roll back ownership; embedding and LanceDB work never run under that transaction.
 
 ### 5.4 Hybrid ranking
 

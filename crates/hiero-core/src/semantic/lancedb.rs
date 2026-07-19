@@ -10,6 +10,7 @@ use arrow_array::{
 };
 use arrow_schema::{DataType, Field, Schema};
 use async_trait::async_trait;
+use fs4::FileExt;
 use futures::TryStreamExt;
 use lancedb::query::{ExecutableQuery, QueryBase};
 use sha2::{Digest, Sha256};
@@ -23,6 +24,16 @@ use super::{
 
 const ACTIVE_FILE: &str = "ACTIVE";
 const TABLE: &str = "vectors";
+const GENERATION_TABLE: &str = "_generation";
+const LIFECYCLE_LOCK: &str = ".lifecycle.lock";
+
+struct LifecycleGuard(std::fs::File);
+
+impl Drop for LifecycleGuard {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.0);
+    }
+}
 
 pub struct LanceDbIndex {
     root: PathBuf,
@@ -45,11 +56,103 @@ impl LanceDbIndex {
         path: impl AsRef<Path>,
         pool: Option<SqlitePool>,
     ) -> Result<Self, SemanticError> {
+        reject_symlink_components(path.as_ref()).await?;
+        if tokio::fs::symlink_metadata(path.as_ref())
+            .await
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(SemanticError::CorruptIndex {
+                reason: "semantic index root must not be a symlink".into(),
+            });
+        }
         tokio::fs::create_dir_all(path.as_ref()).await?;
-        Ok(Self {
-            root: path.as_ref().to_owned(),
-            pool,
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tokio::fs::set_permissions(path.as_ref(), std::fs::Permissions::from_mode(0o700))
+                .await?;
+        }
+        let root = tokio::fs::canonicalize(path.as_ref()).await?;
+        Ok(Self { root, pool })
+    }
+
+    async fn lifecycle_lock(&self) -> Result<LifecycleGuard, SemanticError> {
+        let path = self.root.join(LIFECYCLE_LOCK);
+        let file = tokio::task::spawn_blocking(move || {
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true).write(true).create(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+            }
+            let file = options.open(path)?;
+            FileExt::lock_exclusive(&file)?;
+            Ok::<_, std::io::Error>(file)
         })
+        .await??;
+        let guard = LifecycleGuard(file);
+        self.validate_layout_locked().await?;
+        Ok(guard)
+    }
+
+    async fn validate_layout_locked(&self) -> Result<PathBuf, SemanticError> {
+        let generations = self.root.join("generations");
+        match tokio::fs::symlink_metadata(&generations).await {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(SemanticError::CorruptIndex {
+                    reason: "semantic generations path must be a real directory".into(),
+                });
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tokio::fs::create_dir(&generations).await?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let canonical = tokio::fs::canonicalize(&generations).await?;
+        if !canonical.starts_with(&self.root) {
+            return Err(SemanticError::CorruptIndex {
+                reason: "semantic generations path escapes the index root".into(),
+            });
+        }
+        let active = self.root.join(ACTIVE_FILE);
+        if tokio::fs::symlink_metadata(active)
+            .await
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(SemanticError::CorruptIndex {
+                reason: "semantic ACTIVE pointer must not be a symlink".into(),
+            });
+        }
+        Ok(canonical)
+    }
+
+    async fn validate_generation_locked(
+        &self,
+        generation: GenerationId,
+    ) -> Result<PathBuf, SemanticError> {
+        let generations = self.validate_layout_locked().await?;
+        let path = self.generation_path(generation);
+        let metadata = tokio::fs::symlink_metadata(&path).await.map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                SemanticError::MissingGeneration(generation)
+            } else {
+                error.into()
+            }
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(SemanticError::CorruptIndex {
+                reason: "semantic generation must be a real directory".into(),
+            });
+        }
+        let canonical = tokio::fs::canonicalize(path).await?;
+        if !canonical.starts_with(generations) {
+            return Err(SemanticError::CorruptIndex {
+                reason: "semantic generation escapes the generations root".into(),
+            });
+        }
+        Ok(canonical)
     }
 
     fn generation_path(&self, generation: GenerationId) -> PathBuf {
@@ -74,10 +177,7 @@ impl LanceDbIndex {
         &self,
         generation: GenerationId,
     ) -> Result<lancedb::Connection, SemanticError> {
-        let path = self.generation_path(generation);
-        if !path.is_dir() {
-            return Err(SemanticError::MissingGeneration(generation));
-        }
+        let path = self.validate_generation_locked(generation).await?;
         let uri = path.to_string_lossy().into_owned();
         Ok(lancedb::connect(&uri).execute().await?)
     }
@@ -108,7 +208,7 @@ impl LanceDbIndex {
 
     async fn valid_hit(
         &self,
-        _generation: GenerationId,
+        generation: GenerationId,
         chunk_id: i64,
         checksum: &str,
         series: &str,
@@ -120,7 +220,7 @@ impl LanceDbIndex {
         let Some(pool) = &self.pool else {
             return Ok(true);
         };
-        let row = sqlx::query("SELECT c.text, c.series_slug, s.checksum FROM rag_chunks c JOIN semantic_chunk_state s ON s.chunk_id = c.id WHERE c.id = ?")
+        let row = sqlx::query("SELECT c.text, c.series_slug, s.checksum, s.generation_id FROM rag_chunks c JOIN semantic_chunk_state s ON s.chunk_id = c.id WHERE c.id = ?")
             .bind(chunk_id).fetch_optional(pool).await?;
         let Some(row) = row else {
             return Ok(false);
@@ -128,6 +228,7 @@ impl LanceDbIndex {
         let text: String = row.get("text");
         Ok(row.get::<String, _>("series_slug") == wanted
             && row.get::<String, _>("checksum") == checksum
+            && row.get::<String, _>("generation_id") == generation.0.to_string()
             && checksum == hex_checksum(text.as_bytes()))
     }
 
@@ -138,52 +239,61 @@ impl LanceDbIndex {
         let Some(pool) = &self.pool else {
             return Ok(());
         };
-        let table = self
-            .connection(generation)
-            .await?
-            .open_table(TABLE)
-            .execute()
-            .await?;
-        let batches = table
-            .query()
-            .execute()
-            .await?
-            .try_collect::<Vec<_>>()
-            .await?;
         let mut indexed = HashMap::<i64, (String, String)>::new();
-        for batch in batches {
-            let ids = batch
-                .column_by_name("chunk_id")
-                .and_then(|value| value.as_any().downcast_ref::<Int64Array>())
-                .ok_or_else(|| SemanticError::CorruptIndex {
-                    reason: "chunk_id column missing".into(),
-                })?;
-            let series = batch
-                .column_by_name("series_slug")
-                .and_then(|value| value.as_any().downcast_ref::<StringArray>())
-                .ok_or_else(|| SemanticError::CorruptIndex {
-                    reason: "series_slug column missing".into(),
-                })?;
-            let checksums = batch
-                .column_by_name("checksum")
-                .and_then(|value| value.as_any().downcast_ref::<StringArray>())
-                .ok_or_else(|| SemanticError::CorruptIndex {
-                    reason: "checksum column missing".into(),
-                })?;
-            for row in 0..batch.num_rows() {
-                if indexed
-                    .insert(
-                        ids.value(row),
-                        (
-                            series.value(row).to_owned(),
-                            checksums.value(row).to_owned(),
-                        ),
-                    )
-                    .is_some()
-                {
-                    return Err(SemanticError::CorruptIndex {
-                        reason: format!("generation contains duplicate chunk {}", ids.value(row)),
-                    });
+        let db = self.connection(generation).await?;
+        if db
+            .table_names()
+            .execute()
+            .await?
+            .iter()
+            .any(|name| name == TABLE)
+        {
+            let table = db.open_table(TABLE).execute().await?;
+            let generation_size = table.count_rows(None).await?;
+            let batches = table
+                .query()
+                .limit(generation_size)
+                .execute()
+                .await?
+                .try_collect::<Vec<_>>()
+                .await?;
+            for batch in batches {
+                let ids = batch
+                    .column_by_name("chunk_id")
+                    .and_then(|value| value.as_any().downcast_ref::<Int64Array>())
+                    .ok_or_else(|| SemanticError::CorruptIndex {
+                        reason: "chunk_id column missing".into(),
+                    })?;
+                let series = batch
+                    .column_by_name("series_slug")
+                    .and_then(|value| value.as_any().downcast_ref::<StringArray>())
+                    .ok_or_else(|| SemanticError::CorruptIndex {
+                        reason: "series_slug column missing".into(),
+                    })?;
+                let checksums = batch
+                    .column_by_name("checksum")
+                    .and_then(|value| value.as_any().downcast_ref::<StringArray>())
+                    .ok_or_else(|| SemanticError::CorruptIndex {
+                        reason: "checksum column missing".into(),
+                    })?;
+                for row in 0..batch.num_rows() {
+                    if indexed
+                        .insert(
+                            ids.value(row),
+                            (
+                                series.value(row).to_owned(),
+                                checksums.value(row).to_owned(),
+                            ),
+                        )
+                        .is_some()
+                    {
+                        return Err(SemanticError::CorruptIndex {
+                            reason: format!(
+                                "generation contains duplicate chunk {}",
+                                ids.value(row)
+                            ),
+                        });
+                    }
                 }
             }
         }
@@ -259,8 +369,21 @@ impl SemanticIndex for LanceDbIndex {
     }
 
     async fn begin_rebuild(&self) -> Result<GenerationId, SemanticError> {
+        let _guard = self.lifecycle_lock().await?;
         let id = GenerationId(uuid::Uuid::new_v4());
-        tokio::fs::create_dir_all(self.generation_path(id)).await?;
+        tokio::fs::create_dir(self.generation_path(id)).await?;
+        self.validate_generation_locked(id).await?;
+        let db = self.connection(id).await?;
+        db.create_empty_table(
+            GENERATION_TABLE,
+            Arc::new(Schema::new(vec![Field::new(
+                "generation_id",
+                DataType::Utf8,
+                false,
+            )])),
+        )
+        .execute()
+        .await?;
         Ok(id)
     }
 
@@ -269,6 +392,8 @@ impl SemanticIndex for LanceDbIndex {
         generation: GenerationId,
         vectors: Vec<VectorRecord>,
     ) -> Result<usize, SemanticError> {
+        let _guard = self.lifecycle_lock().await?;
+        self.validate_generation_locked(generation).await?;
         validate_vectors(&vectors)?;
         let dimensions = i32::try_from(vectors[0].embedding.len()).map_err(|_| {
             SemanticError::InvalidVector {
@@ -350,6 +475,15 @@ impl SemanticIndex for LanceDbIndex {
             .await?
             .ok_or(SemanticError::NoActiveGeneration)?;
         let db = self.connection(generation).await?;
+        if !db
+            .table_names()
+            .execute()
+            .await?
+            .iter()
+            .any(|name| name == TABLE)
+        {
+            return Ok(vec![]);
+        }
         let table =
             db.open_table(TABLE)
                 .execute()
@@ -357,57 +491,79 @@ impl SemanticIndex for LanceDbIndex {
                 .map_err(|error| SemanticError::CorruptIndex {
                     reason: error.to_string(),
                 })?;
-        let batches = table
-            .query()
-            .nearest_to(query)?
-            .limit(limit.saturating_mul(4).max(limit))
-            .execute()
-            .await?
-            .try_collect::<Vec<_>>()
-            .await?;
-        let mut hits = Vec::new();
-        for batch in batches {
-            let ids = batch
-                .column_by_name("chunk_id")
-                .and_then(|value| value.as_any().downcast_ref::<Int64Array>())
-                .ok_or_else(|| SemanticError::CorruptIndex {
-                    reason: "chunk_id column missing".into(),
-                })?;
-            let distances = batch
-                .column_by_name("_distance")
-                .and_then(|value| value.as_any().downcast_ref::<Float32Array>())
-                .ok_or_else(|| SemanticError::CorruptIndex {
-                    reason: "distance column missing".into(),
-                })?;
-            let series = batch
-                .column_by_name("series_slug")
-                .and_then(|value| value.as_any().downcast_ref::<StringArray>())
-                .ok_or_else(|| SemanticError::CorruptIndex {
-                    reason: "series_slug column missing".into(),
-                })?;
-            let checksums = batch
-                .column_by_name("checksum")
-                .and_then(|value| value.as_any().downcast_ref::<StringArray>())
-                .ok_or_else(|| SemanticError::CorruptIndex {
-                    reason: "checksum column missing".into(),
-                })?;
-            for row in 0..batch.num_rows() {
-                if self
-                    .valid_hit(
-                        generation,
-                        ids.value(row),
-                        checksums.value(row),
-                        series.value(row),
-                        &filter.series_slug,
-                    )
-                    .await?
-                {
-                    hits.push(SearchHit {
-                        chunk_id: ids.value(row),
-                        distance: distances.value(row),
-                    });
+        if limit == 0 {
+            return Ok(vec![]);
+        }
+        let escaped_series = filter.series_slug.replace('\'', "''");
+        let predicate = format!("series_slug = '{escaped_series}'");
+        let lance_filter = self.pool.as_ref().map(|_| predicate.clone());
+        let generation_size = table.count_rows(lance_filter.clone()).await?;
+        if generation_size == 0 {
+            return Ok(vec![]);
+        }
+        let mut requested = limit.saturating_mul(4).max(limit).min(generation_size);
+        let mut hits;
+        loop {
+            let nearest = table.query().nearest_to(query)?;
+            let nearest = if let Some(predicate) = &lance_filter {
+                nearest.only_if(predicate)
+            } else {
+                nearest
+            };
+            let batches = nearest
+                .limit(requested)
+                .execute()
+                .await?
+                .try_collect::<Vec<_>>()
+                .await?;
+            hits = Vec::new();
+            for batch in batches {
+                let ids = batch
+                    .column_by_name("chunk_id")
+                    .and_then(|value| value.as_any().downcast_ref::<Int64Array>())
+                    .ok_or_else(|| SemanticError::CorruptIndex {
+                        reason: "chunk_id column missing".into(),
+                    })?;
+                let distances = batch
+                    .column_by_name("_distance")
+                    .and_then(|value| value.as_any().downcast_ref::<Float32Array>())
+                    .ok_or_else(|| SemanticError::CorruptIndex {
+                        reason: "distance column missing".into(),
+                    })?;
+                let series = batch
+                    .column_by_name("series_slug")
+                    .and_then(|value| value.as_any().downcast_ref::<StringArray>())
+                    .ok_or_else(|| SemanticError::CorruptIndex {
+                        reason: "series_slug column missing".into(),
+                    })?;
+                let checksums = batch
+                    .column_by_name("checksum")
+                    .and_then(|value| value.as_any().downcast_ref::<StringArray>())
+                    .ok_or_else(|| SemanticError::CorruptIndex {
+                        reason: "checksum column missing".into(),
+                    })?;
+                for row in 0..batch.num_rows() {
+                    if self
+                        .valid_hit(
+                            generation,
+                            ids.value(row),
+                            checksums.value(row),
+                            series.value(row),
+                            &filter.series_slug,
+                        )
+                        .await?
+                    {
+                        hits.push(SearchHit {
+                            chunk_id: ids.value(row),
+                            distance: distances.value(row),
+                        });
+                    }
                 }
             }
+            if hits.len() >= limit || requested >= generation_size {
+                break;
+            }
+            requested = requested.saturating_mul(2).min(generation_size);
         }
         hits.sort_by(|left, right| {
             left.distance
@@ -422,6 +578,7 @@ impl SemanticIndex for LanceDbIndex {
         if chunk_ids.is_empty() {
             return Ok(0);
         }
+        let _guard = self.lifecycle_lock().await?;
         let generation = self
             .read_active()
             .await?
@@ -443,18 +600,8 @@ impl SemanticIndex for LanceDbIndex {
     }
 
     async fn activate_generation(&self, generation: GenerationId) -> Result<(), SemanticError> {
-        let db = self.connection(generation).await?;
-        if !db
-            .table_names()
-            .execute()
-            .await?
-            .iter()
-            .any(|name| name == TABLE)
-        {
-            return Err(SemanticError::CorruptIndex {
-                reason: "generation has no vectors table".into(),
-            });
-        }
+        let _guard = self.lifecycle_lock().await?;
+        self.validate_generation_locked(generation).await?;
         self.ensure_generation_complete(generation).await?;
         let temp = self
             .root
@@ -465,6 +612,8 @@ impl SemanticIndex for LanceDbIndex {
     }
 
     async fn cancel_generation(&self, generation: GenerationId) -> Result<(), SemanticError> {
+        let _guard = self.lifecycle_lock().await?;
+        self.validate_generation_locked(generation).await?;
         if self.read_active().await? == Some(generation) {
             return Err(SemanticError::Cancelled);
         }
@@ -477,10 +626,37 @@ impl SemanticIndex for LanceDbIndex {
     }
 
     async fn close(&self) -> Result<(), SemanticError> {
+        let _guard = self.lifecycle_lock().await?;
         Ok(())
     }
 }
 
 fn hex_checksum(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+async fn reject_symlink_components(path: &Path) -> Result<(), SemanticError> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut ancestors = absolute.ancestors().collect::<Vec<_>>();
+    ancestors.reverse();
+    for ancestor in ancestors {
+        match tokio::fs::symlink_metadata(ancestor).await {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(SemanticError::CorruptIndex {
+                    reason: format!(
+                        "semantic index path contains symlink component {}",
+                        ancestor.display()
+                    ),
+                });
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }

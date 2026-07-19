@@ -558,6 +558,7 @@ const REQUIRED_TABLES: &[&str] = &[
     "rag_chunk_story_scopes",
     "rag_chunks",
     "rag_sources",
+    "semantic_batch_claims",
     "semantic_chunk_state",
     "semantic_index_jobs",
     "series",
@@ -831,6 +832,11 @@ async fn rag_chunks_has_the_exact_compound_source_and_series_foreign_key() {
 async fn explicit_indexes_have_the_exact_declared_columns() {
     let pool = migrated_pool().await;
     let expected = [
+        (
+            "semantic_batch_claims",
+            "semantic_batch_claims_job_token_idx",
+            vec!["job_id", "claim_token"],
+        ),
         (
             "crystal_links",
             "idx_crystal_links_target",
@@ -1121,5 +1127,5 @@ async fn migration_versions_include_fts_and_are_idempotent() {
     .await
     .expect("migration versions should be readable");
 
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
 }

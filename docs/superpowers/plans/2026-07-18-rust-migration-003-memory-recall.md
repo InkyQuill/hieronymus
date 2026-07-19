@@ -97,7 +97,7 @@
 
 **Files:** Create `semantic/{mod.rs,embedding.rs,index.rs,lancedb.rs,jobs.rs,rrf.rs}`, `tests/test_semantic.rs`.
 
-**Interfaces:** Produce `EmbeddingProvider`, `SemanticIndex`, `IndexHealth`, `GenerationId`, `GenerationInfo`, `VectorRecord`, `SearchFilter`, `SearchHit`, `SemanticJobQueue`, test-only `FakeEmbeddingProvider`/`FakeSemanticIndex`, and `reciprocal_rank_fusion` from proposal 003 §5.
+**Interfaces:** Produce `EmbeddingProvider`, `SemanticIndex`, `IndexHealth`, `GenerationId`, `GenerationInfo`, `VectorRecord`, `SearchFilter`, `SearchHit`, `SemanticJobQueue`, ownership-bearing `ClaimedSemanticBatch`, test-only `FakeEmbeddingProvider`/`FakeSemanticIndex`, and `reciprocal_rank_fusion` from proposal 003 §5. Queue completion/failure must accept the batch claim rather than caller-supplied chunk/job IDs.
 
 - [ ] Write contract tests that run the same insert/delete/search corpus against fake and temporary LanceDB indexes; test deterministic embeddings, generation swap, checksum skip, cancellation, missing model, corrupt index, and FTS fallback.
 - [ ] Run focused test; expect RED.

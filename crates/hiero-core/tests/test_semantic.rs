@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use hiero_core::rag::{RagStore, RetrievalMode, SearchOptions};
 use hiero_core::semantic::{
@@ -23,24 +26,56 @@ fn reciprocal_rank_fusion_merges_lanes_and_uses_stable_id_ties() {
     assert_eq!(fused[1].1, fused[2].1);
 }
 
+#[test]
+fn reciprocal_rank_fusion_counts_only_the_first_occurrence_per_lane() {
+    let fused = reciprocal_rank_fusion(
+        &[(10, 9.0), (10, 8.0), (20, 7.0)],
+        &[(30, 0.1), (30, 0.2), (20, 0.3)],
+        60.0,
+    );
+
+    assert_eq!(
+        fused.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        vec![20, 10, 30]
+    );
+    assert_eq!(fused[1].1, fused[2].1);
+}
+
 async fn generation_contract(index: Arc<dyn SemanticIndex>) {
     let first = index.begin_rebuild().await.unwrap();
-    index
-        .upsert_vectors(
-            first,
-            vec![
-                VectorRecord {
-                    chunk_id: 10,
-                    embedding: vec![1.0, 0.0],
-                },
-                VectorRecord {
+    assert_eq!(
+        index
+            .upsert_vectors(
+                first,
+                vec![
+                    VectorRecord {
+                        chunk_id: 10,
+                        embedding: vec![1.0, 0.0],
+                    },
+                    VectorRecord {
+                        chunk_id: 20,
+                        embedding: vec![0.0, 1.0],
+                    },
+                ],
+            )
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        index
+            .upsert_vectors(
+                first,
+                vec![VectorRecord {
                     chunk_id: 20,
                     embedding: vec![0.0, 1.0],
-                },
-            ],
-        )
-        .await
-        .unwrap();
+                }],
+            )
+            .await
+            .unwrap(),
+        1,
+        "upsert returns input records, including replacements"
+    );
     assert!(
         index
             .search(
@@ -124,6 +159,44 @@ async fn temporary_lancedb_index_obeys_generation_contract() {
     generation_contract(Arc::new(LanceDbIndex::open(temp.path()).await.unwrap())).await;
 }
 
+async fn empty_generation_contract(index: Arc<dyn SemanticIndex>) {
+    let generation = index.begin_rebuild().await.unwrap();
+    index.activate_generation(generation).await.unwrap();
+    assert_eq!(
+        index
+            .active_generation()
+            .await
+            .unwrap()
+            .unwrap()
+            .vector_count,
+        0
+    );
+    assert!(
+        index
+            .search(
+                &[1.0, 0.0],
+                &SearchFilter {
+                    series_slug: "book".into(),
+                },
+                5,
+            )
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn fake_index_supports_an_empty_generation() {
+    empty_generation_contract(Arc::new(FakeSemanticIndex::new())).await;
+}
+
+#[tokio::test]
+async fn lancedb_index_supports_an_empty_generation() {
+    let temp = tempfile::tempdir().unwrap();
+    empty_generation_contract(Arc::new(LanceDbIndex::open(temp.path()).await.unwrap())).await;
+}
+
 #[tokio::test]
 async fn fake_embeddings_are_deterministic_and_validate_dimensions() {
     let provider = FakeEmbeddingProvider::new(4);
@@ -201,6 +274,50 @@ async fn ort_boundary_rejects_bad_batch_cardinality_and_non_finite_vectors() {
     ));
 }
 
+#[tokio::test]
+async fn ort_runtime_initializes_once_under_concurrency_and_retries_failures() {
+    let temp = tempfile::tempdir().unwrap();
+    tokio::fs::write(temp.path().join("model.onnx"), b"injected")
+        .await
+        .unwrap();
+    tokio::fs::write(temp.path().join("tokenizer.json"), b"injected")
+        .await
+        .unwrap();
+    let initializes = Arc::new(AtomicUsize::new(0));
+    let provider = Arc::new(OrtEmbeddingProvider::with_initializer(temp.path(), 2, {
+        let initializes = initializes.clone();
+        Arc::new(move |_, _, _| {
+            initializes.fetch_add(1, Ordering::SeqCst);
+            Ok(Arc::new(|texts: &[String]| {
+                Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+            }))
+        })
+    }));
+    let (first, second) = tokio::join!(provider.embed_query("moon"), provider.embed_query("stars"));
+    assert_eq!(first.unwrap(), vec![1.0, 0.0]);
+    assert_eq!(second.unwrap(), vec![1.0, 0.0]);
+    assert_eq!(initializes.load(Ordering::SeqCst), 1);
+
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let retrying = OrtEmbeddingProvider::with_initializer(temp.path(), 2, {
+        let attempts = attempts.clone();
+        Arc::new(move |_, _, _| {
+            if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(SemanticError::Ort("injected initialization failure".into()));
+            }
+            Ok(Arc::new(|texts: &[String]| {
+                Ok(texts.iter().map(|_| vec![0.0, 1.0]).collect())
+            }))
+        })
+    });
+    assert!(matches!(
+        retrying.embed_query("first").await,
+        Err(SemanticError::Ort(_))
+    ));
+    assert_eq!(retrying.embed_query("retry").await.unwrap(), vec![0.0, 1.0]);
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+}
+
 async fn semantic_pool() -> sqlx::SqlitePool {
     let url = format!(
         "sqlite:file:semantic-{}?mode=memory&cache=shared",
@@ -243,10 +360,8 @@ async fn job_queue_claims_bounded_distinct_batches_and_tracks_checksums() {
             .unwrap();
     assert_eq!(unassigned, None, "the index owns generation allocation");
     let generation = uuid::Uuid::new_v4().to_string();
-    queue
-        .mark_indexed(&[10, 20, 30], &generation)
-        .await
-        .unwrap();
+    queue.mark_indexed(&first, &generation).await.unwrap();
+    queue.mark_indexed(&second, &generation).await.unwrap();
     assert!(queue.claim_next_batch(2).await.unwrap().is_empty());
     let status: String = sqlx::query_scalar("SELECT status FROM semantic_index_jobs WHERE id = ?")
         .bind(job)
@@ -279,16 +394,22 @@ async fn failed_job_is_reclaimable_and_generation_cannot_change_mid_job() {
     let pool = semantic_pool().await;
     let queue = SemanticJobQueue::new(&pool);
     let failed = queue.enqueue_rebuild().await.unwrap();
-    assert_eq!(queue.claim_next_batch(1).await.unwrap()[0].id, 10);
-    queue.mark_failed(failed, "injected failure").await.unwrap();
+    let failed_claim = queue.claim_next_batch(1).await.unwrap();
+    assert_eq!(failed_claim[0].id, 10);
+    queue
+        .mark_failed(&failed_claim, "injected failure")
+        .await
+        .unwrap();
 
-    queue.enqueue_rebuild().await.unwrap();
-    assert_eq!(queue.claim_next_batch(1).await.unwrap()[0].id, 10);
+    assert_eq!(failed, failed_claim.job_id());
+    let retry = queue.claim_next_batch(1).await.unwrap();
+    assert_eq!(retry[0].id, 10);
     let first_generation = uuid::Uuid::new_v4().to_string();
-    queue.mark_indexed(&[10], &first_generation).await.unwrap();
+    queue.mark_indexed(&retry, &first_generation).await.unwrap();
+    let next = queue.claim_next_batch(1).await.unwrap();
     let other_generation = uuid::Uuid::new_v4().to_string();
     assert!(matches!(
-        queue.mark_indexed(&[20], &other_generation).await,
+        queue.mark_indexed(&next, &other_generation).await,
         Err(SemanticError::InvalidVector { .. })
     ));
     let state: Option<String> =
@@ -298,6 +419,63 @@ async fn failed_job_is_reclaimable_and_generation_cannot_change_mid_job() {
             .unwrap()
             .flatten();
     assert_ne!(state.as_deref(), Some(other_generation.as_str()));
+    assert!(matches!(
+        queue.mark_indexed(&failed_claim, &first_generation).await,
+        Err(SemanticError::InvalidVector { .. })
+    ));
+}
+
+#[tokio::test]
+async fn empty_second_claim_does_not_complete_a_job_with_an_in_flight_batch() {
+    let pool = semantic_pool().await;
+    let queue = SemanticJobQueue::new(&pool);
+    let job = queue.enqueue_rebuild().await.unwrap();
+    let first = queue.claim_next_batch(10).await.unwrap();
+    assert_eq!(first.len(), 3);
+
+    assert!(queue.claim_next_batch(10).await.unwrap().is_empty());
+    let status: String = sqlx::query_scalar("SELECT status FROM semantic_index_jobs WHERE id = ?")
+        .bind(job)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "running");
+
+    let generation = uuid::Uuid::new_v4().to_string();
+    queue.mark_indexed(&first, &generation).await.unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM semantic_index_jobs WHERE id = ?")
+        .bind(job)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "completed");
+}
+
+#[tokio::test]
+async fn hydration_error_rolls_back_claim_and_leaves_chunk_reclaimable() {
+    let pool = semantic_pool().await;
+    sqlx::query("UPDATE rag_chunks SET metadata_json = 'not-json' WHERE id = 10")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let queue = SemanticJobQueue::new(&pool);
+    queue.enqueue_rebuild().await.unwrap();
+
+    assert!(matches!(
+        queue.claim_next_batch(1).await,
+        Err(SemanticError::CorruptIndex { .. })
+    ));
+    let claims: i64 = sqlx::query_scalar("SELECT count(*) FROM semantic_batch_claims")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(claims, 0);
+
+    sqlx::query("UPDATE rag_chunks SET metadata_json = '{}' WHERE id = 10")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(queue.claim_next_batch(1).await.unwrap()[0].id, 10);
 }
 
 #[tokio::test]
@@ -305,7 +483,10 @@ async fn assigned_rebuild_generation_reclaims_every_prior_generation_chunk() {
     let pool = semantic_pool().await;
     let queue = SemanticJobQueue::new(&pool);
     let old = uuid::Uuid::new_v4().to_string();
-    queue.mark_indexed(&[10, 20, 30], &old).await.unwrap();
+    let seed_job = queue.enqueue_rebuild().await.unwrap();
+    queue.assign_generation(seed_job, &old).await.unwrap();
+    let seed = queue.claim_next_batch(10).await.unwrap();
+    queue.mark_indexed(&seed, &old).await.unwrap();
     let job = queue.enqueue_rebuild().await.unwrap();
     let next = uuid::Uuid::new_v4().to_string();
     queue.assign_generation(job, &next).await.unwrap();
@@ -346,8 +527,14 @@ async fn lancedb_with_sqlite_excludes_stale_vectors_and_wrong_series() {
         .await
         .unwrap();
     let queue = SemanticJobQueue::new(&pool);
+    let job = queue.enqueue_rebuild().await.unwrap();
     queue
-        .mark_indexed(&[10, 20, 30], &generation.0.to_string())
+        .assign_generation(job, &generation.0.to_string())
+        .await
+        .unwrap();
+    let claim = queue.claim_next_batch(10).await.unwrap();
+    queue
+        .mark_indexed(&claim, &generation.0.to_string())
         .await
         .unwrap();
     index.activate_generation(generation).await.unwrap();
@@ -420,6 +607,64 @@ async fn lancedb_with_sqlite_excludes_stale_vectors_and_wrong_series() {
 }
 
 #[tokio::test]
+async fn lancedb_search_backfills_past_more_than_four_limits_of_stale_hits() {
+    let pool = semantic_pool().await;
+    for id in 100_i64..130 {
+        let text = format!("chunk-{id}");
+        sqlx::query("INSERT INTO rag_chunks(id, source_id, series_slug, chunk_kind, text, display_text, location, metadata_json, created_at) VALUES (?, 1, 'book', 'text', ?, ?, '', '{}', ?)")
+            .bind(id).bind(&text).bind(&text).bind(chrono::Utc::now())
+            .execute(&pool).await.unwrap();
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let index = LanceDbIndex::open_with_pool(temp.path(), pool.clone())
+        .await
+        .unwrap();
+    let generation = index.begin_rebuild().await.unwrap();
+    let vectors = [10_i64, 20, 30]
+        .into_iter()
+        .chain(100_i64..130)
+        .map(|id| VectorRecord {
+            chunk_id: id,
+            embedding: if id < 125 {
+                vec![1.0, (id as f32) / 100_000.0]
+            } else {
+                vec![0.0, 1.0]
+            },
+        })
+        .collect::<Vec<_>>();
+    index.upsert_vectors(generation, vectors).await.unwrap();
+    let queue = SemanticJobQueue::new(&pool);
+    let job = queue.enqueue_rebuild().await.unwrap();
+    queue
+        .assign_generation(job, &generation.0.to_string())
+        .await
+        .unwrap();
+    let claim = queue.claim_next_batch(100).await.unwrap();
+    queue
+        .mark_indexed(&claim, &generation.0.to_string())
+        .await
+        .unwrap();
+    index.activate_generation(generation).await.unwrap();
+
+    sqlx::query("UPDATE rag_chunks SET text = text || '-stale' WHERE id < 125")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let hits = index
+        .search(
+            &[1.0, 0.0],
+            &SearchFilter {
+                series_slug: "book".into(),
+            },
+            3,
+        )
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 3);
+    assert!(hits.iter().all(|hit| hit.chunk_id >= 125));
+}
+
+#[tokio::test]
 async fn corrupt_active_pointer_is_typed_and_health_is_degraded() {
     let temp = tempfile::tempdir().unwrap();
     tokio::fs::write(temp.path().join("ACTIVE"), "not-a-generation")
@@ -431,6 +676,122 @@ async fn corrupt_active_pointer_is_typed_and_health_is_degraded() {
         index.active_generation().await,
         Err(SemanticError::CorruptIndex { .. })
     ));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn lancedb_rejects_symlinked_root_generations_entries_and_active_pointer() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let linked_root = temp.path().join("linked-root");
+    symlink(outside.path(), &linked_root).unwrap();
+    assert!(matches!(
+        LanceDbIndex::open(&linked_root).await,
+        Err(SemanticError::CorruptIndex { .. })
+    ));
+    let linked_parent = temp.path().join("linked-parent");
+    symlink(outside.path(), &linked_parent).unwrap();
+    assert!(matches!(
+        LanceDbIndex::open(linked_parent.join("child")).await,
+        Err(SemanticError::CorruptIndex { .. })
+    ));
+
+    let root = temp.path().join("index");
+    tokio::fs::create_dir(&root).await.unwrap();
+    symlink(outside.path(), root.join("generations")).unwrap();
+    let index = LanceDbIndex::open(&root).await.unwrap();
+    assert!(matches!(
+        index.begin_rebuild().await,
+        Err(SemanticError::CorruptIndex { .. })
+    ));
+
+    tokio::fs::remove_file(root.join("generations"))
+        .await
+        .unwrap();
+    let generation = index.begin_rebuild().await.unwrap();
+    index.cancel_generation(generation).await.unwrap();
+    symlink(outside.path(), index_path(&root, generation)).unwrap();
+    assert!(matches!(
+        index
+            .upsert_vectors(
+                generation,
+                vec![VectorRecord {
+                    chunk_id: 1,
+                    embedding: vec![1.0],
+                }],
+            )
+            .await,
+        Err(SemanticError::CorruptIndex { .. })
+    ));
+
+    tokio::fs::remove_file(index_path(&root, generation))
+        .await
+        .unwrap();
+    let generation = index.begin_rebuild().await.unwrap();
+    let outside_active = outside.path().join("active");
+    tokio::fs::write(&outside_active, b"untouched")
+        .await
+        .unwrap();
+    symlink(&outside_active, root.join("ACTIVE")).unwrap();
+    assert!(matches!(
+        index.activate_generation(generation).await,
+        Err(SemanticError::CorruptIndex { .. })
+    ));
+    assert_eq!(
+        tokio::fs::read(&outside_active).await.unwrap(),
+        b"untouched"
+    );
+}
+
+#[cfg(unix)]
+fn index_path(
+    root: &std::path::Path,
+    generation: hiero_core::semantic::GenerationId,
+) -> std::path::PathBuf {
+    root.join("generations").join(generation.0.to_string())
+}
+
+#[tokio::test]
+async fn activation_and_cancellation_are_serialized_across_index_handles() {
+    let temp = tempfile::tempdir().unwrap();
+    let first = Arc::new(LanceDbIndex::open(temp.path()).await.unwrap());
+    let second = Arc::new(LanceDbIndex::open(temp.path()).await.unwrap());
+    let generation = first.begin_rebuild().await.unwrap();
+    let barrier = Arc::new(tokio::sync::Barrier::new(3));
+
+    let activate = {
+        let first = first.clone();
+        let barrier = barrier.clone();
+        tokio::spawn(async move {
+            barrier.wait().await;
+            first.activate_generation(generation).await
+        })
+    };
+    let cancel = {
+        let second = second.clone();
+        let barrier = barrier.clone();
+        tokio::spawn(async move {
+            barrier.wait().await;
+            second.cancel_generation(generation).await
+        })
+    };
+    barrier.wait().await;
+    let activated = activate.await.unwrap();
+    let cancelled = cancel.await.unwrap();
+    let active = first.active_generation().await;
+
+    match (activated, cancelled) {
+        (Ok(()), Err(SemanticError::Cancelled)) => {
+            assert_eq!(active.unwrap().unwrap().id, generation);
+        }
+        (Err(SemanticError::MissingGeneration(id)), Ok(())) => {
+            assert_eq!(id, generation);
+            assert!(active.unwrap().is_none());
+        }
+        result => panic!("lifecycle operations were not serialized: {result:?}"),
+    }
 }
 
 #[tokio::test]
