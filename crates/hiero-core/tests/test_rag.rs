@@ -169,6 +169,72 @@ fn oversized_glossary_metadata_is_rejected_before_split_amplification() {
 }
 
 #[test]
+fn serialized_metadata_limit_counts_scalars_and_container_syntax_exactly() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("scalar-array.json");
+    let values = (0..(MAX_RAG_METADATA_BYTES / 3 + 32))
+        .map(|index| match index % 3 {
+            0 => serde_json::Value::Bool(true),
+            1 => serde_json::Value::Null,
+            _ => serde_json::json!(7),
+        })
+        .collect::<Vec<_>>();
+    fs::write(
+        &path,
+        serde_json::to_vec(&serde_json::json!([{"values": values}])).unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        load_rag_file(&path, SourceType::Auto),
+        Err(RagError::ResourceLimit {
+            resource: "chunk metadata bytes",
+            limit: MAX_RAG_METADATA_BYTES,
+        })
+    ));
+
+    let normal = dir.path().join("normal.json");
+    fs::write(&normal, br#"[{"source":"Sense","approved":true,"rank":7}]"#).unwrap();
+    assert_eq!(
+        load_rag_file(&normal, SourceType::Auto)
+            .unwrap()
+            .chunks
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn many_unique_csv_headers_validate_linearly_and_trimmed_duplicates_reject() {
+    let dir = tempdir().unwrap();
+    let unique = dir.path().join("unique.csv");
+    let headers = (0..1_000)
+        .map(|index| format!("h{index}"))
+        .collect::<Vec<_>>();
+    fs::write(
+        &unique,
+        format!(
+            "{}\n{}\n",
+            headers.join(","),
+            vec!["x"; headers.len()].join(",")
+        ),
+    )
+    .unwrap();
+    assert!(
+        !load_rag_file(&unique, SourceType::Auto)
+            .unwrap()
+            .chunks
+            .is_empty()
+    );
+
+    let duplicate = dir.path().join("duplicate.csv");
+    fs::write(&duplicate, "source, target,source\nSense,Сенс,Sense\n").unwrap();
+    assert!(matches!(
+        load_rag_file(&duplicate, SourceType::Auto),
+        Err(RagError::Parse { .. })
+    ));
+}
+
+#[test]
 fn overlong_unicode_word_splits_exactly_without_losing_scalars() {
     let input = "界".repeat(MAX_RAG_CHUNK_CHARS * 4 + 17);
     let chunks = split_chunk_text(&input);

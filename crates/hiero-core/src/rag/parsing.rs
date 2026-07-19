@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, fs, io::Read, path::Path};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fs,
+    io::{Read, Write},
+    path::Path,
+};
 
 use csv::StringRecord;
 use regex::Regex;
@@ -308,13 +313,12 @@ fn parse_delimited(bytes: &[u8], delimiter: u8) -> Result<Vec<ParsedRagChunk>, R
 }
 
 fn validate_headers(headers: &StringRecord) -> Result<(), RagError> {
-    let clean: Vec<_> = headers.iter().map(str::trim).collect();
-    if clean.is_empty()
-        || clean.iter().any(|header| header.is_empty())
-        || clean
+    let mut seen = HashSet::with_capacity(headers.len());
+    if headers.is_empty()
+        || headers
             .iter()
-            .enumerate()
-            .any(|(i, header)| clean[..i].contains(header))
+            .map(str::trim)
+            .any(|header| header.is_empty() || !seen.insert(header))
     {
         return Err(RagError::Parse {
             path: None,
@@ -400,12 +404,7 @@ fn glossary_chunk(
             message: "empty glossary entry".into(),
         });
     }
-    if retained_metadata_bytes(&metadata) > MAX_RAG_METADATA_BYTES {
-        return Err(RagError::ResourceLimit {
-            resource: "chunk metadata bytes",
-            limit: MAX_RAG_METADATA_BYTES,
-        });
-    }
+    validate_metadata_bytes(&metadata)?;
     let text = metadata
         .iter()
         .map(|(key, value)| {
@@ -427,30 +426,39 @@ fn glossary_chunk(
     })
 }
 
-fn retained_metadata_bytes(metadata: &BTreeMap<String, serde_json::Value>) -> usize {
-    let mut total: usize = 0;
-    for (key, value) in metadata {
-        total = total.saturating_add(key.len());
-        total = total.saturating_add(retained_value_bytes(value));
-        if total > MAX_RAG_METADATA_BYTES {
-            break;
-        }
+fn validate_metadata_bytes(metadata: &BTreeMap<String, serde_json::Value>) -> Result<(), RagError> {
+    let mut writer = BoundedMetadataWriter::default();
+    let result = serde_json::to_writer(&mut writer, metadata);
+    if writer.exceeded {
+        return Err(RagError::ResourceLimit {
+            resource: "chunk metadata bytes",
+            limit: MAX_RAG_METADATA_BYTES,
+        });
     }
-    total
+    result.map_err(RagError::Json)
 }
 
-fn retained_value_bytes(value: &serde_json::Value) -> usize {
-    match value {
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => 0,
-        serde_json::Value::String(value) => value.len(),
-        serde_json::Value::Array(values) => values.iter().fold(0usize, |total, value| {
-            total.saturating_add(retained_value_bytes(value))
-        }),
-        serde_json::Value::Object(values) => values.iter().fold(0usize, |total, (key, value)| {
-            total
-                .saturating_add(key.len())
-                .saturating_add(retained_value_bytes(value))
-        }),
+#[derive(Default)]
+struct BoundedMetadataWriter {
+    bytes: usize,
+    exceeded: bool,
+}
+
+impl Write for BoundedMetadataWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.bytes.saturating_add(bytes.len()) > MAX_RAG_METADATA_BYTES {
+            self.exceeded = true;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::FileTooLarge,
+                "chunk metadata limit",
+            ));
+        }
+        self.bytes += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

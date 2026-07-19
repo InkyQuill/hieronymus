@@ -524,15 +524,18 @@ fn docx_to_markdown(bytes: &[u8], path: &Path) -> Result<String, RagError> {
             message: error.to_string(),
         })?;
     let relationships = {
-        let mut xml = String::new();
-        if let Ok(file) = archive.by_name("word/_rels/document.xml.rels") {
-            file.take(MAX_DOCX_XML_BYTES + 1)
-                .read_to_string(&mut xml)
-                .map_err(|source| RagError::Io {
-                    path: path.to_owned(),
-                    source,
-                })?;
-        }
+        let xml = if let Ok(file) = archive.by_name("word/_rels/document.xml.rels") {
+            let size = file.size();
+            read_docx_xml_bounded(
+                file,
+                size,
+                MAX_DOCX_XML_BYTES as usize,
+                "DOCX relationships XML bytes",
+                path,
+            )?
+        } else {
+            String::new()
+        };
         parse_docx_relationships(&xml, path)?
     };
     let document = archive
@@ -541,27 +544,47 @@ fn docx_to_markdown(bytes: &[u8], path: &Path) -> Result<String, RagError> {
             path: Some(path.to_owned()),
             message: error.to_string(),
         })?;
-    if document.size() > MAX_DOCX_XML_BYTES {
-        return Err(RagError::ResourceLimit {
-            resource: "DOCX document XML bytes",
-            limit: MAX_DOCX_XML_BYTES as usize,
-        });
+    let size = document.size();
+    let xml = read_docx_xml_bounded(
+        document,
+        size,
+        MAX_DOCX_XML_BYTES as usize,
+        "DOCX document XML bytes",
+        path,
+    )?;
+    docx_document_to_markdown(&xml, &relationships, path)
+}
+
+fn read_docx_xml_bounded(
+    reader: impl Read,
+    declared_size: u64,
+    limit: usize,
+    resource: &'static str,
+    path: &Path,
+) -> Result<String, RagError> {
+    if declared_size > limit as u64 {
+        return Err(RagError::ResourceLimit { resource, limit });
     }
-    let mut xml = String::new();
-    document
-        .take(MAX_DOCX_XML_BYTES + 1)
+    let mut xml = String::with_capacity(usize::try_from(declared_size).unwrap_or(limit));
+    reader
+        .take(limit as u64 + 1)
         .read_to_string(&mut xml)
         .map_err(|source| RagError::Io {
             path: path.to_owned(),
             source,
         })?;
-    if xml.len() as u64 > MAX_DOCX_XML_BYTES {
-        return Err(RagError::ResourceLimit {
-            resource: "DOCX document XML bytes",
-            limit: MAX_DOCX_XML_BYTES as usize,
-        });
+    if xml.len() > limit {
+        return Err(RagError::ResourceLimit { resource, limit });
     }
-    let mut reader = Reader::from_str(&xml);
+    Ok(xml)
+}
+
+fn docx_document_to_markdown(
+    xml: &str,
+    relationships: &std::collections::HashMap<String, String>,
+    path: &Path,
+) -> Result<String, RagError> {
+    let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut output = String::new();
     let mut style = String::new();
@@ -798,5 +821,36 @@ mod tests {
             })
         ));
         assert!(output.len() <= 16);
+    }
+
+    #[test]
+    fn docx_relationships_member_checks_declared_and_actual_uncompressed_size() {
+        let path = Path::new("fixture.docx");
+        assert!(matches!(
+            read_docx_xml_bounded(
+                Cursor::new(b"tiny"),
+                9,
+                8,
+                "DOCX relationships XML bytes",
+                path
+            ),
+            Err(RagError::ResourceLimit {
+                resource: "DOCX relationships XML bytes",
+                limit: 8,
+            })
+        ));
+        assert!(matches!(
+            read_docx_xml_bounded(
+                Cursor::new(b"123456789"),
+                8,
+                8,
+                "DOCX relationships XML bytes",
+                path
+            ),
+            Err(RagError::ResourceLimit {
+                resource: "DOCX relationships XML bytes",
+                limit: 8,
+            })
+        ));
     }
 }
