@@ -1130,6 +1130,7 @@ enum SchemaToken {
     Word(String),
     Identifier(String),
     Literal(String),
+    BlobLiteral(String),
     Symbol(char),
 }
 
@@ -1139,6 +1140,7 @@ impl SchemaToken {
             Self::Word(value) => format!("w{}:{value}", value.len()),
             Self::Identifier(value) => format!("i{}:{value}", value.len()),
             Self::Literal(value) => format!("l{}:{value}", value.len()),
+            Self::BlobLiteral(value) => format!("b{}:{value}", value.len()),
             Self::Symbol(value) => format!("p:{value}"),
         }
     }
@@ -1214,15 +1216,54 @@ fn schema_tokens(sql: &str) -> Vec<SchemaToken> {
             }
             let start_byte = characters[start].0;
             let end_byte = characters.get(position).map_or(sql.len(), |item| item.0);
-            tokens.push(SchemaToken::Word(
-                sql[start_byte..end_byte].to_ascii_lowercase(),
-            ));
+            let word = &sql[start_byte..end_byte];
+            if word.eq_ignore_ascii_case("x")
+                && let Some((payload, next)) = blob_literal(&characters, position, sql)
+            {
+                tokens.push(SchemaToken::BlobLiteral(payload));
+                position = next;
+            } else {
+                tokens.push(SchemaToken::Word(word.to_ascii_lowercase()));
+            }
             continue;
         }
         tokens.push(SchemaToken::Symbol(character));
         position += 1;
     }
     tokens
+}
+
+fn blob_literal(
+    characters: &[(usize, char)],
+    quote_position: usize,
+    sql: &str,
+) -> Option<(String, usize)> {
+    if characters.get(quote_position)?.1 != '\'' {
+        return None;
+    }
+    let payload_start = characters
+        .get(quote_position + 1)
+        .map_or(sql.len(), |item| item.0);
+    let mut position = quote_position + 1;
+    while position < characters.len() && characters[position].1 != '\'' {
+        if !characters[position].1.is_ascii_hexdigit() {
+            return None;
+        }
+        position += 1;
+    }
+    if position == characters.len()
+        || characters
+            .get(position + 1)
+            .is_some_and(|item| item.1 == '\'')
+    {
+        return None;
+    }
+    let payload_end = characters[position].0;
+    let payload = &sql[payload_start..payload_end];
+    if !payload.len().is_multiple_of(2) {
+        return None;
+    }
+    Some((payload.to_owned(), position + 1))
 }
 
 fn quoted_token(
@@ -1656,7 +1697,10 @@ mod tests {
         migrate::{Migration, MigrationType, Migrator},
     };
 
-    use super::{compact_schema_sql, normalize_schema_sql, validate_migration_metadata};
+    use super::{
+        SchemaToken, compact_schema_sql, normalize_schema_sql, schema_tokens,
+        validate_migration_metadata,
+    };
 
     fn migration(version: i64) -> Migration {
         Migration::new(
@@ -1735,5 +1779,30 @@ mod tests {
             compact_schema_sql("create table t(a text check(a <> ''), b text)"),
             compact_schema_sql("create table t(b text, a text check(a <> ''))")
         );
+    }
+
+    #[test]
+    fn schema_signature_distinguishes_blob_adjacency_from_ignored_spacing_and_comments() {
+        let adjacent = normalize_schema_sql("SELECT X'41'");
+        assert_ne!(adjacent, normalize_schema_sql("select x '41'"));
+        assert_ne!(adjacent, normalize_schema_sql("select X/**/'41'"));
+        assert_eq!(
+            normalize_schema_sql("SELECT X'AbCd'"),
+            normalize_schema_sql("select x'AbCd'")
+        );
+        assert_ne!(
+            normalize_schema_sql("SELECT X'AbCd'"),
+            normalize_schema_sql("select x'aBcD'")
+        );
+    }
+
+    #[test]
+    fn invalid_blob_payloads_remain_identifier_and_string_tokens() {
+        for sql in ["X'4'", "X'4G'", "X'41''42'"] {
+            assert!(matches!(
+                schema_tokens(sql).as_slice(),
+                [SchemaToken::Word(word), SchemaToken::Literal(_)] if word == "x"
+            ));
+        }
     }
 }
