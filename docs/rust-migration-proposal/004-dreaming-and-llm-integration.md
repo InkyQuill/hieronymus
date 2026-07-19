@@ -65,8 +65,8 @@ callers are, and remain, separate processes.
 #[async_trait]
 pub trait DreamProvider: Send + Sync {
     fn name(&self) -> &str;
-    async fn crystallize(&self, ctx: &TranslationContext, memories: &[ShortTermMemoryRecord]) -> Result<DreamOutput>;
-    async fn run_pass(&self, pass: PassName, ctx: &TranslationContext, memories: &[ShortTermMemoryRecord]) -> Result<serde_json::Value>;
+    async fn crystallize(&self, ctx: &TranslationContext, memories: &[ShortTermMemory]) -> Result<DreamOutput>;
+    async fn run_pass(&self, pass: PassName, ctx: &TranslationContext, memories: &[ShortTermMemory]) -> Result<serde_json::Value>;
 }
 
 pub struct DreamOutput { pub crystals: Vec<CandidateCrystal>, pub concepts: Vec<ConceptCandidate> }
@@ -112,7 +112,7 @@ pub trait DreamPhase: Send + Sync {
 
 pub struct Crystallizer<'a> { provider: &'a dyn DreamProvider }  // LLM-backed
 impl<'a> DreamPhase for Crystallizer<'a> {
-    type Input = (TranslationContext, Vec<ShortTermMemoryRecord>);
+    type Input = (TranslationContext, Vec<ShortTermMemory>);
     type Output = DreamOutput;
 }
 
@@ -136,7 +136,7 @@ impl DreamPhase for DecayManager {
 
 pub struct Reconsolidator;  // NEW, purely algorithmic — no DreamProvider dependency; see §4
 impl DreamPhase for Reconsolidator {
-    type Input = Vec<(ShortTermMemoryRecord, Crystal)>;  // (working copy, its enriched source crystal)
+    type Input = Vec<(ShortTermMemory, Crystal)>;  // (enriched working copy, its enriched source crystal)
     type Output = Vec<ReconsolidationOutcome>;
 }
 

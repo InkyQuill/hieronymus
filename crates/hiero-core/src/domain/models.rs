@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::CrystalRecord;
+use crate::db::{CrystalRecord, ShortTermMemoryRecord, TaskSessionRecord};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TranslationContext {
@@ -93,6 +93,74 @@ impl Deref for Crystal {
 
     fn deref(&self) -> &Self::Target {
         &self.record
+    }
+}
+
+/// A persisted task session enriched with its ordered typed metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskSession {
+    pub record: TaskSessionRecord,
+    pub language_tags: Vec<String>,
+    pub story_scopes: Vec<String>,
+    pub semantic_tags: Vec<String>,
+}
+
+impl Deref for TaskSession {
+    type Target = TaskSessionRecord;
+
+    fn deref(&self) -> &Self::Target {
+        &self.record
+    }
+}
+
+/// A persisted short-term memory enriched with validated JSON and typed metadata.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShortTermMemory {
+    pub record: ShortTermMemoryRecord,
+    pub metadata: serde_json::Map<String, serde_json::Value>,
+    pub language_tags: Vec<String>,
+    pub story_scopes: Vec<String>,
+    pub semantic_tags: Vec<String>,
+}
+
+impl Deref for ShortTermMemory {
+    type Target = ShortTermMemoryRecord;
+
+    fn deref(&self) -> &Self::Target {
+        &self.record
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AddMemoryInput {
+    pub source_role: String,
+    pub kind: String,
+    pub text: String,
+    pub source_ref: String,
+    pub metadata: serde_json::Value,
+    pub language_tags: Vec<String>,
+    pub story_scopes: Vec<String>,
+    pub semantic_tags: Vec<String>,
+    pub source_credibility: String,
+    pub rule_intent: String,
+    pub soft_origin: Option<String>,
+}
+
+impl Default for AddMemoryInput {
+    fn default() -> Self {
+        Self {
+            source_role: "agent".to_owned(),
+            kind: "note".to_owned(),
+            text: String::new(),
+            source_ref: String::new(),
+            metadata: serde_json::json!({}),
+            language_tags: Vec::new(),
+            story_scopes: Vec::new(),
+            semantic_tags: Vec::new(),
+            source_credibility: "observation".to_owned(),
+            rule_intent: String::new(),
+            soft_origin: None,
+        }
     }
 }
 

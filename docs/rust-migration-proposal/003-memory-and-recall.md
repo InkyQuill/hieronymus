@@ -73,6 +73,13 @@ pub struct Crystal {
 `Crystal` dereferences to its `CrystalRecord` for field access. Store hydration batches each
 side-table query over bounded ID chunks; query count is proportional to chunks, never records.
 
+Sessions and short-term memories follow the same raw-row/enriched-view boundary. Public workspace
+reads return `TaskSession { record, language_tags, story_scopes, semantic_tags }` and
+`ShortTermMemory { record, metadata, language_tags, story_scopes, semantic_tags }`; both views
+deref to their raw schema record. `metadata` is a validated JSON object. This makes every public
+side-table field observable without leaking hydration queries to callers, and the dreaming
+contracts in 004 consume `ShortTermMemory`, not raw `ShortTermMemoryRecord` rows.
+
 ---
 
 ## 2. Store Implementations
@@ -128,29 +135,43 @@ link count/recency at query time rather than stored, unless a future migration a
 ### 2.2 `WorkspaceStore` (sessions + short-term memory)
 
 ```rust
-pub struct AddMemoryInput { pub source_role: String, pub kind: String, pub text: String, pub source_ref: String }
+pub struct AddMemoryInput {
+    pub source_role: String, pub kind: String, pub text: String, pub source_ref: String,
+    pub metadata: serde_json::Value,
+    pub language_tags: Vec<String>, pub story_scopes: Vec<String>, pub semantic_tags: Vec<String>,
+    pub source_credibility: String, pub rule_intent: String, pub soft_origin: Option<String>,
+}
 
 pub struct WorkspaceStore<'a> { pool: &'a SqlitePool }
 impl<'a> WorkspaceStore<'a> {
-    pub async fn start_session(&self, ctx: &TranslationContext, task_type: &str, volume: &str, chapter: &str) -> Result<TaskSessionRecord>;
-    pub async fn get_session(&self, id: i64) -> Result<TaskSessionRecord>;
+    pub async fn start_session(&self, ctx: &TranslationContext, task_type: &str, volume: &str, chapter: &str) -> Result<TaskSession>;
+    pub async fn get_session(&self, id: i64) -> Result<TaskSession>;
     pub async fn complete_session(&self, id: i64) -> Result<bool>;
     pub async fn complete_inactive(&self, cutoff: DateTime<Utc>) -> Result<Vec<i64>>;   // runs in 004's interval loop, not a separate thread
     pub async fn add_short_term(&self, session_id: i64, input: AddMemoryInput) -> Result<i64>;              // FTS trigger handles index (002 §3)
     pub async fn add_short_term_batch(&self, session_id: i64, items: &[AddMemoryInput]) -> Result<Vec<i64>>; // batch up to 500
-    pub async fn list_short_term(&self, session_id: i64) -> Result<Vec<ShortTermMemoryRecord>>;
-    pub async fn search_short_term(&self, session_id: i64, query: &str, limit: usize) -> Result<Vec<ShortTermMemoryRecord>>;
+    pub async fn list_short_term(&self, session_id: i64) -> Result<Vec<ShortTermMemory>>;
+    pub async fn search_short_term(&self, session_id: i64, query: &str, limit: usize) -> Result<Vec<ShortTermMemory>>;
 
     /// Reconsolidation working-copy dedup, called from RecallService (§3), not exposed as a
     /// standalone CLI/MCP operation. Looks up an existing row with source_crystal_id = crystal_id
     /// for this session; inserts one seeded from the crystal's text if absent.
-    pub(crate) async fn get_or_create_working_copy(&self, session_id: i64, crystal: &Crystal) -> Result<(ShortTermMemoryRecord, bool)>;  // bool = was newly created
+    pub(crate) async fn get_or_create_working_copy(&self, session_id: i64, crystal: &Crystal) -> Result<(ShortTermMemory, bool)>;  // bool = was newly created
     pub async fn archive(&self, id: i64) -> Result<()>;  // sets archived_at; used by 004's Reconsolidator once a working copy is processed
 }
 
 /// Standalone fn, not a method — called from 004's background loop, not a dedicated thread.
 pub async fn complete_stale_sessions(pool: &SqlitePool, cutoff: DateTime<Utc>) -> Result<Vec<i64>>;
 ```
+
+Every read-before-write workspace path uses a SQLx-tracked `BEGIN IMMEDIATE` transaction. Working
+copy identity is the logical pair `(session_id, source_crystal_id)`: lookup and insert remain in
+one immediate transaction, so all cooperating writers across independent pools/processes serialize
+before observing absence. The Phase 002 schema intentionally remains unchanged; direct SQL writes
+outside `WorkspaceStore` are not part of this domain invariant. An existing row is reused only when
+its persisted source-derived fields are exactly equivalent; otherwise the store returns a typed
+conflict. Deleting a source crystal preserves the working copy and clears its marker through the
+schema's `ON DELETE SET NULL` behavior.
 
 ### 2.3 `ConceptStore` / concept proposals
 

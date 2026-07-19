@@ -44,7 +44,7 @@
 
 **Files:** Create `domain/workspace.rs`, `tests/test_memory.rs`.
 
-**Interfaces:** Produce `AddMemoryInput`, `WorkspaceStore::{start_session,get_session,complete_session,complete_inactive,add_short_term,add_short_term_batch,list_short_term,search_short_term,archive}` and working-copy creation keyed by `source_crystal_id`.
+**Interfaces:** Produce the proposal's complete `AddMemoryInput`, enriched `TaskSession` and `ShortTermMemory` views over raw rows, `WorkspaceStore::{start_session,get_session,complete_session,complete_inactive,add_short_term,add_short_term_batch,list_short_term,search_short_term,archive}`, and transaction-serialized working-copy creation keyed by `(session_id, source_crystal_id)`.
 
 - [ ] Port `test_workspace.py`, `test_short_memory.py`, `test_short_term_metadata.py`, session language/story/semantic tag behavior, batch atomicity, and working-copy deduplication.
 - [ ] Run focused test; expect RED. Implement session and memory transactions with base-table-only writes; expect GREEN.
