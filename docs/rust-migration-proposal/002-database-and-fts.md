@@ -354,15 +354,41 @@ it never performs data conversion and cannot be recorded after a failed converte
 
 The entire sequence — Python baseline preparation, `run_to(4)`, conversion, and final `run()` — is
 one serialized migration protocol. SQLx's SQLite migration lock is a no-op, so file databases use a
-cross-process `fs4` exclusive advisory lock. Rust reads the main filename from
-`PRAGMA database_list`, canonicalizes it, hashes its OS-native absolute path, and keeps a private
-`.hieronymus-migrate-<sha256>.lock` sidecar in the database directory (`0600` with one link on Unix;
-the database-directory ACL on Windows). The sidecar is never
-deleted (deleting a lock file permits two processes to lock different inodes), rejects observed
-symlinks/non-files, and remains open across every await; OS close-on-drop releases it after crashes
-or cancellation. Blocking acquisition/release runs through `spawn_blocking`, and unlock failures are
-typed. In-memory databases use a process-wide Tokio mutex because cross-process sharing is not
-possible. Concurrent callers therefore cannot baseline, convert, or record `0005` out of order.
+cross-process `fs4` exclusive **advisory, cooperative** lock. It serializes Hieronymus processes that
+run this protocol; it cannot stop another program that ignores the sidecar and writes the database.
+
+Rust reads the main filename from `PRAGMA database_list`, canonicalizes it, and identifies the
+database by device/inode on Unix or volume serial/file index from the documented
+`GetFileInformationByHandle` data on Windows. A database with more than one hard link is rejected
+before any migration with an actionable typed error: accepting hard-linked aliases would permit two
+directories to name one database but different sidecars. Symbolic path aliases converge through
+canonicalization. The stable identity is hashed into a private, same-directory
+`.hieronymus-migrate-<sha256>.lock` sidecar (`0600`, one link, and the directory owner on Unix; the
+database-directory ACL and one link on Windows).
+
+The sidecar is opened with `O_NOFOLLOW | O_CLOEXEC` on Unix or
+`FILE_FLAG_OPEN_REPARSE_POINT` on Windows. Regular-file/reparse, link-count, permissions/owner, and
+stable file identity are checked on the opened handle and pathname before waiting and again after
+acquisition. An observed replacement is rejected and the acquired handle is unlocked; migration
+never proceeds against a different inode/file index. The sidecar is intentionally persistent:
+deleting it after release can let processes lock different inodes. This reduces accidental and
+cooperative-process races, but cannot make a sidecar tamper-proof against a malicious owner of the
+containing directory, who can unlink or swap it after the final check. The database directory must
+therefore be a trusted local directory not writable by untrusted principals.
+
+Lock waiting uses one retained open handle, bounded non-blocking `try_lock_exclusive` calls on the
+blocking pool, and asynchronous backoff. Dropping or aborting `migrate()` stops future attempts; at
+most one already-running non-blocking syscall completes and its returned file is dropped, so no
+blocked worker or ghost waiter survives cancellation. A held guard remains open across every await;
+normal completion reports typed unlock failures, while close-on-drop releases the OS lock after
+cancellation or process death. In-memory databases use a process-wide Tokio mutex because
+cross-process sharing is not possible.
+
+This protocol is supported for ordinary local filesystems whose advisory locking and stable file-ID
+semantics match the host OS, including SQLite WAL deployments on such filesystems. It makes no
+correctness guarantee for NFS, SMB, FUSE/network mounts, lock-emulating filesystems, or a database
+and WAL shared across hosts; those deployments remain unsupported. Within these constraints,
+cooperating concurrent callers cannot baseline, convert, or record `0005` out of order.
 
 Existing-target equivalence covers every converter-owned persisted field, including zero versus
 `NULL` lifecycle fields (`is_inferred`, `malformed_penalty`, `supersedes_crystal_id`, cycle fields),

@@ -1,5 +1,13 @@
-use std::{path::Path, str::FromStr, sync::Arc};
+use std::{
+    fs::{File, OpenOptions},
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
+use fs4::FileExt;
 use hiero_core::db::{DbError, convert_legacy_strict_terms, migrate};
 use sqlx::{
     AssertSqlSafe, Executor, Row, SqlitePool,
@@ -44,6 +52,41 @@ async fn file_pool(path: &Path) -> SqlitePool {
         .connect_with(options)
         .await
         .expect("file fixture pool should connect")
+}
+
+fn migration_sidecar(directory: &Path) -> PathBuf {
+    std::fs::read_dir(directory)
+        .expect("fixture directory should read")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".hieronymus-migrate-"))
+        })
+        .expect("persistent migration lock sidecar should exist")
+}
+
+async fn wait_for_file(path: &Path) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !path.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("child-process marker should appear promptly");
+}
+
+fn spawn_lock_helper(mode: &str, database: &Path, marker: &Path) -> Child {
+    Command::new(std::env::current_exe().expect("current test executable should resolve"))
+        .args(["--exact", "migration_lock_process_helper", "--nocapture"])
+        .env("HIERONYMUS_LOCK_HELPER_MODE", mode)
+        .env("HIERONYMUS_LOCK_HELPER_DATABASE", database)
+        .env("HIERONYMUS_LOCK_HELPER_MARKER", marker)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("migration-lock helper process should start")
 }
 
 async fn run_concurrent_migrations(pools: &[SqlitePool]) {
@@ -536,15 +579,7 @@ async fn file_migration_sidecar_is_private_persistent_and_never_follows_a_symlin
     migrate(&pool)
         .await
         .expect("initial migration should succeed");
-    let lock_path = std::fs::read_dir(directory.path())
-        .expect("fixture directory should read")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with(".hieronymus-migrate-"))
-        })
-        .expect("persistent migration lock sidecar should exist");
+    let lock_path = migration_sidecar(directory.path());
     let mode = std::fs::metadata(&lock_path)
         .expect("lock sidecar metadata should read")
         .permissions()
@@ -562,6 +597,302 @@ async fn file_migration_sidecar_is_private_persistent_and_never_follows_a_symlin
         .expect_err("migration lock must reject a sidecar symlink");
     assert!(matches!(error, DbError::MigrationLockIo { .. }));
     assert_eq!(std::fs::read(&victim).unwrap(), b"untouched");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn hard_linked_database_alias_is_rejected_before_any_migration() {
+    let directory = TempDir::new().expect("temporary directory should be created");
+    let path = directory.path().join("hard-linked.sqlite");
+    let pool = file_pool(&path).await;
+    let alias = directory.path().join("database-alias.sqlite");
+    std::fs::hard_link(&path, &alias).expect("database hard-link fixture should be created");
+
+    let error = migrate(&pool)
+        .await
+        .expect_err("hard-linked database aliases must be rejected");
+
+    assert!(matches!(
+        error,
+        DbError::UnsupportedDatabaseAlias { links: 2 }
+    ));
+    let migration_table_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sqlite_schema WHERE name = '_sqlx_migrations'")
+            .fetch_one(&pool)
+            .await
+            .expect("schema should remain readable");
+    assert_eq!(migration_table_count, 0);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn replacing_sidecar_path_while_contended_is_rejected_after_acquisition() {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let directory = TempDir::new().expect("temporary directory should be created");
+    let path = directory.path().join("replacement.sqlite");
+    let pool = file_pool(&path).await;
+    migrate(&pool)
+        .await
+        .expect("initial migration should succeed");
+    let lock_path = migration_sidecar(directory.path());
+    let held = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("sidecar should open");
+    held.lock_exclusive()
+        .expect("fixture should hold sidecar lock");
+    let waiting_pool = pool.clone();
+    let waiter = tokio::spawn(async move { migrate(&waiting_pool).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let displaced = directory.path().join("displaced.lock");
+    std::fs::rename(&lock_path, &displaced).expect("locked inode should be displaced");
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&lock_path)
+        .expect("replacement sidecar should be created");
+    held.unlock().expect("fixture lock should release");
+
+    let error = tokio::time::timeout(Duration::from_secs(2), waiter)
+        .await
+        .expect("waiter should stop promptly")
+        .expect("waiter should not panic")
+        .expect_err("path replacement must invalidate the acquired lock");
+    assert!(matches!(error, DbError::MigrationLockIo { .. }));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn database_hard_link_created_while_contended_is_rejected_before_migration() {
+    let directory = TempDir::new().expect("temporary directory should be created");
+    let path = directory.path().join("late-hard-link.sqlite");
+    let pool = file_pool(&path).await;
+    migrate(&pool)
+        .await
+        .expect("initial migration should succeed");
+    let lock_path = migration_sidecar(directory.path());
+    let held = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("sidecar should open");
+    held.lock_exclusive()
+        .expect("fixture should hold sidecar lock");
+    let waiting_pool = pool.clone();
+    let waiter = tokio::spawn(async move { migrate(&waiting_pool).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    std::fs::hard_link(&path, directory.path().join("late-alias.sqlite"))
+        .expect("late hard-link fixture should be created");
+    held.unlock().expect("fixture lock should release");
+
+    let error = tokio::time::timeout(Duration::from_secs(2), waiter)
+        .await
+        .expect("waiter should stop promptly")
+        .expect("waiter should not panic")
+        .expect_err("hard link created while waiting must invalidate acquisition");
+    assert!(matches!(
+        error,
+        DbError::UnsupportedDatabaseAlias { links: 2 }
+    ));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sidecar_hard_link_created_while_contended_is_rejected_after_acquisition() {
+    let directory = TempDir::new().expect("temporary directory should be created");
+    let path = directory.path().join("late-sidecar-link.sqlite");
+    let pool = file_pool(&path).await;
+    migrate(&pool)
+        .await
+        .expect("initial migration should succeed");
+    let lock_path = migration_sidecar(directory.path());
+    let held = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("sidecar should open");
+    held.lock_exclusive()
+        .expect("fixture should hold sidecar lock");
+    let waiting_pool = pool.clone();
+    let waiter = tokio::spawn(async move { migrate(&waiting_pool).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    std::fs::hard_link(&lock_path, directory.path().join("sidecar-alias.lock"))
+        .expect("late sidecar hard-link fixture should be created");
+    held.unlock().expect("fixture lock should release");
+
+    let error = tokio::time::timeout(Duration::from_secs(2), waiter)
+        .await
+        .expect("waiter should stop promptly")
+        .expect("waiter should not panic")
+        .expect_err("sidecar hard link created while waiting must invalidate acquisition");
+    assert!(matches!(error, DbError::MigrationLockIo { .. }));
+}
+
+#[cfg(unix)]
+#[test]
+fn cancelled_contended_migrations_leave_no_blocking_worker_or_ghost_waiter() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .expect("test runtime should build");
+    runtime.block_on(async {
+        let directory = TempDir::new().expect("temporary directory should be created");
+        let path = directory.path().join("cancel.sqlite");
+        let pool = file_pool(&path).await;
+        migrate(&pool)
+            .await
+            .expect("initial migration should succeed");
+        let lock_path = migration_sidecar(directory.path());
+        let held = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .expect("sidecar should open");
+        held.lock_exclusive()
+            .expect("fixture should hold sidecar lock");
+
+        for _ in 0..4 {
+            let waiting_pool = pool.clone();
+            let waiter = tokio::spawn(async move { migrate(&waiting_pool).await });
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            assert!(!waiter.is_finished(), "contended migration must still wait");
+            waiter.abort();
+            let _ = waiter.await;
+            tokio::time::timeout(
+                Duration::from_millis(250),
+                tokio::task::spawn_blocking(|| ()),
+            )
+            .await
+            .expect("aborting migration must not leave a blocked worker")
+            .expect("blocking-pool probe should not panic");
+        }
+
+        held.unlock().expect("fixture lock should release");
+        tokio::time::timeout(Duration::from_secs(2), migrate(&pool))
+            .await
+            .expect("next caller should not wait behind a ghost waiter")
+            .expect("next migration should succeed");
+    });
+}
+
+#[tokio::test]
+async fn advisory_lock_excludes_a_real_child_process_until_parent_release() {
+    let directory = TempDir::new().expect("temporary directory should be created");
+    let path = directory.path().join("process.sqlite");
+    let pool = file_pool(&path).await;
+    migrate(&pool)
+        .await
+        .expect("initial migration should succeed");
+    let lock_path = migration_sidecar(directory.path());
+    let held = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("sidecar should open");
+    held.lock_exclusive()
+        .expect("parent should hold sidecar lock");
+    let completed = directory.path().join("child-completed");
+    let mut child = spawn_lock_helper("migrate", &path, &completed);
+    let child_started = completed.with_extension("started");
+    wait_for_file(&child_started).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        !completed.exists(),
+        "child must remain excluded while parent holds the lock"
+    );
+    held.unlock().expect("parent lock should release");
+    let status = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::task::spawn_blocking(move || child.wait()),
+    )
+    .await
+    .expect("child should exit promptly after parent release")
+    .expect("child wait worker should not panic")
+    .expect("child should be waitable");
+    assert!(status.success());
+    assert!(
+        completed.exists(),
+        "child should migrate after parent release"
+    );
+}
+
+#[tokio::test]
+async fn child_process_death_releases_advisory_lock_for_parent() {
+    let directory = TempDir::new().expect("temporary directory should be created");
+    let path = directory.path().join("process-death.sqlite");
+    let pool = file_pool(&path).await;
+    migrate(&pool)
+        .await
+        .expect("initial migration should succeed");
+    let lock_path = migration_sidecar(directory.path());
+    let marker = directory.path().join("child-held");
+    let mut child = spawn_lock_helper("hold", &path, &marker);
+    wait_for_file(&marker).await;
+    child.kill().expect("child should be terminated");
+    child.wait().expect("terminated child should be reaped");
+
+    let probe = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("sidecar should open after child death");
+    probe
+        .try_lock_exclusive()
+        .expect("child process death must release the OS lock");
+    probe.unlock().expect("probe lock should release");
+}
+
+#[test]
+fn migration_lock_process_helper() {
+    let Ok(mode) = std::env::var("HIERONYMUS_LOCK_HELPER_MODE") else {
+        return;
+    };
+    let database = PathBuf::from(
+        std::env::var_os("HIERONYMUS_LOCK_HELPER_DATABASE")
+            .expect("helper database path must be configured"),
+    );
+    let marker = PathBuf::from(
+        std::env::var_os("HIERONYMUS_LOCK_HELPER_MARKER")
+            .expect("helper marker path must be configured"),
+    );
+    match mode.as_str() {
+        "migrate" => {
+            std::fs::write(marker.with_extension("started"), b"started")
+                .expect("helper start marker should write");
+            let runtime = tokio::runtime::Runtime::new().expect("helper runtime should build");
+            runtime.block_on(async {
+                let pool = file_pool(&database).await;
+                migrate(&pool)
+                    .await
+                    .expect("child migration should succeed");
+            });
+            std::fs::write(marker, b"completed").expect("helper completion marker should write");
+        }
+        "hold" => {
+            let lock_path = migration_sidecar(
+                database
+                    .parent()
+                    .expect("helper database should have a parent directory"),
+            );
+            let file = File::options()
+                .read(true)
+                .write(true)
+                .open(lock_path)
+                .expect("helper sidecar should open");
+            file.lock_exclusive()
+                .expect("helper should hold sidecar lock");
+            std::fs::write(marker, b"held").expect("helper held marker should write");
+            std::thread::sleep(Duration::from_secs(30));
+        }
+        other => panic!("unsupported migration-lock helper mode: {other}"),
+    }
 }
 
 const LEGACY_SCHEMA: &str = r#"

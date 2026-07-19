@@ -2839,6 +2839,7 @@ dependencies = [
  "csv",
  "fs4",
  "lancedb",
+ "libc",
  "ort",
  "percent-encoding",
  "phf",
@@ -2858,6 +2859,7 @@ dependencies = [
  "toml",
  "url",
  "uuid",
+ "winapi-util",
 ]
 
 [[package]]

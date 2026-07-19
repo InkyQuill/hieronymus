@@ -52,6 +52,11 @@ pub enum DbError {
     #[error("failed to decode the SQLite database path for migration locking: {reason}")]
     MigrationLockPath { reason: String },
 
+    #[error(
+        "SQLite database has {links} hard links; migration locking does not support hard-linked aliases; keep exactly one directory entry for the database"
+    )]
+    UnsupportedDatabaseAlias { links: u64 },
+
     #[error("failed to {operation} migration lock `{path}`: {source}")]
     MigrationLockIo {
         operation: &'static str,

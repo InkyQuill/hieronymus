@@ -1,7 +1,9 @@
 use std::{
     fs::{File, OpenOptions},
+    io,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
+    time::Duration,
 };
 
 use fs4::FileExt;
@@ -12,6 +14,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 use super::DbError;
 
 static MEMORY_MIGRATION_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
+const LOCK_RETRY_DELAY: Duration = Duration::from_millis(10);
 
 pub(super) enum MigrationProtocolLock {
     Memory(OwnedMutexGuard<()>),
@@ -21,6 +24,30 @@ pub(super) enum MigrationProtocolLock {
 pub(super) struct FileMigrationLock {
     file: File,
     path: PathBuf,
+}
+
+struct FileLockCandidate {
+    file: File,
+    path: PathBuf,
+    identity: FileIdentity,
+    database: DatabaseIdentityGuard,
+}
+
+struct DatabaseIdentityGuard {
+    file: File,
+    path: PathBuf,
+    identity: FileIdentity,
+}
+
+enum LockAttempt {
+    Acquired(FileMigrationLock),
+    Contended(FileLockCandidate),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    first: u64,
+    second: u64,
 }
 
 impl MigrationProtocolLock {
@@ -39,13 +66,25 @@ impl MigrationProtocolLock {
         }
 
         let database_path = database_path(&database_file)?;
-        tokio::task::spawn_blocking(move || acquire_file_lock(&database_path))
+        let mut candidate = tokio::task::spawn_blocking(move || prepare_file_lock(&database_path))
             .await
             .map_err(|source| DbError::MigrationLockWorker {
-                operation: "acquisition",
+                operation: "preparation",
                 source,
-            })?
-            .map(Self::File)
+            })??;
+
+        loop {
+            match tokio::task::spawn_blocking(move || try_acquire_file_lock(candidate))
+                .await
+                .map_err(|source| DbError::MigrationLockWorker {
+                    operation: "acquisition attempt",
+                    source,
+                })?? {
+                LockAttempt::Acquired(lock) => return Ok(Self::File(lock)),
+                LockAttempt::Contended(returned) => candidate = returned,
+            }
+            tokio::time::sleep(LOCK_RETRY_DELAY).await;
+        }
     }
 
     pub(super) async fn finish(self, result: Result<(), DbError>) -> Result<(), DbError> {
@@ -93,73 +132,132 @@ fn database_path(bytes: &[u8]) -> Result<PathBuf, DbError> {
         })
 }
 
-fn acquire_file_lock(database_path: &Path) -> Result<FileMigrationLock, DbError> {
+fn prepare_file_lock(database_path: &Path) -> Result<FileLockCandidate, DbError> {
     let canonical =
         std::fs::canonicalize(database_path).map_err(|source| DbError::MigrationLockIo {
             operation: "canonicalize database path for",
             path: database_path.to_owned(),
             source,
         })?;
+    let database = open_database_identity(&canonical)?;
+    let (links, database_identity) = identity_and_link_count(&database.file, &canonical)?;
+    if links > 1 {
+        return Err(DbError::UnsupportedDatabaseAlias { links });
+    }
     let parent = canonical.parent().ok_or_else(|| DbError::MigrationLockIo {
         operation: "resolve parent of",
         path: canonical.clone(),
-        source: std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
+        source: io::Error::new(
+            io::ErrorKind::InvalidInput,
             "canonical database path has no parent",
         ),
     })?;
-    let digest = Sha256::digest(path_identity_bytes(&canonical));
+    let mut hasher = Sha256::new();
+    hasher.update(database_identity.first.to_le_bytes());
+    hasher.update(database_identity.second.to_le_bytes());
+    let digest = hasher.finalize();
     let path = parent.join(format!(".hieronymus-migrate-{digest:x}.lock"));
     let file = open_sidecar(&path)?;
-    FileExt::lock_exclusive(&file).map_err(|source| DbError::MigrationLockIo {
-        operation: "acquire",
-        path: path.clone(),
-        source,
-    })?;
-    Ok(FileMigrationLock { file, path })
+    let identity = identity_for_handle(&file, &path)?;
+    validate_path_identity(&path, identity)?;
+    Ok(FileLockCandidate {
+        file,
+        path,
+        identity,
+        database,
+    })
+}
+
+fn try_acquire_file_lock(candidate: FileLockCandidate) -> Result<LockAttempt, DbError> {
+    match FileExt::try_lock_exclusive(&candidate.file) {
+        Ok(()) => {
+            if let Err(error) = enforce_sidecar_properties(&candidate.path, &candidate.file, false)
+                .and_then(|()| validate_path_identity(&candidate.path, candidate.identity))
+                .and_then(|()| validate_database_identity(&candidate.database))
+            {
+                let _ = FileExt::unlock(&candidate.file);
+                return Err(error);
+            }
+            Ok(LockAttempt::Acquired(FileMigrationLock {
+                file: candidate.file,
+                path: candidate.path,
+            }))
+        }
+        Err(source) if source.kind() == io::ErrorKind::WouldBlock => {
+            Ok(LockAttempt::Contended(candidate))
+        }
+        Err(source) => Err(DbError::MigrationLockIo {
+            operation: "try to acquire",
+            path: candidate.path,
+            source,
+        }),
+    }
+}
+
+fn open_database_identity(path: &Path) -> Result<DatabaseIdentityGuard, DbError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    configure_identity_open(&mut options);
+    let file = options
+        .open(path)
+        .map_err(|source| DbError::MigrationLockIo {
+            operation: "open database identity for",
+            path: path.to_owned(),
+            source,
+        })?;
+    let (_, identity) = identity_and_link_count(&file, path)?;
+    Ok(DatabaseIdentityGuard {
+        file,
+        path: path.to_owned(),
+        identity,
+    })
+}
+
+fn validate_database_identity(database: &DatabaseIdentityGuard) -> Result<(), DbError> {
+    let (links, handle_identity) = identity_and_link_count(&database.file, &database.path)?;
+    if links > 1 {
+        return Err(DbError::UnsupportedDatabaseAlias { links });
+    }
+    let observed = open_database_identity(&database.path)?;
+    if handle_identity == database.identity && observed.identity == database.identity {
+        Ok(())
+    } else {
+        Err(DbError::MigrationLockIo {
+            operation: "validate database identity for",
+            path: database.path.clone(),
+            source: io::Error::new(
+                io::ErrorKind::InvalidData,
+                "database identity changed during migration-lock acquisition",
+            ),
+        })
+    }
 }
 
 fn open_sidecar(path: &Path) -> Result<File, DbError> {
     let mut create = OpenOptions::new();
     create.read(true).write(true).create_new(true);
-    configure_private_create(&mut create);
+    configure_secure_open(&mut create, true);
     match create.open(path) {
         Ok(file) => {
-            enforce_private_permissions(path, &file, true)?;
+            enforce_sidecar_properties(path, &file, true)?;
             Ok(file)
         }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let before =
-                std::fs::symlink_metadata(path).map_err(|source| lock_open_error(path, source))?;
-            if !before.file_type().is_file() {
-                return Err(lock_open_error(
-                    path,
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "migration lock sidecar is not a regular file",
-                    ),
-                ));
-            }
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            validate_path_file_type(path)?;
+            let mut existing = OpenOptions::new();
+            existing.read(true).write(true);
+            configure_secure_open(&mut existing, false);
+            let file = existing
                 .open(path)
                 .map_err(|source| lock_open_error(path, source))?;
-            validate_same_file(
-                path,
-                &before,
-                &file
-                    .metadata()
-                    .map_err(|source| lock_open_error(path, source))?,
-            )?;
-            enforce_private_permissions(path, &file, false)?;
+            enforce_sidecar_properties(path, &file, false)?;
             Ok(file)
         }
         Err(source) => Err(lock_open_error(path, source)),
     }
 }
 
-fn lock_open_error(path: &Path, source: std::io::Error) -> DbError {
+fn lock_open_error(path: &Path, source: io::Error) -> DbError {
     DbError::MigrationLockIo {
         operation: "open",
         path: path.to_owned(),
@@ -168,16 +266,74 @@ fn lock_open_error(path: &Path, source: std::io::Error) -> DbError {
 }
 
 #[cfg(unix)]
-fn configure_private_create(options: &mut OpenOptions) {
+fn configure_secure_open(options: &mut OpenOptions, create: bool) {
     use std::os::unix::fs::OpenOptionsExt;
-    options.mode(0o600);
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    if create {
+        options.mode(0o600);
+    }
+}
+
+#[cfg(unix)]
+fn configure_identity_open(options: &mut OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
 }
 
 #[cfg(windows)]
-fn configure_private_create(_options: &mut OpenOptions) {}
+fn configure_secure_open(options: &mut OpenOptions, _create: bool) {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+}
+
+#[cfg(windows)]
+fn configure_identity_open(options: &mut OpenOptions) {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+}
 
 #[cfg(unix)]
-fn enforce_private_permissions(path: &Path, file: &File, created: bool) -> Result<(), DbError> {
+fn validate_path_file_type(path: &Path) -> Result<(), DbError> {
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|source| lock_open_error(path, source))?;
+    if metadata.file_type().is_file() {
+        Ok(())
+    } else {
+        Err(lock_open_error(
+            path,
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "migration lock sidecar is not a regular file",
+            ),
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn validate_path_file_type(path: &Path) -> Result<(), DbError> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|source| lock_open_error(path, source))?;
+    if metadata.file_type().is_file()
+        && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
+    {
+        Ok(())
+    } else {
+        Err(lock_open_error(
+            path,
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "migration lock sidecar is not a regular non-reparse file",
+            ),
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn enforce_sidecar_properties(path: &Path, file: &File, created: bool) -> Result<(), DbError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     if created {
         file.set_permissions(std::fs::Permissions::from_mode(0o600))
@@ -190,12 +346,23 @@ fn enforce_private_permissions(path: &Path, file: &File, created: bool) -> Resul
     let metadata = file
         .metadata()
         .map_err(|source| lock_open_error(path, source))?;
-    if metadata.permissions().mode() & 0o777 != 0o600 || metadata.nlink() != 1 {
+    let parent = path.parent().ok_or_else(|| {
+        lock_open_error(
+            path,
+            io::Error::new(io::ErrorKind::InvalidInput, "sidecar path has no parent"),
+        )
+    })?;
+    let parent_metadata =
+        std::fs::metadata(parent).map_err(|source| lock_open_error(path, source))?;
+    if metadata.permissions().mode() & 0o777 != 0o600
+        || metadata.nlink() != 1
+        || metadata.uid() != parent_metadata.uid()
+    {
         return Err(lock_open_error(
             path,
-            std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "migration lock sidecar must be a private 0600 file with one link",
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "migration lock sidecar must be a private 0600 regular file with one link and the directory owner",
             ),
         ));
     }
@@ -203,50 +370,155 @@ fn enforce_private_permissions(path: &Path, file: &File, created: bool) -> Resul
 }
 
 #[cfg(windows)]
-fn enforce_private_permissions(_path: &Path, _file: &File, _created: bool) -> Result<(), DbError> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn validate_same_file(
-    path: &Path,
-    before: &std::fs::Metadata,
-    after: &std::fs::Metadata,
-) -> Result<(), DbError> {
-    use std::os::unix::fs::MetadataExt;
-    if before.dev() == after.dev() && before.ino() == after.ino() {
+fn enforce_sidecar_properties(path: &Path, file: &File, _created: bool) -> Result<(), DbError> {
+    let information = windows_file_information(file, path)?;
+    validate_windows_regular_file(path, &information)?;
+    let links = information.number_of_links();
+    if links == 1 {
         Ok(())
     } else {
         Err(lock_open_error(
             path,
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "migration lock sidecar changed while it was opened",
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "migration lock sidecar must have exactly one link",
+            ),
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn identity_and_link_count(file: &File, path: &Path) -> Result<(u64, FileIdentity), DbError> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file.metadata().map_err(|source| DbError::MigrationLockIo {
+        operation: "inspect database identity for",
+        path: path.to_owned(),
+        source,
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(DbError::MigrationLockIo {
+            operation: "validate database file type for",
+            path: path.to_owned(),
+            source: io::Error::new(
+                io::ErrorKind::InvalidData,
+                "database is not a regular local file",
+            ),
+        });
+    }
+    Ok((
+        metadata.nlink(),
+        FileIdentity {
+            first: metadata.dev(),
+            second: metadata.ino(),
+        },
+    ))
+}
+
+#[cfg(windows)]
+fn identity_and_link_count(file: &File, path: &Path) -> Result<(u64, FileIdentity), DbError> {
+    let information = windows_file_information(file, path)?;
+    validate_windows_regular_file(path, &information)?;
+    Ok((
+        information.number_of_links(),
+        FileIdentity {
+            first: information.volume_serial_number(),
+            second: information.file_index(),
+        },
+    ))
+}
+
+#[cfg(unix)]
+fn identity_for_handle(file: &File, path: &Path) -> Result<FileIdentity, DbError> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file
+        .metadata()
+        .map_err(|source| lock_open_error(path, source))?;
+    Ok(FileIdentity {
+        first: metadata.dev(),
+        second: metadata.ino(),
+    })
+}
+
+#[cfg(windows)]
+fn identity_for_handle(file: &File, path: &Path) -> Result<FileIdentity, DbError> {
+    let information = windows_file_information(file, path)?;
+    validate_windows_regular_file(path, &information)?;
+    Ok(FileIdentity {
+        first: information.volume_serial_number(),
+        second: information.file_index(),
+    })
+}
+
+#[cfg(unix)]
+fn validate_path_identity(path: &Path, expected: FileIdentity) -> Result<(), DbError> {
+    use std::os::unix::fs::MetadataExt;
+    validate_path_file_type(path)?;
+    let metadata = std::fs::metadata(path).map_err(|source| lock_open_error(path, source))?;
+    let observed = FileIdentity {
+        first: metadata.dev(),
+        second: metadata.ino(),
+    };
+    if observed == expected {
+        Ok(())
+    } else {
+        Err(lock_open_error(
+            path,
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "migration lock sidecar identity changed during acquisition",
             ),
         ))
     }
 }
 
 #[cfg(windows)]
-fn validate_same_file(
-    _path: &Path,
-    _before: &std::fs::Metadata,
-    _after: &std::fs::Metadata,
-) -> Result<(), DbError> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn path_identity_bytes(path: &Path) -> Vec<u8> {
-    use std::os::unix::ffi::OsStrExt;
-    path.as_os_str().as_bytes().to_vec()
+fn validate_path_identity(path: &Path, expected: FileIdentity) -> Result<(), DbError> {
+    validate_path_file_type(path)?;
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    configure_secure_open(&mut options, false);
+    let file = options
+        .open(path)
+        .map_err(|source| lock_open_error(path, source))?;
+    let observed = identity_for_handle(&file, path)?;
+    if observed == expected {
+        Ok(())
+    } else {
+        Err(lock_open_error(
+            path,
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "migration lock sidecar identity changed during acquisition",
+            ),
+        ))
+    }
 }
 
 #[cfg(windows)]
-fn path_identity_bytes(path: &Path) -> Vec<u8> {
-    use std::os::windows::ffi::OsStrExt;
-    path.as_os_str()
-        .encode_wide()
-        .flat_map(u16::to_le_bytes)
-        .collect()
+fn windows_file_information(
+    file: &File,
+    path: &Path,
+) -> Result<winapi_util::file::Information, DbError> {
+    winapi_util::file::information(file).map_err(|source| lock_open_error(path, source))
+}
+
+#[cfg(windows)]
+fn validate_windows_regular_file(
+    path: &Path,
+    information: &winapi_util::file::Information,
+) -> Result<(), DbError> {
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+    let attributes = information.file_attributes();
+    if attributes & u64::from(FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) == 0 {
+        Ok(())
+    } else {
+        Err(lock_open_error(
+            path,
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "migration lock sidecar handle is not a regular non-reparse file",
+            ),
+        ))
+    }
 }

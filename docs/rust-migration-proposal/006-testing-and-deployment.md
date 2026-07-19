@@ -48,6 +48,7 @@ async fn setup_test_db() -> SqlitePool {
 | `test_semantic.rs` | LanceDB index, hybrid RRF, fake embeddings, fallback | `tests/test_hybrid_ranking.py` |
 | `test_dreaming.rs` | Dream cycles, phase execution, crystallization, audit, cross-process lock contention | `tests/test_dreaming.py` |
 | `test_rule_crystals.rs` | Rule-intent parsing, `list_rule_intent`, concept enrichment | `tests/test_termbase_validate.py` |
+| `legacy_terms.rs` | Exact legacy conversion, advisory-lock concurrency/cancellation, hard-link and sidecar-swap rejection, real child-process exclusion/crash release | Legacy strict-term and migration tests |
 | `test_termbase.rs` | Propose/approve/contract/validate against rule-intent crystals only | `tests/test_termbase_contract.py` |
 | `test_service.rs` | HTTP routes, MCP protocol, WebSocket events, `/api/admin`+`/api/settings` contract shapes | `tests/test_service_app.py` |
 | `test_mcp.rs` | All 39 existing MCP tools + `hieronymus_recall_feedback` via HTTP transport | `tests/test_mcp_http.py` |

@@ -19,6 +19,7 @@ colored = "2"
 csv = "1"
 fs4 = "0.8"
 indicatif = "0.17"
+libc = "0.2"
 lancedb = "0.17"
 mime_guess = "2"
 ort = "2.0.0-rc.12"
@@ -45,6 +46,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
+winapi-util = "0.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
