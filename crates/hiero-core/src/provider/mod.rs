@@ -25,6 +25,7 @@ use crate::domain::{ShortTermMemory, TranslationContext};
 pub use anthropic::AnthropicProvider;
 pub use cache::{ModelCache, ModelCacheEntry};
 pub use catalog::{CredentialSource, ProviderCatalog, ProviderDefaults, ProviderProfile};
+pub(crate) use catalog::{secure_read_bounded, secure_write};
 pub use google::GoogleProvider;
 pub use ollama::OllamaProvider;
 pub use openai::OpenAiProvider;
@@ -67,7 +68,7 @@ pub enum ProviderError {
 
 pub type Result<T> = std::result::Result<T, ProviderError>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PassName {
     Concepts,

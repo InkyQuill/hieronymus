@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod doctor;
 pub mod domain;
+pub mod dreaming;
 pub mod ingest;
 pub mod provider;
 pub mod rag;

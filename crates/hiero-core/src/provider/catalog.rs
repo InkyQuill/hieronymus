@@ -444,7 +444,7 @@ pub(super) fn secure_read(path: &Path) -> Result<Option<String>> {
 }
 
 #[cfg(not(any(unix, windows)))]
-pub(super) fn secure_write(path: &Path, contents: &[u8]) -> Result<()> {
+pub(crate) fn secure_write(path: &Path, contents: &[u8]) -> Result<()> {
     use std::io::Write;
     let parent = path
         .parent()
@@ -452,12 +452,11 @@ pub(super) fn secure_write(path: &Path, contents: &[u8]) -> Result<()> {
     reject_symlink_components(parent)?;
     std::fs::create_dir_all(parent).map_err(ProviderError::Io)?;
     reject_symlink_components(parent)?;
-    if path
-        .symlink_metadata()
-        .is_ok_and(|meta| meta.file_type().is_symlink())
+    if let Ok(metadata) = path.symlink_metadata()
+        && (metadata.file_type().is_symlink() || !metadata.is_file())
     {
         return Err(ProviderError::Config(
-            "provider file must not be a symlink".into(),
+            "provider file must be a regular non-symlink file".into(),
         ));
     }
     let temporary = parent.join(format!(".provider-{}.tmp", uuid::Uuid::new_v4()));
@@ -473,12 +472,11 @@ pub(super) fn secure_write(path: &Path, contents: &[u8]) -> Result<()> {
         file.write_all(contents)
             .and_then(|()| file.sync_all())
             .map_err(ProviderError::Io)?;
-        if path
-            .symlink_metadata()
-            .is_ok_and(|meta| meta.file_type().is_symlink())
+        if let Ok(metadata) = path.symlink_metadata()
+            && (metadata.file_type().is_symlink() || !metadata.is_file())
         {
             return Err(ProviderError::Config(
-                "provider file must not be a symlink".into(),
+                "provider file must be a regular non-symlink file".into(),
             ));
         }
         std::fs::rename(&temporary, path).map_err(ProviderError::Io)?;
@@ -536,7 +534,7 @@ pub(super) fn secure_read(path: &Path) -> Result<Option<String>> {
 }
 
 #[cfg(windows)]
-pub(super) fn secure_write(path: &Path, contents: &[u8]) -> Result<()> {
+pub(crate) fn secure_write(path: &Path, contents: &[u8]) -> Result<()> {
     use std::{fs::OpenOptions, io::Write, os::windows::fs::OpenOptionsExt};
     let path = normalize_windows_path(path)?;
     let anchor = WindowsAnchor::open(&path, true)?;
@@ -546,7 +544,15 @@ pub(super) fn secure_write(path: &Path, contents: &[u8]) -> Result<()> {
         .custom_flags(WINDOWS_OPEN_REPARSE_POINT)
         .open(&anchor.final_path)
     {
-        Ok(existing) => reject_windows_reparse(&existing.metadata().map_err(ProviderError::Io)?)?,
+        Ok(existing) => {
+            let metadata = existing.metadata().map_err(ProviderError::Io)?;
+            reject_windows_reparse(&metadata)?;
+            if !metadata.is_file() {
+                return Err(ProviderError::Config(
+                    "provider file must be a regular file".into(),
+                ));
+            }
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(ProviderError::Io(error)),
     }
@@ -720,7 +726,7 @@ pub(super) fn secure_read(path: &Path) -> Result<Option<String>> {
 }
 
 #[cfg(unix)]
-pub(super) fn secure_write(path: &Path, contents: &[u8]) -> Result<()> {
+pub(crate) fn secure_write(path: &Path, contents: &[u8]) -> Result<()> {
     use std::io::Write;
     let anchor = UnixAnchor::open(path, true)?;
     let temporary_name = format!(".provider-{}.tmp", uuid::Uuid::new_v4());
@@ -746,9 +752,9 @@ pub(super) fn secure_write(path: &Path, contents: &[u8]) -> Result<()> {
             &anchor.file_name,
             rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
         ) {
-            Ok(metadata) if rustix::fs::FileType::from_raw_mode(metadata.st_mode).is_symlink() => {
+            Ok(metadata) if !rustix::fs::FileType::from_raw_mode(metadata.st_mode).is_file() => {
                 return Err(ProviderError::Config(
-                    "provider file must not be a symlink".into(),
+                    "provider file must be a regular non-symlink file".into(),
                 ));
             }
             Ok(_) => {}
@@ -857,7 +863,7 @@ fn unix_error(path: &Path, source: rustix::io::Errno) -> ProviderError {
 }
 
 #[cfg(unix)]
-pub(super) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Option<String>> {
+pub(crate) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Option<String>> {
     use std::io::Read;
     let anchor = match UnixAnchor::open(path, false) {
         Ok(anchor) => anchor,
@@ -896,7 +902,7 @@ pub(super) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Optio
 }
 
 #[cfg(windows)]
-pub(super) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Option<String>> {
+pub(crate) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Option<String>> {
     use std::{fs::OpenOptions, io::Read, os::windows::fs::OpenOptionsExt};
     let path = normalize_windows_path(path)?;
     let anchor = match WindowsAnchor::open(&path, false) {
@@ -934,7 +940,7 @@ pub(super) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Optio
 }
 
 #[cfg(not(any(unix, windows)))]
-pub(super) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Option<String>> {
+pub(crate) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Option<String>> {
     use std::io::Read;
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
