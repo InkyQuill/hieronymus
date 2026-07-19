@@ -43,6 +43,24 @@ fn reciprocal_rank_fusion_counts_only_the_first_occurrence_per_lane() {
 
 async fn generation_contract(index: Arc<dyn SemanticIndex>) {
     let first = index.begin_rebuild().await.unwrap();
+    assert!(matches!(
+        index
+            .upsert_vectors(
+                first,
+                vec![
+                    VectorRecord {
+                        chunk_id: 99,
+                        embedding: vec![1.0, 0.0],
+                    },
+                    VectorRecord {
+                        chunk_id: 99,
+                        embedding: vec![0.0, 1.0],
+                    },
+                ],
+            )
+            .await,
+        Err(SemanticError::InvalidVector { .. })
+    ));
     assert_eq!(
         index
             .upsert_vectors(
@@ -62,6 +80,18 @@ async fn generation_contract(index: Arc<dyn SemanticIndex>) {
             .unwrap(),
         2
     );
+    assert!(matches!(
+        index
+            .upsert_vectors(
+                first,
+                vec![VectorRecord {
+                    chunk_id: 40,
+                    embedding: vec![1.0, 0.0, 0.0],
+                }],
+            )
+            .await,
+        Err(SemanticError::InvalidVector { .. })
+    ));
     assert_eq!(
         index
             .upsert_vectors(
@@ -184,6 +214,7 @@ async fn empty_generation_contract(index: Arc<dyn SemanticIndex>) {
             .unwrap()
             .is_empty()
     );
+    assert_eq!(index.delete_vectors(&[10]).await.unwrap(), 0);
 }
 
 #[tokio::test]
@@ -390,7 +421,7 @@ async fn job_queue_claims_bounded_distinct_batches_and_tracks_checksums() {
 }
 
 #[tokio::test]
-async fn failed_job_is_reclaimable_and_generation_cannot_change_mid_job() {
+async fn mark_failed_is_terminal_observable_and_old_tokens_cannot_mutate() {
     let pool = semantic_pool().await;
     let queue = SemanticJobQueue::new(&pool);
     let failed = queue.enqueue_rebuild().await.unwrap();
@@ -402,27 +433,91 @@ async fn failed_job_is_reclaimable_and_generation_cannot_change_mid_job() {
         .unwrap();
 
     assert_eq!(failed, failed_claim.job_id());
-    let retry = queue.claim_next_batch(1).await.unwrap();
-    assert_eq!(retry[0].id, 10);
+    assert!(queue.claim_next_batch(1).await.unwrap().is_empty());
+    let (status, last_error, failed_at): (String, String, Option<String>) = sqlx::query_as(
+        "SELECT status, last_error, failed_at FROM semantic_index_jobs WHERE id = ?",
+    )
+    .bind(failed)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "failed");
+    assert_eq!(last_error, "injected failure");
+    assert!(failed_at.is_some());
     let first_generation = uuid::Uuid::new_v4().to_string();
-    queue.mark_indexed(&retry, &first_generation).await.unwrap();
-    let next = queue.claim_next_batch(1).await.unwrap();
-    let other_generation = uuid::Uuid::new_v4().to_string();
-    assert!(matches!(
-        queue.mark_indexed(&next, &other_generation).await,
-        Err(SemanticError::InvalidVector { .. })
-    ));
-    let state: Option<String> =
-        sqlx::query_scalar("SELECT generation_id FROM semantic_chunk_state WHERE chunk_id = 20")
-            .fetch_optional(&pool)
-            .await
-            .unwrap()
-            .flatten();
-    assert_ne!(state.as_deref(), Some(other_generation.as_str()));
     assert!(matches!(
         queue.mark_indexed(&failed_claim, &first_generation).await,
         Err(SemanticError::InvalidVector { .. })
     ));
+    assert!(matches!(
+        queue.mark_failed(&failed_claim, "late failure").await,
+        Err(SemanticError::InvalidVector { .. })
+    ));
+}
+
+#[tokio::test]
+async fn expired_claims_are_reowned_but_live_leases_and_max_attempts_are_enforced() {
+    let pool = semantic_pool().await;
+    sqlx::query("DELETE FROM rag_chunks WHERE id IN (20, 30)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let instant = Arc::new(std::sync::Mutex::new(
+        "2026-07-19T00:00:00Z"
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .unwrap(),
+    ));
+    let queue = SemanticJobQueue::with_clock(&pool, chrono::Duration::seconds(5), {
+        let instant = instant.clone();
+        Arc::new(move || *instant.lock().unwrap())
+    });
+    let job = queue.enqueue_rebuild().await.unwrap();
+    let first = queue.claim_next_batch(1).await.unwrap();
+    assert!(queue.claim_next_batch(1).await.unwrap().is_empty());
+
+    *instant.lock().unwrap() += chrono::Duration::seconds(6);
+    let second = queue.claim_next_batch(1).await.unwrap();
+    assert_ne!(first.token(), second.token());
+    assert!(matches!(
+        queue
+            .mark_indexed(&first, &uuid::Uuid::new_v4().to_string())
+            .await,
+        Err(SemanticError::InvalidVector { .. })
+    ));
+    let attempts: i64 = sqlx::query_scalar(
+        "SELECT attempts FROM semantic_batch_claims WHERE job_id = ? AND chunk_id = 10",
+    )
+    .bind(job)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(attempts, 2);
+
+    *instant.lock().unwrap() += chrono::Duration::seconds(6);
+    let third = queue.claim_next_batch(1).await.unwrap();
+    assert_ne!(second.token(), third.token());
+    *instant.lock().unwrap() += chrono::Duration::seconds(6);
+    assert!(matches!(
+        queue.claim_next_batch(1).await,
+        Err(SemanticError::InvalidVector { .. })
+    ));
+    let (status, error): (String, String) =
+        sqlx::query_as("SELECT status, last_error FROM semantic_index_jobs WHERE id = ?")
+            .bind(job)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "failed");
+    assert!(error.contains("exceeded 3 claim attempts"));
+    let attempts: i64 = sqlx::query_scalar(
+        "SELECT attempts FROM semantic_batch_claims WHERE job_id = ? AND chunk_id = 10",
+    )
+    .bind(job)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(attempts, 3);
+    assert!(queue.claim_next_batch(1).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -607,6 +702,96 @@ async fn lancedb_with_sqlite_excludes_stale_vectors_and_wrong_series() {
 }
 
 #[tokio::test]
+async fn partial_rebuild_state_does_not_invalidate_the_active_generation() {
+    let pool = semantic_pool().await;
+    let temp = tempfile::tempdir().unwrap();
+    let index = LanceDbIndex::open_with_pool(temp.path(), pool.clone())
+        .await
+        .unwrap();
+    let active = index.begin_rebuild().await.unwrap();
+    index
+        .upsert_vectors(
+            active,
+            vec![
+                VectorRecord {
+                    chunk_id: 10,
+                    embedding: vec![1.0, 0.0],
+                },
+                VectorRecord {
+                    chunk_id: 20,
+                    embedding: vec![0.0, 1.0],
+                },
+                VectorRecord {
+                    chunk_id: 30,
+                    embedding: vec![0.0, 1.0],
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    let queue = SemanticJobQueue::new(&pool);
+    let job = queue.enqueue_rebuild().await.unwrap();
+    queue
+        .assign_generation(job, &active.0.to_string())
+        .await
+        .unwrap();
+    let claim = queue.claim_next_batch(10).await.unwrap();
+    queue
+        .mark_indexed(&claim, &active.0.to_string())
+        .await
+        .unwrap();
+    index.activate_generation(active).await.unwrap();
+
+    let rebuilding = index.begin_rebuild().await.unwrap();
+    index
+        .upsert_vectors(
+            rebuilding,
+            vec![VectorRecord {
+                chunk_id: 10,
+                embedding: vec![1.0, 0.0],
+            }],
+        )
+        .await
+        .unwrap();
+    let job = queue.enqueue_rebuild().await.unwrap();
+    queue
+        .assign_generation(job, &rebuilding.0.to_string())
+        .await
+        .unwrap();
+    let partial = queue.claim_next_batch(1).await.unwrap();
+    queue
+        .mark_indexed(&partial, &rebuilding.0.to_string())
+        .await
+        .unwrap();
+
+    let filter = SearchFilter {
+        series_slug: "book".into(),
+    };
+    assert!(
+        index
+            .search(&[1.0, 0.0], &filter, 5,)
+            .await
+            .unwrap()
+            .iter()
+            .any(|hit| hit.chunk_id == 10)
+    );
+    assert_eq!(index.active_generation().await.unwrap().unwrap().id, active);
+
+    sqlx::query("UPDATE rag_chunks SET text = 'changed alpha' WHERE id = 10")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        index
+            .search(&[1.0, 0.0], &filter, 5)
+            .await
+            .unwrap()
+            .iter()
+            .all(|hit| hit.chunk_id != 10)
+    );
+}
+
+#[tokio::test]
 async fn lancedb_search_backfills_past_more_than_four_limits_of_stale_hits() {
     let pool = semantic_pool().await;
     for id in 100_i64..130 {
@@ -701,15 +886,15 @@ async fn lancedb_rejects_symlinked_root_generations_entries_and_active_pointer()
     let root = temp.path().join("index");
     tokio::fs::create_dir(&root).await.unwrap();
     symlink(outside.path(), root.join("generations")).unwrap();
-    let index = LanceDbIndex::open(&root).await.unwrap();
     assert!(matches!(
-        index.begin_rebuild().await,
+        LanceDbIndex::open(&root).await,
         Err(SemanticError::CorruptIndex { .. })
     ));
 
     tokio::fs::remove_file(root.join("generations"))
         .await
         .unwrap();
+    let index = LanceDbIndex::open(&root).await.unwrap();
     let generation = index.begin_rebuild().await.unwrap();
     index.cancel_generation(generation).await.unwrap();
     symlink(outside.path(), index_path(&root, generation)).unwrap();

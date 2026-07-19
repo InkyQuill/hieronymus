@@ -3,7 +3,7 @@ use std::{
     ops::Deref,
 };
 
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
@@ -12,6 +12,10 @@ use crate::{db::RagChunkRecord as RawRagChunkRecord, rag::RagChunkRecord};
 
 const MAX_BATCH_SIZE: usize = 500;
 const SCAN_PAGE_SIZE: i64 = 256;
+const MAX_CLAIM_ATTEMPTS: i64 = 3;
+const DEFAULT_LEASE_SECONDS: i64 = 300;
+
+type Clock = dyn Fn() -> DateTime<Utc> + Send + Sync;
 
 /// An owned semantic-work claim. Completion and failure require this token.
 #[derive(Debug)]
@@ -46,6 +50,8 @@ impl Deref for ClaimedSemanticBatch {
 
 pub struct SemanticJobQueue<'a> {
     pool: &'a SqlitePool,
+    clock: std::sync::Arc<Clock>,
+    lease_duration: Duration,
 }
 
 struct ClaimPause {
@@ -55,14 +61,37 @@ struct ClaimPause {
 
 impl<'a> SemanticJobQueue<'a> {
     #[must_use]
-    pub const fn new(pool: &'a SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: &'a SqlitePool) -> Self {
+        Self {
+            pool,
+            clock: std::sync::Arc::new(Utc::now),
+            lease_duration: Duration::seconds(DEFAULT_LEASE_SECONDS),
+        }
+    }
+
+    /// Injects lease time for deterministic worker-death and expiry tests.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_clock(
+        pool: &'a SqlitePool,
+        lease_duration: Duration,
+        clock: std::sync::Arc<Clock>,
+    ) -> Self {
+        Self {
+            pool,
+            clock,
+            lease_duration,
+        }
+    }
+
+    fn now(&self) -> DateTime<Utc> {
+        (self.clock)()
     }
 
     pub async fn enqueue_rebuild(&self) -> Result<i64, SemanticError> {
         Ok(sqlx::query_scalar(
             "INSERT INTO semantic_index_jobs(status, created_at) VALUES ('pending', ?) RETURNING id",
-        ).bind(Utc::now()).fetch_one(self.pool).await?)
+        ).bind(self.now()).fetch_one(self.pool).await?)
     }
 
     pub async fn claim_next_batch(
@@ -88,12 +117,15 @@ impl<'a> SemanticJobQueue<'a> {
             return Ok(empty_batch());
         };
         let token = uuid::Uuid::new_v4();
+        let now = self.now();
+        let lease_expires_at = now + self.lease_duration;
         let mut rows = Vec::with_capacity(batch_size);
         let mut after_id = i64::MIN;
         while rows.len() < batch_size {
             let page = sqlx::query_as::<_, ClaimRow>(CLAIM_SCAN_SQL)
-                .bind(after_id)
                 .bind(job_id)
+                .bind(after_id)
+                .bind(now)
                 .bind(SCAN_PAGE_SIZE)
                 .fetch_all(&mut *tx)
                 .await?;
@@ -106,11 +138,27 @@ impl<'a> SemanticJobQueue<'a> {
                 if is_fresh(&row, generation_id.as_deref()) {
                     continue;
                 }
+                if row.claim_attempts.unwrap_or(0) >= MAX_CLAIM_ATTEMPTS {
+                    let diagnostic = format!(
+                        "semantic chunk {} exceeded {MAX_CLAIM_ATTEMPTS} claim attempts",
+                        row.id
+                    );
+                    sqlx::query("UPDATE semantic_index_jobs SET status = 'failed', last_error = ?, failed_at = ?, completed_at = ? WHERE id = ? AND status = 'running'")
+                        .bind(&diagnostic).bind(now).bind(now).bind(job_id)
+                        .execute(&mut *tx).await?;
+                    sqlx::query("DELETE FROM semantic_batch_claims WHERE claim_token = ?")
+                        .bind(token.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                    tx.commit().await?;
+                    return Err(SemanticError::InvalidVector { reason: diagnostic });
+                }
                 sqlx::query(
-                    "INSERT INTO semantic_batch_claims(claim_token, job_id, chunk_id, generation_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO semantic_batch_claims(claim_token, job_id, chunk_id, generation_id, created_at, lease_expires_at, attempts) VALUES (?, ?, ?, ?, ?, ?, 1) ON CONFLICT(job_id, chunk_id) DO UPDATE SET claim_token = excluded.claim_token, generation_id = excluded.generation_id, created_at = excluded.created_at, lease_expires_at = excluded.lease_expires_at, attempts = semantic_batch_claims.attempts + 1",
                 )
                 .bind(token.to_string()).bind(job_id).bind(row.id)
-                .bind(&generation_id).bind(Utc::now()).execute(&mut *tx).await?;
+                .bind(&generation_id).bind(now).bind(lease_expires_at)
+                .execute(&mut *tx).await?;
                 rows.push(row);
                 if rows.len() == batch_size {
                     break;
@@ -128,7 +176,7 @@ impl<'a> SemanticJobQueue<'a> {
         // rolls back the transaction and therefore cannot strand a claim.
         let chunks = hydrate_claim_rows(&mut tx, rows).await?;
         if chunks.is_empty() {
-            maybe_complete(&mut tx, job_id, generation_id.as_deref()).await?;
+            maybe_complete(&mut tx, job_id, generation_id.as_deref(), now).await?;
         }
         tx.commit().await?;
         Ok(ClaimedSemanticBatch {
@@ -149,6 +197,7 @@ impl<'a> SemanticJobQueue<'a> {
         if batch.chunks.is_empty() {
             return Ok(0);
         }
+        let now = self.now();
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let current: Option<String> = sqlx::query_scalar(
             "SELECT generation_id FROM semantic_index_jobs WHERE id = ? AND status = 'running'",
@@ -170,10 +219,11 @@ impl<'a> SemanticJobQueue<'a> {
             });
         }
         let owned: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM semantic_batch_claims WHERE claim_token = ? AND job_id = ?",
+            "SELECT count(*) FROM semantic_batch_claims WHERE claim_token = ? AND job_id = ? AND lease_expires_at > ?",
         )
         .bind(batch.token.to_string())
         .bind(batch.job_id)
+        .bind(now)
         .fetch_one(&mut *tx)
         .await?;
         if usize::try_from(owned).ok() != Some(batch.chunks.len()) {
@@ -189,7 +239,7 @@ impl<'a> SemanticJobQueue<'a> {
         for chunk in &batch.chunks {
             sqlx::query(
                 "INSERT INTO semantic_chunk_state(chunk_id, checksum, generation_id, indexed_at) VALUES (?, ?, ?, ?) ON CONFLICT(chunk_id) DO UPDATE SET checksum = excluded.checksum, generation_id = excluded.generation_id, indexed_at = excluded.indexed_at",
-            ).bind(chunk.id).bind(checksum(&chunk.text)).bind(generation_id).bind(Utc::now())
+            ).bind(chunk.id).bind(checksum(&chunk.text)).bind(generation_id).bind(now)
                 .execute(&mut *tx).await?;
         }
         sqlx::query("DELETE FROM semantic_batch_claims WHERE claim_token = ? AND job_id = ?")
@@ -197,28 +247,42 @@ impl<'a> SemanticJobQueue<'a> {
             .bind(batch.job_id)
             .execute(&mut *tx)
             .await?;
-        maybe_complete(&mut tx, batch.job_id, Some(generation_id)).await?;
+        maybe_complete(&mut tx, batch.job_id, Some(generation_id), now).await?;
         tx.commit().await?;
         Ok(batch.chunks.len())
     }
 
-    /// Releases only this worker's claim; the same chunks remain reclaimable.
+    /// Records a deterministic worker failure and makes the whole job terminal.
     pub async fn mark_failed(
         &self,
         batch: &ClaimedSemanticBatch,
         error: &str,
     ) -> Result<(), SemanticError> {
-        let _clean = error.chars().take(2_000).collect::<String>();
-        let changed =
-            sqlx::query("DELETE FROM semantic_batch_claims WHERE claim_token = ? AND job_id = ?")
-                .bind(batch.token.to_string())
-                .bind(batch.job_id)
-                .execute(self.pool)
-                .await?
-                .rows_affected();
-        if changed != batch.chunks.len() as u64 {
+        let clean = error.chars().take(2_000).collect::<String>();
+        let now = self.now();
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let owned: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM semantic_batch_claims WHERE claim_token = ? AND job_id = ? AND lease_expires_at > ?",
+        )
+        .bind(batch.token.to_string())
+        .bind(batch.job_id)
+        .bind(now)
+        .fetch_one(&mut *tx)
+        .await?;
+        if usize::try_from(owned).ok() != Some(batch.chunks.len()) {
             return Err(invalid_claim(batch));
         }
+        let changed = sqlx::query("UPDATE semantic_index_jobs SET status = 'failed', last_error = ?, failed_at = ?, completed_at = ? WHERE id = ? AND status = 'running'")
+            .bind(&clean).bind(now).bind(now).bind(batch.job_id)
+            .execute(&mut *tx).await?.rows_affected();
+        if changed != 1 {
+            return Err(invalid_claim(batch));
+        }
+        sqlx::query("DELETE FROM semantic_batch_claims WHERE job_id = ?")
+            .bind(batch.job_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -280,19 +344,22 @@ async fn maybe_complete(
     tx: &mut Transaction<'_, Sqlite>,
     job_id: i64,
     generation: Option<&str>,
+    now: DateTime<Utc>,
 ) -> Result<(), SemanticError> {
-    if has_pending(tx, job_id, generation).await? {
+    if has_pending(tx, job_id, generation, now).await? {
         return Ok(());
     }
-    let in_flight: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM semantic_batch_claims WHERE job_id = ?")
-            .bind(job_id)
-            .fetch_one(&mut **tx)
-            .await?;
+    let in_flight: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM semantic_batch_claims WHERE job_id = ? AND lease_expires_at > ?",
+    )
+    .bind(job_id)
+    .bind(now)
+    .fetch_one(&mut **tx)
+    .await?;
     if in_flight == 0 {
         sqlx::query(
             "UPDATE semantic_index_jobs SET status = 'completed', completed_at = ? WHERE id = ? AND status = 'running'",
-        ).bind(Utc::now()).bind(job_id).execute(&mut **tx).await?;
+        ).bind(now).bind(job_id).execute(&mut **tx).await?;
     }
     Ok(())
 }
@@ -301,9 +368,11 @@ async fn has_pending(
     tx: &mut Transaction<'_, Sqlite>,
     job_id: i64,
     generation: Option<&str>,
+    now: DateTime<Utc>,
 ) -> Result<bool, SemanticError> {
     let rows = sqlx::query_as::<_, ClaimRow>(CLAIM_SCAN_ALL_SQL)
         .bind(job_id)
+        .bind(now)
         .fetch_all(&mut **tx)
         .await?;
     Ok(rows.iter().any(|row| !is_fresh(row, generation)))
@@ -359,26 +428,31 @@ struct ClaimRow {
     source_ref: String,
     state_checksum: Option<String>,
     state_generation: Option<String>,
+    claim_attempts: Option<i64>,
 }
 
 const CLAIM_SCAN_SQL: &str = r#"
-SELECT c.*, r.source_ref, s.checksum AS state_checksum, s.generation_id AS state_generation
+SELECT c.*, r.source_ref, s.checksum AS state_checksum, s.generation_id AS state_generation,
+       claim.attempts AS claim_attempts
 FROM rag_chunks c
 JOIN rag_sources r ON r.id = c.source_id AND r.series_slug = c.series_slug
 LEFT JOIN semantic_chunk_state s ON s.chunk_id = c.id
-WHERE c.id > ? AND NOT EXISTS (
-  SELECT 1 FROM semantic_batch_claims claim WHERE claim.job_id = ? AND claim.chunk_id = c.id
+LEFT JOIN semantic_batch_claims claim ON claim.job_id = ? AND claim.chunk_id = c.id
+WHERE c.id > ? AND (
+  claim.chunk_id IS NULL OR claim.lease_expires_at IS NULL OR claim.lease_expires_at <= ?
 )
 ORDER BY c.id LIMIT ?
 "#;
 
 const CLAIM_SCAN_ALL_SQL: &str = r#"
-SELECT c.*, r.source_ref, s.checksum AS state_checksum, s.generation_id AS state_generation
+SELECT c.*, r.source_ref, s.checksum AS state_checksum, s.generation_id AS state_generation,
+       claim.attempts AS claim_attempts
 FROM rag_chunks c
 JOIN rag_sources r ON r.id = c.source_id AND r.series_slug = c.series_slug
 LEFT JOIN semantic_chunk_state s ON s.chunk_id = c.id
-WHERE NOT EXISTS (
-  SELECT 1 FROM semantic_batch_claims claim WHERE claim.job_id = ? AND claim.chunk_id = c.id
+LEFT JOIN semantic_batch_claims claim ON claim.job_id = ? AND claim.chunk_id = c.id
+WHERE (
+  claim.chunk_id IS NULL OR claim.lease_expires_at IS NULL OR claim.lease_expires_at <= ?
 )
 ORDER BY c.id
 "#;

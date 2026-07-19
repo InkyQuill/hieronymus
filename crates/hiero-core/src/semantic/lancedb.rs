@@ -73,10 +73,18 @@ impl LanceDbIndex {
                 .await?;
         }
         let root = tokio::fs::canonicalize(path.as_ref()).await?;
-        Ok(Self { root, pool })
+        let generations = root.join("generations");
+        match tokio::fs::create_dir(&generations).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+        let index = Self { root, pool };
+        let _guard = index.lifecycle_write_lock().await?;
+        Ok(index)
     }
 
-    async fn lifecycle_lock(&self) -> Result<LifecycleGuard, SemanticError> {
+    async fn lifecycle_lock(&self, exclusive: bool) -> Result<LifecycleGuard, SemanticError> {
         let path = self.root.join(LIFECYCLE_LOCK);
         let file = tokio::task::spawn_blocking(move || {
             let mut options = std::fs::OpenOptions::new();
@@ -87,13 +95,25 @@ impl LanceDbIndex {
                 options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
             }
             let file = options.open(path)?;
-            FileExt::lock_exclusive(&file)?;
+            if exclusive {
+                FileExt::lock_exclusive(&file)?;
+            } else {
+                FileExt::lock_shared(&file)?;
+            }
             Ok::<_, std::io::Error>(file)
         })
         .await??;
         let guard = LifecycleGuard(file);
         self.validate_layout_locked().await?;
         Ok(guard)
+    }
+
+    async fn lifecycle_read_lock(&self) -> Result<LifecycleGuard, SemanticError> {
+        self.lifecycle_lock(false).await
+    }
+
+    async fn lifecycle_write_lock(&self) -> Result<LifecycleGuard, SemanticError> {
+        self.lifecycle_lock(true).await
     }
 
     async fn validate_layout_locked(&self) -> Result<PathBuf, SemanticError> {
@@ -106,7 +126,9 @@ impl LanceDbIndex {
             }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                tokio::fs::create_dir(&generations).await?;
+                return Err(SemanticError::CorruptIndex {
+                    reason: "semantic generations path is missing".into(),
+                });
             }
             Err(error) => return Err(error.into()),
         }
@@ -208,7 +230,7 @@ impl LanceDbIndex {
 
     async fn valid_hit(
         &self,
-        generation: GenerationId,
+        _generation: GenerationId,
         chunk_id: i64,
         checksum: &str,
         series: &str,
@@ -220,15 +242,15 @@ impl LanceDbIndex {
         let Some(pool) = &self.pool else {
             return Ok(true);
         };
-        let row = sqlx::query("SELECT c.text, c.series_slug, s.checksum, s.generation_id FROM rag_chunks c JOIN semantic_chunk_state s ON s.chunk_id = c.id WHERE c.id = ?")
-            .bind(chunk_id).fetch_optional(pool).await?;
+        let row = sqlx::query("SELECT c.text, c.series_slug FROM rag_chunks c WHERE c.id = ?")
+            .bind(chunk_id)
+            .fetch_optional(pool)
+            .await?;
         let Some(row) = row else {
             return Ok(false);
         };
         let text: String = row.get("text");
         Ok(row.get::<String, _>("series_slug") == wanted
-            && row.get::<String, _>("checksum") == checksum
-            && row.get::<String, _>("generation_id") == generation.0.to_string()
             && checksum == hex_checksum(text.as_bytes()))
     }
 
@@ -321,26 +343,8 @@ impl LanceDbIndex {
         }
         Ok(())
     }
-}
 
-#[async_trait]
-impl SemanticIndex for LanceDbIndex {
-    async fn health(&self) -> Result<IndexHealth, SemanticError> {
-        match self.active_generation().await {
-            Ok(active) => Ok(IndexHealth {
-                ok: true,
-                vector_count: active.as_ref().map_or(0, |value| value.vector_count),
-                active_generation: active.map(|value| value.id),
-            }),
-            Err(_) => Ok(IndexHealth {
-                ok: false,
-                vector_count: 0,
-                active_generation: None,
-            }),
-        }
-    }
-
-    async fn active_generation(&self) -> Result<Option<GenerationInfo>, SemanticError> {
+    async fn active_generation_locked(&self) -> Result<Option<GenerationInfo>, SemanticError> {
         let Some(id) = self.read_active().await? else {
             return Ok(None);
         };
@@ -367,9 +371,37 @@ impl SemanticIndex for LanceDbIndex {
             vector_count,
         }))
     }
+}
+
+#[async_trait]
+impl SemanticIndex for LanceDbIndex {
+    async fn health(&self) -> Result<IndexHealth, SemanticError> {
+        let observed = async {
+            let _guard = self.lifecycle_read_lock().await?;
+            self.active_generation_locked().await
+        }
+        .await;
+        match observed {
+            Ok(active) => Ok(IndexHealth {
+                ok: true,
+                vector_count: active.as_ref().map_or(0, |value| value.vector_count),
+                active_generation: active.map(|value| value.id),
+            }),
+            Err(_) => Ok(IndexHealth {
+                ok: false,
+                vector_count: 0,
+                active_generation: None,
+            }),
+        }
+    }
+
+    async fn active_generation(&self) -> Result<Option<GenerationInfo>, SemanticError> {
+        let _guard = self.lifecycle_read_lock().await?;
+        self.active_generation_locked().await
+    }
 
     async fn begin_rebuild(&self) -> Result<GenerationId, SemanticError> {
-        let _guard = self.lifecycle_lock().await?;
+        let _guard = self.lifecycle_write_lock().await?;
         let id = GenerationId(uuid::Uuid::new_v4());
         tokio::fs::create_dir(self.generation_path(id)).await?;
         self.validate_generation_locked(id).await?;
@@ -392,7 +424,7 @@ impl SemanticIndex for LanceDbIndex {
         generation: GenerationId,
         vectors: Vec<VectorRecord>,
     ) -> Result<usize, SemanticError> {
-        let _guard = self.lifecycle_lock().await?;
+        let _guard = self.lifecycle_write_lock().await?;
         self.validate_generation_locked(generation).await?;
         validate_vectors(&vectors)?;
         let dimensions = i32::try_from(vectors[0].embedding.len()).map_err(|_| {
@@ -452,6 +484,20 @@ impl SemanticIndex for LanceDbIndex {
         let tables = db.table_names().execute().await?;
         if tables.iter().any(|name| name == TABLE) {
             let table = db.open_table(TABLE).execute().await?;
+            let schema = table.schema().await?;
+            let expected_dimensions = match schema.field_with_name("vector")?.data_type() {
+                DataType::FixedSizeList(_, dimensions) => *dimensions,
+                _ => {
+                    return Err(SemanticError::CorruptIndex {
+                        reason: "vector column has an invalid type".into(),
+                    });
+                }
+            };
+            if expected_dimensions != dimensions {
+                return Err(SemanticError::InvalidVector {
+                    reason: "vector dimensions differ from the generation schema".into(),
+                });
+            }
             let mut merge = table.merge_insert(&["chunk_id"]);
             merge
                 .when_matched_update_all(None)
@@ -470,6 +516,7 @@ impl SemanticIndex for LanceDbIndex {
         limit: usize,
     ) -> Result<Vec<SearchHit>, SemanticError> {
         validate_query(query)?;
+        let _guard = self.lifecycle_read_lock().await?;
         let generation = self
             .read_active()
             .await?
@@ -578,17 +625,22 @@ impl SemanticIndex for LanceDbIndex {
         if chunk_ids.is_empty() {
             return Ok(0);
         }
-        let _guard = self.lifecycle_lock().await?;
+        let _guard = self.lifecycle_write_lock().await?;
         let generation = self
             .read_active()
             .await?
             .ok_or(SemanticError::NoActiveGeneration)?;
-        let table = self
-            .connection(generation)
-            .await?
-            .open_table(TABLE)
+        let db = self.connection(generation).await?;
+        if !db
+            .table_names()
             .execute()
-            .await?;
+            .await?
+            .iter()
+            .any(|name| name == TABLE)
+        {
+            return Ok(0);
+        }
+        let table = db.open_table(TABLE).execute().await?;
         let before = table.count_rows(None).await?;
         let predicate = chunk_ids
             .iter()
@@ -600,7 +652,7 @@ impl SemanticIndex for LanceDbIndex {
     }
 
     async fn activate_generation(&self, generation: GenerationId) -> Result<(), SemanticError> {
-        let _guard = self.lifecycle_lock().await?;
+        let _guard = self.lifecycle_write_lock().await?;
         self.validate_generation_locked(generation).await?;
         self.ensure_generation_complete(generation).await?;
         let temp = self
@@ -612,7 +664,7 @@ impl SemanticIndex for LanceDbIndex {
     }
 
     async fn cancel_generation(&self, generation: GenerationId) -> Result<(), SemanticError> {
-        let _guard = self.lifecycle_lock().await?;
+        let _guard = self.lifecycle_write_lock().await?;
         self.validate_generation_locked(generation).await?;
         if self.read_active().await? == Some(generation) {
             return Err(SemanticError::Cancelled);
@@ -626,7 +678,7 @@ impl SemanticIndex for LanceDbIndex {
     }
 
     async fn close(&self) -> Result<(), SemanticError> {
-        let _guard = self.lifecycle_lock().await?;
+        let _guard = self.lifecycle_write_lock().await?;
         Ok(())
     }
 }
@@ -659,4 +711,34 @@ async fn reject_symlink_components(path: &Path) -> Result<(), SemanticError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{LanceDbIndex, SemanticIndex};
+
+    #[tokio::test]
+    async fn shared_read_guard_blocks_mutation_until_the_read_finishes() {
+        let directory = tempfile::tempdir().unwrap();
+        let reader = Arc::new(LanceDbIndex::open(directory.path()).await.unwrap());
+        let writer = Arc::new(LanceDbIndex::open(directory.path()).await.unwrap());
+        let generation = reader.begin_rebuild().await.unwrap();
+        let read_guard = reader.lifecycle_read_lock().await.unwrap();
+
+        let task = tokio::spawn(async move { writer.cancel_generation(generation).await });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), async {
+                while !task.is_finished() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .is_err(),
+            "exclusive mutation must wait for the shared read guard"
+        );
+        drop(read_guard);
+        task.await.unwrap().unwrap();
+    }
 }

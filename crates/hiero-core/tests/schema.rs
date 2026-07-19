@@ -838,6 +838,11 @@ async fn explicit_indexes_have_the_exact_declared_columns() {
             vec!["job_id", "claim_token"],
         ),
         (
+            "semantic_batch_claims",
+            "semantic_batch_claims_lease_idx",
+            vec!["job_id", "lease_expires_at", "chunk_id"],
+        ),
+        (
             "crystal_links",
             "idx_crystal_links_target",
             vec!["target_crystal_id", "source_crystal_id", "link_type"],
@@ -1127,5 +1132,5 @@ async fn migration_versions_include_fts_and_are_idempotent() {
     .await
     .expect("migration versions should be readable");
 
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 }

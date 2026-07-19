@@ -93,7 +93,13 @@ pub trait SemanticIndex: Send + Sync {
 #[derive(Default)]
 struct FakeState {
     active: Option<GenerationId>,
-    generations: HashMap<GenerationId, (DateTime<Utc>, Vec<VectorRecord>)>,
+    generations: HashMap<GenerationId, FakeGeneration>,
+}
+
+struct FakeGeneration {
+    created_at: DateTime<Utc>,
+    dimensions: Option<usize>,
+    vectors: Vec<VectorRecord>,
 }
 
 /// Deterministic in-memory contract implementation for callers' tests.
@@ -118,7 +124,7 @@ impl SemanticIndex for FakeSemanticIndex {
         let count = state
             .active
             .and_then(|id| state.generations.get(&id))
-            .map_or(0, |(_, values)| values.len());
+            .map_or(0, |generation| generation.vectors.len());
         Ok(IndexHealth {
             ok: true,
             vector_count: count,
@@ -131,14 +137,11 @@ impl SemanticIndex for FakeSemanticIndex {
             reason: "fake index lock poisoned".into(),
         })?;
         Ok(state.active.and_then(|id| {
-            state
-                .generations
-                .get(&id)
-                .map(|(created_at, values)| GenerationInfo {
-                    id,
-                    created_at: *created_at,
-                    vector_count: values.len(),
-                })
+            state.generations.get(&id).map(|generation| GenerationInfo {
+                id,
+                created_at: generation.created_at,
+                vector_count: generation.vectors.len(),
+            })
         }))
     }
 
@@ -150,7 +153,14 @@ impl SemanticIndex for FakeSemanticIndex {
                 reason: "fake index lock poisoned".into(),
             })?
             .generations
-            .insert(id, (Utc::now(), vec![]));
+            .insert(
+                id,
+                FakeGeneration {
+                    created_at: Utc::now(),
+                    dimensions: None,
+                    vectors: vec![],
+                },
+            );
         Ok(id)
     }
 
@@ -166,14 +176,26 @@ impl SemanticIndex for FakeSemanticIndex {
             .map_err(|_| SemanticError::CorruptIndex {
                 reason: "fake index lock poisoned".into(),
             })?;
-        let (_, values) = state
+        let generation = state
             .generations
             .get_mut(&generation)
             .ok_or(SemanticError::MissingGeneration(generation))?;
+        let dimensions = vectors[0].embedding.len();
+        if generation
+            .dimensions
+            .is_some_and(|expected| expected != dimensions)
+        {
+            return Err(SemanticError::InvalidVector {
+                reason: "vector dimensions differ from the generation schema".into(),
+            });
+        }
+        generation.dimensions = Some(dimensions);
         let input_count = vectors.len();
         for vector in vectors {
-            values.retain(|existing| existing.chunk_id != vector.chunk_id);
-            values.push(vector);
+            generation
+                .vectors
+                .retain(|existing| existing.chunk_id != vector.chunk_id);
+            generation.vectors.push(vector);
         }
         Ok(input_count)
     }
@@ -189,11 +211,11 @@ impl SemanticIndex for FakeSemanticIndex {
             reason: "fake index lock poisoned".into(),
         })?;
         let generation = state.active.ok_or(SemanticError::NoActiveGeneration)?;
-        let (_, vectors) = state
+        let generation = state
             .generations
             .get(&generation)
             .ok_or(SemanticError::MissingGeneration(generation))?;
-        rank_vectors(query, vectors, limit)
+        rank_vectors(query, &generation.vectors, limit)
     }
 
     async fn delete_vectors(&self, chunk_ids: &[i64]) -> Result<usize, SemanticError> {
@@ -204,13 +226,15 @@ impl SemanticIndex for FakeSemanticIndex {
                 reason: "fake index lock poisoned".into(),
             })?;
         let generation = state.active.ok_or(SemanticError::NoActiveGeneration)?;
-        let (_, vectors) = state
+        let generation = state
             .generations
             .get_mut(&generation)
             .ok_or(SemanticError::MissingGeneration(generation))?;
-        let before = vectors.len();
-        vectors.retain(|record| !chunk_ids.contains(&record.chunk_id));
-        Ok(before - vectors.len())
+        let before = generation.vectors.len();
+        generation
+            .vectors
+            .retain(|record| !chunk_ids.contains(&record.chunk_id));
+        Ok(before - generation.vectors.len())
     }
 
     async fn activate_generation(&self, generation: GenerationId) -> Result<(), SemanticError> {
@@ -259,6 +283,7 @@ pub(crate) fn validate_query(query: &[f32]) -> Result<(), SemanticError> {
 }
 
 pub(crate) fn validate_vectors(vectors: &[VectorRecord]) -> Result<(), SemanticError> {
+    let mut ids = std::collections::HashSet::with_capacity(vectors.len());
     let dimensions = vectors.first().map_or(0, |vector| vector.embedding.len());
     if dimensions == 0
         || vectors.iter().any(|vector| {
@@ -268,6 +293,11 @@ pub(crate) fn validate_vectors(vectors: &[VectorRecord]) -> Result<(), SemanticE
     {
         return Err(SemanticError::InvalidVector {
             reason: "vectors must have one non-zero dimension and finite values".into(),
+        });
+    }
+    if vectors.iter().any(|vector| !ids.insert(vector.chunk_id)) {
+        return Err(SemanticError::InvalidVector {
+            reason: "one upsert batch must not contain duplicate chunk IDs".into(),
         });
     }
     Ok(())

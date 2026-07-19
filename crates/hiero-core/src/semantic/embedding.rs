@@ -297,6 +297,89 @@ struct OrtRuntime {
     session: std::sync::Mutex<ort::session::Session>,
 }
 
+struct NamedOutput<'a> {
+    name: &'a str,
+    shape: &'a [i64],
+    data: &'a [f32],
+}
+
+fn vectors_from_named_outputs(
+    outputs: &[NamedOutput<'_>],
+    attention: &[i64],
+    batch: usize,
+    sequence: usize,
+    dimensions: usize,
+) -> Result<Vec<Vec<f32>>> {
+    let known = outputs
+        .iter()
+        .filter(|output| matches!(output.name, "sentence_embedding" | "last_hidden_state"))
+        .collect::<Vec<_>>();
+    if known.len() != 1 {
+        return Err(SemanticError::Ort(format!(
+            "expected exactly one known embedding output, found {}",
+            known.len()
+        )));
+    }
+    let output = known[0];
+    let expected_batch = i64::try_from(batch).map_err(|_| SemanticError::InvalidVector {
+        reason: "embedding batch is too large".into(),
+    })?;
+    let expected_sequence = i64::try_from(sequence).map_err(|_| SemanticError::InvalidVector {
+        reason: "embedding sequence is too large".into(),
+    })?;
+    let expected_dimensions =
+        i64::try_from(dimensions).map_err(|_| SemanticError::InvalidVector {
+            reason: "embedding dimensions are too large".into(),
+        })?;
+    match output.name {
+        "sentence_embedding"
+            if output.shape == [expected_batch, expected_dimensions]
+                && output.data.len() == batch.saturating_mul(dimensions) =>
+        {
+            Ok(output
+                .data
+                .chunks_exact(dimensions)
+                .map(<[f32]>::to_vec)
+                .collect())
+        }
+        "last_hidden_state"
+            if output.shape == [expected_batch, expected_sequence, expected_dimensions]
+                && output.data.len()
+                    == batch.saturating_mul(sequence).saturating_mul(dimensions) =>
+        {
+            Ok((0..batch)
+                .map(|row| {
+                    let mut vector = vec![0.0_f32; dimensions];
+                    let mut weight = 0.0_f32;
+                    for token in 0..sequence {
+                        let mask = attention[row * sequence + token] as f32;
+                        weight += mask;
+                        let start = (row * sequence + token) * dimensions;
+                        for (target, value) in vector
+                            .iter_mut()
+                            .zip(&output.data[start..start + dimensions])
+                        {
+                            *target += *value * mask;
+                        }
+                    }
+                    if weight > 0.0 {
+                        for value in &mut vector {
+                            *value /= weight;
+                        }
+                    }
+                    vector
+                })
+                .collect())
+        }
+        _ => Err(SemanticError::InvalidVector {
+            reason: format!(
+                "unexpected ONNX output shape {:?} for {}",
+                output.shape, output.name
+            ),
+        }),
+    }
+}
+
 fn load_ort_runtime(
     model: &std::path::Path,
     tokenizer_path: &std::path::Path,
@@ -373,53 +456,34 @@ impl OrtRuntime {
             session.run(ort::inputs!["input_ids" => ids, "attention_mask" => mask])
         }
         .map_err(|error| SemanticError::Ort(error.to_string()))?;
-        let (shape, data) = outputs[0]
+        let known_names = ["sentence_embedding", "last_hidden_state"]
+            .into_iter()
+            .filter(|name| outputs.contains_key(name))
+            .collect::<Vec<_>>();
+        if known_names.len() != 1 {
+            return Err(SemanticError::Ort(format!(
+                "expected exactly one known embedding output, found {}",
+                known_names.len()
+            )));
+        }
+        let name = known_names[0];
+        let (shape, data) = outputs
+            .get(name)
+            .expect("known output was checked")
             .try_extract_tensor::<f32>()
             .map_err(|error| SemanticError::Ort(error.to_string()))?;
         let shape = shape.to_vec();
-        let expected_batch = i64::try_from(batch).map_err(|_| SemanticError::InvalidVector {
-            reason: "embedding batch is too large".into(),
-        })?;
-        let expected_sequence =
-            i64::try_from(sequence).map_err(|_| SemanticError::InvalidVector {
-                reason: "embedding sequence is too large".into(),
-            })?;
-        let expected_dimensions =
-            i64::try_from(dimensions).map_err(|_| SemanticError::InvalidVector {
-                reason: "embedding dimensions are too large".into(),
-            })?;
-        let mut vectors = if shape.as_slice() == [expected_batch, expected_dimensions] {
-            data.chunks_exact(dimensions)
-                .map(<[f32]>::to_vec)
-                .collect::<Vec<_>>()
-        } else if shape.as_slice() == [expected_batch, expected_sequence, expected_dimensions] {
-            (0..batch)
-                .map(|row| {
-                    let mut vector = vec![0.0_f32; dimensions];
-                    let mut weight = 0.0_f32;
-                    for token in 0..sequence {
-                        let mask = attention[row * sequence + token] as f32;
-                        weight += mask;
-                        let start = (row * sequence + token) * dimensions;
-                        for (target, value) in
-                            vector.iter_mut().zip(&data[start..start + dimensions])
-                        {
-                            *target += *value * mask;
-                        }
-                    }
-                    if weight > 0.0 {
-                        for value in &mut vector {
-                            *value /= weight;
-                        }
-                    }
-                    vector
-                })
-                .collect()
-        } else {
-            return Err(SemanticError::InvalidVector {
-                reason: format!("unexpected ONNX output shape {shape:?}"),
-            });
-        };
+        let mut vectors = vectors_from_named_outputs(
+            &[NamedOutput {
+                name,
+                shape: &shape,
+                data,
+            }],
+            &attention,
+            batch,
+            sequence,
+            dimensions,
+        )?;
         for vector in &mut vectors {
             let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
             if norm > 0.0 {
@@ -455,7 +519,100 @@ impl EmbeddingProvider for OrtEmbeddingProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::TemporaryArtifact;
+    use super::{NamedOutput, SemanticError, TemporaryArtifact, vectors_from_named_outputs};
+
+    #[test]
+    fn named_embedding_output_ignores_a_same_shaped_decoy_and_rejects_ambiguity() {
+        let decoy = [9.0_f32, 0.0];
+        let sentence = [0.0_f32, 2.0];
+        let vectors = vectors_from_named_outputs(
+            &[
+                NamedOutput {
+                    name: "decoy",
+                    shape: &[1, 2],
+                    data: &decoy,
+                },
+                NamedOutput {
+                    name: "sentence_embedding",
+                    shape: &[1, 2],
+                    data: &sentence,
+                },
+            ],
+            &[1],
+            1,
+            1,
+            2,
+        )
+        .unwrap();
+        assert_eq!(vectors, vec![vec![0.0, 2.0]]);
+
+        assert!(matches!(
+            vectors_from_named_outputs(
+                &[
+                    NamedOutput {
+                        name: "sentence_embedding",
+                        shape: &[1, 2],
+                        data: &sentence,
+                    },
+                    NamedOutput {
+                        name: "last_hidden_state",
+                        shape: &[1, 1, 2],
+                        data: &sentence,
+                    },
+                ],
+                &[1],
+                1,
+                1,
+                2,
+            ),
+            Err(SemanticError::Ort(_))
+        ));
+
+        assert!(matches!(
+            vectors_from_named_outputs(
+                &[NamedOutput {
+                    name: "decoy",
+                    shape: &[1, 2],
+                    data: &decoy,
+                }],
+                &[1],
+                1,
+                1,
+                2,
+            ),
+            Err(SemanticError::Ort(_))
+        ));
+
+        assert!(matches!(
+            vectors_from_named_outputs(
+                &[NamedOutput {
+                    name: "sentence_embedding",
+                    shape: &[2],
+                    data: &sentence,
+                }],
+                &[1],
+                1,
+                1,
+                2,
+            ),
+            Err(SemanticError::InvalidVector { .. })
+        ));
+
+        let hidden = [1.0_f32, 2.0, 3.0, 4.0];
+        let pooled = vectors_from_named_outputs(
+            &[NamedOutput {
+                name: "last_hidden_state",
+                shape: &[1, 2, 2],
+                data: &hidden,
+            }],
+            &[1, 1],
+            1,
+            2,
+            2,
+        )
+        .unwrap();
+        assert_eq!(pooled, vec![vec![2.0, 3.0]]);
+    }
 
     #[test]
     fn temporary_artifact_guard_removes_files_unless_disarmed() {

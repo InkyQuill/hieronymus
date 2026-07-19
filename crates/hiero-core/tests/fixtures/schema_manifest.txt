@@ -295,17 +295,20 @@ FK 0|0|series|series_slug|slug|NO ACTION|CASCADE|NONE
 INDEX 1|sqlite_autoindex_rag_sources_1|1|u|0|id,series_slug
 INDEX 0|sqlite_autoindex_rag_sources_2|1|u|0|series_slug,source_ref
 TABLE semantic_batch_claims
-SQL CREATE TABLE semantic_batch_claims (   claim_token TEXT NOT NULL,   job_id INTEGER NOT NULL REFERENCES semantic_index_jobs(id) ON DELETE CASCADE,   chunk_id INTEGER NOT NULL REFERENCES rag_chunks(id) ON DELETE CASCADE,   generation_id TEXT,   created_at TEXT NOT NULL,   PRIMARY KEY (claim_token, chunk_id),   UNIQUE (job_id, chunk_id) ) STRICT
+SQL CREATE TABLE semantic_batch_claims (   claim_token TEXT NOT NULL,   job_id INTEGER NOT NULL REFERENCES semantic_index_jobs(id) ON DELETE CASCADE,   chunk_id INTEGER NOT NULL REFERENCES rag_chunks(id) ON DELETE CASCADE,   generation_id TEXT,   created_at TEXT NOT NULL, lease_expires_at TEXT, attempts INTEGER NOT NULL DEFAULT 1 CHECK (attempts >= 1),   PRIMARY KEY (claim_token, chunk_id),   UNIQUE (job_id, chunk_id) ) STRICT
 COLUMN 0|claim_token|TEXT|1|NULL|1
 COLUMN 1|job_id|INTEGER|1|NULL|0
 COLUMN 2|chunk_id|INTEGER|1|NULL|2
 COLUMN 3|generation_id|TEXT|0|NULL|0
 COLUMN 4|created_at|TEXT|1|NULL|0
+COLUMN 5|lease_expires_at|TEXT|0|NULL|0
+COLUMN 6|attempts|INTEGER|1|1|0
 FK 0|0|rag_chunks|chunk_id|id|NO ACTION|CASCADE|NONE
 FK 1|0|semantic_index_jobs|job_id|id|NO ACTION|CASCADE|NONE
-INDEX 0|semantic_batch_claims_job_token_idx|0|c|0|job_id,claim_token
-INDEX 2|sqlite_autoindex_semantic_batch_claims_1|1|pk|0|claim_token,chunk_id
-INDEX 1|sqlite_autoindex_semantic_batch_claims_2|1|u|0|job_id,chunk_id
+INDEX 1|semantic_batch_claims_job_token_idx|0|c|0|job_id,claim_token
+INDEX 0|semantic_batch_claims_lease_idx|0|c|0|job_id,lease_expires_at,chunk_id
+INDEX 3|sqlite_autoindex_semantic_batch_claims_1|1|pk|0|claim_token,chunk_id
+INDEX 2|sqlite_autoindex_semantic_batch_claims_2|1|u|0|job_id,chunk_id
 TABLE semantic_chunk_state
 SQL CREATE TABLE semantic_chunk_state (   chunk_id INTEGER PRIMARY KEY REFERENCES rag_chunks(id),   checksum TEXT NOT NULL,   generation_id TEXT NOT NULL,   indexed_at TEXT NOT NULL ) STRICT
 COLUMN 0|chunk_id|INTEGER|0|NULL|1
@@ -314,12 +317,14 @@ COLUMN 2|generation_id|TEXT|1|NULL|0
 COLUMN 3|indexed_at|TEXT|1|NULL|0
 FK 0|0|rag_chunks|chunk_id|id|NO ACTION|NO ACTION|NONE
 TABLE semantic_index_jobs
-SQL CREATE TABLE semantic_index_jobs (   id INTEGER PRIMARY KEY,   status TEXT NOT NULL DEFAULT 'pending' CHECK (     status IN ('pending', 'running', 'completed', 'failed', 'cancelled')   ),   generation_id TEXT,   created_at TEXT NOT NULL,   completed_at TEXT ) STRICT
+SQL CREATE TABLE semantic_index_jobs (   id INTEGER PRIMARY KEY,   status TEXT NOT NULL DEFAULT 'pending' CHECK (     status IN ('pending', 'running', 'completed', 'failed', 'cancelled')   ),   generation_id TEXT,   created_at TEXT NOT NULL,   completed_at TEXT , last_error TEXT NOT NULL DEFAULT '', failed_at TEXT) STRICT
 COLUMN 0|id|INTEGER|0|NULL|1
 COLUMN 1|status|TEXT|1|'pending'|0
 COLUMN 2|generation_id|TEXT|0|NULL|0
 COLUMN 3|created_at|TEXT|1|NULL|0
 COLUMN 4|completed_at|TEXT|0|NULL|0
+COLUMN 5|last_error|TEXT|1|''|0
+COLUMN 6|failed_at|TEXT|0|NULL|0
 TABLE series
 SQL CREATE TABLE series (   id INTEGER PRIMARY KEY,   slug TEXT NOT NULL UNIQUE,   title TEXT NOT NULL,   default_source_language TEXT NOT NULL,   default_target_language TEXT NOT NULL,   created_at TEXT NOT NULL,   updated_at TEXT NOT NULL ) STRICT
 COLUMN 0|id|INTEGER|0|NULL|1

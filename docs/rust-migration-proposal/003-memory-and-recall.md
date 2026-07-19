@@ -476,11 +476,20 @@ impl<'a> SemanticJobQueue<'a> {
 ```
 
 Durable state lives in `semantic_index_jobs`, `semantic_batch_claims`, and
-`semantic_chunk_state` (002 §2). Each claim has a unique ownership token. Late success/failure may
-only mutate rows owned by that token and must revalidate the job's generation binding. A job is
-complete only when no stale/pending chunks and no in-flight claims remain. Claim hydration is
+`semantic_chunk_state` (002 §2). Each claim has a unique ownership token, finite lease, and
+persisted attempt count. A live lease cannot be stolen; an expired lease is atomically re-owned
+with a new token. After three delivered attempts the job becomes terminal `failed` with
+`last_error`/`failed_at` diagnostics. `mark_failed` is also terminal: it records the bounded
+error and releases the job's claims. Late or expired-token success/failure is rejected. A job is
+complete only when no stale/pending chunks and no live claims remain. Claim hydration is
 database-only and stays inside the short `BEGIN IMMEDIATE` claim transaction, so decode errors or
 cancellation roll back ownership; embedding and LanceDB work never run under that transaction.
+
+The active generation's stored series/checksum metadata is compared directly with authoritative
+SQLite rows during search. `semantic_chunk_state.generation_id` tracks rebuild progress only:
+partially indexing generation B must not invalidate unchanged results still served from active
+generation A. All active-pointer/table reads hold a shared lifecycle lock through the Lance query;
+generation mutations hold the corresponding exclusive cross-process lock.
 
 ### 5.4 Hybrid ranking
 
