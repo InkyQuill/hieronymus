@@ -10,10 +10,11 @@ use std::{
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use hiero_core::provider::{
-    AnthropicProvider, CredentialSource, DreamProvider, GoogleProvider, HttpMethod, ModelCache,
-    ModelCacheEntry, OllamaProvider, OpenAiProvider, PassName, ProviderCatalog, ProviderDefaults,
-    ProviderError, ProviderProfile, ProviderRegistry, ProviderRequest, ProviderResponse,
-    ProviderTransport, ReqwestTransport, ReqwestTransportOptions,
+    AnthropicProvider, CredentialResolver, CredentialSource, DreamProvider, GoogleProvider,
+    HttpMethod, ModelCache, ModelCacheEntry, OllamaProvider, OpenAiProvider, PassName,
+    ProviderCatalog, ProviderDefaults, ProviderError, ProviderProfile, ProviderRegistry,
+    ProviderRequest, ProviderResponse, ProviderTransport, ReqwestTransport,
+    ReqwestTransportOptions,
 };
 use secrecy::SecretString;
 
@@ -50,6 +51,15 @@ impl FakeTransport {
     }
     fn requests(&self) -> Vec<ProviderRequest> {
         self.requests.lock().unwrap().clone()
+    }
+
+    fn with_responses(
+        values: impl IntoIterator<Item = hiero_core::provider::Result<ProviderResponse>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            requests: Mutex::new(Vec::new()),
+            responses: Mutex::new(values.into_iter().collect()),
+        })
     }
 }
 
@@ -133,6 +143,66 @@ fn catalog_migrates_api_key_alias_and_gemini_to_canonical_key_and_google() {
     assert!(raw.contains("type = \"google\""));
     assert!(raw.contains("key = \"legacy-secret\""));
     assert!(!raw.contains("api_key"));
+}
+
+#[test]
+fn malformed_catalog_and_timeout_errors_never_echo_secrets_or_panic() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("provider.conf");
+    let secret = "real-secret-never-log";
+    std::fs::write(
+        &path,
+        format!("[remote]\ntype='openai'\nurl='https://example.test'\nkey=\"{secret}\" garbage\n"),
+    )
+    .unwrap();
+    let error = ProviderCatalog::load(&path).unwrap_err();
+    assert!(!format!("{error}").contains(secret));
+    assert!(!format!("{error:?}").contains(secret));
+
+    std::fs::write(
+        &path,
+        "[remote]\ntype='openai'\nurl='https://example.test'\ntimeout_seconds=1e300\n",
+    )
+    .unwrap();
+    assert!(matches!(
+        ProviderCatalog::load(&path),
+        Err(ProviderError::Config(_))
+    ));
+
+    std::fs::write(
+        &path,
+        "[remote]\ntype='openai'\nurl='https://example.test'\ntimeout_seconds=0.000001\n",
+    )
+    .unwrap();
+    let catalog = ProviderCatalog::load(&path).unwrap();
+    assert_eq!(
+        catalog.get("remote").unwrap().timeout().unwrap(),
+        Duration::from_micros(1)
+    );
+}
+
+#[test]
+fn provider_response_and_transport_options_debug_are_opaque() {
+    let body_secret = "secret-response-body";
+    let proxy_secret = "proxy-user:proxy-password";
+    let pem_secret = b"secret-private-pem-material".to_vec();
+    let response = ProviderResponse {
+        status: 418,
+        body: body_secret.as_bytes().to_vec(),
+    };
+    let options = ReqwestTransportOptions {
+        trusted_proxy: Some(format!("http://{proxy_secret}@127.0.0.1:9")),
+        custom_ca_pem: vec![pem_secret.clone()],
+    };
+    let response_debug = format!("{response:?}");
+    assert!(response_debug.contains("418"));
+    assert!(response_debug.contains(&body_secret.len().to_string()));
+    assert!(!response_debug.contains(body_secret));
+    let options_debug = format!("{options:?}");
+    assert!(options_debug.contains("trusted_proxy_present"));
+    assert!(options_debug.contains("custom_ca_count"));
+    assert!(!options_debug.contains(proxy_secret));
+    assert!(!options_debug.contains(std::str::from_utf8(&pem_secret).unwrap()));
 }
 
 #[test]
@@ -252,6 +322,7 @@ async fn injected_transport_is_used_and_provider_shapes_are_exact() {
         );
         let request = transport.requests().pop().unwrap();
         assert_eq!(request.method(), HttpMethod::Post);
+        assert!(request.response_limit() > 0);
         assert_eq!(
             request.payload().unwrap()["contents"].is_array(),
             kind == "google"
@@ -274,6 +345,65 @@ async fn injected_transport_is_used_and_provider_shapes_are_exact() {
         }
         assert!(!format!("{request:?}").contains("fixture-secret"));
     }
+}
+
+#[tokio::test]
+async fn injected_transport_errors_are_typed_bounded_and_redacted() {
+    let configured = keyed(
+        profile("openai", "openai", "https://example.test/v1"),
+        "request-secret",
+    );
+    let cases = [
+        (
+            Ok(ProviderResponse {
+                status: 200,
+                body: b"{".to_vec(),
+            }),
+            ProviderError::MalformedJson,
+        ),
+        (
+            Ok(ProviderResponse {
+                status: 401,
+                body: b"error-body-secret".to_vec(),
+            }),
+            ProviderError::Http { status: 401 },
+        ),
+        (
+            Ok(ProviderResponse {
+                status: 200,
+                body: br#"{"choices":[]}"#.to_vec(),
+            }),
+            ProviderError::MissingOutput,
+        ),
+        (Err(ProviderError::Timeout), ProviderError::Timeout),
+    ];
+    for (response, expected) in cases {
+        let transport = FakeTransport::with_responses([response]);
+        let error = OpenAiProvider::new(transport, configured.clone(), "model")
+            .unwrap()
+            .run_pass(PassName::Concepts, &context(), &[])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            std::mem::discriminant(&error),
+            std::mem::discriminant(&expected)
+        );
+        let rendered = format!("{error:?} {error}");
+        assert!(!rendered.contains("error-body-secret"));
+        assert!(!rendered.contains("request-secret"));
+    }
+
+    let oversized = ProviderResponse {
+        status: 200,
+        body: vec![b'x'; 2 * 1024 * 1024 + 1],
+    };
+    let transport = FakeTransport::with_responses([Ok(oversized)]);
+    let error = OpenAiProvider::new(transport, configured, "model")
+        .unwrap()
+        .run_pass(PassName::Concepts, &context(), &[])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ProviderError::ResponseTooLarge { .. }));
 }
 
 #[tokio::test]
@@ -324,7 +454,7 @@ fn ollama_rejects_dns_names_and_production_transport_ignores_proxy() {
                 custom_ca_pem: vec![]
             }
         )
-        .is_ok()
+        .is_err()
     );
     let remote = profile("remote", "openai", "https://example.test");
     assert!(
@@ -336,6 +466,53 @@ fn ollama_rejects_dns_names_and_production_transport_ignores_proxy() {
             }
         )
         .is_err()
+    );
+}
+
+struct CountingCredentialResolver {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl CredentialResolver for CountingCredentialResolver {
+    async fn resolve(
+        &self,
+        _profile: &ProviderProfile,
+    ) -> hiero_core::provider::Result<Option<SecretString>> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Some(SecretString::from("one-snapshot".to_owned())))
+    }
+}
+
+#[tokio::test]
+async fn discovery_resolves_credentials_once_for_cache_identity_and_auth() {
+    let transport = FakeTransport::with_json([serde_json::json!({"data":[{"id":"one"}]})]);
+    let credentials = Arc::new(CountingCredentialResolver {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let registry = ProviderRegistry::with_transport_and_credential_resolver(
+        transport.clone(),
+        ModelCache::new(8, 4096, Duration::from_secs(60)),
+        credentials.clone(),
+    );
+    let configured = profile("openai", "openai", "https://example.test/v1");
+    assert_eq!(
+        registry
+            .suggest_models(&configured, Utc::now())
+            .await
+            .unwrap(),
+        ["one"]
+    );
+    assert_eq!(
+        credentials.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        transport.requests()[0]
+            .headers()
+            .get("authorization")
+            .unwrap(),
+        "Bearer one-snapshot"
     );
 }
 
@@ -419,7 +596,12 @@ async fn openai_and_anthropic_discovery_paginate_with_auth() {
         let requests = transport.requests();
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].url().path(), "/v1/models");
-        assert!(requests[1].url().query().unwrap().contains("after=b"));
+        let expected_cursor = if kind == "anthropic" {
+            "after_id=b"
+        } else {
+            "after=b"
+        };
+        assert!(requests[1].url().query().unwrap().contains(expected_cursor));
         assert!(
             requests[0]
                 .headers()
@@ -533,6 +715,37 @@ async fn discovery_detects_pagination_loop_and_does_not_cache_errors() {
     );
 }
 
+#[tokio::test]
+async fn discovery_transport_errors_are_not_cached() {
+    let transport = FakeTransport::with_responses([
+        Err(ProviderError::Timeout),
+        Ok(ProviderResponse {
+            status: 200,
+            body: serde_json::to_vec(&serde_json::json!({"data":[{"id":"fresh"}]})).unwrap(),
+        }),
+    ]);
+    let configured = keyed(
+        profile("openai", "openai", "https://example.test/v1"),
+        "secret",
+    );
+    let registry = ProviderRegistry::with_transport(
+        transport.clone(),
+        ModelCache::new(8, 4096, Duration::from_secs(60)),
+    );
+    assert!(matches!(
+        registry.suggest_models(&configured, Utc::now()).await,
+        Err(ProviderError::Timeout)
+    ));
+    assert_eq!(
+        registry
+            .suggest_models(&configured, Utc::now())
+            .await
+            .unwrap(),
+        ["fresh"]
+    );
+    assert_eq!(transport.requests().len(), 2);
+}
+
 #[test]
 fn google_model_normalization_rejects_ambiguous_segments() {
     let transport = FakeTransport::with_json([]);
@@ -569,6 +782,80 @@ fn fake_http(status: u16, body: String, extra_headers: String) -> (String, mpsc:
         );
     });
     (format!("http://{address}"), receiver)
+}
+
+#[test]
+fn reqwest_proxy_child() {
+    let Ok(endpoint) = std::env::var("HIERO_TEST_PROXY_TARGET") else {
+        return;
+    };
+    let trusted_proxy = std::env::var("HIERO_TEST_TRUSTED_PROXY").ok();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async move {
+        let configured = keyed(
+            profile("child", "openai", &format!("{endpoint}/v1")),
+            "secret",
+        );
+        let transport = Arc::new(
+            ReqwestTransport::for_profile(
+                &configured,
+                &ReqwestTransportOptions {
+                    trusted_proxy,
+                    custom_ca_pem: vec![],
+                },
+            )
+            .unwrap(),
+        );
+        OpenAiProvider::new(transport, configured, "model")
+            .unwrap()
+            .run_pass(PassName::Concepts, &context(), &[])
+            .await
+            .unwrap();
+    });
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn reqwest_transport_ignores_environment_proxy_and_uses_only_explicit_proxy() {
+    let _network = network_test_lock().lock().await;
+    let openai_body = r#"{"choices":[{"message":{"content":"{\"ok\":true}"}}]}"#;
+
+    let (environment_proxy, environment_capture) =
+        fake_http(502, "environment proxy used".into(), String::new());
+    let (direct, direct_capture) = fake_http(200, openai_body.into(), String::new());
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "reqwest_proxy_child", "--nocapture"])
+        .env("HIERO_TEST_PROXY_TARGET", &direct)
+        .env("HTTP_PROXY", &environment_proxy)
+        .env("HTTPS_PROXY", &environment_proxy)
+        .env("ALL_PROXY", &environment_proxy)
+        .env_remove("NO_PROXY")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(direct_capture.recv_timeout(Duration::from_secs(1)).is_ok());
+    assert!(
+        environment_capture
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+
+    let (explicit_proxy, explicit_capture) = fake_http(200, openai_body.into(), String::new());
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "reqwest_proxy_child", "--nocapture"])
+        .env("HIERO_TEST_PROXY_TARGET", "http://127.0.0.1:9")
+        .env("HIERO_TEST_TRUSTED_PROXY", explicit_proxy)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(
+        explicit_capture
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .contains("http://127.0.0.1:9/v1/chat/completions")
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

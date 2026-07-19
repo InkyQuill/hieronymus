@@ -14,6 +14,22 @@ impl AnthropicProvider {
     ) -> Result<Self> {
         HttpProvider::new(transport, profile, model, Dialect::Anthropic).map(Self)
     }
+
+    pub(crate) fn with_credential_resolver(
+        transport: Arc<dyn ProviderTransport>,
+        credentials: Arc<dyn super::CredentialResolver>,
+        profile: ProviderProfile,
+        model: impl Into<String>,
+    ) -> Result<Self> {
+        HttpProvider::new_with_credential_resolver(
+            transport,
+            credentials,
+            profile,
+            model,
+            Dialect::Anthropic,
+        )
+        .map(Self)
+    }
 }
 #[async_trait]
 impl DreamProvider for AnthropicProvider {

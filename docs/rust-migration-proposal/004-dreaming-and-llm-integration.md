@@ -93,6 +93,10 @@ pub trait ProviderTransport: Send + Sync {
 pub trait ProviderTransportFactory: Send + Sync {
     fn create(&self, profile: &ProviderProfile) -> Result<Arc<dyn ProviderTransport>>;
 }
+#[async_trait]
+pub trait CredentialResolver: Send + Sync {
+    async fn resolve(&self, profile: &ProviderProfile) -> Result<Option<SecretString>>;
+}
 
 pub struct ProviderRegistry;
 impl ProviderRegistry {
@@ -115,8 +119,12 @@ impl ModelCache {
 inline credential field; `api_key` is accepted only as a migration alias. Credentials are
 resolved before health or discovery requests, errors are never cached, and cache identities
 contain only a SHA-256 credential/account fingerprint. Production transport disables redirects,
-enforces connect/read/total timeouts and response-size limits, and accepts proxy/custom-CA trust
-only through explicit options.
+starts with environment proxy discovery disabled, enforces connect/read/total timeouts and
+response-size limits, and accepts proxy/custom-CA trust only through explicit options. Native
+Ollama is direct-only and rejects proxy configuration. File credentials are loaded on Tokio's
+blocking pool exactly once per operation; the resulting secret snapshot supplies both request
+authentication and the cache fingerprint. Debug output reports only response sizes and the
+presence/count/size of trust options, never response bodies, proxy URLs, or PEM contents.
 
 ---
 

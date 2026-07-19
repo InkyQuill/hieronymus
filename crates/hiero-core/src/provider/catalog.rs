@@ -29,7 +29,7 @@ impl std::fmt::Debug for CredentialSource {
 }
 
 impl CredentialSource {
-    pub fn resolve(&self) -> Result<SecretString> {
+    fn resolve(&self) -> Result<SecretString> {
         let value = match self {
             Self::None => {
                 return Err(ProviderError::Credential(
@@ -51,6 +51,18 @@ impl CredentialSource {
             ));
         }
         Ok(SecretString::from(value))
+    }
+
+    pub async fn resolve_async(&self) -> Result<SecretString> {
+        match self {
+            Self::File { .. } => {
+                let source = self.clone();
+                tokio::task::spawn_blocking(move || source.resolve())
+                    .await
+                    .map_err(|_| ProviderError::Transport)?
+            }
+            _ => self.resolve(),
+        }
     }
 }
 
@@ -123,14 +135,21 @@ impl ProviderProfile {
     pub fn base_url(&self) -> &str {
         &self.url
     }
-    pub fn timeout(&self) -> Duration {
-        Duration::from_secs_f64(self.timeout_seconds)
+    pub fn timeout(&self) -> Result<Duration> {
+        if self.timeout_seconds <= 0.0 {
+            return Err(ProviderError::Config(
+                "provider timeout must be positive and representable".into(),
+            ));
+        }
+        Duration::try_from_secs_f64(self.timeout_seconds).map_err(|_| {
+            ProviderError::Config("provider timeout must be positive and representable".into())
+        })
     }
     pub fn credential(&self) -> &CredentialSource {
         &self.credential
     }
-    pub fn resolve_credential(&self) -> Result<SecretString> {
-        self.credential.resolve()
+    pub async fn resolve_credential_async(&self) -> Result<SecretString> {
+        self.credential.resolve_async().await
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -147,11 +166,7 @@ impl ProviderProfile {
         ) {
             return Err(ProviderError::Unsupported(self.provider_type.clone()));
         }
-        if !self.timeout_seconds.is_finite() || self.timeout_seconds <= 0.0 {
-            return Err(ProviderError::Config(
-                "provider timeout must be finite and positive".into(),
-            ));
-        }
+        self.timeout()?;
         let parsed = Url::parse(&self.url)
             .map_err(|_| ProviderError::Config("provider base URL is invalid".into()))?;
         if !parsed.username().is_empty()
@@ -192,7 +207,7 @@ impl ProviderCatalog {
         };
         let root = contents
             .parse::<toml::Table>()
-            .map_err(|error| ProviderError::Config(error.to_string()))?;
+            .map_err(|_| ProviderError::Config("provider catalog contains invalid TOML".into()))?;
         let mut catalog = Self::default();
         for (id, value) in root {
             let table = value
@@ -267,8 +282,9 @@ impl ProviderCatalog {
         defaults.insert("provider".into(), self.defaults.provider.clone().into());
         defaults.insert("model".into(), self.defaults.model.clone().into());
         root.insert("defaults".into(), defaults.into());
-        let contents = toml::to_string_pretty(&root)
-            .map_err(|error| ProviderError::Config(error.to_string()))?;
+        let contents = toml::to_string_pretty(&root).map_err(|_| {
+            ProviderError::Config("provider catalog could not be serialized".into())
+        })?;
         secure_write(path.as_ref(), contents.as_bytes())
     }
 

@@ -15,7 +15,7 @@ use std::{
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -195,12 +195,25 @@ impl ProviderRequest {
     pub fn timeout(&self) -> Duration {
         self.timeout
     }
+    pub fn response_limit(&self) -> usize {
+        self.response_limit
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProviderResponse {
     pub status: u16,
     pub body: Vec<u8>,
+}
+
+impl std::fmt::Debug for ProviderResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderResponse")
+            .field("status", &self.status)
+            .field("body_len", &self.body.len())
+            .finish()
+    }
 }
 
 #[async_trait]
@@ -212,10 +225,53 @@ pub trait ProviderTransportFactory: Send + Sync {
     fn create(&self, profile: &ProviderProfile) -> Result<Arc<dyn ProviderTransport>>;
 }
 
-#[derive(Debug, Clone, Default)]
+#[async_trait]
+pub trait CredentialResolver: Send + Sync {
+    async fn resolve(&self, profile: &ProviderProfile) -> Result<Option<SecretString>>;
+}
+
+#[derive(Debug, Default)]
+pub struct DefaultCredentialResolver;
+
+#[async_trait]
+impl CredentialResolver for DefaultCredentialResolver {
+    async fn resolve(&self, profile: &ProviderProfile) -> Result<Option<SecretString>> {
+        match profile.credential() {
+            CredentialSource::None if profile.provider_type() == "ollama" => Ok(None),
+            _ => Ok(Some(profile.resolve_credential_async().await?)),
+        }
+    }
+}
+
+async fn resolve_operation_credential(
+    resolver: &dyn CredentialResolver,
+    profile: &ProviderProfile,
+) -> Result<Option<SecretString>> {
+    let credential = resolver.resolve(profile).await?;
+    if credential.is_none() && profile.provider_type() != "ollama" {
+        return Err(ProviderError::Credential(
+            "provider credential resolver returned no credential".into(),
+        ));
+    }
+    Ok(credential)
+}
+
+#[derive(Clone, Default)]
 pub struct ReqwestTransportOptions {
     pub trusted_proxy: Option<String>,
     pub custom_ca_pem: Vec<Vec<u8>>,
+}
+
+impl std::fmt::Debug for ReqwestTransportOptions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let custom_ca_bytes = self.custom_ca_pem.iter().map(Vec::len).sum::<usize>();
+        formatter
+            .debug_struct("ReqwestTransportOptions")
+            .field("trusted_proxy_present", &self.trusted_proxy.is_some())
+            .field("custom_ca_count", &self.custom_ca_pem.len())
+            .field("custom_ca_bytes", &custom_ca_bytes)
+            .finish()
+    }
 }
 
 pub struct ReqwestTransport {
@@ -228,12 +284,18 @@ impl ReqwestTransport {
         options: &ReqwestTransportOptions,
     ) -> Result<Self> {
         profile.validate()?;
+        let timeout = profile.timeout()?;
         let mut builder = reqwest::Client::builder()
-            .connect_timeout(profile.timeout().min(Duration::from_secs(10)))
-            .read_timeout(profile.timeout().min(Duration::from_secs(30)))
+            .no_proxy()
+            .connect_timeout(timeout.min(Duration::from_secs(10)))
+            .read_timeout(timeout.min(Duration::from_secs(30)))
             .redirect(reqwest::redirect::Policy::none());
         if profile.provider_type() == "ollama" {
-            builder = builder.no_proxy();
+            if options.trusted_proxy.is_some() {
+                return Err(ProviderError::Config(
+                    "native Ollama does not permit a trusted proxy".into(),
+                ));
+            }
         } else if let Some(proxy) = &options.trusted_proxy {
             builder = builder.proxy(
                 reqwest::Proxy::all(proxy)
@@ -316,6 +378,7 @@ enum Dialect {
 #[derive(Clone)]
 struct HttpProvider {
     transport: Arc<dyn ProviderTransport>,
+    credentials: Arc<dyn CredentialResolver>,
     profile: ProviderProfile,
     model: String,
     dialect: Dialect,
@@ -324,6 +387,22 @@ struct HttpProvider {
 impl HttpProvider {
     fn new(
         transport: Arc<dyn ProviderTransport>,
+        profile: ProviderProfile,
+        model: impl Into<String>,
+        dialect: Dialect,
+    ) -> Result<Self> {
+        Self::new_with_credential_resolver(
+            transport,
+            Arc::new(DefaultCredentialResolver),
+            profile,
+            model,
+            dialect,
+        )
+    }
+
+    fn new_with_credential_resolver(
+        transport: Arc<dyn ProviderTransport>,
+        credentials: Arc<dyn CredentialResolver>,
         profile: ProviderProfile,
         model: impl Into<String>,
         dialect: Dialect,
@@ -337,6 +416,7 @@ impl HttpProvider {
         };
         Ok(Self {
             transport,
+            credentials,
             profile,
             model,
             dialect,
@@ -344,20 +424,29 @@ impl HttpProvider {
     }
 
     async fn generate(&self, prompt: &str, health: bool) -> Result<String> {
-        let request = self.generation_request(prompt, health)?;
+        let credential =
+            resolve_operation_credential(self.credentials.as_ref(), &self.profile).await?;
+        let request = self.generation_request(prompt, health, credential.as_ref())?;
         let value = self.execute_json(request).await?;
         extract_text(self.dialect, &value).map(str::to_owned)
     }
 
     async fn health(&self) -> Result<()> {
-        let request = self.generation_request("Reply with ok.", true)?;
-        let response = self.transport.execute(request).await?;
+        let credential =
+            resolve_operation_credential(self.credentials.as_ref(), &self.profile).await?;
+        let request = self.generation_request("Reply with ok.", true, credential.as_ref())?;
+        let response = self.execute_response(request).await?;
         ensure_success(response.status)
     }
 
-    fn generation_request(&self, prompt: &str, health: bool) -> Result<ProviderRequest> {
+    fn generation_request(
+        &self,
+        prompt: &str,
+        health: bool,
+        credential: Option<&SecretString>,
+    ) -> Result<ProviderRequest> {
         let base = self.profile.base_url().trim_end_matches('/');
-        let mut headers = self.auth_headers()?;
+        let mut headers = self.auth_headers(credential)?;
         let (url, payload) = match self.dialect {
             Dialect::OpenAi => {
                 let mut payload = serde_json::json!({"model":self.model,"messages":[{"role":"user","content":prompt}]});
@@ -403,17 +492,13 @@ impl HttpProvider {
             url,
             headers,
             payload: Some(payload),
-            timeout: self.profile.timeout(),
+            timeout: self.profile.timeout()?,
             response_limit: MAX_RESPONSE_BYTES,
         })
     }
 
-    fn auth_headers(&self) -> Result<BTreeMap<String, String>> {
+    fn auth_headers(&self, credential: Option<&SecretString>) -> Result<BTreeMap<String, String>> {
         let mut headers = BTreeMap::new();
-        let credential = match self.profile.credential() {
-            CredentialSource::None if self.profile.provider_type() == "ollama" => None,
-            _ => Some(self.profile.resolve_credential()?),
-        };
         if let Some(secret) = credential {
             let value = secret.expose_secret();
             match self.dialect {
@@ -431,7 +516,7 @@ impl HttpProvider {
         Ok(headers)
     }
 
-    async fn list_models(&self) -> Result<Vec<String>> {
+    async fn list_models(&self, credential: Option<&SecretString>) -> Result<Vec<String>> {
         let mut url = match self.dialect {
             Dialect::OpenAi | Dialect::Anthropic => parse_url(&format!(
                 "{}/v1/models",
@@ -449,7 +534,7 @@ impl HttpProvider {
                 self.profile.base_url().trim_end_matches('/')
             ))?,
         };
-        let mut headers = self.auth_headers()?;
+        let mut headers = self.auth_headers(credential)?;
         if matches!(self.dialect, Dialect::Anthropic) {
             headers.insert("anthropic-version".into(), "2023-06-01".into());
         }
@@ -465,7 +550,7 @@ impl HttpProvider {
                     url: url.clone(),
                     headers: headers.clone(),
                     payload: None,
-                    timeout: self.profile.timeout(),
+                    timeout: self.profile.timeout()?,
                     response_limit: MAX_RESPONSE_BYTES,
                 })
                 .await?;
@@ -488,9 +573,25 @@ impl HttpProvider {
     }
 
     async fn execute_json(&self, request: ProviderRequest) -> Result<serde_json::Value> {
-        let response = self.transport.execute(request).await?;
+        let response = self.execute_response(request).await?;
         ensure_success(response.status)?;
         serde_json::from_slice(&response.body).map_err(|_| ProviderError::MalformedJson)
+    }
+
+    async fn execute_response(&self, request: ProviderRequest) -> Result<ProviderResponse> {
+        let response_limit = request.response_limit();
+        if response_limit == 0 {
+            return Err(ProviderError::Config(
+                "provider response limit must be positive".into(),
+            ));
+        }
+        let response = self.transport.execute(request).await?;
+        if response.body.len() > response_limit {
+            return Err(ProviderError::ResponseTooLarge {
+                limit: response_limit,
+            });
+        }
+        Ok(response)
     }
 }
 
@@ -527,10 +628,15 @@ fn discovery_page(
                     })
                     .ok_or(ProviderError::PaginationLoop)?;
                 let mut next_url = current.clone();
+                let cursor_name = if dialect == Dialect::Anthropic {
+                    "after_id"
+                } else {
+                    "after"
+                };
                 next_url
                     .query_pairs_mut()
                     .clear()
-                    .append_pair("after", last);
+                    .append_pair(cursor_name, last);
                 next = Some(next_url);
             }
         }
@@ -654,6 +760,7 @@ pub(crate) fn parse_output(text: &str) -> Result<DreamOutput> {
 pub struct ProviderRegistry {
     factory: Arc<dyn ProviderTransportFactory>,
     cache: ModelCache,
+    credentials: Arc<dyn CredentialResolver>,
 }
 
 impl ProviderRegistry {
@@ -661,12 +768,25 @@ impl ProviderRegistry {
         Self {
             factory: Arc::new(StaticTransportFactory { transport }),
             cache,
+            credentials: Arc::new(DefaultCredentialResolver),
+        }
+    }
+    pub fn with_transport_and_credential_resolver(
+        transport: Arc<dyn ProviderTransport>,
+        cache: ModelCache,
+        credentials: Arc<dyn CredentialResolver>,
+    ) -> Self {
+        Self {
+            factory: Arc::new(StaticTransportFactory { transport }),
+            cache,
+            credentials,
         }
     }
     pub fn production(cache: ModelCache, options: ReqwestTransportOptions) -> Self {
         Self {
             factory: Arc::new(ReqwestTransportFactory { options }),
             cache,
+            credentials: Arc::new(DefaultCredentialResolver),
         }
     }
     pub fn resolve(
@@ -681,10 +801,30 @@ impl ProviderRegistry {
             .clone();
         let transport = self.factory.create(&profile)?;
         match profile.provider_type() {
-            "openai" => Ok(Box::new(OpenAiProvider::new(transport, profile, model)?)),
-            "anthropic" => Ok(Box::new(AnthropicProvider::new(transport, profile, model)?)),
-            "google" => Ok(Box::new(GoogleProvider::new(transport, profile, model)?)),
-            "ollama" => Ok(Box::new(OllamaProvider::new(transport, profile, model)?)),
+            "openai" => Ok(Box::new(OpenAiProvider::with_credential_resolver(
+                transport,
+                self.credentials.clone(),
+                profile,
+                model,
+            )?)),
+            "anthropic" => Ok(Box::new(AnthropicProvider::with_credential_resolver(
+                transport,
+                self.credentials.clone(),
+                profile,
+                model,
+            )?)),
+            "google" => Ok(Box::new(GoogleProvider::with_credential_resolver(
+                transport,
+                self.credentials.clone(),
+                profile,
+                model,
+            )?)),
+            "ollama" => Ok(Box::new(OllamaProvider::with_credential_resolver(
+                transport,
+                self.credentials.clone(),
+                profile,
+                model,
+            )?)),
             other => Err(ProviderError::Unsupported(other.into())),
         }
     }
@@ -701,13 +841,14 @@ impl ProviderRegistry {
         profile: &ProviderProfile,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<String>> {
-        let identity = profile_cache_identity(profile)?;
+        let credential = resolve_operation_credential(self.credentials.as_ref(), profile).await?;
+        let identity = profile_cache_identity(profile, credential.as_ref());
         if let Some(models) = self.cache.get(&identity, now) {
             return Ok(models);
         }
         let models = self
             .http(profile.clone(), "discovery")?
-            .list_models()
+            .list_models(credential.as_ref())
             .await?;
         self.cache.insert(&identity, models.clone(), now)?;
         Ok(models)
@@ -721,16 +862,23 @@ impl ProviderRegistry {
             "ollama" => Dialect::Ollama,
             other => return Err(ProviderError::Unsupported(other.into())),
         };
-        HttpProvider::new(transport, profile, model, dialect)
+        HttpProvider::new_with_credential_resolver(
+            transport,
+            self.credentials.clone(),
+            profile,
+            model,
+            dialect,
+        )
     }
 }
 
-fn profile_cache_identity(profile: &ProviderProfile) -> Result<String> {
-    let secret = match profile.credential() {
-        CredentialSource::None if profile.provider_type() == "ollama" => String::new(),
-        _ => profile.resolve_credential()?.expose_secret().to_owned(),
-    };
-    let secret_hash = Sha256::digest(secret.as_bytes());
+fn profile_cache_identity(profile: &ProviderProfile, credential: Option<&SecretString>) -> String {
+    let secret_hash = Sha256::digest(
+        credential
+            .map(ExposeSecret::expose_secret)
+            .unwrap_or_default()
+            .as_bytes(),
+    );
     let mut digest = Sha256::new();
     digest.update(profile.id().as_bytes());
     digest.update([0]);
@@ -739,5 +887,5 @@ fn profile_cache_identity(profile: &ProviderProfile) -> Result<String> {
     digest.update(profile.base_url().trim_end_matches('/').as_bytes());
     digest.update([0]);
     digest.update(secret_hash);
-    Ok(format!("{:x}", digest.finalize()))
+    format!("{:x}", digest.finalize())
 }
