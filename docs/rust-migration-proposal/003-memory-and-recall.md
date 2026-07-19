@@ -312,10 +312,13 @@ impl<'a> FeedbackStore<'a> {
 pub struct ScoreDelta { pub strength: f64, pub confidence: f64 }
 
 /// Canonical in hiero-core::values (002 §6), imported everywhere — not reimplemented per-store.
-/// rule_intent (non-empty) dampens decay deltas by a flat factor (default 0.5), scaled further
-/// by SOURCE_CREDIBILITY_CONFIDENCE[crystal.source_credibility] — a well-established rule fades
-/// slower under disuse, but nothing is permanently exempt (no archive immunity — see the
-/// reconsolidation design doc for why this replaces the old "rules never archive" rule).
+/// rule_intent (non-empty) dampens each negative delta by the exact factor
+/// `1.0 - 0.5 * SOURCE_CREDIBILITY_CONFIDENCE[crystal.source_credibility].clamp(0.0, 1.0)`;
+/// unknown forward-compatible credibility labels use the observation fallback `0.35`. Higher
+/// credibility therefore loses less, while the factor remains in `[0.5, 1.0]`, so nothing is
+/// permanently exempt (no archive immunity — see the reconsolidation design doc for why this
+/// replaces the old "rules never archive" rule). Positive deltas and crystals without rule
+/// intent are unchanged.
 pub fn apply_score_delta(crystal: &CrystalRecord, delta: ScoreDelta) -> (f64, f64, String);  // -> (new_strength, new_confidence, new_status)
 
 pub static IMMEDIATE_EVENT_DELTAS: phf::Map<&str, (f64, f64)> = phf::phf_map! {

@@ -94,22 +94,69 @@ fn pure_scoring_clamps_archives_and_preserves_archived_status() {
 }
 
 #[test]
-fn rule_intent_dampens_negative_deltas_by_credibility() {
-    let mut ordinary = sample_record();
-    ordinary.source_credibility = "user_rule".into();
-    let mut rule = ordinary.clone();
-    rule.rule_intent = "terminology".into();
+fn rule_intent_dampening_is_monotonic_by_credibility() {
+    let ordinary = sample_record();
+    let mut observation = ordinary.clone();
+    observation.rule_intent = "terminology".into();
+    let mut expert = observation.clone();
+    expert.source_credibility = "expert".into();
+    let mut user_rule = observation.clone();
+    user_rule.source_credibility = "user_rule".into();
     let delta = ScoreDelta {
         strength: -0.2,
         confidence: -0.2,
     };
-    assert_eq!(
-        apply_score_delta(&ordinary, delta),
-        (0.3, 0.3, "active".into())
+    let ordinary_score = apply_score_delta(&ordinary, delta).0;
+    let observation_score = apply_score_delta(&observation, delta).0;
+    let expert_score = apply_score_delta(&expert, delta).0;
+    let user_rule_score = apply_score_delta(&user_rule, delta).0;
+    assert!((ordinary_score - 0.3).abs() < f64::EPSILON);
+    assert!(ordinary_score < observation_score);
+    assert!(observation_score < expert_score);
+    assert!(expert_score < user_rule_score);
+    assert!((observation_score - 0.335).abs() < f64::EPSILON);
+    assert!((user_rule_score - 0.395).abs() < f64::EPSILON);
+}
+
+#[test]
+fn dampening_boundaries_are_clamped_and_positive_deltas_are_unchanged() {
+    let mut rule = sample_record();
+    rule.rule_intent = "terminology".into();
+    rule.source_credibility = "rumor".into();
+    assert!(
+        (apply_score_delta(
+            &rule,
+            ScoreDelta {
+                strength: -0.2,
+                confidence: 0.0
+            }
+        )
+        .0 - 0.315)
+            .abs()
+            < f64::EPSILON
+    );
+    rule.source_credibility = "future_label".into();
+    assert!(
+        (apply_score_delta(
+            &rule,
+            ScoreDelta {
+                strength: -0.2,
+                confidence: 0.0
+            }
+        )
+        .0 - 0.335)
+            .abs()
+            < f64::EPSILON
     );
     assert_eq!(
-        apply_score_delta(&rule, delta),
-        (0.405, 0.405, "active".into())
+        apply_score_delta(
+            &rule,
+            ScoreDelta {
+                strength: 0.2,
+                confidence: 0.2
+            }
+        ),
+        (0.7, 0.7, "active".into())
     );
 }
 
@@ -321,6 +368,182 @@ async fn multiple_activations_share_one_crystal_outcome_delta() {
     let crystal = record(&pool, crystal_id).await;
     assert!((crystal.strength - 0.35).abs() < f64::EPSILON);
     assert!((crystal.confidence - 0.47).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn later_activation_is_filled_without_reapplying_feedback() {
+    let pool = pool().await;
+    let (session_id, crystal_id) = fixture(&pool).await;
+    activation(&pool, session_id, crystal_id).await;
+    let store = FeedbackStore::new(&pool);
+    store
+        .record_recall_outcome(session_id, &[crystal_id], &[])
+        .await
+        .unwrap();
+    let after_first = record(&pool, crystal_id).await;
+    activation(&pool, session_id, crystal_id).await;
+    store
+        .record_recall_outcome(session_id, &[crystal_id], &[])
+        .await
+        .unwrap();
+    let after_second = record(&pool, crystal_id).await;
+    assert_eq!(
+        (after_second.strength, after_second.confidence),
+        (after_first.strength, after_first.confidence)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM memory_events WHERE event_type = 'recalled_useful'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM crystal_activations WHERE outcome = 'useful'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2
+    );
+    assert!(matches!(
+        store
+            .record_recall_outcome(session_id, &[], &[crystal_id])
+            .await,
+        Err(FeedbackError::OutcomeConflict { .. })
+    ));
+}
+
+#[tokio::test]
+async fn concurrently_inserted_late_activation_is_serialized_without_reapplication() {
+    let pool = pool().await;
+    let (session_id, crystal_id) = fixture(&pool).await;
+    activation(&pool, session_id, crystal_id).await;
+    FeedbackStore::new(&pool)
+        .record_recall_outcome(session_id, &[crystal_id], &[])
+        .await
+        .unwrap();
+    let after_first = record(&pool, crystal_id).await;
+
+    let mut insertion = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    sqlx::query("INSERT INTO crystal_activations(crystal_id, session_id, recall_query, rank, score, created_at) VALUES (?, ?, 'later', 2, 0.7, '2026-07-19T00:00:01Z')")
+        .bind(crystal_id).bind(session_id).execute(&mut *insertion).await.unwrap();
+    let reporting_pool = pool.clone();
+    let reporter = tokio::spawn(async move {
+        FeedbackStore::new(&reporting_pool)
+            .record_recall_outcome(session_id, &[crystal_id], &[])
+            .await
+    });
+    tokio::task::yield_now().await;
+    insertion.commit().await.unwrap();
+    reporter.await.unwrap().unwrap();
+
+    let after_report = record(&pool, crystal_id).await;
+    assert_eq!(
+        (after_report.strength, after_report.confidence),
+        (after_first.strength, after_first.confidence)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM memory_events WHERE event_type = 'recalled_useful'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM crystal_activations WHERE outcome = 'useful'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn global_crystal_outcome_allows_any_series_but_malformed_and_cross_series_do_not() {
+    let pool = pool().await;
+    let (session_id, series_crystal) = fixture(&pool).await;
+    let crystals = hiero_core::domain::CrystalStore::new(&pool);
+    let global = crystals
+        .add(AddCrystalInput {
+            crystal_type: "lesson".into(),
+            title: "Global".into(),
+            text: "Universal memory.".into(),
+            scope_type: "global".into(),
+            scope_key: String::new(),
+            series_slug: String::new(),
+            source_language: String::new(),
+            target_language: String::new(),
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
+    activation(&pool, session_id, global).await;
+    FeedbackStore::new(&pool)
+        .record_recall_outcome(session_id, &[global], &[])
+        .await
+        .unwrap();
+
+    SeriesRegistry::new(&pool)
+        .create("beta", "Beta", "ja", "ru")
+        .await
+        .unwrap();
+    let beta = WorkspaceStore::new(&pool)
+        .start_session(
+            &TranslationContext::new("beta", "ja", "ru"),
+            "translate",
+            "",
+            "",
+        )
+        .await
+        .unwrap();
+    activation(&pool, beta.id, series_crystal).await;
+    assert!(matches!(
+        FeedbackStore::new(&pool)
+            .record_recall_outcome(beta.id, &[series_crystal], &[])
+            .await,
+        Err(FeedbackError::SessionContext {
+            field: "series_slug",
+            ..
+        })
+    ));
+
+    let malformed = crystals
+        .add(AddCrystalInput {
+            crystal_type: "lesson".into(),
+            title: "Malformed".into(),
+            text: "Malformed scope.".into(),
+            scope_type: "series".into(),
+            scope_key: "series:oso".into(),
+            series_slug: "oso".into(),
+            source_language: "ja".into(),
+            target_language: "ru".into(),
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
+    sqlx::query("UPDATE crystals SET scope_type = 'book', scope_key = 'book:oso' WHERE id = ?")
+        .bind(malformed)
+        .execute(&pool)
+        .await
+        .unwrap();
+    activation(&pool, session_id, malformed).await;
+    assert!(matches!(
+        FeedbackStore::new(&pool)
+            .record_recall_outcome(session_id, &[malformed], &[])
+            .await,
+        Err(FeedbackError::SessionContext {
+            field: "scope_type",
+            ..
+        })
+    ));
 }
 
 #[tokio::test]

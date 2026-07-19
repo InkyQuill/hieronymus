@@ -174,10 +174,12 @@ Three new/changed phases, each implementing the `DreamPhase` trait from 004 §2:
 ## Rule-Intent Crystals
 
 Archive immunity for `crystal_type == 'rule' && status == 'active'` is removed. In its place,
-`apply_score_delta` (003 §2.5) dampens decay deltas by a flat factor (default `0.5`, i.e. half
-the normal decay rate) when `!crystal.rule_intent.trim().is_empty()`, optionally further scaled
-by `source_credibility_weight(crystal)` for graded effect (a `user_rule`-credibility crystal
-decays slower than an `observation`-credibility one, even if both have non-empty `rule_intent`).
+`apply_score_delta` (003 §2.5) dampens each negative delta when
+`!crystal.rule_intent.trim().is_empty()` by the exact factor
+`1.0 - 0.5 * source_credibility_weight(crystal).clamp(0.0, 1.0)`. Unknown forward-compatible
+labels use the `observation` fallback `0.35`. This keeps the factor in `[0.5, 1.0]`: a
+`user_rule`-credibility crystal decays slower than an `observation`-credibility one, positive
+deltas are unaffected, and even a maximum-credibility rule still decays under sustained disuse.
 A well-established rule fades gradually under sustained disuse instead of snapping directly to
 archived, but nothing is permanently exempt — consistent with "prioritized, not enforced."
 

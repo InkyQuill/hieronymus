@@ -31,17 +31,19 @@ pub static PASSIVE_EVENT_DELTAS: phf::Map<&str, (f64, f64)> = phf::phf_map! {
 ///
 /// Non-finite deltas are ignored instead of allowing invalid floating-point
 /// values to reach SQLite. Negative deltas on rule-intent memories are
-/// dampened by both the rule factor and the source-credibility weight.
+/// dampened by `1.0 - 0.5 * credibility`: credibility is clamped to
+/// `[0, 1]`, so rules retain between half and all of the ordinary decay.
 #[must_use]
 pub fn apply_score_delta(crystal: &CrystalRecord, delta: ScoreDelta) -> (f64, f64, String) {
     let credibility = SOURCE_CREDIBILITY_CONFIDENCE
         .get(crystal.source_credibility.as_str())
         .copied()
-        .unwrap_or(DEFAULT_SOURCE_CREDIBILITY);
+        .unwrap_or(DEFAULT_SOURCE_CREDIBILITY)
+        .clamp(0.0, 1.0);
     let dampening = if crystal.rule_intent.trim().is_empty() {
         1.0
     } else {
-        RULE_INTENT_DECAY_FACTOR * credibility
+        1.0 - RULE_INTENT_DECAY_FACTOR * credibility
     };
     let strength_delta = finite_delta(delta.strength, dampening);
     let confidence_delta = finite_delta(delta.confidence, dampening);

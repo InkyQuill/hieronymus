@@ -90,10 +90,9 @@ impl<'a> FeedbackStore<'a> {
             .collect::<BTreeMap<_, _>>();
         let mut transaction = begin_immediate(self.pool, "record recall outcome").await?;
         let result = async {
-            require_session(&mut transaction, session_id).await?;
+            let session = require_session(&mut transaction, session_id).await?;
             for (crystal_id, outcome) in requested {
-                record_activation_outcome(&mut transaction, session_id, crystal_id, outcome)
-                    .await?;
+                record_activation_outcome(&mut transaction, &session, crystal_id, outcome).await?;
             }
             Ok(())
         }
@@ -104,10 +103,13 @@ impl<'a> FeedbackStore<'a> {
 
 async fn record_activation_outcome(
     transaction: &mut Transaction<'static, Sqlite>,
-    session_id: i64,
+    session: &TaskSessionRecord,
     crystal_id: i64,
     outcome: &'static str,
 ) -> Result<()> {
+    let session_id = session.id;
+    let crystal = get_crystal(transaction.as_mut(), crystal_id).await?;
+    validate_context(&crystal, session)?;
     let outcomes = sqlx::query_scalar::<_, Option<String>>(
         "SELECT outcome FROM crystal_activations WHERE session_id = ? AND crystal_id = ? ORDER BY id",
     )
@@ -137,6 +139,10 @@ async fn record_activation_outcome(
     if outcomes.iter().all(Option::is_some) {
         return Ok(());
     }
+    if outcomes.iter().any(Option::is_some) {
+        update_pending_outcomes(transaction, session_id, crystal_id, outcome).await?;
+        return Ok(());
+    }
     let event_type = match outcome {
         "useful" => "recalled_useful",
         "miss" => "recalled_miss",
@@ -153,6 +159,15 @@ async fn record_activation_outcome(
         },
     )
     .await?;
+    update_pending_outcomes(transaction, session_id, crystal_id, outcome).await
+}
+
+async fn update_pending_outcomes(
+    transaction: &mut Transaction<'static, Sqlite>,
+    session_id: i64,
+    crystal_id: i64,
+    outcome: &str,
+) -> Result<()> {
     sqlx::query("UPDATE crystal_activations SET outcome = ? WHERE session_id = ? AND crystal_id = ? AND outcome IS NULL")
         .bind(outcome)
         .bind(session_id)
@@ -243,8 +258,29 @@ async fn require_session(
 }
 
 fn validate_context(crystal: &CrystalRecord, session: &TaskSessionRecord) -> Result<()> {
+    match crystal.scope_type.as_str() {
+        "global" if crystal.scope_key.is_empty() && crystal.series_slug.is_empty() => {}
+        "series"
+            if !crystal.series_slug.is_empty()
+                && crystal.scope_key == format!("series:{}", crystal.series_slug) =>
+        {
+            if session.series_slug != crystal.series_slug {
+                return Err(FeedbackError::SessionContext {
+                    session_id: session.id,
+                    crystal_id: crystal.id,
+                    field: "series_slug",
+                });
+            }
+        }
+        _ => {
+            return Err(FeedbackError::SessionContext {
+                session_id: session.id,
+                crystal_id: crystal.id,
+                field: "scope_type",
+            });
+        }
+    }
     for (field, valid) in [
-        ("series_slug", session.series_slug == crystal.series_slug),
         (
             "source_language",
             crystal.source_language.is_empty()
