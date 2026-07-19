@@ -352,6 +352,86 @@ def test_crash_after_claim_is_reported_and_recovered_on_retry(tmp_path, monkeypa
     assert not tuple(config.data_root.glob(".llm-cache-adoption-*"))
 
 
+def test_crash_after_private_temp_is_reported_and_recovered_on_retry(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.parent.mkdir(parents=True)
+    original = json.dumps(_cache().to_payload()).encode()
+    legacy_path.write_bytes(original)
+    original_link = os.link
+
+    def interrupt_publication(source, destination, *args, **kwargs):
+        if Path(source).suffix == ".canonical":
+            raise KeyboardInterrupt()
+        return original_link(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(os, "link", interrupt_publication)
+    with pytest.raises(KeyboardInterrupt):
+        adopt_legacy_model_cache(config)
+    monkeypatch.undo()
+
+    inspection = inspect_legacy_model_cache(config)
+    assert inspection.status == "recovery-ready"
+    assert tuple(config.data_root.glob("*.legacy"))
+    assert tuple(config.data_root.glob("*.canonical"))
+
+    assert adopt_legacy_model_cache(config).status == "adopted"
+    assert config.llm_cache_path.read_bytes() == original
+    assert not tuple(config.data_root.glob(".llm-cache-adoption-*"))
+
+
+def test_retry_converges_identical_public_legacy_and_private_claim(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.parent.mkdir(parents=True)
+    original = json.dumps(_cache().to_payload()).encode()
+    different = b'{"providers": {}}'
+    legacy_path.write_bytes(original)
+    config.llm_cache_path.write_bytes(different)
+
+    monkeypatch.setattr(
+        "hieronymus.llm_cache._fsync_directory",
+        lambda *_: (_ for _ in ()).throw(OSError("restore fsync")),
+    )
+    assert adopt_legacy_model_cache(config).status == "recovery-pending"
+    monkeypatch.undo()
+
+    assert legacy_path.read_bytes() == original
+    assert tuple(config.data_root.glob("*.legacy"))
+    assert inspect_legacy_model_cache(config).status == "cleanup-ready"
+
+    retry = adopt_legacy_model_cache(config)
+    assert retry.status == "conflict"
+    assert legacy_path.read_bytes() == original
+    assert config.llm_cache_path.read_bytes() == different
+    assert not tuple(config.data_root.glob(".llm-cache-adoption-*"))
+
+
+def test_recovery_read_errors_preserve_every_artifact(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    canonical = config.llm_cache_path
+    recovery = config.data_root / ".llm-cache-adoption-unreadable.canonical"
+    canonical.write_bytes(b'{"providers": {}}')
+    recovery.write_bytes(b'{"providers": {}}')
+    original_read_bytes = Path.read_bytes
+
+    def fail_recovery_reads(path: Path) -> bytes:
+        if path in {canonical, recovery}:
+            raise OSError("unreadable")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_recovery_reads)
+
+    inspection = inspect_legacy_model_cache(config)
+    adoption = adopt_legacy_model_cache(config)
+
+    assert inspection.status == "recovery-pending"
+    assert adoption.status == "recovery-pending"
+    assert canonical.exists()
+    assert recovery.exists()
+
+
 def test_ambiguous_orphan_claims_are_reported_and_preserved(tmp_path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     config.data_root.mkdir(parents=True)

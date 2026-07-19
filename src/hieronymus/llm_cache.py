@@ -136,11 +136,17 @@ def _inspect_legacy_model_cache_locked(
             return _inspect_recoveries(config, recoveries)
         return ModelCacheAdoption(status="not-needed")
     if recoveries:
-        return _recovery_pending(recoveries, "public legacy cache and recovery files coexist")
+        return _inspect_public_legacy_recoveries(snapshot, recoveries)
     if not snapshot.valid:
         return ModelCacheAdoption(status="invalid-legacy", legacy_path=str(legacy_path))
     if config.llm_cache_path.exists():
-        if _read_bytes(config.llm_cache_path) == snapshot.content:
+        try:
+            canonical = _read_bytes(config.llm_cache_path)
+        except OSError as error:
+            return _recovery_pending(
+                (config.llm_cache_path,), f"canonical cache could not be read: {error}"
+            )
+        if canonical == snapshot.content:
             return ModelCacheAdoption(status="cleanup-ready", legacy_path=str(legacy_path))
         return ModelCacheAdoption(status="conflict", legacy_path=str(legacy_path))
     return ModelCacheAdoption(status="ready", legacy_path=str(legacy_path))
@@ -164,7 +170,18 @@ def _adopt_legacy_model_cache_locked(config: HieronymusConfig) -> ModelCacheAdop
     legacy_path = _legacy_model_cache_path(config)
     recoveries = _recovery_paths(config)
     if legacy_path.exists() and recoveries:
-        return _recovery_pending(recoveries, "public legacy cache and recovery files coexist")
+        try:
+            snapshot = _read_legacy_snapshot(legacy_path)
+        except OSError as error:
+            return _recovery_pending(recoveries, f"public legacy cache could not be read: {error}")
+        if snapshot is None:
+            return _recovery_pending(recoveries, "public legacy cache disappeared")
+        inspection = _inspect_public_legacy_recoveries(snapshot, recoveries)
+        if inspection.status != "cleanup-ready":
+            return inspection
+        cleanup = _cleanup_private_adoption_files(config, *recoveries)
+        if cleanup.status != "adopted":
+            return cleanup
     try:
         claim_path = _claim_legacy_path(config, legacy_path)
     except OSError as error:
@@ -220,7 +237,13 @@ def _publish_claim(config: HieronymusConfig, claim_path: Path) -> ModelCacheAdop
     try:
         os.link(temp_path, config.llm_cache_path)
     except FileExistsError:
-        if _read_bytes(config.llm_cache_path) != snapshot.content:
+        try:
+            canonical = _read_bytes(config.llm_cache_path)
+        except OSError as error:
+            return _recovery_pending(
+                (claim_path, temp_path), f"canonical cache could not be read: {error}"
+            )
+        if canonical != snapshot.content:
             try:
                 os.unlink(temp_path)
             except OSError as error:
@@ -365,9 +388,16 @@ def _inspect_recoveries(
     config: HieronymusConfig,
     recoveries: tuple[Path, ...],
 ) -> ModelCacheAdoption:
-    canonical = _read_bytes(config.llm_cache_path)
+    try:
+        canonical = _read_bytes(config.llm_cache_path)
+    except OSError as error:
+        return _recovery_pending(recoveries, f"canonical cache could not be read: {error}")
     if canonical is not None:
-        if all(_read_bytes(path) == canonical for path in recoveries):
+        try:
+            matches = all(_read_bytes(path) == canonical for path in recoveries)
+        except OSError as error:
+            return _recovery_pending(recoveries, f"recovery file could not be read: {error}")
+        if matches:
             return ModelCacheAdoption(
                 status="cleanup-ready",
                 legacy_path=", ".join(str(path) for path in recoveries),
@@ -375,8 +405,7 @@ def _inspect_recoveries(
         return _recovery_pending(recoveries, "recovery files do not all match the canonical cache")
 
     claims = tuple(path for path in recoveries if path.suffix == ".legacy")
-    temporaries = tuple(path for path in recoveries if path.suffix == ".canonical")
-    if len(claims) == 1 and not temporaries:
+    if len(claims) == 1:
         try:
             snapshot = _read_legacy_snapshot(claims[0])
         except OSError as error:
@@ -384,6 +413,25 @@ def _inspect_recoveries(
         if snapshot is not None and snapshot.valid:
             return ModelCacheAdoption(status="recovery-ready", legacy_path=str(claims[0]))
     return _recovery_pending(recoveries, "recovery files are ambiguous or incomplete")
+
+
+def _inspect_public_legacy_recoveries(
+    snapshot: _LegacyCacheSnapshot,
+    recoveries: tuple[Path, ...],
+) -> ModelCacheAdoption:
+    claims = tuple(path for path in recoveries if path.suffix == ".legacy")
+    if len(claims) != 1:
+        return _recovery_pending(recoveries, "public legacy cache and recovery files coexist")
+    try:
+        claim = _read_legacy_snapshot(claims[0])
+    except OSError as error:
+        return _recovery_pending(recoveries, f"legacy claim could not be read: {error}")
+    if claim is None or claim.content != snapshot.content:
+        return _recovery_pending(recoveries, "public legacy cache and recovery claim differ")
+    return ModelCacheAdoption(
+        status="cleanup-ready",
+        legacy_path=", ".join(str(path) for path in recoveries),
+    )
 
 
 def _claim_legacy_path(config: HieronymusConfig, legacy_path: Path) -> Path | None:
@@ -474,15 +522,24 @@ def _converge_without_public_legacy(config: HieronymusConfig) -> ModelCacheAdopt
         if inspection is None:
             return ModelCacheAdoption(status="not-needed")
         if inspection.status == "recovery-ready":
-            return _publish_claim(config, Path(inspection.legacy_path))
+            claim_path = Path(inspection.legacy_path)
+            temporaries = tuple(path for path in recoveries if path != claim_path)
+            if temporaries:
+                cleanup = _cleanup_private_adoption_files(config, *temporaries)
+                if cleanup.status != "adopted":
+                    return cleanup
+            return _publish_claim(config, claim_path)
         return inspection
     try:
         _fsync_directory(config.data_root)
     except OSError as error:
         return ModelCacheAdoption(status="publication-sync-pending", error=str(error))
 
-    canonical = _read_bytes(config.llm_cache_path)
-    unmatched = tuple(path for path in recoveries if _read_bytes(path) != canonical)
+    try:
+        canonical = _read_bytes(config.llm_cache_path)
+        unmatched = tuple(path for path in recoveries if _read_bytes(path) != canonical)
+    except OSError as error:
+        return _recovery_pending(recoveries, f"cache recovery file could not be read: {error}")
     if unmatched:
         return _recovery_pending(recoveries, "recovery files do not all match the canonical cache")
     if recoveries:
@@ -528,7 +585,7 @@ def _valid_complete_cache_bytes(content: bytes) -> bool:
 def _read_bytes(path: Path) -> bytes | None:
     try:
         return path.read_bytes()
-    except OSError:
+    except FileNotFoundError:
         return None
 
 
