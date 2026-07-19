@@ -57,9 +57,10 @@ callers are, and remain, separate processes.
 
 | Provider | Library | Notes |
 |---|---|---|
-| OpenAI, Ollama (OpenAI-compatible) | `async-openai` | Same client for both, different `base_url` |
-| Anthropic | `reqwest` + `serde`, hand-rolled client against `https://api.anthropic.com/v1/messages` | No official Rust SDK dependency |
-| Gemini | `reqwest` + `serde`, hand-rolled client against `https://generativelanguage.googleapis.com/v1beta/models/...:generateContent` | |
+| OpenAI | `reqwest` + `serde` transport adapter | OpenAI request and discovery envelopes |
+| Anthropic | `reqwest` + `serde` transport adapter | `v1/messages` generation and authenticated `v1/models` discovery |
+| Google | `reqwest` + `serde` transport adapter | `v1beta/models/...:generateContent`; legacy `gemini` config values canonicalize to `google` |
+| Ollama | `reqwest` + `serde` transport adapter | Native `/api/chat` and `/api/tags`; IP-literal loopback HTTP only, with proxies disabled |
 
 ```rust
 #[async_trait]
@@ -75,23 +76,47 @@ pub struct ConceptCandidate { pub canonical_name: String, pub facets: Vec<(Strin
 
 pub struct DeterministicProvider;  // non-LLM crystallization for rule-pattern-only input, implements DreamProvider
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PassName { Concepts, TerminologyCandidates, RuleCrystals, KnowledgeCrystals, Relations, Reinforcement, CoverageAudit }
+
+pub enum CredentialSource { None, Inline(SecretString), Environment { variable: String }, File { path: PathBuf } }
+pub struct ProviderProfile { id: String, name: String, provider_type: String, url: String, credential: CredentialSource, timeout_seconds: f64 }
+pub struct ProviderDefaults { pub provider: String, pub model: String }
+pub struct ProviderCatalog; // provider.conf top-level provider tables plus optional [defaults]; model selection is not duplicated into a profile
+
+pub struct ProviderRequest;  // method, URL, redacted headers, optional JSON body, timeout, response byte cap
+pub struct ProviderResponse { pub status: u16, pub body: Vec<u8> }
+#[async_trait]
+pub trait ProviderTransport: Send + Sync {
+    async fn execute(&self, request: ProviderRequest) -> Result<ProviderResponse>;
+}
+pub trait ProviderTransportFactory: Send + Sync {
+    fn create(&self, profile: &ProviderProfile) -> Result<Arc<dyn ProviderTransport>>;
+}
+
 pub struct ProviderRegistry;
 impl ProviderRegistry {
-    pub fn resolve(&self, config: &ProviderCatalog, name: &str) -> Result<Box<dyn DreamProvider>>;  // resolves from provider.conf catalog + dream.conf workflow, per ADR 0007
-    pub async fn check(&self, profile: &ProviderProfile) -> Result<ConnectionCheck>;                  // redacts API keys in output
-    pub fn suggest_models(&self, provider: &str) -> Vec<String>;
+    pub fn resolve(&self, catalog: &ProviderCatalog, name: &str, model: &str) -> Result<Box<dyn DreamProvider>>; // provider.conf profile plus workflow/default model, per ADR 0007
+    pub async fn check(&self, profile: &ProviderProfile, model: &str) -> Result<ConnectionCheck>;
+    pub async fn suggest_models(&self, profile: &ProviderProfile, now: DateTime<Utc>) -> Result<Vec<String>>;
 }
 
-pub struct ProviderProfile { pub id: String, pub provider: String, pub model: String, pub api_key: secrecy::SecretString, pub base_url: Option<String> }
 pub struct ConnectionCheck { pub ok: bool, pub detail: String }
 
-pub struct ModelCacheEntry { pub model: String, pub cached_at: DateTime<Utc>, pub ttl_hours: u64 }
+pub struct ModelCacheEntry { pub models: Vec<String>, pub cached_at: DateTime<Utc> }
 pub struct ModelCache;
 impl ModelCache {
-    pub fn load(&self, path: &Path) -> Result<HashMap<String, ModelCacheEntry>>;  // TTL-based, path is llm-cache.json (001 §3)
-    pub fn save(&self, path: &Path, entries: &HashMap<String, ModelCacheEntry>) -> Result<()>;  // atomic write via 001 §5's atomic_write_text
+    pub fn load(path: &Path, max_entries: usize, max_bytes: usize, ttl: Duration, now: DateTime<Utc>) -> Result<Self>;
+    pub fn save(&self, path: &Path) -> Result<()>;
 }
 ```
+
+`provider.conf` keeps the existing flat top-level provider tables. `key` is the canonical
+inline credential field; `api_key` is accepted only as a migration alias. Credentials are
+resolved before health or discovery requests, errors are never cached, and cache identities
+contain only a SHA-256 credential/account fingerprint. Production transport disables redirects,
+enforces connect/read/total timeouts and response-size limits, and accepts proxy/custom-CA trust
+only through explicit options.
 
 ---
 
@@ -332,9 +357,6 @@ impl DreamConfig {
     pub fn validate(self) -> Result<Self>;
     pub fn with_workflow(self, name: &str, workflow: WorkflowProfile) -> Self;
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PassName { Concepts, TerminologyCandidates, RuleCrystals, KnowledgeCrystals, Relations, Reinforcement, CoverageAudit }
 
 pub fn resolve_workflows(config: &DreamConfig) -> Vec<(PassName, WorkflowProfile)>;
 pub fn build_prompt(config: &DreamConfig, phase: PassName, input: &serde_json::Value) -> String;

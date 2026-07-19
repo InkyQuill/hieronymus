@@ -1,14 +1,19 @@
 use super::{
-    Dialect, DreamOutput, DreamProvider, HttpProvider, ProviderProfile, Result, dream_prompt,
-    parse_output,
+    Dialect, DreamOutput, DreamProvider, HttpProvider, PassName, ProviderProfile,
+    ProviderTransport, Result, dream_prompt, parse_output,
 };
 use crate::domain::{ShortTermMemory, TranslationContext};
 use async_trait::async_trait;
+use std::sync::Arc;
 
 pub struct OpenAiProvider(HttpProvider);
 impl OpenAiProvider {
-    pub fn new(client: reqwest::Client, profile: ProviderProfile) -> Result<Self> {
-        HttpProvider::new(client, profile, Dialect::OpenAi).map(Self)
+    pub fn new(
+        transport: Arc<dyn ProviderTransport>,
+        profile: ProviderProfile,
+        model: impl Into<String>,
+    ) -> Result<Self> {
+        HttpProvider::new(transport, profile, model, Dialect::OpenAi).map(Self)
     }
 }
 #[async_trait]
@@ -30,12 +35,23 @@ impl DreamProvider for OpenAiProvider {
     }
     async fn run_pass(
         &self,
-        pass: &str,
+        pass: PassName,
         context: &TranslationContext,
         memories: &[ShortTermMemory],
     ) -> Result<serde_json::Value> {
-        let prompt = format!("Pass: {pass}\n{}", dream_prompt(context, memories)?);
-        serde_json::from_str(&self.0.generate(&prompt, false).await?)
-            .map_err(|_| super::ProviderError::MalformedJson)
+        serde_json::from_str(
+            &self
+                .0
+                .generate(
+                    &format!(
+                        "Pass: {}\n{}",
+                        pass.as_str(),
+                        dream_prompt(context, memories)?
+                    ),
+                    false,
+                )
+                .await?,
+        )
+        .map_err(|_| super::ProviderError::MalformedJson)
     }
 }

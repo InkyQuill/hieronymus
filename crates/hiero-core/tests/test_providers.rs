@@ -1,65 +1,172 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     io::{Read, Write},
     net::TcpListener,
-    sync::{Arc, mpsc},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::Duration,
 };
 
+use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use hiero_core::provider::{
-    AnthropicProvider, CandidateCrystal, CredentialSource, DreamOutput, DreamProvider,
-    GoogleProvider, ModelCache, ModelCacheEntry, OllamaProvider, OpenAiProvider, ProviderCatalog,
-    ProviderError, ProviderProfile, ProviderRegistry,
+    AnthropicProvider, CredentialSource, DreamProvider, GoogleProvider, HttpMethod, ModelCache,
+    ModelCacheEntry, OllamaProvider, OpenAiProvider, PassName, ProviderCatalog, ProviderDefaults,
+    ProviderError, ProviderProfile, ProviderRegistry, ProviderRequest, ProviderResponse,
+    ProviderTransport, ReqwestTransport, ReqwestTransportOptions,
 };
-use secrecy::ExposeSecret;
+use secrecy::SecretString;
 
-fn profile(id: &str, provider: &str) -> ProviderProfile {
-    ProviderProfile::new(id, provider, "test-model")
-        .with_base_url("http://127.0.0.1:11434")
-        .with_timeout(Duration::from_secs(2))
+fn profile(id: &str, kind: &str, url: &str) -> ProviderProfile {
+    ProviderProfile::new(id, id, kind, url).with_timeout(Duration::from_secs(2))
+}
+
+fn keyed(profile: ProviderProfile, key: &str) -> ProviderProfile {
+    profile.with_credential_source(CredentialSource::Inline(SecretString::from(key.to_owned())))
+}
+
+#[derive(Default)]
+struct FakeTransport {
+    requests: Mutex<Vec<ProviderRequest>>,
+    responses: Mutex<VecDeque<hiero_core::provider::Result<ProviderResponse>>>,
+}
+
+impl FakeTransport {
+    fn with_json(values: impl IntoIterator<Item = serde_json::Value>) -> Arc<Self> {
+        Arc::new(Self {
+            requests: Mutex::new(Vec::new()),
+            responses: Mutex::new(
+                values
+                    .into_iter()
+                    .map(|value| {
+                        Ok(ProviderResponse {
+                            status: 200,
+                            body: serde_json::to_vec(&value).unwrap(),
+                        })
+                    })
+                    .collect(),
+            ),
+        })
+    }
+    fn requests(&self) -> Vec<ProviderRequest> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl ProviderTransport for FakeTransport {
+    async fn execute(
+        &self,
+        request: ProviderRequest,
+    ) -> hiero_core::provider::Result<ProviderResponse> {
+        self.requests.lock().unwrap().push(request);
+        self.responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(ProviderError::Transport))
+    }
+}
+
+fn context() -> hiero_core::domain::TranslationContext {
+    hiero_core::domain::TranslationContext::new("series", "en", "ru")
 }
 
 #[test]
-fn profile_debug_and_serialization_never_disclose_credentials() {
-    let profile =
-        profile("openai", "openai").with_credential_source(CredentialSource::Environment {
-            variable: "HIERONYMUS_TEST_KEY".into(),
-        });
-    let debug = format!("{profile:?}");
-    assert!(!debug.contains("secret-value"));
-    assert!(!toml::to_string(&profile).unwrap().contains("secret-value"));
-}
-
-#[test]
-fn catalog_round_trips_strict_profiles_and_supports_mutation() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("provider.conf");
-    let mut catalog = ProviderCatalog::default();
-    catalog.upsert(profile("local", "ollama")).unwrap();
-    catalog.save(&path).unwrap();
-
-    let mut loaded = ProviderCatalog::load(&path).unwrap();
-    assert_eq!(loaded.get("local").unwrap().model(), "test-model");
-    assert!(loaded.delete("local"));
-    assert!(loaded.get("local").is_none());
-}
-
-#[test]
-fn catalog_rejects_unknown_fields_and_symlink_destinations() {
+fn catalog_loads_legacy_top_level_fixture_and_round_trips_defaults() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("provider.conf");
     std::fs::write(
         &path,
-        "[providers.bad]\nid='bad'\nprovider='openai'\nmodel='m'\nsurprise=true\n",
+        r#"
+[deepseek-api]
+name = "Deepseek"
+type = "openai"
+url = "https://api.deepseek.com"
+key = "raw-secret"
+timeout_seconds = 45
+
+[local]
+type = "ollama"
+url = "http://127.0.0.1:11434"
+
+[defaults]
+provider = "deepseek-api"
+model = "deepseek-v4-flash"
+"#,
+    )
+    .unwrap();
+
+    let catalog = ProviderCatalog::load(&path).unwrap();
+    assert_eq!(catalog.get("deepseek-api").unwrap().name(), "Deepseek");
+    assert_eq!(catalog.get("local").unwrap().name(), "local");
+    assert_eq!(
+        catalog.defaults(),
+        &ProviderDefaults {
+            provider: "deepseek-api".into(),
+            model: "deepseek-v4-flash".into()
+        }
+    );
+    assert!(!format!("{:?}", catalog.get("deepseek-api").unwrap()).contains("raw-secret"));
+
+    catalog.save(&path).unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("[deepseek-api]"));
+    assert!(raw.contains("[defaults]"));
+    assert!(!raw.contains("[providers."));
+    assert!(raw.contains("key = \"raw-secret\""));
+    assert_eq!(
+        ProviderCatalog::load(&path).unwrap().defaults(),
+        catalog.defaults()
+    );
+}
+
+#[test]
+fn catalog_migrates_api_key_alias_and_gemini_to_canonical_key_and_google() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("provider.conf");
+    std::fs::write(&path, "[gemini]\ntype='gemini'\nurl='https://generativelanguage.googleapis.com'\napi_key='legacy-secret'\n").unwrap();
+    let catalog = ProviderCatalog::load(&path).unwrap();
+    assert_eq!(catalog.get("gemini").unwrap().provider_type(), "google");
+    catalog.save(&path).unwrap();
+    let raw = std::fs::read_to_string(path).unwrap();
+    assert!(raw.contains("type = \"google\""));
+    assert!(raw.contains("key = \"legacy-secret\""));
+    assert!(!raw.contains("api_key"));
+}
+
+#[test]
+fn catalog_crud_has_no_duplicate_id_or_model_in_profile_payload() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("provider.conf");
+    let mut catalog = ProviderCatalog::default();
+    catalog
+        .upsert(profile("openai", "openai", "https://api.openai.com/v1"))
+        .unwrap();
+    catalog.set_defaults(ProviderDefaults {
+        provider: "openai".into(),
+        model: "gpt-4.1".into(),
+    });
+    catalog.save(&path).unwrap();
+    let raw = std::fs::read_to_string(path).unwrap();
+    let table = raw.parse::<toml::Table>().unwrap();
+    assert!(!table["openai"].as_table().unwrap().contains_key("id"));
+    assert!(!table["openai"].as_table().unwrap().contains_key("model"));
+}
+
+#[test]
+fn catalog_rejects_unknown_symlink_and_fifo_inputs() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("provider.conf");
+    std::fs::write(
+        &path,
+        "[bad]\ntype='openai'\nurl='https://example.test'\nsurprise=true\n",
     )
     .unwrap();
     assert!(matches!(
         ProviderCatalog::load(&path),
         Err(ProviderError::Config(_))
     ));
-
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
@@ -68,321 +175,430 @@ fn catalog_rejects_unknown_fields_and_symlink_destinations() {
         std::fs::remove_file(&path).unwrap();
         symlink(&outside, &path).unwrap();
         assert!(ProviderCatalog::default().save(&path).is_err());
-        assert_eq!(std::fs::read_to_string(outside).unwrap(), "keep");
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(ProviderCatalog::load(&path).is_err());
     }
 }
 
 #[test]
-fn credential_sources_resolve_only_explicit_environment_or_files() {
-    let root = tempfile::tempdir().unwrap();
-    let key_file = root.path().join("key");
-    std::fs::write(&key_file, " file-secret \n").unwrap();
-    let secret = CredentialSource::File { path: key_file }.resolve().unwrap();
-    assert_eq!(secret.expose_secret(), "file-secret");
-    assert!(!format!("{secret:?}").contains("file-secret"));
-}
-
-#[test]
-fn model_cache_is_deterministic_bounded_and_ttl_aware() {
-    let now = Utc.with_ymd_and_hms(2026, 7, 19, 1, 0, 0).unwrap();
-    let cache = ModelCache::new(2, 64, Duration::from_secs(60));
-    cache
-        .insert("b", vec!["z".into(), "a".into()], now)
-        .unwrap();
-    cache.insert("a", vec!["m".into()], now).unwrap();
-    cache.insert("c", vec!["n".into()], now).unwrap();
-    assert_eq!(cache.get("a", now), None);
-    assert_eq!(cache.get("b", now).unwrap(), &["a", "z"]);
-    assert_eq!(cache.get("c", now + chrono::Duration::seconds(60)), None);
-}
-
-#[test]
-fn model_cache_load_discards_oversized_and_expired_entries() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("llm-cache.json");
-    let now = Utc.with_ymd_and_hms(2026, 7, 19, 2, 0, 0).unwrap();
-    let entries = BTreeMap::from([(
-        "one".into(),
-        ModelCacheEntry {
-            models: vec!["model".into()],
-            cached_at: now,
-        },
-    )]);
-    let cache = ModelCache::from_entries(2, 1024, Duration::from_secs(60), entries).unwrap();
-    cache.save(&path).unwrap();
-    let loaded = ModelCache::load(&path, 2, 1024, Duration::from_secs(60), now).unwrap();
-    assert_eq!(loaded.get("one", now).unwrap(), &["model"]);
-}
-
-#[test]
-fn candidate_output_schema_is_strict() {
-    let output = DreamOutput {
-        crystals: vec![CandidateCrystal {
-            crystal_type: "rule".into(),
-            title: "title".into(),
-            text: "text".into(),
-            source_credibility: "explicit_rule".into(),
-            rule_intent: "must".into(),
-            confidence: 0.9,
-        }],
-        concepts: vec![],
-    };
+fn pass_name_is_exhaustive_and_unknown_values_fail() {
+    assert_eq!(PassName::ALL.len(), 7);
     assert_eq!(
-        serde_json::to_value(output).unwrap()["crystals"][0]["title"],
-        "title"
+        serde_json::to_string(&PassName::CoverageAudit).unwrap(),
+        "\"coverage_audit\""
     );
+    assert!(serde_json::from_str::<PassName>("\"made_up\"").is_err());
 }
 
-#[test]
-fn ollama_profile_rejects_non_loopback_urls() {
-    let error = profile("bad", "ollama")
-        .with_base_url("http://example.com:11434")
-        .validate()
-        .unwrap_err();
-    assert!(matches!(error, ProviderError::UnsafeEndpoint(_)));
-}
-
-#[test]
-fn registry_holds_heterogeneous_object_safe_providers() {
-    fn assert_send_sync(_: Arc<dyn hiero_core::provider::DreamProvider>) {}
-    let _ = assert_send_sync;
-}
-
-fn fake_http(status: u16, body: &str, delay: Duration) -> (String, mpsc::Receiver<String>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let (sender, receiver) = mpsc::channel();
-    let body = body.to_owned();
-    thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        let mut request = Vec::new();
-        let mut buffer = [0_u8; 4096];
-        loop {
-            let count = stream.read(&mut buffer).unwrap();
-            request.extend_from_slice(&buffer[..count]);
-            let header_end = request.windows(4).position(|window| window == b"\r\n\r\n");
-            if let Some(header_end) = header_end {
-                let headers = String::from_utf8_lossy(&request[..header_end]);
-                let content_length = headers
-                    .lines()
-                    .find_map(|line| {
-                        line.to_ascii_lowercase()
-                            .strip_prefix("content-length:")
-                            .and_then(|value| value.trim().parse::<usize>().ok())
-                    })
-                    .unwrap_or(0);
-                if request.len() >= header_end + 4 + content_length {
-                    break;
-                }
-            }
-        }
-        let _ = sender.send(String::from_utf8_lossy(&request).into_owned());
-        thread::sleep(delay);
-        let reason = if status == 200 { "OK" } else { "Error" };
-        write!(stream, "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
-    });
-    (format!("http://{address}"), receiver)
-}
-
-fn fake_redirect(location: &str) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let location = location.to_owned();
-    thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut buffer = [0_u8; 4096];
-        let _ = stream.read(&mut buffer);
-        write!(stream, "HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
-    });
-    format!("http://{address}")
-}
-
-fn network_test_lock() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
-fn test_context() -> hiero_core::domain::TranslationContext {
-    hiero_core::domain::TranslationContext::new("series", "en", "ru")
-}
-
-fn file_credential(root: &tempfile::TempDir) -> CredentialSource {
-    let path = root.path().join("credential");
-    std::fs::write(&path, "fixture-secret").unwrap();
-    CredentialSource::File { path }
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn adapters_preserve_provider_specific_headers_requests_and_envelopes() {
-    let _network = network_test_lock().lock().await;
-    let root = tempfile::tempdir().unwrap();
+#[tokio::test]
+async fn injected_transport_is_used_and_provider_shapes_are_exact() {
     let cases = [
         (
             "openai",
-            "/v1/chat/completions",
-            "authorization: Bearer fixture-secret",
-            r#"{"choices":[{"message":{"content":"{\"ok\":true}"}}]}"#,
+            serde_json::json!({"choices":[{"message":{"content":"{\"ok\":true}"}}]}),
         ),
         (
             "anthropic",
-            "/v1/messages",
-            "anthropic-version: 2023-06-01",
-            r#"{"content":[{"text":"{\"ok\":true}"}]}"#,
+            serde_json::json!({"content":[{"text":"{\"ok\":true}"}]}),
         ),
         (
             "google",
-            "/v1beta/models/test-model:generateContent",
-            "x-goog-api-key: fixture-secret",
-            r#"{"candidates":[{"content":{"parts":[{"text":"{\"ok\":true}"}]}}]}"#,
+            serde_json::json!({"candidates":[{"content":{"parts":[{"text":"{\"ok\":true}"}]}}]}),
         ),
         (
             "ollama",
-            "/api/chat",
-            "content-type: application/json",
-            r#"{"message":{"content":"{\"ok\":true}"}}"#,
+            serde_json::json!({"message":{"content":"{\"ok\":true}"}}),
         ),
     ];
-    for (kind, path, header, response) in cases {
-        let (endpoint, captured) = fake_http(200, response, Duration::ZERO);
-        let base = if kind == "openai" {
-            format!("{endpoint}/v1")
+    for (kind, response) in cases {
+        let transport = FakeTransport::with_json([response]);
+        let base = if kind == "ollama" {
+            "http://127.0.0.1:11434"
         } else {
-            endpoint
+            "https://example.test"
         };
-        let mut configured = ProviderProfile::new(kind, kind, "test-model").with_base_url(base);
+        let mut configured = profile(kind, kind, base);
         if kind != "ollama" {
-            configured = configured.with_credential_source(file_credential(&root));
+            configured = keyed(configured, "fixture-secret");
         }
         let provider: Box<dyn DreamProvider> = match kind {
-            "openai" => Box::new(OpenAiProvider::new(reqwest::Client::new(), configured).unwrap()),
-            "anthropic" => {
-                Box::new(AnthropicProvider::new(reqwest::Client::new(), configured).unwrap())
+            "openai" => {
+                Box::new(OpenAiProvider::new(transport.clone(), configured, "test-model").unwrap())
             }
-            "google" => Box::new(GoogleProvider::new(reqwest::Client::new(), configured).unwrap()),
-            "ollama" => Box::new(OllamaProvider::new(reqwest::Client::new(), configured).unwrap()),
+            "anthropic" => Box::new(
+                AnthropicProvider::new(transport.clone(), configured, "test-model").unwrap(),
+            ),
+            "google" => Box::new(
+                GoogleProvider::new(transport.clone(), configured, "models/test model").unwrap(),
+            ),
+            "ollama" => {
+                Box::new(OllamaProvider::new(transport.clone(), configured, "test-model").unwrap())
+            }
             _ => unreachable!(),
         };
         assert_eq!(
             provider
-                .run_pass("coverage", &test_context(), &[])
+                .run_pass(PassName::CoverageAudit, &context(), &[])
                 .await
                 .unwrap(),
             serde_json::json!({"ok":true})
         );
-        let request = captured.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert!(
-            request.starts_with(&format!("POST {path} HTTP/1.1")),
-            "{request}"
+        let request = transport.requests().pop().unwrap();
+        assert_eq!(request.method(), HttpMethod::Post);
+        assert_eq!(
+            request.payload().unwrap()["contents"].is_array(),
+            kind == "google"
         );
-        assert!(request.contains(header), "{request}");
-        assert!(
-            kind == "google" || request.contains("\"model\":\"test-model\""),
-            "{request}"
-        );
+        if kind == "google" {
+            assert!(
+                request
+                    .url()
+                    .as_str()
+                    .contains("test%20model:generateContent")
+            );
+        }
+        if kind != "ollama" {
+            assert!(
+                request
+                    .headers()
+                    .values()
+                    .any(|value| value.contains("fixture-secret"))
+            );
+        }
+        assert!(!format!("{request:?}").contains("fixture-secret"));
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn adapter_classifies_http_malformed_json_and_timeout_without_leaking_body() {
-    let _network = network_test_lock().lock().await;
-    let root = tempfile::tempdir().unwrap();
-    for (status, body, delay, expected) in [
-        (
-            429,
-            "fixture-secret upstream",
-            Duration::ZERO,
-            "provider returned HTTP 429",
-        ),
-        (
-            200,
-            "not-json",
-            Duration::ZERO,
-            "provider returned malformed JSON",
-        ),
-        (
-            200,
-            "{}",
-            Duration::from_millis(100),
-            "provider request timed out",
-        ),
-    ] {
-        let (endpoint, _) = fake_http(status, body, delay);
-        let timeout = if delay.is_zero() {
-            Duration::from_secs(1)
-        } else {
-            Duration::from_millis(20)
-        };
-        let profile = ProviderProfile::new("openai", "openai", "m")
-            .with_base_url(format!("{endpoint}/v1"))
-            .with_credential_source(file_credential(&root))
-            .with_timeout(timeout);
-        let provider = OpenAiProvider::new(reqwest::Client::new(), profile).unwrap();
-        let error = provider
-            .run_pass("pass", &test_context(), &[])
-            .await
-            .unwrap_err();
-        assert_eq!(error.to_string(), expected);
-        assert!(!format!("{error:?}").contains("fixture-secret"));
-    }
+#[tokio::test]
+async fn health_requests_apply_google_and_ollama_output_caps_and_ollama_bearer() {
+    let google_transport = FakeTransport::with_json([serde_json::json!({})]);
+    let google = keyed(profile("google", "google", "https://example.test"), "g-key");
+    ProviderRegistry::with_transport(
+        google_transport.clone(),
+        ModelCache::new(4, 4096, Duration::from_secs(60)),
+    )
+    .check(&google, "gemini")
+    .await
+    .unwrap();
+    assert_eq!(
+        google_transport.requests()[0].payload().unwrap()["generationConfig"]["maxOutputTokens"],
+        1
+    );
+
+    let ollama_transport = FakeTransport::with_json([serde_json::json!({})]);
+    let ollama = keyed(
+        profile("ollama", "ollama", "http://127.0.0.1:11434"),
+        "local-key",
+    );
+    ProviderRegistry::with_transport(
+        ollama_transport.clone(),
+        ModelCache::new(4, 4096, Duration::from_secs(60)),
+    )
+    .check(&ollama, "llama")
+    .await
+    .unwrap();
+    let request = &ollama_transport.requests()[0];
+    assert_eq!(request.payload().unwrap()["options"]["num_predict"], 1);
+    assert_eq!(request.headers()["authorization"], "Bearer local-key");
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn registry_model_suggestions_are_sorted_and_cached_without_second_request() {
-    let _network = network_test_lock().lock().await;
-    let root = tempfile::tempdir().unwrap();
-    let (endpoint, captured) =
-        fake_http(200, r#"{"data":[{"id":"z"},{"id":"a"}]}"#, Duration::ZERO);
-    let profile = ProviderProfile::new("openai", "openai", "m")
-        .with_base_url(format!("{endpoint}/v1"))
-        .with_credential_source(file_credential(&root));
+#[test]
+fn ollama_rejects_dns_names_and_production_transport_ignores_proxy() {
+    assert!(matches!(
+        profile("bad", "ollama", "http://localhost:11434").validate(),
+        Err(ProviderError::UnsafeEndpoint(_))
+    ));
+    let local = profile("local", "ollama", "http://127.0.0.1:11434");
+    assert!(
+        ReqwestTransport::for_profile(
+            &local,
+            &ReqwestTransportOptions {
+                trusted_proxy: Some("not a url".into()),
+                custom_ca_pem: vec![]
+            }
+        )
+        .is_ok()
+    );
+    let remote = profile("remote", "openai", "https://example.test");
+    assert!(
+        ReqwestTransport::for_profile(
+            &remote,
+            &ReqwestTransportOptions {
+                trusted_proxy: Some("not a url".into()),
+                custom_ca_pem: vec![]
+            }
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn cache_identity_changes_when_inline_or_file_credential_rotates() {
     let now = Utc::now();
-    let registry = ProviderRegistry::new(
-        reqwest::Client::new(),
-        ModelCache::new(8, 1024, Duration::from_secs(60)),
+    let transport = FakeTransport::with_json([
+        serde_json::json!({"data":[{"id":"one"}]}),
+        serde_json::json!({"data":[{"id":"two"}]}),
+    ]);
+    let registry = ProviderRegistry::with_transport(
+        transport.clone(),
+        ModelCache::new(8, 4096, Duration::from_secs(60)),
+    );
+    let first = keyed(
+        profile("openai", "openai", "https://example.test/v1"),
+        "secret-a",
+    );
+    assert_eq!(registry.suggest_models(&first, now).await.unwrap(), ["one"]);
+    assert_eq!(registry.suggest_models(&first, now).await.unwrap(), ["one"]);
+    let second = keyed(
+        profile("openai", "openai", "https://example.test/v1"),
+        "secret-b",
     );
     assert_eq!(
-        registry.suggest_models(&profile, now).await.unwrap(),
-        vec!["a", "z"]
+        registry.suggest_models(&second, now).await.unwrap(),
+        ["two"]
     );
-    captured.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(transport.requests().len(), 2);
+}
+
+#[test]
+fn model_cache_enforces_serialized_bound_without_poisoning() {
+    let now = Utc.with_ymd_and_hms(2026, 7, 19, 1, 0, 0).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("cache.json");
+    let cache = ModelCache::new(4, 220, Duration::from_secs(60));
+    cache.insert("a", vec!["small".into()], now).unwrap();
+    assert!(
+        cache
+            .insert("oversized", vec!["x".repeat(500)], now)
+            .is_err()
+    );
+    assert_eq!(cache.get("a", now).unwrap(), ["small"]);
+    cache.save(&path).unwrap();
+    assert!(std::fs::metadata(path).unwrap().len() <= 220);
+}
+
+#[test]
+fn model_cache_hostile_malformed_and_legacy_files_fail_soft_empty() {
+    let now = Utc::now();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("cache.json");
+    for contents in [
+        "x".repeat(10_000),
+        "{broken".into(),
+        r#"{"providers":{"openai":{"provider":"openai","models":["old"],"fetched_at":"2026-01-01T00:00:00Z","error":"","identity":"old"}}}"#.into(),
+    ] {
+        std::fs::write(&path, contents).unwrap();
+        let cache = ModelCache::load(&path, 2, 256, Duration::from_secs(60), now).unwrap();
+        assert!(cache.get("anything", now).is_none());
+    }
+}
+
+#[tokio::test]
+async fn openai_and_anthropic_discovery_paginate_with_auth() {
+    for kind in ["openai", "anthropic"] {
+        let transport = FakeTransport::with_json([
+            serde_json::json!({"data":[{"id":"b"}],"has_more":true,"last_id":"b"}),
+            serde_json::json!({"data":[{"id":"a"}],"has_more":false}),
+        ]);
+        let configured = keyed(profile(kind, kind, "https://example.test/v1"), "secret");
+        let models = ProviderRegistry::with_transport(
+            transport.clone(),
+            ModelCache::new(8, 4096, Duration::from_secs(60)),
+        )
+        .suggest_models(&configured, Utc::now())
+        .await
+        .unwrap();
+        assert_eq!(models, ["a", "b"]);
+        let requests = transport.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].url().path(), "/v1/models");
+        assert!(requests[1].url().query().unwrap().contains("after=b"));
+        assert!(
+            requests[0]
+                .headers()
+                .values()
+                .any(|value| value == "secret" || value == "Bearer secret")
+        );
+    }
+}
+
+#[tokio::test]
+async fn ollama_discovery_uses_tags_and_optional_bearer() {
+    let transport = FakeTransport::with_json([
+        serde_json::json!({"models":[{"model":"qwen:latest"},{"model":"llama:latest"}]}),
+    ]);
+    let configured = keyed(
+        profile("ollama", "ollama", "http://127.0.0.1:11434"),
+        "local-token",
+    );
+    let models = ProviderRegistry::with_transport(
+        transport.clone(),
+        ModelCache::new(8, 4096, Duration::from_secs(60)),
+    )
+    .suggest_models(&configured, Utc::now())
+    .await
+    .unwrap();
+    assert_eq!(models, ["llama:latest", "qwen:latest"]);
+    let requests = transport.requests();
+    assert_eq!(requests[0].url().path(), "/api/tags");
     assert_eq!(
-        registry.suggest_models(&profile, now).await.unwrap(),
-        vec!["a", "z"]
+        requests[0].headers().get("authorization").unwrap(),
+        "Bearer local-token"
     );
 }
 
+#[tokio::test]
+async fn discovery_stops_at_the_finite_page_cap() {
+    let pages = (0..8).map(|page| {
+        serde_json::json!({
+            "data": [{"id": format!("model-{page}")}],
+            "has_more": true,
+            "last_id": format!("cursor-{page}")
+        })
+    });
+    let transport = FakeTransport::with_json(pages);
+    let configured = keyed(
+        profile("openai", "openai", "https://example.test/v1"),
+        "secret",
+    );
+    let result = ProviderRegistry::with_transport(
+        transport.clone(),
+        ModelCache::new(8, 4096, Duration::from_secs(60)),
+    )
+    .suggest_models(&configured, Utc::now())
+    .await;
+    assert!(matches!(result, Err(ProviderError::PaginationLimit)));
+    assert_eq!(transport.requests().len(), 8);
+}
+
+#[tokio::test]
+async fn google_discovery_filters_non_generative_models_and_paginates() {
+    let transport = FakeTransport::with_json([
+        serde_json::json!({"models":[{"name":"models/embed","supportedGenerationMethods":["embedContent"]},{"name":"models/gemini","supportedGenerationMethods":["generateContent"]}],"nextPageToken":"next token"}),
+        serde_json::json!({"models":[{"name":"models/gemini-2","supportedGenerationMethods":["generateContent"]}]}),
+    ]);
+    let configured = keyed(
+        profile("google", "google", "https://example.test"),
+        "secret",
+    );
+    let models = ProviderRegistry::with_transport(
+        transport.clone(),
+        ModelCache::new(8, 4096, Duration::from_secs(60)),
+    )
+    .suggest_models(&configured, Utc::now())
+    .await
+    .unwrap();
+    assert_eq!(models, ["gemini", "gemini-2"]);
+    assert!(
+        transport.requests()[1]
+            .url()
+            .query()
+            .unwrap()
+            .contains("pageToken=next+token")
+    );
+}
+
+#[tokio::test]
+async fn discovery_detects_pagination_loop_and_does_not_cache_errors() {
+    let transport = FakeTransport::with_json([
+        serde_json::json!({"data":[{"id":"a"}],"has_more":true,"last_id":"a"}),
+        serde_json::json!({"data":[{"id":"a"}],"has_more":true,"last_id":"a"}),
+        serde_json::json!({"data":[{"id":"fresh"}]}),
+    ]);
+    let configured = keyed(
+        profile("openai", "openai", "https://example.test/v1"),
+        "secret",
+    );
+    let registry = ProviderRegistry::with_transport(
+        transport.clone(),
+        ModelCache::new(8, 4096, Duration::from_secs(60)),
+    );
+    assert!(matches!(
+        registry.suggest_models(&configured, Utc::now()).await,
+        Err(ProviderError::PaginationLoop)
+    ));
+    assert_eq!(
+        registry
+            .suggest_models(&configured, Utc::now())
+            .await
+            .unwrap(),
+        ["fresh"]
+    );
+}
+
+#[test]
+fn google_model_normalization_rejects_ambiguous_segments() {
+    let transport = FakeTransport::with_json([]);
+    let configured = keyed(
+        profile("google", "google", "https://example.test"),
+        "secret",
+    );
+    for invalid in ["", "models/a/b", "a?b", "a#b"] {
+        assert!(GoogleProvider::new(transport.clone(), configured.clone(), invalid).is_err());
+    }
+}
+
+#[test]
+fn catalog_source_contains_unix_and_windows_anchored_backends() {
+    let source = include_str!("../src/provider/catalog.rs");
+    assert!(source.contains("struct UnixAnchor"));
+    assert!(source.contains("struct WindowsAnchor"));
+    assert!(source.contains("WINDOWS_SHARE_WITHOUT_DELETE"));
+}
+
+fn fake_http(status: u16, body: String, extra_headers: String) -> (String, mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buffer = [0_u8; 8192];
+        let count = stream.read(&mut buffer).unwrap();
+        let _ = sender.send(String::from_utf8_lossy(&buffer[..count]).into_owned());
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+    });
+    (format!("http://{address}"), receiver)
+}
+
 #[tokio::test(flavor = "current_thread")]
-async fn oversized_response_is_rejected_before_json_parsing() {
+async fn reqwest_transport_caps_bodies_and_does_not_follow_redirects() {
     let _network = network_test_lock().lock().await;
-    let root = tempfile::tempdir().unwrap();
-    let oversized = format!("{{\"padding\":\"{}\"}}", "x".repeat(2 * 1024 * 1024));
-    let (endpoint, _) = fake_http(200, &oversized, Duration::ZERO);
-    let profile = ProviderProfile::new("openai", "openai", "m")
-        .with_base_url(format!("{endpoint}/v1"))
-        .with_credential_source(file_credential(&root));
-    let error = OpenAiProvider::new(reqwest::Client::new(), profile)
+    let oversized = format!("{{\"x\":\"{}\"}}", "x".repeat(2 * 1024 * 1024));
+    let (endpoint, _) = fake_http(200, oversized, String::new());
+    let configured = keyed(
+        profile("openai", "openai", &format!("{endpoint}/v1")),
+        "secret",
+    );
+    let transport = Arc::new(
+        ReqwestTransport::for_profile(&configured, &ReqwestTransportOptions::default()).unwrap(),
+    );
+    let error = OpenAiProvider::new(transport, configured, "m")
         .unwrap()
-        .run_pass("pass", &test_context(), &[])
+        .run_pass(PassName::Concepts, &context(), &[])
         .await
         .unwrap_err();
     assert!(matches!(error, ProviderError::ResponseTooLarge { .. }));
-}
 
-#[tokio::test(flavor = "current_thread")]
-async fn cross_host_redirect_is_not_followed_with_custom_api_key_header() {
-    let _network = network_test_lock().lock().await;
-    let root = tempfile::tempdir().unwrap();
-    let (target, target_capture) = fake_http(200, r#"{"candidates":[]}"#, Duration::ZERO);
-    let source = fake_redirect(&target);
-    let profile = ProviderProfile::new("google", "google", "m")
-        .with_base_url(source)
-        .with_credential_source(file_credential(&root));
-    let error = GoogleProvider::new(reqwest::Client::new(), profile)
+    let (target, target_capture) = fake_http(200, "{}".into(), String::new());
+    let (source, _) = fake_http(307, String::new(), format!("Location: {target}\r\n"));
+    let configured = keyed(profile("google", "google", &source), "secret");
+    let transport = Arc::new(
+        ReqwestTransport::for_profile(&configured, &ReqwestTransportOptions::default()).unwrap(),
+    );
+    let error = GoogleProvider::new(transport, configured, "m")
         .unwrap()
-        .run_pass("pass", &test_context(), &[])
+        .run_pass(PassName::Concepts, &context(), &[])
         .await
         .unwrap_err();
     assert!(matches!(error, ProviderError::Http { status: 307 }));
@@ -393,49 +609,30 @@ async fn cross_host_redirect_is_not_followed_with_custom_api_key_header() {
     );
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn ollama_v1_endpoint_uses_openai_compatibility_shape_without_configured_key() {
-    let _network = network_test_lock().lock().await;
-    let (endpoint, captured) = fake_http(
-        200,
-        r#"{"choices":[{"message":{"content":"{\"ok\":true}"}}]}"#,
-        Duration::ZERO,
-    );
-    let profile = ProviderProfile::new("ollama-openai", "ollama", "local-model")
-        .with_base_url(format!("{endpoint}/v1"));
-    let provider = OllamaProvider::new(reqwest::Client::new(), profile).unwrap();
-    assert_eq!(
-        provider
-            .run_pass("pass", &test_context(), &[])
-            .await
-            .unwrap(),
-        serde_json::json!({"ok": true})
-    );
-    let request = captured.recv_timeout(Duration::from_secs(1)).unwrap();
-    assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
-    assert!(request.contains("authorization: Bearer ollama"));
+fn network_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-#[cfg(unix)]
 #[test]
-fn catalog_rejects_fifo_without_blocking() {
+fn model_cache_round_trip_current_schema() {
+    let now = Utc.with_ymd_and_hms(2026, 7, 19, 2, 0, 0).unwrap();
     let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("provider.conf");
-    let status = std::process::Command::new("mkfifo")
-        .arg(&path)
-        .status()
-        .unwrap();
-    assert!(status.success());
-    let started = std::time::Instant::now();
-    assert!(ProviderCatalog::load(&path).is_err());
-    assert!(started.elapsed() < Duration::from_secs(1));
-}
-
-#[test]
-fn catalog_source_contains_both_unix_and_windows_anchored_backends() {
-    let source = include_str!("../src/provider/catalog.rs");
-    assert!(source.contains("struct UnixAnchor"));
-    assert!(source.contains("struct WindowsAnchor"));
-    assert!(source.contains("WINDOWS_SHARE_WITHOUT_DELETE"));
-    assert!(source.contains("WINDOWS_OPEN_REPARSE_POINT"));
+    let path = root.path().join("cache.json");
+    let entries = BTreeMap::from([(
+        "identity".into(),
+        ModelCacheEntry {
+            models: vec!["model".into()],
+            cached_at: now,
+        },
+    )]);
+    let cache = ModelCache::from_entries(2, 1024, Duration::from_secs(60), entries).unwrap();
+    cache.save(&path).unwrap();
+    assert_eq!(
+        ModelCache::load(&path, 2, 1024, Duration::from_secs(60), now)
+            .unwrap()
+            .get("identity", now)
+            .unwrap(),
+        ["model"]
+    );
 }

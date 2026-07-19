@@ -1,14 +1,18 @@
 use super::{
-    DreamOutput, DreamProvider, HttpProvider, ProviderProfile, Result, dialect_for_profile,
-    dream_prompt, parse_output,
+    Dialect, DreamOutput, DreamProvider, HttpProvider, PassName, ProviderProfile,
+    ProviderTransport, Result, dream_prompt, parse_output,
 };
 use crate::domain::{ShortTermMemory, TranslationContext};
 use async_trait::async_trait;
+use std::sync::Arc;
 pub struct OllamaProvider(HttpProvider);
 impl OllamaProvider {
-    pub fn new(client: reqwest::Client, profile: ProviderProfile) -> Result<Self> {
-        let dialect = dialect_for_profile(&profile)?;
-        HttpProvider::new(client, profile, dialect).map(Self)
+    pub fn new(
+        transport: Arc<dyn ProviderTransport>,
+        profile: ProviderProfile,
+        model: impl Into<String>,
+    ) -> Result<Self> {
+        HttpProvider::new(transport, profile, model, Dialect::Ollama).map(Self)
     }
 }
 #[async_trait]
@@ -25,14 +29,17 @@ impl DreamProvider for OllamaProvider {
     }
     async fn run_pass(
         &self,
-        p: &str,
+        p: PassName,
         c: &TranslationContext,
         m: &[ShortTermMemory],
     ) -> Result<serde_json::Value> {
         serde_json::from_str(
             &self
                 .0
-                .generate(&format!("Pass: {p}\n{}", dream_prompt(c, m)?), false)
+                .generate(
+                    &format!("Pass: {}\n{}", p.as_str(), dream_prompt(c, m)?),
+                    false,
+                )
                 .await?,
         )
         .map_err(|_| super::ProviderError::MalformedJson)

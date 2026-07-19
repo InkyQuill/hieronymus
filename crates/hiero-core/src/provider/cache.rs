@@ -41,6 +41,7 @@ impl ModelCache {
             ttl,
         }
     }
+
     pub fn from_entries(
         max_entries: usize,
         max_bytes: usize,
@@ -53,15 +54,16 @@ impl ModelCache {
         }
         Ok(cache)
     }
+
     pub fn insert(
         &self,
-        provider: &str,
+        identity: &str,
         mut models: Vec<String>,
         cached_at: DateTime<Utc>,
     ) -> Result<()> {
-        if provider.is_empty() {
+        if identity.is_empty() {
             return Err(ProviderError::Config(
-                "cache provider must not be empty".into(),
+                "cache identity must not be empty".into(),
             ));
         }
         models.sort();
@@ -71,36 +73,46 @@ impl ModelCache {
                 "cache does not store empty or error results".into(),
             ));
         }
-        if entry_size(provider, &models) > self.max_bytes {
-            return Err(ProviderError::Config(
-                "model cache entry exceeds byte bound".into(),
-            ));
-        }
-        let mut entries = self
+
+        let mut guard = self
             .entries
             .write()
             .map_err(|_| ProviderError::Config("model cache lock was poisoned".into()))?;
-        entries.insert(provider.to_owned(), ModelCacheEntry { models, cached_at });
-        while entries.len() > self.max_entries || total_size(&entries) > self.max_bytes {
-            let victim = entries
+        let mut candidate = guard.clone();
+        candidate.insert(identity.to_owned(), ModelCacheEntry { models, cached_at });
+        if serialized_size(&BTreeMap::from([(
+            identity.to_owned(),
+            candidate[identity].clone(),
+        )]))?
+            > self.max_bytes
+        {
+            return Err(ProviderError::Config(
+                "model cache entry exceeds serialized byte bound".into(),
+            ));
+        }
+        while candidate.len() > self.max_entries || serialized_size(&candidate)? > self.max_bytes {
+            let victim = candidate
                 .iter()
                 .min_by_key(|(key, value)| (value.cached_at, *key))
                 .map(|(key, _)| key.clone())
                 .ok_or_else(|| ProviderError::Config("model cache bounds are invalid".into()))?;
-            entries.remove(&victim);
+            candidate.remove(&victim);
         }
+        *guard = candidate;
         Ok(())
     }
-    pub fn get(&self, provider: &str, now: DateTime<Utc>) -> Option<Vec<String>> {
+
+    pub fn get(&self, identity: &str, now: DateTime<Utc>) -> Option<Vec<String>> {
         let mut entries = self.entries.write().ok()?;
-        let entry = entries.get(provider)?;
+        let entry = entries.get(identity)?;
         let age = now.signed_duration_since(entry.cached_at);
         if age < chrono::Duration::zero() || age >= chrono::Duration::from_std(self.ttl).ok()? {
-            entries.remove(provider);
+            entries.remove(identity);
             return None;
         }
         Some(entry.models.clone())
     }
+
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let entries = self
             .entries
@@ -116,6 +128,7 @@ impl ModelCache {
         }
         super::catalog::secure_write(path.as_ref(), &bytes)
     }
+
     pub fn load(
         path: impl AsRef<Path>,
         max_entries: usize,
@@ -123,37 +136,48 @@ impl ModelCache {
         ttl: Duration,
         now: DateTime<Utc>,
     ) -> Result<Self> {
-        let path = path.as_ref();
-        let Some(contents) = super::catalog::secure_read(path)? else {
-            return Ok(Self::new(max_entries, max_bytes, ttl));
+        let empty = || Self::new(max_entries, max_bytes, ttl);
+        let contents = match super::catalog::secure_read_bounded(path.as_ref(), max_bytes) {
+            Ok(Some(contents)) => contents,
+            Ok(None) | Err(ProviderError::ResponseTooLarge { .. }) => return Ok(empty()),
+            Err(ProviderError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData => {
+                return Ok(empty());
+            }
+            Err(error) => return Err(error),
         };
-        if contents.len() > max_bytes {
-            return Ok(Self::new(max_entries, max_bytes, ttl));
-        }
-        let persisted: PersistedCache = serde_json::from_str(&contents)
-            .map_err(|_| ProviderError::Config("model cache is malformed".into()))?;
-        let cache = Self::new(max_entries, max_bytes, ttl);
+        let persisted: PersistedCache = match serde_json::from_str(&contents) {
+            Ok(persisted) => persisted,
+            Err(_) => return Ok(empty()),
+        };
+        let cache = empty();
+        let ttl = chrono::Duration::from_std(ttl)
+            .map_err(|_| ProviderError::Config("cache TTL is invalid".into()))?;
         for (key, entry) in persisted.entries {
-            if now.signed_duration_since(entry.cached_at) >= chrono::Duration::zero()
-                && now.signed_duration_since(entry.cached_at)
-                    < chrono::Duration::from_std(ttl)
-                        .map_err(|_| ProviderError::Config("cache TTL is invalid".into()))?
+            let age = now.signed_duration_since(entry.cached_at);
+            if age >= chrono::Duration::zero()
+                && age < ttl
+                && cache.insert(&key, entry.models, entry.cached_at).is_err()
             {
-                let _ = cache.insert(&key, entry.models, entry.cached_at);
+                continue;
             }
         }
         Ok(cache)
     }
+
+    #[cfg(test)]
+    pub fn serialized_len(&self) -> Result<usize> {
+        let entries = self
+            .entries
+            .read()
+            .map_err(|_| ProviderError::Config("model cache lock was poisoned".into()))?;
+        serialized_size(&entries)
+    }
 }
 
-fn entry_size(provider: &str, models: &[String]) -> usize {
-    provider
-        .len()
-        .saturating_add(models.iter().map(String::len).sum::<usize>())
-}
-fn total_size(entries: &BTreeMap<String, ModelCacheEntry>) -> usize {
-    entries
-        .iter()
-        .map(|(key, value)| entry_size(key, &value.models))
-        .sum()
+fn serialized_size(entries: &BTreeMap<String, ModelCacheEntry>) -> Result<usize> {
+    serde_json::to_vec_pretty(&PersistedCache {
+        entries: entries.clone(),
+    })
+    .map(|bytes| bytes.len())
+    .map_err(|error| ProviderError::Config(error.to_string()))
 }

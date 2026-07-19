@@ -31,11 +31,11 @@
 
 **Files:** Create `provider/{mod.rs,catalog.rs,cache.rs,anthropic.rs,openai.rs,google.rs,ollama.rs}`, `tests/test_providers.rs`.
 
-**Interfaces:** Produce `DreamProvider::{crystallize,run_pass}`, `DreamOutput`, `CandidateCrystal`, `ConceptCandidate`, `ProviderProfile`, `ProviderCatalog::{load,save,get,upsert,delete}`, `ProviderRegistry::{resolve,check,suggest_models}`, and bounded `ModelCache` from proposal 004 §2.
+**Interfaces:** Produce `DreamProvider::{crystallize,run_pass(PassName,...)}`, the exhaustive seven-value `PassName`, `DreamOutput`, `CandidateCrystal`, `ConceptCandidate`, model-free `ProviderProfile`, backward-compatible flat-table `ProviderCatalog::{load,save,get,upsert,delete}` with `[defaults]`, object-safe `ProviderTransport` plus factory, `ProviderRegistry::{resolve(catalog,name,model),check(profile,model),suggest_models(profile,now)}`, and bounded `ModelCache` from proposal 004 §2.
 
-- [ ] Port provider config/cache/provider tests with fake HTTP responses: auth header, request shape, response extraction, timeout, HTTP error, malformed JSON, redaction, model suggestion cache, and Ollama local URL.
+- [ ] Port provider config/cache/provider tests with fake HTTP responses: current top-level catalog fixtures and migration aliases, auth header, exact request shape, response extraction, timeout, HTTP error, malformed JSON, redaction, credential-sensitive model cache, bounded persistence, provider discovery envelopes/pagination, Google generative filtering/model normalization, and native Ollama loopback/proxy rules.
 - [ ] Run focused tests; expect RED.
-- [ ] Implement adapters over injected `reqwest::Client`, typed provider errors, rustls, explicit timeouts, and secrecy-aware credentials. Keep the trait object-safe because registry contents are heterogeneous.
+- [ ] Implement adapters over an honestly injected object-safe transport; keep hardened `reqwest` construction behind the production factory. Use typed provider errors, rustls, explicit connect/read/total timeouts and response caps, disabled redirects, explicit proxy/custom-CA trust, and secrecy-aware credentials.
 - [ ] Run focused tests; expect GREEN. Commit `feat: port dream providers`.
 
 ### Task 2: Dream Configuration and Workflow Resolution

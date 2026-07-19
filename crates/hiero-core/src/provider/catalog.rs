@@ -4,23 +4,28 @@ use std::{
     time::Duration,
 };
 
-use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
+use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 
 use super::{ProviderError, Result};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Default)]
 pub enum CredentialSource {
     #[default]
     None,
+    Inline(SecretString),
     Environment {
         variable: String,
     },
     File {
         path: PathBuf,
     },
+}
+
+impl std::fmt::Debug for CredentialSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CredentialSource([REDACTED])")
+    }
 }
 
 impl CredentialSource {
@@ -31,10 +36,13 @@ impl CredentialSource {
                     "no credential source configured".into(),
                 ));
             }
+            Self::Inline(value) => value.expose_secret().to_owned(),
             Self::Environment { variable } => std::env::var(variable).map_err(|_| {
                 ProviderError::Credential(format!("environment variable {variable} is unavailable"))
             })?,
-            Self::File { path } => read_secret_file(path)?,
+            Self::File { path } => secure_read(path)?.ok_or_else(|| {
+                ProviderError::Credential("credential file is unavailable".into())
+            })?,
         };
         let value = value.trim().to_owned();
         if value.is_empty() {
@@ -46,22 +54,19 @@ impl CredentialSource {
     }
 }
 
-fn read_secret_file(path: &Path) -> Result<String> {
-    secure_read(path)?
-        .ok_or_else(|| ProviderError::Credential("credential file is unavailable".into()))
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProviderDefaults {
+    pub provider: String,
+    pub model: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone)]
 pub struct ProviderProfile {
     id: String,
-    provider: String,
-    model: String,
-    #[serde(default)]
+    name: String,
+    provider_type: String,
+    url: String,
     credential: CredentialSource,
-    #[serde(default)]
-    base_url: Option<String>,
-    #[serde(default = "default_timeout_seconds")]
     timeout_seconds: f64,
 }
 
@@ -70,43 +75,35 @@ impl std::fmt::Debug for ProviderProfile {
         formatter
             .debug_struct("ProviderProfile")
             .field("id", &self.id)
-            .field("provider", &self.provider)
-            .field("model", &self.model)
+            .field("name", &self.name)
+            .field("provider_type", &self.provider_type)
+            .field("url", &self.url)
             .field("credential", &"[REDACTED]")
-            .field("base_url", &self.base_url)
             .field("timeout_seconds", &self.timeout_seconds)
             .finish()
     }
-}
-
-fn default_timeout_seconds() -> f64 {
-    30.0
 }
 
 impl ProviderProfile {
     #[must_use]
     pub fn new(
         id: impl Into<String>,
-        provider: impl Into<String>,
-        model: impl Into<String>,
+        name: impl Into<String>,
+        provider_type: impl Into<String>,
+        url: impl Into<String>,
     ) -> Self {
         Self {
             id: id.into(),
-            provider: provider.into(),
-            model: model.into(),
+            name: name.into(),
+            provider_type: provider_type.into(),
+            url: url.into(),
             credential: CredentialSource::None,
-            base_url: None,
-            timeout_seconds: default_timeout_seconds(),
+            timeout_seconds: 30.0,
         }
     }
     #[must_use]
     pub fn with_credential_source(mut self, source: CredentialSource) -> Self {
         self.credential = source;
-        self
-    }
-    #[must_use]
-    pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
-        self.base_url = Some(url.into());
         self
     }
     #[must_use]
@@ -117,14 +114,14 @@ impl ProviderProfile {
     pub fn id(&self) -> &str {
         &self.id
     }
-    pub fn provider(&self) -> &str {
-        &self.provider
+    pub fn name(&self) -> &str {
+        &self.name
     }
-    pub fn model(&self) -> &str {
-        &self.model
+    pub fn provider_type(&self) -> &str {
+        &self.provider_type
     }
-    pub fn base_url(&self) -> Option<&str> {
-        self.base_url.as_deref()
+    pub fn base_url(&self) -> &str {
+        &self.url
     }
     pub fn timeout(&self) -> Duration {
         Duration::from_secs_f64(self.timeout_seconds)
@@ -132,116 +129,157 @@ impl ProviderProfile {
     pub fn credential(&self) -> &CredentialSource {
         &self.credential
     }
+    pub fn resolve_credential(&self) -> Result<SecretString> {
+        self.credential.resolve()
+    }
 
     pub fn validate(&self) -> Result<()> {
-        if self.id.is_empty()
-            || !self
-                .id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        {
-            return Err(ProviderError::Config(
-                "provider id must contain only ASCII letters, digits, '_' or '-'".into(),
-            ));
+        validate_id(&self.id)?;
+        if self.name.trim().is_empty() {
+            return Err(ProviderError::Config(format!(
+                "providers.{}.name is required",
+                self.id
+            )));
         }
         if !matches!(
-            self.provider.as_str(),
+            self.provider_type.as_str(),
             "openai" | "anthropic" | "google" | "ollama"
         ) {
-            return Err(ProviderError::Unsupported(self.provider.clone()));
-        }
-        if self.model.trim().is_empty() {
-            return Err(ProviderError::Config(
-                "provider model must not be empty".into(),
-            ));
+            return Err(ProviderError::Unsupported(self.provider_type.clone()));
         }
         if !self.timeout_seconds.is_finite() || self.timeout_seconds <= 0.0 {
             return Err(ProviderError::Config(
                 "provider timeout must be finite and positive".into(),
             ));
         }
-        if let Some(url) = &self.base_url {
-            let parsed = Url::parse(url)
-                .map_err(|_| ProviderError::Config("provider base URL is invalid".into()))?;
-            if !parsed.username().is_empty() || parsed.password().is_some() {
-                return Err(ProviderError::UnsafeEndpoint(
-                    "provider base URL must not contain credentials".into(),
-                ));
-            }
-            if parsed.query().is_some() || parsed.fragment().is_some() {
-                return Err(ProviderError::UnsafeEndpoint(
-                    "provider base URL must not contain a query or fragment".into(),
-                ));
-            }
-            if self.provider == "ollama" && !is_loopback_http(&parsed) {
-                return Err(ProviderError::UnsafeEndpoint(
-                    "native Ollama requires an HTTP loopback URL".into(),
-                ));
-            }
-            if self.provider != "ollama"
-                && parsed.scheme() != "https"
-                && !parsed.host().is_some_and(is_loopback_host)
-            {
-                return Err(ProviderError::UnsafeEndpoint(
-                    "remote providers require HTTPS".into(),
-                ));
-            }
+        let parsed = Url::parse(&self.url)
+            .map_err(|_| ProviderError::Config("provider base URL is invalid".into()))?;
+        if !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(ProviderError::UnsafeEndpoint(
+                "provider base URL contains forbidden components".into(),
+            ));
+        }
+        let literal_loopback = matches!(parsed.host(), Some(url::Host::Ipv4(ip)) if ip.is_loopback())
+            || matches!(parsed.host(), Some(url::Host::Ipv6(ip)) if ip.is_loopback());
+        if self.provider_type == "ollama" && !(parsed.scheme() == "http" && literal_loopback) {
+            return Err(ProviderError::UnsafeEndpoint(
+                "native Ollama requires an IP-literal loopback HTTP URL".into(),
+            ));
+        }
+        if self.provider_type != "ollama" && parsed.scheme() != "https" && !literal_loopback {
+            return Err(ProviderError::UnsafeEndpoint(
+                "remote providers require HTTPS".into(),
+            ));
         }
         Ok(())
     }
 }
 
-fn is_loopback_http(url: &Url) -> bool {
-    url.scheme() == "http" && url.host().is_some_and(is_loopback_host)
-}
-fn is_loopback_host(host: url::Host<&str>) -> bool {
-    match host {
-        url::Host::Ipv4(ip) => ip.is_loopback(),
-        url::Host::Ipv6(ip) => ip.is_loopback(),
-        url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Debug, Clone, Default)]
 pub struct ProviderCatalog {
     providers: BTreeMap<String, ProviderProfile>,
+    defaults: ProviderDefaults,
 }
 
 impl ProviderCatalog {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let contents = match secure_read(path)? {
-            Some(contents) => contents,
-            None => return Ok(Self::default()),
+        let Some(contents) = secure_read(path.as_ref())? else {
+            return Ok(Self::default());
         };
-        let catalog: Self =
-            toml::from_str(&contents).map_err(|error| ProviderError::Config(error.to_string()))?;
-        for (key, profile) in &catalog.providers {
-            if key != profile.id() {
-                return Err(ProviderError::Config(format!(
-                    "provider key {key} does not match profile id"
-                )));
+        let root = contents
+            .parse::<toml::Table>()
+            .map_err(|error| ProviderError::Config(error.to_string()))?;
+        let mut catalog = Self::default();
+        for (id, value) in root {
+            let table = value
+                .as_table()
+                .ok_or_else(|| ProviderError::Config(format!("{id} must be a table")))?;
+            if id == "defaults" {
+                reject_unknown(table, &["provider", "model"], "defaults")?;
+                catalog.defaults = ProviderDefaults {
+                    provider: string_or(table, "provider", "")?,
+                    model: string_or(table, "model", "")?,
+                };
+                continue;
             }
+            validate_id(&id)?;
+            reject_unknown(
+                table,
+                &[
+                    "name",
+                    "type",
+                    "url",
+                    "key",
+                    "api_key",
+                    "key_env",
+                    "key_file",
+                    "timeout_seconds",
+                ],
+                &id,
+            )?;
+            let profile = ProviderProfile {
+                id: id.clone(),
+                name: string_or(table, "name", &id)?,
+                provider_type: canonical_provider_type(required_string(table, "type", &id)?),
+                url: required_string(table, "url", &id)?,
+                credential: credential_from_table(table, &id)?,
+                timeout_seconds: number_or(table, "timeout_seconds", 30.0)?,
+            };
             profile.validate()?;
+            catalog.providers.insert(id, profile);
         }
+        catalog.validate_defaults()?;
         Ok(catalog)
     }
+
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
-        for (key, profile) in &self.providers {
-            if key != profile.id() {
-                return Err(ProviderError::Config(
-                    "provider key does not match profile id".into(),
-                ));
-            }
+        self.validate_defaults()?;
+        let mut root = toml::Table::new();
+        for (id, profile) in &self.providers {
             profile.validate()?;
+            let mut table = toml::Table::new();
+            table.insert("name".into(), profile.name.clone().into());
+            table.insert("type".into(), profile.provider_type.clone().into());
+            table.insert("url".into(), profile.url.clone().into());
+            match &profile.credential {
+                CredentialSource::None => {}
+                CredentialSource::Inline(value) => {
+                    table.insert("key".into(), value.expose_secret().to_owned().into());
+                }
+                CredentialSource::Environment { variable } => {
+                    table.insert("key_env".into(), variable.clone().into());
+                }
+                CredentialSource::File { path } => {
+                    table.insert(
+                        "key_file".into(),
+                        path.to_string_lossy().into_owned().into(),
+                    );
+                }
+            }
+            table.insert("timeout_seconds".into(), profile.timeout_seconds.into());
+            root.insert(id.clone(), table.into());
         }
-        let contents = toml::to_string_pretty(self)
+        let mut defaults = toml::Table::new();
+        defaults.insert("provider".into(), self.defaults.provider.clone().into());
+        defaults.insert("model".into(), self.defaults.model.clone().into());
+        root.insert("defaults".into(), defaults.into());
+        let contents = toml::to_string_pretty(&root)
             .map_err(|error| ProviderError::Config(error.to_string()))?;
         secure_write(path.as_ref(), contents.as_bytes())
     }
+
     pub fn get(&self, id: &str) -> Option<&ProviderProfile> {
         self.providers.get(id)
+    }
+    pub fn defaults(&self) -> &ProviderDefaults {
+        &self.defaults
+    }
+    pub fn set_defaults(&mut self, defaults: ProviderDefaults) {
+        self.defaults = defaults;
     }
     pub fn upsert(&mut self, profile: ProviderProfile) -> Result<Option<ProviderProfile>> {
         profile.validate()?;
@@ -253,7 +291,122 @@ impl ProviderCatalog {
     pub fn iter(&self) -> impl Iterator<Item = (&str, &ProviderProfile)> {
         self.providers
             .iter()
-            .map(|(key, value)| (key.as_str(), value))
+            .map(|(id, profile)| (id.as_str(), profile))
+    }
+
+    fn validate_defaults(&self) -> Result<()> {
+        if !self.defaults.provider.is_empty()
+            && !self.providers.contains_key(&self.defaults.provider)
+        {
+            return Err(ProviderError::Config(format!(
+                "default provider is missing: {}",
+                self.defaults.provider
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn validate_id(id: &str) -> Result<()> {
+    if id.is_empty()
+        || id == "defaults"
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        Err(ProviderError::Config(format!("invalid provider id: {id}")))
+    } else {
+        Ok(())
+    }
+}
+
+fn reject_unknown(table: &toml::Table, allowed: &[&str], prefix: &str) -> Result<()> {
+    for key in table.keys() {
+        if !allowed.contains(&key.as_str()) {
+            return Err(ProviderError::Config(format!(
+                "unknown provider config setting: {prefix}.{key}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn required_string(table: &toml::Table, key: &str, prefix: &str) -> Result<String> {
+    let value = table
+        .get(key)
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| ProviderError::Config(format!("{prefix}.{key} is required")))?;
+    if value.is_empty() {
+        return Err(ProviderError::Config(format!("{prefix}.{key} is required")));
+    }
+    Ok(value.to_owned())
+}
+
+fn string_or(table: &toml::Table, key: &str, default: &str) -> Result<String> {
+    match table.get(key) {
+        None => Ok(default.to_owned()),
+        Some(value) => value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| ProviderError::Config(format!("{key} must be a string"))),
+    }
+}
+
+fn number_or(table: &toml::Table, key: &str, default: f64) -> Result<f64> {
+    match table.get(key) {
+        None => Ok(default),
+        Some(toml::Value::Float(value)) => Ok(*value),
+        Some(toml::Value::Integer(value)) => Ok(*value as f64),
+        Some(_) => Err(ProviderError::Config(format!("{key} must be a number"))),
+    }
+}
+
+fn credential_from_table(table: &toml::Table, prefix: &str) -> Result<CredentialSource> {
+    let present = ["key", "api_key", "key_env", "key_file"]
+        .into_iter()
+        .filter(|key| table.contains_key(*key))
+        .count();
+    if present > 1 {
+        return Err(ProviderError::Config(format!(
+            "{prefix} has multiple credential sources"
+        )));
+    }
+    if let Some(value) = table.get("key") {
+        return value
+            .as_str()
+            .map(|value| CredentialSource::Inline(SecretString::from(value.to_owned())))
+            .ok_or_else(|| ProviderError::Config(format!("{prefix}.key must be a string")));
+    }
+    if let Some(value) = table.get("api_key") {
+        return value
+            .as_str()
+            .map(|value| CredentialSource::Inline(SecretString::from(value.to_owned())))
+            .ok_or_else(|| ProviderError::Config(format!("{prefix}.api_key must be a string")));
+    }
+    if let Some(value) = table.get("key_env") {
+        return value
+            .as_str()
+            .map(|variable| CredentialSource::Environment {
+                variable: variable.to_owned(),
+            })
+            .ok_or_else(|| ProviderError::Config(format!("{prefix}.key_env must be a string")));
+    }
+    if let Some(value) = table.get("key_file") {
+        return value
+            .as_str()
+            .map(|path| CredentialSource::File {
+                path: PathBuf::from(path),
+            })
+            .ok_or_else(|| ProviderError::Config(format!("{prefix}.key_file must be a string")));
+    }
+    Ok(CredentialSource::None)
+}
+
+fn canonical_provider_type(value: String) -> String {
+    if value == "gemini" {
+        "google".to_owned()
+    } else {
+        value
     }
 }
 
@@ -685,6 +838,106 @@ fn unix_error(path: &Path, source: rustix::io::Errno) -> ProviderError {
     } else {
         ProviderError::Io(std::io::Error::from_raw_os_error(source.raw_os_error()))
     }
+}
+
+#[cfg(unix)]
+pub(super) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Option<String>> {
+    use std::io::Read;
+    let anchor = match UnixAnchor::open(path, false) {
+        Ok(anchor) => anchor,
+        Err(ProviderError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let descriptor = match rustix::fs::openat(
+        anchor.parent(),
+        &anchor.file_name,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::NONBLOCK
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    ) {
+        Ok(descriptor) => descriptor,
+        Err(source) if source == rustix::io::Errno::NOENT => return Ok(None),
+        Err(source) => return Err(unix_error(path, source)),
+    };
+    let file = std::fs::File::from(descriptor);
+    if !file.metadata().map_err(ProviderError::Io)?.is_file() {
+        return Err(ProviderError::Config(
+            "cache file must be a regular file".into(),
+        ));
+    }
+    let mut contents = String::new();
+    file.take(max_bytes.saturating_add(1) as u64)
+        .read_to_string(&mut contents)
+        .map_err(ProviderError::Io)?;
+    if contents.len() > max_bytes {
+        return Err(ProviderError::ResponseTooLarge { limit: max_bytes });
+    }
+    Ok(Some(contents))
+}
+
+#[cfg(windows)]
+pub(super) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Option<String>> {
+    use std::{fs::OpenOptions, io::Read, os::windows::fs::OpenOptionsExt};
+    let path = normalize_windows_path(path)?;
+    let anchor = match WindowsAnchor::open(&path, false) {
+        Ok(anchor) => anchor,
+        Err(ProviderError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let file = match OpenOptions::new()
+        .read(true)
+        .share_mode(WINDOWS_SHARE_WITHOUT_DELETE)
+        .custom_flags(WINDOWS_OPEN_REPARSE_POINT)
+        .open(&anchor.final_path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(ProviderError::Io(error)),
+    };
+    let metadata = file.metadata().map_err(ProviderError::Io)?;
+    reject_windows_reparse(&metadata)?;
+    if !metadata.is_file() {
+        return Err(ProviderError::Config(
+            "cache file must be a regular file".into(),
+        ));
+    }
+    let mut contents = String::new();
+    file.take(max_bytes.saturating_add(1) as u64)
+        .read_to_string(&mut contents)
+        .map_err(ProviderError::Io)?;
+    if contents.len() > max_bytes {
+        return Err(ProviderError::ResponseTooLarge { limit: max_bytes });
+    }
+    Ok(Some(contents))
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(super) fn secure_read_bounded(path: &Path, max_bytes: usize) -> Result<Option<String>> {
+    use std::io::Read;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(ProviderError::Io(error)),
+    };
+    if !file.metadata().map_err(ProviderError::Io)?.is_file() {
+        return Err(ProviderError::Config(
+            "cache file must be a regular file".into(),
+        ));
+    }
+    let mut contents = String::new();
+    file.take(max_bytes.saturating_add(1) as u64)
+        .read_to_string(&mut contents)
+        .map_err(ProviderError::Io)?;
+    if contents.len() > max_bytes {
+        return Err(ProviderError::ResponseTooLarge { limit: max_bytes });
+    }
+    Ok(Some(contents))
 }
 
 #[cfg(not(any(unix, windows)))]
