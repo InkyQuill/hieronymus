@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sqlx::SqlitePool;
 
@@ -14,16 +14,19 @@ pub(crate) async fn expand_one_hop(
 ) -> Result<Vec<Candidate>> {
     let store = CrystalStore::new(pool);
     let mut expanded = Vec::new();
-    for source in candidates.iter().filter(|candidate| {
-        candidate.crystal.is_some() && candidate.score > SPREADING_ACTIVATION_THRESHOLD
-    }) {
+    for source in deduplicate_graph_sources(candidates)
+        .into_iter()
+        .filter(|candidate| {
+            candidate.crystal.is_some() && candidate.score > SPREADING_ACTIVATION_THRESHOLD
+        })
+    {
         let source_crystal = source
             .crystal
             .as_ref()
             .expect("graph candidates are filtered to crystals");
         let mut seen = BTreeSet::new();
         for (neighbor, link, weight) in store
-            .linked_bounded(source_crystal.id, per_source_limit)
+            .linked_bounded(source_crystal.id, ctx, per_source_limit)
             .await?
         {
             let neighbor_id = if link.source_crystal_id == source_crystal.id {
@@ -46,6 +49,24 @@ pub(crate) async fn expand_one_hop(
     Ok(expanded)
 }
 
+fn deduplicate_graph_sources(candidates: &[Candidate]) -> Vec<&Candidate> {
+    let mut by_id = BTreeMap::<i64, &Candidate>::new();
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate.source == crate::domain::MemorySource::LongTerm)
+    {
+        by_id
+            .entry(candidate.id)
+            .and_modify(|existing| {
+                if candidate.score.total_cmp(&existing.score).is_gt() {
+                    *existing = candidate;
+                }
+            })
+            .or_insert(candidate);
+    }
+    by_id.into_values().collect()
+}
+
 fn visible_in_context(crystal: &Crystal, ctx: &TranslationContext) -> bool {
     let coherent_scope = (crystal.scope_type == "global"
         && crystal.scope_key.is_empty()
@@ -57,4 +78,41 @@ fn visible_in_context(crystal: &Crystal, ctx: &TranslationContext) -> bool {
         && matches!(crystal.status.as_str(), "active" | "candidate")
         && (crystal.source_language.is_empty() || crystal.source_language == ctx.source_language)
         && (crystal.target_language.is_empty() || crystal.target_language == ctx.target_language)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::deduplicate_graph_sources;
+    use crate::{domain::MemorySource, recall::candidates::Candidate};
+
+    fn candidate(id: i64, score: f64) -> Candidate {
+        Candidate {
+            source: MemorySource::LongTerm,
+            id,
+            score,
+            text: String::new(),
+            reason: String::new(),
+            metadata: json!({}),
+            crystal: None,
+            source_crystal_id: None,
+            language_tags: Vec::new(),
+            story_scopes: Vec::new(),
+            semantic_tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn graph_sources_are_deduplicated_by_id_with_best_score_and_stable_order() {
+        let candidates = vec![candidate(2, 0.8), candidate(1, 0.7), candidate(2, 0.9)];
+        let deduplicated = deduplicate_graph_sources(&candidates);
+        assert_eq!(
+            deduplicated
+                .iter()
+                .map(|candidate| (candidate.id, candidate.score))
+                .collect::<Vec<_>>(),
+            [(1, 0.7), (2, 0.9)]
+        );
+    }
 }

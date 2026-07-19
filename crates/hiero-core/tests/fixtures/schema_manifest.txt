@@ -128,7 +128,8 @@ COLUMN 1|target_crystal_id|INTEGER|1|NULL|2
 COLUMN 2|link_type|TEXT|1|NULL|3
 FK 0|0|crystals|target_crystal_id|id|NO ACTION|CASCADE|NONE
 FK 1|0|crystals|source_crystal_id|id|NO ACTION|CASCADE|NONE
-INDEX 0|sqlite_autoindex_crystal_links_1|1|pk|0|source_crystal_id,target_crystal_id,link_type
+INDEX 0|idx_crystal_links_target|0|c|0|target_crystal_id,source_crystal_id,link_type
+INDEX 1|sqlite_autoindex_crystal_links_1|1|pk|0|source_crystal_id,target_crystal_id,link_type
 TABLE crystal_semantic_tags
 SQL CREATE TABLE crystal_semantic_tags (   crystal_id INTEGER NOT NULL REFERENCES crystals(id) ON DELETE CASCADE,   tag TEXT NOT NULL,   confidence REAL NOT NULL DEFAULT 0.2 CHECK (confidence >= 0.0 AND confidence <= 1.0),   created_at TEXT NOT NULL,   PRIMARY KEY (crystal_id, tag) ) STRICT
 COLUMN 0|crystal_id|INTEGER|1|NULL|1

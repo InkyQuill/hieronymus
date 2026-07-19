@@ -136,6 +136,11 @@ cancellation/drop rolls back before a pooled connection can be reused.
 `link_weight` starts uniform (e.g. `1.0` per link) and is not yet a tunable strength column —
 `crystal_links` has no weight column in the current schema (002 §2), so weight is derived from
 link count/recency at query time rather than stored, unless a future migration adds one.
+Recall's crate-private bounded linked-crystal read executes separate source-first and target-first
+queries. Both apply status, coherent global/exact-series scope, and language visibility before
+ordering/`LIMIT`; migration `0006` supplies the covering target-first index. The two bounded lanes
+are merged by neighbor/link identity, then truncated deterministically, so invisible or opposite-
+direction links cannot starve a visible neighbor.
 
 ### 2.2 `WorkspaceStore` (sessions + short-term memory)
 

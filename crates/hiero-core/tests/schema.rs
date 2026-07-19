@@ -831,6 +831,11 @@ async fn rag_chunks_has_the_exact_compound_source_and_series_foreign_key() {
 async fn explicit_indexes_have_the_exact_declared_columns() {
     let pool = migrated_pool().await;
     let expected = [
+        (
+            "crystal_links",
+            "idx_crystal_links_target",
+            vec!["target_crystal_id", "source_crystal_id", "link_type"],
+        ),
         ("crystals", "idx_crystals_maintenance", vec!["id"]),
         (
             "rag_chunks",
@@ -1116,5 +1121,5 @@ async fn migration_versions_include_fts_and_are_idempotent() {
     .await
     .expect("migration versions should be readable");
 
-    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
 }

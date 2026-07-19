@@ -26,7 +26,7 @@
 
 - `crates/hiero-core/src/db/{mod.rs,error.rs,models.rs,legacy_terms.rs,test_support.rs}`: pool, typed rows, legacy converter, tests.
 - `crates/hiero-core/src/values.rs`: timestamp and score helpers shared with stores.
-- `migrations/0001_initial_schema.sql` through `0005_drop_strict_terms.sql`: embedded ordered schema changes.
+- `migrations/0001_initial_schema.sql` through `0006_crystal_link_target_index.sql`: embedded ordered schema changes.
 - `crates/hiero-core/tests/{database,fts,legacy_terms}.rs`: black-box persistence contracts.
 
 **Focused commands:** Task 1 `cargo test -p hiero-core --test database`; Task 2 and Task 4 `cargo test -p hiero-core --test schema`; Task 3 `cargo test -p hiero-core --test fts`; Task 5 `cargo test -p hiero-core --test legacy_terms`. RED means the named contract fails for the absent behavior; GREEN means exit 0 with all named tests passed.

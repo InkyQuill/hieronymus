@@ -305,47 +305,44 @@ impl<'a> WorkspaceStore<'a> {
         session_id: i64,
         crystal: &Crystal,
     ) -> Result<(ShortTermMemory, bool)> {
-        let expected = PreparedMemory::from_crystal(crystal)?;
         let mut transaction = begin_immediate(self.pool, "get or create working copy").await?;
-        let result = async {
-            let session =
-                require_active_session(&mut transaction, session_id, "get or create working copy")
-                    .await?;
-            validate_crystal_for_session(&session, crystal)?;
-            if let Some(existing) =
-                get_working_copy_on(&mut transaction, session_id, crystal.id).await?
-            {
-                if !working_copy_equivalent(&existing, &expected, crystal.id)
-                    || !working_copy_metadata_equivalent(&mut transaction, existing.id, &expected)
-                        .await?
-                {
-                    return Err(WorkspaceError::WorkingCopyConflict {
-                        session_id,
-                        crystal_id: crystal.id,
-                    });
-                }
-                return Ok((existing.id, false));
-            }
-            let now = Utc::now();
-            let id = insert_memory(
-                &mut transaction,
-                session_id,
-                &expected,
-                Some(crystal.id),
-                now,
-            )
-            .await?;
-            sqlx::query("UPDATE task_sessions SET last_activity_at = ? WHERE id = ?")
-                .bind(now)
-                .bind(session_id)
-                .execute(&mut *transaction)
-                .await
-                .map_err(|source| database("touch session", source))?;
-            Ok((id, true))
-        }
-        .await;
+        let result = self
+            .get_or_create_working_copy_in(&mut transaction, session_id, crystal)
+            .await;
         let (id, created) = commit_write(transaction, "get or create working copy", result).await?;
         Ok((self.get_memory(id).await?, created))
+    }
+
+    pub(crate) async fn get_or_create_working_copy_in(
+        &self,
+        transaction: &mut Transaction<'static, Sqlite>,
+        session_id: i64,
+        crystal: &Crystal,
+    ) -> Result<(i64, bool)> {
+        let expected = PreparedMemory::from_crystal(crystal)?;
+        let session =
+            require_active_session(transaction, session_id, "get or create working copy").await?;
+        validate_crystal_for_session(&session, crystal)?;
+        if let Some(existing) = get_working_copy_on(transaction, session_id, crystal.id).await? {
+            if !working_copy_equivalent(&existing, &expected, crystal.id)
+                || !working_copy_metadata_equivalent(transaction, existing.id, &expected).await?
+            {
+                return Err(WorkspaceError::WorkingCopyConflict {
+                    session_id,
+                    crystal_id: crystal.id,
+                });
+            }
+            return Ok((existing.id, false));
+        }
+        let now = Utc::now();
+        let id = insert_memory(transaction, session_id, &expected, Some(crystal.id), now).await?;
+        sqlx::query("UPDATE task_sessions SET last_activity_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(session_id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|source| database("touch session", source))?;
+        Ok((id, true))
     }
 
     pub async fn archive(&self, id: i64) -> Result<()> {

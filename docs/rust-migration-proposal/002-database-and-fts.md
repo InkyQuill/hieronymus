@@ -36,7 +36,7 @@ pub async fn connect(config: &HieronymusConfig) -> Result<SqlitePool> {
         .pragma("recursive_triggers", "ON")
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new().max_connections(8).connect_with(opts).await?;
-    migrate(&pool).await?; // applies 0001..0004, runs typed conversion, then applies 0005
+    migrate(&pool).await?; // applies 0001..0004, runs typed conversion, then applies 0005..0006
     Ok(pool)
 }
 ```
@@ -198,6 +198,10 @@ create index idx_crystals_maintenance
 on crystals(id)
 where status in ('active', 'candidate')
   and not (crystal_type = 'rule' and status = 'active');
+
+-- Target-first index for bounded reverse crystal-link traversal.
+create index idx_crystal_links_target
+on crystal_links(target_crystal_id, source_crystal_id, link_type);
 ```
 
 Fresh Rust databases never create `strict_terms`, `strict_term_tags`, `strict_term_aliases`, or
@@ -300,6 +304,7 @@ pooled connection is returned on every success or error path.
 | `0004` | `semantic_index_state.sql` | Adds `semantic_index_jobs`, `semantic_chunk_state` |
 | between `0004`/`0005` | Rust strict-term converter | Converts and verifies every structured row under `BEGIN IMMEDIATE`, then drops the legacy objects |
 | `0005` | `drop_strict_terms.sql` | Guarded DDL only, making fresh/empty/already-converted databases converge safely |
+| `0006` | `crystal_link_target_index.sql` | Adds the target-first covering index used by bounded reverse graph traversal |
 
 **The pre-`0005` Rust conversion in detail.** `strict_terms` rows are *structured* data (`source_text`,
 `canonical_translation`, `category`, `notes`, plus `strict_term_tags`/`strict_term_aliases`) —

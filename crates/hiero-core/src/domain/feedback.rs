@@ -72,6 +72,14 @@ impl<'a> FeedbackStore<'a> {
         commit_write(transaction, "record", result).await
     }
 
+    pub(crate) async fn record_in(
+        &self,
+        transaction: &mut Transaction<'static, Sqlite>,
+        event: FeedbackEvent,
+    ) -> Result<i64> {
+        record_on(transaction, event).await
+    }
+
     pub async fn record_recall_outcome(
         &self,
         session_id: i64,

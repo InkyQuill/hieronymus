@@ -78,43 +78,12 @@ impl<'a> RecallService<'a> {
         let expanded = expand_one_hop(self.pool, ctx, &scored, candidate_limit).await?;
         let ranked = rank_and_limit(scored.into_iter().chain(expanded), limit);
 
-        self.materialize_working_copies(session_id, &ranked).await?;
-        log_activations(self.pool, session_id, ctx, query, &ranked).await?;
+        persist_recall_side_effects(self.pool, session_id, ctx, query, &ranked).await?;
         Ok(ranked
             .into_iter()
             .enumerate()
             .map(|(index, candidate)| candidate.into_result(index + 1))
             .collect())
-    }
-
-    async fn materialize_working_copies(
-        &self,
-        session_id: i64,
-        candidates: &[candidates::Candidate],
-    ) -> Result<()> {
-        let workspace = WorkspaceStore::new(self.pool);
-        let feedback = FeedbackStore::new(self.pool);
-        for candidate in candidates {
-            let Some(crystal) = candidate.crystal.as_ref() else {
-                continue;
-            };
-            let (_, created) = workspace
-                .get_or_create_working_copy(session_id, crystal)
-                .await?;
-            if !created {
-                feedback
-                    .record(FeedbackEvent {
-                        crystal_id: crystal.id,
-                        event_type: "recalled_again".to_owned(),
-                        source_role: "recall".to_owned(),
-                        evidence: None,
-                        session_id: Some(session_id),
-                    })
-                    .await
-                    .map_err(|source| RecallError::Feedback { source })?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -152,7 +121,7 @@ async fn validate_session(
     Ok(())
 }
 
-async fn log_activations(
+async fn persist_recall_side_effects(
     pool: &SqlitePool,
     session_id: i64,
     ctx: &TranslationContext,
@@ -162,33 +131,34 @@ async fn log_activations(
     let mut transaction = pool
         .begin_with("BEGIN IMMEDIATE")
         .await
-        .map_err(|source| database("begin activation log", source))?;
+        .map_err(|source| database("begin recall side effects", source))?;
     let result = async {
-        let session = sqlx::query_as::<_, crate::db::TaskSessionRecord>(
-            "SELECT id, series_slug, source_language, target_language, task_type, volume, chapter, status, cycle_id, created_at, last_activity_at, completed_at FROM task_sessions WHERE id = ?",
-        )
-        .bind(session_id)
-        .fetch_optional(&mut *transaction)
-        .await
-        .map_err(|source| database("reload activation session", source))?
-        .ok_or(WorkspaceError::SessionNotFound { id: session_id })?;
-        if session.status != "active" {
-            return Err(RecallError::SessionInactive { session_id });
-        }
-        if session.series_slug != ctx.series_slug
-            || session.source_language != ctx.source_language
-            || session.target_language != ctx.target_language
-        {
-            return Err(RecallError::SessionContext {
-                session_id,
-                field: "base context",
-            });
-        }
+        let session = revalidate_session_in(&mut transaction, session_id, ctx).await?;
+        let workspace = WorkspaceStore::new(pool);
+        let feedback = FeedbackStore::new(pool);
         let now = Utc::now();
         for (index, candidate) in candidates.iter().enumerate() {
             let Some(crystal) = candidate.crystal.as_ref() else {
                 continue;
             };
+            let (_, created) = workspace
+                .get_or_create_working_copy_in(&mut transaction, session_id, crystal)
+                .await?;
+            if !created {
+                feedback
+                    .record_in(
+                        &mut transaction,
+                        FeedbackEvent {
+                            crystal_id: crystal.id,
+                            event_type: "recalled_again".to_owned(),
+                            source_role: "recall".to_owned(),
+                            evidence: None,
+                            session_id: Some(session_id),
+                        },
+                    )
+                    .await
+                    .map_err(|source| RecallError::Feedback { source })?;
+            }
             sqlx::query("INSERT INTO crystal_activations(crystal_id, session_id, recall_query, rank, score, reason, cycle_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(crystal.id)
                 .bind(session_id)
@@ -208,6 +178,100 @@ async fn log_activations(
     commit_write(transaction, result).await
 }
 
+async fn revalidate_session_in(
+    transaction: &mut Transaction<'static, Sqlite>,
+    session_id: i64,
+    ctx: &TranslationContext,
+) -> Result<crate::db::TaskSessionRecord> {
+    let session = sqlx::query_as::<_, crate::db::TaskSessionRecord>(
+        "SELECT id, series_slug, source_language, target_language, task_type, volume, chapter, status, cycle_id, created_at, last_activity_at, completed_at FROM task_sessions WHERE id = ?",
+    )
+    .bind(session_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|source| database("revalidate recall session", source))?
+    .ok_or(WorkspaceError::SessionNotFound { id: session_id })?;
+    if session.status != "active" {
+        return Err(RecallError::SessionInactive { session_id });
+    }
+    for (field, matches) in [
+        ("series_slug", session.series_slug == ctx.series_slug),
+        (
+            "scope_key",
+            ctx.scope_key == format!("series:{}", ctx.series_slug),
+        ),
+        (
+            "source_language",
+            session.source_language == ctx.source_language,
+        ),
+        (
+            "target_language",
+            session.target_language == ctx.target_language,
+        ),
+        (
+            "language_tags",
+            session_metadata_in(
+                transaction,
+                session_id,
+                "task_session_language_tags",
+                "language_tag",
+            )
+            .await?
+                == ctx.language_tags,
+        ),
+        (
+            "story_scopes",
+            session_metadata_in(
+                transaction,
+                session_id,
+                "task_session_story_scopes",
+                "story_scope",
+            )
+            .await?
+                == ctx.story_scopes,
+        ),
+        (
+            "semantic_tags",
+            session_metadata_in(
+                transaction,
+                session_id,
+                "task_session_semantic_tags",
+                "semantic_tag",
+            )
+            .await?
+                == ctx.semantic_tags,
+        ),
+    ] {
+        if !matches {
+            return Err(RecallError::SessionContext { session_id, field });
+        }
+    }
+    Ok(session)
+}
+
+async fn session_metadata_in(
+    transaction: &mut Transaction<'static, Sqlite>,
+    session_id: i64,
+    table: &'static str,
+    column: &'static str,
+) -> Result<Vec<String>> {
+    let mut query = sqlx::QueryBuilder::<Sqlite>::new(format!(
+        "SELECT {column} AS value FROM {table} WHERE session_id = "
+    ));
+    query.push_bind(session_id).push(" ORDER BY rowid");
+    query
+        .build()
+        .fetch_all(&mut **transaction)
+        .await
+        .map_err(|source| database("revalidate recall session metadata", source))?
+        .into_iter()
+        .map(|row| {
+            sqlx::Row::try_get(&row, "value")
+                .map_err(|source| database("decode recall session metadata", source))
+        })
+        .collect()
+}
+
 async fn commit_write<T>(
     transaction: Transaction<'static, Sqlite>,
     result: Result<T>,
@@ -217,7 +281,7 @@ async fn commit_write<T>(
             .commit()
             .await
             .map(|()| value)
-            .map_err(|source| database("commit activation log", source)),
+            .map_err(|source| database("commit recall side effects", source)),
         Err(error) => Err(error),
     }
 }

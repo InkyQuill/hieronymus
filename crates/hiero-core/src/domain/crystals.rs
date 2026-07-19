@@ -233,59 +233,73 @@ impl<'a> CrystalStore<'a> {
 
     pub async fn linked(&self, crystal_id: i64) -> Result<Vec<(CrystalLinkRecord, f64)>> {
         self.get(crystal_id).await?;
-        sqlx::query_as::<_, CrystalLinkRecord>(
-            "SELECT source_crystal_id, target_crystal_id, link_type FROM crystal_links WHERE source_crystal_id = ? OR target_crystal_id = ? ORDER BY CASE WHEN source_crystal_id = ? THEN target_crystal_id ELSE source_crystal_id END, source_crystal_id, target_crystal_id, link_type",
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|source| database("begin linked crystal read", source))?;
+        let outgoing = sqlx::query_as::<_, CrystalLinkRecord>(
+            "SELECT source_crystal_id, target_crystal_id, link_type FROM crystal_links WHERE source_crystal_id = ? ORDER BY target_crystal_id, link_type",
         )
         .bind(crystal_id)
-        .bind(crystal_id)
-        .bind(crystal_id)
-        .fetch_all(self.pool)
+        .fetch_all(&mut *transaction)
         .await
-        .map(|links| links.into_iter().map(|link| (link, 1.0)).collect())
-        .map_err(|source| database("list linked crystals", source))
+        .map_err(|source| database("list outgoing linked crystals", source))?;
+        let incoming = sqlx::query_as::<_, CrystalLinkRecord>(
+            "SELECT source_crystal_id, target_crystal_id, link_type FROM crystal_links WHERE target_crystal_id = ? ORDER BY source_crystal_id, link_type",
+        )
+        .bind(crystal_id)
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(|source| database("list incoming linked crystals", source))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|source| database("finish linked crystal read", source))?;
+        let mut links = outgoing;
+        links.extend(incoming);
+        links.sort_by(|left, right| {
+            neighbor_id(left, crystal_id)
+                .cmp(&neighbor_id(right, crystal_id))
+                .then_with(|| left.source_crystal_id.cmp(&right.source_crystal_id))
+                .then_with(|| left.target_crystal_id.cmp(&right.target_crystal_id))
+                .then_with(|| left.link_type.cmp(&right.link_type))
+        });
+        Ok(links.into_iter().map(|link| (link, 1.0)).collect())
     }
 
     pub(crate) async fn linked_bounded(
         &self,
         crystal_id: i64,
+        ctx: &TranslationContext,
         limit: usize,
     ) -> Result<Vec<(Crystal, CrystalLinkRecord, f64)>> {
         let limit = bounded_limit(limit)?;
-        let mut query = QueryBuilder::<Sqlite>::new(format!(
-            "SELECT {CRYSTAL_COLUMNS}, links.source_crystal_id, links.target_crystal_id, links.link_type FROM crystal_links AS links JOIN crystals ON crystals.id = CASE WHEN links.source_crystal_id = "
-        ));
-        query
-            .push_bind(crystal_id)
-            .push(" THEN links.target_crystal_id ELSE links.source_crystal_id END WHERE links.source_crystal_id = ")
-            .push_bind(crystal_id)
-            .push(" OR links.target_crystal_id = ")
-            .push_bind(crystal_id)
-            .push(" ORDER BY crystals.id, links.source_crystal_id, links.target_crystal_id, links.link_type LIMIT ")
-            .push_bind(limit as i64);
-        let rows = query
-            .build()
-            .fetch_all(self.pool)
-            .await
-            .map_err(|source| database("list bounded linked crystals", source))?;
-        let mut records = Vec::with_capacity(rows.len());
-        let mut links = Vec::with_capacity(rows.len());
-        for row in rows {
-            records.push(
-                CrystalRecord::from_row(&row)
-                    .map_err(|source| database("decode linked crystal", source))?,
-            );
-            links.push(CrystalLinkRecord {
-                source_crystal_id: row
-                    .try_get("source_crystal_id")
-                    .map_err(|source| database("decode linked source", source))?,
-                target_crystal_id: row
-                    .try_get("target_crystal_id")
-                    .map_err(|source| database("decode linked target", source))?,
-                link_type: row
-                    .try_get("link_type")
-                    .map_err(|source| database("decode linked type", source))?,
-            });
-        }
+        validate_context(ctx)?;
+        let (outgoing, incoming) = tokio::join!(
+            fetch_visible_links(self.pool, crystal_id, ctx, limit, LinkDirection::Outgoing),
+            fetch_visible_links(self.pool, crystal_id, ctx, limit, LinkDirection::Incoming),
+        );
+        let mut linked = outgoing?;
+        linked.extend(incoming?);
+        linked.sort_by(|(left_crystal, left_link), (right_crystal, right_link)| {
+            left_crystal
+                .id
+                .cmp(&right_crystal.id)
+                .then_with(|| {
+                    left_link
+                        .source_crystal_id
+                        .cmp(&right_link.source_crystal_id)
+                })
+                .then_with(|| {
+                    left_link
+                        .target_crystal_id
+                        .cmp(&right_link.target_crystal_id)
+                })
+                .then_with(|| left_link.link_type.cmp(&right_link.link_type))
+        });
+        linked.truncate(limit);
+        let (records, links): (Vec<_>, Vec<_>) = linked.into_iter().unzip();
         Ok(hydrate(self.pool, records)
             .await?
             .into_iter()
@@ -489,6 +503,71 @@ impl<'a> CrystalStore<'a> {
             .into_iter()
             .zip(scores)
             .collect())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LinkDirection {
+    Outgoing,
+    Incoming,
+}
+
+async fn fetch_visible_links(
+    pool: &SqlitePool,
+    crystal_id: i64,
+    ctx: &TranslationContext,
+    limit: usize,
+    direction: LinkDirection,
+) -> Result<Vec<(CrystalRecord, CrystalLinkRecord)>> {
+    let (neighbor_column, filter_column) = match direction {
+        LinkDirection::Outgoing => ("links.target_crystal_id", "links.source_crystal_id"),
+        LinkDirection::Incoming => ("links.source_crystal_id", "links.target_crystal_id"),
+    };
+    let mut query = QueryBuilder::<Sqlite>::new(format!(
+        "SELECT {CRYSTAL_COLUMNS}, links.source_crystal_id, links.target_crystal_id, links.link_type FROM crystal_links AS links JOIN crystals ON crystals.id = {neighbor_column} WHERE {filter_column} = "
+    ));
+    query
+        .push_bind(crystal_id)
+        .push(" AND crystals.status IN ('active', 'candidate') AND ((crystals.scope_type = 'series' AND crystals.series_slug = ")
+        .push_bind(&ctx.series_slug)
+        .push(" AND crystals.scope_key = ")
+        .push_bind(&ctx.scope_key)
+        .push(") OR (crystals.scope_type = 'global' AND crystals.scope_key = '' AND crystals.series_slug = '')) AND (crystals.source_language = ")
+        .push_bind(&ctx.source_language)
+        .push(" OR crystals.source_language = '') AND (crystals.target_language = ")
+        .push_bind(&ctx.target_language)
+        .push(" OR crystals.target_language = '') ORDER BY crystals.id, links.source_crystal_id, links.target_crystal_id, links.link_type LIMIT ")
+        .push_bind(limit as i64);
+    query
+        .build()
+        .fetch_all(pool)
+        .await
+        .map_err(|source| database("list bounded visible linked crystals", source))?
+        .into_iter()
+        .map(|row| {
+            let crystal = CrystalRecord::from_row(&row)
+                .map_err(|source| database("decode linked crystal", source))?;
+            let link = CrystalLinkRecord {
+                source_crystal_id: row
+                    .try_get("source_crystal_id")
+                    .map_err(|source| database("decode linked source", source))?,
+                target_crystal_id: row
+                    .try_get("target_crystal_id")
+                    .map_err(|source| database("decode linked target", source))?,
+                link_type: row
+                    .try_get("link_type")
+                    .map_err(|source| database("decode linked type", source))?,
+            };
+            Ok((crystal, link))
+        })
+        .collect()
+}
+
+fn neighbor_id(link: &CrystalLinkRecord, crystal_id: i64) -> i64 {
+    if link.source_crystal_id == crystal_id {
+        link.target_crystal_id
+    } else {
+        link.source_crystal_id
     }
 }
 

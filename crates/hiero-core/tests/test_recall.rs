@@ -286,6 +286,207 @@ async fn recall_creates_one_working_copy_and_logs_each_returned_activation() {
 }
 
 #[tokio::test]
+async fn side_effect_failure_rolls_back_every_working_copy_event_and_activation_for_retry() {
+    let pool = pool().await;
+    let ctx = context(&pool).await;
+    let session_id = session(&pool, &ctx).await;
+    let store = CrystalStore::new(&pool);
+    let first = store
+        .add(crystal("Atomic recall boundary one."))
+        .await
+        .unwrap();
+    let second = store
+        .add(crystal("Atomic recall boundary two."))
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_second_activation BEFORE INSERT ON crystal_activations WHEN NEW.rank = 2 BEGIN SELECT RAISE(ABORT, 'injected activation failure'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    RecallService::new(&pool)
+        .recall(session_id, &ctx, "atomic recall boundary", 2)
+        .await
+        .expect_err("the injected final activation failure must abort recall");
+    let counts: (i64, i64, i64) = (
+        sqlx::query_scalar("SELECT count(*) FROM short_term_memories")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM memory_events")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM crystal_activations")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        counts,
+        (0, 0, 0),
+        "no partial recall side effect may commit"
+    );
+
+    sqlx::query("DROP TRIGGER fail_second_activation")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let retry = RecallService::new(&pool)
+        .recall(session_id, &ctx, "atomic recall boundary", 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        retry.iter().map(|item| item.id).collect::<Vec<_>>(),
+        [first, second]
+    );
+    let counts: (i64, i64, i64) = (
+        sqlx::query_scalar("SELECT count(*) FROM short_term_memories")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM memory_events")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM crystal_activations")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        counts,
+        (2, 0, 2),
+        "retry must behave like the first attempt"
+    );
+
+    sqlx::query("DELETE FROM crystal_activations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_repeat_activation BEFORE INSERT ON crystal_activations WHEN NEW.rank = 2 BEGIN SELECT RAISE(ABORT, 'injected repeat failure'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    RecallService::new(&pool)
+        .recall(session_id, &ctx, "atomic recall boundary", 2)
+        .await
+        .expect_err("repeat events must share the failing activation transaction");
+    let counts: (i64, i64, i64) = (
+        sqlx::query_scalar("SELECT count(*) FROM short_term_memories")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM memory_events")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM crystal_activations")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(counts, (2, 0, 0), "repeat events must also roll back");
+
+    sqlx::query("DROP TRIGGER fail_repeat_activation")
+        .execute(&pool)
+        .await
+        .unwrap();
+    RecallService::new(&pool)
+        .recall(session_id, &ctx, "atomic recall boundary", 2)
+        .await
+        .unwrap();
+    let repeat_events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memory_events WHERE event_type = 'recalled_again'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        repeat_events, 2,
+        "successful retry records each repeat once"
+    );
+}
+
+#[tokio::test]
+async fn invisible_low_id_links_cannot_starve_a_visible_neighbor_before_limit() {
+    let pool = pool().await;
+    let ctx = context(&pool).await;
+    let session_id = session(&pool, &ctx).await;
+    let store = CrystalStore::new(&pool);
+    let mut invisible_ids = Vec::new();
+    for index in 0..13 {
+        let mut invisible = crystal(&format!("Invisible other-series neighbor {index}."));
+        invisible.series_slug = "other".into();
+        invisible.scope_key = "series:other".into();
+        invisible_ids.push(store.add(invisible).await.unwrap());
+    }
+    let mut source = crystal("Unique starvation anchor phrase.");
+    source.strength = 1.0;
+    source.confidence = 1.0;
+    source.source_credibility = "expert".into();
+    let source_id = store.add(source).await.unwrap();
+    let visible_id = store
+        .add(crystal(
+            "Visible associative neighbor without lexical overlap.",
+        ))
+        .await
+        .unwrap();
+    for invisible_id in invisible_ids {
+        store
+            .link(source_id, invisible_id, "related")
+            .await
+            .unwrap();
+    }
+    store.link(source_id, visible_id, "related").await.unwrap();
+
+    let results = RecallService::new(&pool)
+        .recall(session_id, &ctx, "unique starvation anchor phrase", 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        results.iter().map(|item| item.id).collect::<Vec<_>>(),
+        [source_id, visible_id]
+    );
+}
+
+#[tokio::test]
+async fn reverse_link_lookup_has_a_target_first_index() {
+    let pool = pool().await;
+    let indexes = sqlx::query("PRAGMA index_list(crystal_links)")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get::<String, _>("name"))
+        .collect::<Vec<_>>();
+    assert!(
+        indexes
+            .iter()
+            .any(|name| name == "idx_crystal_links_target")
+    );
+
+    let plan = sqlx::query("EXPLAIN QUERY PLAN SELECT source_crystal_id FROM crystal_links WHERE target_crystal_id = ? ORDER BY source_crystal_id, link_type LIMIT ?")
+        .bind(1_i64)
+        .bind(10_i64)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan.contains("idx_crystal_links_target"),
+        "query plan: {plan}"
+    );
+}
+
+#[tokio::test]
 async fn short_term_lane_is_ranked_without_duplicating_a_returned_working_copy() {
     let pool = pool().await;
     let ctx = context(&pool).await;
