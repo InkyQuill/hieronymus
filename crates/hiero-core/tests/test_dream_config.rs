@@ -262,6 +262,116 @@ fn serde_shape_contains_no_provider_profiles() {
     );
 }
 
+#[test]
+fn direct_toml_deserialize_merges_partial_settings_and_phases() {
+    let config: DreamConfig = toml::from_str(
+        "[dreaming]\nenabled = true\n\n[workflows.relations]\nprovider = 'remote'\nmodel = 'model'\nenabled = true\n",
+    )
+    .expect("typed TOML should merge over defaults");
+
+    assert!(config.enabled);
+    assert_eq!(config.schedule_interval_minutes, 30);
+    assert_eq!(config.workflows.len(), PassName::ALL.len());
+    assert!(config.workflows[&DreamPhase::Relations].enabled);
+    assert!(!config.workflows[&DreamPhase::Concepts].enabled);
+}
+
+#[test]
+fn direct_json_deserialize_merges_partial_settings_and_phases() {
+    let config: DreamConfig = serde_json::from_value(serde_json::json!({
+        "dreaming": {"schedule_interval_minutes": 45},
+        "workflows": {"coverage_audit": {"enabled": true, "provider": "remote", "model": "model"}}
+    }))
+    .expect("typed JSON should merge over defaults");
+
+    assert_eq!(config.schedule_interval_minutes, 45);
+    assert_eq!(config.workflows.len(), PassName::ALL.len());
+    assert!(config.workflows[&DreamPhase::CoverageAudit].enabled);
+}
+
+#[test]
+fn direct_deserialize_round_trips_the_full_serialized_contract() {
+    let expected = DreamConfig::default().with_phase(
+        DreamPhase::KnowledgeCrystals,
+        PhaseProfile {
+            provider: "remote".into(),
+            model: "model".into(),
+            enabled: true,
+            max_records_per_pass: 17,
+        },
+    );
+
+    let toml = toml::to_string(&expected).unwrap();
+    let json = serde_json::to_string(&expected).unwrap();
+
+    assert_eq!(toml::from_str::<DreamConfig>(&toml).unwrap(), expected);
+    assert_eq!(
+        serde_json::from_str::<DreamConfig>(&json).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn direct_deserialize_rejects_unknown_and_invalid_configuration() {
+    let cases = [
+        "[dreaming]\nunknown = 1\n",
+        "[workflows.unknown]\nenabled = false\n",
+        "[dreaming]\nschedule_interval_minutes = 0\n",
+    ];
+
+    for raw in cases {
+        assert!(
+            toml::from_str::<DreamConfig>(raw).is_err(),
+            "accepted {raw}"
+        );
+    }
+    assert!(
+        serde_json::from_value::<DreamConfig>(serde_json::json!({
+            "dreaming": {"schedule_interval_minutes": 0}
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn oversized_save_fails_before_replacing_an_existing_valid_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dream.conf");
+    DreamConfig::default().save_to(&path).unwrap();
+    let original = fs::read(&path).unwrap();
+    let oversized = DreamConfig {
+        general_prompt: "x".repeat(1024 * 1024),
+        ..DreamConfig::default()
+    };
+
+    let error = oversized
+        .save_to(&path)
+        .expect_err("serialized configs over the read bound must be rejected");
+
+    assert!(error.to_string().contains("exceeds"));
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+
+#[test]
+fn save_accepts_a_serialized_config_at_the_exact_read_boundary() {
+    const LIMIT: usize = 1024 * 1024;
+    let default = DreamConfig::default();
+    let base = toml::to_string_pretty(&default).unwrap();
+    let fixed_bytes = base.len() - default.general_prompt.len();
+    let exact = DreamConfig {
+        general_prompt: "x".repeat(LIMIT - fixed_bytes),
+        ..default
+    };
+    assert_eq!(toml::to_string_pretty(&exact).unwrap().len(), LIMIT);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dream.conf");
+
+    exact.save_to(&path).expect("the boundary is inclusive");
+
+    assert_eq!(fs::metadata(&path).unwrap().len(), LIMIT as u64);
+    assert_eq!(DreamConfig::load_from(path).unwrap(), exact);
+}
+
 #[cfg(unix)]
 #[test]
 fn save_uses_private_permissions_and_rejects_symlink_targets() {

@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path};
 
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{
     config::HieronymusConfig,
@@ -19,6 +19,8 @@ pub enum DreamConfigError {
     InvalidToml(#[source] toml::de::Error),
     #[error("dream configuration could not be serialized")]
     Serialize(#[source] toml::ser::Error),
+    #[error("dream configuration exceeds the {limit}-byte size limit ({actual} bytes)")]
+    TooLarge { limit: usize, actual: usize },
     #[error("dream configuration file operation failed")]
     File(#[source] ProviderError),
 }
@@ -102,12 +104,7 @@ impl DreamConfig {
         else {
             return Self::default().validate();
         };
-        let mut persisted: PersistedDreamConfig =
-            toml::from_str(&contents).map_err(DreamConfigError::InvalidToml)?;
-        let mut workflows = DreamConfig::default().workflows;
-        workflows.append(&mut persisted.workflows);
-        persisted.workflows = workflows;
-        Self::from(persisted).validate()
+        toml::from_str(&contents).map_err(DreamConfigError::InvalidToml)
     }
 
     pub fn save(&self, config: &HieronymusConfig) -> Result<()> {
@@ -118,6 +115,12 @@ impl DreamConfig {
         self.validate_ref()?;
         let contents = toml::to_string_pretty(&PersistedDreamConfig::from(self))
             .map_err(DreamConfigError::Serialize)?;
+        if contents.len() > MAX_CONFIG_BYTES {
+            return Err(DreamConfigError::TooLarge {
+                limit: MAX_CONFIG_BYTES,
+                actual: contents.len(),
+            });
+        }
         secure_write(path.as_ref(), contents.as_bytes()).map_err(DreamConfigError::File)
     }
 
@@ -236,6 +239,21 @@ impl Serialize for DreamConfig {
         S: Serializer,
     {
         PersistedDreamConfig::from(self).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DreamConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut persisted = PersistedDreamConfig::deserialize(deserializer)?;
+        let mut workflows = DreamConfig::default().workflows;
+        workflows.append(&mut persisted.workflows);
+        persisted.workflows = workflows;
+        DreamConfig::from(persisted)
+            .validate()
+            .map_err(D::Error::custom)
     }
 }
 
