@@ -123,8 +123,10 @@ def load_active_rule_crystals(
         language_tags.update(_crystal_language_tags(conn, int(row["id"])))
         story_scopes = set(_crystal_story_scopes(conn, int(row["id"])))
         semantic_tags = set(_crystal_semantic_tags(conn, int(row["id"])))
+        linked_semantic_tags: set[str] = set()
 
         for concept_id in concept_ids:
+            linked_semantic_tags.update(_concept_semantic_tags(conn, concept_id))
             concept_row = conn.execute(
                 "select canonical_name from concepts where id = ?",
                 (concept_id,),
@@ -135,6 +137,7 @@ def load_active_rule_crystals(
             for facet in _concept_facets(conn, concept_id):
                 facet_language_tags = _facet_language_tags(conn, int(facet["id"]))
                 facet_story_scopes = _facet_story_scopes(conn, int(facet["id"]))
+                linked_semantic_tags.update(_facet_semantic_tags(conn, int(facet["id"])))
                 language_tags.update(facet_language_tags)
                 story_scopes.update(facet_story_scopes)
                 if _is_source_facet(
@@ -144,6 +147,9 @@ def load_active_rule_crystals(
                     target_language=context.target_language,
                 ):
                     source_forms.append(facet["value"])
+
+        if not semantic_tags:
+            semantic_tags.update(linked_semantic_tags)
 
         rules.append(
             ActiveRuleCrystal(

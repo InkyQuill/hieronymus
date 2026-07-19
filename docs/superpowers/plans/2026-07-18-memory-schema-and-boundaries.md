@@ -160,7 +160,7 @@
 
   ```bash
   uv run pytest tests/test_termbase_contract.py tests/test_termbase_validate.py tests/test_admin_actions.py tests/test_admin_store.py tests/test_mcp_server.py tests/test_strict_term_retirement.py tests/test_memory_graph_migration.py -q
-  rg -n "from strict_terms|into strict_terms|update strict_terms|strict_terms_fts" src/hieronymus --glob '!migrations/versions/0002_retire_strict_terms.py' --glob '!legacy_terms.py'
+  rg -n "from strict_terms|into strict_terms|update strict_terms|strict_terms_fts" src/hieronymus --glob '!**/migrations/versions/0002_retire_strict_terms.py' --glob '!**/legacy_terms.py'
   ```
 
   Expected: no runtime legacy-table access outside the one-time retirement implementation.

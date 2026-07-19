@@ -329,3 +329,76 @@ def test_high_confidence_advisory_crystal_does_not_validate(
     )
 
     assert findings == []
+
+
+def test_linked_graph_tags_disambiguate_without_pending_proposal_leakage(
+    config: HieronymusConfig,
+) -> None:
+    context = _context(config)
+    concepts = ConceptStore(config)
+    crystals = CrystalStore(config)
+
+    talent = concepts.create_concept(
+        "Cooking talent",
+        status=CONCEPT_ESTABLISHED,
+        confidence=0.95,
+        scope_type="series",
+        scope_key=context.scope_key,
+    )
+    concepts.add_facet(
+        talent.id,
+        "Cooking",
+        kind="name",
+        language_tags=("en",),
+        semantic_tags=("role:talent",),
+    )
+    talent_rule_id = crystals.add_crystal(
+        context,
+        crystal_type="rule",
+        text="Cooking is translated as Готовка.",
+        source_credibility="user_rule",
+        confidence=0.95,
+        strength=0.8,
+        concept_ids=(talent.id,),
+    )
+
+    subskill = concepts.create_concept(
+        "Cooking subskill",
+        status=CONCEPT_ESTABLISHED,
+        confidence=0.95,
+        scope_type="series",
+        scope_key=context.scope_key,
+        semantic_tags=("role:subskill",),
+    )
+    concepts.add_facet(
+        subskill.id,
+        "Cooking",
+        kind="name",
+        language_tags=("en",),
+    )
+    crystals.add_crystal(
+        context,
+        crystal_type="rule",
+        text="Cooking is translated as Приготовление.",
+        source_credibility="user_rule",
+        confidence=0.95,
+        strength=0.8,
+        concept_ids=(subskill.id,),
+    )
+
+    pending_id = Termbase(config, context).propose(
+        category="skill",
+        source_text="Cooking",
+        canonical_translation="Кулинарное дело",
+        tags=["role:talent"],
+    )
+    tagged_context = _same_series_context(context, semantic_tags=("role:talent",))
+
+    findings = Termbase(config, tagged_context).validate(
+        source_text="Cooking",
+        translated_text="Приготовление",
+    )
+
+    assert {finding.term_id for finding in findings} == {talent_rule_id}
+    assert {finding.expected for finding in findings} == {"Готовка"}
+    assert pending_id not in {finding.term_id for finding in findings}
