@@ -269,7 +269,6 @@ def test_approve_proposal_creates_advisory_concept_and_audit(
     concept_id = AdminStore(config).approve_proposal(proposal_id)
 
     with connect(config.database_path) as conn:
-        term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
         crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
         concept = conn.execute("select * from concepts where id = ?", (concept_id,)).fetchone()
         facets = conn.execute(
@@ -281,7 +280,6 @@ def test_approve_proposal_creates_advisory_concept_and_audit(
         ).fetchone()
         audits = conn.execute("select * from audit_log").fetchall()
 
-    assert term_count == 0
     assert crystal_count == 0
     assert concept["canonical_name"] == "センス"
     assert concept["description"] == "Use the established Russian rendering."
@@ -346,7 +344,6 @@ def test_approve_proposal_requires_pending_and_does_not_duplicate_concepts(
 
     with connect(config.database_path) as conn:
         concepts = conn.execute("select id from concepts order by id").fetchall()
-        term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
         proposal = conn.execute(
             "select status from strict_concept_proposals where id = ?",
             (proposal_id,),
@@ -354,7 +351,6 @@ def test_approve_proposal_requires_pending_and_does_not_duplicate_concepts(
         audits = conn.execute("select action from audit_log order by id").fetchall()
 
     assert [row["id"] for row in concepts] == [concept_id]
-    assert term_count == 0
     assert proposal["status"] == "approved"
     assert [row["action"] for row in audits] == ["approve"]
 
@@ -478,14 +474,12 @@ def test_approving_rejected_proposal_raises_without_strict_term(
         admin.approve_proposal(proposal_id)
 
     with connect(config.database_path) as conn:
-        term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
         proposal = conn.execute(
             "select status from strict_concept_proposals where id = ?",
             (proposal_id,),
         ).fetchone()
         audits = conn.execute("select action from audit_log order by id").fetchall()
 
-    assert term_count == 0
     assert proposal["status"] == "rejected"
     assert [row["action"] for row in audits] == ["reject"]
 

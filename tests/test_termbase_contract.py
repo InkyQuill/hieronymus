@@ -50,12 +50,12 @@ def _propose_sense_name(termbase: Termbase) -> int:
 
 def _assert_approval_rejected_atomically(termbase: Termbase, term_id: int) -> None:
     with connect(termbase.config.database_path) as conn:
-        term = conn.execute("select status from strict_terms where id = ?", (term_id,)).fetchone()
+        term = conn.execute("select status from crystals where id = ?", (term_id,)).fetchone()
         crystal_count = conn.execute("select count(*) from crystals").fetchone()[0]
         audit_count = conn.execute("select count(*) from audit_log").fetchone()[0]
 
     assert term["status"] == "pending"
-    assert crystal_count == 0
+    assert crystal_count == 1
     assert audit_count == 0
 
 
@@ -187,7 +187,7 @@ def test_approve_rejects_unknown_term(config):
         termbase.approve(404)
 
 
-def test_approve_same_strict_term_twice_creates_one_rule_crystal(config):
+def test_approve_same_rule_proposal_twice_creates_one_rule_crystal(config):
     termbase = _create_termbase(config)
     term_id = _propose_sense_name(termbase)
 
@@ -211,11 +211,9 @@ def test_approve_same_strict_term_twice_creates_one_rule_crystal(config):
     assert contract[0].source_text == "攻撃力上昇"
 
 
-def test_approve_strict_term_links_generated_rule_to_concept(config):
+def test_propose_creates_rule_and_concept_graph_in_one_transaction(config):
     termbase = _create_termbase(config)
-    term_id = _propose_sense_name(termbase)
-
-    termbase.approve(term_id)
+    _propose_sense_name(termbase)
 
     with connect(termbase.config.database_path) as conn:
         row = conn.execute(
@@ -247,6 +245,21 @@ def test_approve_strict_term_links_generated_rule_to_concept(config):
     assert row["link_type"] == "defines"
     assert row["source_facet"] == "攻撃力上昇"
     assert row["rendering_facet"] == "ATK Up"
+
+
+def test_fresh_termbase_schema_has_no_legacy_term_tables(config):
+    termbase = _create_termbase(config)
+
+    with connect(termbase.config.database_path) as conn:
+        names = {
+            row["name"]
+            for row in conn.execute(
+                "select name from sqlite_master where type in ('table', 'view')"
+            )
+        }
+
+    legacy_tables = {"strict_terms", "strict_term_tags", "strict_term_aliases", "strict_terms_fts"}
+    assert not legacy_tables & names
 
 
 def test_approve_strict_term_selects_duplicate_concept_by_matching_tag(config):
@@ -352,26 +365,25 @@ def test_add_alias_rejects_approved_term(config):
         )
 
 
-def test_approve_rejects_source_variant_alias_atomically(config):
+def test_approve_source_variant_alias_adds_contract_surface(config):
     termbase = _create_termbase(config)
     term_id = _propose_sense_name(termbase)
     termbase.add_alias(term_id, kind="source_variant", text="攻撃バフ", language="ja")
 
-    with pytest.raises(ValueError, match="source_variant aliases are unsupported by rule crystals"):
-        termbase.approve(term_id)
+    termbase.approve(term_id)
 
-    _assert_approval_rejected_atomically(termbase, term_id)
+    contract = termbase.contract("攻撃バフを選ぶ。")
+    assert [term.canonical_translation for term in contract] == ["ATK Up"]
 
 
-def test_approve_rejects_search_alias_atomically(config):
+def test_approve_search_alias_keeps_rule_valid(config):
     termbase = _create_termbase(config)
     term_id = _propose_sense_name(termbase)
     termbase.add_alias(term_id, kind="search_alias", text="attack buff", language="en")
 
-    with pytest.raises(ValueError, match="search_alias aliases are unsupported by rule crystals"):
-        termbase.approve(term_id)
+    termbase.approve(term_id)
 
-    _assert_approval_rejected_atomically(termbase, term_id)
+    assert termbase.contract("攻撃力上昇を選ぶ。")[0].canonical_translation == "ATK Up"
 
 
 def test_approve_rejects_case_insensitive_forbidden_alias_atomically(config):
@@ -522,13 +534,11 @@ def test_unparseable_rule_crystal_remains_out_of_contract(config):
     assert termbase.contract("Cooking Talent") == []
 
 
-def test_propose_maintains_terms_fts_row(config):
+def test_propose_maintains_crystals_fts_row(config):
     termbase = _create_termbase(config)
     term_id = _propose_sense_name(termbase)
 
     with connect(termbase.config.database_path) as conn:
-        row = conn.execute("select * from strict_terms_fts where rowid = ?", (term_id,)).fetchone()
+        row = conn.execute("select * from crystals_fts where rowid = ?", (term_id,)).fetchone()
 
-    assert row["source_text"] == "攻撃力上昇"
-    assert row["canonical_translation"] == "ATK Up"
-    assert row["notes"] == "OSO Sense name."
+    assert row["text"] == "攻撃力上昇 is translated as ATK Up."

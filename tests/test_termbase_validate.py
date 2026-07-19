@@ -3,7 +3,6 @@ import pytest
 from hieronymus.concepts import CONCEPT_ESTABLISHED, ConceptStore
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import CrystalStore
-from hieronymus.db import connect
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.rule_crystals import parse_rule_crystal
@@ -247,7 +246,7 @@ def test_reapproving_strict_term_does_not_duplicate_validation_findings(config):
     ]
 
 
-def test_existing_approved_strict_term_rule_is_migrated_before_validation(config):
+def test_approved_rule_validates_without_legacy_migration_on_read(config):
     series = Registry(config).create_series(
         slug="only-sense-online",
         title="Only Sense Online",
@@ -261,37 +260,18 @@ def test_existing_approved_strict_term_rule_is_migrated_before_validation(config
         canonical_translation="ATK Up",
     )
     termbase.add_alias(term_id, kind="forbidden_variant", text="Attack Increase", language="en")
-    with connect(termbase.config.database_path) as conn:
-        conn.execute("update strict_terms set status = 'approved' where id = ?", (term_id,))
-        conn.commit()
-    crystal_id = _add_rule_crystal(
-        config,
-        termbase.context,
-        "攻撃力上昇 is translated as ATK Up, not Attack Increase.",
-        link_concept=False,
-    )
+    termbase.approve(term_id)
 
     findings = termbase.validate(
         raw_text="攻撃力上昇を取るべきだ。",
         translated_text="You should pick up Attack Increase.",
     )
 
-    with connect(termbase.config.database_path) as conn:
-        links = conn.execute(
-            """
-            select concept_id
-            from crystal_concepts
-            where crystal_id = ?
-            """,
-            (crystal_id,),
-        ).fetchall()
-
     assert [finding.kind for finding in findings] == [
         "forbidden_variant",
         "missing_canonical",
     ]
-    assert [finding.term_id for finding in findings] == [crystal_id, crystal_id]
-    assert len(links) == 1
+    assert [finding.term_id for finding in findings] == [term_id, term_id]
 
 
 def test_approve_rejects_multiple_forbidden_variants(config):

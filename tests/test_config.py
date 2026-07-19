@@ -60,11 +60,9 @@ def test_global_migration_creates_memory_dreaming_schema(tmp_path: Path) -> None
         "memory_events",
         "dream_runs",
         "strict_concept_proposals",
-        "strict_terms",
-        "strict_term_tags",
-        "strict_term_aliases",
-        "strict_terms_fts",
     } <= tables
+    legacy_tables = {"strict_terms", "strict_term_tags", "strict_term_aliases", "strict_terms_fts"}
+    assert not legacy_tables & tables
     assert (
         not {
             "terms",

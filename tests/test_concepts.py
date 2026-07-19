@@ -216,7 +216,6 @@ def test_approve_and_reject_only_change_status(config: HieronymusConfig) -> None
                 (rejected_id,),
             ).fetchone()
         )
-        hard_term_count = conn.execute("select count(*) from strict_terms").fetchone()[0]
 
     for before, after, expected_status in (
         (before_approved, after_approved, "approved"),
@@ -225,8 +224,6 @@ def test_approve_and_reject_only_change_status(config: HieronymusConfig) -> None
         changed = {key for key in before if before[key] != after[key]}
         assert changed <= {"status", "updated_at"}
         assert after["status"] == expected_status
-
-    assert hard_term_count == 0
 
 
 def test_get_unknown_proposal_raises_key_error(config: HieronymusConfig) -> None:

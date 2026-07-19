@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Mapping
 
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import connect
@@ -58,9 +59,6 @@ def _validate_rule_shape(
         or parsed.forbidden_variants != forbidden_variants
     ):
         raise ValueError("rule crystal text cannot round-trip parsed fields")
-
-
-_UNSUPPORTED_RULE_ALIAS_KINDS = frozenset({"source_variant", "search_alias"})
 
 
 def _maximal_matched_surfaces(
@@ -240,59 +238,59 @@ class Termbase:
             raise ValueError("canonical_translation must not be empty")
 
         now = _now()
+        tags_tuple = tuple(sorted({tag.strip() for tag in tags or [] if tag.strip()}))
         with connect(self.config.database_path) as conn:
+            conn.execute("begin immediate")
             cursor = conn.execute(
                 """
-                insert into strict_terms(
-                  series_slug,
-                  source_language,
-                  target_language,
-                  category,
-                  source_text,
-                  canonical_translation,
-                  status,
-                  notes,
-                  created_at,
-                  updated_at
-                )
-                values (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                insert into crystals(
+                  crystal_type, text, title, scope_type, scope_key, series_slug,
+                  source_language, target_language, tags_json, strength, confidence,
+                  source_credibility, rule_intent, status, created_at, updated_at
+                ) values ('rule', ?, ?, 'series', ?, ?, ?, ?, ?, 0.8, 0.95,
+                          'user_rule', ?, 'pending', ?, ?)
                 """,
                 (
+                    _rule_text(source_text, canonical_translation, []),
+                    category,
+                    self.context.scope_key,
                     self.series_slug,
                     self.source_language,
                     self.target_language,
-                    category,
-                    source_text,
-                    canonical_translation,
+                    json.dumps(tags_tuple, ensure_ascii=False),
                     notes,
                     now,
                     now,
                 ),
             )
             term_id = int(cursor.lastrowid)
-            for tag in tags or []:
-                conn.execute(
-                    "insert into strict_term_tags(term_id, tag) values (?, ?)",
-                    (term_id, tag),
-                )
-            conn.execute(
-                "insert into strict_terms_fts(rowid, source_text, canonical_translation, notes) "
-                "values (?, ?, ?, ?)",
-                (term_id, source_text, canonical_translation, notes),
+            term = {
+                "source_text": source_text,
+                "canonical_translation": canonical_translation,
+                "source_language": self.source_language,
+                "target_language": self.target_language,
+                "notes": notes,
+            }
+            concept_id = self._ensure_concept_for_strict_term(conn, term, tags=tags_tuple, now=now)
+            self._ensure_crystal_semantic_tags(conn, term_id, tags=tags_tuple, now=now)
+            self._link_rule_crystal_to_concept(
+                conn, crystal_id=term_id, concept_id=concept_id, now=now
             )
             conn.commit()
         return term_id
 
     def approve(self, term_id: int) -> None:
         with connect(self.config.database_path) as conn:
+            conn.execute("begin immediate")
             term = conn.execute(
                 """
-                select *
-                from strict_terms
-                where id = ?
-                  and series_slug = ?
-                  and source_language = ?
-                  and target_language = ?
+                select crystal.*, cc.concept_id
+                from crystals crystal
+                join crystal_concepts cc on cc.crystal_id = crystal.id
+                where crystal.id = ? and crystal.crystal_type = 'rule'
+                  and crystal.series_slug = ?
+                  and crystal.source_language = ? and crystal.target_language = ?
+                order by cc.concept_id limit 1
                 """,
                 (
                     term_id,
@@ -303,24 +301,45 @@ class Termbase:
             ).fetchone()
             if term is None:
                 raise KeyError(f"unknown term: {term_id}")
-            self._validate_strict_term_rule_shape(conn, term)
-            self._insert_rule_crystal_for_strict_term(conn, term)
+            if term["status"] == "active":
+                conn.commit()
+                return
+            source_text, canonical_translation = self._proposal_surfaces(
+                conn,
+                int(term["concept_id"]),
+                source_language=term["source_language"],
+                target_language=term["target_language"],
+            )
+            alias_rows = self._proposal_aliases(conn, int(term["concept_id"]))
+            approved_variants = [
+                row["value"] for row in alias_rows if row["facet_type"] == "approved_variant"
+            ]
+            forbidden_variants = [
+                row["value"] for row in alias_rows if row["facet_type"] == "forbidden_variant"
+            ]
+            for row in alias_rows:
+                if float(row["confidence"]) < 0:
+                    raise ValueError("case-insensitive aliases are unsupported by rule crystals")
+            _validate_rule_shape(
+                source_text=source_text,
+                canonical_translation=canonical_translation,
+                approved_variants=approved_variants,
+                forbidden_variants=forbidden_variants,
+            )
             conn.execute(
                 """
-                update strict_terms
-                set status = 'approved', updated_at = ?
-                where id = ?
-                  and series_slug = ?
-                  and source_language = ?
-                  and target_language = ?
+                update crystals set text = ?, status = 'active', updated_at = ? where id = ?
                 """,
                 (
+                    _rule_text(source_text, canonical_translation, forbidden_variants),
                     _now(),
                     term_id,
-                    self.series_slug,
-                    self.source_language,
-                    self.target_language,
                 ),
+            )
+            conn.execute(
+                "update concepts set status = 'established', confidence = max(confidence, 0.95), "
+                "updated_at = ? where id = ?",
+                (_now(), int(term["concept_id"])),
             )
             conn.commit()
 
@@ -339,27 +358,32 @@ class Termbase:
             raise ValueError("alias text must not be empty")
 
         with connect(self.config.database_path) as conn:
+            conn.execute("begin immediate")
             term = conn.execute(
                 """
-                select id, status
-                from strict_terms
-                where id = ?
-                  and series_slug = ?
-                  and source_language = ?
-                  and target_language = ?
+                select crystal.id, crystal.status, cc.concept_id
+                from crystals crystal
+                join crystal_concepts cc on cc.crystal_id = crystal.id
+                where crystal.id = ? and crystal.crystal_type = 'rule'
+                  and crystal.series_slug = ?
+                  and crystal.source_language = ? and crystal.target_language = ?
+                order by cc.concept_id limit 1
                 """,
                 (term_id, self.series_slug, self.source_language, self.target_language),
             ).fetchone()
             if term is None:
                 raise KeyError(f"unknown term: {term_id}")
-            if term["status"] == "approved":
+            if term["status"] == "active":
                 raise ValueError("approved term aliases must be represented as rule crystals")
-            conn.execute(
-                """
-                insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
-                values (?, ?, ?, ?, ?)
-                """,
-                (term_id, language, text, kind, int(case_sensitive)),
+            self._ensure_concept_facet(
+                conn,
+                concept_id=int(term["concept_id"]),
+                value=text,
+                facet_type="alias" if kind in {"source_variant", "search_alias"} else kind,
+                language_tag=language,
+                is_canonical=False,
+                now=_now(),
+                confidence=0.95 if case_sensitive else -1.0,
             )
             conn.commit()
 
@@ -432,8 +456,6 @@ class Termbase:
         raw_text: str,
     ) -> tuple[list[tuple[ActiveRuleCrystal, str]], list[ValidationFinding], bool]:
         with connect(self.config.database_path) as conn:
-            self._ensure_approved_strict_terms_migrated(conn)
-            conn.commit()
             rules = load_active_rule_crystals(conn, self.context)
         if not rules:
             return [], [], False
@@ -500,230 +522,44 @@ class Termbase:
             ),
         )
 
-    def _ensure_approved_strict_terms_migrated(self, conn: sqlite3.Connection) -> None:
+    def _proposal_surfaces(
+        self,
+        conn: sqlite3.Connection,
+        concept_id: int,
+        *,
+        source_language: str,
+        target_language: str,
+    ) -> tuple[str, str]:
         rows = conn.execute(
             """
-            select *
-            from strict_terms
-            where status = 'approved'
-              and series_slug = ?
-              and source_language = ?
-              and target_language = ?
+            select facet_type, value from concept_facets
+            where concept_id = ? and superseded_at is null
+              and ((facet_type = 'name' and language = ?)
+                   or (facet_type = 'rendering' and language = ?))
+            order by case facet_type when 'name' then 0 else 1 end, id
+            """,
+            (concept_id, source_language, target_language),
+        ).fetchall()
+        values = {row["facet_type"]: row["value"] for row in rows}
+        if "name" not in values or "rendering" not in values:
+            raise ValueError("rule proposal is missing canonical source or rendering facet")
+        return values["name"], values["rendering"]
+
+    def _proposal_aliases(self, conn: sqlite3.Connection, concept_id: int) -> list[sqlite3.Row]:
+        return conn.execute(
+            """
+            select facet_type, value, confidence from concept_facets
+            where concept_id = ? and superseded_at is null
+              and facet_type in ('alias', 'approved_variant', 'forbidden_variant')
             order by id
             """,
-            (self.series_slug, self.source_language, self.target_language),
+            (concept_id,),
         ).fetchall()
-        for term in rows:
-            if self._approved_strict_term_rule_is_linked(conn, term):
-                continue
-            self._validate_strict_term_rule_shape(conn, term)
-            self._insert_rule_crystal_for_strict_term(conn, term)
-
-    def _validate_strict_term_rule_shape(
-        self,
-        conn: sqlite3.Connection,
-        term: sqlite3.Row,
-    ) -> None:
-        alias_rows = conn.execute(
-            """
-            select text, kind, case_sensitive
-            from strict_term_aliases
-            where term_id = ?
-            order by id
-            """,
-            (term["id"],),
-        ).fetchall()
-        for row in alias_rows:
-            if row["kind"] in _UNSUPPORTED_RULE_ALIAS_KINDS:
-                raise ValueError(f"{row['kind']} aliases are unsupported by rule crystals")
-            if not bool(row["case_sensitive"]):
-                raise ValueError("case-insensitive aliases are unsupported by rule crystals")
-
-        approved_variants = [
-            row["text"].strip()
-            for row in alias_rows
-            if row["kind"] == "approved_variant" and row["text"].strip()
-        ]
-        forbidden_variants = [
-            row["text"].strip()
-            for row in alias_rows
-            if row["kind"] == "forbidden_variant" and row["text"].strip()
-        ]
-        _validate_rule_shape(
-            source_text=term["source_text"],
-            canonical_translation=term["canonical_translation"],
-            approved_variants=approved_variants,
-            forbidden_variants=forbidden_variants,
-        )
-
-    def _insert_rule_crystal_for_strict_term(
-        self,
-        conn: sqlite3.Connection,
-        term: sqlite3.Row,
-    ) -> int:
-        now = _now()
-        tags = self._strict_term_tags(conn, int(term["id"]))
-        forbidden_variants = self._strict_term_forbidden_variants(conn, int(term["id"]))
-        concept_id = self._ensure_concept_for_strict_term(
-            conn,
-            term,
-            tags=tags,
-            now=now,
-        )
-        text = _rule_text(
-            term["source_text"],
-            term["canonical_translation"],
-            forbidden_variants,
-        )
-        existing = conn.execute(
-            """
-            select id
-            from crystals
-            where crystal_type = 'rule'
-              and status = 'active'
-              and text = ?
-              and scope_type = 'series'
-              and scope_key = ?
-              and series_slug = ?
-              and source_language = ?
-              and target_language = ?
-            order by id
-            limit 1
-            """,
-            (
-                text,
-                self.context.scope_key,
-                term["series_slug"],
-                term["source_language"],
-                term["target_language"],
-            ),
-        ).fetchone()
-        if existing is not None:
-            crystal_id = int(existing["id"])
-            self._ensure_crystal_semantic_tags(conn, crystal_id, tags=tags, now=now)
-            self._link_rule_crystal_to_concept(
-                conn,
-                crystal_id=crystal_id,
-                concept_id=concept_id,
-                now=now,
-            )
-            return crystal_id
-
-        cursor = conn.execute(
-            """
-            insert into crystals(
-              crystal_type,
-              text,
-              title,
-              scope_type,
-              scope_key,
-              series_slug,
-              source_language,
-              target_language,
-              tags_json,
-              strength,
-              confidence,
-              source_credibility,
-              rule_intent,
-              malformed_penalty,
-              supersedes_crystal_id,
-              status,
-              created_at,
-              updated_at
-            )
-            values ('rule', ?, '', 'series', ?, ?, ?, ?, ?, 0.8, 0.95,
-                    'user_rule', '', 0.0, null, 'active', ?, ?)
-            """,
-            (
-                text,
-                self.context.scope_key,
-                term["series_slug"],
-                term["source_language"],
-                term["target_language"],
-                json.dumps(tags, ensure_ascii=False, sort_keys=True),
-                now,
-                now,
-            ),
-        )
-        crystal_id = int(cursor.lastrowid)
-        self._ensure_crystal_semantic_tags(conn, crystal_id, tags=tags, now=now)
-        self._link_rule_crystal_to_concept(
-            conn,
-            crystal_id=crystal_id,
-            concept_id=concept_id,
-            now=now,
-        )
-        return crystal_id
-
-    def _approved_strict_term_rule_is_linked(
-        self,
-        conn: sqlite3.Connection,
-        term: sqlite3.Row,
-    ) -> bool:
-        text = _rule_text(
-            term["source_text"],
-            term["canonical_translation"],
-            self._strict_term_forbidden_variants(conn, int(term["id"])),
-        )
-        row = conn.execute(
-            """
-            select 1
-            from crystals crystal
-            join crystal_concepts cc on cc.crystal_id = crystal.id
-            join concepts c on c.id = cc.concept_id
-            where crystal.crystal_type = 'rule'
-              and crystal.status = 'active'
-              and crystal.text = ?
-              and crystal.scope_type = 'series'
-              and crystal.scope_key = ?
-              and crystal.series_slug = ?
-              and crystal.source_language = ?
-              and crystal.target_language = ?
-              and c.status not in ('archived', 'merged')
-            limit 1
-            """,
-            (
-                text,
-                self.context.scope_key,
-                term["series_slug"],
-                term["source_language"],
-                term["target_language"],
-            ),
-        ).fetchone()
-        return row is not None
-
-    def _strict_term_tags(self, conn: sqlite3.Connection, term_id: int) -> tuple[str, ...]:
-        rows = conn.execute(
-            """
-            select tag
-            from strict_term_tags
-            where term_id = ?
-            order by tag
-            """,
-            (term_id,),
-        ).fetchall()
-        return tuple(row["tag"] for row in rows)
-
-    def _strict_term_forbidden_variants(
-        self,
-        conn: sqlite3.Connection,
-        term_id: int,
-    ) -> list[str]:
-        rows = conn.execute(
-            """
-            select text
-            from strict_term_aliases
-            where term_id = ? and kind = 'forbidden_variant'
-            order by id
-            """,
-            (term_id,),
-        ).fetchall()
-        return [row["text"] for row in rows if row["text"].strip()]
 
     def _ensure_concept_for_strict_term(
         self,
         conn: sqlite3.Connection,
-        term: sqlite3.Row,
+        term: Mapping[str, object],
         *,
         tags: tuple[str, ...],
         now: str,
@@ -733,6 +569,18 @@ class Termbase:
             term["source_text"],
             tags=tags,
         )
+        if concept_id is not None:
+            conflicting_rendering = conn.execute(
+                """
+                select 1 from concept_facets
+                where concept_id = ? and facet_type = 'rendering' and superseded_at is null
+                  and language = ? and value != ?
+                limit 1
+                """,
+                (concept_id, term["target_language"], term["canonical_translation"]),
+            ).fetchone()
+            if conflicting_rendering is not None:
+                concept_id = None
         if concept_id is None:
             cursor = conn.execute(
                 """
@@ -856,6 +704,7 @@ class Termbase:
         language_tag: str,
         is_canonical: bool,
         now: str,
+        confidence: float = 0.95,
     ) -> None:
         existing = conn.execute(
             """
@@ -884,13 +733,14 @@ class Termbase:
                   created_at,
                   updated_at
                 )
-                values (?, ?, ?, ?, null, 0.95, ?, ?, ?)
+                values (?, ?, ?, ?, null, ?, ?, ?, ?)
                 """,
                 (
                     concept_id,
                     language_tag,
                     facet_type,
                     value,
+                    confidence,
                     int(is_canonical),
                     now,
                     now,

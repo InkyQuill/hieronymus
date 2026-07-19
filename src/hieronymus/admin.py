@@ -1555,7 +1555,7 @@ class AdminStore:
         if view == "Concepts":
             return self._list_concept_rows()
         if view == "Renderings":
-            return self._list_strict_terms(label_column="canonical_translation")
+            return self._list_rule_renderings()
         if view == "Crystals":
             return self.list_crystals()
         if view == "Lessons":
@@ -1589,39 +1589,48 @@ class AdminStore:
             for record in ConceptStore(self.config).list_concepts()
         ][:200]
 
-    def _list_strict_terms(self, *, label_column: str) -> list[AdminRow]:
+    def _list_rule_renderings(self) -> list[AdminRow]:
         with connect(self.config.database_path) as conn:
             rows = conn.execute(
                 """
-                select *
-                from strict_terms
-                order by id
-                limit 200
+                with rule_rows as (
+                  select crystal.id, crystal.title, crystal.status, crystal.series_slug,
+                         crystal.source_language, crystal.target_language, cc.concept_id
+                  from crystals crystal
+                  join crystal_concepts cc on cc.crystal_id = crystal.id
+                  where crystal.crystal_type = 'rule'
+                  order by crystal.id
+                  limit 200
+                ), tag_rows as (
+                  select crystal_id, group_concat(tag, char(31)) as tags
+                  from (select crystal_id, tag from crystal_semantic_tags order by tag)
+                  group by crystal_id
+                )
+                select rule_rows.*,
+                       rendering.value as canonical_translation,
+                       coalesce(tag_rows.tags, '') as tags
+                from rule_rows
+                join concept_facets rendering
+                  on rendering.concept_id = rule_rows.concept_id
+                 and rendering.facet_type = 'rendering'
+                 and rendering.language = rule_rows.target_language
+                 and rendering.superseded_at is null
+                left join tag_rows on tag_rows.crystal_id = rule_rows.id
+                order by rule_rows.id
                 """
             ).fetchall()
-            result = []
-            for row in rows:
-                tag_rows = conn.execute(
-                    """
-                    select tag
-                    from strict_term_tags
-                    where term_id = ?
-                    order by tag
-                    """,
-                    (row["id"],),
-                ).fetchall()
-                result.append(
-                    AdminRow(
-                        id=int(row["id"]),
-                        kind=row["category"],
-                        label=row[label_column],
-                        status=row["status"],
-                        scope=row["series_slug"],
-                        language_pair=_language_pair(row),
-                        tags=tuple(tag["tag"] for tag in tag_rows),
-                    )
-                )
-        return result
+        return [
+            AdminRow(
+                id=int(row["id"]),
+                kind=row["title"] or "rule",
+                label=row["canonical_translation"],
+                status=row["status"],
+                scope=row["series_slug"],
+                language_pair=_language_pair(row),
+                tags=tuple(tag for tag in row["tags"].split(chr(31)) if tag),
+            )
+            for row in rows
+        ]
 
     def _list_sessions(self) -> list[AdminRow]:
         with connect(self.config.database_path) as conn:
@@ -1851,7 +1860,7 @@ class AdminStore:
         if view == "Concepts":
             return self._concept_detail(int(selected.id))
         if view == "Renderings":
-            return self._strict_term_detail(int(selected.id))
+            return self._rule_rendering_detail(int(selected.id))
         if view == "Short-Term Memory":
             return self._short_term_memory_detail(int(selected.id))
         if view == "Short-Term Sessions":
@@ -1911,15 +1920,32 @@ class AdminStore:
             ),
         )
 
-    def _strict_term_detail(self, term_id: int) -> AdminDetail:
+    def _rule_rendering_detail(self, term_id: int) -> AdminDetail:
         with connect(self.config.database_path) as conn:
-            row = conn.execute("select * from strict_terms where id = ?", (term_id,)).fetchone()
+            row = conn.execute(
+                """
+                select crystal.*, source.value as source_text,
+                       rendering.value as canonical_translation
+                from crystals crystal
+                join crystal_concepts cc on cc.crystal_id = crystal.id
+                join concept_facets source
+                  on source.concept_id = cc.concept_id and source.facet_type = 'name'
+                 and source.language = crystal.source_language and source.superseded_at is null
+                join concept_facets rendering
+                  on rendering.concept_id = cc.concept_id and rendering.facet_type = 'rendering'
+                 and rendering.language = crystal.target_language
+                 and rendering.superseded_at is null
+                where crystal.id = ? and crystal.crystal_type = 'rule'
+                order by cc.concept_id limit 1
+                """,
+                (term_id,),
+            ).fetchone()
         if row is None:
             return AdminDetail(title="Missing term", subtitle="", body="")
         return AdminDetail(
             title=row["source_text"],
-            subtitle=f"{row['category']} / {row['status']}",
-            body=row["notes"],
+            subtitle=f"{row['title'] or 'rule'} / {row['status']}",
+            body=row["rule_intent"],
             fields=(
                 ("Rendering", row["canonical_translation"]),
                 ("Series", row["series_slug"]),
@@ -2442,25 +2468,6 @@ class AdminStore:
                 """,
                 (facet_id, language_tag.casefold()),
             )
-
-    def _insert_alias(
-        self,
-        conn: sqlite3.Connection,
-        term_id: int,
-        *,
-        language: str,
-        text: str,
-        kind: str,
-    ) -> None:
-        if not text.strip():
-            return
-        conn.execute(
-            """
-            insert into strict_term_aliases(term_id, language, text, kind, case_sensitive)
-            values (?, ?, ?, ?, 1)
-            """,
-            (term_id, language, text, kind),
-        )
 
     def _now(self) -> str:
         return utc_now()

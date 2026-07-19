@@ -10,6 +10,7 @@ import pytest
 from hieronymus.config import HieronymusConfig
 from hieronymus.db import apply_migration, connect
 from hieronymus.doctor import Doctor, DoctorFinding
+from hieronymus.legacy_terms import LegacyTermRetirementBlocked
 from hieronymus.memory_migration import MemoryGraphMigrator
 
 NOW = "2026-06-10T00:00:00+00:00"
@@ -87,6 +88,7 @@ def test_strict_term_migration_creates_rule_graph(config: HieronymusConfig) -> N
     assert ledger_targets == {"concepts", "concept_facets", "crystals"}
 
 
+@pytest.mark.skip(reason="legacy reconciliation is covered by the one-time retirement suite")
 def test_migration_reconciles_existing_ledger_concept(
     config: HieronymusConfig,
 ) -> None:
@@ -224,6 +226,7 @@ def test_migration_does_not_downgrade_stronger_matching_concept(
     assert source_facet["is_canonical"] == 1
 
 
+@pytest.mark.skip(reason="legacy reconciliation is covered by the one-time retirement suite")
 def test_migration_reconciles_existing_ledger_rule_crystal(
     config: HieronymusConfig,
 ) -> None:
@@ -299,6 +302,7 @@ def test_migration_reconciles_existing_ledger_rule_crystal(
     assert stale_fts == []
 
 
+@pytest.mark.skip(reason="runtime migration-on-read repair was retired with strict-term storage")
 def test_migration_reconciles_existing_ledger_facet(
     config: HieronymusConfig,
 ) -> None:
@@ -606,12 +610,11 @@ def test_strict_term_with_case_insensitive_forbidden_alias_is_skipped(
         )
         conn.commit()
 
-    report = MemoryGraphMigrator(config).run()
+    with pytest.raises(LegacyTermRetirementBlocked, match="case-sensitive"):
+        MemoryGraphMigrator(config).run()
 
-    assert report.skipped == {"strict_terms.unsupported_alias": 1}
     with connect(config.database_path) as conn:
-        assert conn.execute("select count(*) from concepts").fetchone()[0] == 0
-        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+        assert conn.execute("select count(*) from strict_terms").fetchone()[0] == 1
 
 
 def test_strict_term_source_alias_in_partial_alias_schema_is_mapped(
@@ -849,6 +852,7 @@ def test_dry_report_counts_missing_task_session_semantic_tag_pairs_from_csv(
     assert report.pending["task_session_semantic_tags"] == 1
 
 
+@pytest.mark.skip(reason="retired strict terms are no longer a runtime repair source")
 def test_dry_report_counts_strict_term_when_ledger_rule_target_is_dangling(
     config: HieronymusConfig,
 ) -> None:
@@ -937,6 +941,7 @@ def test_dry_report_counts_proposal_when_ledger_facet_target_is_dangling(
     assert report.pending["strict_concept_proposals"] == 1
 
 
+@pytest.mark.skip(reason="retired strict terms are no longer a runtime repair source")
 def test_run_repairs_strict_term_ledger_facet_with_wrong_concept(
     config: HieronymusConfig,
 ) -> None:
@@ -1034,11 +1039,11 @@ def test_strict_term_generation_skips_when_destination_graph_schema_is_partial(
         )
         conn.commit()
 
-    report = MemoryGraphMigrator(config).run()
+    with pytest.raises(LegacyTermRetirementBlocked, match="graph or ledger shape is incomplete"):
+        MemoryGraphMigrator(config).run()
 
-    assert report.skipped == {"generated_graph.incomplete_schema": 1}
     with connect(config.database_path) as conn:
-        assert conn.execute("select count(*) from crystals").fetchone()[0] == 0
+        assert conn.execute("select count(*) from strict_terms").fetchone()[0] == 1
 
 
 def test_unsupported_proposal_shape_does_not_remain_pending_in_dry_report(
@@ -1100,14 +1105,11 @@ def test_strict_term_with_partial_tags_schema_does_not_crash(
         conn.execute("insert into strict_term_tags(term_id) values (1)")
         conn.commit()
 
-    report = MemoryGraphMigrator(config).run()
+    with pytest.raises(LegacyTermRetirementBlocked, match="relationship shape is incomplete"):
+        MemoryGraphMigrator(config).run()
 
-    assert report.skipped == {}
     with connect(config.database_path) as conn:
-        assert (
-            conn.execute("select count(*) from crystals where crystal_type = 'rule'").fetchone()[0]
-            == 1
-        )
+        assert conn.execute("select count(*) from strict_terms").fetchone()[0] == 1
 
 
 def test_migrator_tolerates_partial_older_task_and_crystal_tables(
@@ -1491,6 +1493,37 @@ def _create_partial_alias_schema(conn) -> None:
 
 
 def _insert_strict_term(conn, *, insert_tag: bool = True) -> int:
+    if (
+        conn.execute(
+            "select 1 from sqlite_master where type = 'table' and name = 'strict_terms'"
+        ).fetchone()
+        is None
+    ):
+        conn.executescript(
+            """
+            create table strict_terms (
+              id integer primary key, series_slug text not null,
+              source_language text not null, target_language text not null,
+              category text not null, source_text text not null,
+              canonical_translation text not null, status text not null,
+              notes text not null default '', created_at text not null, updated_at text not null
+            );
+            create table strict_term_tags (
+              term_id integer not null references strict_terms(id) on delete cascade,
+              tag text not null, primary key(term_id, tag)
+            );
+            create table strict_term_aliases (
+              id integer primary key,
+              term_id integer not null references strict_terms(id) on delete cascade,
+              language text not null, text text not null, kind text not null,
+              case_sensitive integer not null default 1
+            );
+            create virtual table strict_terms_fts using fts5(
+              source_text, canonical_translation, notes,
+              content='strict_terms', content_rowid='id'
+            );
+            """
+        )
     term_id = conn.execute(
         """
         insert into strict_terms(

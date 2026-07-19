@@ -248,15 +248,21 @@ def prepare_strict_term_retirement(
     *,
     timestamp: str | None = None,
     failure_hook: Callable[[int], None] | None = None,
+    transaction_owned_by_caller: bool = False,
+    finalizer: Callable[[sqlite3.Connection], None] | None = None,
 ) -> StrictTermRetirementResult:
     """Back up, convert, audit, and verify legacy terms in one owned transaction."""
-    if conn.in_transaction:
+    if conn.in_transaction and not transaction_owned_by_caller:
         raise sqlite3.ProgrammingError(
             "strict term retirement requires explicit transaction ownership; "
             "the supplied connection already has an active transaction"
         )
 
-    conn.execute("begin immediate")
+    if transaction_owned_by_caller:
+        if not conn.in_transaction:
+            raise sqlite3.ProgrammingError("caller-owned retirement requires an active transaction")
+    else:
+        conn.execute("begin immediate")
     try:
         backup = write_legacy_terms_backup(conn, backup_dir, timestamp=timestamp)
         payload = verify_legacy_terms_backup(backup.path)
@@ -277,9 +283,13 @@ def prepare_strict_term_retirement(
             raise LegacyTermRetirementBlocked(
                 f"strict term retirement parity failed for terms {blocked}"
             )
-        conn.commit()
+        if finalizer is not None:
+            finalizer(conn)
+        if not transaction_owned_by_caller:
+            conn.commit()
     except BaseException:
-        conn.rollback()
+        if not transaction_owned_by_caller:
+            conn.rollback()
         raise
     return StrictTermRetirementResult(backup=backup, coverage=coverage)
 
@@ -671,6 +681,8 @@ def _is_owned_target(
 
 
 def drop_legacy_tables(conn: sqlite3.Connection) -> None:
-    raise LegacyTermRetirementDisabled(
-        "strict term table dropping remains disabled until Task 3 removes runtime access"
-    )
+    """Drop verified legacy storage in foreign-key-safe child/FTS/parent order."""
+    conn.execute("drop table if exists strict_terms_fts")
+    conn.execute("drop table strict_term_aliases")
+    conn.execute("drop table strict_term_tags")
+    conn.execute("drop table strict_terms")

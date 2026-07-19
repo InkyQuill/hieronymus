@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+from importlib import import_module
 from importlib.resources import files
 from pathlib import Path
 
@@ -72,10 +73,24 @@ class SchemaMigration:
     version: str
     name: str
     sql: str
+    runner: Callable[[sqlite3.Connection, MigrationContext], None] | None = None
+    baseline_verifier: Callable[[sqlite3.Connection], None] | None = None
 
     @property
     def checksum(self) -> str:
         return sha256(self.sql.encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class MigrationContext:
+    """Filesystem context available to one-time Python schema migrations."""
+
+    database_path: Path
+
+    @property
+    def backup_root(self) -> Path:
+        """Keep retirement backups below the database's data root."""
+        return self.database_path.parent / "backups" / "strict-terms"
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -104,12 +119,13 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     """Create or upgrade the global schema through the ordered migration ledger."""
     _require_no_active_transaction(conn)
     migrations = discover_schema_migrations()
+    context = _migration_context(conn)
     _preflight_migrations(migrations)
     global_sql = files("hieronymus.migrations").joinpath("global.sql").read_text(encoding="utf-8")
 
     with _schema_transaction(conn, disable_foreign_keys=True):
         if _table_exists(conn, "schema_migrations"):
-            _apply_pending_migrations(conn, migrations)
+            _apply_pending_migrations(conn, migrations, context=context)
             return
 
         is_fresh = not _has_application_schema(conn)
@@ -118,7 +134,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         if is_fresh:
             _baseline_schema_migrations(conn, migrations)
         else:
-            _apply_pending_migrations(conn, migrations)
+            _apply_pending_migrations(conn, migrations, context=context)
 
 
 def discover_schema_migrations() -> list[SchemaMigration]:
@@ -126,19 +142,34 @@ def discover_schema_migrations() -> list[SchemaMigration]:
     migrations: list[SchemaMigration] = []
     versions = files("hieronymus.migrations.versions")
     for resource in versions.iterdir():
-        if not resource.name.endswith(".sql"):
+        if resource.name == "__init__.py" or not resource.name.endswith((".sql", ".py")):
             continue
-        match = MIGRATION_FILENAME.fullmatch(resource.name)
+        normalized_name = (
+            resource.name.removesuffix(".py") + ".sql"
+            if resource.name.endswith(".py")
+            else resource.name
+        )
+        match = MIGRATION_FILENAME.fullmatch(normalized_name)
         if match is None:
             raise SchemaMigrationError(
                 f"invalid migration resource {resource.name!r}; expected four zero-padded digits "
                 "and a lowercase snake-case name, for example 0001_example.sql"
             )
+        content = resource.read_text(encoding="utf-8")
+        runner = None
+        baseline_verifier = None
+        if resource.name.endswith(".py"):
+            module_name = f"hieronymus.migrations.versions.{resource.name.removesuffix('.py')}"
+            module = import_module(module_name)
+            runner = module.migrate
+            baseline_verifier = module.verify_fresh
         migrations.append(
             SchemaMigration(
                 version=match.group("version"),
                 name=match.group("name"),
-                sql=resource.read_text(encoding="utf-8"),
+                sql=content,
+                runner=runner,
+                baseline_verifier=baseline_verifier,
             )
         )
     return _ordered_migrations(migrations)
@@ -160,6 +191,8 @@ def apply_schema_migrations(
 def _apply_pending_migrations(
     conn: sqlite3.Connection,
     migrations: list[SchemaMigration],
+    *,
+    context: MigrationContext | None = None,
 ) -> None:
     applied = {
         row["version"] if isinstance(row, sqlite3.Row) else row[0]: row
@@ -175,7 +208,12 @@ def _apply_pending_migrations(
     for migration in migrations:
         if migration.version in applied:
             continue
-        _execute_sql_statements(conn, _sql_statements(migration.sql))
+        if migration.runner is None:
+            _execute_sql_statements(conn, _sql_statements(migration.sql))
+        else:
+            if context is None:
+                context = _migration_context(conn)
+            migration.runner(conn, context)
         conn.execute(
             """
             insert into schema_migrations(version, name, checksum, applied_at)
@@ -214,7 +252,16 @@ def _ordered_migrations(migrations: Iterable[SchemaMigration]) -> list[SchemaMig
 
 def _preflight_migrations(migrations: list[SchemaMigration]) -> None:
     for migration in migrations:
-        _reject_non_transactional_statements(migration, _sql_statements(migration.sql))
+        if migration.runner is None:
+            _reject_non_transactional_statements(migration, _sql_statements(migration.sql))
+
+
+def _migration_context(conn: sqlite3.Connection) -> MigrationContext:
+    row = next(row for row in conn.execute("pragma database_list") if row[1] == "main")
+    database_path = Path(row[2]).resolve(strict=False)
+    if not database_path.name:
+        raise SchemaMigrationError("Python migrations require a file-backed main database")
+    return MigrationContext(database_path=database_path)
 
 
 @contextmanager
@@ -332,7 +379,7 @@ def _baseline_schema_migrations(
     validators = {"0001": _verify_memory_fts_trigger_state}
     conn.execute(MIGRATION_LEDGER_SQL)
     for migration in migrations:
-        validator = validators.get(migration.version)
+        validator = migration.baseline_verifier or validators.get(migration.version)
         if validator is None:
             raise SchemaMigrationError(
                 f"fresh schema has no baseline verifier for migration {migration.version}"

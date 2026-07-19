@@ -1,8 +1,4 @@
-"""Prepared strict-term retirement phases.
-
-This module is deliberately not registered with the SQL-only ordered migration runner.
-Task 3 will activate the destructive phase after runtime legacy access is removed.
-"""
+"""One-time verified retirement of legacy strict-term storage."""
 
 from __future__ import annotations
 
@@ -10,16 +6,28 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
+from hieronymus.db import MigrationContext
 from hieronymus.legacy_terms import (
     StrictTermRetirementResult,
     prepare_strict_term_retirement,
 )
-from hieronymus.legacy_terms import (
-    drop_legacy_tables as _disabled_drop_legacy_tables,
-)
+from hieronymus.legacy_terms import drop_legacy_tables as _drop_legacy_tables
 from hieronymus.memory_migration import StrictTermConversionReport, convert_strict_terms
 
-DROP_PHASE_ENABLED = False
+DROP_PHASE_ENABLED = True
+
+
+def verify_fresh(conn: sqlite3.Connection) -> None:
+    legacy = conn.execute(
+        """
+        select name from sqlite_master
+        where name in (
+          'strict_terms', 'strict_term_tags', 'strict_term_aliases', 'strict_terms_fts'
+        )
+        """
+    ).fetchall()
+    if legacy:
+        raise RuntimeError("fresh schema still declares legacy strict-term storage")
 
 
 def backup_and_convert(
@@ -43,5 +51,19 @@ def convert(conn: sqlite3.Connection) -> StrictTermConversionReport:
 
 
 def drop_legacy_tables(conn: sqlite3.Connection) -> None:
-    """Remain inert until Task 3 explicitly implements and enables cutover."""
-    _disabled_drop_legacy_tables(conn)
+    _drop_legacy_tables(conn)
+
+
+def migrate(conn: sqlite3.Connection, context: MigrationContext) -> None:
+    """Back up, prove parity/ownership, and drop in the runner-owned transaction."""
+    legacy_table = conn.execute(
+        "select 1 from sqlite_master where type = 'table' and name = 'strict_terms'"
+    ).fetchone()
+    if legacy_table is None:
+        return
+    prepare_strict_term_retirement(
+        conn,
+        context.backup_root,
+        transaction_owned_by_caller=True,
+        finalizer=drop_legacy_tables,
+    )

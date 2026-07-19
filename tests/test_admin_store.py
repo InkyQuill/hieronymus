@@ -2,6 +2,7 @@ import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 
@@ -27,6 +28,7 @@ from hieronymus.provider_config import (
 )
 from hieronymus.recall import RecallService
 from hieronymus.registry import Registry
+from hieronymus.termbase import Termbase
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -179,6 +181,31 @@ def test_status_payload_reports_admin_counts(
     }
     assert "concepts" in payload["view_keys"]
     assert "dream_audits" in payload["view_keys"]
+
+
+def test_rendering_rows_use_bounded_set_queries(config: HieronymusConfig) -> None:
+    context = _context(config)
+    termbase = Termbase(config, context)
+    for index in range(4):
+        term_id = termbase.propose(
+            category="ability_name",
+            source_text=f"能力{index}",
+            canonical_translation=f"Ability {index}",
+            tags=["ability", f"group:{index % 2}"],
+        )
+        termbase.approve(term_id)
+
+    statements: list[str] = []
+    with connect(config.database_path) as conn:
+        conn.set_trace_callback(statements.append)
+        with patch("hieronymus.admin.connect", return_value=conn):
+            rows = AdminStore(config)._list_rule_renderings()
+
+    selects = [
+        statement for statement in statements if statement.lstrip().lower().startswith("with")
+    ]
+    assert len(rows) == 4
+    assert len(selects) == 1
 
 
 def test_status_payload_survives_malformed_dream_config(

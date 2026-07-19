@@ -233,43 +233,6 @@ create table if not exists strict_concept_proposals (
   updated_at text not null
 );
 
-create table if not exists strict_terms (
-  id integer primary key,
-  series_slug text not null references series(slug),
-  source_language text not null,
-  target_language text not null,
-  category text not null,
-  source_text text not null,
-  canonical_translation text not null,
-  status text not null,
-  notes text not null default '',
-  created_at text not null,
-  updated_at text not null
-);
-
-create table if not exists strict_term_tags (
-  term_id integer not null references strict_terms(id) on delete cascade,
-  tag text not null,
-  primary key(term_id, tag)
-);
-
-create table if not exists strict_term_aliases (
-  id integer primary key,
-  term_id integer not null references strict_terms(id) on delete cascade,
-  language text not null,
-  text text not null,
-  kind text not null,
-  case_sensitive integer not null default 1
-);
-
-create virtual table if not exists strict_terms_fts using fts5(
-  source_text,
-  canonical_translation,
-  notes,
-  content='strict_terms',
-  content_rowid='id'
-);
-
 create table if not exists audit_log (
   id integer primary key,
   actor text not null default 'admin',

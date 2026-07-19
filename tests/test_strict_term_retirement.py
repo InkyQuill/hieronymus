@@ -11,10 +11,9 @@ from unittest.mock import patch
 
 import pytest
 
-from hieronymus.db import apply_migration, connect, discover_schema_migrations
+from hieronymus.db import apply_migration, connect, discover_schema_migrations, ensure_schema
 from hieronymus.legacy_terms import (
     LegacyTermRetirementBlocked,
-    LegacyTermRetirementDisabled,
     _fsync_directory,
     check_strict_term_retirement_parity,
     prepare_strict_term_retirement,
@@ -35,6 +34,30 @@ def legacy_database(tmp_path: Path) -> tuple[sqlite3.Connection, Path]:
     database_path = tmp_path / "hieronymus.sqlite"
     conn = connect(database_path)
     apply_migration(conn, "global.sql")
+    conn.executescript(
+        """
+        create table strict_terms (
+          id integer primary key, series_slug text not null references series(slug),
+          source_language text not null, target_language text not null, category text not null,
+          source_text text not null, canonical_translation text not null, status text not null,
+          notes text not null default '', created_at text not null, updated_at text not null
+        );
+        create table strict_term_tags (
+          term_id integer not null references strict_terms(id) on delete cascade,
+          tag text not null, primary key(term_id, tag)
+        );
+        create table strict_term_aliases (
+          id integer primary key,
+          term_id integer not null references strict_terms(id) on delete cascade,
+          language text not null, text text not null, kind text not null,
+          case_sensitive integer not null default 1
+        );
+        create virtual table strict_terms_fts using fts5(
+          source_text, canonical_translation, notes,
+          content='strict_terms', content_rowid='id'
+        );
+        """
+    )
     conn.execute(
         """
         insert into series(
@@ -300,19 +323,51 @@ def test_orchestrator_rejects_ambiguous_existing_transaction_ownership(
     assert not backup_dir.exists()
 
 
-def test_drop_phase_is_importable_but_disabled_and_not_sql_discovered(
+def test_python_retirement_migration_is_discovered_and_drops_legacy_once(
     legacy_database: tuple[sqlite3.Connection, Path],
 ) -> None:
-    conn, _ = legacy_database
+    conn, backup_dir = legacy_database
+    _term(conn, source="攻撃力上昇", rendering="ATK Up")
+    conn.commit()
     module = importlib.import_module("hieronymus.migrations.versions.0002_retire_strict_terms")
 
-    assert module.DROP_PHASE_ENABLED is False
-    with pytest.raises(LegacyTermRetirementDisabled, match="Task 3"):
-        module.drop_legacy_tables(conn)
-    assert [migration.version for migration in discover_schema_migrations()] == ["0001"]
-    assert conn.execute(
-        "select 1 from sqlite_master where type = 'table' and name = 'strict_terms'"
-    ).fetchone()
+    assert module.DROP_PHASE_ENABLED is True
+    assert [migration.version for migration in discover_schema_migrations()] == ["0001", "0002"]
+    ensure_schema(conn)
+    migration_backup_dir = backup_dir / "strict-terms"
+    first_backups = list(migration_backup_dir.glob("*.json"))
+    ensure_schema(conn)
+
+    names = {row["name"] for row in conn.execute("select name from sqlite_master")}
+    legacy_tables = {"strict_terms", "strict_term_tags", "strict_term_aliases", "strict_terms_fts"}
+    assert not legacy_tables & names
+    assert len(first_backups) == 1
+    assert list(migration_backup_dir.glob("*.json")) == first_backups
+
+
+def test_python_retirement_drop_failure_rolls_back_schema_and_data(
+    legacy_database: tuple[sqlite3.Connection, Path],
+) -> None:
+    conn, backup_dir = legacy_database
+    term_id = _term(conn, source="攻撃力上昇", rendering="ATK Up")
+    conn.commit()
+    module = importlib.import_module("hieronymus.migrations.versions.0002_retire_strict_terms")
+
+    def fail_during_drop(connection: sqlite3.Connection) -> None:
+        connection.execute("drop table strict_terms_fts")
+        raise RuntimeError("injected drop failure")
+
+    with (
+        patch.object(module, "drop_legacy_tables", side_effect=fail_during_drop),
+        pytest.raises(RuntimeError, match="injected drop failure"),
+    ):
+        ensure_schema(conn)
+
+    names = {row["name"] for row in conn.execute("select name from sqlite_master")}
+    assert {"strict_terms", "strict_term_tags", "strict_term_aliases", "strict_terms_fts"} <= names
+    assert conn.execute("select id from strict_terms").fetchone()[0] == term_id
+    assert conn.execute("select 1 from schema_migrations where version = '0002'").fetchone() is None
+    assert len(list((backup_dir / "strict-terms").glob("*.json"))) == 1
 
 
 def test_rerun_reconciles_changed_legacy_projection_exactly(

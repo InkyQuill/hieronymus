@@ -86,7 +86,10 @@ def test_two_concurrent_fresh_initializers_share_one_valid_ledger(tmp_path: Path
             future.result(timeout=10)
 
     with db.connect(database_path) as conn:
-        assert ledger_rows(conn) == [("0001", "memory_fts_triggers")]
+        assert ledger_rows(conn) == [
+            ("0001", "memory_fts_triggers"),
+            ("0002", "retire_strict_terms"),
+        ]
         assert conn.execute("pragma integrity_check").fetchone()[0] == "ok"
 
 
@@ -150,7 +153,10 @@ def test_existing_partial_pre_ledger_schema_normalizes_usable_fts_shape(
 
         db.ensure_schema(conn)
 
-        assert ledger_rows(conn) == [("0001", "memory_fts_triggers")]
+        assert ledger_rows(conn) == [
+            ("0001", "memory_fts_triggers"),
+            ("0002", "retire_strict_terms"),
+        ]
         crystal_id = conn.execute(
             "insert into crystals(crystal_type, text) values ('lesson', 'first token')"
         ).lastrowid
