@@ -10,11 +10,13 @@ from pathlib import Path
 
 import pytest
 
+import hieronymus.llm_cache as llm_cache_module
 from hieronymus.config import HieronymusConfig
 from hieronymus.llm_cache import (
     CachedModels,
     ModelCacheEntry,
     adopt_legacy_model_cache,
+    inspect_legacy_model_cache,
     load_model_cache,
     save_model_cache,
 )
@@ -161,7 +163,9 @@ def test_adoption_uses_stable_bytes_when_legacy_path_is_replaced(tmp_path, monke
     assert config.llm_cache_path.read_bytes() == original
     assert legacy_path.read_bytes() == replacement
 
-    assert adopt_legacy_model_cache(config).status == "conflict"
+    retry = adopt_legacy_model_cache(config)
+    assert retry.status == "recovery-pending"
+    assert ".legacy" in retry.error
     assert config.llm_cache_path.read_bytes() == original
     assert legacy_path.read_bytes() == replacement
 
@@ -186,7 +190,22 @@ def test_adoption_exclusive_create_never_clobbers_racing_canonical(tmp_path, mon
     assert legacy_path.exists()
 
 
-def test_concurrent_exclusive_adopters_publish_one_complete_cache(tmp_path, monkeypatch) -> None:
+def test_repeated_conflicts_never_leak_owned_canonical_temps(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    different = b'{"providers": {}}'
+    config.llm_cache_path.write_bytes(different)
+
+    for _ in range(3):
+        _legacy_cache_path(config).write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
+        assert adopt_legacy_model_cache(config).status == "conflict"
+        assert not tuple(config.data_root.glob("*.canonical"))
+        assert _legacy_cache_path(config).exists()
+
+    assert config.llm_cache_path.read_bytes() == different
+
+
+def test_observer_waits_for_publisher_and_never_cleans_live_adoption(tmp_path, monkeypatch) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     legacy_path = _legacy_cache_path(config)
     legacy_path.parent.mkdir(parents=True)
@@ -195,6 +214,7 @@ def test_concurrent_exclusive_adopters_publish_one_complete_cache(tmp_path, monk
     original_link = os.link
     publication_ready = threading.Event()
     allow_publication = threading.Event()
+    observer_started = threading.Event()
 
     def synchronized_link(source, target):
         if Path(target) == config.llm_cache_path:
@@ -204,19 +224,110 @@ def test_concurrent_exclusive_adopters_publish_one_complete_cache(tmp_path, monk
 
     monkeypatch.setattr(os, "link", synchronized_link)
 
+    def inspect_after_start():
+        observer_started.set()
+        return inspect_legacy_model_cache(config)
+
     with ThreadPoolExecutor(max_workers=2) as executor:
         publisher = executor.submit(adopt_legacy_model_cache, config)
         assert publication_ready.wait(timeout=2)
-        observer = executor.submit(adopt_legacy_model_cache, config)
-        observer_result = observer.result(timeout=2)
+        observer = executor.submit(inspect_after_start)
+        assert observer_started.wait(timeout=2)
+        with pytest.raises(TimeoutError):
+            observer.result(timeout=0.2)
         allow_publication.set()
         publisher_result = publisher.result(timeout=2)
+        observer_result = observer.result(timeout=2)
 
-    assert observer_result.status == "adoption-in-progress"
     assert publisher_result.status == "adopted"
+    assert observer_result.status == "not-needed"
     assert config.llm_cache_path.read_bytes() == original
     assert adopt_legacy_model_cache(config).status == "adopted"
     assert not legacy_path.exists()
+
+
+def test_inspection_locks_existing_directory_without_mutating_it(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    before = tuple(config.data_root.iterdir())
+    lock_operations: list[int] = []
+
+    def record_flock(_descriptor: int, operation: int) -> None:
+        lock_operations.append(operation)
+
+    assert hasattr(llm_cache_module, "fcntl")
+    monkeypatch.setattr(llm_cache_module.fcntl, "flock", record_flock)
+
+    assert inspect_legacy_model_cache(config).status == "not-needed"
+    assert tuple(config.data_root.iterdir()) == before
+    assert len(lock_operations) == 2
+
+
+def test_inspection_of_missing_data_root_creates_nothing(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+
+    assert inspect_legacy_model_cache(config).status == "not-needed"
+    assert not config.data_root.exists()
+
+
+def test_crash_after_claim_is_reported_and_recovered_on_retry(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.parent.mkdir(parents=True)
+    original = json.dumps(_cache().to_payload()).encode()
+    legacy_path.write_bytes(original)
+
+    monkeypatch.setattr(
+        "hieronymus.llm_cache._read_legacy_snapshot",
+        lambda _path: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        adopt_legacy_model_cache(config)
+    monkeypatch.undo()
+
+    inspection = inspect_legacy_model_cache(config)
+    assert inspection.status == "recovery-ready"
+    assert inspection.legacy_path
+    assert Path(inspection.legacy_path).exists()
+
+    assert adopt_legacy_model_cache(config).status == "adopted"
+    assert config.llm_cache_path.read_bytes() == original
+    assert not tuple(config.data_root.glob(".llm-cache-adoption-*"))
+
+
+def test_ambiguous_orphan_claims_are_reported_and_preserved(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    first = config.data_root / ".llm-cache-adoption-first.legacy"
+    second = config.data_root / ".llm-cache-adoption-second.legacy"
+    first.write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
+    second.write_bytes(b'{"providers": {}}')
+
+    inspection = inspect_legacy_model_cache(config)
+
+    assert inspection.status == "recovery-pending"
+    assert str(first) in inspection.error
+    assert str(second) in inspection.error
+    assert adopt_legacy_model_cache(config).status == "recovery-pending"
+    assert first.exists()
+    assert second.exists()
+    assert not config.llm_cache_path.exists()
+
+
+def test_public_legacy_does_not_hide_orphan_recovery_files(tmp_path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    legacy_path = _legacy_cache_path(config)
+    recovery_path = config.data_root / ".llm-cache-adoption-orphan.legacy"
+    legacy_path.write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
+    recovery_path.write_bytes(b'{"providers": {}}')
+
+    inspection = inspect_legacy_model_cache(config)
+
+    assert inspection.status == "recovery-pending"
+    assert str(recovery_path) in inspection.error
+    assert legacy_path.exists()
+    assert recovery_path.exists()
 
 
 @pytest.mark.parametrize(

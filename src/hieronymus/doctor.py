@@ -103,7 +103,7 @@ class Doctor:
 
     def _check_llm_cache_adoption(self, report: DoctorReport, *, autofix: bool) -> None:
         adoption = inspect_legacy_model_cache(self.config)
-        if adoption.status in {"ready", "cleanup-ready"} and autofix:
+        if adoption.status in {"ready", "cleanup-ready", "recovery-ready"} and autofix:
             adoption = adopt_legacy_model_cache(self.config)
         if adoption.status == "adopted":
             report["autofixed"].append(
@@ -171,6 +171,7 @@ class Doctor:
             "cleanup-pending",
             "cleanup-sync-pending",
             "recovery-pending",
+            "recovery-ready",
             "adoption-in-progress",
         }:
             report["warnings"].append(

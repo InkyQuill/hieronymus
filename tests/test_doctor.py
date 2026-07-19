@@ -763,6 +763,38 @@ def test_doctor_autofix_adopts_legacy_model_cache(tmp_path: Path) -> None:
     assert not legacy_path.exists()
 
 
+def test_doctor_autofix_recovers_orphan_claim_after_crash(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    claim_path = config.data_root / ".llm-cache-adoption-crashed.legacy"
+    claim_path.write_text(_valid_cache_payload(), encoding="utf-8")
+
+    report = run_doctor_without_daemon(config, autofix=True)
+
+    assert any(finding.code == "llm-cache-legacy-adopted" for finding in report["autofixed"])
+    assert config.llm_cache_path.exists()
+    assert not claim_path.exists()
+
+
+def test_doctor_reports_recovery_artifact_path_without_mutating(tmp_path: Path) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    config.data_root.mkdir(parents=True)
+    recovery_path = config.data_root / ".llm-cache-adoption-crashed.canonical"
+    recovery_path.write_text(_valid_cache_payload(), encoding="utf-8")
+    before = recovery_path.read_bytes()
+
+    report = run_doctor_without_daemon(config)
+
+    finding = next(
+        finding
+        for finding in report["warnings"]
+        if finding.code == "llm-cache-legacy-recovery-pending"
+    )
+    assert str(recovery_path) in finding.message
+    assert recovery_path.read_bytes() == before
+    assert not config.llm_cache_path.exists()
+
+
 def test_doctor_reports_legacy_model_cache_conflict_and_keeps_new(tmp_path: Path) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     config.data_root.mkdir(parents=True)
