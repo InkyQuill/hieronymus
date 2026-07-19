@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -34,6 +35,7 @@ from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_state import EXPECTED_LAUNCH_ID_HEADER, ServerState
 
 _MAX_JSON_BODY = 1_000_000
+LOGGER = logging.getLogger(__name__)
 
 
 class _HostValidationMiddleware:
@@ -406,6 +408,7 @@ def build_app(
     state: ServerState,
     *,
     asset_root: Path | None = None,
+    semantic_worker: Any | None = None,
 ) -> Starlette:
     resolved_asset_root = asset_root or Path(__file__).resolve().parent / "frontend" / "dist"
     runtime = _ServiceRuntime(config, state)
@@ -414,6 +417,13 @@ def build_app(
 
     @asynccontextmanager
     async def lifespan(_: Starlette):
+        if semantic_worker is not None:
+            try:
+                semantic_worker.start()
+            except Exception:
+                LOGGER.exception(
+                    "Semantic index worker could not start; lexical RAG remains available"
+                )
         async with mcp_app.router.lifespan_context(mcp_app):
             yield
 
@@ -450,6 +460,7 @@ def build_app(
     app.state.runtime = runtime
     app.state.asset_root = resolved_asset_root
     app.state.shutdown_requested = runtime.shutdown_requested
+    app.state.semantic_worker = semantic_worker
     app.add_middleware(
         _HostValidationMiddleware,
         expected_host=f"{state.host}:{state.port}",

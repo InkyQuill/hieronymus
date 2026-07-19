@@ -4,8 +4,10 @@ import pytest
 
 import hieronymus.rag_store as rag_store_module
 from hieronymus.config import HieronymusConfig
+from hieronymus.db import connect
 from hieronymus.rag import RagStore
 from hieronymus.registry import Registry
+from hieronymus.semantic_jobs import SemanticJobStore
 
 
 def _series(config: HieronymusConfig) -> str:
@@ -164,6 +166,50 @@ def test_changed_import_replaces_old_chunks(
     assert [hit.chunk.text for hit in store.search(series_slug, "Cooking Talent", limit=5)] == [
         "New Cooking Talent note."
     ]
+
+
+def test_changed_import_commits_lexical_rows_and_queues_obsolete_vector_removal(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    path = tmp_path / "chapter.txt"
+    store = RagStore(config)
+    path.write_text("Old Sense note.", encoding="utf-8")
+    store.import_file(series_slug, path, source_ref="chapter.txt")
+    with connect(config.database_path) as conn:
+        old_chunk_id = int(conn.execute("select id from rag_chunks").fetchone()["id"])
+
+    path.write_text("New Cooking Talent note.", encoding="utf-8")
+    result = store.import_file(series_slug, path, source_ref="chapter.txt")
+
+    job = SemanticJobStore(config).latest_job()
+    assert result.skipped is False
+    assert [hit.chunk.text for hit in store.search(series_slug, "Cooking", limit=1)] == [
+        "New Cooking Talent note."
+    ]
+    assert job is not None
+    assert (str(old_chunk_id), "delete") in SemanticJobStore(config).job_operations(job.id)
+
+
+def test_delete_source_commits_lexical_deletion_and_queues_obsolete_vectors(
+    config: HieronymusConfig,
+    tmp_path: Path,
+) -> None:
+    series_slug = _series(config)
+    path = tmp_path / "chapter.txt"
+    path.write_text("Sense note.", encoding="utf-8")
+    store = RagStore(config)
+    store.import_file(series_slug, path, source_ref="chapter.txt")
+    with connect(config.database_path) as conn:
+        chunk_id = int(conn.execute("select id from rag_chunks").fetchone()["id"])
+
+    assert store.delete_source(series_slug, "chapter.txt") is True
+
+    job = SemanticJobStore(config).latest_job()
+    assert store.search(series_slug, "Sense", limit=1) == []
+    assert job is not None
+    assert (str(chunk_id), "delete") in SemanticJobStore(config).job_operations(job.id)
 
 
 def test_failed_changed_import_preserves_old_chunks(

@@ -15,7 +15,15 @@ import uvicorn
 
 from hieronymus.config import HieronymusConfig, load_config
 from hieronymus.dream_autostart import DreamAutostart
+from hieronymus.embeddings import create_embedding_provider
+from hieronymus.lance_index import LanceSemanticIndex
 from hieronymus.presentation import package_version
+from hieronymus.semantic_config import load_semantic_config
+from hieronymus.semantic_jobs import (
+    DEFAULT_POLL_INTERVAL,
+    SemanticIndexWorker,
+    SQLiteGenerationPointer,
+)
 from hieronymus.service_app import build_app
 from hieronymus.service_config import load_service_config
 from hieronymus.service_deadlines import (
@@ -105,6 +113,12 @@ class _SchedulerProtocol(Protocol):
     def stop(self, *, timeout: float | None = None) -> bool: ...
 
 
+class _SemanticWorkerProtocol(Protocol):
+    def start(self) -> None: ...
+
+    def stop(self, *, timeout: float | None = None) -> bool: ...
+
+
 class ShutdownCoordinator:
     def __init__(
         self,
@@ -112,10 +126,13 @@ class ShutdownCoordinator:
         server: _ServerProtocol,
         scheduler: _SchedulerProtocol,
         state: ServerState | None,
+        *,
+        semantic_worker: _SemanticWorkerProtocol | None = None,
     ) -> None:
         self._config = config
         self._server = server
         self._scheduler = scheduler
+        self._semantic_worker = semantic_worker
         self._state = state
         self._lock = threading.Lock()
         self._requested = False
@@ -143,6 +160,8 @@ class ShutdownCoordinator:
                 return
             self._finished = True
         LOGGER.info("Finishing daemon shutdown after %s", source)
+        if self._semantic_worker is not None:
+            self._semantic_worker.stop(timeout=self.remaining())
         self._scheduler.stop(timeout=self.remaining())
         if self._state is not None:
             remove_server_state(self._config, expected_state=self._state)
@@ -184,6 +203,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_semantic_worker(config: HieronymusConfig) -> SemanticIndexWorker:
+    semantic = load_semantic_config(config)
+    pointer = SQLiteGenerationPointer(config)
+    provider = create_embedding_provider(semantic, config)
+
+    def configured_provider(_job):
+        return create_embedding_provider(load_semantic_config(config), config)
+
+    index = LanceSemanticIndex(
+        config.semantic_index_root,
+        pointer=pointer,
+        max_batch_size=semantic.batch_size,
+    )
+    return SemanticIndexWorker(
+        config,
+        provider=provider,
+        index=index,
+        batch_size=semantic.batch_size,
+        poll_interval=DEFAULT_POLL_INTERVAL,
+        provider_factory=configured_provider,
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     config = load_config(args.data_root)
@@ -208,7 +250,8 @@ def main(argv: list[str] | None = None) -> None:
         process_identity=process_start_identity(os.getpid()),
         launch_id=uuid.uuid4().hex,
     )
-    app = build_app(config, state)
+    semantic_worker = build_semantic_worker(config)
+    app = build_app(config, state, semantic_worker=semantic_worker)
     server = CoordinatedServer(
         uvicorn.Config(
             app,
@@ -221,7 +264,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     write_server_state(config, state)
     dream_scheduler = DreamAutostartScheduler(config)
-    coordinator = ShutdownCoordinator(config, server, dream_scheduler, state)
+    coordinator = ShutdownCoordinator(
+        config,
+        server,
+        dream_scheduler,
+        state,
+        semantic_worker=semantic_worker,
+    )
     server.shutdown_coordinator = coordinator
     app.state.runtime.request_shutdown = lambda: coordinator.request("http")
     dream_scheduler.start()

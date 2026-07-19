@@ -144,7 +144,7 @@ def test_global_schema_and_ordered_upgrade_create_dream_maintenance_index(tmp_pa
         ]
 
     assert "idx_crystals_dream_maintenance" in fresh_indexes
-    assert fresh_versions[-1] == "0003"
+    assert fresh_versions[-1] == "0004"
 
     with connect(fresh_path) as conn:
         conn.execute("drop index idx_crystals_dream_maintenance")

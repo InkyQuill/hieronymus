@@ -164,6 +164,33 @@ def test_shutdown_coordinator_is_idempotent_across_request_and_finalize(
     scheduler.stop.assert_called_once()
 
 
+def test_shutdown_coordinator_stops_semantic_worker_with_remaining_deadline(
+    config: HieronymusConfig,
+) -> None:
+    server = type("Server", (), {"should_exit": False})()
+    scheduler = type("Scheduler", (), {"stop": MagicMock(return_value=True)})()
+    worker = type("Worker", (), {"stop": MagicMock(return_value=True)})()
+    coordinator = service_daemon.ShutdownCoordinator(
+        config, server, scheduler, None, semantic_worker=worker
+    )
+
+    coordinator.request("test")
+    coordinator.finish("test")
+    coordinator.finish("test")
+
+    worker.stop.assert_called_once()
+    assert worker.stop.call_args.kwargs["timeout"] <= service_daemon.DAEMON_SHUTDOWN_TIMEOUT
+
+
+def test_daemon_builds_one_event_woken_semantic_worker_after_schema_readiness(
+    config: HieronymusConfig,
+) -> None:
+    worker = service_daemon.build_semantic_worker(config)
+
+    assert worker.poll_interval == 30.0
+    assert worker.is_alive() is False
+
+
 def test_coordinated_server_preserves_uvicorn_repeated_sigint_semantics(
     config: HieronymusConfig,
 ) -> None:

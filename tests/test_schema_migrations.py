@@ -90,6 +90,7 @@ def test_two_concurrent_fresh_initializers_share_one_valid_ledger(tmp_path: Path
             ("0001", "memory_fts_triggers"),
             ("0002", "retire_strict_terms"),
             ("0003", "index_dream_maintenance"),
+            ("0004", "semantic_index_state"),
         ]
         assert conn.execute("pragma integrity_check").fetchone()[0] == "ok"
 
@@ -158,6 +159,7 @@ def test_existing_partial_pre_ledger_schema_normalizes_usable_fts_shape(
             ("0001", "memory_fts_triggers"),
             ("0002", "retire_strict_terms"),
             ("0003", "index_dream_maintenance"),
+            ("0004", "semantic_index_state"),
         ]
         crystal_id = conn.execute(
             "insert into crystals(crystal_type, text) values ('lesson', 'first token')"

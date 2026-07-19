@@ -398,6 +398,7 @@ def _baseline_schema_migrations(
     validators = {
         "0001": _verify_memory_fts_trigger_state,
         "0003": _verify_dream_maintenance_index_state,
+        "0004": _verify_semantic_index_state,
     }
     conn.execute(MIGRATION_LEDGER_SQL)
     for migration in migrations:
@@ -447,6 +448,24 @@ def _verify_dream_maintenance_index_state(conn: sqlite3.Connection) -> None:
         raise SchemaMigrationError(
             "fresh schema does not represent migration 0003; "
             "missing index: idx_crystals_dream_maintenance"
+        )
+
+
+def _verify_semantic_index_state(conn: sqlite3.Connection) -> None:
+    expected = {
+        "semantic_index_state",
+        "semantic_index_jobs",
+        "semantic_index_job_items",
+        "semantic_indexed_chunks",
+    }
+    present = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[0]
+        for row in conn.execute("select name from sqlite_master where type = 'table'").fetchall()
+    }
+    missing = sorted(expected - present)
+    if missing:
+        raise SchemaMigrationError(
+            f"fresh schema does not represent migration 0004; missing tables: {missing}"
         )
 
 

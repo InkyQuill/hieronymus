@@ -334,6 +334,7 @@ def test_python_retirement_migration_is_discovered_and_drops_legacy_once(
         "0001",
         "0002",
         "0003",
+        "0004",
     ]
     ensure_schema(conn)
     migration_backup_dir = backup_dir / "strict-terms"

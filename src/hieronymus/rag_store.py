@@ -8,6 +8,7 @@ from pathlib import Path
 from hieronymus.config import HieronymusConfig
 from hieronymus.crystals import search_expression
 from hieronymus.db import connect, ensure_schema
+from hieronymus.embeddings import EmbeddingIdentity
 from hieronymus.rag_conversion import normalize_rag_source
 from hieronymus.rag_models import (
     RagChunkRecord,
@@ -16,6 +17,8 @@ from hieronymus.rag_models import (
     RagSourceRecord,
 )
 from hieronymus.rag_parsing import RagLoadSourceType, load_rag_file
+from hieronymus.semantic_config import load_semantic_config
+from hieronymus.semantic_jobs import SemanticJobStore, wake_semantic_workers
 from hieronymus.values import normalize_string_tuple as _clean_text_tuple
 from hieronymus.values import utc_now as _now
 
@@ -31,6 +34,7 @@ class RagStore:
         self.config = config
         with connect(self.config.database_path) as conn:
             ensure_schema(conn)
+        self._semantic_jobs = SemanticJobStore(config)
 
     def import_file(
         self,
@@ -63,6 +67,7 @@ class RagStore:
         clean_language_tags = _clean_text_tuple(language_tags)
         clean_story_scopes = _clean_text_tuple(story_scopes)
         clean_semantic_tags = _clean_text_tuple(semantic_tags)
+        semantic_identity = self._semantic_identity()
 
         with connect(self.config.database_path) as conn:
             existing = self._source_row(conn, series_slug, clean_source_ref)
@@ -80,7 +85,10 @@ class RagStore:
                     story_scopes=clean_story_scopes,
                     semantic_tags=clean_semantic_tags,
                 )
+                if semantic_identity is not None:
+                    self._semantic_jobs.enqueue_change(conn, identity=semantic_identity)
                 conn.commit()
+                wake_semantic_workers(self.config)
                 return RagImportResult(
                     source=_source_from_row(existing),
                     chunk_count=chunk_count,
@@ -89,7 +97,15 @@ class RagStore:
                     normalized_format=normalized.format,
                 )
 
+            obsolete_chunk_ids: tuple[int, ...] = ()
             if existing is not None:
+                obsolete_chunk_ids = tuple(
+                    int(row["id"])
+                    for row in conn.execute(
+                        "select id from rag_chunks where source_id = ? order by id",
+                        (int(existing["id"]),),
+                    ).fetchall()
+                )
                 conn.execute(
                     """
                     delete from rag_sources
@@ -174,7 +190,14 @@ class RagStore:
                     chunk_id=chunk_id,
                     values=clean_semantic_tags,
                 )
+            if semantic_identity is not None:
+                self._semantic_jobs.enqueue_change(
+                    conn,
+                    identity=semantic_identity,
+                    obsolete_chunk_ids=obsolete_chunk_ids,
+                )
             conn.commit()
+            wake_semantic_workers(self.config)
 
         return RagImportResult(
             source=RagSourceRecord(
@@ -190,6 +213,44 @@ class RagStore:
             skipped=False,
             normalized_path=str(normalized.path),
             normalized_format=normalized.format,
+        )
+
+    def delete_source(self, series_slug: str, source_ref: str) -> bool:
+        semantic_identity = self._semantic_identity()
+        with connect(self.config.database_path) as conn:
+            existing = self._source_row(conn, series_slug, source_ref)
+            if existing is None:
+                return False
+            obsolete_chunk_ids = tuple(
+                int(row["id"])
+                for row in conn.execute(
+                    "select id from rag_chunks where source_id = ? order by id",
+                    (int(existing["id"]),),
+                ).fetchall()
+            )
+            conn.execute(
+                "delete from rag_sources where id = ? and series_slug = ?",
+                (int(existing["id"]), series_slug),
+            )
+            if semantic_identity is not None:
+                self._semantic_jobs.enqueue_change(
+                    conn,
+                    identity=semantic_identity,
+                    obsolete_chunk_ids=obsolete_chunk_ids,
+                )
+            conn.commit()
+        wake_semantic_workers(self.config)
+        return True
+
+    def _semantic_identity(self) -> EmbeddingIdentity | None:
+        semantic = load_semantic_config(self.config)
+        if semantic.fts_only:
+            return None
+        return EmbeddingIdentity(
+            provider=semantic.provider,
+            model=semantic.model,
+            revision=semantic.revision,
+            dimensions=semantic.dimensions,
         )
 
     def search(
