@@ -1116,5 +1116,5 @@ async fn migration_versions_include_fts_and_are_idempotent() {
     .await
     .expect("migration versions should be readable");
 
-    assert_eq!(versions, vec![1, 2, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
 }

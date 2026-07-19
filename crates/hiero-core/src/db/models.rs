@@ -344,10 +344,6 @@ persisted_enum!(DreamRunStatus, "dream run status", {
 persisted_enum!(RecallOutcome, "recall outcome", { Useful => "useful", Miss => "miss" });
 
 #[derive(Debug, Clone, PartialEq, Eq, FromRow)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "consumed by the Task 5 legacy converter")
-)]
 pub(crate) struct StrictTermRow {
     pub(crate) id: i64,
     pub(crate) series_slug: String,
@@ -363,10 +359,6 @@ pub(crate) struct StrictTermRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "consumed by the Task 5 legacy converter")
-)]
 pub(crate) struct StrictTermAliasRow {
     pub(crate) id: i64,
     pub(crate) term_id: i64,

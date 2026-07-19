@@ -1,5 +1,6 @@
 mod error;
 mod legacy_baseline;
+mod legacy_terms;
 mod models;
 
 #[cfg(test)]
@@ -8,6 +9,7 @@ mod test_support;
 use std::{path::Path, str::FromStr, time::Duration};
 
 pub use error::DbError;
+pub use legacy_terms::{LegacyConversionReport, convert_legacy_strict_terms};
 pub use models::{
     ConceptFacetRecord, ConceptProposalRecord, ConceptProposalStatus, ConceptRecord, ConceptStatus,
     CrystalActivationRecord, CrystalLinkRecord, CrystalRecord, CrystalStatus, CrystalType,
@@ -84,6 +86,14 @@ pub async fn connect_url(url: &str) -> Result<SqlitePool, DbError> {
 
 pub async fn migrate(pool: &SqlitePool) -> Result<(), DbError> {
     legacy_baseline::prepare(pool, &MIGRATOR).await?;
+    // SQL migrations cannot call the typed Rust converter. Stop at the last
+    // pre-conversion schema, convert under BEGIN IMMEDIATE, then let the same
+    // embedded manifest validate checksums and apply the guarded drop migration.
+    MIGRATOR
+        .run_to(4, pool)
+        .await
+        .map_err(|source| DbError::Migration { source })?;
+    convert_legacy_strict_terms(pool).await?;
     MIGRATOR
         .run(pool)
         .await

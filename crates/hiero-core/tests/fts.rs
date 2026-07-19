@@ -301,25 +301,39 @@ async fn migration_creates_exact_external_content_tables_and_narrow_triggers() {
 }
 
 #[tokio::test]
-async fn upgrade_rebuilds_every_preexisting_row_and_preserves_legacy_strict_fts() {
+async fn upgrade_rebuilds_every_preexisting_row_and_retires_legacy_strict_fts() {
     let pool = pre_fts_pool().await;
     seed_preexisting_content(&pool).await;
     pool.execute(sqlx::raw_sql(
         r#"
-        CREATE VIRTUAL TABLE strict_terms_fts USING fts5(source_text, canonical_translation);
-        INSERT INTO strict_terms_fts(rowid, source_text, canonical_translation)
-        VALUES (41, 'legacyterm', 'legacyvalue');
+        CREATE TABLE strict_terms (
+          id INTEGER PRIMARY KEY, series_slug TEXT NOT NULL REFERENCES series(slug),
+          source_language TEXT NOT NULL, target_language TEXT NOT NULL, category TEXT NOT NULL,
+          source_text TEXT NOT NULL, canonical_translation TEXT NOT NULL, status TEXT NOT NULL,
+          notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        ) STRICT;
+        CREATE TABLE strict_term_tags (
+          term_id INTEGER NOT NULL REFERENCES strict_terms(id) ON DELETE CASCADE,
+          tag TEXT NOT NULL, PRIMARY KEY(term_id, tag)
+        ) STRICT;
+        CREATE TABLE strict_term_aliases (
+          id INTEGER PRIMARY KEY, term_id INTEGER NOT NULL REFERENCES strict_terms(id) ON DELETE CASCADE,
+          language TEXT NOT NULL, text TEXT NOT NULL, kind TEXT NOT NULL,
+          case_sensitive INTEGER NOT NULL DEFAULT 1 CHECK(case_sensitive IN (0, 1))
+        ) STRICT;
+        CREATE VIRTUAL TABLE strict_terms_fts USING fts5(
+          source_text, canonical_translation, notes, content='strict_terms', content_rowid='id'
+        );
+        INSERT INTO strict_terms(
+          id, series_slug, source_language, target_language, category, source_text,
+          canonical_translation, status, notes, created_at, updated_at
+        ) VALUES (41, 'series', 'en', 'ru', 'correction', 'legacyterm', 'legacyvalue',
+          'approved', 'legacy note', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+        INSERT INTO strict_terms_fts(strict_terms_fts) VALUES ('rebuild');
         "#,
     ))
     .await
     .expect("legacy strict-term FTS fixture should install");
-    let legacy_sql_before: String = sqlx::query_scalar(
-        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'strict_terms_fts'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("legacy FTS SQL should read");
-
     migrate(&pool)
         .await
         .expect("future migrator should fill version 2");
@@ -333,14 +347,19 @@ async fn upgrade_rebuilds_every_preexisting_row_and_preserves_legacy_strict_fts(
     ] {
         assert_match(&pool, table, token, 1).await;
     }
-    assert_match(&pool, "strict_terms_fts", "legacyterm", 41).await;
-    let legacy_sql_after: String = sqlx::query_scalar(
-        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'strict_terms_fts'",
+    let converted_id: i64 = sqlx::query_scalar(
+        "SELECT target_id FROM migration_ledger WHERE source_table = 'strict_terms' AND source_id = '41' AND target_table = 'crystals'",
     )
     .fetch_one(&pool)
     .await
-    .expect("legacy FTS SQL should remain readable");
-    assert_eq!(legacy_sql_after, legacy_sql_before);
+    .expect("converted rule should be traceable");
+    assert_match(&pool, "crystals_fts", "legacyterm", converted_id).await;
+    let legacy_objects: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sqlite_schema WHERE name LIKE 'strict_term%'")
+            .fetch_one(&pool)
+            .await
+            .expect("legacy object count should read");
+    assert_eq!(legacy_objects, 0);
 
     let versions: Vec<i64> = sqlx::query_scalar(
         "SELECT version FROM _sqlx_migrations WHERE success = 1 ORDER BY version",
@@ -348,7 +367,7 @@ async fn upgrade_rebuilds_every_preexisting_row_and_preserves_legacy_strict_fts(
     .fetch_all(&pool)
     .await
     .expect("migration history should read");
-    assert_eq!(versions, [1, 2, 3, 4]);
+    assert_eq!(versions, [1, 2, 3, 4, 5]);
     assert_fts_integrity(&pool).await;
 }
 
@@ -793,7 +812,7 @@ async fn rag_fts_survives_source_and_multiple_path_series_cascades() {
 }
 
 #[tokio::test]
-async fn fresh_history_contains_all_four_ordered_migrations_and_is_idempotent() {
+async fn fresh_history_contains_all_five_ordered_migrations_and_is_idempotent() {
     let pool = connect_url("sqlite::memory:")
         .await
         .expect("fresh database should migrate");
@@ -806,5 +825,5 @@ async fn fresh_history_contains_all_four_ordered_migrations_and_is_idempotent() 
     .fetch_all(&pool)
     .await
     .expect("migration history should read");
-    assert_eq!(versions, [1, 2, 3, 4]);
+    assert_eq!(versions, [1, 2, 3, 4, 5]);
 }

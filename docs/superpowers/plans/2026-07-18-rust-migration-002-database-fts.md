@@ -86,7 +86,7 @@
 - [ ] Build a Python-era fixture with active/inactive terms, tags, aliases, duplicate ledger entries, an injected invalid row, and no legacy tables. Assert direct structured mapping, semantic-tag union/deduplication, traceable ledger rows, idempotence, rollback on mismatch, and drop only after exact source/target count parity.
 - [ ] Run `cargo test -p hiero-core --test legacy_terms`; expect RED.
 - [ ] In one acquired connection, execute `BEGIN IMMEDIATE`, consume the strict-term objects retained by the pre-0001 baseline, read structured rows, insert rule crystals and semantic tags with bound parameters, record ledger rows, verify counts, then drop legacy FTS/triggers/child/parent objects in safe order and commit. Do not call the free-text `parse_rule` path.
-- [ ] Keep `0005_drop_strict_terms.sql` limited to guarded DDL for fresh/empty cases. Migration orchestration must run `0001..0004`, invoke the Rust converter, then run `0005`; document why a plain SQLx migration cannot call Rust.
+- [ ] Keep `0005_drop_strict_terms.sql` limited to guarded DDL for fresh/empty cases. Use the one embedded migrator as `run_to(4)`, invoke the Rust converter, then `run()` the same manifest through `0005`; document why a plain SQLx migration cannot call typed Rust and why this preserves the embedded checksums without filesystem or duplicated-manifest dependencies.
 - [ ] Run focused tests against both fresh and copied Python schemas; expect GREEN. Commit `feat: retire legacy strict terms safely`.
 
 ## Phase Acceptance

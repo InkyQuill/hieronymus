@@ -36,7 +36,7 @@ pub async fn connect(config: &HieronymusConfig) -> Result<SqlitePool> {
         .pragma("recursive_triggers", "ON")
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new().max_connections(8).connect_with(opts).await?;
-    sqlx::migrate!("../../migrations").run(&pool).await?;
+    migrate(&pool).await?; // applies 0001..0004, runs typed conversion, then applies 0005
     Ok(pool)
 }
 ```
@@ -298,9 +298,10 @@ pooled connection is returned on every success or error path.
 | `0002` | `fts_triggers.sql` | Creates/narrows the §3 triggers, rebuilds FTS content from existing rows |
 | `0003` | `compound_indexes.sql` | Adds `idx_crystals_maintenance` |
 | `0004` | `semantic_index_state.sql` | Adds `semantic_index_jobs`, `semantic_chunk_state` |
-| `0005` | `drop_strict_terms.sql` | Converts `strict_terms` rows to rule-intent crystals (see below), then drops all four legacy tables |
+| between `0004`/`0005` | Rust strict-term converter | Converts and verifies every structured row under `BEGIN IMMEDIATE`, then drops the legacy objects |
+| `0005` | `drop_strict_terms.sql` | Guarded DDL only, making fresh/empty/already-converted databases converge safely |
 
-**Migration `0005` in detail.** `strict_terms` rows are *structured* data (`source_text`,
+**The pre-`0005` Rust conversion in detail.** `strict_terms` rows are *structured* data (`source_text`,
 `canonical_translation`, `category`, `notes`, plus `strict_term_tags`/`strict_term_aliases`) —
 not free text to run a pattern parser against. The conversion is a direct, programmatic mapping,
 not a call through 003's `parse_rule` (that parser is for free-text rule statements written by
@@ -317,18 +318,39 @@ pub fn strict_term_to_crystal(term: &StrictTermRow, aliases: &[StrictTermAliasRo
         target_language: term.target_language.clone(),
         source_credibility: "user_rule".into(),
         rule_intent: term.category.clone(),  // e.g. "correction" — carries the term's category forward as the rule's intent label
+        scope_type: "series".into(),
+        scope_key: format!("series:{}", term.series_slug),
+        strength: 0.8,
+        confidence: 0.95,
+        soft_origin: Some(term.notes.clone()), // lossless home for legacy notes
+        status: map_legacy_status(&term.status).into(),
+        created_at: term.created_at,
+        updated_at: term.updated_at,
         // aliases become crystal_semantic_tags rows; strict_term_tags become crystal_semantic_tags rows too
     }
 }
 ```
 
-Each converted row: (1) inserts the crystal, (2) inserts one `crystal_semantic_tags` row per
-`strict_term_tags`/`strict_term_aliases` entry, (3) records a `migration_ledger` row
+The exact, bounded union of `strict_term_tags.tag` and `strict_term_aliases.text` is deduplicated
+and sorted deterministically; it is written to both `tags_json` and one
+`crystal_semantic_tags` row per value. Each converted row then records a `migration_ledger` row
 (`source_table = "strict_terms"`, `source_id = term.id`, `target_table = "crystals"`,
 `target_id = new_crystal_id`) so the conversion is traceable and idempotent on a second run.
-Only after every row converts successfully and the row counts match does the migration
-`DROP TABLE` the four legacy tables — a conversion failure aborts the migration transaction
-rather than partially dropping data.
+An existing ledger target or otherwise equivalent crystal is reused only when every mapped field,
+timestamp, tag, and status agrees; ledger conflicts are typed failures. Only after exact source =
+converted + existing parity, one ledger row per source, per-target tag parity, FTS integrity,
+`foreign_key_check`, and `integrity_check` does the same transaction drop legacy FTS, child tables,
+and parent table in safe order. Any decode, validation, parity, or integrity failure rolls back every
+target, ledger, and DDL change.
+
+`map_legacy_status` preserves activation semantics: `approved`/`active` become `active`, `pending`
+becomes `candidate`, `inactive`/`archived` become `archived`, and `rejected`/`superseded` retain
+their labels. Any other label is a typed validation error.
+
+Migration orchestration uses the one compile-time `MIGRATOR`: `run_to(4)`, the Rust converter,
+then `run()` to validate the same embedded checksums and apply `0005`. A plain SQL migration cannot
+call typed Rust or perform this structured validation. `0005` therefore contains guarded DDL only;
+it never performs data conversion and cannot be recorded after a failed converter.
 
 Existing (Python-created) databases missing rows in `migration_ledger` for this migration are
 detected by absence of a `source_table = "strict_terms"` row before `0005` runs; a fresh

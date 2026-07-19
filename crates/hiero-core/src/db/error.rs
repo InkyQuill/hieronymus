@@ -71,6 +71,43 @@ pub enum DbError {
         source: sqlx::Error,
     },
 
+    #[error("failed to convert legacy strict terms: {source}")]
+    LegacyTermConversion {
+        #[source]
+        source: sqlx::Error,
+    },
+
+    #[error("legacy strict term {source_id} has invalid {field}: {reason}")]
+    InvalidLegacyTerm {
+        source_id: String,
+        field: &'static str,
+        reason: String,
+    },
+
+    #[error("legacy strict term {source_id} conflicts with crystal {target_id}: {reason}")]
+    LegacyTermConflict {
+        source_id: String,
+        target_id: i64,
+        reason: String,
+    },
+
+    #[error(
+        "legacy strict-term conversion parity mismatch: source={source_rows}, converted={converted_rows}, existing={existing_rows}, ledger={ledger_rows}"
+    )]
+    LegacyTermCountMismatch {
+        source_rows: i64,
+        converted_rows: i64,
+        existing_rows: i64,
+        ledger_rows: i64,
+    },
+
+    #[error("failed to roll back legacy strict-term conversion after `{original}`: {source}")]
+    LegacyTermRollback {
+        original: String,
+        #[source]
+        source: sqlx::Error,
+    },
+
     #[error("failed to restore foreign-key enforcement after legacy migration: {reason}")]
     ForeignKeyRestore { reason: String },
 }

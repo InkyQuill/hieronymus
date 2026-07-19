@@ -656,7 +656,6 @@ async fn current_python_schema_is_baselined_losslessly_and_idempotently() {
         "short_term_memory_language_tags",
         "short_term_memory_story_scopes",
         "short_term_memory_semantic_tags",
-        "crystals",
         "crystal_language_tags",
         "crystal_sources",
         "crystal_links",
@@ -674,18 +673,13 @@ async fn current_python_schema_is_baselined_losslessly_and_idempotently() {
         "concept_renames",
         "crystal_concepts",
         "crystal_story_scopes",
-        "crystal_semantic_tags",
         "dream_phase_runs",
         "dream_audit_entries",
-        "migration_ledger",
         "rag_sources",
         "rag_chunks",
         "rag_chunk_language_tags",
         "rag_chunk_story_scopes",
         "rag_chunk_semantic_tags",
-        "strict_terms",
-        "strict_term_tags",
-        "strict_term_aliases",
     ] {
         let count: i64 =
             sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
@@ -694,13 +688,34 @@ async fn current_python_schema_is_baselined_losslessly_and_idempotently() {
                 .expect("preserved table should be readable");
         assert_eq!(count, 1, "row loss in {table}");
     }
-    let strict_fts: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM strict_terms_fts WHERE strict_terms_fts MATCH 'Source'",
+    let aggregate_counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM crystals), (SELECT count(*) FROM crystal_semantic_tags), (SELECT count(*) FROM migration_ledger)",
     )
     .fetch_one(&pool)
     .await
-    .expect("strict-term FTS should remain queryable");
-    assert_eq!(strict_fts, 1);
+    .expect("converted aggregate counts should read");
+    assert_eq!(aggregate_counts, (2, 3, 2));
+    let legacy_objects: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sqlite_schema WHERE name LIKE 'strict_term%'")
+            .fetch_one(&pool)
+            .await
+            .expect("legacy object count should read");
+    assert_eq!(legacy_objects, 0);
+    let converted: (String, String, String, String) = sqlx::query_as(
+        "SELECT crystals.text, crystals.status, crystals.soft_origin, crystals.tags_json FROM crystals JOIN migration_ledger ON target_id = crystals.id WHERE source_table = 'strict_terms' AND source_id = '1' AND target_table = 'crystals'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("strict term conversion should remain traceable");
+    assert_eq!(
+        converted,
+        (
+            "Source is translated as Канон".to_owned(),
+            "active".to_owned(),
+            "keep me".to_owned(),
+            r#"["term-tag","Вариант"]"#.to_owned(),
+        )
+    );
     let concept_status: String = sqlx::query_scalar("SELECT status FROM concepts WHERE id = 1")
         .fetch_one(&pool)
         .await
@@ -724,7 +739,7 @@ async fn current_python_schema_is_baselined_losslessly_and_idempotently() {
     .fetch_all(&pool)
     .await
     .expect("migration records should exist");
-    assert_eq!(versions, vec![1, 2, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
     let fk: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
         .fetch_one(&pool)
         .await
