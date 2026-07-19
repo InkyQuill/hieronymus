@@ -39,6 +39,10 @@ class IndexClosedError(SemanticIndexError):
     """Raised when an operation targets a closed index."""
 
 
+class DuplicateChunkIdError(SemanticIndexError):
+    """Raised when one mutation or manifest contains a chunk ID more than once."""
+
+
 @dataclass(frozen=True)
 class IndexHealth:
     healthy: bool
@@ -176,6 +180,8 @@ class SemanticIndex(Protocol):
 
 def compute_manifest_checksum(rows: Sequence[IndexRow]) -> str:
     """Hash authoritative row metadata independently of storage serialization."""
+    chunk_ids = [row.chunk_id for row in rows]
+    reject_duplicate_chunk_ids(chunk_ids)
     records = [
         {
             "checksum": row.checksum,
@@ -195,3 +201,8 @@ def compute_manifest_checksum(rows: Sequence[IndexRow]) -> str:
     ]
     payload = json.dumps(records, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def reject_duplicate_chunk_ids(chunk_ids: Sequence[str]) -> None:
+    if len(set(chunk_ids)) != len(chunk_ids):
+        raise DuplicateChunkIdError("chunk IDs must be unique within a batch")

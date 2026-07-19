@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import importlib
 import json
 import math
+import os
 import re
 import shutil
 import threading
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import lancedb
 import pyarrow as pa
@@ -26,7 +29,9 @@ from hieronymus.semantic_index import (
     IndexRow,
     SearchFilters,
     SearchResult,
+    SemanticIndexError,
     compute_manifest_checksum,
+    reject_duplicate_chunk_ids,
 )
 
 _GENERATION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -53,12 +58,12 @@ class LanceSemanticIndex:
 
     @property
     def active_generation(self) -> str | None:
-        with self._lock:
+        with self._lock, self._lease(exclusive=False):
             self._ensure_open()
             return self._pointer.read()
 
     def health(self) -> IndexHealth:
-        with self._lock:
+        with self._lock, self._lease(exclusive=False):
             if self._closed:
                 return IndexHealth(healthy=False, detail="closed")
             active = self._pointer.read()
@@ -67,14 +72,8 @@ class LanceSemanticIndex:
             try:
                 manifest = self._load_manifest(active)
                 self._require_state(manifest, "ready")
-                self._open_table(active)
-            except (
-                GenerationConflictError,
-                GenerationNotFoundError,
-                IndexManifestError,
-                OSError,
-                ValueError,
-            ) as error:
+                self._verify_generation(active, manifest)
+            except (SemanticIndexError, OSError, ValueError) as error:
                 return IndexHealth(healthy=False, detail=str(error))
             return IndexHealth(healthy=True, detail="ok")
 
@@ -86,7 +85,7 @@ class LanceSemanticIndex:
         expected_count: int,
         manifest_checksum: str,
     ) -> None:
-        with self._lock:
+        with self._lock, self._lease(exclusive=True):
             self._ensure_open()
             self._validate_generation(generation)
             if expected_count < 0:
@@ -123,7 +122,7 @@ class LanceSemanticIndex:
                 raise
 
     def upsert(self, generation: str, rows: Sequence[IndexRow]) -> None:
-        with self._lock:
+        with self._lock, self._lease(exclusive=True):
             self._ensure_open()
             if self._pointer.read() == generation:
                 raise GenerationConflictError("cannot mutate the active generation")
@@ -131,6 +130,7 @@ class LanceSemanticIndex:
                 raise IndexBatchSizeError(
                     f"index mutation accepts at most {self._max_batch_size} rows per batch"
                 )
+            reject_duplicate_chunk_ids([row.chunk_id for row in rows])
             manifest = self._load_manifest(generation)
             self._require_state(manifest, "building")
             identity = self._identity(manifest)
@@ -147,7 +147,7 @@ class LanceSemanticIndex:
             table.add([self._row_to_record(row) for row in rows])
 
     def delete_chunk_ids(self, generation: str, chunk_ids: Sequence[str]) -> None:
-        with self._lock:
+        with self._lock, self._lease(exclusive=True):
             self._ensure_open()
             if self._pointer.read() == generation:
                 raise GenerationConflictError("cannot mutate the active generation")
@@ -159,6 +159,7 @@ class LanceSemanticIndex:
                 raise IndexBatchSizeError(
                     f"index mutation accepts at most {self._max_batch_size} chunk IDs per batch"
                 )
+            reject_duplicate_chunk_ids(chunk_ids)
             self._open_table(generation).delete(self._in_filter("chunk_id", chunk_ids))
 
     def search(
@@ -169,7 +170,7 @@ class LanceSemanticIndex:
         limit: int,
         filters: SearchFilters | None = None,
     ) -> list[SearchResult]:
-        with self._lock:
+        with self._lock, self._lease(exclusive=False):
             self._ensure_open()
             if limit < 1:
                 raise ValueError("limit must be positive")
@@ -206,31 +207,18 @@ class LanceSemanticIndex:
     def activate_generation(
         self, generation: str, *, expected_active_generation: str | None
     ) -> None:
-        with self._lock:
+        with self._lock, self._lease(exclusive=True):
             self._ensure_open()
             manifest = self._load_manifest(generation)
-            rows = [
-                self._record_to_row(item)
-                for item in self._open_table(generation).to_arrow().to_pylist()
-            ]
-            expected_count = int(manifest["expected_count"])
-            if len(rows) != expected_count:
-                raise IndexManifestError(
-                    f"generation {generation} has {len(rows)} rows; expected {expected_count}"
-                )
-            actual_checksum = compute_manifest_checksum(rows)
-            expected_checksum = str(manifest["manifest_checksum"])
-            if actual_checksum != expected_checksum:
-                raise IndexManifestError(
-                    f"generation {generation} checksum does not match its manifest"
-                )
+            self._require_state(manifest, "building")
+            self._verify_generation(generation, manifest)
             manifest["state"] = "ready"
             self._write_json_atomic(self._generation_path(generation) / "manifest.json", manifest)
             if not self._pointer.compare_and_set(expected_active_generation, generation):
                 raise GenerationConflictError("active generation changed during activation")
 
     def cancel_generation(self, generation: str) -> None:
-        with self._lock:
+        with self._lock, self._lease(exclusive=True):
             self._ensure_open()
             if self._pointer.read() == generation:
                 raise GenerationConflictError("cannot cancel the active generation")
@@ -245,11 +233,17 @@ class LanceSemanticIndex:
 
     @property
     def _generations_root(self) -> Path:
-        return self._root / "generations"
+        return self._contained_path(self._root / "generations")
 
     def _generation_path(self, generation: str) -> Path:
         self._validate_generation(generation)
-        return self._generations_root / generation
+        return self._contained_path(self._generations_root / generation)
+
+    def _contained_path(self, path: Path) -> Path:
+        resolved = path.resolve(strict=False)
+        if not resolved.is_relative_to(self._root):
+            raise ValueError(f"path resolves outside semantic index root: {path}")
+        return resolved
 
     @staticmethod
     def _validate_generation(generation: str) -> None:
@@ -286,6 +280,28 @@ class LanceSemanticIndex:
             return lancedb.connect(path / "lance").open_table(_TABLE_NAME)
         except Exception as error:
             raise IndexManifestError(f"generation table is unavailable: {generation}") from error
+
+    def _verify_generation(self, generation: str, manifest: dict[str, Any]) -> None:
+        try:
+            table = self._open_table(generation)
+            identity = self._identity(manifest)
+            if table.schema != self._schema(identity):
+                raise IndexManifestError(f"generation {generation} table schema is invalid")
+            rows = [self._record_to_row(item) for item in table.to_arrow().to_pylist()]
+            expected_count = int(manifest["expected_count"])
+            if len(rows) != expected_count:
+                raise IndexManifestError(
+                    f"generation {generation} has {len(rows)} rows; expected {expected_count}"
+                )
+            actual_checksum = compute_manifest_checksum(rows)
+            if actual_checksum != str(manifest["manifest_checksum"]):
+                raise IndexManifestError(
+                    f"generation {generation} checksum does not match its manifest"
+                )
+        except IndexManifestError:
+            raise
+        except Exception as error:
+            raise IndexManifestError(f"generation {generation} rows are invalid") from error
 
     @staticmethod
     def _schema(identity: EmbeddingIdentity) -> pa.Schema:
@@ -392,3 +408,38 @@ class LanceSemanticIndex:
     def _ensure_open(self) -> None:
         if self._closed:
             raise IndexClosedError("index is closed")
+
+    @contextmanager
+    def _lease(self, *, exclusive: bool) -> Iterator[None]:
+        self._root.mkdir(parents=True, exist_ok=True)
+        handle: BinaryIO
+        with (self._root / ".coordination.lock").open("a+b") as handle:
+            self._acquire_process_lock(handle, exclusive=exclusive)
+            try:
+                yield
+            finally:
+                self._release_process_lock(handle)
+
+    @staticmethod
+    def _acquire_process_lock(handle: BinaryIO, *, exclusive: bool) -> None:
+        if os.name == "nt":
+            locking = importlib.import_module("msvcrt")
+            handle.seek(0)
+            if not handle.read(1):
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            locking.locking(handle.fileno(), locking.LK_LOCK, 1)
+            return
+        locking = importlib.import_module("fcntl")
+        locking.flock(handle.fileno(), locking.LOCK_EX if exclusive else locking.LOCK_SH)
+
+    @staticmethod
+    def _release_process_lock(handle: BinaryIO) -> None:
+        if os.name == "nt":
+            locking = importlib.import_module("msvcrt")
+            handle.seek(0)
+            locking.locking(handle.fileno(), locking.LK_UNLCK, 1)
+            return
+        locking = importlib.import_module("fcntl")
+        locking.flock(handle.fileno(), locking.LOCK_UN)

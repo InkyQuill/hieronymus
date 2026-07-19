@@ -8,6 +8,7 @@ import pytest
 
 from hieronymus.embeddings import EmbeddingIdentity
 from hieronymus.semantic_index import (
+    DuplicateChunkIdError,
     GenerationConflictError,
     GenerationNotActiveError,
     GenerationNotFoundError,
@@ -66,6 +67,7 @@ class MemorySemanticIndex:
         self._manifests: dict[str, tuple[int, str]] = {}
         self._lock = threading.RLock()
         self._closed = False
+        self._corrupt: set[str] = set()
 
     @property
     def active_generation(self) -> str | None:
@@ -75,7 +77,22 @@ class MemorySemanticIndex:
     def health(self):
         from hieronymus.semantic_index import IndexHealth
 
-        return IndexHealth(healthy=not self._closed, detail="closed" if self._closed else "ok")
+        if self._closed:
+            return IndexHealth(healthy=False, detail="closed")
+        active = self._pointer.read()
+        if active is None:
+            return IndexHealth(healthy=True, detail="ok")
+        try:
+            rows = list(self._get_generation(active).values())
+            expected_count, expected_checksum = self._manifests[active]
+            valid = (
+                active not in self._corrupt
+                and len(rows) == expected_count
+                and compute_manifest_checksum(rows) == expected_checksum
+            )
+        except (GenerationNotFoundError, KeyError):
+            valid = False
+        return IndexHealth(healthy=valid, detail="ok" if valid else "invalid")
 
     def begin_rebuild(
         self,
@@ -98,6 +115,7 @@ class MemorySemanticIndex:
             raise GenerationConflictError("cannot mutate active generation")
         if len(rows) > self._max_batch_size:
             raise IndexBatchSizeError(str(len(rows)))
+        _reject_duplicate_ids([item.chunk_id for item in rows])
         generation_rows = self._get_generation(generation)
         for item in rows:
             if item.generation != generation:
@@ -110,6 +128,7 @@ class MemorySemanticIndex:
             raise GenerationConflictError("cannot mutate active generation")
         if len(chunk_ids) > self._max_batch_size:
             raise IndexBatchSizeError(str(len(chunk_ids)))
+        _reject_duplicate_ids(chunk_ids)
         generation_rows = self._get_generation(generation)
         for chunk_id in chunk_ids:
             generation_rows.pop(chunk_id, None)
@@ -125,6 +144,8 @@ class MemorySemanticIndex:
         self._ensure_open()
         if self._pointer.read() != generation:
             raise GenerationNotActiveError(generation)
+        if generation in self._corrupt:
+            raise IndexManifestError(generation)
         rows = list(self._get_generation(generation).values())
         filters = filters or SearchFilters()
         rows = [item for item in rows if filters.matches(item)]
@@ -172,8 +193,24 @@ class MemorySemanticIndex:
         if self._closed:
             raise IndexClosedError("index is closed")
 
+    def simulate_missing_active(self) -> None:
+        active = self._pointer.read()
+        assert active is not None
+        del self._generations[active]
+
+    def simulate_corrupt_active(self) -> None:
+        active = self._pointer.read()
+        assert active is not None
+        self._corrupt.add(active)
+
+
+def _reject_duplicate_ids(chunk_ids: Sequence[str]) -> None:
+    if len(set(chunk_ids)) != len(chunk_ids):
+        raise DuplicateChunkIdError("duplicate chunk IDs")
+
 
 type IndexFactory = Callable[[], SemanticIndex]
+type DamageActiveGeneration = Callable[[SemanticIndex], None]
 
 
 def run_semantic_index_contract(factory: IndexFactory) -> None:
@@ -185,6 +222,7 @@ def run_semantic_index_contract(factory: IndexFactory) -> None:
     alpha = row("alpha", (1.0, 0.0))
     beta = row("beta", (-1.0, 0.0), semantic_scope="dialogue")
     gamma = row("gamma", (0.0, 2.0), series_slug="discworld")
+    discarded = row("discarded", (0.0, 0.5))
     final_rows = [alpha, beta, gamma]
     index.begin_rebuild(
         "generation-1",
@@ -196,6 +234,8 @@ def run_semantic_index_contract(factory: IndexFactory) -> None:
     index.upsert("generation-1", [old_alpha])
     index.upsert("generation-1", [alpha])
     index.upsert("generation-1", [beta, gamma])
+    index.upsert("generation-1", [discarded])
+    index.delete_chunk_ids("generation-1", ["discarded"])
     index.upsert("generation-1", [beta])  # idempotent
     index.delete_chunk_ids("generation-1", ["gamma", "missing"])
     index.upsert("generation-1", [gamma])
@@ -205,6 +245,10 @@ def run_semantic_index_contract(factory: IndexFactory) -> None:
         index.upsert("generation-1", [row("wrong", (0.0, 0.0), generation="other")])
     with pytest.raises(IndexBatchSizeError):
         index.delete_chunk_ids("generation-1", ["alpha", "beta", "gamma"])
+    with pytest.raises(DuplicateChunkIdError):
+        index.upsert("generation-1", [alpha, alpha])
+    with pytest.raises(DuplicateChunkIdError):
+        index.delete_chunk_ids("generation-1", ["alpha", "alpha"])
 
     with pytest.raises(GenerationNotActiveError):
         index.search("generation-1", (0.0, 0.0), limit=3)
@@ -220,6 +264,9 @@ def run_semantic_index_contract(factory: IndexFactory) -> None:
     assert all(item.generation == "generation-1" for item in results)
     assert all(item.identity == IDENTITY for item in results)
     assert [item.distance for item in results] == pytest.approx([1.0, 1.0])
+    assert "discarded" not in {
+        item.chunk_id for item in index.search("generation-1", (0.0, 0.0), limit=10)
+    }
     assert [
         item.chunk_id
         for item in index.search(
@@ -270,3 +317,37 @@ def test_activation_rejects_wrong_count_or_checksum() -> None:
     index.upsert("generation-1", [item])
     with pytest.raises(IndexManifestError):
         index.activate_generation("generation-1", expected_active_generation=None)
+
+
+def run_unusable_active_generation_contract(
+    factory: IndexFactory, damage: DamageActiveGeneration
+) -> None:
+    index = factory()
+    item = row("alpha", (1.0, 0.0))
+    index.begin_rebuild(
+        "generation-1",
+        identity=IDENTITY,
+        expected_count=1,
+        manifest_checksum=compute_manifest_checksum([item]),
+    )
+    index.upsert("generation-1", [item])
+    index.activate_generation("generation-1", expected_active_generation=None)
+    damage(index)
+
+    assert not index.health().healthy
+    with pytest.raises((GenerationNotFoundError, IndexManifestError)):
+        index.search("generation-1", (0.0, 0.0), limit=1)
+
+
+@pytest.mark.parametrize("failure", ["missing", "corrupt"])
+def test_in_memory_fake_reports_unusable_active_generation(failure: str) -> None:
+    run_unusable_active_generation_contract(
+        MemorySemanticIndex,
+        lambda index: getattr(index, f"simulate_{failure}_active")(),
+    )
+
+
+def test_manifest_checksum_rejects_duplicate_chunk_ids() -> None:
+    item = row("alpha", (1.0, 0.0))
+    with pytest.raises(DuplicateChunkIdError):
+        compute_manifest_checksum([item, item])
