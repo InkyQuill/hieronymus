@@ -380,6 +380,34 @@ def test_crash_after_private_temp_is_reported_and_recovered_on_retry(tmp_path, m
     assert not tuple(config.data_root.glob(".llm-cache-adoption-*"))
 
 
+def test_write_interruption_closes_private_temp_descriptor(tmp_path, monkeypatch) -> None:
+    config = HieronymusConfig(data_root=tmp_path / "hieronymus")
+    legacy_path = _legacy_cache_path(config)
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(json.dumps(_cache().to_payload()), encoding="utf-8")
+    original_open = os.open
+    private_descriptors: list[int] = []
+
+    def record_private_open(path, flags, mode=0o777):
+        descriptor = original_open(path, flags, mode)
+        if Path(path).suffix == ".canonical":
+            private_descriptors.append(descriptor)
+        return descriptor
+
+    monkeypatch.setattr(os, "open", record_private_open)
+    monkeypatch.setattr(
+        "hieronymus.llm_cache._write_all",
+        lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        adopt_legacy_model_cache(config)
+
+    assert private_descriptors
+    with pytest.raises(OSError):
+        os.fstat(private_descriptors[-1])
+
+
 def test_retry_converges_identical_public_legacy_and_private_claim(tmp_path, monkeypatch) -> None:
     config = HieronymusConfig(data_root=tmp_path / "hieronymus")
     legacy_path = _legacy_cache_path(config)

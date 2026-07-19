@@ -214,19 +214,14 @@ def _publish_claim(config: HieronymusConfig, claim_path: Path) -> ModelCacheAdop
         )
 
     temp_path = _unique_adoption_path(config, "canonical")
-    descriptor: int | None = None
     try:
         descriptor = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        _write_all(descriptor, snapshot.content)
-        os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = None
+        try:
+            _write_all(descriptor, snapshot.content)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     except OSError as error:
-        if descriptor is not None:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
         return _prepublication_failure(
             config,
             claim_path,
