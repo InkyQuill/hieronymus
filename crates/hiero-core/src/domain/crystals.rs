@@ -41,8 +41,8 @@ pub enum StoreError {
         #[source]
         source: sqlx::Error,
     },
-    #[error("invalid raw FTS5 expression: {message}")]
-    FtsExpression { expression: String, message: String },
+    #[error("invalid raw FTS5 expression")]
+    FtsExpression,
     #[error("failed to serialize normalized crystal tags: {source}")]
     Json {
         #[source]
@@ -796,19 +796,103 @@ fn database(operation: &'static str, source: sqlx::Error) -> StoreError {
 }
 
 fn fts_error(expression: &str, source: sqlx::Error) -> StoreError {
-    let is_sqlite_expression_error = source
-        .as_database_error()
-        .and_then(|error| error.code())
-        .and_then(|code| code.parse::<i32>().ok())
-        .is_some_and(|code| code & 0xff == 1);
-    if is_sqlite_expression_error {
-        StoreError::FtsExpression {
-            expression: expression.to_owned(),
-            message: "SQLite rejected the MATCH expression".to_owned(),
-        }
+    if is_fts_expression_error(expression, &source) {
+        StoreError::FtsExpression
     } else {
         database("search", source)
     }
+}
+
+fn is_fts_expression_error(expression: &str, source: &sqlx::Error) -> bool {
+    let Some(error) = source.as_database_error() else {
+        return false;
+    };
+    let is_sqlite_error = error
+        .code()
+        .and_then(|code| code.parse::<i32>().ok())
+        .is_some_and(|code| code & 0xff == 1);
+    if !is_sqlite_error {
+        return false;
+    }
+
+    let message = error.message().trim().to_ascii_lowercase();
+    if message.starts_with("fts5: syntax error")
+        || message.starts_with("unterminated string")
+        || message.starts_with("malformed match expression")
+        || message.starts_with("unknown special query")
+    {
+        return true;
+    }
+
+    message
+        .strip_prefix("no such column:")
+        .map(str::trim)
+        .is_some_and(|column| {
+            column_filter_tokens(expression)
+                .iter()
+                .any(|token| *token == column || token.eq_ignore_ascii_case(column))
+        })
+}
+
+fn column_filter_tokens(expression: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut chars = expression.char_indices().peekable();
+    while let Some((start, character)) = chars.next() {
+        match character {
+            '"' => {
+                while let Some((_, quoted)) = chars.next() {
+                    if quoted == '"' {
+                        if chars.peek().is_some_and(|(_, next)| *next == '"') {
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            '{' => {
+                let content_start = start + character.len_utf8();
+                let mut content_end = None;
+                for (index, braced) in chars.by_ref() {
+                    if braced == '}' {
+                        content_end = Some(index);
+                        break;
+                    }
+                }
+                let Some(content_end) = content_end else {
+                    break;
+                };
+                while chars.peek().is_some_and(|(_, after)| after.is_whitespace()) {
+                    chars.next();
+                }
+                if chars.peek().is_some_and(|(_, after)| *after == ':') {
+                    tokens.extend(expression[content_start..content_end].split_whitespace());
+                }
+            }
+            character if is_column_identifier_char(character) => {
+                let mut end = start + character.len_utf8();
+                while chars
+                    .peek()
+                    .is_some_and(|(_, next)| is_column_identifier_char(*next))
+                {
+                    let (index, next) = chars.next().expect("peeked character must exist");
+                    end = index + next.len_utf8();
+                }
+                while chars.peek().is_some_and(|(_, after)| after.is_whitespace()) {
+                    chars.next();
+                }
+                if chars.peek().is_some_and(|(_, after)| *after == ':') {
+                    tokens.push(&expression[start..end]);
+                }
+            }
+            _ => {}
+        }
+    }
+    tokens
+}
+
+fn is_column_identifier_char(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
 }
 
 fn validate_scope(scope_type: &str, scope_key: &str, series_slug: &str) -> Result<()> {

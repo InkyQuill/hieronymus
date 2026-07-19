@@ -1,3 +1,5 @@
+use std::error::Error as _;
+
 use hiero_core::{
     db::connect_url,
     domain::{
@@ -627,7 +629,7 @@ async fn raw_search_expression_reports_syntax_errors_as_typed_failures() {
         .search_expression(&TranslationContext::new("oso", "ja", "ru"), "NEAR(", 10)
         .await
         .expect_err("invalid raw syntax should fail");
-    assert!(matches!(error, StoreError::FtsExpression { .. }));
+    assert!(matches!(error, StoreError::FtsExpression));
     assert!(
         store
             .search(&TranslationContext::new("oso", "ja", "ru"), "NEAR(", 10,)
@@ -644,17 +646,24 @@ async fn raw_search_classifies_all_match_parser_errors_without_hiding_operationa
     let ctx = TranslationContext::new("oso", "ja", "ru");
     for expression in [
         "unknown:term",
+        "unknown : term",
+        "{unknown title}:term",
+        "несуществующая:term",
         "\"unterminated",
         "AND guarded",
         "guarded OR",
+        "*unsupported",
     ] {
-        assert!(matches!(
-            store
-                .search_expression(&ctx, expression, 10)
-                .await
-                .unwrap_err(),
-            StoreError::FtsExpression { .. }
-        ));
+        assert!(
+            matches!(
+                store
+                    .search_expression(&ctx, expression, 10)
+                    .await
+                    .unwrap_err(),
+                StoreError::FtsExpression
+            ),
+            "expected parser classification for {expression:?}"
+        );
     }
     pool.close().await;
     assert!(matches!(
@@ -664,6 +673,48 @@ async fn raw_search_classifies_all_match_parser_errors_without_hiding_operationa
             .unwrap_err(),
         StoreError::Database { .. }
     ));
+}
+
+#[tokio::test]
+async fn raw_search_schema_failure_remains_an_operational_database_error() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    store.add(input("Guarded crafting")).await.unwrap();
+    sqlx::query("DROP TABLE crystals_fts")
+        .execute(&pool)
+        .await
+        .expect("test should remove the FTS schema object");
+
+    let error = store
+        .search_expression(&TranslationContext::new("oso", "ja", "ru"), "guarded", 10)
+        .await
+        .expect_err("missing FTS schema must fail");
+
+    assert!(matches!(error, StoreError::Database { .. }));
+}
+
+#[tokio::test]
+async fn raw_fts_expression_error_never_exposes_secret_input() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    store.add(input("Guarded crafting")).await.unwrap();
+    let sentinel = "secret-fts-sentinel-9f4c2e";
+    let expression = format!("\"{sentinel}");
+
+    let error = store
+        .search_expression(&TranslationContext::new("oso", "ja", "ru"), &expression, 10)
+        .await
+        .expect_err("unterminated raw expression must fail");
+
+    assert!(matches!(error, StoreError::FtsExpression));
+    assert!(!error.to_string().contains(sentinel));
+    assert!(!format!("{error:?}").contains(sentinel));
+    let mut source = error.source();
+    while let Some(cause) = source {
+        assert!(!cause.to_string().contains(sentinel));
+        assert!(!format!("{cause:?}").contains(sentinel));
+        source = cause.source();
+    }
 }
 
 #[tokio::test]
