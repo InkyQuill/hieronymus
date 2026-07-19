@@ -14,31 +14,71 @@ mod models {
     use serde_json::Value;
     use std::str::FromStr;
 
-    const CREATED: &str = "2026-07-18T12:34:56.789012Z";
     const UPDATED: &str = "2026-07-18T13:34:56Z";
+
+    const MODEL_FIXTURE_MANIFEST: &[(&str, &str)] = &[
+        (
+            "SeriesRecord",
+            "INSERT INTO series VALUES (1, 'book', 'Book', 'en', 'ru', '2026-07-18T12:34:56.789012Z', '2026-07-18T13:34:56Z')",
+        ),
+        (
+            "TaskSessionRecord",
+            "INSERT INTO task_sessions VALUES (1, 'book', 'en', 'ru', 'translation', '1', '2', 'active', NULL, '2026-07-18T12:34:56.789012Z', '2026-07-18T13:34:56Z', NULL)",
+        ),
+        (
+            "CrystalRecord",
+            "INSERT INTO crystals VALUES (1, 'rule', 'Use X', 'Rule', 'series', 'book', 'book', 'en', 'ru', '[\"tag\"]', 0.8, 0.9, 'user_explicit', 'term_rule', NULL, 1, 0.0, NULL, 'active', 3, NULL, 4, '2026-07-18T12:34:56.789012Z', '2026-07-18T13:34:56Z')",
+        ),
+        (
+            "ShortTermMemoryRecord",
+            "INSERT INTO short_term_memories VALUES (1, 1, 'translator', 'observation', 'Text', 'chapter.md:1', '{not-json', NULL, NULL, NULL, 1, '2026-07-18T12:34:56.789012Z', NULL)",
+        ),
+        (
+            "CrystalActivationRecord",
+            "INSERT INTO crystal_activations VALUES (1, 1, 1, 'query', 2, 0.75, 'fts', NULL, NULL, '2026-07-18T12:34:56.789012Z')",
+        ),
+        (
+            "CrystalLinkRecord",
+            "INSERT INTO crystal_links VALUES (1, 1, 'supports')",
+        ),
+        (
+            "DreamRunRecord",
+            "INSERT INTO dream_runs VALUES (1, 8, 'running', 'deterministic', 4, 1, 2, '', '2026-07-18T12:34:56.789012Z', NULL)",
+        ),
+        (
+            "ConceptRecord",
+            "INSERT INTO concepts VALUES (1, 'Name', 'Description', 'global', '', 'candidate', 0.4, NULL, '2026-07-18T12:34:56.789012Z', '2026-07-18T13:34:56Z')",
+        ),
+        (
+            "ConceptFacetRecord",
+            "INSERT INTO concept_facets VALUES (1, 1, 'ru', 'rendering', 'Имя', 1, 0.8, 0, NULL, '2026-07-18T12:34:56.789012Z', '2026-07-18T13:34:56Z')",
+        ),
+        (
+            "ConceptProposalRecord",
+            "INSERT INTO concept_proposals VALUES (1, 1, 'book', 'en', 'ru', 'name', 'Name', 'Имя', '[\"Имя\"]', '{broken', 'why', 'pending', '2026-07-18T12:34:56.789012Z', '2026-07-18T13:34:56Z')",
+        ),
+        (
+            "MemoryEventRecord",
+            "INSERT INTO memory_events VALUES (1, NULL, NULL, 'reinforce', 'translator', 'used', 0.1, 0.2, 0, NULL, '2026-07-18T12:34:56.789012Z')",
+        ),
+        (
+            "RagSourceDependency",
+            "INSERT INTO rag_sources VALUES (1, 'book', 'glossary.md', 'markdown', 'text/markdown', 'abc', '{}', '2026-07-18T12:34:56.789012Z', '2026-07-18T13:34:56Z')",
+        ),
+        (
+            "RagChunkRecord",
+            "INSERT INTO rag_chunks VALUES (1, 1, 'book', 'paragraph', 'Source', 'Display', 'line:1', '{malformed', '2026-07-18T12:34:56.789012Z')",
+        ),
+    ];
 
     async fn seeded_pool() -> SqlitePool {
         let pool = migrated_pool().await;
-        sqlx::raw_sql(AssertSqlSafe(format!(
-            r#"
-            INSERT INTO series VALUES (1, 'book', 'Book', 'en', 'ru', '{CREATED}', '{UPDATED}');
-            INSERT INTO task_sessions VALUES (1, 'book', 'en', 'ru', 'translation', '1', '2', 'active', NULL, '{CREATED}', '{UPDATED}', NULL);
-            INSERT INTO crystals VALUES (1, 'rule', 'Use X', 'Rule', 'series', 'book', 'book', 'en', 'ru', '["tag"]', 0.8, 0.9, 'user_explicit', 'term_rule', NULL, 1, 0.0, NULL, 'active', 3, NULL, 4, '{CREATED}', '{UPDATED}');
-            INSERT INTO short_term_memories VALUES (1, 1, 'translator', 'observation', 'Text', 'chapter.md:1', '{{not-json', NULL, NULL, NULL, 1, '{CREATED}', NULL);
-            INSERT INTO crystal_activations VALUES (1, 1, 1, 'query', 2, 0.75, 'fts', NULL, NULL, '{CREATED}');
-            INSERT INTO crystal_links VALUES (1, 1, 'supports');
-            INSERT INTO dream_runs VALUES (1, 8, 'running', 'deterministic', 4, 1, 2, '', '{CREATED}', NULL);
-            INSERT INTO concepts VALUES (1, 'Name', 'Description', 'global', '', 'candidate', 0.4, NULL, '{CREATED}', '{UPDATED}');
-            INSERT INTO concept_facets VALUES (1, 1, 'ru', 'rendering', 'Имя', 1, 0.8, 0, NULL, '{CREATED}', '{UPDATED}');
-            INSERT INTO concept_proposals VALUES (1, 1, 'book', 'en', 'ru', 'name', 'Name', 'Имя', '["Имя"]', '{{broken', 'why', 'pending', '{CREATED}', '{UPDATED}');
-            INSERT INTO memory_events VALUES (1, NULL, NULL, 'reinforce', 'translator', 'used', 0.1, 0.2, 0, NULL, '{CREATED}');
-            INSERT INTO rag_sources VALUES (1, 'book', 'glossary.md', 'markdown', 'text/markdown', 'abc', '{{}}', '{CREATED}', '{UPDATED}');
-            INSERT INTO rag_chunks VALUES (1, 1, 'book', 'paragraph', 'Source', 'Display', 'line:1', '{{malformed', '{CREATED}');
-            "#
-        )))
-        .execute(&pool)
-        .await
-        .expect("representative model rows should insert");
+        for (model, statement) in MODEL_FIXTURE_MANIFEST {
+            sqlx::raw_sql(*statement)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|error| panic!("{model} fixture should insert: {error}"));
+        }
         pool
     }
 
@@ -83,6 +123,7 @@ mod models {
         "short_term_memories",
         |row: ShortTermMemoryRecord| {
             assert_eq!(row.metadata_json, "{not-json");
+            assert_eq!(row.source_crystal_id, Some(1));
             assert!(
                 row.source_credibility.is_none()
                     && row.rule_intent.is_none()
@@ -103,6 +144,7 @@ mod models {
                     && row.supersedes_crystal_id.is_none()
                     && row.last_activated_cycle.is_none()
             );
+            assert_eq!(row.last_reinforced_cycle, Some(4));
         }
     );
     assert_row!(
@@ -135,6 +177,7 @@ mod models {
         "concept_facets",
         |row: ConceptFacetRecord| {
             assert!(!row.is_canonical);
+            assert_eq!(row.source_crystal_id, Some(1));
             assert!(row.superseded_at.is_none());
         }
     );
@@ -207,6 +250,80 @@ mod models {
     }
 
     #[tokio::test]
+    async fn optional_text_number_and_foreign_key_fields_decode_in_both_states() {
+        let pool = seeded_pool().await;
+        sqlx::raw_sql(AssertSqlSafe(format!(
+            r#"
+            UPDATE task_sessions SET cycle_id = 8, completed_at = '{UPDATED}';
+            UPDATE short_term_memories SET source_credibility = 'thought', rule_intent = 'term_rule', soft_origin = 'dream', source_crystal_id = NULL, archived_at = '{UPDATED}';
+            UPDATE crystals SET soft_origin = 'dream', supersedes_crystal_id = 1, last_activated_cycle = 7, last_reinforced_cycle = NULL;
+            UPDATE crystal_activations SET outcome = 'useful', cycle_id = 8;
+            UPDATE concepts SET merged_into_concept_id = 1;
+            UPDATE concept_facets SET source_crystal_id = NULL, superseded_at = '{UPDATED}';
+            UPDATE concept_proposals SET dream_run_id = NULL;
+            UPDATE memory_events SET crystal_id = 1, session_id = 1, cycle_id = 8;
+            UPDATE dream_runs SET completed_at = '{UPDATED}';
+            "#
+        )))
+        .execute(&pool)
+        .await
+        .expect("optional values should update");
+
+        let session: TaskSessionRecord = sqlx::query_as("SELECT * FROM task_sessions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let memory: ShortTermMemoryRecord = sqlx::query_as("SELECT * FROM short_term_memories")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let crystal: CrystalRecord = sqlx::query_as("SELECT * FROM crystals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let activation: CrystalActivationRecord =
+            sqlx::query_as("SELECT * FROM crystal_activations")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let concept: ConceptRecord = sqlx::query_as("SELECT * FROM concepts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let facet: ConceptFacetRecord = sqlx::query_as("SELECT * FROM concept_facets")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let proposal: ConceptProposalRecord = sqlx::query_as("SELECT * FROM concept_proposals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let event: MemoryEventRecord = sqlx::query_as("SELECT * FROM memory_events")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(session.cycle_id, Some(8));
+        assert_eq!(memory.source_credibility.as_deref(), Some("thought"));
+        assert_eq!(memory.rule_intent.as_deref(), Some("term_rule"));
+        assert_eq!(memory.soft_origin.as_deref(), Some("dream"));
+        assert!(memory.source_crystal_id.is_none());
+        assert_eq!(crystal.soft_origin.as_deref(), Some("dream"));
+        assert_eq!(crystal.supersedes_crystal_id, Some(1));
+        assert_eq!(crystal.last_activated_cycle, Some(7));
+        assert!(crystal.last_reinforced_cycle.is_none());
+        assert_eq!(activation.outcome.as_deref(), Some("useful"));
+        assert_eq!(activation.cycle_id, Some(8));
+        assert_eq!(concept.merged_into_concept_id, Some(1));
+        assert!(facet.source_crystal_id.is_none());
+        assert!(proposal.dream_run_id.is_none());
+        assert_eq!(
+            (event.crystal_id, event.session_id, event.cycle_id),
+            (Some(1), Some(1), Some(8))
+        );
+    }
+
+    #[tokio::test]
     async fn integer_booleans_accept_zero_and_one_but_reject_other_values() {
         let pool = seeded_pool().await;
         let false_event: MemoryEventRecord = sqlx::query_as("SELECT id, crystal_id, session_id, event_type, source_role, evidence, strength_delta, confidence_delta, 0 AS applied, cycle_id, created_at FROM memory_events").fetch_one(&pool).await.unwrap();
@@ -233,10 +350,47 @@ mod models {
     }
 
     #[tokio::test]
+    async fn integer_booleans_reject_null_and_non_integer_storage_classes() {
+        let pool = seeded_pool().await;
+        for (expression, expected_type) in [
+            ("NULL", "NULL"),
+            ("'0'", "TEXT"),
+            ("'1'", "TEXT"),
+            ("0.0", "REAL"),
+            ("X'30'", "BLOB"),
+        ] {
+            let query = format!(
+                "SELECT id, crystal_id, session_id, event_type, source_role, evidence, strength_delta, confidence_delta, {expression} AS applied, cycle_id, created_at FROM memory_events"
+            );
+            let error = sqlx::query_as::<_, MemoryEventRecord>(AssertSqlSafe(query))
+                .fetch_one(&pool)
+                .await
+                .expect_err("only non-null INTEGER booleans may decode");
+            let message = error.to_string();
+            assert!(
+                message.contains("applied"),
+                "missing column context: {message}"
+            );
+            assert!(
+                message.contains(expected_type),
+                "missing {expected_type} storage context: {message}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn malformed_timestamp_reports_the_column_context() {
         let pool = seeded_pool().await;
         let error = sqlx::query_as::<_, SeriesRecord>("SELECT id, slug, title, default_source_language, default_target_language, 'yesterday' AS created_at, updated_at FROM series").fetch_one(&pool).await.expect_err("malformed timestamp must fail");
         assert!(error.to_string().contains("created_at"));
+
+        let optional_error = sqlx::query_as::<_, TaskSessionRecord>(
+            "SELECT id, series_slug, source_language, target_language, task_type, volume, chapter, status, cycle_id, created_at, last_activity_at, 'not-a-time' AS completed_at FROM task_sessions",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect_err("malformed optional timestamp must fail when present");
+        assert!(optional_error.to_string().contains("completed_at"));
     }
 
     #[test]
@@ -284,20 +438,45 @@ mod models {
         for label in ["useful", "miss"] {
             RecallOutcome::from_str(label).unwrap();
         }
-        for error in [
-            CrystalType::from_str("future").unwrap_err().to_string(),
-            TaskSessionStatus::from_str("future")
-                .unwrap_err()
-                .to_string(),
-            CrystalStatus::from_str("future").unwrap_err().to_string(),
-            ConceptStatus::from_str("future").unwrap_err().to_string(),
-            ConceptProposalStatus::from_str("future")
-                .unwrap_err()
-                .to_string(),
-            DreamRunStatus::from_str("future").unwrap_err().to_string(),
-            RecallOutcome::from_str("future").unwrap_err().to_string(),
+        for (error, discriminator) in [
+            (
+                CrystalType::from_str("future").unwrap_err().to_string(),
+                "crystal type",
+            ),
+            (
+                TaskSessionStatus::from_str("future")
+                    .unwrap_err()
+                    .to_string(),
+                "task session status",
+            ),
+            (
+                CrystalStatus::from_str("future").unwrap_err().to_string(),
+                "crystal status",
+            ),
+            (
+                ConceptStatus::from_str("future").unwrap_err().to_string(),
+                "concept status",
+            ),
+            (
+                ConceptProposalStatus::from_str("future")
+                    .unwrap_err()
+                    .to_string(),
+                "concept proposal status",
+            ),
+            (
+                DreamRunStatus::from_str("future").unwrap_err().to_string(),
+                "dream run status",
+            ),
+            (
+                RecallOutcome::from_str("future").unwrap_err().to_string(),
+                "recall outcome",
+            ),
         ] {
-            assert!(error.contains("future"));
+            assert!(error.contains("future"), "missing rejected label: {error}");
+            assert!(
+                error.contains(discriminator),
+                "missing discriminator context: {error}"
+            );
         }
     }
 
@@ -331,6 +510,23 @@ mod models {
             serde_json::to_value(CrystalType::ConceptNote).unwrap(),
             "concept_note"
         );
+
+        let crystal: CrystalRecord = sqlx::query_as("SELECT * FROM crystals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let proposal: ConceptProposalRecord = sqlx::query_as("SELECT * FROM concept_proposals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let chunk: RagChunkRecord = sqlx::query_as("SELECT * FROM rag_chunks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(crystal.tags_json, "[\"tag\"]");
+        assert_eq!(proposal.approved_variants_json, "[\"Имя\"]");
+        assert_eq!(proposal.forbidden_variants_json, "{broken");
+        assert_eq!(chunk.metadata_json, "{malformed");
     }
 }
 

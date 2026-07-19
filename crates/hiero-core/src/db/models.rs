@@ -3,7 +3,7 @@ use std::{fmt, str::FromStr};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{
-    Decode, FromRow, Row, Sqlite, Type,
+    Decode, FromRow, Row, Sqlite, Type, TypeInfo, ValueRef,
     error::BoxDynError,
     sqlite::{SqliteRow, SqliteTypeInfo, SqliteValueRef},
 };
@@ -390,20 +390,50 @@ impl<'r> FromRow<'r, SqliteRow> for StrictTermAliasRow {
 }
 
 fn strict_bool(row: &SqliteRow, column: &'static str) -> Result<bool, sqlx::Error> {
+    let raw = row.try_get_raw(column)?;
+    if raw.is_null() {
+        return Err(boolean_decode_error(column, SqliteBooleanError::Null));
+    }
+
+    let storage_class = raw.type_info().name().to_owned();
+    if storage_class != "INTEGER" {
+        return Err(boolean_decode_error(
+            column,
+            SqliteBooleanError::StorageClass { storage_class },
+        ));
+    }
+
     match row.try_get::<i64, _>(column)? {
         0 => Ok(false),
         1 => Ok(true),
-        value => Err(sqlx::Error::ColumnDecode {
-            index: column.to_owned(),
-            source: format!("expected SQLite boolean 0 or 1, got {value}").into(),
-        }),
+        value => Err(boolean_decode_error(
+            column,
+            SqliteBooleanError::OutOfRange { value },
+        )),
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum SqliteBooleanError {
+    #[error("expected a non-null SQLite INTEGER boolean 0 or 1, got NULL")]
+    Null,
+    #[error("expected a non-null SQLite INTEGER boolean 0 or 1, got {storage_class}")]
+    StorageClass { storage_class: String },
+    #[error("expected a SQLite INTEGER boolean 0 or 1, got INTEGER {value}")]
+    OutOfRange { value: i64 },
+}
+
+fn boolean_decode_error(column: &'static str, source: SqliteBooleanError) -> sqlx::Error {
+    sqlx::Error::ColumnDecode {
+        index: column.to_owned(),
+        source: Box::new(source),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{StrictTermAliasRow, StrictTermRow};
-    use sqlx::SqlitePool;
+    use sqlx::{AssertSqlSafe, SqlitePool};
 
     #[tokio::test]
     async fn strict_term_row_decodes_without_becoming_public_api() {
@@ -428,6 +458,14 @@ mod tests {
         .expect("legacy strict alias should decode");
         assert!(row.case_sensitive);
 
+        let false_row = sqlx::query_as::<_, StrictTermAliasRow>(
+            "SELECT 1 AS id, 2 AS term_id, 'ru' AS language, 'Имя' AS text, 'approved' AS kind, 0 AS case_sensitive",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("legacy false boolean should decode");
+        assert!(!false_row.case_sensitive);
+
         let error = sqlx::query_as::<_, StrictTermAliasRow>(
             "SELECT 1 AS id, 2 AS term_id, 'ru' AS language, 'Имя' AS text, 'approved' AS kind, -1 AS case_sensitive",
         )
@@ -435,5 +473,30 @@ mod tests {
         .await
         .expect_err("invalid legacy boolean must fail");
         assert!(error.to_string().contains("case_sensitive"));
+    }
+
+    #[tokio::test]
+    async fn strict_term_alias_rejects_null_and_non_integer_booleans() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        for (expression, expected_type) in [
+            ("NULL", "NULL"),
+            ("'1'", "TEXT"),
+            ("1.0", "REAL"),
+            ("X'31'", "BLOB"),
+        ] {
+            let query = format!(
+                "SELECT 1 AS id, 2 AS term_id, 'ru' AS language, 'Имя' AS text, 'approved' AS kind, {expression} AS case_sensitive"
+            );
+            let error = sqlx::query_as::<_, StrictTermAliasRow>(AssertSqlSafe(query))
+                .fetch_one(&pool)
+                .await
+                .expect_err("legacy booleans require a non-null INTEGER");
+            let message = error.to_string();
+            assert!(message.contains("case_sensitive"));
+            assert!(
+                message.contains(expected_type),
+                "missing {expected_type}: {message}"
+            );
+        }
     }
 }
