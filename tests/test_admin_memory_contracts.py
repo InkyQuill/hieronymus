@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from hieronymus.admin import AdminStore
 from hieronymus.concepts import ConceptProposalStore, ConceptStore
 from hieronymus.config import HieronymusConfig
+from hieronymus.console_api.admin_api import AdminBridge
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_audit import DreamAuditStore
@@ -16,8 +17,6 @@ from hieronymus.memory_models import TranslationContext
 from hieronymus.provider_config import ProviderCatalog, ProviderProfile, save_provider_catalog
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
-from hieronymus.tui_bridge.admin_api import AdminBridge
-from hieronymus.tui_bridge.server import dispatch
 from hieronymus.workspace import WorkspaceStore
 
 
@@ -538,7 +537,7 @@ def test_concept_and_facet_admin_commands_call_primitive_store(
     assert "set_canonical_facet" in called
 
 
-def test_concept_facet_bridge_dispatches_to_admin_contract(
+def test_concept_facet_console_api_dispatches_to_admin_contract(
     config: HieronymusConfig,
 ) -> None:
     concept_id = (
@@ -550,32 +549,21 @@ def test_concept_facet_bridge_dispatches_to_admin_contract(
         .id
     )
 
-    add_response = dispatch(
-        config,
+    bridge = AdminBridge(config)
+    add_response = bridge.add_concept_facet(
         {
-            "id": "1",
-            "method": "admin.add_concept_facet",
-            "params": {
-                "concept_id": concept_id,
-                "value": "гильдейская книга",
-                "facet_type": "rendering",
-                "language_tags": ["ru"],
-                "is_canonical": True,
-            },
+            "concept_id": concept_id,
+            "value": "гильдейская книга",
+            "facet_type": "rendering",
+            "language_tags": ["ru"],
+            "is_canonical": True,
         },
     )
-    detail_response = dispatch(
-        config,
-        {
-            "id": "2",
-            "method": "admin.concept_detail",
-            "params": {"id": concept_id},
-        },
-    )
+    detail_response = bridge.concept_detail({"id": concept_id})
 
-    assert add_response["ok"] is True
-    assert detail_response["ok"] is True
-    assert detail_response["result"]["concept"]["facets"][0]["value"] == "гильдейская книга"
+    assert add_response["result"]["entity_type"] == "concept_facet"
+    assert add_response["result"]["action"] == "add"
+    assert detail_response["concept"]["facets"][0]["value"] == "гильдейская книга"
 
 
 def test_proposal_approval_upgrades_existing_concept_facet_state(

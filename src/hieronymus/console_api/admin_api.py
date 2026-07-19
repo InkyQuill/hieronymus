@@ -11,10 +11,10 @@ from hieronymus.admin import (
 )
 from hieronymus.admin_models import ActionResult, AdminDetail, AdminRow, AdminSnapshot
 from hieronymus.config import HieronymusConfig
+from hieronymus.console_api.serialization import dataclass_to_json
 from hieronymus.crystals import CrystalStore
 from hieronymus.dreaming import DreamEventSink
 from hieronymus.service_manager import ServiceManager
-from hieronymus.tui_bridge.protocol import dataclass_to_json
 
 DEFAULT_VIEW = "Crystals"
 FilterValue = str | tuple[str, ...]

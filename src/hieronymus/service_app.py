@@ -18,6 +18,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.console_api.admin_api import AdminBridge
+from hieronymus.console_api.config_api import ConfigBridge
 from hieronymus.daemon_events import (
     AdminEventHub,
     EventSubscriptionClosed,
@@ -30,8 +32,6 @@ from hieronymus.mcp_server import build_http_mcp_server
 from hieronymus.provider_config import load_provider_catalog
 from hieronymus.secrets import redact_configured_secret_values
 from hieronymus.service_state import EXPECTED_LAUNCH_ID_HEADER, ServerState
-from hieronymus.tui_bridge.admin_api import AdminBridge
-from hieronymus.tui_bridge.config_api import ConfigBridge
 
 _MAX_JSON_BODY = 1_000_000
 

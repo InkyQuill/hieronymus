@@ -3,6 +3,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.console_api.config_state import (
+    field_value,
+    parse_bool,
+    parse_float,
+    parse_positive_int,
+)
 from hieronymus.dream_config import (
     DreamConfig,
     DreamConfigError,
@@ -46,12 +52,6 @@ from hieronymus.release_config import (
     validate_release_config,
 )
 from hieronymus.secrets import configured_secret_values
-from hieronymus.tui_bridge.config_state import (
-    field_value,
-    parse_bool,
-    parse_float,
-    parse_positive_int,
-)
 
 REMOTE_PROVIDERS = ("openai", "gemini", "anthropic")
 

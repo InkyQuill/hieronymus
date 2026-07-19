@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.console_api.config_api import ConfigBridge
 from hieronymus.doctor import Doctor, DoctorFinding
 from hieronymus.dream_config import (
     WorkflowProfile,
@@ -25,7 +26,6 @@ from hieronymus.provider_config import (
     save_provider_catalog,
 )
 from hieronymus.release_config import load_release_config
-from hieronymus.tui_bridge.config_api import ConfigBridge
 
 
 def _config(tmp_path: Path) -> HieronymusConfig:
@@ -514,10 +514,10 @@ def test_config_save_persists_provider_catalog_before_dream_config(tmp_path: Pat
     draft = bridge.bootstrap({})["draft"]
     with (
         patch(
-            "hieronymus.tui_bridge.config_api.save_provider_catalog",
+            "hieronymus.console_api.config_api.save_provider_catalog",
             side_effect=OSError("provider.conf denied"),
         ),
-        patch("hieronymus.tui_bridge.config_api.save_dream_config") as save_dream,
+        patch("hieronymus.console_api.config_api.save_dream_config") as save_dream,
         pytest.raises(OSError, match="provider.conf denied"),
     ):
         bridge.save({"draft": draft})

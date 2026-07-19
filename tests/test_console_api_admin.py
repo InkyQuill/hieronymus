@@ -5,12 +5,12 @@ import pytest
 from hieronymus.admin import ADMIN_VIEW_KEYS, ADMIN_VIEWS, AdminStore
 from hieronymus.concepts import ConceptProposalStore
 from hieronymus.config import HieronymusConfig
+from hieronymus.console_api.admin_api import AdminBridge
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dreaming import DreamRunRecord
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
-from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.workspace import WorkspaceStore
 
 

@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from hieronymus.config import HieronymusConfig
+from hieronymus.console_api.admin_api import AdminBridge
 from hieronymus.crystals import CrystalStore
 from hieronymus.db import connect
 from hieronymus.dream_audit import DreamAuditStore
@@ -14,7 +15,6 @@ from hieronymus.dreaming import DreamService
 from hieronymus.memory_models import TranslationContext
 from hieronymus.registry import Registry
 from hieronymus.scoring import FeedbackStore
-from hieronymus.tui_bridge.admin_api import AdminBridge
 from hieronymus.workspace import WorkspaceStore
 
 
