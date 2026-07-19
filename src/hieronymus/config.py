@@ -29,6 +29,18 @@ class HieronymusConfig:
         return self.data_root / "ingest.conf"
 
     @property
+    def semantic_config_path(self) -> Path:
+        return self.data_root / "semantic.conf"
+
+    @property
+    def semantic_index_root(self) -> Path:
+        return self.data_root / "semantic-index"
+
+    @property
+    def embedding_cache_root(self) -> Path:
+        return self.data_root / "embedding-models"
+
+    @property
     def release_config_path(self) -> Path:
         return self.data_root / "release.conf"
 
