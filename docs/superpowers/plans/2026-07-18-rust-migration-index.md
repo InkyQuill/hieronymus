@@ -2,6 +2,11 @@
 
 This index maps the six standalone proposal documents to dependency-ordered implementation plans. Execute them in numeric order; each phase must pass its acceptance gate before the next phase starts. Keep the Python implementation and its passing 1,193-test baseline until Phase 006's final removal gate.
 
+Current continuation point: Phase 004 Task 3 is complete and independently
+approved; resume with Phase 004 Task 4. See
+`2026-07-18-rust-migration-handoff.md` for the reviewed head, verification
+evidence, environment constraints, and exact restart command.
+
 | Proposal coverage | Implementation plan | Independent deliverable |
 |---|---|---|
 | 001 §§1-2, 8-9 | `2026-07-18-rust-migration-001-foundation.md`, Task 1 and Task 6 | Compiling, linted two-crate workspace and composition root |
