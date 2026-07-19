@@ -14,16 +14,14 @@ import pytest
 from hieronymus.db import apply_migration, connect, discover_schema_migrations, ensure_schema
 from hieronymus.legacy_terms import (
     LegacyTermRetirementBlocked,
+    _canonical_alias_source,
     _fsync_directory,
+    _is_canonical_facet_source,
     check_strict_term_retirement_parity,
+    convert_strict_terms,
     prepare_strict_term_retirement,
     verify_legacy_terms_backup,
     write_legacy_terms_backup,
-)
-from hieronymus.memory_migration import (
-    _canonical_alias_source,
-    _is_canonical_facet_source,
-    convert_strict_terms,
 )
 
 NOW = "2026-07-19T12:00:00+00:00"

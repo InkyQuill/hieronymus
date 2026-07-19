@@ -22,6 +22,23 @@ def test_memory_graph_migrator_constructor_signature_matches_public_api() -> Non
     assert parameter.annotation == "Database"
 
 
+def test_runtime_migrator_has_no_legacy_term_migration_boundary() -> None:
+    assert not hasattr(MemoryGraphMigrator, "_migrate_strict_terms")
+    assert not hasattr(MemoryGraphMigrator, "_count_migratable_strict_terms")
+
+
+def test_runtime_migration_module_contains_no_legacy_term_sql() -> None:
+    source = Path(inspect.getfile(MemoryGraphMigrator)).read_text(encoding="utf-8")
+
+    for pattern in (
+        "from strict_terms",
+        "into strict_terms",
+        "update strict_terms",
+        "strict_terms_fts",
+    ):
+        assert pattern not in source.casefold()
+
+
 def test_strict_term_migration_creates_rule_graph(config: HieronymusConfig) -> None:
     _seed_base(config)
     with connect(config.database_path) as conn:
@@ -529,14 +546,16 @@ def test_migration_is_idempotent_across_second_run(config: HieronymusConfig) -> 
     assert second_counts == first_counts
 
 
-def test_migration_rolls_back_partial_backfill_on_failure(config: HieronymusConfig) -> None:
+def test_runtime_migration_rolls_back_partial_backfill_on_failure(
+    config: HieronymusConfig,
+) -> None:
     _seed_base(config)
     migrator = MemoryGraphMigrator(config)
 
     with pytest.raises(RuntimeError, match="forced migration failure"):
         with patch.object(
             migrator,
-            "_migrate_strict_terms",
+            "_migrate_strict_concept_proposals",
             side_effect=RuntimeError("forced migration failure"),
         ):
             migrator.run()

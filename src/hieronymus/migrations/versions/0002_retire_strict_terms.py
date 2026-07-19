@@ -8,11 +8,12 @@ from pathlib import Path
 
 from hieronymus.db import MigrationContext
 from hieronymus.legacy_terms import (
+    StrictTermConversionReport,
     StrictTermRetirementResult,
+    convert_strict_terms,
     prepare_strict_term_retirement,
 )
 from hieronymus.legacy_terms import drop_legacy_tables as _drop_legacy_tables
-from hieronymus.memory_migration import StrictTermConversionReport, convert_strict_terms
 
 DROP_PHASE_ENABLED = True
 
