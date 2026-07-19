@@ -44,6 +44,10 @@ fn config_defaults_and_plaintext_round_trip_match_python_contract() {
     let path = directory.path().join("ingest.conf");
     let defaults = IngestConfig::load(&path).unwrap();
     assert_eq!(defaults, IngestConfig::default());
+    assert_eq!(
+        IngestConfig::load(directory.path().join("missing/root/ingest.conf")).unwrap(),
+        IngestConfig::default()
+    );
     assert_eq!(defaults.short_memory, ShortMemoryLimits::DEFAULT);
     assert_eq!(defaults.learn.max_block_chars, 1_200);
 
@@ -359,6 +363,22 @@ async fn read_rejects_unknown_inactive_and_mismatched_sessions_without_writing()
         service.read(inactive, input()).await,
         Err(IngestError::SessionInactive { .. })
     ));
+    sqlx::query("DELETE FROM task_session_language_tags WHERE session_id = ?")
+        .bind(active)
+        .execute(&pool)
+        .await
+        .unwrap();
+    service
+        .read(
+            active,
+            ReadInput {
+                text: "lowercase only".into(),
+                source_ref: None,
+                store_observation: false,
+            },
+        )
+        .await
+        .expect("empty optional session metadata must remain valid");
     sqlx::query("UPDATE task_sessions SET source_language = 'de' WHERE id = ?")
         .bind(active)
         .execute(&pool)

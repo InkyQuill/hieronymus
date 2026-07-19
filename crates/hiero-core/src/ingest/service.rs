@@ -186,8 +186,9 @@ impl<'a> IngestionService<'a> {
             ),
             (
                 "language_tags",
-                session.language_tags.contains(&session.source_language)
-                    && session.language_tags.contains(&session.target_language),
+                session.language_tags.is_empty()
+                    || (session.language_tags.contains(&session.source_language)
+                        && session.language_tags.contains(&session.target_language)),
             ),
         ] {
             if !matches {

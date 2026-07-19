@@ -848,7 +848,8 @@ async fn lancedb_with_sqlite_excludes_stale_vectors_and_wrong_series() {
 #[tokio::test]
 async fn deleting_lancedb_and_rebuilding_from_sqlite_reproduces_semantic_results() {
     let pool = semantic_pool().await;
-    let root = tempfile::tempdir().unwrap().keep();
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("index");
     let embeddings = FakeEmbeddingProvider::new(4);
     let query = embeddings.embed_query("alpha").await.unwrap();
 
@@ -915,6 +916,10 @@ async fn deleting_lancedb_and_rebuilding_from_sqlite_reproduces_semantic_results
         .await
         .unwrap();
     assert_eq!(actual, expected);
+    rebuilt.close().await.unwrap();
+    drop(rebuilt);
+    tokio::fs::remove_dir_all(&root).await.unwrap();
+    assert!(!root.exists());
 }
 
 #[tokio::test]

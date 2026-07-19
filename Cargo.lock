@@ -3086,6 +3086,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rust-embed",
+ "rustix 1.1.4",
  "scraper",
  "secrecy",
  "serde",
