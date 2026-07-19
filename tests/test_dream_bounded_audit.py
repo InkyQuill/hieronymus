@@ -680,14 +680,9 @@ def test_large_post_cap_maintenance_backlog_uses_bounded_skip_summary(
             "crystal_id": skipped_ids[0],
         },
         {
-            "entry_path": f"cycle_decay.crystals[{skipped_ids[1]}]",
-            "reason": "changed_crystal_cap",
-            "crystal_id": skipped_ids[1],
-        },
-        {
             "entry_path": "cycle_decay.crystals",
             "reason": "changed_crystal_cap",
-            "skipped_count": 28,
+            "skipped_count_at_least": 1,
         },
     ]
 

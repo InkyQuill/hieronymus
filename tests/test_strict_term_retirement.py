@@ -330,7 +330,11 @@ def test_python_retirement_migration_is_discovered_and_drops_legacy_once(
     module = importlib.import_module("hieronymus.migrations.versions.0002_retire_strict_terms")
 
     assert module.DROP_PHASE_ENABLED is True
-    assert [migration.version for migration in discover_schema_migrations()] == ["0001", "0002"]
+    assert [migration.version for migration in discover_schema_migrations()] == [
+        "0001",
+        "0002",
+        "0003",
+    ]
     ensure_schema(conn)
     migration_backup_dir = backup_dir / "strict-terms"
     first_backups = list(migration_backup_dir.glob("*.json"))

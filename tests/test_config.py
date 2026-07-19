@@ -130,6 +130,41 @@ def test_global_migration_creates_memory_dreaming_schema(tmp_path: Path) -> None
     )
 
 
+def test_global_schema_and_ordered_upgrade_create_dream_maintenance_index(tmp_path: Path) -> None:
+    fresh_path = tmp_path / "fresh.sqlite"
+    with connect(fresh_path) as conn:
+        ensure_schema(conn)
+        fresh_indexes = {
+            row["name"]
+            for row in conn.execute("select name from sqlite_master where type = 'index'")
+        }
+        fresh_versions = [
+            row["version"]
+            for row in conn.execute("select version from schema_migrations order by version")
+        ]
+
+    assert "idx_crystals_dream_maintenance" in fresh_indexes
+    assert fresh_versions[-1] == "0003"
+
+    with connect(fresh_path) as conn:
+        conn.execute("drop index idx_crystals_dream_maintenance")
+        conn.execute("delete from schema_migrations where version = '0003'")
+        conn.commit()
+        ensure_schema(conn)
+        upgraded_index = conn.execute(
+            """
+            select name from sqlite_master
+            where type = 'index' and name = 'idx_crystals_dream_maintenance'
+            """
+        ).fetchone()
+        upgraded_version = conn.execute(
+            "select name from schema_migrations where version = '0003'"
+        ).fetchone()
+
+    assert upgraded_index["name"] == "idx_crystals_dream_maintenance"
+    assert upgraded_version["name"] == "index_dream_maintenance"
+
+
 def test_global_migration_allows_cycle_less_records(tmp_path: Path) -> None:
     with connect(tmp_path / "hieronymus.sqlite") as conn:
         ensure_schema(conn)

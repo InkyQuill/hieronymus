@@ -52,6 +52,12 @@ GLOBAL_COMPATIBILITY_COLUMNS = {
         "last_activity_at": "text not null default ''",
     },
     "crystals": {
+        "confidence": "real not null default 0.5",
+        "created_cycle": "integer not null default 0",
+        "crystal_type": "text not null default 'lesson'",
+        "last_activated_cycle": "integer",
+        "last_reinforced_cycle": "integer",
+        "status": "text not null default 'active'",
         "text": "text not null default ''",
         "title": "text not null default ''",
         "source_credibility": "text not null default 'observation'",
@@ -111,8 +117,7 @@ def apply_migration(conn: sqlite3.Connection, name: str) -> None:
 
     _require_no_active_transaction(conn)
     with _schema_transaction(conn, disable_foreign_keys=True):
-        _execute_sql_statements(conn, _sql_statements(sql))
-        ensure_global_compatibility_columns(conn)
+        _execute_global_schema(conn, _sql_statements(sql))
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -130,8 +135,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             return
 
         is_fresh = not _has_application_schema(conn)
-        _execute_sql_statements(conn, _sql_statements(global_sql))
-        ensure_global_compatibility_columns(conn)
+        _execute_global_schema(conn, _sql_statements(global_sql))
         if is_fresh:
             _baseline_schema_migrations(conn, migrations)
         else:
@@ -328,6 +332,20 @@ def _execute_sql_statements(conn: sqlite3.Connection, statements: list[str]) -> 
         conn.execute(statement)
 
 
+def _execute_global_schema(conn: sqlite3.Connection, statements: list[str]) -> None:
+    """Create compatibility indexes only after partial legacy tables are normalized."""
+    deferred: list[str] = []
+    immediate: list[str] = []
+    for statement in statements:
+        if "idx_crystals_dream_maintenance" in statement:
+            deferred.append(statement)
+        else:
+            immediate.append(statement)
+    _execute_sql_statements(conn, immediate)
+    ensure_global_compatibility_columns(conn)
+    _execute_sql_statements(conn, deferred)
+
+
 def _reject_non_transactional_statements(
     migration: SchemaMigration,
     statements: list[str],
@@ -377,7 +395,10 @@ def _baseline_schema_migrations(
     conn: sqlite3.Connection,
     migrations: list[SchemaMigration],
 ) -> None:
-    validators = {"0001": _verify_memory_fts_trigger_state}
+    validators = {
+        "0001": _verify_memory_fts_trigger_state,
+        "0003": _verify_dream_maintenance_index_state,
+    }
     conn.execute(MIGRATION_LEDGER_SQL)
     for migration in migrations:
         validator = migration.baseline_verifier or validators.get(migration.version)
@@ -412,6 +433,20 @@ def _verify_memory_fts_trigger_state(conn: sqlite3.Connection) -> None:
     if missing:
         raise SchemaMigrationError(
             f"fresh schema does not represent migration 0001; missing triggers: {missing}"
+        )
+
+
+def _verify_dream_maintenance_index_state(conn: sqlite3.Connection) -> None:
+    index = conn.execute(
+        """
+        select 1 from sqlite_master
+        where type = 'index' and name = 'idx_crystals_dream_maintenance'
+        """
+    ).fetchone()
+    if index is None:
+        raise SchemaMigrationError(
+            "fresh schema does not represent migration 0003; "
+            "missing index: idx_crystals_dream_maintenance"
         )
 
 

@@ -136,6 +136,13 @@ create table if not exists crystals (
   updated_at text not null
 );
 
+create index if not exists idx_crystals_dream_maintenance on crystals(
+  id,
+  last_activated_cycle,
+  last_reinforced_cycle,
+  created_cycle
+) where status = 'candidate' or (status = 'active' and crystal_type != 'rule');
+
 create table if not exists crystal_language_tags (
   crystal_id integer not null references crystals(id) on delete cascade,
   language_tag text not null,
