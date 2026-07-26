@@ -1,22 +1,22 @@
 # Rust Migration Continuation Handoff
 
-**Recorded:** 2026-07-18
+**Updated:** 2026-07-26
 
 **Branch:** `feat/rust-rewrite`
 
 **Worktree:** `/home/inky/Development/hieronymus/.worktrees/rust-rewrite`
 
-**Reviewed implementation head:** `b14cb45` (`fix: close dream audit allocation gaps`)
+**Reviewed implementation head:** `6f7d9a4` (`fix: finish bounded dreaming maintenance`)
 
 ## Stop Point
 
-Stop after Phase 004 Task 3, Cross-Process Lock and Audit Lifecycle. Its complete
-diff from `1d0a531` through `b14cb45` received the independent result:
+Phase 004, Dreaming, is complete. Its final whole-phase review and both narrowly
+authorized hardening waves are closed with no remaining Critical, Important, or
+High findings. Continue in this same branch and worktree; do not create another
+migration branch or worktree.
 
-> No findings; spec compliant; quality approved.
-
-Phase 004 Task 4 has not started. Continue in the same branch and worktree; do
-not create another migration branch or worktree.
+The next implementation unit is Phase 005 Task 1, Build App State, Router, and
+Security Layers.
 
 ## Sources of Truth
 
@@ -26,9 +26,12 @@ not create another migration branch or worktree.
 - Proposals: `docs/rust-migration-proposal/001-initial-setup.md` through
   `docs/rust-migration-proposal/006-testing-and-deployment.md`.
 - Plan index: `docs/superpowers/plans/2026-07-18-rust-migration-index.md`.
-- Active plan: `docs/superpowers/plans/2026-07-18-rust-migration-004-dreaming.md`.
-- Later plans: `2026-07-18-rust-migration-005-service-mcp.md` and
-  `2026-07-18-rust-migration-006-parity-release.md` in the same directory.
+- Completed Phase 004 plan:
+  `docs/superpowers/plans/2026-07-18-rust-migration-004-dreaming.md`.
+- Next plan:
+  `docs/superpowers/plans/2026-07-18-rust-migration-005-service-mcp.md`.
+- Final plan:
+  `docs/superpowers/plans/2026-07-18-rust-migration-006-parity-release.md`.
 
 The CLI decision is settled: use intuitive nested subcommands while preserving
 the proposal's external command names. Do not flatten the command enum.
@@ -58,69 +61,90 @@ the proposal's external command names. Do not flatten the command enum.
 - Rebuildable semantic retrieval, queue leases/heartbeats, and hybrid recall.
 - Ingestion configuration and the complete Phase 003 gate.
 
-### Phase 004: Dreaming — Tasks 1–3 complete
+### Phase 004: Dreaming — complete at `6f7d9a4`
 
-- **Task 1, `38b5e2f`:** provider catalog and adapters, current flat-config
-  compatibility, transport seams, discovery/cache behavior, proxy policy,
-  secret redaction, and pass-name validation.
-- **Task 2, `1d0a531`:** strict dream configuration/workflow resolution and
-  symmetric bounded save/load behavior.
-- **Task 3, `b14cb45`:** shared Unix/Windows file identity, securely anchored
-  cross-process dream locking, identity-safe cleanup, bounded/redacted audit
-  lifecycle, nonnegative lifecycle validation, and schema/tests.
+- Provider catalog, discovery/cache behavior, hardened transports, proxy policy,
+  secret redaction, deterministic local provider, and typed phase prompts.
+- Strict dream configuration, workflow resolution, bounded safe persistence,
+  and provider/model default resolution.
+- Cross-process cycle locking, transactional and redacted audit lifecycle,
+  cancellation-safe cleanup, and resumable cycle stages.
+- Typed parsing and sequential execution for all provider phases.
+- Atomic reconsolidation, passive and provider reinforcement, pair combination,
+  supersession, bounded indexed decay, and retry-safe persistence.
+- Dream service, due-cycle scheduler, graceful in-flight shutdown, aggregate
+  unique-crystal budgets, and true two-process exclusion coverage.
+- Durable reviewable concept-merge proposals and bounded, resumable, live
+  duplicate consolidation with concurrency-safe durable budget admission.
+- New migrations `0009` through `0013` add the maintenance index, unique cycle
+  maintenance events, merge proposals, consolidation scan state, dirty queues,
+  and durable affected-id accounting without rewriting prior migrations.
 
-Task 3 spans these commits:
+The final hardening sequence is:
 
-1. `c22fdd8` — `feat: add safe dream-cycle locking and audit`
-2. `b184445` — `fix: harden dream lock identity and audit bounds`
-3. `b14cb45` — `fix: close dream audit allocation gaps`
+1. `f40483b` — complete normal-cycle integration and deterministic provider.
+2. `502fc21` — make aggregate affected-id accounting and consolidation atomic.
+3. `6f7d9a4` — finish bounded/live consolidation and concurrent admission.
+
+Independent final review at `6f7d9a4` reported the phase ready. The independent
+Rust/SQLite audit reported no Critical or High findings.
 
 ## Verification at the Stop Point
 
-The final Task 3 implementation passed:
+Fresh controller verification at `6f7d9a4` passed:
 
-- focused dream-lock tests: 25 passed, 2 intentional child-process helpers
-  ignored;
-- JSON encoded-length budget unit test;
-- adjacent database tests: 17 passed;
-- legacy migration-lock tests: 19 passed;
 - `cargo fmt --all -- --check`;
 - `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`;
-- `cargo test --workspace --all-features --locked`;
+- the focused Phase 004 suite: 168 passed, 3 intentional helper tests ignored;
+- `cargo test --workspace --all-targets --all-features --locked --no-fail-fast`;
 - `cargo doc --workspace --no-deps --all-features --locked`;
-- `uv run --frozen pytest`: 1,193 passed;
-- `uv run --frozen ruff check .`;
-- `uv run --frozen ruff format --check .`.
+- `git diff --check 11ee6b8..HEAD`.
 
-The complete final review package is an ignored local artifact at
-`.superpowers/sdd/review-1d0a531..b14cb45.diff`. The Task 3 implementation report
-is `.superpowers/sdd/phase004-task-3-report.md`, and the local progress ledger is
-`.superpowers/sdd/progress.md`.
+The focused suite includes true two-process service exclusion, cancellation and
+audit-cleanup paths, scheduler completion of unfinished consolidation,
+concurrent durable budget admission, Unicode casefold parity, and
+`EXPLAIN QUERY PLAN` assertions for the named maintenance indexes. Provider
+tests use deterministic or injected local transports; they perform no real
+external model calls.
+
+The Phase 004 execution ledger and final Task 6 report are retained at:
+
+- `.superpowers/sdd/2026-07-18-rust-migration-004-dreaming/progress.md`
+- `.superpowers/sdd/2026-07-18-rust-migration-004-dreaming/task-6-report.md`
+
+## Deferred Non-Blocking Hardening
+
+- If a partially emitted consolidation group's target is deleted, source-cursor
+  repair can wait until the key cursor wraps. A later hardening pass can persist
+  the active target id or invalidate that group immediately.
+- Dirty-group exclusion has no collation-aware raw-key index. At unusually
+  large dirty-backlog scale, add an index or persist an indexed normalized dirty
+  key.
+- Earlier Task 5/6 minor notes remain in the retained progress ledger. They are
+  cleanup, observability, or extreme-scale improvements and do not block Phase
+  005.
 
 ## Exact Next Step
 
-Start Phase 004 Task 4, Phase Parsing and Execution, from the reviewed Task 3
-head plus this handoff commit:
+Resume from the worktree and start Phase 005 Task 1:
 
 ```bash
-task-brief docs/superpowers/plans/2026-07-18-rust-migration-004-dreaming.md 4
+cd /home/inky/Development/hieronymus/.worktrees/rust-rewrite
+task-brief docs/superpowers/plans/2026-07-18-rust-migration-005-service-mcp.md 1
 ```
 
-Use `superpowers:subagent-driven-development` with a fresh implementer and an
-independent reviewer. Follow the task's TDD order. Keep phase tests deterministic
-and do not make real network/model calls. After implementation, generate a
-complete base-to-head review package, fix every Critical/Important finding and
-useful Minor finding, regenerate the complete package, and repeat review until
-it is clean.
+Use `superpowers:subagent-driven-development` and follow the task's TDD order.
+Keep HTTP, WebSocket, frontend, and MCP contracts grounded in the migration
+proposal and existing Python parity tests. After every task, review the complete
+task range and rerun the relevant Rust gates before moving forward.
 
 Then continue in dependency order:
 
-1. Phase 004 Task 5: Reconsolidation, Reinforcement, and Decay.
-2. Phase 004 Task 6: Dream Service and Background Scheduler.
-3. Phase 005: service, HTTP/WebSocket/frontend contracts, MCP, and lifecycle.
-4. Phase 006: parity manifest, cross-cutting suites, native release, and only
+1. Phase 005 Tasks 2–5: admin/settings contracts, WebSocket and embedded
+   frontend, MCP tools, stdio shim, and graceful lifecycle.
+2. Phase 006: parity manifest, cross-cutting suites, native release, and only
    then removal of the Python runtime.
-5. A final whole-branch review and full acceptance verification.
+3. Final whole-branch review and full acceptance verification.
 
 ## Environment Notes
 
@@ -130,11 +154,8 @@ Then continue in dependency order:
   is available.
 - Git commits in this linked worktree may need approval because the index and
   worktree metadata live under the main repository's `.git/worktrees` directory.
-- `uv run --frozen` currently rewrites only the editable Hieronymus entry in
-  `uv.lock` from `0.4.0` to workspace version `0.6.0`; restore that incidental
-  line after Python verification until the planned version transition owns it.
 - Some local TCP-bind tests can receive sandbox `EPERM`; rerun those focused
   tests with the required approval rather than weakening them.
-- The full Python parity suite currently takes roughly two minutes.
 - `.superpowers/sdd` reports, review packages, and progress are intentionally
-  ignored local execution artifacts. The present file is the tracked handoff.
+  retained local execution artifacts. This tracked file is the durable
+  continuation handoff.
