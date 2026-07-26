@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -8,8 +12,18 @@ use axum::{
     http::{Method, Request, StatusCode, header},
     response::Response,
 };
-use hiero_bin::daemon::{AppState, bind_listener, build_router, load_or_create_auth_token, serve};
-use hiero_core::{config::HieronymusConfig, db};
+use hiero_bin::{
+    api::{
+        admin::{AdminApi, FeedbackRecorder},
+        contracts::AdminActionRequest,
+    },
+    daemon::{AppState, bind_listener, build_router, load_or_create_auth_token, serve},
+};
+use hiero_core::{
+    config::HieronymusConfig,
+    db,
+    domain::{ConceptStore, CreateConceptInput, FeedbackError, FeedbackEvent},
+};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::sync::broadcast;
@@ -23,9 +37,10 @@ async fn test_state() -> (AppState, broadcast::Receiver<()>) {
     let pool = db::connect_url("sqlite::memory:?cache=shared")
         .await
         .expect("test database should connect");
-    let temp = TempDir::new().expect("temporary directory should be created");
-    let config =
-        HieronymusConfig::load(Some(temp.path().join("data"))).expect("test config should load");
+    let root = TempDir::new()
+        .expect("temporary directory should be created")
+        .keep();
+    let config = HieronymusConfig::with_roots(root.join("data"), root.join("config"));
     let (shutdown, receiver) = broadcast::channel(4);
     (
         AppState {
@@ -34,9 +49,22 @@ async fn test_state() -> (AppState, broadcast::Receiver<()>) {
             shutdown,
             auth_token: Arc::from(AUTH_TOKEN),
             port: 9768,
+            dream_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         },
         receiver,
     )
+}
+
+fn json_request(method: Method, path: &str, value: Value) -> Request<Body> {
+    let mut request = request(
+        method,
+        path,
+        Body::from(serde_json::to_vec(&value).expect("request JSON should serialize")),
+    );
+    request
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+    request
 }
 
 fn request(method: Method, path: &str, body: Body) -> Request<Body> {
@@ -103,7 +131,7 @@ async fn router_registers_every_phase_005_section_2_route() {
         (Method::GET, "/admin", StatusCode::NOT_IMPLEMENTED),
         (Method::GET, "/config", StatusCode::NOT_IMPLEMENTED),
         (Method::GET, "/assets/app.js", StatusCode::NOT_IMPLEMENTED),
-        (Method::GET, "/api/providers", StatusCode::NOT_IMPLEMENTED),
+        (Method::GET, "/api/providers", StatusCode::OK),
         (Method::GET, "/ws/admin", StatusCode::NOT_IMPLEMENTED),
         (Method::GET, "/health", StatusCode::OK),
         (Method::GET, "/status", StatusCode::OK),
@@ -124,6 +152,415 @@ async fn router_registers_every_phase_005_section_2_route() {
             .expect("router should answer");
         assert_eq!(response.status(), expected, "{path}");
     }
+}
+
+#[tokio::test]
+async fn api_provider_contract_matches_the_current_typescript_client() {
+    let (state, _) = test_state().await;
+    let router = build_router(state);
+    let draft = json!({
+        "provider": {
+            "id": "local-ollama",
+            "name": "Local Ollama",
+            "type": "ollama",
+            "url": "http://127.0.0.1:9",
+            "key": "",
+            "timeout_seconds": "30"
+        }
+    });
+
+    let saved = router
+        .clone()
+        .oneshot(json_request(Method::POST, "/api/providers", draft))
+        .await
+        .expect("provider save should answer");
+    assert_eq!(saved.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(saved).await,
+        json!({
+            "provider": {
+                "id": "local-ollama",
+                "name": "Local Ollama",
+                "type": "ollama",
+                "url": "http://127.0.0.1:9",
+                "key_configured": false,
+                "model": "",
+                "timeout_seconds": 30.0
+            }
+        })
+    );
+
+    let listed = router
+        .clone()
+        .oneshot(request(Method::GET, "/api/providers", Body::empty()))
+        .await
+        .expect("provider list should answer");
+    assert_eq!(
+        response_json(listed).await,
+        json!({
+            "providers": [{
+                "id": "local-ollama",
+                "name": "Local Ollama",
+                "type": "ollama",
+                "url": "http://127.0.0.1:9",
+                "key_configured": false,
+                "model": "",
+                "timeout_seconds": 30.0
+            }]
+        })
+    );
+
+    let check = router
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/providers/local-ollama/check",
+            json!({}),
+        ))
+        .await
+        .expect("provider check should answer");
+    let check = response_json(check).await;
+    assert_eq!(check["check"]["ok"], false);
+    assert_eq!(check["check"]["models"], json!([]));
+    assert_eq!(check["check"]["source"], "live");
+    assert!(
+        check["check"]["error"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+
+    let models = router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/providers/missing/models",
+            Body::empty(),
+        ))
+        .await
+        .expect("model refresh should answer");
+    assert_eq!(models.status(), StatusCode::NOT_FOUND);
+
+    let deleted = router
+        .oneshot(request(
+            Method::DELETE,
+            "/api/providers/local-ollama",
+            Body::empty(),
+        ))
+        .await
+        .expect("provider delete should answer");
+    assert_eq!(deleted.status(), StatusCode::OK);
+    assert_eq!(response_json(deleted).await, json!({}));
+}
+
+#[tokio::test]
+async fn api_settings_contract_uses_the_current_wrappers_and_shapes() {
+    let (state, _) = test_state().await;
+    let router = build_router(state);
+
+    let dream = router
+        .clone()
+        .oneshot(request(Method::GET, "/api/settings/dream", Body::empty()))
+        .await
+        .expect("dream settings should answer");
+    assert_eq!(dream.status(), StatusCode::OK);
+    let dream = response_json(dream).await;
+    assert_eq!(
+        dream["dream"],
+        json!({
+            "dreaming": {
+                "enabled": false,
+                "schedule_interval_minutes": 30,
+                "min_pending_short_term_memories": 20,
+                "max_pending_short_term_memories": 200,
+                "max_short_term_memories_per_cycle": 50,
+                "not_enough_memories_cycle_threshold": 5,
+                "max_changed_crystals_per_cycle": 200,
+                "max_related_concepts_per_cycle": 80,
+                "max_related_crystals_per_concept": 20,
+                "max_total_affected_crystals": 500,
+                "max_short_term_memories_per_run": 500,
+                "max_long_term_records_affected_per_run": 1000,
+                "max_relation_records_per_pass": 1000,
+                "general_prompt": "Use English as the primary searchable memory language. Preserve Japanese, Russian, and other languages only as terms, names, renderings, quoted evidence, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences."
+            },
+            "workflows": {
+                "concepts": {"provider": "", "model": "", "enabled": false, "max_records_per_pass": 500},
+                "coverage_audit": {"provider": "", "model": "", "enabled": false, "max_records_per_pass": 500},
+                "knowledge_crystals": {"provider": "", "model": "", "enabled": false, "max_records_per_pass": 500},
+                "reinforcement": {"provider": "", "model": "", "enabled": false, "max_records_per_pass": 500},
+                "relations": {"provider": "", "model": "", "enabled": false, "max_records_per_pass": 500},
+                "rule_crystals": {"provider": "", "model": "", "enabled": false, "max_records_per_pass": 500},
+                "terminology_candidates": {"provider": "", "model": "", "enabled": false, "max_records_per_pass": 500}
+            }
+        })
+    );
+    assert_eq!(dream["providers"], json!([]));
+    assert_eq!(dream["model_cache"], json!({"providers": {}}));
+    assert!(
+        dream["dream"]["dreaming"]
+            .get("reconsolidation_diff_threshold")
+            .is_none()
+    );
+
+    let ingest = json!({
+        "ingest": {
+            "short_memory": {
+                "warning_sentence_count": 7,
+                "rejection_sentence_count": 31,
+                "warning_symbol_count": 100,
+                "rejection_symbol_count": 200
+            },
+            "learn": {"max_block_chars": 1400}
+        }
+    });
+    let saved_ingest = router
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/settings/ingest",
+            ingest.clone(),
+        ))
+        .await
+        .expect("ingest settings save should answer");
+    assert_eq!(response_json(saved_ingest).await, ingest);
+
+    let release = json!({"release": {"update_channel": "dev"}});
+    let saved_release = router
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/settings/release",
+            release.clone(),
+        ))
+        .await
+        .expect("release settings save should answer");
+    assert_eq!(response_json(saved_release).await, release);
+    let loaded_release = router
+        .oneshot(request(Method::GET, "/api/settings/release", Body::empty()))
+        .await
+        .expect("release settings load should answer");
+    assert_eq!(response_json(loaded_release).await, release);
+}
+
+#[tokio::test]
+async fn api_admin_snapshot_action_and_manual_dream_shapes_match_the_client() {
+    let (state, _) = test_state().await;
+    let router = build_router(state);
+
+    let dashboard = router
+        .clone()
+        .oneshot(request(Method::GET, "/api/admin/dashboard", Body::empty()))
+        .await
+        .expect("dashboard should answer");
+    let dashboard = response_json(dashboard).await;
+    assert_eq!(dashboard["header"]["product"], "Hieronymus");
+    assert!(dashboard["header"]["version"].is_string());
+    assert!(dashboard["header"]["tagline"].is_string());
+    assert!(dashboard["stats"].is_object());
+    assert!(dashboard["views"].is_array());
+    assert!(dashboard["short_term_status"].is_object());
+    assert!(dashboard["dream_status"].is_object());
+
+    let snapshot = router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/admin/snapshot?view=Concepts&selected_id=7",
+            Body::empty(),
+        ))
+        .await
+        .expect("snapshot should answer");
+    assert_eq!(
+        response_json(snapshot).await,
+        json!({
+            "snapshot": {
+                "view": "Concepts",
+                "rows": [],
+                "selected": null,
+                "detail": {
+                    "title": "Concepts",
+                    "subtitle": "No record selected",
+                    "body": "",
+                    "fields": []
+                }
+            }
+        })
+    );
+
+    let unconfirmed = router
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/admin/actions/delete_crystal",
+            json!({"id": 7}),
+        ))
+        .await
+        .expect("confirmation rejection should answer");
+    assert_eq!(unconfirmed.status(), StatusCode::BAD_REQUEST);
+
+    let manual = router
+        .oneshot(json_request(
+            Method::POST,
+            "/api/admin/actions/run_manual_dreaming",
+            json!({}),
+        ))
+        .await
+        .expect("manual dreaming should answer");
+    assert_eq!(
+        response_json(manual).await,
+        json!({"started": true, "status": "running"})
+    );
+}
+
+#[tokio::test]
+async fn api_admin_snapshot_reads_seeded_concept_and_resolves_selected_id() {
+    let (state, _) = test_state().await;
+    let concept = ConceptStore::new(&state.pool)
+        .create(CreateConceptInput {
+            canonical_name: "Guild Ledger".into(),
+            scope_type: "series".into(),
+            scope_key: "merchant-guild".into(),
+        })
+        .await
+        .expect("concept fixture should be created");
+    let router = build_router(state);
+
+    let response = router
+        .oneshot(request(
+            Method::GET,
+            &format!(
+                "/api/admin/snapshot?view=Concepts&selected_id={}",
+                concept.id
+            ),
+            Body::empty(),
+        ))
+        .await
+        .expect("snapshot should answer");
+    let snapshot = response_json(response).await["snapshot"].clone();
+
+    assert_eq!(snapshot["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(snapshot["rows"][0]["id"], concept.id);
+    assert_eq!(snapshot["rows"][0]["label"], "Guild Ledger");
+    assert_eq!(snapshot["selected"]["id"], concept.id);
+    assert_eq!(snapshot["detail"]["title"], "Guild Ledger");
+    assert_eq!(snapshot["detail"]["body"], "");
+}
+
+#[tokio::test]
+async fn api_admin_snapshot_reads_every_supported_store_view() {
+    let (state, _) = test_state().await;
+    let router = build_router(state);
+
+    for view in [
+        "Crystals",
+        "Lessons",
+        "Concepts",
+        "Proposals",
+        "Short-Term%20Memories",
+        "Short-Term%20Sessions",
+        "Dream%20Runs",
+    ] {
+        let response = router
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                &format!("/api/admin/snapshot?view={view}"),
+                Body::empty(),
+            ))
+            .await
+            .expect("snapshot should answer");
+
+        assert_eq!(response.status(), StatusCode::OK, "view {view}");
+        assert!(
+            response_json(response).await["snapshot"]["rows"].is_array(),
+            "view {view}"
+        );
+    }
+}
+
+#[derive(Clone, Default)]
+struct FakeFeedback {
+    events: Arc<Mutex<Vec<FeedbackEvent>>>,
+}
+
+impl FeedbackRecorder for FakeFeedback {
+    fn record(
+        &self,
+        event: FeedbackEvent,
+    ) -> impl Future<Output = Result<(), FeedbackError>> + Send {
+        self.events
+            .lock()
+            .expect("fake lock should work")
+            .push(event);
+        std::future::ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn api_admin_score_actions_delegate_the_event_without_local_arithmetic() {
+    let feedback = FakeFeedback::default();
+    let calls = feedback.events.clone();
+    let (state, _) = test_state().await;
+    let api = AdminApi::new(feedback, state.pool);
+
+    let result = api
+        .run_action(
+            "reinforce_crystal",
+            AdminActionRequest {
+                id: 42,
+                confirmed: None,
+            },
+        )
+        .await
+        .expect("delegated action should succeed");
+
+    assert_eq!(result.result.message, "Crystal reinforced");
+    assert_eq!(
+        calls.lock().expect("fake lock should work").as_slice(),
+        &[FeedbackEvent {
+            crystal_id: 42,
+            event_type: "confirmed_by_user".into(),
+            source_role: "web_admin".into(),
+            evidence: Some("Reinforced from web admin".into()),
+            session_id: None,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn api_admin_concept_score_actions_delegate_to_the_concept_store() {
+    let (state, _) = test_state().await;
+    let concept = ConceptStore::new(&state.pool)
+        .create(CreateConceptInput {
+            canonical_name: "Guild Ledger".into(),
+            scope_type: "global".into(),
+            scope_key: String::new(),
+        })
+        .await
+        .expect("concept fixture should be created");
+    let router = build_router(state.clone());
+
+    let response = router
+        .oneshot(json_request(
+            Method::POST,
+            "/api/admin/actions/reinforce_concept",
+            json!({"id": concept.id}),
+        ))
+        .await
+        .expect("concept action should answer");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = response_json(response).await;
+    assert_eq!(response["snapshot"]["rows"][0]["id"], concept.id);
+    assert_eq!(response["snapshot"]["selected"]["id"], concept.id);
+    assert_eq!(
+        ConceptStore::new(&state.pool)
+            .get(concept.id)
+            .await
+            .expect("concept should remain")
+            .confidence,
+        0.35
+    );
 }
 
 #[tokio::test]
@@ -217,8 +654,8 @@ async fn router_browser_admin_security_matrix_is_route_complete() {
             host: Some(LOCAL_HOST),
             origin: None,
             token: Some(AUTH_TOKEN),
-            status: StatusCode::NOT_IMPLEMENTED,
-            error_code: Some("not_implemented"),
+            status: StatusCode::OK,
+            error_code: None,
         },
         SecurityCase {
             name: "admin missing token and missing Origin",
@@ -265,8 +702,8 @@ async fn router_browser_admin_security_matrix_is_route_complete() {
             host: Some(LOCAL_HOST),
             origin: Some("http://127.0.0.1:9768"),
             token: None,
-            status: StatusCode::NOT_IMPLEMENTED,
-            error_code: Some("not_implemented"),
+            status: StatusCode::OK,
+            error_code: None,
         },
         SecurityCase {
             name: "admin foreign Origin with correct token",

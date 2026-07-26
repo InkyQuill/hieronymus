@@ -119,6 +119,11 @@ impl ProviderProfile {
         self
     }
     #[must_use]
+    pub fn with_inline_credential(mut self, credential: impl Into<String>) -> Self {
+        self.credential = CredentialSource::Inline(SecretString::from(credential.into()));
+        self
+    }
+    #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout_seconds = timeout.as_secs_f64();
         self

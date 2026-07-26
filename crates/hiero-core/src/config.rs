@@ -1,6 +1,11 @@
 use std::{env, ffi::OsString, fs, path::PathBuf};
 
+use serde::{Deserialize, Serialize};
+
+use crate::provider::{ProviderError, secure_read_bounded, secure_write};
+
 const APPLICATION_DIR: &str = "hieronymus";
+const MAX_RELEASE_CONFIG_BYTES: usize = 64 * 1024;
 
 trait Environment {
     fn var_os(&self, key: &str) -> Option<OsString>;
@@ -44,7 +49,75 @@ pub struct HieronymusConfig {
     config_root: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseConfig {
+    pub update_channel: String,
+}
+
+impl Default for ReleaseConfig {
+    fn default() -> Self {
+        Self {
+            update_channel: "stable".into(),
+        }
+    }
+}
+
+impl ReleaseConfig {
+    pub fn load(config: &HieronymusConfig) -> Result<Self, ProviderError> {
+        let Some(contents) =
+            secure_read_bounded(&config.release_config_path(), MAX_RELEASE_CONFIG_BYTES)?
+        else {
+            return Ok(Self::default());
+        };
+        let persisted: PersistedRelease =
+            toml::from_str(&contents).map_err(|error| ProviderError::Config(error.to_string()))?;
+        Self {
+            update_channel: persisted.updates.channel,
+        }
+        .validate()
+    }
+
+    pub fn save(&self, config: &HieronymusConfig) -> Result<(), ProviderError> {
+        let release = self.clone().validate()?;
+        let contents = toml::to_string_pretty(&PersistedRelease {
+            updates: PersistedUpdates {
+                channel: release.update_channel,
+            },
+        })
+        .map_err(|error| ProviderError::Config(error.to_string()))?;
+        secure_write(&config.release_config_path(), contents.as_bytes())
+    }
+
+    fn validate(self) -> Result<Self, ProviderError> {
+        if matches!(self.update_channel.as_str(), "stable" | "dev") {
+            Ok(self)
+        } else {
+            Err(ProviderError::Config(
+                "release update channel must be stable or dev".into(),
+            ))
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedRelease {
+    updates: PersistedUpdates,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedUpdates {
+    channel: String,
+}
+
 impl HieronymusConfig {
+    #[must_use]
+    pub fn with_roots(data_root: PathBuf, config_root: PathBuf) -> Self {
+        Self {
+            data_root,
+            config_root,
+        }
+    }
+
     pub fn load(data_root: Option<PathBuf>) -> Result<Self, ConfigError> {
         Self::load_with_environment(data_root, &ProcessEnvironment)
     }
@@ -105,6 +178,11 @@ impl HieronymusConfig {
     #[must_use]
     pub fn semantic_config_path(&self) -> PathBuf {
         self.config_path("semantic.conf")
+    }
+
+    #[must_use]
+    pub fn release_config_path(&self) -> PathBuf {
+        self.config_path("release.conf")
     }
 
     #[must_use]

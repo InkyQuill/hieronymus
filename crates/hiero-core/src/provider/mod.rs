@@ -904,6 +904,15 @@ impl ProviderRegistry {
         self.cache.insert(&identity, models.clone(), now)?;
         Ok(models)
     }
+    pub async fn cached_models(
+        &self,
+        profile: &ProviderProfile,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<Vec<String>>> {
+        let credential = resolve_operation_credential(self.credentials.as_ref(), profile).await?;
+        let identity = profile_cache_identity(profile, credential.as_ref());
+        Ok(self.cache.get(&identity, now))
+    }
     fn http(&self, profile: ProviderProfile, model: &str) -> Result<HttpProvider> {
         let transport = self.factory.create(&profile)?;
         let dialect = match profile.provider_type() {

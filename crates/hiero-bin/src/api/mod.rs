@@ -1,4 +1,8 @@
+pub mod admin;
+pub mod contracts;
 pub mod error;
+pub mod providers;
+pub mod settings;
 pub mod system;
 
 use axum::{

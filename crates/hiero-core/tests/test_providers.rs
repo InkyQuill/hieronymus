@@ -620,6 +620,10 @@ async fn cache_identity_changes_when_inline_or_file_credential_rotates() {
         "secret-a",
     );
     assert_eq!(registry.suggest_models(&first, now).await.unwrap(), ["one"]);
+    assert_eq!(
+        registry.cached_models(&first, now).await.unwrap(),
+        Some(vec!["one".into()])
+    );
     assert_eq!(registry.suggest_models(&first, now).await.unwrap(), ["one"]);
     let second = keyed(
         profile("openai", "openai", "https://example.test/v1"),

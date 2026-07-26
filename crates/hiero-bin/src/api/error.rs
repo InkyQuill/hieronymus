@@ -54,6 +54,19 @@ impl ApiError {
             request_id,
         )
     }
+
+    pub(crate) fn bad_request(request_id: RequestId, message: &'static str) -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            message,
+            request_id,
+        )
+    }
+
+    pub(crate) fn not_found(request_id: RequestId, message: &'static str) -> Self {
+        Self::new(StatusCode::NOT_FOUND, "not_found", message, request_id)
+    }
 }
 
 impl IntoResponse for ApiError {

@@ -267,6 +267,33 @@ impl<'a> ConceptStore<'a> {
         commit_write(transaction, "archive", result).await
     }
 
+    pub async fn reinforce(&self, id: i64) -> Result<()> {
+        self.adjust_confidence(id, 0.15, "reinforce").await
+    }
+
+    pub async fn decay(&self, id: i64) -> Result<()> {
+        self.adjust_confidence(id, -0.15, "decay").await
+    }
+
+    async fn adjust_confidence(&self, id: i64, delta: f64, operation: &'static str) -> Result<()> {
+        let mut transaction = begin_immediate(self.pool, operation).await?;
+        let result = async {
+            require_active_concept(&mut transaction, id, operation).await?;
+            sqlx::query(
+                "UPDATE concepts SET confidence = min(1.0, max(0.0, confidence + ?)), updated_at = ? WHERE id = ?",
+            )
+            .bind(delta)
+            .bind(Utc::now())
+            .bind(id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|source| database(operation, source))?;
+            Ok(())
+        }
+        .await;
+        commit_write(transaction, operation, result).await
+    }
+
     pub async fn merge_concepts(&self, source: i64, target: i64, _reason: &str) -> Result<()> {
         if source == target {
             return Err(conflict("merge", "source and target must differ"));

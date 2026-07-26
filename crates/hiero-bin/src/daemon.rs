@@ -6,6 +6,7 @@ use std::{
     path::Path,
     str::FromStr,
     sync::Arc,
+    sync::atomic::AtomicBool,
 };
 
 #[cfg(unix)]
@@ -50,6 +51,7 @@ pub struct AppState {
     pub shutdown: broadcast::Sender<()>,
     pub auth_token: Arc<str>,
     pub port: u16,
+    pub dream_running: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +65,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/config", get(api::placeholder))
         .route("/assets/{*path}", get(api::placeholder))
         .route("/api/mcp/{operation}", post(api::placeholder))
+        .nest("/api/providers", api::providers::routes())
+        .nest("/api/settings", api::settings::routes())
+        .nest("/api/admin", api::admin::routes())
         .route("/api/{*path}", any(api::placeholder))
         .route("/ws/admin", get(api::placeholder))
         .route("/health", get(health))
@@ -100,6 +105,7 @@ where
         shutdown: shutdown_sender,
         auth_token,
         port,
+        dream_running: Arc::new(AtomicBool::new(false)),
     });
 
     axum::serve(listener, router)
