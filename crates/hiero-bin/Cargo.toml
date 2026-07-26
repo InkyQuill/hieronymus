@@ -21,6 +21,7 @@ indicatif.workspace = true
 mime_guess.workspace = true
 rmcp.workspace = true
 rust-embed.workspace = true
+rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

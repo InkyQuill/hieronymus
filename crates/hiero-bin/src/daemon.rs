@@ -4,9 +4,13 @@ use std::{
     io::{ErrorKind, Read, Write},
     net::{Ipv4Addr, SocketAddr},
     path::Path,
+    pin::Pin,
     str::FromStr,
-    sync::Arc,
-    sync::atomic::AtomicBool,
+    sync::{
+        Arc, Mutex as StdMutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 #[cfg(unix)]
@@ -30,7 +34,10 @@ use hiero_core::provider::ProviderTransport;
 use hiero_core::{config::HieronymusConfig, db};
 use sqlx::SqlitePool;
 use subtle::ConstantTimeEq;
-use tokio::sync::{Mutex, broadcast};
+use tokio::{
+    sync::{Notify, broadcast, mpsc, oneshot},
+    task::{JoinHandle, JoinSet},
+};
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
@@ -46,6 +53,8 @@ use crate::assets::{AssetSource, is_client_route, serve_assets, serve_client_rou
 const BODY_LIMIT: usize = 1_000_000;
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const AUTH_TOKEN_HEADER: &str = "x-hieronymus-token";
+const WORKER_CHANNEL_CAPACITY: usize = 64;
+const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -61,35 +70,193 @@ pub struct AppState {
     pub assets: AssetSource,
 }
 
-#[derive(Clone, Default)]
+type WorkerFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+enum WorkerCommand {
+    Spawn(WorkerFuture),
+    Shutdown(oneshot::Sender<()>),
+}
+
+struct WorkerSupervisorInner {
+    commands: mpsc::Sender<WorkerCommand>,
+    active: Arc<AtomicUsize>,
+    idle: Arc<Notify>,
+    closed: AtomicBool,
+    reaper: StdMutex<Option<JoinHandle<()>>>,
+}
+
+#[derive(Clone)]
 pub struct WorkerSupervisor {
-    tasks: Arc<Mutex<tokio::task::JoinSet<()>>>,
-    closed: Arc<AtomicBool>,
+    inner: Arc<WorkerSupervisorInner>,
+}
+
+impl Default for WorkerSupervisor {
+    fn default() -> Self {
+        let (commands, receiver) = mpsc::channel(WORKER_CHANNEL_CAPACITY);
+        let active = Arc::new(AtomicUsize::new(0));
+        let idle = Arc::new(Notify::new());
+        let reaper = tokio::spawn(run_worker_supervisor(
+            receiver,
+            active.clone(),
+            idle.clone(),
+        ));
+        Self {
+            inner: Arc::new(WorkerSupervisorInner {
+                commands,
+                active,
+                idle,
+                closed: AtomicBool::new(false),
+                reaper: StdMutex::new(Some(reaper)),
+            }),
+        }
+    }
 }
 
 impl WorkerSupervisor {
     pub async fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> bool {
-        let mut tasks = self.tasks.lock().await;
-        while tasks.try_join_next().is_some() {}
-        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+        if self.inner.closed.load(Ordering::Acquire) {
             return false;
         }
-        tasks.spawn(task);
-        true
+        self.inner
+            .commands
+            .send(WorkerCommand::Spawn(Box::pin(task)))
+            .await
+            .is_ok()
     }
 
     pub async fn shutdown(&self) {
-        self.closed
-            .store(true, std::sync::atomic::Ordering::Release);
-        let mut tasks = self.tasks.lock().await;
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
+        if !self.inner.closed.swap(true, Ordering::AcqRel) {
+            let (completed, observed) = oneshot::channel();
+            if self
+                .inner
+                .commands
+                .send(WorkerCommand::Shutdown(completed))
+                .await
+                .is_ok()
+            {
+                let _ = observed.await;
+            }
+        }
+        self.wait_idle().await;
+        let reaper = self
+            .inner
+            .reaper
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(reaper) = reaper {
+            let _ = reaper.await;
+        }
     }
 
     pub async fn active_count(&self) -> usize {
-        let mut tasks = self.tasks.lock().await;
-        while tasks.try_join_next().is_some() {}
-        tasks.len()
+        self.inner.active.load(Ordering::Acquire)
+    }
+
+    pub async fn wait_idle(&self) {
+        loop {
+            let idle = self.inner.idle.notified();
+            if self.inner.active.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            idle.await;
+        }
+    }
+}
+
+async fn run_worker_supervisor(
+    mut commands: mpsc::Receiver<WorkerCommand>,
+    active: Arc<AtomicUsize>,
+    idle: Arc<Notify>,
+) {
+    let mut tasks = JoinSet::new();
+    loop {
+        if tasks.is_empty() {
+            match commands.recv().await {
+                Some(WorkerCommand::Spawn(task)) => spawn_worker(&mut tasks, &active, task),
+                Some(WorkerCommand::Shutdown(completed)) => {
+                    finish_worker_shutdown(&mut commands, &mut tasks, &active, &idle).await;
+                    let _ = completed.send(());
+                    return;
+                }
+                None => {
+                    abort_workers(&mut tasks, &active, &idle).await;
+                    return;
+                }
+            }
+        } else {
+            tokio::select! {
+                command = commands.recv() => {
+                    match command {
+                        Some(WorkerCommand::Spawn(task)) => {
+                            spawn_worker(&mut tasks, &active, task);
+                        }
+                        Some(WorkerCommand::Shutdown(completed)) => {
+                            finish_worker_shutdown(
+                                &mut commands,
+                                &mut tasks,
+                                &active,
+                                &idle,
+                            ).await;
+                            let _ = completed.send(());
+                            return;
+                        }
+                        None => {
+                            abort_workers(&mut tasks, &active, &idle).await;
+                            return;
+                        }
+                    }
+                }
+                joined = tasks.join_next() => {
+                    if joined.is_some() {
+                        record_worker_completion(&active, &idle);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn spawn_worker(tasks: &mut JoinSet<()>, active: &AtomicUsize, task: WorkerFuture) {
+    active.fetch_add(1, Ordering::AcqRel);
+    tasks.spawn(task);
+}
+
+async fn finish_worker_shutdown(
+    commands: &mut mpsc::Receiver<WorkerCommand>,
+    tasks: &mut JoinSet<()>,
+    active: &AtomicUsize,
+    idle: &Notify,
+) {
+    commands.close();
+    while let Some(command) = commands.recv().await {
+        if let WorkerCommand::Spawn(task) = command {
+            spawn_worker(tasks, active, task);
+        }
+    }
+    let graceful = async {
+        while tasks.join_next().await.is_some() {
+            record_worker_completion(active, idle);
+        }
+    };
+    if tokio::time::timeout(WORKER_SHUTDOWN_GRACE, graceful)
+        .await
+        .is_err()
+    {
+        abort_workers(tasks, active, idle).await;
+    }
+}
+
+async fn abort_workers(tasks: &mut JoinSet<()>, active: &AtomicUsize, idle: &Notify) {
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {
+        record_worker_completion(active, idle);
+    }
+}
+
+fn record_worker_completion(active: &AtomicUsize, idle: &Notify) {
+    if active.fetch_sub(1, Ordering::AcqRel) == 1 {
+        idle.notify_waiters();
     }
 }
 
@@ -144,7 +311,7 @@ where
     let router = build_router(AppState {
         pool,
         config: Arc::new(config),
-        shutdown: shutdown_sender,
+        shutdown: shutdown_sender.clone(),
         auth_token,
         port,
         dream_running: Arc::new(AtomicBool::new(false)),
@@ -154,22 +321,22 @@ where
         assets,
     });
 
-    let shutdown_workers = workers.clone();
+    let shutdown_broadcast = shutdown_sender.clone();
     let result = axum::serve(listener, router)
-        .with_graceful_shutdown(await_shutdown_and_workers(
+        .with_graceful_shutdown(await_shutdown_and_broadcast(
             shutdown,
             shutdown_receiver,
-            shutdown_workers,
+            shutdown_broadcast,
         ))
         .await;
     workers.shutdown().await;
     result.context("daemon server failed")
 }
 
-pub async fn await_shutdown_and_workers<S>(
+pub async fn await_shutdown_and_broadcast<S>(
     shutdown: S,
     mut shutdown_receiver: broadcast::Receiver<()>,
-    workers: WorkerSupervisor,
+    shutdown_sender: broadcast::Sender<()>,
 ) where
     S: Future<Output = ()> + Send,
 {
@@ -177,7 +344,7 @@ pub async fn await_shutdown_and_workers<S>(
         () = shutdown => {}
         _ = shutdown_receiver.recv() => {}
     }
-    workers.shutdown().await;
+    let _ = shutdown_sender.send(());
 }
 
 pub async fn bind_listener(port: u16) -> Result<tokio::net::TcpListener> {
@@ -337,6 +504,7 @@ async fn authorize_request(
     let authorized = match route_policy(request.uri().path()) {
         RoutePolicy::Static => true,
         RoutePolicy::Browser => has_origin || token_valid,
+        RoutePolicy::WebSocket => has_origin,
         RoutePolicy::Authenticated => token_valid,
     };
     if authorized {
@@ -378,6 +546,7 @@ fn valid_token(headers: &HeaderMap, expected: &str) -> bool {
 enum RoutePolicy {
     Static,
     Browser,
+    WebSocket,
     Authenticated,
 }
 
@@ -387,7 +556,9 @@ fn route_policy(path: &str) -> RoutePolicy {
         || is_client_route(path)
     {
         RoutePolicy::Static
-    } else if path == "/ws/admin" || (path.starts_with("/api/") && !path.starts_with("/api/mcp/")) {
+    } else if path == "/ws/admin" {
+        RoutePolicy::WebSocket
+    } else if path.starts_with("/api/") && !path.starts_with("/api/mcp/") {
         RoutePolicy::Browser
     } else {
         RoutePolicy::Authenticated

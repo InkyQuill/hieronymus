@@ -2,8 +2,10 @@ use std::{
     env,
     ffi::OsString,
     path::{Component, Path, PathBuf},
-    sync::Arc,
 };
+
+#[cfg(unix)]
+use std::{io::Read, sync::Arc};
 
 use anyhow::{Result, bail};
 use axum::{
@@ -34,7 +36,14 @@ pub struct Asset;
 #[derive(Clone, Debug)]
 pub enum AssetSource {
     Embedded,
-    Override(Arc<PathBuf>),
+    #[cfg(unix)]
+    Override(Arc<OverrideRoot>),
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+pub struct OverrideRoot {
+    descriptor: std::os::fd::OwnedFd,
 }
 
 impl AssetSource {
@@ -53,7 +62,24 @@ impl AssetSource {
         if !metadata.is_dir() {
             bail!("configured frontend asset root is unavailable");
         }
-        Ok(Self::Override(Arc::new(root)))
+        #[cfg(unix)]
+        {
+            let descriptor = rustix::fs::open(
+                &root,
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::DIRECTORY
+                    | rustix::fs::OFlags::NOFOLLOW
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )
+            .map_err(|_| anyhow::anyhow!("configured frontend asset root is unavailable"))?;
+            Ok(Self::Override(Arc::new(OverrideRoot { descriptor })))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = root;
+            bail!("filesystem frontend asset overrides are unsupported on this platform")
+        }
     }
 
     pub fn from_environment() -> Result<Self> {
@@ -71,7 +97,16 @@ impl AssetSource {
         let path = safe_relative_path(path)?;
         match self {
             Self::Embedded => Asset::get(path.to_str()?).map(|file| file.data.into_owned()),
-            Self::Override(root) => load_override(root, &path).await,
+            #[cfg(unix)]
+            Self::Override(root) => {
+                let root = root.clone();
+                tokio::task::spawn_blocking(move || {
+                    load_override_unix_with_hook(&root, &path, || {})
+                })
+                .await
+                .ok()
+                .flatten()
+            }
         }
     }
 }
@@ -108,14 +143,20 @@ pub(crate) async fn serve_client_route(
 pub(crate) fn is_client_route(path: &str) -> bool {
     let path = path.trim_start_matches('/');
     !path.is_empty()
-        && !path.starts_with("api/")
-        && !path.starts_with("mcp")
-        && !path.starts_with("ws/")
-        && !matches!(path, "health" | "status" | "shutdown")
+        && !is_reserved_namespace(path)
         && path
             .rsplit('/')
             .next()
             .is_some_and(|segment| !segment.contains('.'))
+}
+
+fn is_reserved_namespace(path: &str) -> bool {
+    ["api", "mcp", "ws", "health", "status", "shutdown"]
+        .into_iter()
+        .any(|namespace| {
+            path.strip_prefix(namespace)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
 }
 
 async fn serve(source: &AssetSource, path: &str, index: bool, request_id: RequestId) -> Response {
@@ -155,16 +196,52 @@ fn safe_relative_path(path: &str) -> Option<PathBuf> {
     Some(path.to_owned())
 }
 
-async fn load_override(root: &Path, path: &Path) -> Option<Vec<u8>> {
-    let candidate = tokio::fs::canonicalize(root.join(path)).await.ok()?;
-    if !candidate.starts_with(root) {
+#[cfg(unix)]
+fn load_override_unix_with_hook(
+    root: &OverrideRoot,
+    path: &Path,
+    before_file_open: impl FnOnce(),
+) -> Option<Vec<u8>> {
+    let mut components = path.components();
+    let Component::Normal(file_name) = components.next_back()? else {
+        return None;
+    };
+    let mut current = rustix::io::dup(&root.descriptor).ok()?;
+    for component in components {
+        let Component::Normal(component) = component else {
+            return None;
+        };
+        current = rustix::fs::openat(
+            &current,
+            component,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .ok()?;
+    }
+    before_file_open();
+    let descriptor = rustix::fs::openat(
+        &current,
+        file_name,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::NONBLOCK
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .ok()?;
+    let metadata = rustix::fs::fstat(&descriptor).ok()?;
+    if !rustix::fs::FileType::from_raw_mode(metadata.st_mode).is_file() {
         return None;
     }
-    let metadata = tokio::fs::metadata(&candidate).await.ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    tokio::fs::read(candidate).await.ok()
+    let mut bytes = Vec::new();
+    std::fs::File::from(descriptor)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    Some(bytes)
 }
 
 fn content_type(path: &str) -> &'static str {
@@ -183,8 +260,9 @@ fn has_content_hash(path: &str) -> bool {
     let Some(stem) = Path::new(path).file_stem().and_then(|value| value.to_str()) else {
         return false;
     };
-    stem.rsplit_once('-').is_some_and(|(_, suffix)| {
-        suffix.len() >= 8
+    stem.match_indices('-').any(|(separator, _)| {
+        let suffix = &stem[separator + 1..];
+        suffix.len() == 8
             && suffix
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
@@ -199,4 +277,67 @@ fn not_found(request_id: RequestId) -> Response {
         request_id,
     )
     .into_response()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use std::{fs, path::PathBuf, sync::mpsc, time::Duration};
+
+    use tempfile::TempDir;
+
+    use super::{AssetSource, load_override_unix_with_hook};
+
+    #[tokio::test]
+    async fn override_read_is_anchored_when_ancestor_and_file_are_swapped_concurrently() {
+        let temp = TempDir::new().expect("temporary directory should be created");
+        let root = temp.path().join("dist");
+        let assets = root.join("assets");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&assets).expect("asset directory should be created");
+        fs::create_dir_all(&outside).expect("outside directory should be created");
+        fs::write(assets.join("app.js"), b"safe").expect("safe fixture should be written");
+        let fifo = outside.join("app.js");
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            &fifo,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .expect("outside FIFO should be created");
+        let source = AssetSource::override_root(&root).expect("override root should open");
+        let AssetSource::Override(root_handle) = source else {
+            panic!("fixture should use an override root");
+        };
+
+        let parked = root.join("parked-assets");
+        let (opened_tx, opened_rx) = mpsc::sync_channel(0);
+        let (swapped_tx, swapped_rx) = mpsc::sync_channel(0);
+        let swapper = std::thread::spawn(move || {
+            opened_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("reader should reach the final component");
+            fs::rename(&assets, &parked).expect("opened ancestor should be renamed");
+            std::os::unix::fs::symlink(&outside, &assets)
+                .expect("root entry should be replaced by an outside symlink");
+            fs::remove_file(parked.join("app.js")).expect("safe file should be removed");
+            std::os::unix::fs::symlink(&fifo, parked.join("app.js"))
+                .expect("opened ancestor file should be replaced by an outside FIFO symlink");
+            swapped_tx.send(()).expect("reader should be released");
+        });
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            tokio::task::spawn_blocking(move || {
+                load_override_unix_with_hook(&root_handle, &PathBuf::from("assets/app.js"), || {
+                    opened_tx.send(()).expect("swapper should be ready");
+                    swapped_rx.recv().expect("swap should finish");
+                })
+            }),
+        )
+        .await
+        .expect("anchored read must not hang on the outside FIFO")
+        .expect("blocking reader should not panic");
+        swapper.join().expect("swapper should not panic");
+
+        assert_eq!(result, None);
+    }
 }

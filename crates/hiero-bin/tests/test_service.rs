@@ -23,8 +23,7 @@ use hiero_bin::{
     },
     assets::AssetSource,
     daemon::{
-        AppState, WorkerSupervisor, await_shutdown_and_workers, bind_listener, build_router,
-        load_or_create_auth_token, serve,
+        AppState, WorkerSupervisor, bind_listener, build_router, load_or_create_auth_token, serve,
     },
 };
 use hiero_core::{
@@ -40,6 +39,10 @@ use hiero_core::{
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::sync::broadcast;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::oneshot,
+};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message, client::IntoClientRequest},
@@ -270,7 +273,7 @@ async fn router_registers_every_phase_005_section_2_route() {
         (Method::GET, "/config", StatusCode::OK),
         (Method::GET, "/assets/app.js", StatusCode::NOT_FOUND),
         (Method::GET, "/api/providers", StatusCode::OK),
-        (Method::GET, "/ws/admin", StatusCode::BAD_REQUEST),
+        (Method::GET, "/ws/admin", StatusCode::UNAUTHORIZED),
         (Method::GET, "/health", StatusCode::OK),
         (Method::GET, "/status", StatusCode::OK),
         (Method::POST, "/shutdown", StatusCode::OK),
@@ -994,19 +997,34 @@ async fn manual_dream_worker_supervisor_cancels_and_joins_in_flight_work() {
     );
     entered.notified().await;
 
-    let (shutdown, receiver) = broadcast::channel(1);
     let shutdown_workers = workers.clone();
-    let joined = tokio::spawn(await_shutdown_and_workers(
-        std::future::pending(),
-        receiver,
-        shutdown_workers,
-    ));
-    shutdown.send(()).expect("shutdown should be observed");
+    let joined = tokio::spawn(async move {
+        shutdown_workers.shutdown().await;
+    });
     joined.await.expect("shutdown join should complete");
 
     assert!(!running.load(std::sync::atomic::Ordering::Acquire));
     assert_eq!(workers.active_count().await, 0);
     assert!(!workers.spawn(async {}).await);
+}
+
+#[tokio::test]
+async fn manual_worker_supervisor_reaps_completion_without_spawn_poll_or_shutdown() {
+    let workers = WorkerSupervisor::default();
+    let (completed, observed) = tokio::sync::oneshot::channel();
+    assert!(
+        workers
+            .spawn(async move {
+                let _ = completed.send(());
+            })
+            .await
+    );
+    observed.await.expect("worker should complete");
+
+    tokio::time::timeout(Duration::from_secs(1), workers.wait_idle())
+        .await
+        .expect("continuous reaper should observe completion");
+    assert_eq!(workers.active_count().await, 0);
 }
 
 #[tokio::test]
@@ -1570,6 +1588,7 @@ async fn assets_embedded_bundle_serves_index_and_hashed_files_with_cache_contrac
     );
 
     let script = router
+        .clone()
         .oneshot(request(
             Method::GET,
             "/assets/index-DnP9ckhr.js",
@@ -1584,6 +1603,20 @@ async fn assets_embedded_bundle_serves_index_and_hashed_files_with_cache_contrac
     );
     assert_eq!(
         script.headers()[header::CACHE_CONTROL],
+        "public, max-age=31536000, immutable"
+    );
+
+    let stylesheet = router
+        .oneshot(request(
+            Method::GET,
+            "/assets/index-BdYtw-xD.css",
+            Body::empty(),
+        ))
+        .await
+        .expect("router should serve an embedded hashed stylesheet");
+    assert_eq!(stylesheet.status(), StatusCode::OK);
+    assert_eq!(
+        stylesheet.headers()[header::CACHE_CONTROL],
         "public, max-age=31536000, immutable"
     );
 }
@@ -1602,6 +1635,11 @@ async fn assets_override_serves_mime_cache_and_spa_fallback_without_frontend_cha
         b"body{color:teal}",
     )
     .expect("override stylesheet should be written");
+    std::fs::write(
+        temp.path().join("assets").join("guide-reference.css"),
+        b"body{color:purple}",
+    )
+    .expect("non-hashed stylesheet should be written");
     let (mut state, _) = test_state().await;
     state.assets = override_assets(temp.path());
     let router = build_router(state);
@@ -1625,6 +1663,21 @@ async fn assets_override_serves_mime_cache_and_spa_fallback_without_frontend_cha
         "public, max-age=31536000, immutable"
     );
     assert_eq!(response_body(stylesheet).await, b"body{color:teal}");
+
+    let non_hashed = router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/assets/guide-reference.css",
+            Body::empty(),
+        ))
+        .await
+        .expect("router should serve a non-hashed override asset");
+    assert_eq!(non_hashed.status(), StatusCode::OK);
+    assert_eq!(
+        non_hashed.headers()[header::CACHE_CONTROL],
+        "public, max-age=3600"
+    );
 
     let client_route = router
         .oneshot(request(Method::GET, "/memories/selected", Body::empty()))
@@ -1749,4 +1802,188 @@ async fn events_shutdown_closes_the_websocket_and_joins_its_worker() {
     );
     wait_for_no_workers(&workers).await;
     server.abort();
+}
+
+#[tokio::test]
+async fn events_serve_external_shutdown_closes_websocket_then_drains_in_flight_http() {
+    let reservation = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("test port should be reservable");
+    let port = reservation
+        .local_addr()
+        .expect("listener should have an address")
+        .port();
+    drop(reservation);
+    let temp = TempDir::new().expect("temporary directory should be created");
+    let config = HieronymusConfig::with_roots(temp.path().join("data"), temp.path().join("config"));
+    let token_path = config.auth_token_path();
+    let (signal, shutdown) = oneshot::channel();
+    let server = tokio::spawn(serve(config, port, async move {
+        let _ = shutdown.await;
+    }));
+    let token = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Ok(token) = tokio::fs::read_to_string(&token_path).await {
+                break token.trim().to_owned();
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("daemon should publish its token");
+
+    let mut websocket_request = format!("ws://127.0.0.1:{port}/ws/admin")
+        .into_client_request()
+        .expect("WebSocket URL should produce a request");
+    websocket_request.headers_mut().insert(
+        header::ORIGIN,
+        format!("http://127.0.0.1:{port}")
+            .parse()
+            .expect("test Origin should be valid"),
+    );
+    websocket_request.headers_mut().insert(
+        "x-hieronymus-token",
+        token.parse().expect("test token should be a valid header"),
+    );
+    let (mut socket, _) = connect_async(websocket_request)
+        .await
+        .expect("same-origin WebSocket should connect through serve");
+
+    let mut in_flight = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("in-flight request should connect");
+    in_flight
+        .write_all(
+            format!(
+                "POST /api/mcp/probe HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+                 X-Hieronymus-Token: {token}\r\nContent-Length: 1\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .expect("partial request headers should be sent");
+
+    let mut accepted_after_partial = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("health probe should connect");
+    accepted_after_partial
+        .write_all(
+            format!(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+                 X-Hieronymus-Token: {token}\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .expect("health probe should be sent");
+    let mut health = Vec::new();
+    accepted_after_partial
+        .read_to_end(&mut health)
+        .await
+        .expect("health response should be read");
+    assert!(health.starts_with(b"HTTP/1.1 200"));
+
+    signal
+        .send(())
+        .expect("external shutdown should be delivered");
+    let close = tokio::time::timeout(Duration::from_secs(1), socket.next())
+        .await
+        .expect("external shutdown should close WebSocket promptly")
+        .expect("server should send a close frame")
+        .expect("close frame should be valid");
+    assert!(matches!(
+        close,
+        Message::Close(Some(frame))
+            if frame.code
+                == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Away
+    ));
+    assert!(
+        !server.is_finished(),
+        "Axum should still be draining the partial HTTP request"
+    );
+
+    in_flight
+        .write_all(b"x")
+        .await
+        .expect("in-flight request should remain writable during drain");
+    let mut response = Vec::new();
+    in_flight
+        .read_to_end(&mut response)
+        .await
+        .expect("drained response should be readable");
+    assert!(response.starts_with(b"HTTP/1.1 501"));
+    tokio::time::timeout(Duration::from_secs(3), server)
+        .await
+        .expect("daemon should finish after in-flight request drains")
+        .expect("daemon task should not panic")
+        .expect("daemon should stop cleanly");
+}
+
+#[tokio::test]
+async fn events_websocket_requires_same_origin_even_with_a_valid_daemon_token() {
+    let (state, _) = test_state().await;
+    let router = build_router(state);
+
+    let missing_origin = router
+        .clone()
+        .oneshot(request(Method::GET, "/ws/admin", Body::empty()))
+        .await
+        .expect("router should reject an origin-less WebSocket request");
+    assert_eq!(missing_origin.status(), StatusCode::UNAUTHORIZED);
+
+    let same_origin = router
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/ws/admin")
+                .header(header::HOST, LOCAL_HOST)
+                .header(header::ORIGIN, format!("http://{LOCAL_HOST}"))
+                .body(Body::empty())
+                .expect("same-origin request should build"),
+        )
+        .await
+        .expect("router should authorize a same-origin WebSocket request");
+    assert_eq!(same_origin.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn assets_spa_fallback_never_claims_reserved_transport_namespaces() {
+    let (state, _) = test_state().await;
+    let router = build_router(state);
+    let reserved = [
+        "/api",
+        "/api/unknown",
+        "/mcp",
+        "/mcp/unknown",
+        "/ws",
+        "/ws/unknown",
+        "/health",
+        "/health/unknown",
+        "/status",
+        "/status/unknown",
+        "/shutdown",
+        "/shutdown/unknown",
+    ];
+
+    for path in reserved {
+        let response = router
+            .clone()
+            .oneshot(request(Method::GET, path, Body::empty()))
+            .await
+            .expect("reserved namespace should answer");
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let body = response_body(response).await;
+        assert_ne!(content_type, "text/html; charset=utf-8", "{path}");
+        assert!(
+            !body
+                .windows(b"<div id=\"app\"></div>".len())
+                .any(|window| window == b"<div id=\"app\"></div>"),
+            "{path}"
+        );
+    }
 }
