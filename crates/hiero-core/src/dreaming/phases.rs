@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    ConceptsOutput, CoverageAuditOutput, ReinforcementOutput, RelationsOutput,
-    SourcedCrystalCandidate, TerminologyCandidatesOutput, WorkflowProfile,
+    ConceptsOutput, CoverageAuditOutput, MALFORMED_OUTPUT_PENALTY, ReinforcementOutput,
+    RelationsOutput, SourcedCrystalCandidate, TerminologyCandidatesOutput, WorkflowProfile,
 };
 
 #[async_trait]
@@ -261,16 +261,21 @@ fn decode_and_validate<T: ValidatedPhaseOutput>(
     parsed: ProviderPassOutput,
     memories: &[ShortTermMemory],
 ) -> Result<T, DreamPhaseError> {
+    let recovery = match (parsed.recovered, parsed.malformed_penalty) {
+        (false, 0.0) => RecoveryMetadata::default(),
+        (true, MALFORMED_OUTPUT_PENALTY) => RecoveryMetadata {
+            recovered: true,
+            malformed_penalty: MALFORMED_OUTPUT_PENALTY,
+        },
+        _ => return Err(DreamPhaseError::InvalidSchema),
+    };
     let mut output: T =
         serde_json::from_value(parsed.value).map_err(|_| DreamPhaseError::InvalidSchema)?;
     let allowed_memory_ids = memories.iter().map(|memory| memory.id).collect();
     if !output.is_valid(&allowed_memory_ids) {
         return Err(DreamPhaseError::InvalidSchema);
     }
-    output.apply_recovery(RecoveryMetadata {
-        recovered: parsed.recovered,
-        malformed_penalty: parsed.malformed_penalty,
-    });
+    output.apply_recovery(recovery);
     Ok(output)
 }
 

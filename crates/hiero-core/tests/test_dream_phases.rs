@@ -704,6 +704,62 @@ async fn recovered_crystal_phase_marks_output_and_applies_malformed_penalty() {
 }
 
 #[tokio::test]
+async fn execute_provider_passes_rejects_invalid_recovery_metadata() {
+    let crystal = json!({"crystals":[{
+        "crystal_type": "observation",
+        "title": "Evidence",
+        "text": "Knowledge.",
+        "source_credibility": "expert",
+        "rule_intent": "",
+        "confidence": 0.8,
+        "source_memory_ids": [1]
+    }]});
+    let invalid_metadata = [
+        (true, f64::NAN),
+        (true, f64::INFINITY),
+        (true, -0.2),
+        (false, 0.2),
+        (true, 0.1),
+    ];
+    let pool = SqlitePoolOptions::new()
+        .connect_lazy("sqlite::memory:")
+        .unwrap();
+
+    for (recovered, malformed_penalty) in invalid_metadata {
+        let mut resolver = RecordingResolver::default();
+        resolver.outputs.insert(
+            ("knowledge".into(), "model".into()),
+            ProviderPassOutput {
+                value: crystal.clone(),
+                recovered,
+                malformed_penalty,
+            },
+        );
+
+        let error = execute_provider_passes(
+            &pool,
+            &resolver,
+            &[profile(
+                PassName::KnowledgeCrystals,
+                "knowledge",
+                "model",
+                10,
+            )],
+            TranslationContext::new("book", "en", "ru"),
+            vec![memory(1)],
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "dream phase output schema is invalid",
+            "accepted recovered={recovered} malformed_penalty={malformed_penalty:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn terminology_limit_uses_raw_count_before_dedup_and_short_circuits() {
     let proposal = json!({
         "concept_text": "Sense",
