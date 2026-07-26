@@ -1,10 +1,10 @@
 use chrono::Utc;
 use hiero_core::{
-    db::{MemoryEventRecord, connect_url},
+    db::{CrystalActivationRecord, MemoryEventRecord, connect_url},
     domain::{AddCrystalInput, CrystalStore, FeedbackEvent, FeedbackStore, WorkspaceStore},
     dreaming::{
-        DreamPhase, ReconsolidationDecision, ReconsolidationOutcome, Reconsolidator,
-        ReinforcementManager, diff_ratio, reconsolidation_decision,
+        DreamPhase, LinkReinforcer, ReconsolidationDecision, ReconsolidationOutcome,
+        Reconsolidator, ReinforcementManager, diff_ratio, reconsolidation_decision,
     },
 };
 use sqlx::Row;
@@ -325,4 +325,211 @@ async fn supersession_failure_rolls_back_new_row_status_and_archive() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn reconsolidation_retry_converges_after_an_earlier_supersession_commits() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let first_id = store.add(input("first old wording")).await.unwrap();
+    let second_id = store.add(input("second old wording")).await.unwrap();
+    let first_memory = working_copy(&pool, first_id, "first completely revised wording").await;
+    let second_memory = working_copy(&pool, second_id, "second completely revised wording").await;
+    let first_source = store.get(first_id).await.unwrap();
+    let second_source = store.get(second_id).await.unwrap();
+    let original_input = vec![
+        (first_memory.clone(), first_source.clone()),
+        (second_memory.clone(), second_source.clone()),
+    ];
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER fail_second_supersession
+         BEFORE UPDATE OF status ON crystals
+         WHEN OLD.id={second_id} AND NEW.status='superseded'
+         BEGIN SELECT RAISE(ABORT,'second supersession failure'); END"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert!(
+        Reconsolidator::new(0.20, 18)
+            .run(&pool, original_input.clone())
+            .await
+            .is_err()
+    );
+    let first_replacement: i64 =
+        sqlx::query_scalar("SELECT id FROM crystals WHERE supersedes_crystal_id=?")
+            .bind(first_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(store.get(first_id).await.unwrap().status, "superseded");
+    assert_eq!(store.get(second_id).await.unwrap().status, "active");
+    assert!(
+        WorkspaceStore::new(&pool)
+            .list_short_term(first_memory.session_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        WorkspaceStore::new(&pool)
+            .list_short_term(second_memory.session_id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    sqlx::query("DROP TRIGGER fail_second_supersession")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let outcomes = Reconsolidator::new(0.20, 18)
+        .run(&pool, original_input)
+        .await
+        .unwrap();
+
+    assert_eq!(outcomes.len(), 2);
+    assert_eq!(
+        outcomes[0],
+        ReconsolidationOutcome::Superseded {
+            old_crystal_id: first_id,
+            new_crystal_id: first_replacement,
+        }
+    );
+    assert!(matches!(
+        outcomes[1],
+        ReconsolidationOutcome::Superseded {
+            old_crystal_id,
+            ..
+        } if old_crystal_id == second_id
+    ));
+    let replacement_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM crystals WHERE supersedes_crystal_id IN (?,?)")
+            .bind(first_id)
+            .bind(second_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(replacement_count, 2);
+}
+
+#[tokio::test]
+async fn in_place_reconsolidation_retry_survives_later_same_cycle_combination() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let source_id = store.add(input("stable wording")).await.unwrap();
+    let memory = working_copy(&pool, source_id, "stable wording").await;
+    let source_snapshot = store.get(source_id).await.unwrap();
+    let retry_input = vec![(memory, source_snapshot)];
+    let reconsolidator = Reconsolidator::new(0.20, 19);
+    assert_eq!(
+        reconsolidator
+            .run(&pool, retry_input.clone())
+            .await
+            .unwrap(),
+        [ReconsolidationOutcome::ReinforcedInPlace {
+            crystal_id: source_id,
+        }]
+    );
+    let mut partner_input = input("stable wording");
+    partner_input.source_credibility = "expert".into();
+    let partner_id = store.add(partner_input).await.unwrap();
+    let now = Utc::now();
+    let activation = |id, crystal_id| CrystalActivationRecord {
+        id,
+        crystal_id,
+        session_id: 1,
+        recall_query: "q".into(),
+        rank: id,
+        score: 1.0,
+        reason: String::new(),
+        outcome: Some("useful".into()),
+        cycle_id: Some(19),
+        created_at: now,
+    };
+    LinkReinforcer::new(19)
+        .run(
+            &pool,
+            vec![activation(1, source_id), activation(2, partner_id)],
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.get(source_id).await.unwrap().status, "superseded");
+
+    assert_eq!(
+        reconsolidator.run(&pool, retry_input).await.unwrap(),
+        [ReconsolidationOutcome::ReinforcedInPlace {
+            crystal_id: source_id,
+        }]
+    );
+    let events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memory_events
+         WHERE crystal_id=? AND event_type='reconsolidated_in_place' AND cycle_id=19",
+    )
+    .bind(source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(events, 1);
+}
+
+#[tokio::test]
+async fn retry_discriminates_mixed_outcomes_for_two_working_copies_of_one_source() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let source_id = store.add(input("shared source wording")).await.unwrap();
+    let equivalent = working_copy(&pool, source_id, "shared source wording").await;
+    let revised = working_copy(
+        &pool,
+        source_id,
+        "completely different revised source wording",
+    )
+    .await;
+    let source_snapshot = store.get(source_id).await.unwrap();
+    let original_input = vec![
+        (equivalent.clone(), source_snapshot.clone()),
+        (revised.clone(), source_snapshot),
+    ];
+    let reconsolidator = Reconsolidator::new(0.20, 20);
+
+    let first = reconsolidator
+        .run(&pool, original_input.clone())
+        .await
+        .unwrap();
+    let ReconsolidationOutcome::Superseded { new_crystal_id, .. } = first[1] else {
+        panic!("the revised working copy must supersede");
+    };
+    assert_eq!(
+        first,
+        [
+            ReconsolidationOutcome::ReinforcedInPlace {
+                crystal_id: source_id,
+            },
+            ReconsolidationOutcome::Superseded {
+                old_crystal_id: source_id,
+                new_crystal_id,
+            },
+        ]
+    );
+
+    assert_eq!(
+        reconsolidator.run(&pool, original_input).await.unwrap(),
+        first
+    );
+    let replacement_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM crystals WHERE supersedes_crystal_id=?")
+            .bind(source_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(replacement_count, 1);
+    let replacement_source: i64 =
+        sqlx::query_scalar("SELECT short_term_memory_id FROM crystal_sources WHERE crystal_id=?")
+            .bind(new_crystal_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(replacement_source, revised.id);
 }

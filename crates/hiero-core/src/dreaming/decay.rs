@@ -98,6 +98,23 @@ impl DreamPhase for DecayManager {
                 transaction.commit().await?;
                 continue;
             }
+            let already_decayed: bool = sqlx::query_scalar(
+                "SELECT EXISTS(
+                    SELECT 1
+                    FROM memory_events
+                    WHERE crystal_id=?
+                      AND event_type='cycle_decay'
+                      AND cycle_id=?
+                )",
+            )
+            .bind(id)
+            .bind(input.current_cycle)
+            .fetch_one(&mut *transaction)
+            .await?;
+            if already_decayed {
+                transaction.commit().await?;
+                continue;
+            }
             let delta = decay_delta(&crystal);
             let (strength, confidence, status) = apply_score_delta(&crystal, delta);
             let now = Utc::now();
@@ -164,7 +181,17 @@ fn decay_query(
         .push(" AND coalesce(last_activated_cycle,-1) != ")
         .push_bind(scope.current_cycle)
         .push(" AND coalesce(last_reinforced_cycle,0) < ")
-        .push_bind(scope.stale_before_cycle);
+        .push_bind(scope.stale_before_cycle)
+        .push(
+            " AND NOT EXISTS(
+                SELECT 1
+                FROM memory_events
+                WHERE memory_events.crystal_id=crystals.id
+                  AND memory_events.event_type='cycle_decay'
+                  AND memory_events.cycle_id=",
+        )
+        .push_bind(scope.current_cycle)
+        .push(")");
     if !protected.is_empty() {
         query.push(" AND id NOT IN (");
         let mut separated = query.separated(",");

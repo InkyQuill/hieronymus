@@ -59,12 +59,6 @@ impl DreamPhase for Reconsolidator {
         let mut outcomes = Vec::with_capacity(input.len());
         for (memory, source) in input {
             let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
-            let source = read_crystal(&mut transaction, source.id).await?;
-            if !matches!(source.status.as_str(), "active" | "candidate") {
-                return Err(DreamPhaseError::InvalidInput(
-                    "working-copy source is no longer active or candidate",
-                ));
-            }
             let (working_text, source_crystal_id, archived_at): (
                 String,
                 Option<i64>,
@@ -80,9 +74,19 @@ impl DreamPhase for Reconsolidator {
                     "working copy does not reference its supplied source crystal",
                 ));
             }
+            let source = read_crystal(&mut transaction, source.id).await?;
             if archived_at.is_some() {
+                let outcome =
+                    completed_outcome(&mut transaction, &source, memory.id, self.current_cycle)
+                        .await?;
                 transaction.commit().await?;
+                outcomes.push(outcome);
                 continue;
+            }
+            if !matches!(source.status.as_str(), "active" | "candidate") {
+                return Err(DreamPhaseError::InvalidInput(
+                    "working-copy source is no longer active or candidate",
+                ));
             }
             let outcome =
                 match reconsolidation_decision(&working_text, &source.text, self.threshold) {
@@ -118,6 +122,67 @@ impl DreamPhase for Reconsolidator {
         }
         Ok(outcomes)
     }
+}
+
+async fn completed_outcome(
+    transaction: &mut Transaction<'static, Sqlite>,
+    source: &CrystalRecord,
+    memory_id: i64,
+    current_cycle: i64,
+) -> Result<ReconsolidationOutcome, DreamPhaseError> {
+    let reinforced: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM memory_events
+            WHERE crystal_id=?
+              AND event_type='reconsolidated_in_place'
+              AND applied=1
+              AND cycle_id=?
+              AND evidence=?
+        )",
+    )
+    .bind(source.id)
+    .bind(current_cycle)
+    .bind(working_copy_evidence(memory_id))
+    .fetch_one(&mut **transaction)
+    .await?;
+    if reinforced {
+        return Ok(ReconsolidationOutcome::ReinforcedInPlace {
+            crystal_id: source.id,
+        });
+    }
+    if source.status == "superseded" {
+        let replacement_id: Option<i64> = sqlx::query_scalar(
+            "SELECT crystals.id
+             FROM crystals
+             JOIN crystal_sources
+               ON crystal_sources.crystal_id=crystals.id
+             WHERE crystals.supersedes_crystal_id=?
+               AND crystal_sources.short_term_memory_id=?
+             ORDER BY crystals.id
+             LIMIT 1",
+        )
+        .bind(source.id)
+        .bind(memory_id)
+        .fetch_optional(&mut **transaction)
+        .await?;
+        let Some(new_crystal_id) = replacement_id else {
+            return Err(DreamPhaseError::InvalidInput(
+                "archived working copy has no completed supersession",
+            ));
+        };
+        return Ok(ReconsolidationOutcome::Superseded {
+            old_crystal_id: source.id,
+            new_crystal_id,
+        });
+    }
+    Err(DreamPhaseError::InvalidInput(
+        "archived working copy has no completed reconsolidation",
+    ))
+}
+
+fn working_copy_evidence(memory_id: i64) -> String {
+    format!("working_copy:{memory_id}")
 }
 
 #[must_use]
@@ -202,8 +267,9 @@ async fn reinforce_in_place(
         .bind(source.id)
         .execute(&mut **transaction)
         .await?;
-    sqlx::query("INSERT INTO memory_events(crystal_id,session_id,event_type,source_role,evidence,strength_delta,confidence_delta,applied,cycle_id,created_at) VALUES (?,NULL,'reconsolidated_in_place','system','working copy remained equivalent',0.02,0.0,1,?,?)")
+    sqlx::query("INSERT INTO memory_events(crystal_id,session_id,event_type,source_role,evidence,strength_delta,confidence_delta,applied,cycle_id,created_at) VALUES (?,NULL,'reconsolidated_in_place','system',?,0.02,0.0,1,?,?)")
         .bind(source.id)
+        .bind(working_copy_evidence(memory_id))
         .bind(current_cycle)
         .bind(now)
         .execute(&mut **transaction)
@@ -245,6 +311,11 @@ async fn supersede(
     .execute(&mut **transaction)
     .await?;
     let new_id = inserted.last_insert_rowid();
+    sqlx::query("INSERT INTO crystal_sources(crystal_id,short_term_memory_id) VALUES (?,?)")
+        .bind(new_id)
+        .bind(memory_id)
+        .execute(&mut **transaction)
+        .await?;
     sqlx::query("INSERT INTO crystal_language_tags(crystal_id,language_tag) SELECT ?,language_tag FROM crystal_language_tags WHERE crystal_id=?")
         .bind(new_id).bind(source.id).execute(&mut **transaction).await?;
     sqlx::query("INSERT INTO crystal_story_scopes(crystal_id,scope,confidence,created_at) SELECT ?,scope,confidence,created_at FROM crystal_story_scopes WHERE crystal_id=?")

@@ -876,6 +876,23 @@ async fn explicit_indexes_have_the_exact_declared_columns() {
                 .expect("index_info should succeed");
         assert_eq!(actual, columns);
     }
+
+    let decay_index = sqlx::query(
+        "SELECT [unique], partial FROM pragma_index_list('memory_events') WHERE name=?",
+    )
+    .bind("ux_memory_events_cycle_decay_crystal_cycle")
+    .fetch_one(&pool)
+    .await
+    .expect("cycle-decay uniqueness index should exist");
+    assert_eq!(decay_index.get::<i64, _>("unique"), 1);
+    assert_eq!(decay_index.get::<i64, _>("partial"), 1);
+    let decay_columns =
+        sqlx::query_scalar::<_, String>("SELECT name FROM pragma_index_info(?) ORDER BY seqno")
+            .bind("ux_memory_events_cycle_decay_crystal_cycle")
+            .fetch_all(&pool)
+            .await
+            .expect("cycle-decay uniqueness columns should be readable");
+    assert_eq!(decay_columns, ["crystal_id", "cycle_id"]);
 }
 
 #[tokio::test]
@@ -1132,5 +1149,5 @@ async fn migration_versions_include_fts_and_are_idempotent() {
     .await
     .expect("migration versions should be readable");
 
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 }

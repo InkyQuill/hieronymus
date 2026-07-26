@@ -237,6 +237,7 @@ COLUMN 9|cycle_id|INTEGER|0|NULL|0
 COLUMN 10|created_at|TEXT|1|NULL|0
 FK 0|0|task_sessions|session_id|id|NO ACTION|SET NULL|NONE
 FK 1|0|crystals|crystal_id|id|NO ACTION|SET NULL|NONE
+INDEX 0|ux_memory_events_cycle_decay_crystal_cycle|1|c|1|crystal_id,cycle_id
 TABLE migration_ledger
 SQL CREATE TABLE migration_ledger (   source_table TEXT NOT NULL,   source_id TEXT NOT NULL,   target_table TEXT NOT NULL,   target_id INTEGER NOT NULL,   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),   PRIMARY KEY (source_table, source_id, target_table) ) STRICT
 COLUMN 0|source_table|TEXT|1|NULL|1

@@ -90,9 +90,12 @@ impl DreamPhase for LinkReinforcer {
         pool: &SqlitePool,
         input: Self::Input,
     ) -> Result<Self::Output, DreamPhaseError> {
-        let mut combined = BTreeSet::new();
         let mut outcomes = Vec::new();
-        for (source_id, target_id) in useful_pairs(&input) {
+        let current_activations: Vec<_> = input
+            .into_iter()
+            .filter(|activation| activation.cycle_id == Some(self.current_cycle))
+            .collect();
+        for (source_id, target_id) in useful_pairs(&current_activations) {
             let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
             let source = read_crystal(&mut transaction, source_id).await?;
             let target = read_crystal(&mut transaction, target_id).await?;
@@ -113,10 +116,10 @@ impl DreamPhase for LinkReinforcer {
             let should_combine = shared_concept
                 || text_similarity(&source.text, &target.text)
                     > COMBINATION_TEXT_SIMILARITY_THRESHOLD;
-            let outcome = if should_combine
-                && !combined.contains(&source_id)
-                && !combined.contains(&target_id)
-            {
+            let already_combined =
+                participants_combined(&mut transaction, source_id, target_id, self.current_cycle)
+                    .await?;
+            let outcome = if should_combine && !already_combined {
                 let (survivor_id, absorbed_id) = select_survivor(&source, &target);
                 combine(
                     &mut transaction,
@@ -125,8 +128,6 @@ impl DreamPhase for LinkReinforcer {
                     self.current_cycle,
                 )
                 .await?;
-                combined.insert(survivor_id);
-                combined.insert(absorbed_id);
                 LinkOutcome::Combined {
                     survivor_id,
                     absorbed_id,
@@ -142,6 +143,34 @@ impl DreamPhase for LinkReinforcer {
         }
         Ok(outcomes)
     }
+}
+
+async fn participants_combined(
+    transaction: &mut Transaction<'static, Sqlite>,
+    source_id: i64,
+    target_id: i64,
+    current_cycle: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM memory_events
+            WHERE event_type='combined_into'
+              AND applied=1
+              AND cycle_id=?
+              AND (
+                crystal_id IN (?,?)
+                OR evidence IN (CAST(? AS TEXT),CAST(? AS TEXT))
+              )
+        )",
+    )
+    .bind(current_cycle)
+    .bind(source_id)
+    .bind(target_id)
+    .bind(source_id)
+    .bind(target_id)
+    .fetch_one(&mut **transaction)
+    .await
 }
 
 #[async_trait]

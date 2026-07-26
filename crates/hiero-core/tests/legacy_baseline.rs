@@ -739,7 +739,7 @@ async fn current_python_schema_is_baselined_losslessly_and_idempotently() {
     .fetch_all(&pool)
     .await
     .expect("migration records should exist");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     let fk: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
         .fetch_one(&pool)
         .await
