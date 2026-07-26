@@ -36,7 +36,27 @@ pub fn dream_cycle_paths(config: &HieronymusConfig) -> DreamCyclePaths {
 #[must_use]
 pub fn read_dream_cycle_state(config: &HieronymusConfig) -> Option<DreamCycleState> {
     let directory = SecureDataRoot::open(config.data_root.as_path()).ok()?;
-    read_state(&directory, STATE_NAME)
+    let file = directory.open_lock_file().ok()?;
+    directory.validate_lock_identity(&file).ok()?;
+    match FileExt::try_lock_exclusive(&file) {
+        Ok(()) => {
+            let _ = FileExt::unlock(&file);
+            None
+        }
+        Err(source) if source.kind() == io::ErrorKind::WouldBlock => {
+            let state = read_state(&directory, STATE_NAME)?;
+            directory.validate_lock_identity(&file).ok()?;
+            match FileExt::try_lock_exclusive(&file) {
+                Err(source) if source.kind() == io::ErrorKind::WouldBlock => Some(state),
+                Ok(()) => {
+                    let _ = FileExt::unlock(&file);
+                    None
+                }
+                Err(_) => None,
+            }
+        }
+        Err(_) => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

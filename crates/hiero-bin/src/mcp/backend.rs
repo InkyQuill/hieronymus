@@ -45,6 +45,16 @@ pub struct StoreDreamRunner {
     notifier: Option<AdminNotifier>,
 }
 
+struct CompletionRefreshGuard(Option<AdminNotifier>);
+
+impl Drop for CompletionRefreshGuard {
+    fn drop(&mut self) {
+        if let Some(notifier) = &self.0 {
+            notifier.notify_refresh();
+        }
+    }
+}
+
 impl StoreDreamRunner {
     #[must_use]
     pub fn new(pool: SqlitePool, config: Arc<HieronymusConfig>) -> Self {
@@ -116,6 +126,7 @@ impl DreamRunner for StoreDreamRunner {
         if let Some(notifier) = &self.notifier {
             notifier.notify_refresh();
         }
+        let _completion_refresh = CompletionRefreshGuard(self.notifier.clone());
         let run = DreamService::new_with_catalog(
             &self.pool,
             &self.config,
@@ -130,9 +141,6 @@ impl DreamRunner for StoreDreamRunner {
             ..CycleOptions::default()
         })
         .await;
-        if let Some(notifier) = &self.notifier {
-            notifier.notify_refresh();
-        }
         let run = run?;
         Ok(json!({
             "cycle_id": run.cycle_id,

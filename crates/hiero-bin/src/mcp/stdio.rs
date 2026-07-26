@@ -110,11 +110,13 @@ pub async fn proxy_operation(
         )
             .into_response();
     }
-    let runner = Arc::new(StoreDreamRunner::new(
-        state.pool.clone(),
-        state.config.clone(),
-    ));
-    let backend = StoreMcpBackend::new(state.pool, state.config).with_dream_runner(runner);
+    let runner = Arc::new(
+        StoreDreamRunner::new(state.pool.clone(), state.config.clone())
+            .with_notifier(state.events.clone()),
+    );
+    let backend = StoreMcpBackend::new(state.pool, state.config)
+        .with_dream_runner(runner)
+        .with_notifier(state.events);
     match backend.call(&name, arguments).await {
         Ok(result) => Json(json!({"result": result})).into_response(),
         Err(error) => {

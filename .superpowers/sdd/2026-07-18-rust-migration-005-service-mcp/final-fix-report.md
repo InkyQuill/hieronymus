@@ -25,6 +25,7 @@ Resolution:
 - Short-term status now includes state, thresholds, urgency, and drain counts/progress.
 - Dream status now includes state, current phase, progress, run ID, cycle ID, owner, and start time.
 - Status derives from authoritative SQLite run/phase rows plus the cross-process dream lock, so background and MCP owners report `WORKING`.
+- Lock metadata is reported as live only while the anchored OS lock remains contended across the metadata read. Valid stale JSON with a free lock reports `IDLE` and is left untouched.
 - Frontend `Record<string, unknown>` placeholders were replaced with the complete typed contract. `AdminDashboard.svelte` preserves the same fields and UI; it only removes defensive `String`/`Number` casts that previously hid missing backend fields. This strengthens rather than relaxes the shipping client contract.
 
 ### C. Production admin event publishers
@@ -38,6 +39,8 @@ Resolution:
 - Manual, MCP, and background dream lifecycle transitions publish refresh events.
 - Publications happen only after successful persistence/acceptance. Failed provider validation has a negative regression.
 - The end-to-end regression connects to `/ws/admin`, performs a real provider HTTP mutation, and receives `{"type":"refresh"}`.
+- The stdio compatibility `/api/mcp/{operation}` route constructs the same notifier-aware backend and dream runner as direct `/mcp`; a real compatibility HTTP mutation now has HTTP-to-WebSocket coverage.
+- MCP dream completion publication is owned by a synchronous drop guard, so success, error, and request cancellation all publish the terminal refresh while core cancellation cleanup continues.
 
 ### D. `series_init` compatibility alias
 
@@ -77,11 +80,12 @@ Observed RED before production changes:
 - `series_init`: behavior diverged and wrote `.hieronymus.json`;
 - oversized asset: the complete 16 MiB + 1 byte file was returned;
 - lifecycle premise: only the recurring construction site called `with_cleanup_deadline`.
+- targeted rereview: valid stale dream JSON alone reported `WORKING`; the compatibility mutation produced no WebSocket event; cancelling an in-flight MCP dream produced no terminal refresh.
 
 Focused GREEN:
 
-- `test_service`: 49 tests;
-- `test_mcp`: 22 tests;
+- `test_service`: 51 tests;
+- `test_mcp`: 23 tests;
 - `task5_process`: 8 tests;
 - `test_dreaming`: 35 passed, 1 intentionally ignored process helper;
 - frontend: two TypeScript configurations, 16 Vitest tests, production build, and Prettier check.

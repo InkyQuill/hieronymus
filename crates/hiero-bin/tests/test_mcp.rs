@@ -19,9 +19,12 @@ use hiero_bin::{
 use hiero_core::{
     config::HieronymusConfig,
     db,
-    domain::{AddMemoryInput, TranslationContext, WorkspaceStore},
+    domain::{AddMemoryInput, ShortTermMemory, TranslationContext, WorkspaceStore},
     dreaming::{DreamConfig, DreamPhaseError, DreamProviderResolver, WorkflowProfile},
-    provider::{DeterministicProvider, DreamProvider, ProviderCatalog},
+    provider::{
+        DeterministicProvider, DreamOutput, DreamProvider, PassName, ProviderCatalog,
+        ProviderPassOutput,
+    },
     registry::SeriesRegistry,
 };
 use serde_json::{Value, json};
@@ -29,12 +32,15 @@ use tempfile::TempDir;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, Command},
-    sync::{broadcast, oneshot},
+    sync::{Notify, broadcast, oneshot},
 };
 use tower::ServiceExt;
 
 struct FailingBackend(&'static str);
 struct FakeDreamRunner;
+struct BlockingDreamProvider {
+    entered: Arc<Notify>,
+}
 
 #[async_trait]
 impl McpBackend for FailingBackend {
@@ -47,6 +53,32 @@ impl McpBackend for FailingBackend {
 impl DreamRunner for FakeDreamRunner {
     async fn run(&self, provider: Option<&str>, wait: bool) -> anyhow::Result<Value> {
         Ok(json!({"provider": provider, "wait": wait, "started": true}))
+    }
+}
+
+#[async_trait]
+impl DreamProvider for BlockingDreamProvider {
+    fn name(&self) -> &str {
+        "blocking"
+    }
+
+    async fn crystallize(
+        &self,
+        _context: &TranslationContext,
+        _memories: &[ShortTermMemory],
+    ) -> hiero_core::provider::Result<DreamOutput> {
+        self.entered.notify_one();
+        std::future::pending().await
+    }
+
+    async fn run_pass(
+        &self,
+        _pass: PassName,
+        _context: &TranslationContext,
+        _memories: &[ShortTermMemory],
+    ) -> hiero_core::provider::Result<ProviderPassOutput> {
+        self.entered.notify_one();
+        std::future::pending().await
     }
 }
 
@@ -829,6 +861,106 @@ async fn mcp_dream_bounds_persistent_audit_cleanup_failure_and_releases_the_cycl
         hiero_core::dreaming::acquire_dream_cycle_lock(&state.config, "after-mcp-failure", false)
             .expect("bounded cleanup must release the cross-process lock");
     drop(lock);
+}
+
+#[tokio::test]
+async fn cancelling_mcp_dream_emits_a_final_refresh_and_releases_the_cycle_lock() {
+    let (state, _) = test_state().await;
+    state.config.ensure_directories().unwrap();
+    SeriesRegistry::new(&state.pool)
+        .create("cancel-refresh", "Cancel Refresh", "ja", "ru")
+        .await
+        .unwrap();
+    let workspace = WorkspaceStore::new(&state.pool);
+    let session = workspace
+        .start_session(
+            &TranslationContext::new("cancel-refresh", "ja", "ru"),
+            "translation",
+            "",
+            "",
+        )
+        .await
+        .unwrap();
+    workspace
+        .add_short_term(
+            session.id,
+            AddMemoryInput {
+                text: "Use Холо for ホロ.".into(),
+                ..AddMemoryInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    workspace.complete_session(session.id).await.unwrap();
+    let entered = Arc::new(Notify::new());
+    let provider = Arc::new(BlockingDreamProvider {
+        entered: entered.clone(),
+    });
+    let resolver: Arc<dyn DreamProviderResolver> = Arc::new(move |_: &WorkflowProfile| {
+        Ok::<Arc<dyn DreamProvider>, DreamPhaseError>(provider.clone())
+    });
+    let mut dream_config = DreamConfig {
+        enabled: true,
+        min_pending_short_term_memories: 1,
+        ..DreamConfig::default()
+    };
+    for profile in dream_config.workflows.values_mut() {
+        profile.enabled = true;
+        profile.provider = "deterministic".into();
+        profile.model = "deterministic".into();
+    }
+    let mut receiver = state.events.subscribe();
+    let runner = Arc::new(
+        StoreDreamRunner::new(state.pool.clone(), state.config.clone())
+            .with_components(dream_config, ProviderCatalog::default(), resolver)
+            .with_notifier(state.events.clone()),
+    );
+    let backend = StoreMcpBackend::new(state.pool, state.config.clone()).with_dream_runner(runner);
+    let mut call = tokio::spawn(async move {
+        backend
+            .call("hieronymus_dream", json!({"wait": false}))
+            .await
+    });
+
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+            .await
+            .expect("MCP dream start refresh should arrive")
+            .unwrap(),
+        hiero_bin::api::events::AdminEvent::Refresh
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            () = entered.notified() => {}
+            result = &mut call => panic!("MCP dream finished before provider blocking point: {result:?}"),
+        }
+    })
+        .await
+        .expect("dream provider should start");
+    call.abort();
+    assert!(call.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+            .await
+            .expect("cancelled MCP dream should emit a final refresh")
+            .unwrap(),
+        hiero_bin::api::events::AdminEvent::Refresh
+    );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Ok(lock) = hiero_core::dreaming::acquire_dream_cycle_lock(
+                &state.config,
+                "after-mcp-cancel",
+                false,
+            ) {
+                drop(lock);
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("core cancellation cleanup should release the cycle lock");
 }
 
 #[tokio::test]

@@ -900,6 +900,39 @@ async fn api_admin_dashboard_reports_the_literal_shipping_contract_for_a_backgro
 }
 
 #[tokio::test]
+async fn api_admin_dashboard_ignores_valid_stale_dream_metadata_when_the_lock_is_free() {
+    let (state, _) = test_state().await;
+    state.config.ensure_directories().unwrap();
+    let dream = DreamConfig {
+        enabled: true,
+        ..DreamConfig::default()
+    };
+    dream.save(&state.config).unwrap();
+    let guard = hiero_core::dreaming::acquire_dream_cycle_lock(&state.config, "stale-owner", false)
+        .unwrap();
+    let stale = guard.state().clone();
+    let paths = hiero_core::dreaming::dream_cycle_paths(&state.config);
+    drop(guard);
+    std::fs::write(&paths.state_json, serde_json::to_vec(&stale).unwrap()).unwrap();
+    #[cfg(unix)]
+    std::fs::set_permissions(&paths.state_json, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let response = build_router(state)
+        .oneshot(request(Method::GET, "/api/admin/dashboard", Body::empty()))
+        .await
+        .unwrap();
+    let payload = response_json(response).await;
+
+    assert_eq!(payload["dream_status"]["state"], "IDLE");
+    assert_eq!(payload["dream_status"]["owner"], "");
+    assert_eq!(payload["short_term_status"]["drain_in_progress"], false);
+    assert!(
+        paths.state_json.exists(),
+        "liveness observation must not remove stale user metadata"
+    );
+}
+
+#[tokio::test]
 async fn api_admin_snapshot_reads_seeded_concept_and_resolves_selected_id() {
     let (state, _) = test_state().await;
     let concept = ConceptStore::new(&state.pool)
@@ -2117,6 +2150,53 @@ async fn successful_provider_mutation_publishes_a_real_admin_websocket_event() {
             tokio::time::timeout(Duration::from_secs(1), socket.next())
                 .await
                 .expect("successful mutation should publish promptly")
+                .unwrap()
+                .unwrap()
+                .to_text()
+                .unwrap()
+        )
+        .unwrap(),
+        json!({"type": "refresh"})
+    );
+    socket.send(Message::Close(None)).await.unwrap();
+    drop(socket);
+    server.abort();
+}
+
+#[tokio::test]
+async fn successful_stdio_compatibility_mutation_publishes_a_real_admin_websocket_event() {
+    let (state, _) = test_state().await;
+    let (mut socket, server, port) = websocket_server(state).await;
+    let body = serde_json::to_string(&json!({
+        "slug": "compat-event-series",
+        "title": "Compatibility Event Series",
+        "source_language": "ja",
+        "target_language": "ru"
+    }))
+    .unwrap();
+    let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    client
+        .write_all(
+            format!(
+                "POST /api/mcp/series_create HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+                 X-Hieronymus-Token: {AUTH_TOKEN}\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut response = Vec::new();
+    client.read_to_end(&mut response).await.unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            tokio::time::timeout(Duration::from_secs(1), socket.next())
+                .await
+                .expect("successful compatibility mutation should publish promptly")
                 .unwrap()
                 .unwrap()
                 .to_text()
