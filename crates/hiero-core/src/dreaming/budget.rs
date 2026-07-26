@@ -78,6 +78,25 @@ pub(crate) async fn load_affected(
     .await
 }
 
+pub(crate) async fn merge_affected(
+    connection: &mut SqliteConnection,
+    maintenance_cycle_id: i64,
+    budgets: &mut [AffectedCrystalIds],
+) -> Result<(), sqlx::Error> {
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT crystal_id FROM dream_affected_crystals
+         WHERE maintenance_cycle_id=?
+         ORDER BY crystal_id",
+    )
+    .bind(maintenance_cycle_id)
+    .fetch_all(&mut *connection)
+    .await?;
+    for budget in budgets {
+        budget.include_existing(ids.iter().copied());
+    }
+    Ok(())
+}
+
 pub(crate) async fn record_affected(
     connection: &mut SqliteConnection,
     maintenance_cycle_id: i64,

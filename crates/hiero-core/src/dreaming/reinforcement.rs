@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     COMBINATION_TEXT_SIMILARITY_THRESHOLD, DreamPhase, DreamPhaseError,
-    budget::{AffectedCrystalIds, record_affected},
+    budget::{AffectedCrystalIds, merge_affected, record_affected},
     text_similarity,
 };
 
@@ -132,6 +132,7 @@ impl DreamPhase for LinkReinforcer {
             .collect();
         for (source_id, target_id) in useful_pairs(&current_activations) {
             let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+            merge_affected(&mut transaction, self.current_cycle, &mut affected).await?;
             if affected
                 .iter()
                 .any(|budget| !budget.can_reserve(&[source_id, target_id]))
@@ -241,6 +242,7 @@ impl DreamPhase for ReinforcementManager {
         let mut affected = self.affected.clone();
         for event in input {
             let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+            merge_affected(&mut transaction, self.current_cycle, &mut affected).await?;
             let stored: MemoryEventRecord =
                 sqlx::query_as("SELECT * FROM memory_events WHERE id=?")
                     .bind(event.id)

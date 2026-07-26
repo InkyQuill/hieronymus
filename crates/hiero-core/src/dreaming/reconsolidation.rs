@@ -11,7 +11,7 @@ use crate::{
 
 use super::{
     DreamPhase, DreamPhaseError,
-    budget::{AffectedCrystalIds, record_affected},
+    budget::{AffectedCrystalIds, merge_affected, record_affected},
 };
 
 pub const COMBINATION_TEXT_SIMILARITY_THRESHOLD: f64 = 0.80;
@@ -76,6 +76,7 @@ impl DreamPhase for Reconsolidator {
         let mut affected = self.affected.clone();
         for (memory, source) in input {
             let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+            merge_affected(&mut transaction, self.current_cycle, &mut affected).await?;
             let (working_text, kind, source_crystal_id, archived_at): (
                 String,
                 String,

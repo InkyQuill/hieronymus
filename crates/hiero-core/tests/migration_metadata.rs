@@ -189,7 +189,7 @@ async fn every_current_embedded_history_prefix_is_valid() {
     .expect("current history should read");
     assert_eq!(
         history.iter().map(|row| row.0).collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
     );
 
     for prefix_len in 0..=history.len() {
@@ -213,6 +213,7 @@ async fn every_current_embedded_history_prefix_is_valid() {
                 10 => include_str!("../../../migrations/0010_unique_cycle_maintenance_events.sql"),
                 11 => include_str!("../../../migrations/0011_concept_merge_proposals.sql"),
                 12 => include_str!("../../../migrations/0012_concept_consolidation_scan.sql"),
+                13 => include_str!("../../../migrations/0013_bounded_concept_consolidation.sql"),
                 _ => panic!("unexpected embedded migration {version}"),
             };
             pool.execute(sqlx::raw_sql(sql))

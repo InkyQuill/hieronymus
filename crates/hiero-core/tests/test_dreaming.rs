@@ -498,8 +498,29 @@ impl Fixture {
             (
                 max_changed,
                 DreamConfig::default().max_long_term_records_affected_per_run,
+                DreamConfig::default().max_related_concepts_per_cycle,
             ),
             enabled,
+        )
+    }
+
+    fn service_with_concept_limit(
+        &self,
+        provider: Arc<dyn DreamProvider>,
+        min_pending: usize,
+        max_related_concepts: usize,
+    ) -> DreamService<'_> {
+        self.service_with_budget(
+            provider,
+            min_pending,
+            10,
+            10,
+            (
+                200,
+                DreamConfig::default().max_long_term_records_affected_per_run,
+                max_related_concepts,
+            ),
+            &[PassName::KnowledgeCrystals, PassName::CoverageAudit],
         )
     }
 
@@ -509,10 +530,10 @@ impl Fixture {
         min_pending: usize,
         per_cycle: usize,
         per_run: usize,
-        crystal_limits: (usize, usize),
+        crystal_limits: (usize, usize, usize),
         enabled: &[PassName],
     ) -> DreamService<'_> {
-        let (max_changed, max_long_term) = crystal_limits;
+        let (max_changed, max_long_term, max_related_concepts) = crystal_limits;
         let resolver: Arc<dyn DreamProviderResolver> = Arc::new(
             move |_: &WorkflowProfile| -> Result<Arc<dyn DreamProvider>, DreamPhaseError> {
                 Ok(provider.clone())
@@ -526,6 +547,7 @@ impl Fixture {
             max_short_term_memories_per_run: per_run,
             max_changed_crystals_per_cycle: max_changed,
             max_long_term_records_affected_per_run: max_long_term,
+            max_related_concepts_per_cycle: max_related_concepts,
             ..DreamConfig::default()
         };
         for phase in PassName::ALL {
@@ -986,6 +1008,93 @@ async fn background_loop_runs_due_cycles_serially_and_stops_on_shutdown() {
             .await
             .unwrap(),
         1
+    );
+}
+
+#[tokio::test]
+async fn scheduler_finishes_multi_page_consolidation_without_pending_memories() {
+    let fixture = Fixture::new().await;
+    for (name, status, confidence) in [
+        ("Shared", "candidate", 0.1),
+        (" shared ", "candidate", 0.2),
+        ("SHARED", "candidate", 0.3),
+        ("Shared", "candidate", 0.4),
+        (" shared ", "established", 0.9),
+    ] {
+        sqlx::query(
+            "INSERT INTO concepts(
+                canonical_name,description,scope_type,scope_key,status,
+                confidence,created_at,updated_at
+             ) VALUES (?,'','series','series:book',?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+        )
+        .bind(name)
+        .bind(status)
+        .bind(confidence)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM short_term_memories WHERE archived_at IS NULL"
+        )
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap(),
+        0
+    );
+    let service = fixture.service_with_concept_limit(fake(), 1, 2);
+    let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+    let controller = async {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let proposals: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM concept_merge_proposals WHERE status='pending'",
+                )
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap();
+                if proposals == 4 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        shutdown_tx.send(()).unwrap();
+    };
+    let (loop_result, ()) = tokio::join!(
+        run_background_loop(service, Duration::from_millis(10), shutdown_rx),
+        controller
+    );
+    loop_result.unwrap();
+
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM concept_merge_proposals WHERE status='pending'"
+        )
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap(),
+        4
+    );
+    assert!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM dream_runs
+             WHERE status='completed' AND input_count=0 AND completed_at IS NOT NULL"
+        )
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap()
+            >= 2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM dream_runs WHERE status='running'")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
+        0
     );
 }
 
@@ -1717,7 +1826,7 @@ async fn one_unique_crystal_id_can_be_reconsolidated_and_provider_reinforced_in_
             1,
             10,
             10,
-            (1, 1),
+            (1, 1, DreamConfig::default().max_related_concepts_per_cycle),
             &[PassName::Reinforcement, PassName::CoverageAudit],
         )
         .run_cycle(CycleOptions::default())

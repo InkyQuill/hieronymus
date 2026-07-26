@@ -240,8 +240,10 @@ impl<'a> DreamService<'a> {
         &self,
         run_id: Option<&Arc<AtomicI64>>,
     ) -> Result<Option<DreamRunRecord>> {
+        let consolidation_due = Consolidator::maintenance_due(&self.pool).await?;
         if !self.dream_config.enabled
             || (self.resumable_algorithm_batch().await?.is_none()
+                && !consolidation_due
                 && self.pending_count().await?
                     < self.dream_config.min_pending_short_term_memories as i64)
         {
@@ -486,6 +488,7 @@ impl<'a> DreamService<'a> {
     ) -> Result<DreamRunRecord> {
         let pending = self.pending_count().await?;
         let has_resumable_batch = self.resumable_algorithm_batch().await?.is_some();
+        let consolidation_due = Consolidator::maintenance_due(&self.pool).await?;
         let cycle_id = self.next_cycle_id().await?;
         let workflows = self.workflows()?;
         let provider = workflows
@@ -508,6 +511,7 @@ impl<'a> DreamService<'a> {
             .await?;
         if !ignore_minimum
             && !has_resumable_batch
+            && !consolidation_due
             && pending < self.dream_config.min_pending_short_term_memories as i64
         {
             DreamAuditStore::new(&self.pool)
@@ -549,7 +553,11 @@ impl<'a> DreamService<'a> {
     ) -> Result<DreamRunCompletion> {
         let (batches, resumed_stage) = self.pending_or_resumable_batches(limit).await?;
         if batches.is_empty() {
-            return Ok(DreamRunCompletion::new(0, 0, 0));
+            let proposals =
+                Consolidator::new(run_id, self.dream_config.max_related_concepts_per_cycle)
+                    .scan(&self.pool)
+                    .await?;
+            return Ok(DreamRunCompletion::new(0, 0, proposals.len() as i64));
         }
         let mut memories = Vec::new();
         let mut context = None;

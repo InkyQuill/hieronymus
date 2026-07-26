@@ -10,6 +10,7 @@ mod test_support;
 use std::{path::Path, str::FromStr, time::Duration};
 
 pub use error::DbError;
+use icu_casemap::CaseMapper;
 pub use legacy_terms::{LegacyConversionReport, convert_legacy_strict_terms};
 pub use models::{
     ConceptFacetRecord, ConceptMergeProposalRecord, ConceptProposalRecord, ConceptProposalStatus,
@@ -137,11 +138,26 @@ async fn build_pool_with_probe(
     SqlitePoolOptions::new()
         .max_connections(8)
         .after_connect(|connection, _metadata| {
-            Box::pin(async move { probe_fts5(connection).await.map_err(probe_error_for_pool) })
+            Box::pin(async move {
+                probe_fts5(connection).await.map_err(probe_error_for_pool)?;
+                register_casefold_collation(connection).await
+            })
         })
         .connect_with(options)
         .await
         .map_err(|source| connect_error(&target, source))
+}
+
+async fn register_casefold_collation(connection: &mut SqliteConnection) -> Result<(), sqlx::Error> {
+    connection
+        .lock_handle()
+        .await?
+        .create_collation("hiero_casefold", |left, right| {
+            let mapper = CaseMapper::new();
+            mapper
+                .fold_string(left.trim())
+                .cmp(&mapper.fold_string(right.trim()))
+        })
 }
 
 trait Fts5Probe {

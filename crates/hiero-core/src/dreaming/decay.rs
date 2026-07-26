@@ -11,7 +11,7 @@ use crate::{
 
 use super::{
     DreamPhase, DreamPhaseError,
-    budget::{AffectedCrystalIds, record_affected},
+    budget::{AffectedCrystalIds, merge_affected, record_affected},
 };
 
 pub const STRENGTH_DECAY_PER_CYCLE: f64 = 0.03;
@@ -111,6 +111,7 @@ async fn run_decay(
     let mut decayed = Vec::with_capacity(candidates.len());
     for id in candidates {
         let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        merge_affected(&mut transaction, input.current_cycle, &mut affected).await?;
         if affected.iter().any(|budget| !budget.can_reserve(&[id])) {
             transaction.commit().await?;
             continue;

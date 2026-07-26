@@ -43,14 +43,39 @@ COLUMN 10|updated_at|TEXT|1|NULL|0
 FK 0|0|crystals|source_crystal_id|id|NO ACTION|SET NULL|NONE
 FK 1|0|concepts|concept_id|id|NO ACTION|CASCADE|NONE
 TABLE concept_consolidation_keys
-SQL CREATE TABLE concept_consolidation_keys (   concept_id INTEGER PRIMARY KEY REFERENCES concepts(id) ON DELETE CASCADE,   scope_type TEXT NOT NULL,   scope_key TEXT NOT NULL,   canonical_name_key TEXT NOT NULL,   updated_at TEXT NOT NULL ) STRICT
+SQL CREATE TABLE concept_consolidation_keys (   concept_id INTEGER PRIMARY KEY REFERENCES concepts(id) ON DELETE CASCADE,   scope_type TEXT NOT NULL,   scope_key TEXT NOT NULL,   canonical_name_key TEXT NOT NULL,   updated_at TEXT NOT NULL , status_rank INTEGER NOT NULL DEFAULT 1 CHECK (status_rank IN (0, 1)), confidence REAL NOT NULL DEFAULT 0.0 CHECK (confidence >= 0.0 AND confidence <= 1.0)) STRICT
 COLUMN 0|concept_id|INTEGER|0|NULL|1
 COLUMN 1|scope_type|TEXT|1|NULL|0
 COLUMN 2|scope_key|TEXT|1|NULL|0
 COLUMN 3|canonical_name_key|TEXT|1|NULL|0
 COLUMN 4|updated_at|TEXT|1|NULL|0
+COLUMN 5|status_rank|INTEGER|1|1|0
+COLUMN 6|confidence|REAL|1|0.0|0
 FK 0|0|concepts|concept_id|id|NO ACTION|CASCADE|NONE
-INDEX 0|concept_consolidation_keys_lookup_idx|0|c|0|scope_type,scope_key,canonical_name_key,concept_id
+INDEX 1|concept_consolidation_keys_lookup_idx|0|c|0|scope_type,scope_key,canonical_name_key,concept_id
+INDEX 0|concept_consolidation_target_idx|0|c|0|scope_type,scope_key,canonical_name_key,status_rank,confidence,concept_id
+TABLE concept_consolidation_dirty
+SQL CREATE TABLE concept_consolidation_dirty (   queue_id INTEGER PRIMARY KEY AUTOINCREMENT,   concept_id INTEGER NOT NULL UNIQUE REFERENCES concepts(id) ON UPDATE CASCADE ON DELETE CASCADE,   scope_type TEXT NOT NULL,   scope_key TEXT NOT NULL,   canonical_name TEXT NOT NULL,   created_at TEXT NOT NULL ) STRICT
+COLUMN 0|queue_id|INTEGER|0|NULL|1
+COLUMN 1|concept_id|INTEGER|1|NULL|0
+COLUMN 2|scope_type|TEXT|1|NULL|0
+COLUMN 3|scope_key|TEXT|1|NULL|0
+COLUMN 4|canonical_name|TEXT|1|NULL|0
+COLUMN 5|created_at|TEXT|1|NULL|0
+FK 0|0|concepts|concept_id|id|CASCADE|CASCADE|NONE
+INDEX 0|sqlite_autoindex_concept_consolidation_dirty_1|1|u|0|concept_id
+TABLE concept_consolidation_emission
+SQL CREATE TABLE concept_consolidation_emission (   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),   has_after_key INTEGER NOT NULL DEFAULT 0 CHECK (has_after_key IN (0, 1)),   after_scope_type TEXT NOT NULL DEFAULT '',   after_scope_key TEXT NOT NULL DEFAULT '',   after_canonical_name_key TEXT NOT NULL DEFAULT '',   active_scope_type TEXT,   active_scope_key TEXT,   active_canonical_name_key TEXT,   source_after_concept_id INTEGER NOT NULL DEFAULT 0 CHECK (source_after_concept_id >= 0),   updated_at TEXT NOT NULL ) STRICT
+COLUMN 0|singleton|INTEGER|0|NULL|1
+COLUMN 1|has_after_key|INTEGER|1|0|0
+COLUMN 2|after_scope_type|TEXT|1|''|0
+COLUMN 3|after_scope_key|TEXT|1|''|0
+COLUMN 4|after_canonical_name_key|TEXT|1|''|0
+COLUMN 5|active_scope_type|TEXT|0|NULL|0
+COLUMN 6|active_scope_key|TEXT|0|NULL|0
+COLUMN 7|active_canonical_name_key|TEXT|0|NULL|0
+COLUMN 8|source_after_concept_id|INTEGER|1|0|0
+COLUMN 9|updated_at|TEXT|1|NULL|0
 TABLE concept_consolidation_scan
 SQL CREATE TABLE concept_consolidation_scan (   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),   after_concept_id INTEGER NOT NULL DEFAULT 0 CHECK (after_concept_id >= 0),   restart_required INTEGER NOT NULL DEFAULT 0 CHECK (restart_required IN (0, 1)),   updated_at TEXT NOT NULL ) STRICT
 COLUMN 0|singleton|INTEGER|0|NULL|1

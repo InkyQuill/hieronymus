@@ -551,6 +551,8 @@ const REQUIRED_TABLES: &[&str] = &[
     "concept_facet_story_scopes",
     "concept_facets",
     "concept_consolidation_keys",
+    "concept_consolidation_dirty",
+    "concept_consolidation_emission",
     "concept_consolidation_scan",
     "concept_merge_proposals",
     "concept_proposals",
@@ -875,6 +877,18 @@ async fn explicit_indexes_have_the_exact_declared_columns() {
                 "concept_id",
             ],
         ),
+        (
+            "concept_consolidation_keys",
+            "concept_consolidation_target_idx",
+            vec![
+                "scope_type",
+                "scope_key",
+                "canonical_name_key",
+                "status_rank",
+                "confidence",
+                "concept_id",
+            ],
+        ),
         ("crystals", "idx_crystals_maintenance", vec!["id"]),
         (
             "rag_chunks",
@@ -1177,5 +1191,5 @@ async fn migration_versions_include_fts_and_are_idempotent() {
     .await
     .expect("migration versions should be readable");
 
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 }

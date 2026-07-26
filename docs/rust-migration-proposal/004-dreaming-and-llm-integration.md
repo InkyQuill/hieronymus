@@ -190,10 +190,15 @@ produces a stable source-to-target pending proposal; it never auto-merges.
 Pending directed pairs are idempotent. The durable record stores both concept
 ids, a fixed bounded duplicate-name-and-scope rationale, status, dream run id,
 and timestamps, subject to the cycle and run budgets.
-Discovery uses an indexed durable cursor over normalized eligible-concept keys,
-so bounded cycles eventually revisit the complete keyspace instead of repeatedly
-scanning the lowest ids. Each proposal batch is recomputed from authoritative
-rows and inserted atomically under one immediate transaction.
+Discovery drains a FIFO dirty-concept queue in bounded pages, then selects one
+normalized duplicate key at a time in stable indexed order. It chooses the
+authoritative target with an indexed status/confidence/id `LIMIT 1` query and
+pages source ids behind a durable exclusive cursor, so no cycle materializes a
+complete duplicate group. Writes invalidate only their old and new groups;
+unrelated groups remain live under sustained writes. Dirty refresh, an active
+group cursor, or a still-missing proposal makes maintenance due even with no
+short-term memories. Each proposal page is revalidated and inserted atomically
+under one immediate transaction.
 
 `dreaming::validation` and `dreaming::persistence` are not phases themselves — they're called
 by `Crystallizer`: `validation::normalize_candidate(candidate: &CandidateCrystal) -> Result<CandidateCrystal>`

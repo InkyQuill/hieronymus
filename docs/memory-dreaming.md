@@ -130,9 +130,13 @@ detects duplicate concepts conservatively. Concepts must have the same scope and
 an exact trimmed Unicode-casefolded canonical name. Dreaming records an
 idempotent pending source-to-target merge proposal for review; it never merges
 concepts automatically, and terminology proposals remain a separate contract.
-Duplicate discovery advances through a durable indexed scan, and each batch is
-revalidated and committed atomically, so bounded cycles do not starve
-higher-id concepts or preserve partial proposal batches.
+Duplicate discovery drains changed concepts through a FIFO dirty queue, then
+advances one indexed normalized group and one bounded source page at a time.
+The target is selected globally by established status, confidence, and id
+without loading the full group. Group and source cursors survive across cycles;
+unrelated groups keep progressing during sustained writes. Dirty refresh and
+partial groups remain scheduler-due even after all short-term memories are
+processed. Each page is revalidated and committed atomically.
 
 The affected memory set is bounded. It starts with the completed short-term
 memories selected for the cycle, then adds nearby concepts, facets, active rule
@@ -145,7 +149,9 @@ work on the same crystal in one cycle or run is charged once, while
 supersession and two-crystal link work count every distinct participant.
 `run_all` shares the long-term-record ID set across its constituent cycles.
 Interrupted algorithm batches resume from the durable affected-ID set, so a
-retry cannot silently reset the cycle limit.
+retry cannot silently reset the cycle limit. Public bounded mutation phases
+also reload that ledger after acquiring their immediate write transaction, so
+concurrent callers cannot independently admit distinct ids past the same cap.
 
 Providers produce structured JSON that Hieronymus validates before applying dream
 outputs. Malformed entries are parsed best-effort when they still contain useful

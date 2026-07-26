@@ -606,3 +606,116 @@ passed
 ### Concerns
 
 None.
+
+## Second exceptional final fix wave
+
+### RED and GREEN evidence
+
+- `consolidation_emits_one_bounded_source_page_for_one_globally_ranked_group`
+  was RED with `no such table: concept_consolidation_emission`; it is GREEN
+  with a two-row source page and the approved global target.
+- `consolidation_explain_uses_bounded_key_target_and_source_indexes_without_sorting`
+  was RED with `no such column: status_rank`; it is GREEN and observes
+  `concept_consolidation_target_idx` and
+  `concept_consolidation_keys_lookup_idx`, with no temporary B-tree or
+  `SCAN concepts`.
+- `sustained_low_id_writes_do_not_block_an_unaffected_high_id_duplicate_group`
+  was RED with zero proposals; it is GREEN with three low-id dirty rows
+  replenished every cycle against a limit-one page while the unrelated high-id
+  Unicode `Straße`/`STRASSE` duplicate still reaches a pending proposal.
+- `concurrent_bounded_reinforcement_admits_only_one_durable_crystal_id` was RED
+  with two ledger rows; it is GREEN with one mutation, event, and durable
+  affected id, and a reusable pool.
+- `scheduler_finishes_multi_page_consolidation_without_pending_memories` was RED
+  by timeout; it is GREEN with four proposals across multiple audited
+  maintenance-only runs.
+- The companion audit found that a vanished active group could retain a failing
+  cursor. The new all-terminal active-group regression exposed incomplete
+  clean-group admission during its first RED run; after affected-key admission
+  and stale-active handling it is GREEN, clears the cursor, and leaves
+  maintenance not due.
+
+### Implementation and migration
+
+- Additive migration `0013_bounded_concept_consolidation.sql` leaves 0012 and
+  every earlier checksum unchanged. It adds ranked consolidation keys, the
+  authoritative target index, a FIFO dirty-concept queue carrying affected key
+  metadata, and a durable group/source emission cursor.
+- Consolidation drains one bounded dirty page, admits only a known-clean
+  normalized group, selects the target with indexed `ORDER BY ... LIMIT 1`,
+  and pages exclusive source ids without materializing a whole group. A
+  changed active group restarts only its source cursor; a vanished group is
+  completed safely.
+- Dirty refresh, a partial group, or a missing directed pending proposal makes
+  consolidation maintenance due. `run_due` therefore performs audited,
+  locked, cancellable zero-input maintenance without invoking provider phases.
+- Reconsolidation, link reinforcement, passive reinforcement, and decay reload
+  and merge the durable affected-id ledger inside their `BEGIN IMMEDIATE`
+  transaction before admission.
+
+### Verification
+
+```text
+cargo test -p hiero-core \
+  --test test_providers \
+  --test test_dream_config \
+  --test test_dream_lock \
+  --test test_dream_phases \
+  --test test_reconsolidation \
+  --test test_link_reinforcement \
+  --test test_dreaming \
+  --locked --no-fail-fast
+168 passed; 0 failed; 3 ignored helper entry points
+
+cargo test -p hiero-core \
+  --test schema \
+  --test migration_metadata \
+  --test fts \
+  --test legacy_terms \
+  --test legacy_baseline \
+  --locked --no-fail-fast
+93 passed; 0 failed
+
+cargo fmt --all -- --check
+passed
+
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+passed
+
+cargo test --workspace --all-targets --all-features --locked --no-fail-fast
+passed; no failed target
+
+cargo doc --workspace --no-deps --all-features --locked
+passed
+
+git diff --check
+passed
+```
+
+### Self-review and companion audit
+
+- Proposal insertion, target selection, dirty refresh, and cursor persistence
+  share one immediate transaction and remain cancellation-atomic.
+- Named query-plan regressions prove the bounded target and source paths.
+- The sustained-write regression keeps the dirty backlog above the page limit,
+  rather than allowing a globally clean instant.
+- Rejected concurrent admission occurs before mutation and durable event/ledger
+  writes; committed admission remains visible to the next serialized caller.
+- All High findings from both Rust-practices companion-audit passes were
+  reproduced and fixed. The final pass aligned dirty-key comparison with the
+  same Unicode-trimmed ICU casefold collation used by production grouping,
+  including NBSP-surrounded `Straße` against `STRASSE`.
+- One full-workspace invocation reported the scheduler background-loop test
+  running past 60 seconds, but process inspection found no surviving Cargo or
+  test process while the command channel remained open. The exact test then
+  passed in 0.03 seconds, and an immediate fresh full-workspace rerun exited 0
+  in 8.09 seconds. No timeout or scheduler code was changed; the evidence
+  localizes the event to the stale command-output channel rather than the
+  scheduler state/data flow.
+- The audit's remaining Medium observation is that the read-only
+  maintenance-due proof may inspect the indexed keyspace; it does not scan
+  `concepts`, materialize groups, or affect bounded proposal emission.
+
+### Concerns
+
+None.
