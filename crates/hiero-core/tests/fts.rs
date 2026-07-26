@@ -367,7 +367,7 @@ async fn upgrade_rebuilds_every_preexisting_row_and_retires_legacy_strict_fts() 
     .fetch_all(&pool)
     .await
     .expect("migration history should read");
-    assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     assert_fts_integrity(&pool).await;
 }
 
@@ -812,7 +812,7 @@ async fn rag_fts_survives_source_and_multiple_path_series_cascades() {
 }
 
 #[tokio::test]
-async fn fresh_history_contains_all_ten_ordered_migrations_and_is_idempotent() {
+async fn fresh_history_contains_all_eleven_ordered_migrations_and_is_idempotent() {
     let pool = connect_url("sqlite::memory:")
         .await
         .expect("fresh database should migrate");
@@ -825,5 +825,5 @@ async fn fresh_history_contains_all_ten_ordered_migrations_and_is_idempotent() {
     .fetch_all(&pool)
     .await
     .expect("migration history should read");
-    assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert_eq!(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 }

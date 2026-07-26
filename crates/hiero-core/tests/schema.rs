@@ -2,10 +2,11 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
 use hiero_core::db::{
-    ConceptFacetRecord, ConceptProposalRecord, ConceptProposalStatus, ConceptRecord, ConceptStatus,
-    CrystalActivationRecord, CrystalLinkRecord, CrystalRecord, CrystalStatus, CrystalType,
-    DreamRunRecord, DreamRunStatus, MemoryEventRecord, RagChunkRecord, RecallOutcome, SeriesRecord,
-    ShortTermMemoryRecord, TaskSessionRecord, TaskSessionStatus, connect_url, migrate,
+    ConceptFacetRecord, ConceptMergeProposalRecord, ConceptProposalRecord, ConceptProposalStatus,
+    ConceptRecord, ConceptStatus, CrystalActivationRecord, CrystalLinkRecord, CrystalRecord,
+    CrystalStatus, CrystalType, DreamRunRecord, DreamRunStatus, MemoryEventRecord, RagChunkRecord,
+    RecallOutcome, SeriesRecord, ShortTermMemoryRecord, TaskSessionRecord, TaskSessionStatus,
+    connect_url, migrate,
 };
 use sqlx::{AssertSqlSafe, Executor, Row, SqlitePool};
 
@@ -52,6 +53,10 @@ mod models {
         (
             "ConceptFacetRecord",
             "INSERT INTO concept_facets VALUES (1, 1, 'ru', 'rendering', 'Имя', 1, 0.8, 0, NULL, '2026-07-18T12:34:56.789012Z', '2026-07-18T13:34:56Z')",
+        ),
+        (
+            "ConceptMergeProposalRecord",
+            "INSERT INTO concepts VALUES (2, 'name', 'Duplicate', 'global', '', 'established', 0.9, NULL, '2026-07-18T12:34:56.789012Z', '2026-07-18T13:34:56Z'); INSERT INTO concept_merge_proposals VALUES (1, 1, 2, 'same canonical identity', 'pending', 1, '2026-07-18T12:34:56.789012Z', '2026-07-18T13:34:56Z')",
         ),
         (
             "ConceptProposalRecord",
@@ -179,6 +184,15 @@ mod models {
             assert!(!row.is_canonical);
             assert_eq!(row.source_crystal_id, Some(1));
             assert!(row.superseded_at.is_none());
+        }
+    );
+    assert_row!(
+        concept_merge_proposal_record_decodes,
+        ConceptMergeProposalRecord,
+        "concept_merge_proposals",
+        |row: ConceptMergeProposalRecord| {
+            assert_eq!(row.status, "pending");
+            assert_eq!(row.dream_run_id, Some(1));
         }
     );
     assert_row!(
@@ -536,6 +550,7 @@ const REQUIRED_TABLES: &[&str] = &[
     "concept_facet_semantic_tags",
     "concept_facet_story_scopes",
     "concept_facets",
+    "concept_merge_proposals",
     "concept_proposals",
     "concept_renames",
     "concept_semantic_tags",
@@ -1149,5 +1164,5 @@ async fn migration_versions_include_fts_and_are_idempotent() {
     .await
     .expect("migration versions should be readable");
 
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 }

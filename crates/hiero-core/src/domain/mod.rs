@@ -13,9 +13,10 @@ pub use crystals::{CrystalStore, StoreError, search_expression};
 pub use feedback::{FeedbackError, FeedbackEvent, FeedbackStore};
 pub use models::{
     AddCrystalInput, AddMemoryInput, AddMemoryResult, Concept, ConceptFacet, ConceptFilter,
-    ConceptProposal, ContractTerm, CreateConceptInput, CreateProposalInput, Crystal, MemorySource,
-    RecallResult, RuleFilter, ShortMemoryLimits, ShortTermMemory, TaskSession, TermProposal,
-    TranslationContext, ValidationFinding, ValidationReport,
+    ConceptMergeProposalInput, ConceptProposal, ContractTerm, CreateConceptInput,
+    CreateProposalInput, Crystal, MemorySource, RecallResult, RuleFilter, ShortMemoryLimits,
+    ShortTermMemory, TaskSession, TermProposal, TranslationContext, ValidationFinding,
+    ValidationReport,
 };
 pub use rule_parser::{ParsedRule, parse_rule};
 pub use scoring::{

@@ -12,10 +12,11 @@ use std::{path::Path, str::FromStr, time::Duration};
 pub use error::DbError;
 pub use legacy_terms::{LegacyConversionReport, convert_legacy_strict_terms};
 pub use models::{
-    ConceptFacetRecord, ConceptProposalRecord, ConceptProposalStatus, ConceptRecord, ConceptStatus,
-    CrystalActivationRecord, CrystalLinkRecord, CrystalRecord, CrystalStatus, CrystalType,
-    DreamRunRecord, DreamRunStatus, MemoryEventRecord, PersistedLabelError, RagChunkRecord,
-    RecallOutcome, SeriesRecord, ShortTermMemoryRecord, TaskSessionRecord, TaskSessionStatus,
+    ConceptFacetRecord, ConceptMergeProposalRecord, ConceptProposalRecord, ConceptProposalStatus,
+    ConceptRecord, ConceptStatus, CrystalActivationRecord, CrystalLinkRecord, CrystalRecord,
+    CrystalStatus, CrystalType, DreamRunRecord, DreamRunStatus, MemoryEventRecord,
+    PersistedLabelError, RagChunkRecord, RecallOutcome, SeriesRecord, ShortTermMemoryRecord,
+    TaskSessionRecord, TaskSessionStatus,
 };
 use sha2::{Digest, Sha256};
 use sqlx::{

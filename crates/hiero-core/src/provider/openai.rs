@@ -69,4 +69,14 @@ impl DreamProvider for OpenAiProvider {
         )
         .await
     }
+
+    async fn run_pass_with_prompt(
+        &self,
+        _pass: PassName,
+        _context: &TranslationContext,
+        _memories: &[ShortTermMemory],
+        prompt: &str,
+    ) -> Result<super::ProviderPassOutput> {
+        super::parse_pass_output(self.0.generate(prompt, false).await?).await
+    }
 }

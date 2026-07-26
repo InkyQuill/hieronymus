@@ -24,10 +24,8 @@ pub async fn run_background_loop(
     loop {
         tokio::select! {
             result = shutdown.recv() => {
-                match result {
-                    Ok(()) | Err(broadcast::error::RecvError::Closed) => return Ok(()),
-                    Err(broadcast::error::RecvError::Lagged(_)) => return Ok(()),
-                }
+                acknowledge_shutdown(result);
+                return Ok(());
             }
             _ = ticks.tick() => {
                 complete_stale_sessions(service.pool(), Utc::now() - stale_after)
@@ -38,8 +36,25 @@ pub async fn run_background_loop(
                     Err(DreamServiceError::Lock(error)) if error.is_already_running() => continue,
                     Err(error) => return Err(error),
                 };
-                service.run_due_with_lock(guard).await?;
+                let mut cycle = Box::pin(service.run_due_with_lock(guard));
+                tokio::select! {
+                    result = &mut cycle => {
+                        result?;
+                    }
+                    result = shutdown.recv() => {
+                        acknowledge_shutdown(result);
+                        drop(cycle);
+                        // The supervisor retains the OS lock until cancellation
+                        // audit cleanup is durable. Reacquisition is the explicit
+                        // completion acknowledgement for scheduler shutdown.
+                        let cleanup_ack = service.acquire_lock("scheduler-shutdown", true).await?;
+                        drop(cleanup_ack);
+                        return Ok(());
+                    }
+                }
             }
         }
     }
 }
+
+fn acknowledge_shutdown(_result: Result<(), broadcast::error::RecvError>) {}

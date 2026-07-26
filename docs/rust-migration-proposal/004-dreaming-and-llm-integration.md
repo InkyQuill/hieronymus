@@ -152,7 +152,7 @@ impl<'a> DreamPhase for Crystallizer<'a> {
 pub struct Consolidator;   // concept-only: finds relationships between existing concepts, produces merge proposals — unchanged in scope from the first draft
 impl DreamPhase for Consolidator {
     type Input = Vec<ConceptRecord>;
-    type Output = Vec<CreateProposalInput>;  // 003 §2.3
+    type Output = Vec<ConceptMergeProposalInput>;
 }
 
 pub struct ReinforcementManager;  // applies passive score deltas, extended per the reconsolidation design (see §4)
@@ -179,6 +179,17 @@ impl DreamPhase for LinkReinforcer {
     type Output = Vec<LinkOutcome>;
 }
 ```
+
+`ConceptMergeProposalInput` is distinct from the terminology
+`CreateProposalInput` in proposal 003 §2.3, whose contract remains unchanged.
+The consolidator considers only unmerged `candidate` and `established` concepts.
+It groups exact trimmed Unicode-casefolded canonical-name matches within the
+same `scope_type` and `scope_key`, then chooses the target by established status,
+higher confidence, and lower id, in that order. Every other group member
+produces a stable source-to-target pending proposal; it never auto-merges.
+Pending directed pairs are idempotent. The durable record stores both concept
+ids, a fixed bounded duplicate-name-and-scope rationale, status, dream run id,
+and timestamps, subject to the cycle and run budgets.
 
 `dreaming::validation` and `dreaming::persistence` are not phases themselves — they're called
 by `Crystallizer`: `validation::normalize_candidate(candidate: &CandidateCrystal) -> Result<CandidateCrystal>`

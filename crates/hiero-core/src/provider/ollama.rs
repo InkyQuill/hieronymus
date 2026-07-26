@@ -59,4 +59,13 @@ impl DreamProvider for OllamaProvider {
         )
         .await
     }
+    async fn run_pass_with_prompt(
+        &self,
+        _p: PassName,
+        _c: &TranslationContext,
+        _m: &[ShortTermMemory],
+        prompt: &str,
+    ) -> Result<super::ProviderPassOutput> {
+        super::parse_pass_output(self.0.generate(prompt, false).await?).await
+    }
 }

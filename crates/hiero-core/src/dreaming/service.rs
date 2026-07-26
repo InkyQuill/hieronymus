@@ -14,20 +14,20 @@ use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 
 use crate::{
     config::HieronymusConfig,
-    db::{CrystalActivationRecord, DreamRunRecord, MemoryEventRecord},
+    db::{ConceptRecord, CrystalActivationRecord, DreamRunRecord, MemoryEventRecord},
     domain::{
         AddCrystalInput, CrystalStore, ScoreDelta, TranslationContext, WorkspaceStore,
         add_crystal_in_transaction, apply_score_delta,
     },
-    provider::PassName,
+    provider::ProviderCatalog,
 };
 
 use super::{
-    DecayManager, DecayScope, DreamAuditError, DreamAuditStore, DreamConfig,
+    Consolidator, DecayManager, DecayScope, DreamAuditError, DreamAuditStore, DreamConfig,
     DreamCycleAlreadyRunning, DreamCycleGuard, DreamPhase, DreamPhaseError, DreamProviderResolver,
-    DreamRunCompletion, LinkOutcome, LinkReinforcer, PhaseOutput, PhaseProfile, PhaseRunStart,
-    Reconsolidator, ReinforcementManager, WorkflowProfile, acquire_dream_cycle_lock,
-    execute_provider_passes,
+    DreamRunCompletion, LinkOutcome, LinkReinforcer, PhaseOutput, PhaseRunStart, Reconsolidator,
+    ReinforcementManager, WorkflowProfile, acquire_dream_cycle_lock,
+    execute_provider_passes_with_config, resolve_workflows,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,12 +92,21 @@ impl From<sqlx::Error> for DreamServiceError {
 
 pub type Result<T> = std::result::Result<T, DreamServiceError>;
 
+struct OutputApplication<'a> {
+    run_id: i64,
+    cycle_id: i64,
+    context: &'a TranslationContext,
+    memories: &'a [crate::domain::ShortTermMemory],
+    outputs: &'a [PhaseOutput],
+}
+
 #[derive(Clone)]
 pub struct DreamService<'a> {
     pool: SqlitePool,
     config: HieronymusConfig,
     dream_config: DreamConfig,
     resolver: Arc<dyn DreamProviderResolver>,
+    provider_catalog: Option<ProviderCatalog>,
     lifetime: PhantomData<&'a ()>,
 }
 
@@ -114,6 +123,25 @@ impl<'a> DreamService<'a> {
             config: config.clone(),
             dream_config: dream_config.clone(),
             resolver,
+            provider_catalog: None,
+            lifetime: PhantomData,
+        }
+    }
+
+    #[must_use]
+    pub fn new_with_catalog(
+        pool: &'a SqlitePool,
+        config: &'a HieronymusConfig,
+        dream_config: &'a DreamConfig,
+        resolver: Arc<dyn DreamProviderResolver>,
+        provider_catalog: ProviderCatalog,
+    ) -> Self {
+        Self {
+            pool: pool.clone(),
+            config: config.clone(),
+            dream_config: dream_config.clone(),
+            resolver,
+            provider_catalog: Some(provider_catalog),
             lifetime: PhantomData,
         }
     }
@@ -217,11 +245,14 @@ impl<'a> DreamService<'a> {
         {
             return Ok(None);
         }
+        let mut long_term_budget =
+            LongTermBudget::new(self.dream_config.max_long_term_records_affected_per_run);
         self.run_unlocked(
             self.dream_config.max_short_term_memories_per_cycle,
             false,
             "autostart",
             run_id,
+            &mut long_term_budget,
         )
         .await
         .map(Some)
@@ -248,6 +279,7 @@ impl<'a> DreamService<'a> {
             config: self.config.clone(),
             dream_config: self.dream_config.clone(),
             resolver: self.resolver.clone(),
+            provider_catalog: self.provider_catalog.clone(),
             lifetime: PhantomData,
         }
     }
@@ -258,17 +290,23 @@ impl<'a> DreamService<'a> {
         run_id: &Arc<AtomicI64>,
     ) -> Result<SupervisedResult> {
         match request {
-            SupervisedRun::Cycle(opts) => self
-                .run_unlocked(
+            SupervisedRun::Cycle(opts) => {
+                let mut long_term_budget =
+                    LongTermBudget::new(self.dream_config.max_long_term_records_affected_per_run);
+                self.run_unlocked(
                     self.dream_config.max_short_term_memories_per_cycle,
                     opts.ignore_minimum,
                     &opts.trigger_type,
                     Some(run_id),
+                    &mut long_term_budget,
                 )
                 .await
-                .map(SupervisedResult::Run),
+                .map(SupervisedResult::Run)
+            }
             SupervisedRun::All(opts) => {
                 let mut remaining = self.dream_config.max_short_term_memories_per_run;
+                let mut long_term_budget =
+                    LongTermBudget::new(self.dream_config.max_long_term_records_affected_per_run);
                 let mut last = self
                     .run_unlocked(
                         self.dream_config
@@ -277,6 +315,7 @@ impl<'a> DreamService<'a> {
                         opts.ignore_minimum,
                         &opts.trigger_type,
                         Some(run_id),
+                        &mut long_term_budget,
                     )
                     .await?;
                 remaining = remaining.saturating_sub(last.input_count as usize);
@@ -289,6 +328,7 @@ impl<'a> DreamService<'a> {
                             true,
                             &opts.trigger_type,
                             Some(run_id),
+                            &mut long_term_budget,
                         )
                         .await?;
                     if last.input_count == 0 {
@@ -440,11 +480,15 @@ impl<'a> DreamService<'a> {
         ignore_minimum: bool,
         trigger_type: &str,
         shared_run_id: Option<&Arc<AtomicI64>>,
+        long_term_budget: &mut LongTermBudget,
     ) -> Result<DreamRunRecord> {
         let pending = self.pending_count().await?;
         let has_resumable_batch = self.resumable_algorithm_batch().await?.is_some();
         let cycle_id = self.next_cycle_id().await?;
-        let provider = self.provider_label();
+        let workflows = self.workflows()?;
+        let provider = workflows
+            .first()
+            .map_or_else(|| "none".into(), |workflow| workflow.provider.clone());
         let run = DreamAuditStore::new(&self.pool)
             .start_run(cycle_id, &provider)
             .await?;
@@ -471,7 +515,9 @@ impl<'a> DreamService<'a> {
             return self.read_run(run.id).await;
         }
 
-        let outcome = self.execute_run(run.id, cycle_id, limit).await;
+        let outcome = self
+            .execute_run(run.id, cycle_id, limit, &workflows, long_term_budget)
+            .await;
         match outcome {
             Ok(counts) => {
                 DreamAuditStore::new(&self.pool)
@@ -496,6 +542,8 @@ impl<'a> DreamService<'a> {
         run_id: i64,
         cycle_id: i64,
         limit: usize,
+        workflows: &[WorkflowProfile],
+        long_term_budget: &mut LongTermBudget,
     ) -> Result<DreamRunCompletion> {
         let (batches, resumed_stage) = self.pending_or_resumable_batches(limit).await?;
         if batches.is_empty() {
@@ -519,7 +567,6 @@ impl<'a> DreamService<'a> {
                     .await?
             }
         };
-        let workflows = self.workflows();
         let mut outputs = Vec::with_capacity(workflows.len());
         for workflow in workflows {
             let phase = DreamAuditStore::new(&self.pool)
@@ -534,7 +581,7 @@ impl<'a> DreamService<'a> {
                 })
                 .await?;
             let output = self
-                .execute_phase(&workflow, context.clone(), memories.clone())
+                .execute_phase(workflow, context.clone(), memories.clone())
                 .await?;
             let count = phase_output_count(&output);
             DreamAuditStore::new(&self.pool)
@@ -544,8 +591,14 @@ impl<'a> DreamService<'a> {
         }
         require_complete_coverage(&outputs, &memories)?;
         if !stage.algorithms_completed {
-            self.run_algorithmic_phases(stage.maintenance_cycle_id, &memories, &session_ids)
-                .await?;
+            self.run_algorithmic_phases(
+                run_id,
+                stage.maintenance_cycle_id,
+                &memories,
+                &session_ids,
+                long_term_budget,
+            )
+            .await?;
             self.complete_algorithm_batch(run_id, &stage.batch_id)
                 .await?;
         }
@@ -553,11 +606,14 @@ impl<'a> DreamService<'a> {
         let (created, proposals) = self
             .apply_outputs(
                 &mut transaction,
-                run_id,
-                cycle_id,
-                &context,
-                &memories,
-                &outputs,
+                OutputApplication {
+                    run_id,
+                    cycle_id,
+                    context: &context,
+                    memories: &memories,
+                    outputs: &outputs,
+                },
+                long_term_budget,
             )
             .await?;
         let now = Utc::now();
@@ -600,10 +656,11 @@ impl<'a> DreamService<'a> {
         context: TranslationContext,
         memories: Vec<crate::domain::ShortTermMemory>,
     ) -> Result<PhaseOutput> {
-        execute_provider_passes(
+        execute_provider_passes_with_config(
             &self.pool,
             self.resolver.as_ref(),
             std::slice::from_ref(workflow),
+            &self.dream_config,
             context,
             memories,
         )
@@ -617,20 +674,36 @@ impl<'a> DreamService<'a> {
     async fn apply_outputs(
         &self,
         transaction: &mut SqliteConnection,
-        run_id: i64,
-        cycle_id: i64,
-        context: &TranslationContext,
-        memories: &[crate::domain::ShortTermMemory],
-        outputs: &[PhaseOutput],
+        application: OutputApplication<'_>,
+        long_term_budget: &mut LongTermBudget,
     ) -> Result<(usize, usize)> {
+        let OutputApplication {
+            run_id,
+            cycle_id,
+            context,
+            memories,
+            outputs,
+        } = application;
         let allowed: BTreeSet<i64> = memories.iter().map(|memory| memory.id).collect();
         let mut created = 0;
         let mut proposals = 0;
-        let mut changed = BTreeSet::new();
+        let mut affected = ChangeBudget::new(
+            self.dream_config
+                .max_changed_crystals_per_cycle
+                .min(self.dream_config.max_total_affected_crystals),
+        );
         for output in outputs {
             match output {
                 PhaseOutput::Concepts(value) => {
-                    for candidate in &value.concepts {
+                    for candidate in value
+                        .concepts
+                        .iter()
+                        .take(self.dream_config.max_related_concepts_per_cycle)
+                    {
+                        let record_cost = 1usize.saturating_add(candidate.concept.facets.len());
+                        if !long_term_budget.reserve(record_cost) {
+                            break;
+                        }
                         let now = Utc::now();
                         let concept_id = sqlx::query("INSERT INTO concepts(canonical_name,scope_type,scope_key,status,confidence,created_at,updated_at) VALUES (?,'series',?,'candidate',0.2,?,?)")
                             .bind(candidate.concept.canonical_name.trim())
@@ -663,6 +736,9 @@ impl<'a> DreamService<'a> {
                 }
                 PhaseOutput::TerminologyCandidates(value) => {
                     for candidate in &value.concept_proposals {
+                        if !long_term_budget.reserve(1) {
+                            break;
+                        }
                         let now = Utc::now();
                         sqlx::query("INSERT INTO concept_proposals(dream_run_id,series_slug,source_language,target_language,concept_text,source_form,canonical_rendering,approved_variants_json,forbidden_variants_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'[]','[]','pending',?,?)")
                             .bind(run_id)
@@ -681,7 +757,7 @@ impl<'a> DreamService<'a> {
                 }
                 PhaseOutput::RuleCrystals(value) | PhaseOutput::KnowledgeCrystals(value) => {
                     for candidate in &value.crystals {
-                        if changed.len() >= self.dream_config.max_changed_crystals_per_cycle {
+                        if affected.remaining() == 0 || !long_term_budget.reserve(1) {
                             break;
                         }
                         if candidate
@@ -726,7 +802,7 @@ impl<'a> DreamService<'a> {
                                 .execute(&mut *transaction)
                                 .await?;
                         }
-                        changed.insert(id);
+                        assert!(affected.reserve(&[id]), "new crystal budget was prechecked");
                         created += 1;
                     }
                 }
@@ -736,6 +812,11 @@ impl<'a> DreamService<'a> {
                         .iter()
                         .take(self.dream_config.max_relation_records_per_pass)
                     {
+                        if !affected.reserve(&[relation.source_id, relation.target_id])
+                            || !long_term_budget.reserve(1)
+                        {
+                            break;
+                        }
                         sqlx::query("INSERT OR IGNORE INTO crystal_links(source_crystal_id,target_crystal_id,link_type) VALUES (?,?,?)")
                             .bind(relation.source_id)
                             .bind(relation.target_id)
@@ -750,8 +831,13 @@ impl<'a> DreamService<'a> {
                     candidates.dedup_by_key(|candidate| candidate.crystal_id);
                     for candidate in candidates
                         .into_iter()
-                        .take(self.dream_config.max_changed_crystals_per_cycle)
+                        .take(self.dream_config.max_total_affected_crystals)
                     {
+                        if !affected.reserve(&[candidate.crystal_id])
+                            || !long_term_budget.reserve(1)
+                        {
+                            break;
+                        }
                         Self::apply_provider_reinforcement(
                             transaction,
                             candidate.crystal_id,
@@ -808,16 +894,21 @@ impl<'a> DreamService<'a> {
 
     async fn run_algorithmic_phases(
         &self,
+        run_id: i64,
         cycle_id: i64,
         memories: &[crate::domain::ShortTermMemory],
         session_ids: &[i64],
+        long_term_budget: &mut LongTermBudget,
     ) -> Result<()> {
-        let limit = self.dream_config.max_changed_crystals_per_cycle;
+        let limit = self
+            .dream_config
+            .max_changed_crystals_per_cycle
+            .min(self.dream_config.max_total_affected_crystals);
         let mut working = Vec::new();
         for memory in memories
             .iter()
             .filter(|memory| memory.source_crystal_id.is_some())
-            .take(limit)
+            .take(limit.min(long_term_budget.remaining()))
         {
             let Some(source_crystal_id) = memory.source_crystal_id else {
                 continue;
@@ -834,14 +925,65 @@ impl<'a> DreamService<'a> {
             Reconsolidator::new(self.dream_config.reconsolidation_diff_threshold, cycle_id)
                 .run(&self.pool, working)
                 .await?;
+        long_term_budget.reserve(reconsolidated.len());
         let mut changed = reconsolidated.len();
 
+        let concepts: Vec<ConceptRecord> = sqlx::query_as(
+            "SELECT * FROM concepts
+             WHERE merged_into_concept_id IS NULL
+               AND status IN ('candidate','established')
+             ORDER BY id
+             LIMIT ?",
+        )
+        .bind(self.dream_config.max_related_concepts_per_cycle as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        let proposal_limit = self
+            .dream_config
+            .max_related_concepts_per_cycle
+            .min(long_term_budget.remaining());
+        let consolidated = Consolidator::new(run_id, proposal_limit)
+            .run(&self.pool, concepts)
+            .await?;
+        long_term_budget.reserve(consolidated.len());
+
+        let passive_limit = limit
+            .saturating_sub(changed)
+            .min(long_term_budget.remaining());
+        if passive_limit > 0 {
+            let passive_events: Vec<MemoryEventRecord> = sqlx::query_as(
+                "SELECT * FROM memory_events
+                 WHERE applied=0
+                   AND event_type IN (
+                     'cited','used_in_translation','passed_review',
+                     'caused_correction','superseded','recalled_again'
+                   )
+                 ORDER BY id
+                 LIMIT ?",
+            )
+            .bind(passive_limit as i64)
+            .fetch_all(&self.pool)
+            .await?;
+            let reinforced = ReinforcementManager::new(cycle_id)
+                .run(&self.pool, passive_events)
+                .await?;
+            long_term_budget.reserve(reinforced.len());
+            changed += reinforced.len();
+        }
+
         let activations = self
-            .bounded_activations(session_ids, cycle_id, limit.saturating_sub(changed))
+            .bounded_activations(
+                session_ids,
+                cycle_id,
+                limit
+                    .saturating_sub(changed)
+                    .min(long_term_budget.remaining()),
+            )
             .await?;
         let outcomes = LinkReinforcer::new(cycle_id)
             .run(&self.pool, activations.clone())
             .await?;
+        long_term_budget.reserve(outcomes.len());
         changed += outcomes.len();
         let recalled_ids = activations
             .iter()
@@ -861,8 +1003,8 @@ impl<'a> DreamService<'a> {
             })
             .collect();
         let remaining = limit.saturating_sub(changed);
-        if remaining > 0 {
-            DecayManager
+        if remaining > 0 && long_term_budget.remaining() > 0 {
+            let decayed = DecayManager
                 .run(
                     &self.pool,
                     DecayScope {
@@ -871,10 +1013,11 @@ impl<'a> DreamService<'a> {
                         stale_before_cycle: cycle_id,
                         recalled_ids,
                         linked_ids,
-                        limit: remaining,
+                        limit: remaining.min(long_term_budget.remaining()),
                     },
                 )
                 .await?;
+            long_term_budget.reserve(decayed.len());
         }
         Ok(())
     }
@@ -905,10 +1048,33 @@ impl<'a> DreamService<'a> {
             .push(" ORDER BY crystal_id,id LIMIT ")
             .push_bind(limit as i64);
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let activations = select
+        let candidates = select
             .build_query_as::<CrystalActivationRecord>()
             .fetch_all(&mut *transaction)
             .await?;
+        let mut concept_counts = std::collections::BTreeMap::<i64, usize>::new();
+        let mut activations = Vec::new();
+        for activation in candidates {
+            let concept_ids: Vec<i64> = sqlx::query_scalar(
+                "SELECT concept_id FROM crystal_concepts WHERE crystal_id=? ORDER BY concept_id",
+            )
+            .bind(activation.crystal_id)
+            .fetch_all(&mut *transaction)
+            .await?;
+            if concept_ids.iter().any(|concept_id| {
+                concept_counts.get(concept_id).copied().unwrap_or(0)
+                    >= self.dream_config.max_related_crystals_per_concept
+            }) {
+                continue;
+            }
+            for concept_id in concept_ids {
+                *concept_counts.entry(concept_id).or_default() += 1;
+            }
+            activations.push(activation);
+            if activations.len() == limit {
+                break;
+            }
+        }
         if !activations.is_empty() {
             let mut update =
                 QueryBuilder::<Sqlite>::new("UPDATE crystal_activations SET cycle_id=");
@@ -1203,20 +1369,21 @@ impl<'a> DreamService<'a> {
         Ok(run)
     }
 
-    fn workflows(&self) -> Vec<WorkflowProfile> {
-        PassName::ALL
-            .into_iter()
-            .filter_map(|phase| {
-                let profile = &self.dream_config.workflows[&phase];
-                profile.enabled.then(|| workflow(phase, profile))
-            })
-            .collect()
+    fn workflows(&self) -> Result<Vec<WorkflowProfile>> {
+        let catalog = match &self.provider_catalog {
+            Some(catalog) => catalog.clone(),
+            None => ProviderCatalog::load(self.config.provider_config_path())
+                .map_err(|error| DreamServiceError::Domain(error.to_string()))?,
+        };
+        resolve_workflows(&self.dream_config, &catalog)
+            .map_err(|error| DreamServiceError::Domain(error.to_string()))
     }
 
     fn provider_label(&self) -> String {
         self.workflows()
-            .first()
-            .map_or_else(|| "none".into(), |workflow| workflow.provider.clone())
+            .ok()
+            .and_then(|workflows| workflows.first().cloned())
+            .map_or_else(|| "none".into(), |workflow| workflow.provider)
     }
 }
 
@@ -1232,15 +1399,6 @@ struct AlgorithmBatchStage {
     memory_ids: Vec<i64>,
     algorithms_completed: bool,
     committed: bool,
-}
-
-fn workflow(phase: PassName, profile: &PhaseProfile) -> WorkflowProfile {
-    WorkflowProfile {
-        phase,
-        provider: profile.provider.clone(),
-        model: profile.model.clone(),
-        max_records_per_pass: profile.max_records_per_pass,
-    }
 }
 
 fn phase_output_count(output: &PhaseOutput) -> usize {
@@ -1335,6 +1493,32 @@ impl ChangeBudget {
         self.ids.extend(ids.iter().copied());
         true
     }
+
+    fn remaining(&self) -> usize {
+        self.limit.saturating_sub(self.ids.len())
+    }
+}
+
+struct LongTermBudget {
+    remaining: usize,
+}
+
+impl LongTermBudget {
+    const fn new(limit: usize) -> Self {
+        Self { remaining: limit }
+    }
+
+    const fn remaining(&self) -> usize {
+        self.remaining
+    }
+
+    fn reserve(&mut self, count: usize) -> bool {
+        if count > self.remaining {
+            return false;
+        }
+        self.remaining -= count;
+        true
+    }
 }
 
 async fn synthetic_maintenance_session(pool: &SqlitePool, cycle_id: i64) -> Result<i64> {
@@ -1426,6 +1610,7 @@ fn supervise_blocking(
     }));
 
     let open_run_id = run_id.load(Ordering::Acquire);
+    let mut recovery_failure = None;
     if open_run_id != 0 {
         let reason = match &outcome {
             Ok(SupervisorOutcome::Cancelled) => "dream cycle cancelled",
@@ -1435,8 +1620,12 @@ fn supervise_blocking(
         let audit = DreamAuditStore::new(&service.pool);
         let mut cleanup =
             runtime.block_on(audit.fail_run(open_run_id, DreamRunCompletion::new(0, 0, 0), reason));
-        if cleanup.is_err() {
-            let _ = guard.mark_audit_recovery();
+        if let Err(cleanup_error) = &cleanup
+            && let Err(publication_error) = guard.mark_audit_recovery()
+        {
+            recovery_failure = Some(format!(
+                "audit cleanup failed: {cleanup_error}; audit recovery state publication failed: {publication_error}"
+            ));
         }
         while cleanup.is_err() {
             runtime.block_on(tokio::time::sleep(std::time::Duration::from_millis(50)));
@@ -1452,6 +1641,8 @@ fn supervise_blocking(
     drop(guard);
     match outcome {
         Ok(SupervisorOutcome::Complete(result)) => {
+            let result =
+                recovery_failure.map_or(result, |failure| Err(DreamServiceError::Domain(failure)));
             let _ = sender.send(result);
         }
         Ok(SupervisorOutcome::Cancelled) => {}

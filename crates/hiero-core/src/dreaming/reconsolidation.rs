@@ -59,12 +59,13 @@ impl DreamPhase for Reconsolidator {
         let mut outcomes = Vec::with_capacity(input.len());
         for (memory, source) in input {
             let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
-            let (working_text, source_crystal_id, archived_at): (
+            let (working_text, kind, source_crystal_id, archived_at): (
+                String,
                 String,
                 Option<i64>,
                 Option<String>,
             ) = sqlx::query_as(
-                "SELECT text,source_crystal_id,archived_at FROM short_term_memories WHERE id=?",
+                "SELECT text,kind,source_crystal_id,archived_at FROM short_term_memories WHERE id=?",
             )
             .bind(memory.id)
             .fetch_one(&mut *transaction)
@@ -72,6 +73,11 @@ impl DreamPhase for Reconsolidator {
             if source_crystal_id != Some(source.id) {
                 return Err(DreamPhaseError::InvalidInput(
                     "working copy does not reference its supplied source crystal",
+                ));
+            }
+            if kind != "working_copy" {
+                return Err(DreamPhaseError::InvalidInput(
+                    "source-linked memory is not a working copy",
                 ));
             }
             let source = read_crystal(&mut transaction, source.id).await?;

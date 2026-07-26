@@ -3,6 +3,7 @@
 mod audit;
 mod concepts;
 mod config;
+mod consolidation;
 mod crystallize;
 mod decay;
 mod evidence;
@@ -23,6 +24,7 @@ pub use concepts::{
     ConceptPhaseCandidate, ConceptsOutput, TerminologyCandidate, TerminologyCandidatesOutput,
 };
 pub use config::{DreamConfig, DreamConfigError, PhaseProfile};
+pub use consolidation::Consolidator;
 pub use crystallize::{Crystallizer, KnowledgeCrystalsPhase, RuleCrystalsPhase};
 pub use decay::{
     CONFIDENCE_DECAY_AFTER_STRENGTH_BELOW, CONFIDENCE_DECAY_PER_CYCLE, DECAY_BATCH_SIZE,
@@ -44,7 +46,7 @@ pub use parsing::{
 pub use phases::{
     CatalogDreamProviderResolver, ConceptsPhase, CrystalPhaseOutput, DreamPhase, DreamPhaseError,
     DreamProviderResolver, PhaseInput, PhaseOutput, RecoveryMetadata, TerminologyCandidatesPhase,
-    execute_provider_passes,
+    execute_provider_passes, execute_provider_passes_with_config,
 };
 pub use reconsolidation::{
     COMBINATION_TEXT_SIMILARITY_THRESHOLD, ReconsolidationDecision, ReconsolidationOutcome,

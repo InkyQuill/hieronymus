@@ -3,6 +3,7 @@
 mod anthropic;
 mod cache;
 mod catalog;
+mod deterministic;
 mod google;
 mod ollama;
 mod openai;
@@ -26,6 +27,7 @@ pub use anthropic::AnthropicProvider;
 pub use cache::{ModelCache, ModelCacheEntry};
 pub use catalog::{CredentialSource, ProviderCatalog, ProviderDefaults, ProviderProfile};
 pub(crate) use catalog::{secure_read_bounded, secure_write};
+pub use deterministic::DeterministicProvider;
 pub use google::GoogleProvider;
 pub use ollama::OllamaProvider;
 pub use openai::OpenAiProvider;
@@ -170,6 +172,16 @@ pub trait DreamProvider: Send + Sync {
         context: &TranslationContext,
         memories: &[ShortTermMemory],
     ) -> Result<ProviderPassOutput>;
+
+    async fn run_pass_with_prompt(
+        &self,
+        pass: PassName,
+        context: &TranslationContext,
+        memories: &[ShortTermMemory],
+        _prompt: &str,
+    ) -> Result<ProviderPassOutput> {
+        self.run_pass(pass, context, memories).await
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -831,6 +843,9 @@ impl ProviderRegistry {
         name: &str,
         model: &str,
     ) -> Result<Box<dyn DreamProvider>> {
+        if name == "deterministic" {
+            return Ok(Box::new(DeterministicProvider));
+        }
         let profile = catalog
             .get(name)
             .ok_or_else(|| ProviderError::MissingProfile(name.into()))?

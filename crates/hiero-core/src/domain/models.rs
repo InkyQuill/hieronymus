@@ -327,6 +327,14 @@ pub struct CreateProposalInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConceptMergeProposalInput {
+    pub source_concept_id: i64,
+    pub target_concept_id: i64,
+    pub rationale: String,
+    pub dream_run_id: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConceptProposal {
     pub record: ConceptProposalRecord,
     pub approved_variants: Vec<String>,

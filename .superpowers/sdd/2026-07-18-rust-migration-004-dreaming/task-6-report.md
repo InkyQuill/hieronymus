@@ -388,3 +388,105 @@ passed.
 ### Concerns
 
 None.
+
+## Final review fix wave
+
+### RED
+
+The seven final-review findings were reproduced with focused regression
+coverage before their production fixes:
+
+- production workflow integration could not resolve blank provider/model
+  defaults or deliver the exact phase prompt to a production-shaped transport;
+- the registry could not execute the configured `deterministic` provider;
+- the consolidator type was absent, and a late persistence retry left no merge
+  proposal or applied passive reinforcement event;
+- a deliberately unshared `run_all` budget exceeded the configured aggregate
+  long-term-record limit;
+- blocked-provider scheduler shutdown timed out while cleanup was still in
+  flight;
+- an injected audit cleanup/publication failure returned only the provider
+  failure;
+- a source-linked non-working-copy row was accepted by reconsolidation and
+  returned `ReinforcedInPlace`.
+
+### GREEN
+
+- Production `DreamService` now resolves every enabled workflow against the
+  provider catalog, applies catalog defaults, builds the phase-specific prompt
+  including `general_prompt`, and passes that exact prompt through each provider
+  transport.
+- The registered deterministic provider emits rule crystals only for explicit
+  rule-pattern memories and performs no network I/O.
+- Additive migration 0011 adds reviewable, idempotent directed concept merge
+  proposals. `Consolidator` applies the confirmed scope, Unicode casefold,
+  target-order, and stable source-order contract without changing terminology
+  proposals. Normal durable algorithm batches now run consolidation and
+  bounded passive reinforcement with exact-once retry behavior.
+- Related-concept, per-concept related-crystal, changed-crystal,
+  total-affected-crystal, and long-term-record limits now bound provider and
+  algorithmic work. `run_all` shares one aggregate long-term budget.
+- Scheduler shutdown cancels the in-flight cycle and waits for the supervised
+  lock/audit cleanup acknowledgement before returning.
+- Audit recovery retains a state-publication error alongside the original
+  cleanup failure.
+- Reconsolidation's locked reread now requires `kind = 'working_copy'` before
+  any mutation.
+- Proposal 004, user-facing dreaming documentation, migration history tests,
+  schema fixtures, and public row decoding coverage now describe migration 0011
+  and the dedicated merge-proposal contract.
+
+### Verification
+
+```text
+cargo test -p hiero-core \
+  --test test_providers \
+  --test test_dream_config \
+  --test test_dream_lock \
+  --test test_dream_phases \
+  --test test_reconsolidation \
+  --test test_link_reinforcement \
+  --test test_dreaming \
+  --locked --no-fail-fast
+151 passed; 0 failed; 3 ignored helper entry points
+
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+passed
+
+cargo test --workspace --all-targets --all-features --locked --no-fail-fast
+passed; no failed target
+
+cargo doc --workspace --no-deps --all-features --locked
+passed
+
+cargo fmt --all -- --check
+passed
+
+git diff --check
+passed
+```
+
+The first full-workspace verification exposed stale ten-migration expectations
+in the FTS and legacy-upgrade suites after additive migration 0011. Those
+manifests were updated, all three exact failed targets passed, and the complete
+workspace rerun passed.
+
+### Self-review
+
+- Provider resolution remains fail-closed, enabled phase order is stable, and
+  all test providers are injected without credentials or external I/O.
+- Consolidation never auto-merges, does not reuse the terminology proposal DTO,
+  and its pending directed-pair uniqueness makes durable retries converge.
+- Every newly composed algorithm uses the original resumable maintenance cycle;
+  provider persistence and source archival remain one transaction.
+- Aggregate budgets are owned by the supervised run, while cycle-local affected
+  limits are recreated only at cycle boundaries.
+- Shutdown does not release the data-root lock before audit cleanup is durable,
+  and publication failures are no longer discarded.
+- The reconsolidation kind check occurs inside the locked reread transaction
+  before archive or score mutation.
+- Proposal 005 and the recorded deferred minors remain untouched.
+
+### Concerns
+
+None.

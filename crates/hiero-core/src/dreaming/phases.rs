@@ -13,8 +13,9 @@ use crate::{
 };
 
 use super::{
-    ConceptsOutput, CoverageAuditOutput, MALFORMED_OUTPUT_PENALTY, ReinforcementOutput,
-    RelationsOutput, SourcedCrystalCandidate, TerminologyCandidatesOutput, WorkflowProfile,
+    ConceptsOutput, CoverageAuditOutput, DreamConfig, MALFORMED_OUTPUT_PENALTY,
+    ReinforcementOutput, RelationsOutput, SourcedCrystalCandidate, TerminologyCandidatesOutput,
+    WorkflowProfile, build_phase_prompt,
 };
 
 #[async_trait]
@@ -93,6 +94,7 @@ impl DreamProviderResolver for CatalogDreamProviderResolver<'_> {
 pub struct PhaseInput {
     pub context: TranslationContext,
     pub memories: Vec<ShortTermMemory>,
+    prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -144,11 +146,16 @@ macro_rules! provider_phase {
                 _pool: &SqlitePool,
                 input: Self::Input,
             ) -> Result<Self::Output, DreamPhaseError> {
-                let parsed = self
-                    .provider
-                    .run_pass($pass, &input.context, &input.memories)
-                    .await
-                    .map_err(DreamPhaseError::Provider)?;
+                let parsed = if let Some(prompt) = input.prompt.as_deref() {
+                    self.provider
+                        .run_pass_with_prompt($pass, &input.context, &input.memories, prompt)
+                        .await
+                } else {
+                    self.provider
+                        .run_pass($pass, &input.context, &input.memories)
+                        .await
+                }
+                .map_err(DreamPhaseError::Provider)?;
                 decode_and_validate(parsed, &input.memories)
             }
         }
@@ -190,9 +197,37 @@ pub async fn execute_provider_passes(
     context: TranslationContext,
     memories: Vec<ShortTermMemory>,
 ) -> Result<Vec<PhaseOutput>, DreamPhaseError> {
-    let input = PhaseInput { context, memories };
+    execute_provider_passes_inner(pool, resolver, workflow, context, memories, None).await
+}
+
+pub async fn execute_provider_passes_with_config(
+    pool: &SqlitePool,
+    resolver: &dyn DreamProviderResolver,
+    workflow: &[WorkflowProfile],
+    config: &DreamConfig,
+    context: TranslationContext,
+    memories: Vec<ShortTermMemory>,
+) -> Result<Vec<PhaseOutput>, DreamPhaseError> {
+    execute_provider_passes_inner(pool, resolver, workflow, context, memories, Some(config)).await
+}
+
+async fn execute_provider_passes_inner(
+    pool: &SqlitePool,
+    resolver: &dyn DreamProviderResolver,
+    workflow: &[WorkflowProfile],
+    context: TranslationContext,
+    memories: Vec<ShortTermMemory>,
+    config: Option<&DreamConfig>,
+) -> Result<Vec<PhaseOutput>, DreamPhaseError> {
+    let input_value = serde_json::json!({"context": &context, "memories": &memories});
+    let mut input = PhaseInput {
+        context,
+        memories,
+        prompt: None,
+    };
     let mut outputs = Vec::with_capacity(workflow.len());
     for profile in workflow {
+        input.prompt = config.map(|config| build_phase_prompt(config, profile.phase, &input_value));
         let provider = resolver.resolve(profile)?;
         let mut output = match profile.phase {
             PassName::Concepts => PhaseOutput::Concepts(

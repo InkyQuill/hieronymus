@@ -125,11 +125,20 @@ compaction then inspect the affected memory set and decide what to reinforce, de
 combine, supersede, or archive. Optional discovery workflows can be assigned to a
 separate provider profile, such as a local Ollama model.
 
+The algorithmic stage also applies unapplied passive reinforcement events and
+detects duplicate concepts conservatively. Concepts must have the same scope and
+an exact trimmed Unicode-casefolded canonical name. Dreaming records an
+idempotent pending source-to-target merge proposal for review; it never merges
+concepts automatically, and terminology proposals remain a separate contract.
+
 The affected memory set is bounded. It starts with the completed short-term
 memories selected for the cycle, then adds nearby concepts, facets, active rule
 crystals, related ordinary crystals, semantic-tag matches, story-scope matches,
 and explicit links. Dreaming records and changes only that bounded set; it does
-not rescore or rewrite the whole store on each run.
+not rescore or rewrite the whole store on each run. Relationship,
+changed-crystal, total-affected-crystal, and long-term-record limits apply to
+provider and algorithmic work; `run_all` shares the long-term-record budget
+across its constituent cycles.
 
 Providers produce structured JSON that Hieronymus validates before applying dream
 outputs. Malformed entries are parsed best-effort when they still contain useful

@@ -1,9 +1,9 @@
 use chrono::Utc;
 use hiero_core::{
-    db::{CrystalActivationRecord, MemoryEventRecord, connect_url},
+    db::{ConceptRecord, CrystalActivationRecord, MemoryEventRecord, connect_url, migrate},
     domain::{AddCrystalInput, CrystalStore, FeedbackEvent, FeedbackStore, WorkspaceStore},
     dreaming::{
-        DreamPhase, LinkReinforcer, ReconsolidationDecision, ReconsolidationOutcome,
+        Consolidator, DreamPhase, LinkReinforcer, ReconsolidationDecision, ReconsolidationOutcome,
         Reconsolidator, ReinforcementManager, diff_ratio, reconsolidation_decision,
     },
 };
@@ -17,6 +17,77 @@ async fn pool() -> sqlx::SqlitePool {
     ))
     .await
     .unwrap()
+}
+
+async fn concept(
+    pool: &sqlx::SqlitePool,
+    name: &str,
+    scope_key: &str,
+    status: &str,
+    confidence: f64,
+) -> ConceptRecord {
+    sqlx::query_as(
+        "INSERT INTO concepts(canonical_name,description,scope_type,scope_key,status,confidence,created_at,updated_at)
+         VALUES (?,'','series',?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) RETURNING *",
+    )
+    .bind(name)
+    .bind(scope_key)
+    .bind(status)
+    .bind(confidence)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn consolidator_persists_stable_casefolded_pending_merge_proposals_idempotently() {
+    let pool = pool().await;
+    migrate(&pool).await.unwrap();
+    let target = concept(&pool, " STRASSE ", "series:oso", "established", 0.7).await;
+    let source_low = concept(&pool, "Straße", "series:oso", "candidate", 0.9).await;
+    let source_high = concept(&pool, "strasse", "series:oso", "established", 0.6).await;
+    let other_scope = concept(&pool, "STRASSE", "series:other", "established", 1.0).await;
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO dream_runs(cycle_id,status,provider,created_at) VALUES (1,'running','deterministic',CURRENT_TIMESTAMP) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let input = vec![
+        source_low.clone(),
+        other_scope,
+        target.clone(),
+        source_high.clone(),
+    ];
+
+    let first = Consolidator::new(run_id, 10)
+        .run(&pool, input.clone())
+        .await
+        .unwrap();
+    let second = Consolidator::new(run_id, 10)
+        .run(&pool, input)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        first
+            .iter()
+            .map(|proposal| (proposal.source_concept_id, proposal.target_concept_id))
+            .collect::<Vec<_>>(),
+        [(source_low.id, target.id), (source_high.id, target.id)]
+    );
+    assert!(second.is_empty());
+    let rows: Vec<(i64, i64, String, String)> = sqlx::query_as(
+        "SELECT source_concept_id,target_concept_id,rationale,status
+         FROM concept_merge_proposals ORDER BY source_concept_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.1 == target.id
+        && row.2 == "Canonical name and scope are exact duplicates."
+        && row.3 == "pending"));
 }
 
 fn input(text: &str) -> AddCrystalInput {
@@ -259,6 +330,42 @@ async fn reconsolidator_rereads_the_working_copy_after_write_lock_acquisition() 
         store.get(new_crystal_id).await.unwrap().text,
         "completely revised wording"
     );
+}
+
+#[tokio::test]
+async fn reconsolidator_rejects_source_linked_non_working_copy_from_locked_reread() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let source_id = store.add(input("one two three")).await.unwrap();
+    let memory = working_copy(&pool, source_id, "one two three").await;
+    sqlx::query("UPDATE short_term_memories SET kind='note' WHERE id=?")
+        .bind(memory.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let error = Reconsolidator::new(0.20, 16)
+        .run(
+            &pool,
+            vec![(memory.clone(), store.get(source_id).await.unwrap())],
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        hiero_core::dreaming::DreamPhaseError::InvalidInput(
+            "source-linked memory is not a working copy"
+        )
+    ));
+    assert_eq!(store.get(source_id).await.unwrap().strength, 0.5);
+    let archived_at: Option<String> =
+        sqlx::query_scalar("SELECT archived_at FROM short_term_memories WHERE id=?")
+            .bind(memory.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(archived_at.is_none());
 }
 
 #[tokio::test]

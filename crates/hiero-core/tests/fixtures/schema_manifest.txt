@@ -42,6 +42,20 @@ COLUMN 9|created_at|TEXT|1|NULL|0
 COLUMN 10|updated_at|TEXT|1|NULL|0
 FK 0|0|crystals|source_crystal_id|id|NO ACTION|SET NULL|NONE
 FK 1|0|concepts|concept_id|id|NO ACTION|CASCADE|NONE
+TABLE concept_merge_proposals
+SQL CREATE TABLE concept_merge_proposals (   id INTEGER PRIMARY KEY,   source_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,   target_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,   rationale TEXT NOT NULL,   status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),   dream_run_id INTEGER REFERENCES dream_runs(id) ON DELETE SET NULL,   created_at TEXT NOT NULL,   updated_at TEXT NOT NULL,   CHECK (source_concept_id <> target_concept_id) ) STRICT
+COLUMN 0|id|INTEGER|0|NULL|1
+COLUMN 1|source_concept_id|INTEGER|1|NULL|0
+COLUMN 2|target_concept_id|INTEGER|1|NULL|0
+COLUMN 3|rationale|TEXT|1|NULL|0
+COLUMN 4|status|TEXT|1|NULL|0
+COLUMN 5|dream_run_id|INTEGER|0|NULL|0
+COLUMN 6|created_at|TEXT|1|NULL|0
+COLUMN 7|updated_at|TEXT|1|NULL|0
+FK 0|0|dream_runs|dream_run_id|id|NO ACTION|SET NULL|NONE
+FK 1|0|concepts|target_concept_id|id|NO ACTION|CASCADE|NONE
+FK 2|0|concepts|source_concept_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|concept_merge_proposals_pending_pair_idx|1|c|1|source_concept_id,target_concept_id
 TABLE concept_proposals
 SQL CREATE TABLE concept_proposals (   id INTEGER PRIMARY KEY,   dream_run_id INTEGER REFERENCES dream_runs(id) ON DELETE SET NULL,   series_slug TEXT NOT NULL DEFAULT '',   source_language TEXT NOT NULL,   target_language TEXT NOT NULL,   concept_text TEXT NOT NULL,   source_form TEXT NOT NULL,   canonical_rendering TEXT NOT NULL,   approved_variants_json TEXT NOT NULL DEFAULT '[]',   forbidden_variants_json TEXT NOT NULL DEFAULT '[]',   rationale TEXT NOT NULL DEFAULT '',   status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),   created_at TEXT NOT NULL,   updated_at TEXT NOT NULL ) STRICT
 COLUMN 0|id|INTEGER|0|NULL|1

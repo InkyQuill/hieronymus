@@ -16,6 +16,7 @@ use hiero_core::provider::{
     ProviderRequest, ProviderResponse, ProviderTransport, ReqwestTransport,
     ReqwestTransportOptions,
 };
+use hiero_core::{db::ShortTermMemoryRecord, domain::ShortTermMemory};
 use secrecy::SecretString;
 
 fn profile(id: &str, kind: &str, url: &str) -> ProviderProfile {
@@ -80,6 +81,93 @@ impl ProviderTransport for FakeTransport {
 
 fn context() -> hiero_core::domain::TranslationContext {
     hiero_core::domain::TranslationContext::new("series", "en", "ru")
+}
+
+fn rule_memory() -> ShortTermMemory {
+    ShortTermMemory {
+        record: ShortTermMemoryRecord {
+            id: 7,
+            session_id: 1,
+            source_role: "user".into(),
+            kind: "terminology-rule".into(),
+            text: "Render Sense as Сенс.".into(),
+            source_ref: String::new(),
+            metadata_json: "{}".into(),
+            source_credibility: Some("user_rule".into()),
+            rule_intent: Some("terminology".into()),
+            soft_origin: None,
+            source_crystal_id: None,
+            created_at: Utc::now(),
+            archived_at: None,
+        },
+        metadata: Default::default(),
+        language_tags: vec!["en".into(), "ru".into()],
+        story_scopes: Vec::new(),
+        semantic_tags: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn deterministic_registry_provider_emits_only_rule_pattern_crystals() {
+    let registry = ProviderRegistry::with_transport(
+        Arc::new(FakeTransport::default()),
+        ModelCache::new(4, 4096, Duration::from_secs(60)),
+    );
+    let provider = registry
+        .resolve(
+            &ProviderCatalog::default(),
+            "deterministic",
+            "deterministic",
+        )
+        .unwrap();
+
+    let output = provider
+        .run_pass(PassName::RuleCrystals, &context(), &[rule_memory()])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        output.value,
+        serde_json::json!({
+            "crystals": [{
+                "crystal_type": "rule",
+                "title": "Terminology Rule",
+                "text": "Render Sense as Сенс.",
+                "source_credibility": "user_rule",
+                "rule_intent": "terminology",
+                "confidence": 0.95,
+                "source_memory_ids": [7]
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn production_provider_request_uses_the_exact_supplied_phase_prompt() {
+    let transport = FakeTransport::with_json([serde_json::json!({
+        "choices": [{"message": {"content": "{\"covered_memory_ids\":[]}"}}]
+    })]);
+    let provider = OpenAiProvider::new(
+        transport.clone(),
+        keyed(
+            profile("remote", "openai", "https://example.test/v1"),
+            "fixture-secret",
+        ),
+        "model",
+    )
+    .unwrap();
+    let prompt = "GENERAL\n\nCOVERAGE PHASE\n\nReturn a single JSON object.\n\n{\"memories\":[]}";
+
+    provider
+        .run_pass_with_prompt(PassName::CoverageAudit, &context(), &[], prompt)
+        .await
+        .unwrap();
+
+    let request = transport.requests().pop().unwrap();
+    assert_eq!(
+        request.payload().unwrap().pointer("/messages/0/content"),
+        Some(&serde_json::Value::String(prompt.into()))
+    );
 }
 
 #[test]

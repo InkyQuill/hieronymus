@@ -201,6 +201,18 @@ pub struct ConceptProposalRecord {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, FromRow, Serialize, Deserialize)]
+pub struct ConceptMergeProposalRecord {
+    pub id: i64,
+    pub source_concept_id: i64,
+    pub target_concept_id: i64,
+    pub rationale: String,
+    pub status: String,
+    pub dream_run_id: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryEventRecord {
     pub id: i64,

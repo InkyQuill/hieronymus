@@ -21,7 +21,10 @@ use hiero_core::{
         MaintenancePayload, PhaseProfile, WorkflowProfile, acquire_dream_cycle_lock,
         run_background_loop,
     },
-    provider::{DreamOutput, DreamProvider, PassName, ProviderError, ProviderPassOutput},
+    provider::{
+        DreamOutput, DreamProvider, PassName, ProviderCatalog, ProviderDefaults, ProviderError,
+        ProviderPassOutput, ProviderProfile,
+    },
 };
 use serde_json::json;
 use sqlx::{Row, SqlitePool};
@@ -91,6 +94,54 @@ struct FullOutputProvider {
 
 struct BulkOutputProvider {
     count: usize,
+}
+
+struct ShutdownBlockingProvider {
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+    current: Arc<AtomicUsize>,
+    maximum: Arc<AtomicUsize>,
+}
+
+struct ActiveCall(Arc<AtomicUsize>);
+
+impl Drop for ActiveCall {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[async_trait]
+impl DreamProvider for ShutdownBlockingProvider {
+    fn name(&self) -> &str {
+        "shutdown-blocking"
+    }
+
+    async fn crystallize(
+        &self,
+        _context: &TranslationContext,
+        _memories: &[hiero_core::domain::ShortTermMemory],
+    ) -> Result<DreamOutput, ProviderError> {
+        unreachable!("the service executes configured evidence passes")
+    }
+
+    async fn run_pass(
+        &self,
+        pass: PassName,
+        _context: &TranslationContext,
+        memories: &[hiero_core::domain::ShortTermMemory],
+    ) -> Result<ProviderPassOutput, ProviderError> {
+        let active = self.current.fetch_add(1, Ordering::AcqRel) + 1;
+        self.maximum.fetch_max(active, Ordering::AcqRel);
+        let _active = ActiveCall(self.current.clone());
+        self.entered.notify_one();
+        self.release.notified().await;
+        let ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
+        Ok(ProviderPassOutput::direct(match pass {
+            PassName::CoverageAudit => json!({"covered_memory_ids": ids}),
+            _ => json!({}),
+        }))
+    }
 }
 
 #[async_trait]
@@ -299,9 +350,6 @@ impl DreamProvider for FakeProvider {
         _context: &TranslationContext,
         memories: &[hiero_core::domain::ShortTermMemory],
     ) -> Result<ProviderPassOutput, ProviderError> {
-        if self.failure == Some(pass) {
-            return Err(ProviderError::MalformedJson);
-        }
         if let Some(entered) = &self.entered {
             entered.notify_one();
             self.release
@@ -309,6 +357,9 @@ impl DreamProvider for FakeProvider {
                 .expect("blocking fake has a release notification")
                 .notified()
                 .await;
+        }
+        if self.failure == Some(pass) {
+            return Err(ProviderError::MalformedJson);
         }
         let memory_ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
         let value = match pass {
@@ -468,7 +519,7 @@ impl Fixture {
             );
         }
         let config = Box::leak(Box::new(config));
-        DreamService::new(&self.pool, &self.config, config, resolver)
+        DreamService::new_with_catalog(&self.pool, &self.config, config, resolver, fake_catalog())
     }
 }
 
@@ -478,6 +529,19 @@ fn fake() -> Arc<dyn DreamProvider> {
         entered: None,
         release: None,
     })
+}
+
+fn fake_catalog() -> ProviderCatalog {
+    let mut catalog = ProviderCatalog::default();
+    catalog
+        .upsert(ProviderProfile::new(
+            "fake",
+            "Fake",
+            "openai",
+            "https://example.test/v1",
+        ))
+        .unwrap();
+    catalog
 }
 
 #[tokio::test]
@@ -527,6 +591,68 @@ async fn run_cycle_persists_output_and_closes_all_audit_records() {
         .await
         .unwrap(),
         10
+    );
+}
+
+#[tokio::test]
+async fn service_resolves_blank_workflow_provider_and_model_from_catalog_defaults() {
+    let fixture = Fixture::new().await;
+    fixture.pending_memory().await;
+    let mut catalog = ProviderCatalog::default();
+    catalog
+        .upsert(ProviderProfile::new(
+            "remote",
+            "Remote",
+            "openai",
+            "https://example.test/v1",
+        ))
+        .unwrap();
+    catalog.set_defaults(ProviderDefaults {
+        provider: "remote".into(),
+        model: "catalog-model".into(),
+    });
+    let calls = Arc::new(Mutex::new(Vec::<WorkflowProfile>::new()));
+    let provider: Arc<dyn DreamProvider> = fake();
+    let captured = calls.clone();
+    let resolver: Arc<dyn DreamProviderResolver> = Arc::new(
+        move |workflow: &WorkflowProfile| -> Result<Arc<dyn DreamProvider>, DreamPhaseError> {
+            captured.lock().unwrap().push(workflow.clone());
+            Ok(provider.clone())
+        },
+    );
+    let mut dream_config = DreamConfig {
+        enabled: true,
+        ..DreamConfig::default()
+    };
+    dream_config = dream_config.with_phase(
+        PassName::CoverageAudit,
+        PhaseProfile {
+            provider: String::new(),
+            model: String::new(),
+            enabled: true,
+            max_records_per_pass: 10,
+        },
+    );
+
+    DreamService::new_with_catalog(
+        &fixture.pool,
+        &fixture.config,
+        &dream_config,
+        resolver,
+        catalog,
+    )
+    .run_cycle(CycleOptions::default())
+    .await
+    .unwrap();
+
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        [WorkflowProfile {
+            phase: PassName::CoverageAudit,
+            provider: "remote".into(),
+            model: "catalog-model".into(),
+            max_records_per_pass: 10,
+        }]
     );
 }
 
@@ -840,6 +966,49 @@ async fn background_loop_runs_due_cycles_serially_and_stops_on_shutdown() {
 }
 
 #[tokio::test]
+async fn scheduler_shutdown_waits_for_blocked_cycle_cancellation_and_audit_cleanup() {
+    let fixture = Fixture::new().await;
+    fixture.pending_memory().await;
+    let entered = Arc::new(Notify::new());
+    let current = Arc::new(AtomicUsize::new(0));
+    let maximum = Arc::new(AtomicUsize::new(0));
+    let service = fixture.service(
+        Arc::new(ShutdownBlockingProvider {
+            entered: entered.clone(),
+            release: Arc::new(Notify::new()),
+            current: current.clone(),
+            maximum: maximum.clone(),
+        }),
+        1,
+    );
+    let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+    let controller = async {
+        entered.notified().await;
+        shutdown_tx.send(()).unwrap();
+    };
+    let (scheduler, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(
+            run_background_loop(service, Duration::from_millis(10), shutdown_rx),
+            controller
+        )
+    })
+    .await
+    .unwrap();
+    scheduler.unwrap();
+
+    assert_eq!(current.load(Ordering::Acquire), 0);
+    assert_eq!(maximum.load(Ordering::Acquire), 1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM dream_runs WHERE status='running'")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    acquire_dream_cycle_lock(&fixture.config, "after-scheduler-shutdown", false).unwrap();
+}
+
+#[tokio::test]
 async fn each_run_uses_one_exact_series_and_language_context() {
     let fixture = Fixture::new().await;
     fixture.add_series("other", "ja", "de").await;
@@ -974,13 +1143,14 @@ fn cancelling_many_waiters_does_not_occupy_blocking_workers() {
             min_pending_short_term_memories: 1,
             ..DreamConfig::default()
         }));
-        let service = DreamService::new(
+        let service = DreamService::new_with_catalog(
             pool,
             config,
             dream_config,
             Arc::new(|_: &WorkflowProfile| {
                 Err(DreamPhaseError::InvalidInput("provider must not run"))
             }),
+            fake_catalog(),
         );
         let mut waiters = Vec::new();
         for _ in 0..8 {
@@ -1085,6 +1255,63 @@ async fn failed_audit_cleanup_poison_is_visible_and_recovers_before_unlock() {
     .expect("audit recovery must close the run and release the lock");
 }
 
+#[tokio::test]
+async fn audit_recovery_publication_failure_is_retained_with_cleanup_failure() {
+    let fixture = Fixture::new().await;
+    fixture.pending_memory().await;
+    sqlx::query(
+        "CREATE TRIGGER injected_cleanup_failure
+         BEFORE UPDATE OF status ON dream_runs
+         WHEN OLD.status='running' AND NEW.status='failed'
+         BEGIN SELECT RAISE(ABORT,'injected cleanup failure'); END",
+    )
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let service = fixture.service(
+        Arc::new(FakeProvider {
+            failure: Some(PassName::KnowledgeCrystals),
+            entered: Some(entered.clone()),
+            release: Some(release.clone()),
+        }),
+        1,
+    );
+    let cycle = service.run_cycle(CycleOptions::default());
+    tokio::pin!(cycle);
+    tokio::select! {
+        () = entered.notified() => {}
+        result = &mut cycle => panic!("cycle completed before publication injection: {result:?}"),
+    }
+    let state_link = fixture.config.data_root.join("dream-cycle-state-link");
+    fs::hard_link(fixture.config.dream_cycle_state_path(), &state_link).unwrap();
+    release.notify_one();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let error =
+                acquire_dream_cycle_lock(&fixture.config, "must-stay-locked", false).unwrap_err();
+            if error.is_already_running() && error.state.is_none() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    fs::remove_file(state_link).unwrap();
+    sqlx::query("DROP TRIGGER injected_cleanup_failure")
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+    let error = cycle.await.unwrap_err().to_string();
+    assert!(error.contains("audit cleanup failed"));
+    assert!(error.contains("audit recovery state publication failed"));
+}
+
 #[test]
 fn runtime_shutdown_still_finishes_cancelled_audit_before_unlock() {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1129,7 +1356,8 @@ fn runtime_shutdown_still_finishes_cancelled_audit_before_unlock() {
     let pool = Box::leak(Box::new(fixture.pool.clone()));
     let config = Box::leak(Box::new(fixture.config.clone()));
     let dream_config = Box::leak(Box::new(dream_config));
-    let service = DreamService::new(pool, config, dream_config, resolver);
+    let service =
+        DreamService::new_with_catalog(pool, config, dream_config, resolver, fake_catalog());
     runtime.spawn(async move {
         let _ = service.run_cycle(CycleOptions::default()).await;
     });
@@ -1208,6 +1436,63 @@ async fn run_all_obeys_per_cycle_and_aggregate_per_run_limits() {
         .await
         .unwrap(),
         1
+    );
+}
+
+#[tokio::test]
+async fn run_all_shares_one_long_term_record_budget_across_cycles() {
+    let fixture = Fixture::new().await;
+    fixture.pending_memory().await;
+    fixture.pending_memory().await;
+    let provider: Arc<dyn DreamProvider> = Arc::new(BulkOutputProvider { count: 2 });
+    let resolver: Arc<dyn DreamProviderResolver> = Arc::new(
+        move |_: &WorkflowProfile| -> Result<Arc<dyn DreamProvider>, DreamPhaseError> {
+            Ok(provider.clone())
+        },
+    );
+    let mut dream_config = DreamConfig {
+        enabled: true,
+        max_short_term_memories_per_cycle: 1,
+        max_short_term_memories_per_run: 2,
+        max_changed_crystals_per_cycle: 20,
+        max_total_affected_crystals: 20,
+        max_long_term_records_affected_per_run: 3,
+        ..DreamConfig::default()
+    };
+    for phase in PassName::ALL {
+        dream_config = dream_config.with_phase(phase, PhaseProfile::default());
+    }
+    for phase in [PassName::KnowledgeCrystals, PassName::CoverageAudit] {
+        dream_config = dream_config.with_phase(
+            phase,
+            PhaseProfile {
+                provider: "fake".into(),
+                model: "fixture".into(),
+                enabled: true,
+                max_records_per_pass: 10,
+            },
+        );
+    }
+
+    DreamService::new_with_catalog(
+        &fixture.pool,
+        &fixture.config,
+        &dream_config,
+        resolver,
+        fake_catalog(),
+    )
+    .run_all(CycleOptions::default())
+    .await
+    .unwrap();
+
+    assert!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM crystals WHERE title LIKE 'Bulk finding %'"
+        )
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap()
+            <= 3
     );
 }
 
@@ -1750,6 +2035,40 @@ async fn late_persistence_failure_retries_algorithmic_work_exactly_once() {
         })
         .await
         .unwrap();
+    let passive = CrystalStore::new(&fixture.pool)
+        .add(AddCrystalInput {
+            title: "passive".into(),
+            text: "A passively reinforced memory.".into(),
+            strength: 0.4,
+            confidence: 0.5,
+            status: "active".into(),
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO memory_events(crystal_id,event_type,source_role,evidence,strength_delta,confidence_delta,applied,created_at)
+         VALUES (?,'recalled_again','recall','',0.02,0,0,CURRENT_TIMESTAMP)",
+    )
+    .bind(passive)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    for (name, status, confidence) in [
+        ("Duplicate Name", "candidate", 0.9),
+        (" duplicate name ", "established", 0.6),
+    ] {
+        sqlx::query(
+            "INSERT INTO concepts(canonical_name,description,scope_type,scope_key,status,confidence,created_at,updated_at)
+             VALUES (?,'','series','series:book',?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+        )
+        .bind(name)
+        .bind(status)
+        .bind(confidence)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    }
     sqlx::query(
         "CREATE TRIGGER injected_late_failure
          BEFORE INSERT ON crystals
@@ -1791,6 +2110,26 @@ async fn late_persistence_failure_retries_algorithmic_work_exactly_once() {
         )
         .bind(recalled[0])
         .bind(recalled[1])
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM concept_merge_proposals WHERE status='pending'"
+        )
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM memory_events
+             WHERE crystal_id=? AND event_type='recalled_again' AND applied=1"
+        )
+        .bind(passive)
         .fetch_one(&fixture.pool)
         .await
         .unwrap(),
@@ -1859,6 +2198,13 @@ async fn late_persistence_failure_retries_algorithmic_work_exactly_once() {
         .await
         .unwrap(),
         0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM concept_merge_proposals")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
+        1
     );
 }
 
@@ -2009,7 +2355,7 @@ async fn cancelling_in_flight_persistence_rolls_back_outputs_and_retry_converges
         .fetch_one(&fixture.pool)
         .await
         .unwrap(),
-        1000
+        500
     );
 }
 
@@ -2065,7 +2411,13 @@ async fn dream_service_process_helper() {
             Ok(provider.clone())
         },
     );
-    let service = DreamService::new(&pool, fixture_config, dream_config, resolver);
+    let service = DreamService::new_with_catalog(
+        &pool,
+        fixture_config,
+        dream_config,
+        resolver,
+        fake_catalog(),
+    );
     let run = service
         .run_cycle(CycleOptions {
             owner: action.clone(),
