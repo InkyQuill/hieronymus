@@ -189,7 +189,7 @@ async fn every_current_embedded_history_prefix_is_valid() {
     .expect("current history should read");
     assert_eq!(
         history.iter().map(|row| row.0).collect::<Vec<_>>(),
-        [1, 2, 3, 4, 5, 6, 7, 8]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9]
     );
 
     for prefix_len in 0..=history.len() {
@@ -207,6 +207,9 @@ async fn every_current_embedded_history_prefix_is_valid() {
                 6 => include_str!("../../../migrations/0006_crystal_link_target_index.sql"),
                 7 => include_str!("../../../migrations/0007_semantic_batch_claims.sql"),
                 8 => include_str!("../../../migrations/0008_semantic_claim_leases.sql"),
+                9 => include_str!(
+                    "../../../migrations/0009_include_rule_crystals_in_maintenance.sql"
+                ),
                 _ => panic!("unexpected embedded migration {version}"),
             };
             pool.execute(sqlx::raw_sql(sql))

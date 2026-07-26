@@ -4,10 +4,13 @@ mod audit;
 mod concepts;
 mod config;
 mod crystallize;
+mod decay;
 mod evidence;
 mod lock;
 pub(crate) mod parsing;
 mod phases;
+mod reconsolidation;
+mod reinforcement;
 mod workflows;
 
 pub use audit::{
@@ -19,6 +22,10 @@ pub use concepts::{
 };
 pub use config::{DreamConfig, DreamConfigError, PhaseProfile};
 pub use crystallize::{Crystallizer, KnowledgeCrystalsPhase, RuleCrystalsPhase};
+pub use decay::{
+    CONFIDENCE_DECAY_AFTER_STRENGTH_BELOW, CONFIDENCE_DECAY_PER_CYCLE, DECAY_BATCH_SIZE,
+    DecayManager, DecayScope, STRENGTH_DECAY_PER_CYCLE, decay_delta,
+};
 pub use evidence::{
     CoverageAuditOutput, CoverageAuditPhase, ReinforcementCandidate, ReinforcementOutput,
     ReinforcementPhase, RelationCandidate, RelationsOutput, RelationsPhase,
@@ -36,5 +43,12 @@ pub use phases::{
     CatalogDreamProviderResolver, ConceptsPhase, CrystalPhaseOutput, DreamPhase, DreamPhaseError,
     DreamProviderResolver, PhaseInput, PhaseOutput, RecoveryMetadata, TerminologyCandidatesPhase,
     execute_provider_passes,
+};
+pub use reconsolidation::{
+    COMBINATION_TEXT_SIMILARITY_THRESHOLD, ReconsolidationDecision, ReconsolidationOutcome,
+    Reconsolidator, diff_ratio, reconsolidation_decision, text_similarity,
+};
+pub use reinforcement::{
+    LinkOutcome, LinkReinforcer, ReinforcementManager, select_survivor, useful_pairs,
 };
 pub use workflows::{WorkflowProfile, build_phase_prompt, resolve_workflows};

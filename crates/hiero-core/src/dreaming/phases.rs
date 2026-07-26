@@ -40,6 +40,10 @@ pub enum DreamPhaseError {
     OutputLimit,
     #[error("dream workflow provider could not be resolved")]
     ProviderResolution,
+    #[error("dream phase database operation failed: {0}")]
+    Database(#[from] sqlx::Error),
+    #[error("dream phase input is invalid: {0}")]
+    InvalidInput(&'static str),
 }
 
 pub trait DreamProviderResolver: Send + Sync {

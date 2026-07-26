@@ -56,6 +56,7 @@ tower-http = { version = "0.6", features = ["trace", "cors", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+unicode-segmentation = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
 winapi-util = "0.1"

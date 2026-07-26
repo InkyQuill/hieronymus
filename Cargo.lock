@@ -3100,6 +3100,7 @@ dependencies = [
  "tokio",
  "toml",
  "unicode-properties",
+ "unicode-segmentation",
  "url",
  "uuid",
  "winapi-util",
