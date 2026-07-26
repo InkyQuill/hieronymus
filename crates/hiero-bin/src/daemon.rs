@@ -38,8 +38,10 @@ use uuid::Uuid;
 use crate::api::{
     self,
     error::ApiError,
+    events::{AdminEvent, admin_event_channel, admin_ws},
     system::{health, shutdown, status},
 };
+use crate::assets::{AssetSource, is_client_route, serve_assets, serve_client_route, serve_index};
 
 const BODY_LIMIT: usize = 1_000_000;
 const REQUEST_ID_HEADER: &str = "x-request-id";
@@ -55,6 +57,8 @@ pub struct AppState {
     pub dream_running: Arc<AtomicBool>,
     pub provider_transport: Option<Arc<dyn ProviderTransport>>,
     pub workers: WorkerSupervisor,
+    pub events: broadcast::Sender<AdminEvent>,
+    pub assets: AssetSource,
 }
 
 #[derive(Clone, Default)]
@@ -66,6 +70,7 @@ pub struct WorkerSupervisor {
 impl WorkerSupervisor {
     pub async fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> bool {
         let mut tasks = self.tasks.lock().await;
+        while tasks.try_join_next().is_some() {}
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
             return false;
         }
@@ -82,32 +87,34 @@ impl WorkerSupervisor {
     }
 
     pub async fn active_count(&self) -> usize {
-        self.tasks.lock().await.len()
+        let mut tasks = self.tasks.lock().await;
+        while tasks.try_join_next().is_some() {}
+        tasks.len()
     }
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct RequestId(pub(crate) String);
+pub struct RequestId(pub(crate) String);
 
 pub fn build_router(state: AppState) -> Router {
     let security_state = state.clone();
     Router::new()
-        .route("/", get(api::placeholder))
-        .route("/admin", get(api::placeholder))
-        .route("/config", get(api::placeholder))
-        .route("/assets/{*path}", get(api::placeholder))
+        .route("/", get(serve_index))
+        .route("/admin", get(serve_index))
+        .route("/config", get(serve_index))
+        .route("/assets/{*path}", get(serve_assets))
         .route("/api/mcp/{operation}", post(api::placeholder))
         .nest("/api/providers", api::providers::routes())
         .nest("/api/settings", api::settings::routes())
         .nest("/api/admin", api::admin::routes())
         .route("/api/{*path}", any(api::placeholder))
-        .route("/ws/admin", get(api::placeholder))
+        .route("/ws/admin", get(admin_ws))
         .route("/health", get(health))
         .route("/status", get(status))
         .route("/shutdown", post(shutdown))
         .route("/mcp", any(api::placeholder))
         .method_not_allowed_fallback(api::method_not_allowed)
-        .fallback(api::not_found)
+        .fallback(get(serve_client_route).fallback(api::not_found))
         .layer(
             ServiceBuilder::new()
                 .layer(middleware::from_fn(assign_request_id))
@@ -131,6 +138,8 @@ where
         .await
         .context("failed to open daemon database")?;
     let (shutdown_sender, shutdown_receiver) = broadcast::channel(4);
+    let (events, _) = admin_event_channel(64);
+    let assets = AssetSource::from_environment().context("failed to configure frontend assets")?;
     let workers = WorkerSupervisor::default();
     let router = build_router(AppState {
         pool,
@@ -141,6 +150,8 @@ where
         dream_running: Arc::new(AtomicBool::new(false)),
         provider_transport: None,
         workers: workers.clone(),
+        events,
+        assets,
     });
 
     let shutdown_workers = workers.clone();
@@ -371,7 +382,10 @@ enum RoutePolicy {
 }
 
 fn route_policy(path: &str) -> RoutePolicy {
-    if matches!(path, "/" | "/admin" | "/config") || path.starts_with("/assets/") {
+    if matches!(path, "/" | "/admin" | "/config")
+        || path.starts_with("/assets/")
+        || is_client_route(path)
+    {
         RoutePolicy::Static
     } else if path == "/ws/admin" || (path.starts_with("/api/") && !path.starts_with("/api/mcp/")) {
         RoutePolicy::Browser

@@ -1,5 +1,6 @@
 use std::{
     future::Future,
+    path::Path,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -13,11 +14,14 @@ use axum::{
     http::{Method, Request, StatusCode, header},
     response::Response,
 };
+use futures::{SinkExt, StreamExt};
 use hiero_bin::{
     api::{
         admin::{AdminApi, FeedbackRecorder},
         contracts::AdminActionRequest,
+        events::{AdminEvent, admin_event_channel, next_admin_event},
     },
+    assets::AssetSource,
     daemon::{
         AppState, WorkerSupervisor, await_shutdown_and_workers, bind_listener, build_router,
         load_or_create_auth_token, serve,
@@ -36,6 +40,10 @@ use hiero_core::{
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::sync::broadcast;
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{Message, client::IntoClientRequest},
+};
 use tower::ServiceExt;
 
 #[derive(Default)]
@@ -112,6 +120,7 @@ async fn test_state() -> (AppState, broadcast::Receiver<()>) {
         .keep();
     let config = HieronymusConfig::with_roots(root.join("data"), root.join("config"));
     let (shutdown, receiver) = broadcast::channel(4);
+    let (events, _) = admin_event_channel(4);
     (
         AppState {
             pool,
@@ -122,9 +131,68 @@ async fn test_state() -> (AppState, broadcast::Receiver<()>) {
             dream_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             provider_transport: None,
             workers: WorkerSupervisor::default(),
+            events,
+            assets: AssetSource::embedded(),
         },
         receiver,
     )
+}
+
+async fn websocket_server(
+    mut state: AppState,
+) -> (
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("test WebSocket listener should bind");
+    let port = listener
+        .local_addr()
+        .expect("test listener should have an address")
+        .port();
+    state.port = port;
+    let router = build_router(state);
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .await
+            .expect("test WebSocket server should run");
+    });
+    let mut request = format!("ws://127.0.0.1:{port}/ws/admin")
+        .into_client_request()
+        .expect("WebSocket URL should produce a request");
+    request.headers_mut().insert(
+        header::ORIGIN,
+        format!("http://127.0.0.1:{port}")
+            .parse()
+            .expect("test Origin should be valid"),
+    );
+    let (socket, response) = connect_async(request)
+        .await
+        .expect("authorized WebSocket should connect");
+    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    (socket, server)
+}
+
+async fn wait_for_no_workers(workers: &WorkerSupervisor) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while workers.active_count().await != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("WebSocket worker should finish");
+}
+
+async fn response_body(response: Response) -> Vec<u8> {
+    to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body should be readable")
+        .to_vec()
+}
+
+fn override_assets(root: &Path) -> AssetSource {
+    AssetSource::override_root(root).expect("fixture asset root should be accepted")
 }
 
 fn json_request(method: Method, path: &str, value: Value) -> Request<Body> {
@@ -197,12 +265,12 @@ async fn router_registers_every_phase_005_section_2_route() {
     let (state, _) = test_state().await;
     let router = build_router(state);
     let routes = [
-        (Method::GET, "/", StatusCode::NOT_IMPLEMENTED),
-        (Method::GET, "/admin", StatusCode::NOT_IMPLEMENTED),
-        (Method::GET, "/config", StatusCode::NOT_IMPLEMENTED),
-        (Method::GET, "/assets/app.js", StatusCode::NOT_IMPLEMENTED),
+        (Method::GET, "/", StatusCode::OK),
+        (Method::GET, "/admin", StatusCode::OK),
+        (Method::GET, "/config", StatusCode::OK),
+        (Method::GET, "/assets/app.js", StatusCode::NOT_FOUND),
         (Method::GET, "/api/providers", StatusCode::OK),
-        (Method::GET, "/ws/admin", StatusCode::NOT_IMPLEMENTED),
+        (Method::GET, "/ws/admin", StatusCode::BAD_REQUEST),
         (Method::GET, "/health", StatusCode::OK),
         (Method::GET, "/status", StatusCode::OK),
         (Method::POST, "/shutdown", StatusCode::OK),
@@ -1140,7 +1208,7 @@ async fn router_preserves_or_generates_request_ids_on_every_response() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/missing")
+                .uri("/missing.json")
                 .header(header::HOST, LOCAL_HOST)
                 .header("x-hieronymus-token", AUTH_TOKEN)
                 .header("x-request-id", "test-request-123")
@@ -1477,4 +1545,208 @@ async fn router_serve_fails_fast_when_the_requested_port_is_occupied() {
         message.contains("in use") || message.contains("Address already in use"),
         "{message}"
     );
+}
+
+#[tokio::test]
+async fn assets_embedded_bundle_serves_index_and_hashed_files_with_cache_contracts() {
+    let (state, _) = test_state().await;
+    let router = build_router(state);
+
+    let index = router
+        .clone()
+        .oneshot(request(Method::GET, "/", Body::empty()))
+        .await
+        .expect("router should serve the embedded index");
+    assert_eq!(index.status(), StatusCode::OK);
+    assert_eq!(
+        index.headers()[header::CONTENT_TYPE],
+        "text/html; charset=utf-8"
+    );
+    assert_eq!(index.headers()[header::CACHE_CONTROL], "no-cache");
+    assert!(
+        String::from_utf8(response_body(index).await)
+            .expect("embedded index should be UTF-8")
+            .contains("<div id=\"app\"></div>")
+    );
+
+    let script = router
+        .oneshot(request(
+            Method::GET,
+            "/assets/index-DnP9ckhr.js",
+            Body::empty(),
+        ))
+        .await
+        .expect("router should serve an embedded hashed asset");
+    assert_eq!(script.status(), StatusCode::OK);
+    assert_eq!(
+        script.headers()[header::CONTENT_TYPE],
+        "text/javascript; charset=utf-8"
+    );
+    assert_eq!(
+        script.headers()[header::CACHE_CONTROL],
+        "public, max-age=31536000, immutable"
+    );
+}
+
+#[tokio::test]
+async fn assets_override_serves_mime_cache_and_spa_fallback_without_frontend_changes() {
+    let temp = TempDir::new().expect("temporary directory should be created");
+    std::fs::create_dir(temp.path().join("assets")).expect("asset directory should be created");
+    std::fs::write(
+        temp.path().join("index.html"),
+        b"<!doctype html><main>override console</main>",
+    )
+    .expect("override index should be written");
+    std::fs::write(
+        temp.path().join("assets").join("app-01234567.css"),
+        b"body{color:teal}",
+    )
+    .expect("override stylesheet should be written");
+    let (mut state, _) = test_state().await;
+    state.assets = override_assets(temp.path());
+    let router = build_router(state);
+
+    let stylesheet = router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/assets/app-01234567.css",
+            Body::empty(),
+        ))
+        .await
+        .expect("router should serve an override asset");
+    assert_eq!(stylesheet.status(), StatusCode::OK);
+    assert_eq!(
+        stylesheet.headers()[header::CONTENT_TYPE],
+        "text/css; charset=utf-8"
+    );
+    assert_eq!(
+        stylesheet.headers()[header::CACHE_CONTROL],
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(response_body(stylesheet).await, b"body{color:teal}");
+
+    let client_route = router
+        .oneshot(request(Method::GET, "/memories/selected", Body::empty()))
+        .await
+        .expect("router should serve the SPA shell for a client route");
+    assert_eq!(client_route.status(), StatusCode::OK);
+    assert_eq!(client_route.headers()[header::CACHE_CONTROL], "no-cache");
+    assert_eq!(
+        response_body(client_route).await,
+        b"<!doctype html><main>override console</main>"
+    );
+}
+
+#[tokio::test]
+async fn assets_override_rejects_traversal_symlink_escape_and_special_files_without_path_leaks() {
+    let temp = TempDir::new().expect("temporary directory should be created");
+    let root = temp.path().join("dist");
+    std::fs::create_dir(&root).expect("asset directory should be created");
+    std::fs::write(root.join("index.html"), b"safe index")
+        .expect("fixture index should be written");
+    let outside = temp.path().join("outside-secret.txt");
+    std::fs::write(&outside, b"do not serve").expect("outside fixture should be written");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, root.join("escaped.txt"))
+        .expect("fixture symlink should be created");
+    #[cfg(unix)]
+    let _socket = std::os::unix::net::UnixListener::bind(root.join("special.sock"))
+        .expect("fixture socket should be created");
+
+    let (mut state, _) = test_state().await;
+    state.assets = override_assets(&root);
+    let router = build_router(state);
+    let paths = [
+        "/assets/%2e%2e/outside-secret.txt",
+        "/assets/escaped.txt",
+        "/assets/special.sock",
+        "/assets/missing.js",
+    ];
+    for path in paths {
+        let response = router
+            .clone()
+            .oneshot(request(Method::GET, path, Body::empty()))
+            .await
+            .expect("router should reject an unsafe asset path");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        let body = String::from_utf8(response_body(response).await)
+            .expect("sanitized error body should be UTF-8");
+        assert!(
+            !body.contains(temp.path().to_string_lossy().as_ref()),
+            "{path}"
+        );
+        assert!(!body.contains("outside-secret"), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn events_websocket_subscribes_streams_events_and_cleans_up_after_disconnect() {
+    let (state, _) = test_state().await;
+    let events = state.events.clone();
+    let workers = state.workers.clone();
+    let (mut socket, server) = websocket_server(state).await;
+
+    events
+        .send(AdminEvent::Refresh)
+        .expect("connected client should subscribe");
+    let message = tokio::time::timeout(Duration::from_secs(1), socket.next())
+        .await
+        .expect("event should arrive promptly")
+        .expect("WebSocket should remain connected")
+        .expect("event frame should be valid");
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            message
+                .to_text()
+                .expect("admin event should be sent as text")
+        )
+        .expect("admin event should be JSON"),
+        json!({"type": "refresh"})
+    );
+
+    socket
+        .send(Message::Close(None))
+        .await
+        .expect("client close should be sent");
+    drop(socket);
+    wait_for_no_workers(&workers).await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn events_lag_emits_the_stable_resync_required_event() {
+    let (events, mut receiver) = admin_event_channel(1);
+    events
+        .send(AdminEvent::Refresh)
+        .expect("test receiver should be present");
+    events
+        .send(AdminEvent::Refresh)
+        .expect("test receiver should remain present");
+
+    assert_eq!(
+        next_admin_event(&mut receiver).await,
+        Some(AdminEvent::ResyncRequired)
+    );
+}
+
+#[tokio::test]
+async fn events_shutdown_closes_the_websocket_and_joins_its_worker() {
+    let (state, _) = test_state().await;
+    let shutdown = state.shutdown.clone();
+    let workers = state.workers.clone();
+    let (mut socket, server) = websocket_server(state).await;
+
+    shutdown
+        .send(())
+        .expect("connected WebSocket should observe shutdown");
+    let close = tokio::time::timeout(Duration::from_secs(1), socket.next())
+        .await
+        .expect("WebSocket should close promptly");
+    assert!(
+        close.is_none() || matches!(close, Some(Ok(Message::Close(_)))),
+        "{close:?}"
+    );
+    wait_for_no_workers(&workers).await;
+    server.abort();
 }

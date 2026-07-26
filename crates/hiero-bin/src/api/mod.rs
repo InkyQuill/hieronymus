@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod contracts;
 pub mod error;
+pub mod events;
 pub mod providers;
 pub mod settings;
 pub mod system;

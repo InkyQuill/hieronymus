@@ -36,8 +36,10 @@ uuid.workspace = true
 [dev-dependencies]
 async-trait.workspace = true
 assert_cmd = "2"
+futures.workspace = true
 predicates = "3"
 tempfile.workspace = true
+tokio-tungstenite.workspace = true
 trycmd = "1.2"
 
 [lints]
