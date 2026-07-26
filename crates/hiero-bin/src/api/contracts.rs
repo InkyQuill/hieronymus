@@ -344,8 +344,33 @@ pub struct AdminDashboard {
     pub header: AdminHeader,
     pub stats: BTreeMap<String, i64>,
     pub views: Vec<String>,
-    pub short_term_status: BTreeMap<String, Value>,
-    pub dream_status: BTreeMap<String, Value>,
+    pub short_term_status: AdminShortTermStatus,
+    pub dream_status: AdminDreamStatus,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct AdminShortTermStatus {
+    pub state: String,
+    pub pending_count: i64,
+    pub min_pending_short_term_memories: usize,
+    pub max_pending_short_term_memories: usize,
+    pub urgent: bool,
+    pub drain_in_progress: bool,
+    pub drain_completed: i64,
+    pub drain_remaining: i64,
+    pub drain_total: i64,
+    pub drain_progress: f64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct AdminDreamStatus {
+    pub state: String,
+    pub current_phase: String,
+    pub progress: f64,
+    pub run_id: Option<i64>,
+    pub cycle_id: Option<i64>,
+    pub owner: String,
+    pub started_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

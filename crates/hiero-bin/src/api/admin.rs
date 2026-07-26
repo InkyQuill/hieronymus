@@ -14,15 +14,15 @@ use hiero_core::domain::{
     WorkspaceStore,
 };
 use serde::Deserialize;
-use serde_json::Value;
 use sqlx::SqlitePool;
 
-use crate::daemon::{AppState, RequestId};
+use crate::daemon::{AppState, DAEMON_DREAM_CLEANUP_DEADLINE, RequestId};
 
 use super::{
     contracts::{
         ActionMessage, AdminActionRequest, AdminActionResult, AdminDashboard, AdminDetail,
-        AdminHeader, AdminRow, AdminSnapshot, AdminSnapshotResponse, ManualDreamResponse,
+        AdminDreamStatus, AdminHeader, AdminRow, AdminShortTermStatus, AdminSnapshot,
+        AdminSnapshotResponse, ManualDreamResponse,
     },
     error::ApiError,
 };
@@ -196,12 +196,106 @@ async fn dashboard(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
 ) -> Result<Json<AdminDashboard>, ApiError> {
-    let stats = sqlx::query_as::<_, (i64, i64, i64, i64)>(
-        "SELECT (SELECT count(*) FROM crystals), (SELECT count(*) FROM concepts), (SELECT count(*) FROM short_term_memories WHERE archived_at IS NULL), (SELECT count(*) FROM task_sessions WHERE status = 'active')",
+    let stats = sqlx::query_as::<_, (i64, i64, i64, i64, i64, i64, i64, i64)>(
+        "SELECT
+            (SELECT count(*) FROM series),
+            (SELECT count(*) FROM crystals),
+            (SELECT count(*) FROM crystals WHERE crystal_type = 'lesson'),
+            (SELECT count(*) FROM short_term_memories WHERE archived_at IS NULL),
+            (SELECT count(*) FROM task_sessions),
+            (SELECT count(*) FROM dream_runs),
+            (SELECT count(*) FROM concept_proposals WHERE status = 'pending'),
+            (SELECT count(*) FROM memory_events)",
     )
     .fetch_one(&state.pool)
     .await
-    .map_err(|error| ApiError::internal(request_id, &error))?;
+    .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
+    let pending_count: i64 = sqlx::query_scalar(
+        "SELECT count(*)
+         FROM short_term_memories
+         JOIN task_sessions ON task_sessions.id = short_term_memories.session_id
+         WHERE task_sessions.status = 'completed'
+           AND short_term_memories.archived_at IS NULL",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
+    let running = sqlx::query_as::<_, (i64, i64, Option<String>)>(
+        "SELECT r.id, r.cycle_id, p.phase
+         FROM dream_runs AS r
+         LEFT JOIN dream_phase_runs AS p
+           ON p.dream_run_id = r.id AND p.status = 'running'
+         WHERE r.status = 'running'
+         ORDER BY p.id DESC
+         LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
+    let config = state.config.clone();
+    let (dream_config, active_cycle) = tokio::task::spawn_blocking(move || {
+        let dream = hiero_core::dreaming::DreamConfig::load(&config)?;
+        let active = hiero_core::dreaming::read_dream_cycle_state(&config);
+        Ok::<_, hiero_core::dreaming::DreamConfigError>((dream, active))
+    })
+    .await
+    .map_err(|error| ApiError::internal(request_id.clone(), &error))?
+    .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
+    let working = running.is_some() || active_cycle.is_some();
+    let (run_id, cycle_id, current_phase) = running
+        .map(|(run_id, cycle_id, phase)| {
+            (
+                Some(run_id),
+                Some(cycle_id),
+                phase.unwrap_or_else(|| "starting".into()),
+            )
+        })
+        .unwrap_or((
+            None,
+            None,
+            if working {
+                "starting".into()
+            } else {
+                String::new()
+            },
+        ));
+    let completed = if let Some(run_id) = run_id {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT coalesce(sum(input_count), 0)
+             FROM dream_phase_runs
+             WHERE dream_run_id = ? AND status = 'completed'",
+        )
+        .bind(run_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|error| ApiError::internal(request_id.clone(), &error))?
+    } else {
+        0
+    };
+    let drain_total = completed + pending_count;
+    let drain_progress = if working && drain_total == 0 {
+        1.0
+    } else if drain_total == 0 {
+        0.0
+    } else {
+        completed as f64 / drain_total as f64
+    };
+    let urgent = pending_count >= dream_config.max_pending_short_term_memories as i64;
+    let dream_progress = if !working || current_phase == "starting" {
+        0.0
+    } else if current_phase == "maintenance" {
+        0.9
+    } else {
+        drain_progress
+    };
+    let owner = active_cycle
+        .as_ref()
+        .map(|cycle| cycle.owner.clone())
+        .unwrap_or_default();
+    let started_at = active_cycle
+        .as_ref()
+        .map(|cycle| cycle.started_at.to_rfc3339())
+        .unwrap_or_default();
     Ok(Json(AdminDashboard {
         header: AdminHeader {
             product: "Hieronymus".into(),
@@ -209,28 +303,52 @@ async fn dashboard(
             tagline: "Local-first literary translation memory".into(),
         },
         stats: [
-            ("crystals".into(), stats.0),
-            ("concepts".into(), stats.1),
-            ("pending_short_term_memories".into(), stats.2),
-            ("active_sessions".into(), stats.3),
+            ("series".into(), stats.0),
+            ("crystals".into(), stats.1),
+            ("lessons".into(), stats.2),
+            ("short_term_memories".into(), stats.3),
+            ("sessions".into(), stats.4),
+            ("dream_runs".into(), stats.5),
+            ("pending_proposals".into(), stats.6),
+            ("audit_events".into(), stats.7),
         ]
         .into(),
         views: VIEWS.into_iter().map(str::to_owned).collect(),
-        short_term_status: [("pending".into(), Value::from(stats.2))].into(),
-        dream_status: [(
-            "state".into(),
-            Value::from(
-                if state
-                    .dream_running
-                    .load(std::sync::atomic::Ordering::Acquire)
-                {
-                    "RUNNING"
-                } else {
-                    "IDLE"
-                },
-            ),
-        )]
-        .into(),
+        short_term_status: AdminShortTermStatus {
+            state: if working {
+                "DRAINING"
+            } else if urgent {
+                "URGENT"
+            } else {
+                "IDLE"
+            }
+            .into(),
+            pending_count,
+            min_pending_short_term_memories: dream_config.min_pending_short_term_memories,
+            max_pending_short_term_memories: dream_config.max_pending_short_term_memories,
+            urgent,
+            drain_in_progress: working,
+            drain_completed: completed,
+            drain_remaining: pending_count,
+            drain_total,
+            drain_progress,
+        },
+        dream_status: AdminDreamStatus {
+            state: if working {
+                "WORKING"
+            } else if dream_config.enabled {
+                "IDLE"
+            } else {
+                "DISABLED"
+            }
+            .into(),
+            current_phase,
+            progress: dream_progress,
+            run_id,
+            cycle_id,
+            owner,
+            started_at,
+        },
     }))
 }
 
@@ -693,13 +811,14 @@ async fn run_action(
         SqliteFeedback {
             pool: state.pool.clone(),
         },
-        state.pool,
+        state.pool.clone(),
     );
     let mut result = result;
     result.snapshot = api
         .snapshot(&result.snapshot.view, Some(&selected_id))
         .await
         .map_err(|error| ApiError::internal(request_id, &error))?;
+    state.events.notify_refresh();
     Ok(Json(result))
 }
 
@@ -758,6 +877,7 @@ async fn run_manual_dreaming(
     });
     let pool = state.pool.clone();
     let config = state.config.clone();
+    let events = state.events.clone();
     let running = DreamRunningGuard(state.dream_running.clone());
     let accepted = state
         .workers
@@ -769,15 +889,18 @@ async fn run_manual_dreaming(
                 &dream_config,
                 resolver,
                 catalog,
-            );
-            service
+            )
+            .with_cleanup_deadline(DAEMON_DREAM_CLEANUP_DEADLINE);
+            let result = service
                 .run_all(hiero_core::dreaming::CycleOptions {
                     owner: "web_admin".into(),
                     ..hiero_core::dreaming::CycleOptions::default()
                 })
                 .await
                 .map(|_| ())
-                .map_err(anyhow::Error::from)
+                .map_err(anyhow::Error::from);
+            events.notify_refresh();
+            result
         })
         .await;
     if !accepted {
@@ -788,6 +911,7 @@ async fn run_manual_dreaming(
             request_id,
         ));
     }
+    state.events.notify_refresh();
     Ok(Json(ManualDreamResponse {
         started: true,
         status: "running".into(),

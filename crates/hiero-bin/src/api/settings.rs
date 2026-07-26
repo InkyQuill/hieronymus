@@ -88,6 +88,7 @@ async fn save_dream(
         .await
         .map_err(|error| ApiError::internal(request_id.clone(), &error))?
         .map_err(|error| ApiError::internal(request_id, &error))?;
+    state.events.notify_refresh();
     Ok(Json(DreamRequest { dream: contract }))
 }
 
@@ -114,6 +115,7 @@ async fn save_ingest(
         .await
         .map_err(|error| ApiError::internal(request_id.clone(), &error))?
         .map_err(|error| ApiError::internal(request_id, &error))?;
+    state.events.notify_refresh();
     Ok(Json(request))
 }
 
@@ -152,5 +154,6 @@ async fn save_release(
         .await
         .map_err(|error| ApiError::internal(request_id.clone(), &error))?
         .map_err(|error| ApiError::internal(request_id, &error))?;
+    state.events.notify_refresh();
     Ok(Json(request))
 }

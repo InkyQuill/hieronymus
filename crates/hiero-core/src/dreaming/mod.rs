@@ -38,7 +38,7 @@ pub use evidence::{
 };
 pub use lock::{
     DreamCycleAlreadyRunning, DreamCycleGuard, DreamCyclePaths, DreamCycleState,
-    acquire_dream_cycle_lock, dream_cycle_paths,
+    acquire_dream_cycle_lock, dream_cycle_paths, read_dream_cycle_state,
 };
 pub use parsing::{
     MALFORMED_OUTPUT_PENALTY, MalformedPayloadError, parse_dream_output, parse_dream_output_async,

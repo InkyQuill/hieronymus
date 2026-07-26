@@ -133,6 +133,7 @@ async fn test_state() -> (AppState, broadcast::Receiver<()>) {
             port: 9768,
             dream_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             provider_transport: None,
+            provider_catalog_mutations: Arc::new(tokio::sync::Mutex::new(())),
             workers: WorkerSupervisor::default(),
             events,
             assets: AssetSource::embedded(),
@@ -146,6 +147,7 @@ async fn websocket_server(
 ) -> (
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     tokio::task::JoinHandle<()>,
+    u16,
 ) {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -174,7 +176,7 @@ async fn websocket_server(
         .await
         .expect("authorized WebSocket should connect");
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
-    (socket, server)
+    (socket, server, port)
 }
 
 async fn wait_for_no_workers(workers: &WorkerSupervisor) {
@@ -469,6 +471,93 @@ async fn api_provider_delete_rejects_workflow_references_and_clears_only_matchin
     assert_eq!(free.status(), StatusCode::OK);
 }
 
+#[tokio::test]
+async fn concurrent_provider_upserts_preserve_every_independent_profile() {
+    let (state, _) = test_state().await;
+    let router = build_router(state.clone());
+    let mut tasks = Vec::new();
+    for index in 0..16 {
+        let router = router.clone();
+        tasks.push(tokio::spawn(async move {
+            let id = format!("provider-{index}");
+            router
+                .oneshot(json_request(
+                    Method::POST,
+                    "/api/providers",
+                    json!({
+                        "provider": {
+                            "id": id,
+                            "name": format!("Provider {index}"),
+                            "type": "ollama",
+                            "url": "http://127.0.0.1:11434",
+                            "key": "",
+                            "timeout_seconds": "30"
+                        }
+                    }),
+                ))
+                .await
+                .expect("provider save should answer")
+                .status()
+        }));
+    }
+    for task in tasks {
+        assert_eq!(task.await.unwrap(), StatusCode::OK);
+    }
+
+    let catalog =
+        ProviderCatalog::load(state.config.provider_config_path()).expect("catalog should load");
+    assert_eq!(catalog.iter().count(), 16);
+    for index in 0..16 {
+        assert!(catalog.get(&format!("provider-{index}")).is_some());
+    }
+}
+
+#[tokio::test]
+async fn concurrent_provider_save_and_delete_do_not_restore_or_discard_independent_changes() {
+    let (state, _) = test_state().await;
+    let mut catalog = ProviderCatalog::default();
+    catalog
+        .upsert(ProviderProfile::new(
+            "remove-me",
+            "Remove Me",
+            "ollama",
+            "http://127.0.0.1:11434",
+        ))
+        .unwrap();
+    catalog
+        .save(state.config.provider_config_path())
+        .expect("seed catalog should save");
+    let router = build_router(state.clone());
+
+    let save = router.clone().oneshot(json_request(
+        Method::POST,
+        "/api/providers",
+        json!({
+            "provider": {
+                "id": "keep-me",
+                "name": "Keep Me",
+                "type": "ollama",
+                "url": "http://127.0.0.1:11434",
+                "key": "",
+                "timeout_seconds": "30"
+            }
+        }),
+    ));
+    let delete = router.oneshot(request(
+        Method::DELETE,
+        "/api/providers/remove-me",
+        Body::empty(),
+    ));
+    let (saved, deleted) = tokio::join!(save, delete);
+    assert_eq!(saved.unwrap().status(), StatusCode::OK);
+    assert_eq!(deleted.unwrap().status(), StatusCode::OK);
+
+    let catalog =
+        ProviderCatalog::load(state.config.provider_config_path()).expect("catalog should load");
+    assert!(catalog.get("keep-me").is_some());
+    assert!(catalog.get("remove-me").is_none());
+}
+
 fn configure_local_provider(state: &AppState) {
     let mut catalog = ProviderCatalog::load(state.config.provider_config_path())
         .expect("empty catalog should load");
@@ -724,6 +813,90 @@ async fn api_admin_snapshot_action_and_manual_dream_shapes_match_the_client() {
         response_json(manual).await,
         json!({"started": true, "status": "running"})
     );
+}
+
+#[tokio::test]
+async fn api_admin_dashboard_reports_the_literal_shipping_contract_for_a_background_cycle() {
+    let (state, _) = test_state().await;
+    state.config.ensure_directories().unwrap();
+    let mut dream = DreamConfig {
+        enabled: true,
+        min_pending_short_term_memories: 2,
+        max_pending_short_term_memories: 5,
+        max_short_term_memories_per_cycle: 5,
+        ..DreamConfig::default()
+    };
+    dream
+        .workflows
+        .values_mut()
+        .for_each(|profile| profile.enabled = false);
+    dream.save(&state.config).unwrap();
+    let guard =
+        hiero_core::dreaming::acquire_dream_cycle_lock(&state.config, "background", false).unwrap();
+    let now = chrono::Utc::now();
+    let run_id = sqlx::query(
+        "INSERT INTO dream_runs(cycle_id,status,provider,created_at) VALUES(7,'running','test',?)",
+    )
+    .bind(now)
+    .execute(&state.pool)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    sqlx::query(
+        "INSERT INTO dream_phase_runs(dream_run_id,phase,provider_profile,provider_type,model,status,input_count,created_at) VALUES(?,'relations','test','test','test','running',3,?)",
+    )
+    .bind(run_id)
+    .bind(now)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+
+    let response = build_router(state)
+        .oneshot(request(Method::GET, "/api/admin/dashboard", Body::empty()))
+        .await
+        .unwrap();
+    let payload = response_json(response).await;
+    assert_eq!(
+        payload["stats"],
+        json!({
+            "audit_events": 0,
+            "crystals": 0,
+            "dream_runs": 1,
+            "lessons": 0,
+            "pending_proposals": 0,
+            "series": 0,
+            "sessions": 0,
+            "short_term_memories": 0
+        })
+    );
+    assert_eq!(
+        payload["short_term_status"],
+        json!({
+            "state": "DRAINING",
+            "pending_count": 0,
+            "min_pending_short_term_memories": 2,
+            "max_pending_short_term_memories": 5,
+            "urgent": false,
+            "drain_in_progress": true,
+            "drain_completed": 0,
+            "drain_remaining": 0,
+            "drain_total": 0,
+            "drain_progress": 1.0
+        })
+    );
+    assert_eq!(
+        payload["dream_status"],
+        json!({
+            "state": "WORKING",
+            "current_phase": "relations",
+            "progress": 1.0,
+            "run_id": run_id,
+            "cycle_id": 7,
+            "owner": "background",
+            "started_at": guard.state().started_at.to_rfc3339()
+        })
+    );
+    drop(guard);
 }
 
 #[tokio::test]
@@ -1730,7 +1903,7 @@ async fn assets_embedded_bundle_serves_index_and_hashed_files_with_cache_contrac
         .clone()
         .oneshot(request(
             Method::GET,
-            "/assets/index-DnP9ckhr.js",
+            "/assets/index-CYKQ2eAv.js",
             Body::empty(),
         ))
         .await
@@ -1877,7 +2050,7 @@ async fn events_websocket_subscribes_streams_events_and_cleans_up_after_disconne
     let (state, _) = test_state().await;
     let events = state.events.clone();
     let workers = state.workers.clone();
-    let (mut socket, server) = websocket_server(state).await;
+    let (mut socket, server, _) = websocket_server(state).await;
 
     events
         .send(AdminEvent::Refresh)
@@ -1907,6 +2080,112 @@ async fn events_websocket_subscribes_streams_events_and_cleans_up_after_disconne
 }
 
 #[tokio::test]
+async fn successful_provider_mutation_publishes_a_real_admin_websocket_event() {
+    let (state, _) = test_state().await;
+    let (mut socket, server, port) = websocket_server(state).await;
+    let body = serde_json::to_string(&json!({
+        "provider": {
+            "id": "event-provider",
+            "name": "Event Provider",
+            "type": "ollama",
+            "url": "http://127.0.0.1:11434",
+            "key": "",
+            "timeout_seconds": "30"
+        }
+    }))
+    .unwrap();
+    let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    client
+        .write_all(
+            format!(
+                "POST /api/providers HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+                 X-Hieronymus-Token: {AUTH_TOKEN}\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut response = Vec::new();
+    client.read_to_end(&mut response).await.unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            tokio::time::timeout(Duration::from_secs(1), socket.next())
+                .await
+                .expect("successful mutation should publish promptly")
+                .unwrap()
+                .unwrap()
+                .to_text()
+                .unwrap()
+        )
+        .unwrap(),
+        json!({"type": "refresh"})
+    );
+    socket.send(Message::Close(None)).await.unwrap();
+    drop(socket);
+    server.abort();
+}
+
+#[tokio::test]
+async fn successful_mcp_mutation_publishes_an_admin_event() {
+    let (state, _) = test_state().await;
+    let mut receiver = state.events.subscribe();
+    let backend =
+        hiero_bin::mcp::StoreMcpBackend::new(state.pool, state.config).with_notifier(state.events);
+    backend
+        .call(
+            "hieronymus_series_create",
+            json!({
+                "slug": "event-series",
+                "title": "Event Series",
+                "source_language": "ja",
+                "target_language": "ru"
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+            .await
+            .expect("successful MCP mutation should publish promptly")
+            .unwrap(),
+        AdminEvent::Refresh
+    );
+}
+
+#[tokio::test]
+async fn failed_provider_mutation_does_not_publish_an_admin_event() {
+    let (state, _) = test_state().await;
+    let mut receiver = state.events.subscribe();
+    let response = build_router(state)
+        .oneshot(json_request(
+            Method::POST,
+            "/api/providers",
+            json!({
+                "provider": {
+                    "id": "invalid-provider",
+                    "name": "Invalid Provider",
+                    "type": "ollama",
+                    "url": "http://127.0.0.1:11434",
+                    "key": "",
+                    "timeout_seconds": "not-a-number"
+                }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(!matches!(
+        tokio::time::timeout(Duration::from_millis(100), receiver.recv()).await,
+        Ok(Ok(_))
+    ));
+}
+
+#[tokio::test]
 async fn events_lag_emits_the_stable_resync_required_event() {
     let (events, mut receiver) = admin_event_channel(1);
     events
@@ -1927,7 +2206,7 @@ async fn events_shutdown_closes_the_websocket_and_joins_its_worker() {
     let (state, _) = test_state().await;
     let shutdown = state.shutdown.clone();
     let workers = state.workers.clone();
-    let (mut socket, server) = websocket_server(state).await;
+    let (mut socket, server, _) = websocket_server(state).await;
 
     shutdown
         .send(())

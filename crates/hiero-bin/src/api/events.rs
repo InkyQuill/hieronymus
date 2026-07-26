@@ -17,14 +17,33 @@ pub enum AdminEvent {
     ResyncRequired,
 }
 
+#[derive(Clone, Debug)]
+pub struct AdminNotifier {
+    sender: broadcast::Sender<AdminEvent>,
+}
+
+impl AdminNotifier {
+    #[must_use]
+    pub fn subscribe(&self) -> broadcast::Receiver<AdminEvent> {
+        self.sender.subscribe()
+    }
+
+    pub fn send(
+        &self,
+        event: AdminEvent,
+    ) -> Result<usize, broadcast::error::SendError<AdminEvent>> {
+        self.sender.send(event)
+    }
+
+    pub fn notify_refresh(&self) {
+        let _ = self.sender.send(AdminEvent::Refresh);
+    }
+}
+
 #[must_use]
-pub fn admin_event_channel(
-    capacity: usize,
-) -> (
-    broadcast::Sender<AdminEvent>,
-    broadcast::Receiver<AdminEvent>,
-) {
-    broadcast::channel(capacity)
+pub fn admin_event_channel(capacity: usize) -> (AdminNotifier, broadcast::Receiver<AdminEvent>) {
+    let (sender, receiver) = broadcast::channel(capacity);
+    (AdminNotifier { sender }, receiver)
 }
 
 pub async fn next_admin_event(

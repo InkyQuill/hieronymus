@@ -33,6 +33,12 @@ pub fn dream_cycle_paths(config: &HieronymusConfig) -> DreamCyclePaths {
     }
 }
 
+#[must_use]
+pub fn read_dream_cycle_state(config: &HieronymusConfig) -> Option<DreamCycleState> {
+    let directory = SecureDataRoot::open(config.data_root.as_path()).ok()?;
+    read_state(&directory, STATE_NAME)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DreamCycleState {
     pub owner: String,

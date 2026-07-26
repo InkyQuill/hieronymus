@@ -23,7 +23,7 @@
     ["reinforcement", "Reinforcement"],
     ["coverage_audit", "Coverage"],
   ] as const;
-  const currentPhase = $derived(String(dashboard.dream_status.current_phase ?? ""));
+  const currentPhase = $derived(dashboard.dream_status.current_phase);
   const currentPhaseIndex = $derived(workflow.findIndex(([phase]) => phase === currentPhase));
 
   function workflowState(index: number): "complete" | "active" | "pending" {
@@ -55,7 +55,7 @@
       {/each}
     </div>
     <section class="mt-4 rounded-md border border-default bg-surface p-5" aria-label="Dreaming workflow status">
-        <div class="flex items-baseline justify-between gap-4"><h3 class="text-h3">Dreaming workflow</h3><span class="text-caption text-secondary">{String(dashboard.dream_status.state ?? "unknown")}</span></div>
+        <div class="flex items-baseline justify-between gap-4"><h3 class="text-h3">Dreaming workflow</h3><span class="text-caption text-secondary">{dashboard.dream_status.state}</span></div>
         <ol class="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-7">
           {#each workflow as [phase, name], index (phase)}
             <li class="min-w-0 text-caption {workflowState(index) === 'complete' ? 'text-secondary' : workflowState(index) === 'active' ? 'text-accent-text' : 'text-tertiary'}" aria-current={workflowState(index) === "active" ? "step" : undefined}>
@@ -64,12 +64,12 @@
           {/each}
         </ol>
         {#if currentPhase}
-          <p class="mt-3 text-caption capitalize text-secondary">{currentPhase.replaceAll("_", " ")} · {Math.round(Number(dashboard.dream_status.progress ?? 0) * 100)}%</p>
+          <p class="mt-3 text-caption capitalize text-secondary">{currentPhase.replaceAll("_", " ")} · {Math.round(dashboard.dream_status.progress * 100)}%</p>
         {:else}
           <p class="mt-3 text-caption text-secondary">Ready for the next run.</p>
         {/if}
     </section>
-    <section class="mt-4 rounded-md border border-default bg-surface p-5"><h3 class="mb-4 text-h3">Local service</h3><dl class="flex flex-wrap gap-x-12 gap-y-4"><div><dt class="text-caption text-secondary">Dreaming</dt><dd class="mt-1 text-body">{String(dashboard.dream_status.state ?? "unknown")}</dd></div>{#if dashboard.dream_status.current_phase}<div><dt class="text-caption text-secondary">Phase</dt><dd class="mt-1 text-body">{String(dashboard.dream_status.current_phase)} · {Math.round(Number(dashboard.dream_status.progress ?? 0) * 100)}%</dd></div>{/if}<div><dt class="text-caption text-secondary">Short-term memory</dt><dd class="mt-1 text-body">{String(dashboard.short_term_status.state ?? "unknown")}</dd></div></dl></section>
+    <section class="mt-4 rounded-md border border-default bg-surface p-5"><h3 class="mb-4 text-h3">Local service</h3><dl class="flex flex-wrap gap-x-12 gap-y-4"><div><dt class="text-caption text-secondary">Dreaming</dt><dd class="mt-1 text-body">{dashboard.dream_status.state}</dd></div>{#if dashboard.dream_status.current_phase}<div><dt class="text-caption text-secondary">Phase</dt><dd class="mt-1 text-body">{dashboard.dream_status.current_phase} · {Math.round(dashboard.dream_status.progress * 100)}%</dd></div>{/if}<div><dt class="text-caption text-secondary">Short-term memory</dt><dd class="mt-1 text-body">{dashboard.short_term_status.state}</dd></div></dl></section>
     {#if error}<p class="mt-4 border-l-2 border-danger bg-[var(--hiero-danger-bg)] px-4 py-3 text-body-sm text-danger">{error}</p>{/if}
   </div>
 </section>

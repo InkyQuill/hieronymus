@@ -27,6 +27,8 @@ use crate::{
 const NO_CACHE: &str = "no-cache";
 const IMMUTABLE_CACHE: &str = "public, max-age=31536000, immutable";
 const SHORT_CACHE: &str = "public, max-age=3600";
+/// Filesystem development overrides are bounded to 16 MiB per response.
+pub const MAX_OVERRIDE_ASSET_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(RustEmbed)]
 #[folder = "../../frontend/dist/"]
@@ -237,11 +239,15 @@ fn load_override_unix_with_hook(
     if !rustix::fs::FileType::from_raw_mode(metadata.st_mode).is_file() {
         return None;
     }
+    if metadata.st_size < 0 || metadata.st_size as u64 > MAX_OVERRIDE_ASSET_BYTES as u64 {
+        return None;
+    }
     let mut bytes = Vec::new();
     std::fs::File::from(descriptor)
+        .take(MAX_OVERRIDE_ASSET_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .ok()?;
-    Some(bytes)
+    (bytes.len() <= MAX_OVERRIDE_ASSET_BYTES).then_some(bytes)
 }
 
 fn content_type(path: &str) -> &'static str {
@@ -286,6 +292,24 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{AssetSource, load_override_unix_with_hook};
+
+    #[test]
+    fn override_read_rejects_assets_larger_than_the_documented_limit() {
+        let temp = TempDir::new().expect("temporary directory should be created");
+        let root = temp.path().join("dist");
+        fs::create_dir_all(&root).expect("asset directory should be created");
+        fs::write(root.join("oversized.js"), vec![b'x'; 16 * 1024 * 1024 + 1])
+            .expect("oversized fixture should be written");
+        let source = AssetSource::override_root(&root).expect("override root should open");
+        let AssetSource::Override(root_handle) = source else {
+            panic!("fixture should use an override root");
+        };
+
+        assert!(
+            load_override_unix_with_hook(&root_handle, &PathBuf::from("oversized.js"), || {})
+                .is_none()
+        );
+    }
 
     #[tokio::test]
     async fn override_read_is_anchored_when_ancestor_and_file_are_swapped_concurrently() {

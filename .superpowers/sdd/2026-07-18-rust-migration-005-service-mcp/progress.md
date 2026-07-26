@@ -1,0 +1,42 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-07-18-rust-migration-005-service-mcp.md
+Setup: existing linked worktree verified at /home/inky/Development/hieronymus/.worktrees/rust-rewrite on feat/rust-rewrite; starting head 48200c1.
+Pre-flight decision: the plan requires rmcp 2.2 and the workspace currently pins rmcp 0.4; official current docs confirm rmcp 2.2 exposes StreamableHttpService and LocalSessionManager, so Task 4 owns the dependency/API upgrade rather than weakening the plan to the stale workspace pin.
+Task 1: fix round 1/5 (2 addressed, 1 open — shutdown token authorization and exact loopback binding fixed; route-sensitive security matrix remains incomplete; commits 170c9c7..91a04cd)
+Task 1: fix round 2/5 (1 addressed, 0 open — route-complete MCP, admin, and shutdown security matrices; commits 91a04cd..dbecfd3)
+Task 1: complete (commits 48200c1..dbecfd3, review clean)
+Task 2: decision — proposal 005 says frontend/src/web/lib/api.ts is the pinned source of truth; where its §4 table conflicts with the current client (provider wrapper, check response, snapshot/manual-dream shapes), preserve the actual current TypeScript client contract and cover it with contract tests.
+Task 2: minor (deferred): test configuration uses TempDir::keep and leaks temporary directories; retain the TempDir in test state instead.
+Task 2: minor (deferred): most admin action branches and destructive confirmations need broader seeded behavior coverage; the current all-view test proves shape more strongly than mapping for six views.
+Task 2: fix round 1/5 (6 addressed, 1 open — browser errors, provider deletion, selected IDs, string IDs, atomic delete, and worker supervision fixed; independent provider-check cache-persistence proof remains; commits 72e4488..c2002ce)
+Task 2: minor (deferred): WorkerSupervisor retains completed JoinSet entries until shutdown; add periodic reaping before repeated manual runs can accumulate.
+Task 2: minor (deferred): delete_by_user cancellation atomicity follows transaction ownership and has late-failure rollback coverage, but no dedicated aborted-future test.
+Task 2: fix round 2/5 (1 addressed, 0 open — provider check persistence isolated from models refresh with injected transport; commits c2002ce..71b69a0)
+Task 2: complete (commits dbecfd3..71b69a0, review clean)
+Task 3: minor (deferred): manual asset MIME table covers woff2 but omits woff, ttf, and otf; use a complete MIME resolver or add the common font types.
+Task 3: fix round 1/5 (6 addressed, 0 open — handle-safe overrides, Vite hashing, shutdown order, continuous reaping, namespace fallback, and WebSocket origin policy; commits 586ab6e..6a56d09)
+Task 3: complete (commits 71b69a0..6a56d09, review clean)
+Task 4: decision — the global constraint preserves the 39 actual Python MCP registrations by exact name; proposal §3's shorthand `hieronymus_rule_crystals_*` does not rename the existing singular `hieronymus_rule_crystal_archive` and `hieronymus_rule_crystal_validate`. Register those 39 exact names plus `hieronymus_recall_feedback`, for exactly 40 unique tools.
+Task 4: decision — extend Phase 003 ConceptStore with the minimal typed update/facet input APIs required by the preserved MCP signatures, with core TDD and transactional validation. Direct SQL in hiero-bin and explicit unsupported handlers are rejected because Task 4 requires thin store dispatch and functional parity.
+Task 4: minor (deferred): backing-group dispatch coverage omits many error/mutation paths; expand status, unfiltered list, response shapes, transactional failures, term operations, session reuse, RAG search, and remaining mutations.
+Task 4: minor (deferred): series creation performs blocking filesystem work in an async handler; move initialization behind spawn_blocking or an async-safe core boundary.
+Task 4: fix round 1/5 (7 addressed, 2 open — facet kind compatibility and three exact Python descriptions remain; commits e429079..061fb7f)
+Task 4: fix round 2/5 (2 addressed, 0 open — Python facet kind mapping and exact descriptions; commits 061fb7f..eb61748)
+Task 4: complete (commits 6a56d09..eb61748, review clean)
+Task 5: decision — the stdio compatibility process owns one rmcp stdio session and the Task 4 tool catalog, but its backend is HTTP-only: each `tools/call` strips the stable `hieronymus_` prefix and posts the unchanged arguments to authenticated `/api/mcp/{operation}`. The shim reads the existing configured token file and never creates daemon state or opens a store.
+Task 5: decision — no-subcommand and explicit `start` first probe authenticated `/status` on the proposal-governed configured port. A matching daemon prints status and remains the sole long-lived process; an unavailable daemon starts in the foreground and owns Ctrl+C/SIGTERM.
+Task 5: decision — graceful lifecycle broadcasts cancellation before Axum begins draining, allows five seconds for in-flight HTTP work, then surfaces a timeout; supervised workers get a separate two-second cooperative window before abort. Worker-returned errors and panics are retained and surfaced by daemon shutdown.
+Task 5: review correction — the authenticated loopback client disables environment proxies and redirects and applies bounded connect/request deadlines, preventing token forwarding and indefinite daemon waits.
+Task 5: review correction — worker failures are logged immediately and retained as a bounded rolling summary; force-aborted workers are detached without synchronous reaping, keeping shutdown bounded while preserving clean cancellation semantics.
+Task 5: complete (commits eb61748..84d3f48; focused MCP/service/process suites and full workspace fmt/clippy/test/doc verification green)
+Task 5: review fix round 1 decision — start the concrete Phase 004 production dream loop; do not invent semantic orchestration because proposal 003 §5.3 explicitly exposes queue/lease primitives without a concrete job-to-index loop.
+Task 5: review fix round 1 — recurring failures now trigger immediate coordinated daemon shutdown, one-shot failures are nonfatal, and aborted workers are separately deadline-reaped with activity decremented only after joins.
+Task 5: review fix round 1 verifier correction — fatal-channel lag and unexpected Axum completion now enter common cooperative cleanup; daemon dream audit cleanup has its own one-second deadline and explicit failure acknowledgement, preventing a detached blocking lock owner under persistent failure.
+Task 5: review fix round 1 complete (`84d3f48..fe8f0be`; focused dream 35+1 ignored/MCP 20/service 43/process 7 and full workspace fmt/clippy/test/doc verification green)
+Task 5: minor (deferred): a recurring worker that returns `Ok(())` before coordinated shutdown is treated as a normal completion; classify unexpected early success as fatal when the supervisor API gains another recurring worker.
+Task 5: complete (commits eb61748..fe8f0be, scoped review clean of Critical/Important findings)
+Final fix wave: all six current findings addressed — shared daemon dream cleanup deadline across recurring/admin/MCP/compat, complete lock-and-audit-backed dashboard contract, production bounded admin event publishers, filesystem-free `series_init` alias, serialized provider catalog mutations, and a 16 MiB anchored override-asset bound.
+Final fix wave frontend rationale: the current UI fields and rendering are preserved; permissive `Record<string, unknown>` placeholders and fallback casts were replaced with the complete backend-guaranteed shipping contract, including every stat category already consumed by the console.
+Final fix wave verification: focused service 49, MCP 22, process 8, dream 35 plus 1 ignored helper; frontend typecheck/test/build/format green. Full workspace fmt/clippy/test/doc rerun recorded in `final-fix-report.md`.
+Final audit deferred: do not broaden this wave into missing-docs or `#[non_exhaustive]` cleanup; audit those separately.
+Final audit deferred: recurring-worker early `Ok(())` remains the ledgered invariant gap; classify unexpected success as fatal when the supervisor gains another recurring worker.
+Final audit note: the pre-existing dream cancellation test remains timing-sensitive; no ignore or weakened assertion was introduced.

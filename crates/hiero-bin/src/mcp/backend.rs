@@ -23,6 +23,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
+use crate::{api::events::AdminNotifier, daemon::DAEMON_DREAM_CLEANUP_DEADLINE};
+
 use super::{SafeMcpError, tools::*};
 
 #[async_trait]
@@ -40,6 +42,7 @@ pub struct StoreDreamRunner {
     pool: SqlitePool,
     config: Arc<HieronymusConfig>,
     components: Option<(DreamConfig, ProviderCatalog, Arc<dyn DreamProviderResolver>)>,
+    notifier: Option<AdminNotifier>,
 }
 
 impl StoreDreamRunner {
@@ -49,7 +52,14 @@ impl StoreDreamRunner {
             pool,
             config,
             components: None,
+            notifier: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_notifier(mut self, notifier: AdminNotifier) -> Self {
+        self.notifier = Some(notifier);
+        self
     }
 
     #[must_use]
@@ -103,6 +113,9 @@ impl StoreDreamRunner {
 impl DreamRunner for StoreDreamRunner {
     async fn run(&self, provider: Option<&str>, wait: bool) -> Result<Value> {
         let (dream_config, catalog, resolver) = self.components(provider).await?;
+        if let Some(notifier) = &self.notifier {
+            notifier.notify_refresh();
+        }
         let run = DreamService::new_with_catalog(
             &self.pool,
             &self.config,
@@ -110,12 +123,17 @@ impl DreamRunner for StoreDreamRunner {
             resolver,
             catalog,
         )
+        .with_cleanup_deadline(DAEMON_DREAM_CLEANUP_DEADLINE)
         .run_all(CycleOptions {
             owner: "mcp".into(),
             wait,
             ..CycleOptions::default()
         })
-        .await?;
+        .await;
+        if let Some(notifier) = &self.notifier {
+            notifier.notify_refresh();
+        }
+        let run = run?;
         Ok(json!({
             "cycle_id": run.cycle_id,
             "status": run.status,
@@ -132,6 +150,7 @@ pub struct StoreMcpBackend {
     pool: SqlitePool,
     config: Arc<HieronymusConfig>,
     dream_runner: Option<Arc<dyn DreamRunner>>,
+    notifier: Option<AdminNotifier>,
 }
 
 impl StoreMcpBackend {
@@ -141,7 +160,14 @@ impl StoreMcpBackend {
             pool,
             config,
             dream_runner: None,
+            notifier: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_notifier(mut self, notifier: AdminNotifier) -> Self {
+        self.notifier = Some(notifier);
+        self
     }
 
     #[must_use]
@@ -205,7 +231,7 @@ impl McpBackend for StoreMcpBackend {
         let concepts = ConceptStore::new(&self.pool);
         let crystals = CrystalStore::new(&self.pool);
         let workspace = WorkspaceStore::new(&self.pool);
-        match name {
+        let result = match name {
             "hieronymus_status" => {
                 let _: NoArgs = input!(NoArgs);
                 json_value(crate::api::system::status_report(&self.pool, &self.config).await?)
@@ -223,11 +249,6 @@ impl McpBackend for StoreMcpBackend {
                         language_tags,
                     )
                     .await?;
-                if name == "hieronymus_series_init" {
-                    let root = self.config.data_root.join("series").join(&input.slug);
-                    std::fs::create_dir_all(&root)?;
-                    registry.init_at(&input.slug, root).await?;
-                }
                 json_value(series)
             }
             "hieronymus_series_list" => {
@@ -799,8 +820,34 @@ impl McpBackend for StoreMcpBackend {
                 Ok(json!({"recorded": true}))
             }
             _ => bail!("unknown MCP tool: {name}"),
+        };
+        if result.is_ok()
+            && is_mutating_tool(name)
+            && let Some(notifier) = &self.notifier
+        {
+            notifier.notify_refresh();
         }
+        result
     }
+}
+
+fn is_mutating_tool(name: &str) -> bool {
+    !matches!(
+        name,
+        "hieronymus_status"
+            | "hieronymus_series_list"
+            | "hieronymus_concept_list"
+            | "hieronymus_concept_get"
+            | "hieronymus_concept_facet_list"
+            | "hieronymus_rule_crystals_list"
+            | "hieronymus_rule_crystal_validate"
+            | "hieronymus_termbase_contract"
+            | "hieronymus_termbase_validate"
+            | "hieronymus_memory_search"
+            | "hieronymus_recall"
+            | "hieronymus_rag_search"
+            | "hieronymus_concept_proposals_list"
+    )
 }
 
 fn decode<T: DeserializeOwned>(name: &str, arguments: Value) -> Result<T> {

@@ -71,10 +71,38 @@ export type ReleaseSettings = { update_channel: "stable" | "dev" };
 
 export type AdminDashboard = {
   header: { product: string; version: string; tagline: string };
-  stats: Record<string, number>;
+  stats: {
+    audit_events: number;
+    crystals: number;
+    dream_runs: number;
+    lessons: number;
+    pending_proposals: number;
+    series: number;
+    sessions: number;
+    short_term_memories: number;
+  };
   views: string[];
-  short_term_status: Record<string, unknown>;
-  dream_status: Record<string, unknown>;
+  short_term_status: {
+    state: "IDLE" | "URGENT" | "DRAINING";
+    pending_count: number;
+    min_pending_short_term_memories: number;
+    max_pending_short_term_memories: number;
+    urgent: boolean;
+    drain_in_progress: boolean;
+    drain_completed: number;
+    drain_remaining: number;
+    drain_total: number;
+    drain_progress: number;
+  };
+  dream_status: {
+    state: "IDLE" | "WORKING" | "DISABLED";
+    current_phase: string;
+    progress: number;
+    run_id: number | null;
+    cycle_id: number | null;
+    owner: string;
+    started_at: string;
+  };
 };
 
 export type AdminRow = {

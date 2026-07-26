@@ -370,3 +370,97 @@ async fn sigterm_bounds_persistent_dream_cleanup_failure_without_orphaning_lock(
             .unwrap();
     assert_eq!(running, 1);
 }
+
+#[tokio::test]
+async fn sigterm_bounds_manual_admin_dream_cleanup_failure_without_orphaning_lock() {
+    let provider = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let provider_url = format!("http://{}/v1", provider.local_addr().unwrap());
+    let root = TempDir::new().unwrap();
+    let config = configure_pending_dream(&root, Some(&provider_url)).await;
+    let mut dream = DreamConfig::load(&config).unwrap();
+    dream.enabled = false;
+    dream.save(&config).unwrap();
+    let pool = db::connect(&config).await.unwrap();
+    sqlx::query(
+        "CREATE TRIGGER injected_manual_cleanup_failure
+         BEFORE UPDATE OF status ON dream_runs
+         WHEN OLD.status='running' AND NEW.status='failed'
+         BEGIN SELECT RAISE(ABORT,'injected manual cleanup failure'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+    let (request_started, request_observed) = tokio::sync::oneshot::channel();
+    let provider_task = tokio::spawn(async move {
+        let (mut stream, _) = provider.accept().await.unwrap();
+        let mut request = [0_u8; 4_096];
+        assert!(stream.read(&mut request).await.unwrap() > 0);
+        let _ = request_started.send(());
+        let mut rest = Vec::new();
+        stream.read_to_end(&mut rest).await.unwrap();
+    });
+    let port = random_port().await;
+    let daemon = daemon_command(&root, port, true).spawn().unwrap();
+    wait_daemon_ready(&root, port).await;
+    let token = std::fs::read_to_string(config.auth_token_path()).unwrap();
+    let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let body = "{}";
+    client
+        .write_all(
+            format!(
+                "POST /api/admin/actions/run_manual_dreaming HTTP/1.1\r\n\
+                 Host: 127.0.0.1:{port}\r\n\
+                 X-Hieronymus-Token: {}\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {}\r\n\
+                 Connection: close\r\n\r\n{body}",
+                token.trim(),
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut response = Vec::new();
+    client.read_to_end(&mut response).await.unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    tokio::time::timeout(Duration::from_secs(5), request_observed)
+        .await
+        .expect("manual admin dream provider request should start")
+        .unwrap();
+
+    Command::new("kill")
+        .arg("-TERM")
+        .arg(daemon.id().unwrap().to_string())
+        .status()
+        .await
+        .unwrap();
+    let output = tokio::time::timeout(Duration::from_secs(5), daemon.wait_with_output())
+        .await
+        .expect("manual cleanup failure must not prevent process exit")
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    tokio::time::timeout(Duration::from_secs(1), provider_task)
+        .await
+        .expect("provider connection must not outlive daemon shutdown")
+        .unwrap();
+    let lock = acquire_dream_cycle_lock(&config, "after-manual-cleanup", false)
+        .expect("manual bounded cleanup must release the OS lock");
+    drop(lock);
+    let pool = db::connect(&config).await.unwrap();
+    let running: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM dream_runs WHERE status = 'running'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(running, 1);
+}

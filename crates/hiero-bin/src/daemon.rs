@@ -52,7 +52,7 @@ use uuid::Uuid;
 use crate::api::{
     self,
     error::ApiError,
-    events::{AdminEvent, admin_event_channel, admin_ws},
+    events::{AdminNotifier, admin_event_channel, admin_ws},
     system::{health, shutdown, status},
 };
 use crate::assets::{AssetSource, is_client_route, serve_assets, serve_client_route, serve_index};
@@ -64,6 +64,7 @@ const AUTH_TOKEN_HEADER: &str = "x-hieronymus-token";
 const WORKER_CHANNEL_CAPACITY: usize = 64;
 const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const WORKER_ABORT_GRACE: Duration = Duration::from_secs(1);
+pub const DAEMON_DREAM_CLEANUP_DEADLINE: Duration = WORKER_ABORT_GRACE;
 const WORKER_SHUTDOWN_TOTAL: Duration = Duration::from_secs(4);
 const SERVER_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const LOOPBACK_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -80,8 +81,9 @@ pub struct AppState {
     pub port: u16,
     pub dream_running: Arc<AtomicBool>,
     pub provider_transport: Option<Arc<dyn ProviderTransport>>,
+    pub provider_catalog_mutations: Arc<tokio::sync::Mutex<()>>,
     pub workers: WorkerSupervisor,
-    pub events: broadcast::Sender<AdminEvent>,
+    pub events: AdminNotifier,
     pub assets: AssetSource,
 }
 
@@ -554,13 +556,14 @@ pub struct RequestId(pub(crate) String);
 
 pub fn build_router(state: AppState) -> Router {
     let security_state = state.clone();
-    let dream_runner = Arc::new(StoreDreamRunner::new(
-        state.pool.clone(),
-        state.config.clone(),
-    ));
+    let dream_runner = Arc::new(
+        StoreDreamRunner::new(state.pool.clone(), state.config.clone())
+            .with_notifier(state.events.clone()),
+    );
     let mcp = http::service(Arc::new(
         StoreMcpBackend::new(state.pool.clone(), state.config.clone())
-            .with_dream_runner(dream_runner),
+            .with_dream_runner(dream_runner)
+            .with_notifier(state.events.clone()),
     ));
     Router::new()
         .route("/", get(serve_index))
@@ -610,6 +613,7 @@ where
         pool.clone(),
         Arc::new(config.clone()),
         shutdown_sender.clone(),
+        events.clone(),
         &workers,
     )
     .await?;
@@ -621,6 +625,7 @@ where
         port,
         dream_running: Arc::new(AtomicBool::new(false)),
         provider_transport: None,
+        provider_catalog_mutations: Arc::new(tokio::sync::Mutex::new(())),
         workers: workers.clone(),
         events,
         assets,
@@ -678,6 +683,7 @@ async fn start_recurring_workers(
     pool: SqlitePool,
     config: Arc<HieronymusConfig>,
     shutdown: broadcast::Sender<()>,
+    events: AdminNotifier,
     workers: &WorkerSupervisor,
 ) -> Result<()> {
     let load_config = config.clone();
@@ -715,6 +721,7 @@ async fn start_recurring_workers(
     ensure!(
         workers
             .spawn_recurring(async move {
+                events.notify_refresh();
                 let service = DreamService::new_with_catalog(
                     &pool,
                     &config,
@@ -722,10 +729,12 @@ async fn start_recurring_workers(
                     resolver,
                     catalog,
                 )
-                .with_cleanup_deadline(WORKER_ABORT_GRACE);
-                run_background_loop(service, interval, shutdown_receiver)
+                .with_cleanup_deadline(DAEMON_DREAM_CLEANUP_DEADLINE);
+                let result = run_background_loop(service, interval, shutdown_receiver)
                     .await
-                    .map_err(anyhow::Error::from)
+                    .map_err(anyhow::Error::from);
+                events.notify_refresh();
+                result
             })
             .await,
         "worker supervisor rejected the background dream scheduler"

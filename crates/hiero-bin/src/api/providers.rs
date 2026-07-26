@@ -51,7 +51,6 @@ async fn save(
     Extension(request_id): Extension<RequestId>,
     Json(request): Json<SaveProviderRequest>,
 ) -> Result<Json<ProviderResponse>, ApiError> {
-    let mut catalog = load_catalog(&state, request_id.clone()).await?;
     let draft = request.provider;
     let timeout = draft
         .timeout_seconds
@@ -59,6 +58,8 @@ async fn save(
         .ok()
         .filter(|value| value.is_finite() && *value > 0.0)
         .ok_or_else(|| ApiError::bad_request(request_id.clone(), "invalid provider timeout"))?;
+    let mutation = state.provider_catalog_mutations.lock().await;
+    let mut catalog = load_catalog(&state, request_id.clone()).await?;
     let existing_credential = catalog
         .get(&draft.id)
         .map(|profile| profile.credential().clone())
@@ -78,6 +79,8 @@ async fn save(
         .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
     let provider = ProviderContract::from_profile(&profile, &catalog);
     save_catalog(catalog, state.config.provider_config_path(), request_id).await?;
+    drop(mutation);
+    state.events.notify_refresh();
     Ok(Json(ProviderResponse { provider }))
 }
 
@@ -86,6 +89,7 @@ async fn remove(
     Extension(request_id): Extension<RequestId>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let mutation = state.provider_catalog_mutations.lock().await;
     let mut catalog = load_catalog(&state, request_id.clone()).await?;
     let config = state.config.clone();
     let dream =
@@ -110,6 +114,8 @@ async fn remove(
         return Err(ApiError::not_found(request_id, "provider not found"));
     }
     save_catalog(catalog, state.config.provider_config_path(), request_id).await?;
+    drop(mutation);
+    state.events.notify_refresh();
     Ok(Json(json!({})))
 }
 
@@ -128,6 +134,7 @@ async fn models(
         .await
         .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
     save_cache(cache, state.config.llm_cache_path(), request_id).await?;
+    state.events.notify_refresh();
     Ok(Json(ModelsResponse { models }))
 }
 
@@ -146,6 +153,7 @@ async fn check(
     let check = match result {
         Ok(models) => {
             save_cache(cache, state.config.llm_cache_path(), request_id).await?;
+            state.events.notify_refresh();
             ProviderCheck {
                 ok: true,
                 models,

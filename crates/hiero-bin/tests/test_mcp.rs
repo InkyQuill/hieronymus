@@ -103,7 +103,7 @@ async fn test_state() -> (AppState, TempDir) {
     let root = TempDir::new().expect("temporary directory should be created");
     let config = HieronymusConfig::with_roots(root.path().join("data"), root.path().join("config"));
     let (shutdown, _) = broadcast::channel(4);
-    let (events, _) = broadcast::channel(4);
+    let (events, _) = hiero_bin::api::events::admin_event_channel(4);
     (
         AppState {
             pool,
@@ -113,6 +113,7 @@ async fn test_state() -> (AppState, TempDir) {
             port: 9768,
             dream_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             provider_transport: None,
+            provider_catalog_mutations: Arc::new(tokio::sync::Mutex::new(())),
             workers: WorkerSupervisor::default(),
             events,
             assets: AssetSource::embedded(),
@@ -763,6 +764,74 @@ async fn production_dream_runner_executes_dream_service_with_an_injected_provide
 }
 
 #[tokio::test]
+async fn mcp_dream_bounds_persistent_audit_cleanup_failure_and_releases_the_cycle_lock() {
+    let (state, _) = test_state().await;
+    state.config.ensure_directories().unwrap();
+    SeriesRegistry::new(&state.pool)
+        .create("bounded", "Bounded", "ja", "ru")
+        .await
+        .unwrap();
+    let workspace = WorkspaceStore::new(&state.pool);
+    let session = workspace
+        .start_session(
+            &TranslationContext::new("bounded", "ja", "ru"),
+            "translation",
+            "",
+            "",
+        )
+        .await
+        .unwrap();
+    workspace
+        .add_short_term(
+            session.id,
+            AddMemoryInput {
+                text: "Bound the cleanup retry loop.".into(),
+                ..AddMemoryInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    workspace.complete_session(session.id).await.unwrap();
+    sqlx::query(
+        "CREATE TRIGGER persistent_dream_cleanup_failure
+         BEFORE UPDATE OF status ON dream_runs
+         WHEN OLD.status = 'running'
+         BEGIN SELECT RAISE(ABORT, 'persistent cleanup failure'); END",
+    )
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    let resolver: Arc<dyn DreamProviderResolver> = Arc::new(|_: &WorkflowProfile| {
+        Ok::<Arc<dyn DreamProvider>, DreamPhaseError>(Arc::new(DeterministicProvider))
+    });
+    let mut dream_config = DreamConfig {
+        enabled: true,
+        min_pending_short_term_memories: 1,
+        ..DreamConfig::default()
+    };
+    for profile in dream_config.workflows.values_mut() {
+        profile.enabled = true;
+        profile.provider = "deterministic".into();
+        profile.model = "deterministic".into();
+    }
+    let runner = StoreDreamRunner::new(state.pool, state.config.clone()).with_components(
+        dream_config,
+        ProviderCatalog::default(),
+        resolver,
+    );
+
+    let error = tokio::time::timeout(Duration::from_secs(3), runner.run(None, false))
+        .await
+        .expect("daemon-owned MCP cleanup must be deadline bounded")
+        .expect_err("persistent audit failure must be surfaced");
+    assert!(error.to_string().contains("audit cleanup"));
+    let lock =
+        hiero_core::dreaming::acquire_dream_cycle_lock(&state.config, "after-mcp-failure", false)
+            .expect("bounded cleanup must release the cross-process lock");
+    drop(lock);
+}
+
+#[tokio::test]
 async fn production_dream_runner_reports_invalid_configuration() {
     let (state, root) = test_state().await;
     std::fs::create_dir_all(root.path().join("config")).unwrap();
@@ -772,6 +841,35 @@ async fn production_dream_runner_reports_invalid_configuration() {
         .await
         .expect_err("invalid configuration must remain a tool error");
     assert!(error.to_string().contains("dream"));
+}
+
+#[tokio::test]
+async fn series_init_is_an_exact_no_filesystem_side_effect_alias_for_series_create() {
+    let (state, root) = test_state().await;
+    let backend = StoreMcpBackend::new(state.pool, state.config.clone());
+    let input = json!({
+        "slug": "alias-series",
+        "title": "Alias Series",
+        "source_language": "ja",
+        "target_language": "ru",
+        "language_tags": ["ja", "ru"]
+    });
+
+    let created = backend
+        .call("hieronymus_series_create", input.clone())
+        .await
+        .unwrap();
+    let initialized = backend.call("hieronymus_series_init", input).await.unwrap();
+
+    assert_eq!(initialized["series"]["id"], created["series"]["id"]);
+    assert_eq!(initialized["series"]["slug"], created["series"]["slug"]);
+    assert_eq!(initialized["language_tags"], created["language_tags"]);
+    assert!(
+        !root
+            .path()
+            .join("data/series/alias-series/.hieronymus.json")
+            .exists()
+    );
 }
 
 #[tokio::test]
