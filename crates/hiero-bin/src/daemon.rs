@@ -49,13 +49,19 @@ use crate::api::{
     system::{health, shutdown, status},
 };
 use crate::assets::{AssetSource, is_client_route, serve_assets, serve_client_route, serve_index};
-use crate::mcp::{StoreDreamRunner, StoreMcpBackend, http};
+use crate::mcp::{StoreDreamRunner, StoreMcpBackend, http, proxy_operation};
 
 const BODY_LIMIT: usize = 1_000_000;
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const AUTH_TOKEN_HEADER: &str = "x-hieronymus-token";
 const WORKER_CHANNEL_CAPACITY: usize = 64;
 const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+const WORKER_ABORT_GRACE: Duration = Duration::from_secs(1);
+const SERVER_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+const LOOPBACK_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+const LOOPBACK_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_RETAINED_WORKER_FAILURES: usize = 16;
+const MAX_WORKER_FAILURE_BYTES: usize = 1_024;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -71,11 +77,11 @@ pub struct AppState {
     pub assets: AssetSource,
 }
 
-type WorkerFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+type WorkerFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 
 enum WorkerCommand {
     Spawn(WorkerFuture),
-    Shutdown(oneshot::Sender<()>),
+    Shutdown(oneshot::Sender<Result<()>>),
 }
 
 struct WorkerSupervisorInner {
@@ -115,6 +121,17 @@ impl Default for WorkerSupervisor {
 
 impl WorkerSupervisor {
     pub async fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> bool {
+        self.spawn_result(async move {
+            task.await;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn spawn_result(
+        &self,
+        task: impl Future<Output = Result<()>> + Send + 'static,
+    ) -> bool {
         if self.inner.closed.load(Ordering::Acquire) {
             return false;
         }
@@ -125,7 +142,31 @@ impl WorkerSupervisor {
             .is_ok()
     }
 
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(&self) -> Result<()> {
+        match tokio::time::timeout(
+            WORKER_SHUTDOWN_GRACE + WORKER_ABORT_GRACE,
+            self.shutdown_inner(),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let reaper = self
+                    .inner
+                    .reaper
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                if let Some(reaper) = reaper {
+                    reaper.abort();
+                }
+                Err(anyhow::Error::new(error).context("worker shutdown timed out"))
+            }
+        }
+    }
+
+    async fn shutdown_inner(&self) -> Result<()> {
+        let mut result = Ok(());
         if !self.inner.closed.swap(true, Ordering::AcqRel) {
             let (completed, observed) = oneshot::channel();
             if self
@@ -135,7 +176,9 @@ impl WorkerSupervisor {
                 .await
                 .is_ok()
             {
-                let _ = observed.await;
+                result = observed
+                    .await
+                    .context("worker supervisor stopped before acknowledging shutdown")?;
             }
         }
         self.wait_idle().await;
@@ -146,8 +189,11 @@ impl WorkerSupervisor {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         if let Some(reaper) = reaper {
-            let _ = reaper.await;
+            reaper
+                .await
+                .context("worker supervisor task panicked during shutdown")?;
         }
+        result
     }
 
     pub async fn active_count(&self) -> usize {
@@ -171,17 +217,28 @@ async fn run_worker_supervisor(
     idle: Arc<Notify>,
 ) {
     let mut tasks = JoinSet::new();
+    let mut failures = Vec::new();
     loop {
         if tasks.is_empty() {
             match commands.recv().await {
                 Some(WorkerCommand::Spawn(task)) => spawn_worker(&mut tasks, &active, task),
                 Some(WorkerCommand::Shutdown(completed)) => {
-                    finish_worker_shutdown(&mut commands, &mut tasks, &active, &idle).await;
-                    let _ = completed.send(());
+                    finish_worker_shutdown(
+                        &mut commands,
+                        &mut tasks,
+                        &active,
+                        &idle,
+                        &mut failures,
+                    )
+                    .await;
+                    let _ = completed.send(worker_failures(failures));
                     return;
                 }
                 None => {
-                    abort_workers(&mut tasks, &active, &idle).await;
+                    abort_workers(&mut tasks, &active, &idle);
+                    for failure in failures {
+                        tracing::error!(failure, "worker task failed after supervisor closed");
+                    }
                     return;
                 }
             }
@@ -198,18 +255,26 @@ async fn run_worker_supervisor(
                                 &mut tasks,
                                 &active,
                                 &idle,
+                                &mut failures,
                             ).await;
-                            let _ = completed.send(());
+                            let _ = completed.send(worker_failures(failures));
                             return;
                         }
                         None => {
-                            abort_workers(&mut tasks, &active, &idle).await;
+                            abort_workers(&mut tasks, &active, &idle);
+                            for failure in failures {
+                                tracing::error!(
+                                    failure,
+                                    "worker task failed after supervisor closed"
+                                );
+                            }
                             return;
                         }
                     }
                 }
                 joined = tasks.join_next() => {
-                    if joined.is_some() {
+                    if let Some(joined) = joined {
+                        record_worker_result(joined, &mut failures);
                         record_worker_completion(&active, &idle);
                     }
                 }
@@ -218,16 +283,17 @@ async fn run_worker_supervisor(
     }
 }
 
-fn spawn_worker(tasks: &mut JoinSet<()>, active: &AtomicUsize, task: WorkerFuture) {
+fn spawn_worker(tasks: &mut JoinSet<Result<()>>, active: &AtomicUsize, task: WorkerFuture) {
     active.fetch_add(1, Ordering::AcqRel);
     tasks.spawn(task);
 }
 
 async fn finish_worker_shutdown(
     commands: &mut mpsc::Receiver<WorkerCommand>,
-    tasks: &mut JoinSet<()>,
+    tasks: &mut JoinSet<Result<()>>,
     active: &AtomicUsize,
     idle: &Notify,
+    failures: &mut Vec<String>,
 ) {
     commands.close();
     while let Some(command) = commands.recv().await {
@@ -236,7 +302,8 @@ async fn finish_worker_shutdown(
         }
     }
     let graceful = async {
-        while tasks.join_next().await.is_some() {
+        while let Some(joined) = tasks.join_next().await {
+            record_worker_result(joined, failures);
             record_worker_completion(active, idle);
         }
     };
@@ -244,14 +311,20 @@ async fn finish_worker_shutdown(
         .await
         .is_err()
     {
-        abort_workers(tasks, active, idle).await;
+        abort_workers(tasks, active, idle);
     }
 }
 
-async fn abort_workers(tasks: &mut JoinSet<()>, active: &AtomicUsize, idle: &Notify) {
+fn abort_workers(tasks: &mut JoinSet<Result<()>>, active: &AtomicUsize, idle: &Notify) {
+    let remaining = tasks.len();
     tasks.abort_all();
-    while tasks.join_next().await.is_some() {
-        record_worker_completion(active, idle);
+    if remaining > 0 {
+        active.fetch_sub(remaining, Ordering::AcqRel);
+        idle.notify_waiters();
+        tracing::warn!(
+            remaining,
+            "workers exceeded the graceful shutdown window and were cancelled"
+        );
     }
 }
 
@@ -259,6 +332,45 @@ fn record_worker_completion(active: &AtomicUsize, idle: &Notify) {
     if active.fetch_sub(1, Ordering::AcqRel) == 1 {
         idle.notify_waiters();
     }
+}
+
+fn record_worker_result(
+    joined: std::result::Result<Result<()>, tokio::task::JoinError>,
+    failures: &mut Vec<String>,
+) {
+    match joined {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => retain_worker_failure(failures, error.to_string()),
+        Err(error) if error.is_cancelled() => {}
+        Err(error) => retain_worker_failure(failures, format!("worker task failed: {error}")),
+    }
+}
+
+fn retain_worker_failure(failures: &mut Vec<String>, mut failure: String) {
+    if failure.len() > MAX_WORKER_FAILURE_BYTES {
+        let boundary = failure
+            .char_indices()
+            .map(|(index, _)| index)
+            .take_while(|index| *index <= MAX_WORKER_FAILURE_BYTES)
+            .last()
+            .unwrap_or_default();
+        failure.truncate(boundary);
+        failure.push('…');
+    }
+    tracing::error!(failure, "supervised worker failed");
+    if failures.len() == MAX_RETAINED_WORKER_FAILURES {
+        failures.remove(0);
+    }
+    failures.push(failure);
+}
+
+fn worker_failures(failures: Vec<String>) -> Result<()> {
+    ensure!(
+        failures.is_empty(),
+        "worker task failure(s): {}",
+        failures.join("; ")
+    );
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -279,7 +391,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/admin", get(serve_index))
         .route("/config", get(serve_index))
         .route("/assets/{*path}", get(serve_assets))
-        .route("/api/mcp/{operation}", post(api::placeholder))
+        .route("/api/mcp/{operation}", post(proxy_operation))
         .nest("/api/providers", api::providers::routes())
         .nest("/api/settings", api::settings::routes())
         .nest("/api/admin", api::admin::routes())
@@ -331,21 +443,44 @@ where
     });
 
     let shutdown_broadcast = shutdown_sender.clone();
-    let result = axum::serve(listener, router)
-        .with_graceful_shutdown(await_shutdown_and_broadcast(
-            shutdown,
-            shutdown_receiver,
-            shutdown_broadcast,
-        ))
-        .await;
-    workers.shutdown().await;
-    result.context("daemon server failed")
+    let shutdown_started = Arc::new(Notify::new());
+    let graceful_started = shutdown_started.clone();
+    let server = async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(await_shutdown_and_broadcast(
+                shutdown,
+                shutdown_receiver,
+                shutdown_broadcast,
+                graceful_started,
+            ))
+            .await
+    };
+    tokio::pin!(server);
+    let result = tokio::select! {
+        result = &mut server => result.context("daemon server failed"),
+        () = shutdown_started.notified() => {
+            match tokio::time::timeout(SERVER_SHUTDOWN_GRACE, &mut server).await {
+                Ok(result) => result.context("daemon server failed"),
+                Err(error) => Err(anyhow::Error::new(error)
+                    .context("daemon graceful shutdown timed out")),
+            }
+        }
+    };
+    let worker_result = workers.shutdown().await;
+    match (result, worker_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(server), Err(worker)) => {
+            Err(server.context(format!("worker shutdown also failed: {worker:#}")))
+        }
+    }
 }
 
 pub async fn await_shutdown_and_broadcast<S>(
     shutdown: S,
     mut shutdown_receiver: broadcast::Receiver<()>,
     shutdown_sender: broadcast::Sender<()>,
+    shutdown_started: Arc<Notify>,
 ) where
     S: Future<Output = ()> + Send,
 {
@@ -354,6 +489,90 @@ pub async fn await_shutdown_and_broadcast<S>(
         _ = shutdown_receiver.recv() => {}
     }
     let _ = shutdown_sender.send(());
+    shutdown_started.notify_one();
+}
+
+pub async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let terminate = signal(SignalKind::terminate());
+        if let Ok(mut terminate) = terminate {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+pub async fn daemon_status(
+    config: &HieronymusConfig,
+    port: u16,
+) -> Result<Option<serde_json::Value>> {
+    let token = match read_auth_token(&config.auth_token_path()) {
+        Ok(token) => token,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == ErrorKind::NotFound) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let response = match loopback_http_client()?
+        .get(format!("http://127.0.0.1:{port}/status"))
+        .header(AUTH_TOKEN_HEADER, token.as_ref())
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) if error.is_connect() => return Ok(None),
+        Err(error) => return Err(error).context("failed to query daemon status"),
+    };
+    ensure!(
+        response.status().is_success(),
+        "daemon status request failed with {}",
+        response.status()
+    );
+    response
+        .json()
+        .await
+        .map(Some)
+        .context("daemon returned malformed status JSON")
+}
+
+pub async fn request_shutdown(config: &HieronymusConfig, port: u16) -> Result<serde_json::Value> {
+    let token = read_auth_token(&config.auth_token_path())?;
+    let response = loopback_http_client()?
+        .post(format!("http://127.0.0.1:{port}/shutdown"))
+        .header(AUTH_TOKEN_HEADER, token.as_ref())
+        .send()
+        .await
+        .context("failed to contact the Hieronymus daemon")?;
+    ensure!(
+        response.status().is_success(),
+        "daemon shutdown request failed with {}",
+        response.status()
+    );
+    response
+        .json()
+        .await
+        .context("daemon returned malformed shutdown JSON")
+}
+
+pub(crate) fn loopback_http_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(LOOPBACK_CONNECT_TIMEOUT)
+        .timeout(LOOPBACK_REQUEST_TIMEOUT)
+        .build()
+        .context("failed to build hardened loopback HTTP client")
 }
 
 pub async fn bind_listener(port: u16) -> Result<tokio::net::TcpListener> {
@@ -397,7 +616,7 @@ pub fn load_or_create_auth_token(path: &Path) -> Result<Arc<str>> {
     read_auth_token(path)
 }
 
-fn read_auth_token(path: &Path) -> Result<Arc<str>> {
+pub(crate) fn read_auth_token(path: &Path) -> Result<Arc<str>> {
     let metadata = fs::symlink_metadata(path)
         .with_context(|| format!("failed to inspect auth token `{}`", path.display()))?;
     ensure!(

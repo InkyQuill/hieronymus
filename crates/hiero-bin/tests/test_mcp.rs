@@ -1,8 +1,10 @@
 use std::collections::BTreeSet;
+use std::process::Stdio;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::{
@@ -24,7 +26,11 @@ use hiero_core::{
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
-use tokio::sync::broadcast;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    process::{Child, Command},
+    sync::{broadcast, oneshot},
+};
 use tower::ServiceExt;
 
 struct FailingBackend(&'static str);
@@ -972,4 +978,423 @@ async fn http_rejects_unknown_tool_invalid_payload_and_foreign_origin() {
     .await
     .expect_err("invalid payload should fail");
     assert!(invalid.to_string().contains("invalid payload"));
+}
+
+async fn random_port() -> u16 {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("random loopback port should bind");
+    listener
+        .local_addr()
+        .expect("listener should have an address")
+        .port()
+}
+
+async fn spawn_stdio_shim(root: &TempDir, port: u16) -> Child {
+    Command::new(assert_cmd::cargo::cargo_bin!("hiero"))
+        .arg("--data-root")
+        .arg(root.path().join("data"))
+        .arg("mcp")
+        .env("XDG_CONFIG_HOME", root.path().join("config"))
+        .env("HIERONYMUS_PORT", port.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("stdio shim should spawn")
+}
+
+async fn write_mcp(child: &mut Child, value: Value) {
+    let stdin = child.stdin.as_mut().expect("shim stdin should be piped");
+    stdin
+        .write_all(serde_json::to_string(&value).unwrap().as_bytes())
+        .await
+        .unwrap();
+    stdin.write_all(b"\n").await.unwrap();
+    stdin.flush().await.unwrap();
+}
+
+async fn read_mcp(reader: &mut BufReader<tokio::process::ChildStdout>) -> Value {
+    let mut line = String::new();
+    tokio::time::timeout(Duration::from_secs(6), reader.read_line(&mut line))
+        .await
+        .expect("shim should answer promptly")
+        .expect("shim stdout should remain readable");
+    serde_json::from_str(&line)
+        .unwrap_or_else(|error| panic!("invalid MCP response: {error}: {line}"))
+}
+
+async fn initialize_stdio(
+    child: &mut Child,
+    reader: &mut BufReader<tokio::process::ChildStdout>,
+) -> Value {
+    write_mcp(
+        child,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "spawned-test", "version": "1"}
+            }
+        }),
+    )
+    .await;
+    read_mcp(reader).await
+}
+
+#[tokio::test]
+async fn stdio_spawned_binary_keeps_one_session_and_forwards_tool_calls() {
+    let root = TempDir::new().unwrap();
+    let port = random_port().await;
+    let config = HieronymusConfig::with_roots(
+        root.path().join("data"),
+        root.path().join("config/hieronymus"),
+    );
+    let token_path = config.auth_token_path();
+    let (stop, stopped) = oneshot::channel();
+    let daemon = tokio::spawn(hiero_bin::daemon::serve(config, port, async move {
+        let _ = stopped.await;
+    }));
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !token_path.exists() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("daemon should create its token");
+
+    let mut child = spawn_stdio_shim(&root, port).await;
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let initialized = initialize_stdio(&mut child, &mut reader).await;
+    assert_eq!(initialized["result"]["serverInfo"]["name"], "hieronymus");
+    write_mcp(
+        &mut child,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    )
+    .await;
+    write_mcp(
+        &mut child,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    )
+    .await;
+    assert_eq!(
+        read_mcp(&mut reader).await["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .len(),
+        40
+    );
+    write_mcp(
+        &mut child,
+        json!({
+            "jsonrpc":"2.0",
+            "id":3,
+            "method":"tools/call",
+            "params":{"name":"hieronymus_status","arguments":{}}
+        }),
+    )
+    .await;
+    assert_ne!(read_mcp(&mut reader).await["result"]["isError"], true);
+
+    drop(child.stdin.take());
+    tokio::time::timeout(Duration::from_secs(3), child.wait())
+        .await
+        .expect("stdio EOF should stop the shim")
+        .unwrap();
+    stop.send(()).unwrap();
+    daemon.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn stdio_reports_unavailable_daemon_as_a_tool_error() {
+    let root = TempDir::new().unwrap();
+    let config = HieronymusConfig::with_roots(
+        root.path().join("data"),
+        root.path().join("config/hieronymus"),
+    );
+    std::fs::create_dir_all(config.auth_token_path().parent().unwrap()).unwrap();
+    std::fs::write(config.auth_token_path(), "test-token\n").unwrap();
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        config.auth_token_path(),
+        std::os::unix::fs::PermissionsExt::from_mode(0o600),
+    )
+    .unwrap();
+    let mut child = spawn_stdio_shim(&root, random_port().await).await;
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    initialize_stdio(&mut child, &mut reader).await;
+    write_mcp(
+        &mut child,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    )
+    .await;
+    write_mcp(
+        &mut child,
+        json!({
+            "jsonrpc":"2.0","id":2,"method":"tools/call",
+            "params":{"name":"hieronymus_status","arguments":{}}
+        }),
+    )
+    .await;
+    let response = read_mcp(&mut reader).await;
+    assert_eq!(response["result"]["isError"], true);
+    assert!(
+        response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("daemon is unavailable")
+    );
+}
+
+#[tokio::test]
+async fn stdio_reports_malformed_daemon_response_as_a_tool_error() {
+    let root = TempDir::new().unwrap();
+    let config = HieronymusConfig::with_roots(
+        root.path().join("data"),
+        root.path().join("config/hieronymus"),
+    );
+    std::fs::create_dir_all(config.auth_token_path().parent().unwrap()).unwrap();
+    std::fs::write(config.auth_token_path(), "test-token\n").unwrap();
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        config.auth_token_path(),
+        std::os::unix::fs::PermissionsExt::from_mode(0o600),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let fake = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 4096];
+        let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request)
+            .await
+            .unwrap();
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot-json",
+            )
+            .await
+            .unwrap();
+    });
+    let mut child = spawn_stdio_shim(&root, port).await;
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    initialize_stdio(&mut child, &mut reader).await;
+    write_mcp(
+        &mut child,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    )
+    .await;
+    write_mcp(
+        &mut child,
+        json!({
+            "jsonrpc":"2.0","id":2,"method":"tools/call",
+            "params":{"name":"hieronymus_status","arguments":{}}
+        }),
+    )
+    .await;
+    let response = read_mcp(&mut reader).await;
+    assert_eq!(response["result"]["isError"], true);
+    assert!(
+        response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("malformed response")
+    );
+    fake.await.unwrap();
+}
+
+#[tokio::test]
+async fn stdio_never_follows_a_daemon_redirect_with_the_token() {
+    let root = TempDir::new().unwrap();
+    let config = HieronymusConfig::with_roots(
+        root.path().join("data"),
+        root.path().join("config/hieronymus"),
+    );
+    std::fs::create_dir_all(config.auth_token_path().parent().unwrap()).unwrap();
+    std::fs::write(config.auth_token_path(), "redirect-secret\n").unwrap();
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        config.auth_token_path(),
+        std::os::unix::fs::PermissionsExt::from_mode(0o600),
+    )
+    .unwrap();
+    let collector = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let collector_port = collector.local_addr().unwrap().port();
+    let redirector = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = redirector.local_addr().unwrap().port();
+    let redirect = tokio::spawn(async move {
+        let (mut socket, _) = redirector.accept().await.unwrap();
+        let mut request = vec![0; 4096];
+        let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request)
+            .await
+            .unwrap();
+        let response = format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{collector_port}/stolen\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        socket.write_all(response.as_bytes()).await.unwrap();
+    });
+    let stolen = tokio::spawn(async move {
+        match tokio::time::timeout(Duration::from_secs(1), collector.accept()).await {
+            Ok(Ok((mut socket, _))) => {
+                let mut request = vec![0; 4096];
+                let read = tokio::io::AsyncReadExt::read(&mut socket, &mut request)
+                    .await
+                    .unwrap();
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 13\r\nConnection: close\r\n\r\n{\"result\":{}}",
+                    )
+                    .await
+                    .unwrap();
+                String::from_utf8_lossy(&request[..read]).contains("redirect-secret")
+            }
+            _ => false,
+        }
+    });
+
+    let mut child = spawn_stdio_shim(&root, port).await;
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    initialize_stdio(&mut child, &mut reader).await;
+    write_mcp(
+        &mut child,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    )
+    .await;
+    write_mcp(
+        &mut child,
+        json!({
+            "jsonrpc":"2.0","id":2,"method":"tools/call",
+            "params":{"name":"hieronymus_status","arguments":{}}
+        }),
+    )
+    .await;
+    let response = read_mcp(&mut reader).await;
+    assert_eq!(response["result"]["isError"], true);
+    assert!(
+        !stolen.await.unwrap(),
+        "redirect target received the daemon token"
+    );
+    redirect.await.unwrap();
+}
+
+#[tokio::test]
+async fn stdio_ignores_environment_proxies_that_could_receive_the_token() {
+    let root = TempDir::new().unwrap();
+    let port = random_port().await;
+    let config = HieronymusConfig::with_roots(
+        root.path().join("data"),
+        root.path().join("config/hieronymus"),
+    );
+    let token_path = config.auth_token_path();
+    let (stop, stopped) = oneshot::channel();
+    let daemon = tokio::spawn(hiero_bin::daemon::serve(config, port, async move {
+        let _ = stopped.await;
+    }));
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !token_path.exists() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let proxy = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let proxy_port = proxy.local_addr().unwrap().port();
+    let intercepted = tokio::spawn(async move {
+        tokio::time::timeout(Duration::from_secs(1), proxy.accept())
+            .await
+            .is_ok()
+    });
+    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("hiero"))
+        .arg("--data-root")
+        .arg(root.path().join("data"))
+        .arg("mcp")
+        .env("XDG_CONFIG_HOME", root.path().join("config"))
+        .env("HIERONYMUS_PORT", port.to_string())
+        .env("HTTP_PROXY", format!("http://127.0.0.1:{proxy_port}"))
+        .env("NO_PROXY", "")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    initialize_stdio(&mut child, &mut reader).await;
+    write_mcp(
+        &mut child,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    )
+    .await;
+    write_mcp(
+        &mut child,
+        json!({
+            "jsonrpc":"2.0","id":2,"method":"tools/call",
+            "params":{"name":"hieronymus_status","arguments":{}}
+        }),
+    )
+    .await;
+    assert_ne!(read_mcp(&mut reader).await["result"]["isError"], true);
+    assert!(!intercepted.await.unwrap());
+    drop(child.stdin.take());
+    child.wait().await.unwrap();
+    stop.send(()).unwrap();
+    daemon.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn stdio_times_out_when_a_daemon_accepts_but_never_answers() {
+    let root = TempDir::new().unwrap();
+    let config = HieronymusConfig::with_roots(
+        root.path().join("data"),
+        root.path().join("config/hieronymus"),
+    );
+    std::fs::create_dir_all(config.auth_token_path().parent().unwrap()).unwrap();
+    std::fs::write(config.auth_token_path(), "test-token\n").unwrap();
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        config.auth_token_path(),
+        std::os::unix::fs::PermissionsExt::from_mode(0o600),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stalled = tokio::spawn(async move {
+        let (_socket, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    });
+    let mut child = spawn_stdio_shim(&root, port).await;
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    initialize_stdio(&mut child, &mut reader).await;
+    write_mcp(
+        &mut child,
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    )
+    .await;
+    write_mcp(
+        &mut child,
+        json!({
+            "jsonrpc":"2.0","id":2,"method":"tools/call",
+            "params":{"name":"hieronymus_status","arguments":{}}
+        }),
+    )
+    .await;
+    let response = tokio::time::timeout(Duration::from_secs(7), read_mcp(&mut reader))
+        .await
+        .expect("loopback MCP request must have a deadline");
+    assert_eq!(response["result"]["isError"], true);
+    stalled.abort();
 }

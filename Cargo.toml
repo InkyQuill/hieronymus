@@ -36,7 +36,7 @@ pdf-extract = "0.10"
 quick-xml = "0.38"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-rmcp = { version = "=2.2.0", features = ["schemars", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
+rmcp = { version = "=2.2.0", features = ["schemars", "transport-io", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
 rust-embed = { version = "8", features = ["debug-embed", "deterministic-timestamps"] }
 rustix = { version = "1.1", features = ["fs"] }
 secrecy = "0.10"

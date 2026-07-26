@@ -21,6 +21,7 @@ hiero-core = { path = "../hiero-core" }
 indicatif.workspace = true
 mime_guess.workspace = true
 rmcp.workspace = true
+reqwest.workspace = true
 rust-embed.workspace = true
 rustix.workspace = true
 serde.workspace = true

@@ -1,5 +1,6 @@
 mod backend;
 pub mod http;
+pub mod stdio;
 mod tools;
 
 use std::{collections::HashMap, sync::Arc};
@@ -15,6 +16,7 @@ use rmcp::{
 use serde_json::Value;
 
 pub use backend::{DreamRunner, McpBackend, StoreDreamRunner, StoreMcpBackend};
+pub use stdio::proxy_operation;
 pub use tools::{ToolContract, tool_catalog};
 
 const SANITIZED_TOOL_ERROR: &str = "The tool could not complete the request.";

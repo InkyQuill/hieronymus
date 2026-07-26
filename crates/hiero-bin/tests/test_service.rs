@@ -281,7 +281,7 @@ async fn router_registers_every_phase_005_section_2_route() {
         (
             Method::POST,
             "/api/mcp/series_create",
-            StatusCode::NOT_IMPLEMENTED,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
         ),
     ];
 
@@ -999,7 +999,7 @@ async fn manual_dream_worker_supervisor_cancels_and_joins_in_flight_work() {
 
     let shutdown_workers = workers.clone();
     let joined = tokio::spawn(async move {
-        shutdown_workers.shutdown().await;
+        shutdown_workers.shutdown().await.unwrap();
     });
     joined.await.expect("shutdown join should complete");
 
@@ -1025,6 +1025,80 @@ async fn manual_worker_supervisor_reaps_completion_without_spawn_poll_or_shutdow
         .await
         .expect("continuous reaper should observe completion");
     assert_eq!(workers.active_count().await, 0);
+}
+
+#[tokio::test]
+async fn worker_supervisor_surfaces_task_failures_at_shutdown() {
+    let workers = WorkerSupervisor::default();
+    assert!(
+        workers
+            .spawn_result(async { anyhow::bail!("recurring worker failed") })
+            .await
+    );
+    workers.wait_idle().await;
+
+    let error = workers
+        .shutdown()
+        .await
+        .expect_err("worker failure must reach the daemon lifecycle");
+    assert!(error.to_string().contains("recurring worker failed"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worker_supervisor_bounds_abort_and_reap_for_a_stalled_worker() {
+    struct SlowDrop;
+    impl Drop for SlowDrop {
+        fn drop(&mut self) {
+            std::thread::sleep(Duration::from_secs(5));
+        }
+    }
+
+    let workers = WorkerSupervisor::default();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let task_entered = entered.clone();
+    assert!(
+        workers
+            .spawn(async move {
+                let _slow_drop = SlowDrop;
+                task_entered.notify_one();
+                std::future::pending::<()>().await;
+            })
+            .await
+    );
+    entered.notified().await;
+
+    tokio::time::timeout(Duration::from_secs(4), workers.shutdown())
+        .await
+        .expect("supervisor shutdown itself must be bounded")
+        .expect("forced cancellation is a clean shutdown");
+    assert_eq!(workers.active_count().await, 0);
+}
+
+#[tokio::test]
+async fn worker_supervisor_bounds_retained_failure_summaries() {
+    let workers = WorkerSupervisor::default();
+    for index in 0..20 {
+        assert!(
+            workers
+                .spawn_result(
+                    async move { anyhow::bail!("failure-{index:02}-{}", "x".repeat(2_000)) }
+                )
+                .await
+        );
+    }
+    workers.wait_idle().await;
+
+    let error = workers
+        .shutdown()
+        .await
+        .expect_err("worker failures must reach the daemon lifecycle");
+    let summary = error.to_string();
+    assert!(summary.contains("failure-19-"));
+    assert!(!summary.contains("failure-00-"));
+    assert!(
+        summary.len() < 17_000,
+        "retained failure summary should stay bounded"
+    );
 }
 
 #[tokio::test]
@@ -1203,7 +1277,7 @@ async fn router_rejects_a_request_body_larger_than_one_megabyte() {
         ))
         .await
         .expect("router should answer");
-    assert_eq!(accepted.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(accepted.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
 
     let rejected = router
         .oneshot(request(
@@ -1911,12 +1985,77 @@ async fn events_serve_external_shutdown_closes_websocket_then_drains_in_flight_h
         .read_to_end(&mut response)
         .await
         .expect("drained response should be readable");
-    assert!(response.starts_with(b"HTTP/1.1 501"));
+    assert!(response.starts_with(b"HTTP/1.1 415"));
     tokio::time::timeout(Duration::from_secs(3), server)
         .await
         .expect("daemon should finish after in-flight request drains")
         .expect("daemon task should not panic")
         .expect("daemon should stop cleanly");
+}
+
+#[tokio::test]
+async fn shutdown_aborts_an_in_flight_request_after_the_bounded_grace_period() {
+    let reservation = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = reservation.local_addr().unwrap().port();
+    drop(reservation);
+    let temp = TempDir::new().unwrap();
+    let config = HieronymusConfig::with_roots(temp.path().join("data"), temp.path().join("config"));
+    let token_path = config.auth_token_path();
+    let (signal, shutdown) = oneshot::channel();
+    let server = tokio::spawn(serve(config, port, async move {
+        let _ = shutdown.await;
+    }));
+    let token = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Ok(token) = tokio::fs::read_to_string(&token_path).await {
+                break token.trim().to_owned();
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut request = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    request
+        .write_all(
+            format!(
+                "POST /api/mcp/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+                 X-Hieronymus-Token: {token}\r\nContent-Type: application/json\r\n\
+                 Content-Length: 1\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut accepted = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    accepted
+        .write_all(
+            format!(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+                 X-Hieronymus-Token: {token}\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut health = Vec::new();
+    accepted.read_to_end(&mut health).await.unwrap();
+    assert!(health.starts_with(b"HTTP/1.1 200"));
+    signal.send(()).unwrap();
+
+    let error = tokio::time::timeout(Duration::from_secs(7), server)
+        .await
+        .expect("bounded graceful shutdown should finish")
+        .unwrap()
+        .expect_err("an exhausted grace period should be surfaced");
+    assert!(error.to_string().contains("graceful shutdown timed out"));
+    drop(request);
 }
 
 #[tokio::test]

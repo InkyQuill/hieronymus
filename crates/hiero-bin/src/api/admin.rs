@@ -761,7 +761,7 @@ async fn run_manual_dreaming(
     let running = DreamRunningGuard(state.dream_running.clone());
     let accepted = state
         .workers
-        .spawn(async move {
+        .spawn_result(async move {
             let _running = running;
             let service = hiero_core::dreaming::DreamService::new_with_catalog(
                 &pool,
@@ -770,15 +770,14 @@ async fn run_manual_dreaming(
                 resolver,
                 catalog,
             );
-            if let Err(error) = service
+            service
                 .run_all(hiero_core::dreaming::CycleOptions {
                     owner: "web_admin".into(),
                     ..hiero_core::dreaming::CycleOptions::default()
                 })
                 .await
-            {
-                tracing::error!(%error, "manual dream run failed");
-            }
+                .map(|_| ())
+                .map_err(anyhow::Error::from)
         })
         .await;
     if !accepted {
