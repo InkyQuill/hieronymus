@@ -72,6 +72,37 @@ impl<'a> FeedbackStore<'a> {
         commit_write(transaction, "record", result).await
     }
 
+    pub async fn delete_by_user(
+        &self,
+        crystal_id: i64,
+        source_role: &str,
+        evidence: Option<&str>,
+    ) -> Result<i64> {
+        let mut transaction = begin_immediate(self.pool, "delete by user").await?;
+        let result = async {
+            let event_id = record_on(
+                &mut transaction,
+                FeedbackEvent {
+                    crystal_id,
+                    event_type: "deleted_by_user".into(),
+                    source_role: source_role.to_owned(),
+                    evidence: evidence.map(str::to_owned),
+                    session_id: None,
+                },
+            )
+            .await?;
+            sqlx::query("UPDATE crystals SET status = 'archived', updated_at = ? WHERE id = ?")
+                .bind(Utc::now())
+                .bind(crystal_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|source| database("archive deleted crystal", source))?;
+            Ok(event_id)
+        }
+        .await;
+        commit_write(transaction, "delete by user", result).await
+    }
+
     pub(crate) async fn record_in(
         &self,
         transaction: &mut Transaction<'static, Sqlite>,

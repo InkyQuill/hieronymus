@@ -7,6 +7,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+use async_trait::async_trait;
 use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
@@ -17,17 +18,86 @@ use hiero_bin::{
         admin::{AdminApi, FeedbackRecorder},
         contracts::AdminActionRequest,
     },
-    daemon::{AppState, bind_listener, build_router, load_or_create_auth_token, serve},
+    daemon::{
+        AppState, WorkerSupervisor, await_shutdown_and_workers, bind_listener, build_router,
+        load_or_create_auth_token, serve,
+    },
 };
 use hiero_core::{
     config::HieronymusConfig,
     db,
     domain::{ConceptStore, CreateConceptInput, FeedbackError, FeedbackEvent},
+    dreaming::{DreamConfig, PhaseProfile},
+    provider::{
+        HttpMethod, PassName, ProviderCatalog, ProviderDefaults, ProviderProfile, ProviderRequest,
+        ProviderResponse, ProviderTransport,
+    },
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::sync::broadcast;
 use tower::ServiceExt;
+
+#[derive(Default)]
+struct FakeProviderTransport {
+    requests: Mutex<Vec<ProviderRequest>>,
+    responses: Mutex<std::collections::VecDeque<hiero_core::provider::Result<ProviderResponse>>>,
+}
+
+impl FakeProviderTransport {
+    fn with_ollama_models(models: &[&[&str]]) -> Arc<Self> {
+        Arc::new(Self {
+            requests: Mutex::new(Vec::new()),
+            responses: Mutex::new(
+                models
+                    .iter()
+                    .map(|models| {
+                        Ok(ProviderResponse {
+                            status: 200,
+                            body: serde_json::to_vec(&json!({
+                                "models": models
+                                    .iter()
+                                    .map(|name| json!({"model": name}))
+                                    .collect::<Vec<_>>()
+                            }))
+                            .expect("fake response should serialize"),
+                        })
+                    })
+                    .collect(),
+            ),
+        })
+    }
+
+    fn failing() -> Arc<Self> {
+        Arc::new(Self {
+            requests: Mutex::new(Vec::new()),
+            responses: Mutex::new(
+                [Err(hiero_core::provider::ProviderError::Transport)]
+                    .into_iter()
+                    .collect(),
+            ),
+        })
+    }
+}
+
+#[async_trait]
+impl ProviderTransport for FakeProviderTransport {
+    async fn execute(
+        &self,
+        request: ProviderRequest,
+    ) -> hiero_core::provider::Result<ProviderResponse> {
+        assert_eq!(request.method(), HttpMethod::Get);
+        self.requests
+            .lock()
+            .expect("request lock should work")
+            .push(request);
+        self.responses
+            .lock()
+            .expect("response lock should work")
+            .pop_front()
+            .expect("fake response should exist")
+    }
+}
 
 const LOCAL_HOST: &str = "127.0.0.1:9768";
 const BODY_LIMIT: usize = 1_000_000;
@@ -50,6 +120,8 @@ async fn test_state() -> (AppState, broadcast::Receiver<()>) {
             auth_token: Arc::from(AUTH_TOKEN),
             port: 9768,
             dream_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            provider_transport: None,
+            workers: WorkerSupervisor::default(),
         },
         receiver,
     )
@@ -106,12 +178,10 @@ fn security_request(method: Method, path: &str, case: SecurityCase) -> Request<B
 async fn assert_security_response(response: Response, case: SecurityCase) {
     assert_eq!(response.status(), case.status, "{}", case.name);
     if let Some(error_code) = case.error_code {
-        assert_eq!(
-            response_json(response).await["error"]["code"],
-            error_code,
-            "{}",
-            case.name
-        );
+        let payload = response_json(response).await;
+        assert_eq!(payload["code"], error_code, "{}", case.name);
+        assert!(payload["error"].is_string(), "{}", case.name);
+        assert!(payload["request_id"].is_string(), "{}", case.name);
     }
 }
 
@@ -156,7 +226,8 @@ async fn router_registers_every_phase_005_section_2_route() {
 
 #[tokio::test]
 async fn api_provider_contract_matches_the_current_typescript_client() {
-    let (state, _) = test_state().await;
+    let (mut state, _) = test_state().await;
+    state.provider_transport = Some(FakeProviderTransport::failing());
     let router = build_router(state);
     let draft = json!({
         "provider": {
@@ -239,6 +310,10 @@ async fn api_provider_contract_matches_the_current_typescript_client() {
         .await
         .expect("model refresh should answer");
     assert_eq!(models.status(), StatusCode::NOT_FOUND);
+    let error = response_json(models).await;
+    assert_eq!(error["error"], "provider not found");
+    assert_eq!(error["code"], "not_found");
+    assert!(error["request_id"].is_string());
 
     let deleted = router
         .oneshot(request(
@@ -250,6 +325,152 @@ async fn api_provider_contract_matches_the_current_typescript_client() {
         .expect("provider delete should answer");
     assert_eq!(deleted.status(), StatusCode::OK);
     assert_eq!(response_json(deleted).await, json!({}));
+}
+
+#[tokio::test]
+async fn api_provider_delete_rejects_workflow_references_and_clears_only_matching_default() {
+    let (state, _) = test_state().await;
+    let path = state.config.provider_config_path();
+    let mut catalog = ProviderCatalog::load(&path).expect("empty catalog should load");
+    for id in ["workflow-provider", "default-provider", "free-provider"] {
+        catalog
+            .upsert(ProviderProfile::new(
+                id,
+                id,
+                "ollama",
+                "http://127.0.0.1:11434",
+            ))
+            .expect("provider should be valid");
+    }
+    catalog.set_defaults(ProviderDefaults {
+        provider: "default-provider".into(),
+        model: "default-model".into(),
+    });
+    catalog.save(&path).expect("catalog should save");
+    let mut dream = DreamConfig::default();
+    dream.workflows.insert(
+        PassName::Concepts,
+        PhaseProfile {
+            provider: "workflow-provider".into(),
+            model: "workflow-model".into(),
+            enabled: true,
+            max_records_per_pass: 10,
+        },
+    );
+    dream.save(&state.config).expect("dream config should save");
+    let router = build_router(state.clone());
+
+    let referenced = router
+        .clone()
+        .oneshot(request(
+            Method::DELETE,
+            "/api/providers/workflow-provider",
+            Body::empty(),
+        ))
+        .await
+        .expect("referenced delete should answer");
+    assert_eq!(referenced.status(), StatusCode::BAD_REQUEST);
+    assert!(response_json(referenced).await["error"].is_string());
+
+    let default = router
+        .clone()
+        .oneshot(request(
+            Method::DELETE,
+            "/api/providers/default-provider",
+            Body::empty(),
+        ))
+        .await
+        .expect("default delete should answer");
+    assert_eq!(default.status(), StatusCode::OK);
+    let catalog = ProviderCatalog::load(&path).expect("updated catalog should load");
+    assert!(catalog.get("workflow-provider").is_some());
+    assert!(catalog.get("default-provider").is_none());
+    assert_eq!(catalog.defaults(), &ProviderDefaults::default());
+
+    let free = router
+        .oneshot(request(
+            Method::DELETE,
+            "/api/providers/free-provider",
+            Body::empty(),
+        ))
+        .await
+        .expect("unreferenced delete should answer");
+    assert_eq!(free.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn api_provider_check_and_models_bypass_cache_and_persist_each_live_discovery() {
+    let (mut state, _) = test_state().await;
+    let transport =
+        FakeProviderTransport::with_ollama_models(&[&["cached"], &["fresh"], &["newer"]]);
+    state.provider_transport = Some(transport.clone());
+    let mut catalog = ProviderCatalog::load(state.config.provider_config_path())
+        .expect("empty catalog should load");
+    catalog
+        .upsert(ProviderProfile::new(
+            "local",
+            "Local",
+            "ollama",
+            "http://127.0.0.1:11434",
+        ))
+        .expect("provider should be valid");
+    catalog
+        .save(state.config.provider_config_path())
+        .expect("catalog should save");
+    let router = build_router(state);
+
+    let first = router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/providers/local/models",
+            Body::empty(),
+        ))
+        .await
+        .expect("first model refresh should answer");
+    assert_eq!(response_json(first).await["models"], json!(["cached"]));
+
+    let check = router
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/providers/local/check",
+            json!({}),
+        ))
+        .await
+        .expect("live check should answer");
+    assert_eq!(
+        response_json(check).await["check"]["models"],
+        json!(["fresh"])
+    );
+
+    let second = router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/providers/local/models",
+            Body::empty(),
+        ))
+        .await
+        .expect("second model refresh should answer");
+    assert_eq!(response_json(second).await["models"], json!(["newer"]));
+
+    let dream = router
+        .oneshot(request(Method::GET, "/api/settings/dream", Body::empty()))
+        .await
+        .expect("dream settings should answer");
+    assert_eq!(
+        response_json(dream).await["model_cache"]["providers"]["local"]["models"],
+        json!(["newer"])
+    );
+    assert_eq!(
+        transport
+            .requests
+            .lock()
+            .expect("request lock should work")
+            .len(),
+        3
+    );
 }
 
 #[tokio::test]
@@ -447,6 +668,41 @@ async fn api_admin_snapshot_reads_seeded_concept_and_resolves_selected_id() {
 }
 
 #[tokio::test]
+async fn api_admin_snapshot_resolves_selected_id_older_than_the_bounded_row_list() {
+    let (state, _) = test_state().await;
+    sqlx::query(
+        "WITH RECURSIVE sequence(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < 201) INSERT INTO concepts(canonical_name, scope_type, scope_key, status, confidence, created_at, updated_at) SELECT printf('Concept %03d', value), 'global', '', 'candidate', 0.2, datetime('now'), datetime('now') FROM sequence",
+    )
+    .execute(&state.pool)
+    .await
+    .expect("concept fixtures should be created");
+    let oldest_id = sqlx::query_scalar::<_, i64>("SELECT min(id) FROM concepts")
+        .fetch_one(&state.pool)
+        .await
+        .expect("oldest concept should exist");
+    let router = build_router(state);
+
+    let response = router
+        .oneshot(request(
+            Method::GET,
+            &format!("/api/admin/snapshot?view=Concepts&selected_id={oldest_id}"),
+            Body::empty(),
+        ))
+        .await
+        .expect("snapshot should answer");
+    let snapshot = response_json(response).await["snapshot"].clone();
+
+    assert_eq!(snapshot["rows"].as_array().map(Vec::len), Some(200));
+    assert!(
+        snapshot["rows"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().all(|row| row["id"] != oldest_id))
+    );
+    assert_eq!(snapshot["selected"]["id"], oldest_id);
+    assert_eq!(snapshot["detail"]["title"], "Concept 001");
+}
+
+#[tokio::test]
 async fn api_admin_snapshot_reads_every_supported_store_view() {
     let (state, _) = test_state().await;
     let router = build_router(state);
@@ -494,6 +750,19 @@ impl FeedbackRecorder for FakeFeedback {
             .push(event);
         std::future::ready(Ok(()))
     }
+
+    fn delete_by_user(
+        &self,
+        crystal_id: i64,
+    ) -> impl Future<Output = Result<(), FeedbackError>> + Send {
+        self.record(FeedbackEvent {
+            crystal_id,
+            event_type: "deleted_by_user".into(),
+            source_role: "web_admin".into(),
+            evidence: Some("Deleted from web admin".into()),
+            session_id: None,
+        })
+    }
 }
 
 #[tokio::test]
@@ -507,14 +776,14 @@ async fn api_admin_score_actions_delegate_the_event_without_local_arithmetic() {
         .run_action(
             "reinforce_crystal",
             AdminActionRequest {
-                id: 42,
+                id: 42.into(),
                 confirmed: None,
             },
         )
         .await
         .expect("delegated action should succeed");
 
-    assert_eq!(result.result.message, "Crystal reinforced");
+    assert_eq!(result.message, "Crystal reinforced");
     assert_eq!(
         calls.lock().expect("fake lock should work").as_slice(),
         &[FeedbackEvent {
@@ -561,6 +830,93 @@ async fn api_admin_concept_score_actions_delegate_to_the_concept_store() {
             .confidence,
         0.35
     );
+}
+
+#[tokio::test]
+async fn api_admin_action_accepts_numeric_strings_and_rejects_invalid_ids_stably() {
+    let (state, _) = test_state().await;
+    let concept = ConceptStore::new(&state.pool)
+        .create(CreateConceptInput {
+            canonical_name: "Numeric String".into(),
+            scope_type: "global".into(),
+            scope_key: String::new(),
+        })
+        .await
+        .expect("concept fixture should be created");
+    let router = build_router(state);
+
+    let accepted = router
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/admin/actions/reinforce_concept",
+            json!({"id": concept.id.to_string()}),
+        ))
+        .await
+        .expect("numeric-string action should answer");
+    assert_eq!(accepted.status(), StatusCode::OK);
+
+    for id in [
+        json!("not-a-number"),
+        json!("9223372036854775808"),
+        json!(0),
+        json!(-1),
+    ] {
+        let rejected = router
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/admin/actions/reinforce_concept",
+                json!({"id": id}),
+            ))
+            .await
+            .expect("invalid action should answer");
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+        let payload = response_json(rejected).await;
+        assert!(payload["error"].is_string());
+        assert_eq!(payload["code"], "invalid_request");
+        assert!(payload["request_id"].is_string());
+    }
+}
+
+#[tokio::test]
+async fn manual_dream_worker_supervisor_cancels_and_joins_in_flight_work() {
+    struct RunningGuard(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for RunningGuard {
+        fn drop(&mut self) {
+            self.0.store(false, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    let workers = WorkerSupervisor::default();
+    let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let task_running = running.clone();
+    let task_entered = entered.clone();
+    assert!(
+        workers
+            .spawn(async move {
+                let _guard = RunningGuard(task_running);
+                task_entered.notify_one();
+                std::future::pending::<()>().await;
+            })
+            .await
+    );
+    entered.notified().await;
+
+    let (shutdown, receiver) = broadcast::channel(1);
+    let shutdown_workers = workers.clone();
+    let joined = tokio::spawn(await_shutdown_and_workers(
+        std::future::pending(),
+        receiver,
+        shutdown_workers,
+    ));
+    shutdown.send(()).expect("shutdown should be observed");
+    joined.await.expect("shutdown join should complete");
+
+    assert!(!running.load(std::sync::atomic::Ordering::Acquire));
+    assert_eq!(workers.active_count().await, 0);
+    assert!(!workers.spawn(async {}).await);
 }
 
 #[tokio::test]
@@ -750,10 +1106,7 @@ async fn router_rejects_a_request_body_larger_than_one_megabyte() {
         .await
         .expect("router should answer");
     assert_eq!(rejected.status(), StatusCode::PAYLOAD_TOO_LARGE);
-    assert_eq!(
-        response_json(rejected).await["error"]["code"],
-        "payload_too_large"
-    );
+    assert_eq!(response_json(rejected).await["code"], "payload_too_large");
 }
 
 #[tokio::test]
@@ -780,7 +1133,7 @@ async fn router_preserves_or_generates_request_ids_on_every_response() {
         "the caller's correlation ID should be preserved"
     );
     assert_eq!(
-        response_json(supplied).await["error"]["request_id"],
+        response_json(supplied).await["request_id"],
         "test-request-123"
     );
 
@@ -986,11 +1339,9 @@ async fn router_internal_errors_are_sanitized_and_correlated() {
     assert_eq!(
         body,
         json!({
-            "error": {
-                "code": "internal_error",
-                "message": "internal server error",
-                "request_id": "closed-pool-request",
-            }
+            "error": "internal server error",
+            "code": "internal_error",
+            "request_id": "closed-pool-request",
         })
     );
     assert!(!body.to_string().contains("pool closed"));
@@ -1018,11 +1369,9 @@ async fn router_method_errors_use_the_stable_json_envelope() {
     assert_eq!(
         response_json(response).await,
         json!({
-            "error": {
-                "code": "method_not_allowed",
-                "message": "method not allowed",
-                "request_id": "wrong-method-request",
-            }
+            "error": "method not allowed",
+            "code": "method_not_allowed",
+            "request_id": "wrong-method-request",
         })
     );
 }

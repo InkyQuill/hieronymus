@@ -7,8 +7,8 @@ use axum::{
 };
 use chrono::Utc;
 use hiero_core::provider::{
-    CredentialSource, ModelCache, ProviderCatalog, ProviderProfile, ProviderRegistry,
-    ReqwestTransportOptions,
+    CredentialSource, ModelCache, ProviderCatalog, ProviderDefaults, ProviderProfile,
+    ProviderRegistry, ReqwestTransportOptions,
 };
 use serde_json::json;
 
@@ -87,6 +87,25 @@ async fn remove(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut catalog = load_catalog(&state, request_id.clone()).await?;
+    let config = state.config.clone();
+    let dream =
+        tokio::task::spawn_blocking(move || hiero_core::dreaming::DreamConfig::load(&config))
+            .await
+            .map_err(|error| ApiError::internal(request_id.clone(), &error))?
+            .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
+    if dream
+        .workflows
+        .values()
+        .any(|workflow| workflow.provider == id)
+    {
+        return Err(ApiError::bad_request(
+            request_id,
+            "provider is used by a dream workflow",
+        ));
+    }
+    if catalog.defaults().provider == id {
+        catalog.set_defaults(ProviderDefaults::default());
+    }
     if !catalog.delete(&id) {
         return Err(ApiError::not_found(request_id, "provider not found"));
     }
@@ -105,7 +124,7 @@ async fn models(
         .ok_or_else(|| ApiError::not_found(request_id.clone(), "provider not found"))?;
     let (registry, cache) = registry(&state, request_id.clone()).await?;
     let models = registry
-        .suggest_models(profile, Utc::now())
+        .refresh_models(profile, Utc::now())
         .await
         .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
     save_cache(cache, state.config.llm_cache_path(), request_id).await?;
@@ -123,7 +142,7 @@ async fn check(
         .get(&id)
         .ok_or_else(|| ApiError::not_found(request_id.clone(), "provider not found"))?;
     let (registry, cache) = registry(&state, request_id.clone()).await?;
-    let result = registry.suggest_models(profile, Utc::now()).await;
+    let result = registry.refresh_models(profile, Utc::now()).await;
     let check = match result {
         Ok(models) => {
             save_cache(cache, state.config.llm_cache_path(), request_id).await?;
@@ -177,7 +196,10 @@ async fn registry(
     .await
     .map_err(|error| ApiError::internal(request_id.clone(), &error))?
     .map_err(|error| ApiError::internal(request_id, &error))?;
-    let registry = ProviderRegistry::production(cache.clone(), ReqwestTransportOptions::default());
+    let registry = state.provider_transport.as_ref().map_or_else(
+        || ProviderRegistry::production(cache.clone(), ReqwestTransportOptions::default()),
+        |transport| ProviderRegistry::with_transport(transport.clone(), cache.clone()),
+    );
     Ok((registry, cache))
 }
 

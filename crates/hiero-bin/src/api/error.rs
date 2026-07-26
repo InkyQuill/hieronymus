@@ -9,13 +9,8 @@ use crate::daemon::RequestId;
 
 #[derive(Debug, Serialize)]
 struct ErrorEnvelope {
-    error: ErrorBody,
-}
-
-#[derive(Debug, Serialize)]
-struct ErrorBody {
+    error: &'static str,
     code: &'static str,
-    message: &'static str,
     request_id: String,
 }
 
@@ -74,11 +69,9 @@ impl IntoResponse for ApiError {
         (
             self.status,
             Json(ErrorEnvelope {
-                error: ErrorBody {
-                    code: self.code,
-                    message: self.message,
-                    request_id: self.request_id.0,
-                },
+                error: self.message,
+                code: self.code,
+                request_id: self.request_id.0,
             }),
         )
             .into_response()

@@ -26,10 +26,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, get, post},
 };
+use hiero_core::provider::ProviderTransport;
 use hiero_core::{config::HieronymusConfig, db};
 use sqlx::SqlitePool;
 use subtle::ConstantTimeEq;
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex, broadcast};
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
@@ -52,6 +53,37 @@ pub struct AppState {
     pub auth_token: Arc<str>,
     pub port: u16,
     pub dream_running: Arc<AtomicBool>,
+    pub provider_transport: Option<Arc<dyn ProviderTransport>>,
+    pub workers: WorkerSupervisor,
+}
+
+#[derive(Clone, Default)]
+pub struct WorkerSupervisor {
+    tasks: Arc<Mutex<tokio::task::JoinSet<()>>>,
+    closed: Arc<AtomicBool>,
+}
+
+impl WorkerSupervisor {
+    pub async fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> bool {
+        let mut tasks = self.tasks.lock().await;
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            return false;
+        }
+        tasks.spawn(task);
+        true
+    }
+
+    pub async fn shutdown(&self) {
+        self.closed
+            .store(true, std::sync::atomic::Ordering::Release);
+        let mut tasks = self.tasks.lock().await;
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
+    }
+
+    pub async fn active_count(&self) -> usize {
+        self.tasks.lock().await.len()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -98,7 +130,8 @@ where
     let pool = db::connect(&config)
         .await
         .context("failed to open daemon database")?;
-    let (shutdown_sender, mut shutdown_receiver) = broadcast::channel(4);
+    let (shutdown_sender, shutdown_receiver) = broadcast::channel(4);
+    let workers = WorkerSupervisor::default();
     let router = build_router(AppState {
         pool,
         config: Arc::new(config),
@@ -106,17 +139,34 @@ where
         auth_token,
         port,
         dream_running: Arc::new(AtomicBool::new(false)),
+        provider_transport: None,
+        workers: workers.clone(),
     });
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                () = shutdown => {}
-                _ = shutdown_receiver.recv() => {}
-            }
-        })
-        .await
-        .context("daemon server failed")
+    let shutdown_workers = workers.clone();
+    let result = axum::serve(listener, router)
+        .with_graceful_shutdown(await_shutdown_and_workers(
+            shutdown,
+            shutdown_receiver,
+            shutdown_workers,
+        ))
+        .await;
+    workers.shutdown().await;
+    result.context("daemon server failed")
+}
+
+pub async fn await_shutdown_and_workers<S>(
+    shutdown: S,
+    mut shutdown_receiver: broadcast::Receiver<()>,
+    workers: WorkerSupervisor,
+) where
+    S: Future<Output = ()> + Send,
+{
+    tokio::select! {
+        () = shutdown => {}
+        _ = shutdown_receiver.recv() => {}
+    }
+    workers.shutdown().await;
 }
 
 pub async fn bind_listener(port: u16) -> Result<tokio::net::TcpListener> {

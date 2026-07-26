@@ -897,6 +897,26 @@ impl ProviderRegistry {
         if let Some(models) = self.cache.get(&identity, now) {
             return Ok(models);
         }
+        self.refresh_models_with_credential(profile, now, credential, identity)
+            .await
+    }
+    pub async fn refresh_models(
+        &self,
+        profile: &ProviderProfile,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<String>> {
+        let credential = resolve_operation_credential(self.credentials.as_ref(), profile).await?;
+        let identity = profile_cache_identity(profile, credential.as_ref());
+        self.refresh_models_with_credential(profile, now, credential, identity)
+            .await
+    }
+    async fn refresh_models_with_credential(
+        &self,
+        profile: &ProviderProfile,
+        now: chrono::DateTime<chrono::Utc>,
+        credential: Option<SecretString>,
+        identity: String,
+    ) -> Result<Vec<String>> {
         let models = self
             .http(profile.clone(), "discovery")?
             .list_models(credential.as_ref())

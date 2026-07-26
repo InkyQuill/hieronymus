@@ -547,6 +547,61 @@ async fn global_crystal_outcome_allows_any_series_but_malformed_and_cross_series
 }
 
 #[tokio::test]
+async fn delete_by_user_records_feedback_and_archives_in_one_transaction() {
+    let pool = pool().await;
+    let (_, crystal_id) = fixture(&pool).await;
+
+    FeedbackStore::new(&pool)
+        .delete_by_user(crystal_id, "web_admin", Some("Deleted from web admin"))
+        .await
+        .expect("delete should commit");
+
+    assert_eq!(record(&pool, crystal_id).await.status, "archived");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM memory_events WHERE crystal_id = ? AND event_type = 'deleted_by_user'"
+        )
+        .bind(crystal_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn delete_by_user_rolls_back_feedback_and_score_when_late_archive_fails() {
+    let pool = pool().await;
+    let (_, crystal_id) = fixture(&pool).await;
+    let before = record(&pool, crystal_id).await;
+    sqlx::query(
+        "CREATE TRIGGER fail_web_delete_archive BEFORE UPDATE OF status ON crystals WHEN NEW.status = 'archived' BEGIN SELECT RAISE(ABORT, 'injected late archive failure'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert!(
+        FeedbackStore::new(&pool)
+            .delete_by_user(crystal_id, "web_admin", Some("Deleted from web admin"))
+            .await
+            .is_err()
+    );
+
+    assert_eq!(record(&pool, crystal_id).await, before);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM memory_events WHERE crystal_id = ? AND event_type = 'deleted_by_user'"
+        )
+        .bind(crystal_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn feedback_preserves_candidate_and_archived_lifecycle_states() {
     let pool = pool().await;
     let (_, crystal_id) = fixture(&pool).await;

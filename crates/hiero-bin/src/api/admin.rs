@@ -2,7 +2,7 @@ use std::future::Future;
 
 use axum::{
     Extension, Json, Router,
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, rejection::JsonRejection},
     routing::{get, post},
 };
 use hiero_core::db::{
@@ -52,6 +52,10 @@ pub trait FeedbackRecorder: Clone + Send + Sync {
         &self,
         event: FeedbackEvent,
     ) -> impl Future<Output = Result<(), FeedbackError>> + Send;
+    fn delete_by_user(
+        &self,
+        crystal_id: i64,
+    ) -> impl Future<Output = Result<(), FeedbackError>> + Send;
 }
 
 #[derive(Clone)]
@@ -63,6 +67,13 @@ impl FeedbackRecorder for SqliteFeedback {
     async fn record(&self, event: FeedbackEvent) -> Result<(), FeedbackError> {
         FeedbackStore::new(&self.pool)
             .record(event)
+            .await
+            .map(|_| ())
+    }
+
+    async fn delete_by_user(&self, crystal_id: i64) -> Result<(), FeedbackError> {
+        FeedbackStore::new(&self.pool)
+            .delete_by_user(crystal_id, "web_admin", Some("Deleted from web admin"))
             .await
             .map(|_| ())
     }
@@ -94,7 +105,7 @@ impl<R: FeedbackRecorder> AdminApi<R> {
         &self,
         action: &str,
         request: AdminActionRequest,
-    ) -> Result<AdminActionResult, AdminError> {
+    ) -> Result<ActionMessage, AdminError> {
         let (event_type, message, evidence) = match action {
             "reinforce_crystal" => (
                 "confirmed_by_user",
@@ -118,21 +129,21 @@ impl<R: FeedbackRecorder> AdminApi<R> {
             }
             _ => return Err(AdminError::UnknownAction),
         };
-        self.feedback
-            .record(FeedbackEvent {
-                crystal_id: request.id,
-                event_type: event_type.into(),
-                source_role: "web_admin".into(),
-                evidence: Some(evidence.into()),
-                session_id: None,
-            })
-            .await?;
-        let selected_id = request.id.to_string();
-        Ok(AdminActionResult {
-            result: ActionMessage {
-                message: message.into(),
-            },
-            snapshot: self.snapshot("Crystals", Some(&selected_id)).await?,
+        if event_type == "deleted_by_user" {
+            self.feedback.delete_by_user(request.id.get()).await?;
+        } else {
+            self.feedback
+                .record(FeedbackEvent {
+                    crystal_id: request.id.get(),
+                    event_type: event_type.into(),
+                    source_role: "web_admin".into(),
+                    evidence: Some(evidence.into()),
+                    session_id: None,
+                })
+                .await?;
+        }
+        Ok(ActionMessage {
+            message: message.into(),
         })
     }
 
@@ -151,7 +162,18 @@ impl<R: FeedbackRecorder> AdminApi<R> {
             "Dream Runs" => dream_run_items(&self.pool).await?,
             _ => Vec::new(),
         };
-        Ok(build_snapshot(view, selected_id, records))
+        let selected_id = selected_id.and_then(|value| value.parse::<i64>().ok());
+        let selected_record = match selected_id {
+            Some(selected_id)
+                if records
+                    .iter()
+                    .all(|record| record.row.id.as_i64() != Some(selected_id)) =>
+            {
+                selected_item(&self.pool, view, selected_id).await?
+            }
+            _ => None,
+        };
+        Ok(build_snapshot(view, selected_id, records, selected_record))
     }
 }
 
@@ -239,13 +261,19 @@ struct AdminItem {
     fields: Vec<(String, String)>,
 }
 
-fn build_snapshot(view: &str, selected_id: Option<&str>, records: Vec<AdminItem>) -> AdminSnapshot {
-    let selected_id = selected_id.and_then(|value| value.parse::<i64>().ok());
-    let selected_record = selected_id.and_then(|selected_id| {
-        records
-            .iter()
-            .find(|record| record.row.id.as_i64() == Some(selected_id))
-    });
+fn build_snapshot(
+    view: &str,
+    selected_id: Option<i64>,
+    records: Vec<AdminItem>,
+    selected_fallback: Option<AdminItem>,
+) -> AdminSnapshot {
+    let selected_record = selected_id
+        .and_then(|selected_id| {
+            records
+                .iter()
+                .find(|record| record.row.id.as_i64() == Some(selected_id))
+        })
+        .or(selected_fallback.as_ref());
     let selected = selected_record.map(|record| record.row.clone());
     let detail = selected_record.map_or_else(
         || AdminDetail {
@@ -267,6 +295,70 @@ fn build_snapshot(view: &str, selected_id: Option<&str>, records: Vec<AdminItem>
         selected,
         detail,
     }
+}
+
+#[derive(sqlx::FromRow)]
+struct SelectedRecord {
+    id: i64,
+    kind: String,
+    label: String,
+    status: String,
+    scope: String,
+    language_pair: String,
+    quality_label: String,
+    tags_json: String,
+    body: String,
+}
+
+async fn selected_item(
+    pool: &SqlitePool,
+    view: &str,
+    id: i64,
+) -> Result<Option<AdminItem>, sqlx::Error> {
+    let query = match view {
+        "Crystals" => {
+            "SELECT id, 'Crystal' AS kind, title AS label, status, CASE WHEN scope_key = '' THEN scope_type ELSE scope_type || ': ' || scope_key END AS scope, CASE WHEN source_language = '' AND target_language = '' THEN '' ELSE source_language || ' → ' || target_language END AS language_pair, printf('%.0f%% strength · %.0f%% confidence', strength * 100, confidence * 100) AS quality_label, tags_json, text AS body FROM crystals WHERE id = ? AND crystal_type != 'lesson'"
+        }
+        "Lessons" => {
+            "SELECT id, 'Lesson' AS kind, title AS label, status, CASE WHEN scope_key = '' THEN scope_type ELSE scope_type || ': ' || scope_key END AS scope, CASE WHEN source_language = '' AND target_language = '' THEN '' ELSE source_language || ' → ' || target_language END AS language_pair, printf('%.0f%% strength · %.0f%% confidence', strength * 100, confidence * 100) AS quality_label, tags_json, text AS body FROM crystals WHERE id = ? AND crystal_type = 'lesson'"
+        }
+        "Concepts" => {
+            "SELECT id, 'Concept' AS kind, canonical_name AS label, status, CASE WHEN scope_key = '' THEN scope_type ELSE scope_type || ': ' || scope_key END AS scope, '' AS language_pair, printf('%.0f%% confidence', confidence * 100) AS quality_label, '[]' AS tags_json, description AS body FROM concepts WHERE id = ?"
+        }
+        "Proposals" => {
+            "SELECT id, 'Proposal' AS kind, concept_text AS label, status, series_slug AS scope, CASE WHEN source_language = '' AND target_language = '' THEN '' ELSE source_language || ' → ' || target_language END AS language_pair, '' AS quality_label, '[]' AS tags_json, rationale AS body FROM concept_proposals WHERE id = ?"
+        }
+        "Short-Term Memories" => {
+            "SELECT id, kind, text AS label, CASE WHEN archived_at IS NULL THEN 'pending' ELSE 'archived' END AS status, 'session ' || session_id AS scope, '' AS language_pair, coalesce(source_credibility, '') AS quality_label, '[]' AS tags_json, text AS body FROM short_term_memories WHERE id = ?"
+        }
+        "Short-Term Sessions" => {
+            "SELECT id, 'Session' AS kind, volume || ' / ' || chapter AS label, status, series_slug AS scope, CASE WHEN source_language = '' AND target_language = '' THEN '' ELSE source_language || ' → ' || target_language END AS language_pair, task_type AS quality_label, '[]' AS tags_json, '' AS body FROM task_sessions WHERE id = ?"
+        }
+        "Dream Runs" => {
+            "SELECT id, 'Dream Run' AS kind, 'Cycle ' || cycle_id AS label, status, provider AS scope, '' AS language_pair, created_crystal_count || ' crystals · ' || proposal_count || ' proposals' AS quality_label, '[]' AS tags_json, error AS body FROM dream_runs WHERE id = ?"
+        }
+        _ => return Ok(None),
+    };
+    sqlx::query_as::<_, SelectedRecord>(query)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map(|record| {
+            record.map(|record| AdminItem {
+                row: AdminRow {
+                    id: record.id.into(),
+                    kind: record.kind,
+                    label: record.label,
+                    status: record.status,
+                    scope: record.scope,
+                    language_pair: record.language_pair,
+                    quality_label: record.quality_label,
+                    tags: serde_json::from_str(&record.tags_json).unwrap_or_default(),
+                },
+                body: record.body,
+                fields: Vec::new(),
+            })
+        })
 }
 
 async fn crystal_items(pool: &SqlitePool, lessons: bool) -> Result<Vec<AdminItem>, sqlx::Error> {
@@ -494,8 +586,10 @@ async fn run_action(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     Path(action): Path<String>,
-    Json(request): Json<AdminActionRequest>,
+    request: Result<Json<AdminActionRequest>, JsonRejection>,
 ) -> Result<Json<AdminActionResult>, ApiError> {
+    let Json(request) =
+        request.map_err(|_| ApiError::bad_request(request_id.clone(), "invalid action request"))?;
     if matches!(
         action.as_str(),
         "deprecate_crystal" | "archive_concept" | "remove_short_term_memory" | "close_session"
@@ -515,35 +609,24 @@ async fn run_action(
                 },
                 state.pool.clone(),
             );
-            let result =
-                api.run_action(&action, request.clone())
-                    .await
-                    .map_err(|error| match error {
-                        AdminError::ConfirmationRequired => ApiError::bad_request(
-                            request_id.clone(),
-                            "action requires confirmation",
-                        ),
-                        AdminError::UnknownAction => {
-                            ApiError::not_found(request_id.clone(), "unknown admin action")
-                        }
-                        AdminError::Feedback(error) => {
-                            ApiError::internal(request_id.clone(), &error)
-                        }
-                        AdminError::Database(error) => {
-                            ApiError::internal(request_id.clone(), &error)
-                        }
-                    })?;
-            if action == "delete_crystal" {
-                CrystalStore::new(&state.pool)
-                    .archive(request.id)
-                    .await
-                    .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
-            }
-            result
+            let message = api
+                .run_action(&action, request.clone())
+                .await
+                .map_err(|error| match error {
+                    AdminError::ConfirmationRequired => {
+                        ApiError::bad_request(request_id.clone(), "action requires confirmation")
+                    }
+                    AdminError::UnknownAction => {
+                        ApiError::not_found(request_id.clone(), "unknown admin action")
+                    }
+                    AdminError::Feedback(error) => ApiError::internal(request_id.clone(), &error),
+                    AdminError::Database(error) => ApiError::internal(request_id.clone(), &error),
+                })?;
+            action_result(&message.message, "Crystals")
         }
         "deprecate_crystal" => {
             CrystalStore::new(&state.pool)
-                .archive(request.id)
+                .archive(request.id.get())
                 .await
                 .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
             action_result("Crystal deprecated", "Crystals")
@@ -551,9 +634,9 @@ async fn run_action(
         "approve_proposal" | "reject_proposal" => {
             let store = ConceptProposalStore::new(&state.pool);
             let result = if action == "approve_proposal" {
-                store.approve(request.id).await
+                store.approve(request.id.get()).await
             } else {
-                store.reject(request.id).await
+                store.reject(request.id.get()).await
             };
             result.map_err(|error| ApiError::internal(request_id.clone(), &error))?;
             action_result(
@@ -567,21 +650,21 @@ async fn run_action(
         }
         "archive_concept" => {
             ConceptStore::new(&state.pool)
-                .archive(request.id, "Archived from web admin")
+                .archive(request.id.get(), "Archived from web admin")
                 .await
                 .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
             action_result("Concept archived", "Concepts")
         }
         "remove_short_term_memory" => {
             WorkspaceStore::new(&state.pool)
-                .archive(request.id)
+                .archive(request.id.get())
                 .await
                 .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
             action_result("Short-term memory removed", "Short-Term Memories")
         }
         "close_session" => {
             WorkspaceStore::new(&state.pool)
-                .complete_session(request.id)
+                .complete_session(request.id.get())
                 .await
                 .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
             action_result("Session closed", "Short-Term Sessions")
@@ -589,9 +672,9 @@ async fn run_action(
         "reinforce_concept" | "decay_concept" => {
             let store = ConceptStore::new(&state.pool);
             let result = if action == "reinforce_concept" {
-                store.reinforce(request.id).await
+                store.reinforce(request.id.get()).await
             } else {
-                store.decay(request.id).await
+                store.decay(request.id.get()).await
             };
             result.map_err(|error| ApiError::internal(request_id.clone(), &error))?;
             action_result(
@@ -605,7 +688,7 @@ async fn run_action(
         }
         _ => return Err(ApiError::not_found(request_id, "unknown admin action")),
     };
-    let selected_id = request.id.to_string();
+    let selected_id = request.id.get().to_string();
     let api = AdminApi::new(
         SqliteFeedback {
             pool: state.pool.clone(),
@@ -676,25 +759,36 @@ async fn run_manual_dreaming(
     let pool = state.pool.clone();
     let config = state.config.clone();
     let running = DreamRunningGuard(state.dream_running.clone());
-    tokio::spawn(async move {
-        let _running = running;
-        let service = hiero_core::dreaming::DreamService::new_with_catalog(
-            &pool,
-            &config,
-            &dream_config,
-            resolver,
-            catalog,
-        );
-        if let Err(error) = service
-            .run_all(hiero_core::dreaming::CycleOptions {
-                owner: "web_admin".into(),
-                ..hiero_core::dreaming::CycleOptions::default()
-            })
-            .await
-        {
-            tracing::error!(%error, "manual dream run failed");
-        }
-    });
+    let accepted = state
+        .workers
+        .spawn(async move {
+            let _running = running;
+            let service = hiero_core::dreaming::DreamService::new_with_catalog(
+                &pool,
+                &config,
+                &dream_config,
+                resolver,
+                catalog,
+            );
+            if let Err(error) = service
+                .run_all(hiero_core::dreaming::CycleOptions {
+                    owner: "web_admin".into(),
+                    ..hiero_core::dreaming::CycleOptions::default()
+                })
+                .await
+            {
+                tracing::error!(%error, "manual dream run failed");
+            }
+        })
+        .await;
+    if !accepted {
+        return Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "shutting_down",
+            "service is shutting down",
+            request_id,
+        ));
+    }
     Ok(Json(ManualDreamResponse {
         started: true,
         status: "running".into(),

@@ -233,9 +233,47 @@ pub struct ReleaseRequest {
     pub release: ReleaseSettings,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdminId(i64);
+
+impl AdminId {
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl From<i64> for AdminId {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for AdminId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum RawId {
+            Integer(i64),
+            String(String),
+        }
+
+        let value = match RawId::deserialize(deserializer)? {
+            RawId::Integer(value) => value,
+            RawId::String(value) => value
+                .parse()
+                .map_err(|_| serde::de::Error::custom("id must be a positive integer"))?,
+        };
+        if value <= 0 {
+            return Err(serde::de::Error::custom("id must be a positive integer"));
+        }
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct AdminActionRequest {
-    pub id: i64,
+    pub id: AdminId,
     pub confirmed: Option<bool>,
 }
 
