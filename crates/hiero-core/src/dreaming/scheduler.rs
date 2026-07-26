@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 
 use crate::domain::complete_stale_sessions;
 
-use super::{DreamService, DreamServiceError, acquire_dream_cycle_lock};
+use super::{DreamService, DreamServiceError};
 
 pub async fn run_background_loop(
     service: DreamService<'_>,
@@ -33,10 +33,10 @@ pub async fn run_background_loop(
                 complete_stale_sessions(service.pool(), Utc::now() - stale_after)
                     .await
                     .map_err(|_| DreamServiceError::InvalidInput("stale sessions could not be completed"))?;
-                let guard = match acquire_dream_cycle_lock(service.config(), "autostart", false) {
+                let guard = match service.acquire_lock("autostart", false).await {
                     Ok(guard) => guard,
-                    Err(error) if error.is_already_running() => continue,
-                    Err(error) => return Err(error.into()),
+                    Err(DreamServiceError::Lock(error)) if error.is_already_running() => continue,
+                    Err(error) => return Err(error),
                 };
                 service.run_due_with_lock(guard).await?;
             }

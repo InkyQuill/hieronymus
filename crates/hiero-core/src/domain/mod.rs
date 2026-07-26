@@ -8,6 +8,7 @@ mod termbase;
 mod workspace;
 
 pub use concepts::{ConceptError, ConceptProposalStore, ConceptStore};
+pub(crate) use crystals::add_crystal_in_transaction;
 pub use crystals::{CrystalStore, StoreError, search_expression};
 pub use feedback::{FeedbackError, FeedbackEvent, FeedbackStore};
 pub use models::{

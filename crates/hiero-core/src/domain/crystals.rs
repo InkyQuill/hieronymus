@@ -674,6 +674,14 @@ impl TryFrom<AddCrystalInput> for ValidatedInput {
     }
 }
 
+pub(crate) async fn add_crystal_in_transaction(
+    connection: &mut SqliteConnection,
+    input: AddCrystalInput,
+) -> Result<i64> {
+    let input = ValidatedInput::try_from(input)?;
+    add_in_transaction(connection, &input).await
+}
+
 async fn add_in_transaction(
     connection: &mut SqliteConnection,
     input: &ValidatedInput,
