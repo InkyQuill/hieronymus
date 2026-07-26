@@ -49,6 +49,7 @@ use crate::api::{
     system::{health, shutdown, status},
 };
 use crate::assets::{AssetSource, is_client_route, serve_assets, serve_client_route, serve_index};
+use crate::mcp::{StoreDreamRunner, StoreMcpBackend, http};
 
 const BODY_LIMIT: usize = 1_000_000;
 const REQUEST_ID_HEADER: &str = "x-request-id";
@@ -265,6 +266,14 @@ pub struct RequestId(pub(crate) String);
 
 pub fn build_router(state: AppState) -> Router {
     let security_state = state.clone();
+    let dream_runner = Arc::new(StoreDreamRunner::new(
+        state.pool.clone(),
+        state.config.clone(),
+    ));
+    let mcp = http::service(Arc::new(
+        StoreMcpBackend::new(state.pool.clone(), state.config.clone())
+            .with_dream_runner(dream_runner),
+    ));
     Router::new()
         .route("/", get(serve_index))
         .route("/admin", get(serve_index))
@@ -279,7 +288,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/status", get(status))
         .route("/shutdown", post(shutdown))
-        .route("/mcp", any(api::placeholder))
+        .nest_service("/mcp", mcp)
         .method_not_allowed_fallback(api::method_not_allowed)
         .fallback(get(serve_client_route).fallback(api::not_found))
         .layer(

@@ -21,6 +21,36 @@ async fn pool() -> sqlx::SqlitePool {
     .expect("test database should migrate")
 }
 
+#[tokio::test]
+async fn explicit_side_table_confidence_is_persisted() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let id = store.add(input("evidence")).await.unwrap();
+
+    store
+        .set_story_scopes_with_confidence(id, &["volume:1".into()], 0.7)
+        .await
+        .unwrap();
+    store
+        .set_semantic_tags_with_confidence(id, &["character".into()], 0.8)
+        .await
+        .unwrap();
+
+    let story_confidence: f64 =
+        sqlx::query_scalar("SELECT confidence FROM crystal_story_scopes WHERE crystal_id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let tag_confidence: f64 =
+        sqlx::query_scalar("SELECT confidence FROM crystal_semantic_tags WHERE crystal_id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((story_confidence, tag_confidence), (0.7, 0.8));
+}
+
 fn input(text: &str) -> AddCrystalInput {
     AddCrystalInput {
         crystal_type: "lesson".into(),

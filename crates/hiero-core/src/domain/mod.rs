@@ -12,11 +12,11 @@ pub(crate) use crystals::add_crystal_in_transaction;
 pub use crystals::{CrystalStore, StoreError, search_expression};
 pub use feedback::{FeedbackError, FeedbackEvent, FeedbackStore};
 pub use models::{
-    AddCrystalInput, AddMemoryInput, AddMemoryResult, Concept, ConceptFacet, ConceptFilter,
-    ConceptMergeProposalInput, ConceptProposal, ContractTerm, CreateConceptInput,
+    AddConceptFacetInput, AddCrystalInput, AddMemoryInput, AddMemoryResult, Concept, ConceptFacet,
+    ConceptFilter, ConceptMergeProposalInput, ConceptProposal, ContractTerm, CreateConceptInput,
     CreateProposalInput, Crystal, MemorySource, RecallResult, RuleFilter, ShortMemoryLimits,
-    ShortTermMemory, TaskSession, TermProposal, TranslationContext, ValidationFinding,
-    ValidationReport,
+    ShortTermMemory, TaskSession, TermProposal, TranslationContext, UpdateConceptFacetInput,
+    UpdateConceptInput, ValidationFinding, ValidationReport,
 };
 pub use rule_parser::{ParsedRule, parse_rule};
 pub use scoring::{

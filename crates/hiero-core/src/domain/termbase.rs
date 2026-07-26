@@ -71,8 +71,8 @@ impl<'a> Termbase<'a> {
                 .bind(&text).bind(format!("series:{}", input.series_slug)).bind(&input.series_slug).bind(&input.source_language).bind(&input.target_language)
                 .fetch_optional(&mut *transaction).await.map_err(|source| database("propose", source))?;
             if duplicate.is_some() { return Err(conflict("propose", "an equivalent active or candidate term exists")); }
-            let id = sqlx::query("INSERT INTO crystals(crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, status, created_at, updated_at) VALUES ('rule', ?, '', 'series', ?, ?, ?, ?, ?, 0.8, 0.95, 'user_rule', ?, 'candidate', ?, ?)")
-                .bind(&text).bind(format!("series:{}", input.series_slug)).bind(&input.series_slug).bind(&input.source_language).bind(&input.target_language).bind(tags_json).bind(&input.category).bind(now).bind(now)
+            let id = sqlx::query("INSERT INTO crystals(crystal_type, text, title, scope_type, scope_key, series_slug, source_language, target_language, tags_json, strength, confidence, source_credibility, rule_intent, soft_origin, status, created_at, updated_at) VALUES ('rule', ?, '', 'series', ?, ?, ?, ?, ?, 0.8, 0.95, 'user_rule', ?, ?, 'candidate', ?, ?)")
+                .bind(&text).bind(format!("series:{}", input.series_slug)).bind(&input.series_slug).bind(&input.source_language).bind(&input.target_language).bind(tags_json).bind(&input.category).bind(&input.notes).bind(now).bind(now)
                 .execute(&mut *transaction).await.map_err(|source| database("propose", source))?.last_insert_rowid();
             for tag in &input.tags {
                 sqlx::query("INSERT INTO crystal_semantic_tags(crystal_id, tag, confidence, created_at) VALUES (?, ?, 0.95, ?)")
@@ -831,6 +831,7 @@ fn validate_proposal(mut input: TermProposal) -> Result<TermProposal> {
     input.category = required("category", &input.category)?;
     input.source_text = required("source_text", &input.source_text)?;
     input.canonical_translation = required("canonical_translation", &input.canonical_translation)?;
+    input.notes = input.notes.trim().to_owned();
     if input.source_text.contains(" is translated as ") || input.source_text.contains(", not ") {
         return Err(invalid("source_text", "contains a reserved rule delimiter"));
     }

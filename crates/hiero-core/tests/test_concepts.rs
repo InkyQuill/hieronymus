@@ -1,7 +1,8 @@
 use hiero_core::{
     db::connect_url,
     domain::{
-        ConceptFilter, ConceptProposalStore, ConceptStore, CreateConceptInput, CreateProposalInput,
+        AddConceptFacetInput, ConceptFilter, ConceptProposalStore, ConceptStore,
+        CreateConceptInput, CreateProposalInput, UpdateConceptFacetInput, UpdateConceptInput,
     },
 };
 use sqlx::Row;
@@ -14,6 +15,161 @@ async fn pool() -> sqlx::SqlitePool {
     ))
     .await
     .expect("test database should migrate")
+}
+
+#[tokio::test]
+async fn typed_updates_persist_all_mcp_concept_and_facet_fields() {
+    let pool = pool().await;
+    let store = ConceptStore::new(&pool);
+    let concept = store
+        .create(concept("Holo", "series", "series:oso"))
+        .await
+        .unwrap();
+
+    let updated = store
+        .update(
+            concept.id,
+            UpdateConceptInput {
+                description: Some("Wise wolf".into()),
+                status: Some("established".into()),
+                confidence: Some(0.9),
+            },
+        )
+        .await
+        .expect("concept metadata should update atomically");
+    assert_eq!(
+        (
+            updated.description.as_str(),
+            updated.status.as_str(),
+            updated.confidence
+        ),
+        ("Wise wolf", "established", 0.9)
+    );
+
+    let facet = store
+        .add_facet_typed(AddConceptFacetInput {
+            concept_id: concept.id,
+            language: "ru".into(),
+            facet_type: "rendering".into(),
+            value: "Холо".into(),
+            language_tags: vec!["ru".into(), "RU".into()],
+            story_scopes: vec!["volume:1".into()],
+            semantic_tags: vec!["character:name".into()],
+            source_crystal_id: None,
+            confidence: 0.8,
+            is_canonical: true,
+        })
+        .await
+        .expect("full facet should be inserted");
+    let hydrated = store.list_facets(concept.id).await.unwrap();
+    assert_eq!(hydrated[0].language_tags, ["ru"]);
+    assert_eq!(hydrated[0].story_scopes, ["volume:1"]);
+    assert_eq!(hydrated[0].semantic_tags, ["character:name"]);
+    assert_eq!((facet.confidence, facet.is_canonical), (0.8, true));
+
+    store
+        .update_facet_typed(
+            facet.id,
+            UpdateConceptFacetInput {
+                value: Some("Хоро".into()),
+                language: Some("ja-Latn".into()),
+                facet_type: Some("alias".into()),
+                language_tags: Some(vec!["ja-Latn".into()]),
+                story_scopes: Some(vec!["volume:2".into()]),
+                semantic_tags: Some(Vec::new()),
+                source_crystal_id: None,
+                confidence: Some(0.7),
+                is_canonical: Some(false),
+            },
+        )
+        .await
+        .expect("full facet should update atomically");
+    let hydrated = store.list_facets(concept.id).await.unwrap();
+    assert_eq!(
+        (
+            hydrated[0].value.as_str(),
+            hydrated[0].language.as_str(),
+            hydrated[0].facet_type.as_str(),
+            hydrated[0].confidence,
+            hydrated[0].is_canonical,
+        ),
+        ("Хоро", "ja-latn", "alias", 0.7, false)
+    );
+    assert_eq!(hydrated[0].language_tags, ["ja-latn"]);
+    assert_eq!(hydrated[0].story_scopes, ["volume:2"]);
+    assert!(hydrated[0].semantic_tags.is_empty());
+}
+
+#[tokio::test]
+async fn typed_updates_reject_invalid_status_confidence_and_missing_source_crystal() {
+    let pool = pool().await;
+    let store = ConceptStore::new(&pool);
+    let concept = store.create(concept("Holo", "global", "")).await.unwrap();
+
+    assert!(
+        store
+            .update(
+                concept.id,
+                UpdateConceptInput {
+                    description: None,
+                    status: Some("unknown".into()),
+                    confidence: None,
+                },
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .add_facet_typed(AddConceptFacetInput {
+                concept_id: concept.id,
+                language: "ru".into(),
+                facet_type: "rendering".into(),
+                value: "Холо".into(),
+                language_tags: vec![],
+                story_scopes: vec![],
+                semantic_tags: vec![],
+                source_crystal_id: Some(999),
+                confidence: 1.1,
+                is_canonical: false,
+            })
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn rename_preserves_source_crystal_provenance_on_the_former_label() {
+    let pool = pool().await;
+    let store = ConceptStore::new(&pool);
+    let concept = store
+        .create(concept("Holo", "series", "series:oso"))
+        .await
+        .unwrap();
+    let now = chrono::Utc::now();
+    let crystal_id: i64 = sqlx::query(
+        "INSERT INTO crystals(crystal_type,text,title,scope_type,scope_key,series_slug,source_language,target_language,tags_json,strength,confidence,source_credibility,rule_intent,status,created_at,updated_at) VALUES('lesson','rename evidence','', 'series','series:oso','oso','ja','ru','[]',0.5,0.5,'observation','','active',?,?)",
+    )
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+
+    store
+        .rename_concept_with_source(concept.id, "Horo", "mcp", Some(crystal_id))
+        .await
+        .expect("rename should retain the supplied provenance");
+
+    let former = store
+        .list_facets(concept.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|facet| facet.facet_type == "former_label")
+        .expect("rename should create a former-label facet");
+    assert_eq!(former.source_crystal_id, Some(crystal_id));
 }
 
 fn concept(name: &str, scope_type: &str, scope_key: &str) -> CreateConceptInput {

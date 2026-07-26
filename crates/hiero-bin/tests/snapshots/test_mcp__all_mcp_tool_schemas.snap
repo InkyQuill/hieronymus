@@ -1,0 +1,1319 @@
+---
+source: crates/hiero-bin/tests/test_mcp.rs
+expression: schemas
+---
+{
+  "hieronymus_concept_archive": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "concept_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "reason": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "concept_id"
+    ],
+    "title": "ConceptArchiveInput",
+    "type": "object"
+  },
+  "hieronymus_concept_create": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "canonical_name": {
+        "type": "string"
+      },
+      "confidence": {
+        "default": 0.2,
+        "format": "double",
+        "type": "number"
+      },
+      "description": {
+        "default": "",
+        "type": "string"
+      },
+      "scope_key": {
+        "default": "",
+        "type": "string"
+      },
+      "scope_type": {
+        "default": "global",
+        "type": "string"
+      },
+      "semantic_tags": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "series_slug": {
+        "default": "",
+        "type": "string"
+      },
+      "status": {
+        "default": "candidate",
+        "type": "string"
+      }
+    },
+    "required": [
+      "canonical_name"
+    ],
+    "title": "ConceptCreateInput",
+    "type": "object"
+  },
+  "hieronymus_concept_facet_add": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "concept_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "confidence": {
+        "default": 0.2,
+        "format": "double",
+        "type": "number"
+      },
+      "facet_type": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "is_canonical": {
+        "default": false,
+        "type": "boolean"
+      },
+      "kind": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "language": {
+        "default": "",
+        "type": "string"
+      },
+      "language_tags": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "semantic_tags": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "source_crystal_id": {
+        "format": "int64",
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "story_scopes": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "value": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "concept_id",
+      "value"
+    ],
+    "title": "FacetAddInput",
+    "type": "object"
+  },
+  "hieronymus_concept_facet_list": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "concept_id": {
+        "format": "int64",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "concept_id"
+    ],
+    "title": "ConceptIdInput",
+    "type": "object"
+  },
+  "hieronymus_concept_facet_set_canonical": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "concept_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "facet_id": {
+        "format": "int64",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "concept_id",
+      "facet_id"
+    ],
+    "title": "FacetCanonicalInput",
+    "type": "object"
+  },
+  "hieronymus_concept_facet_update": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "confidence": {
+        "format": "double",
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "facet_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "facet_type": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "is_canonical": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "kind": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "language_tags": {
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "array",
+          "null"
+        ]
+      },
+      "semantic_tags": {
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "array",
+          "null"
+        ]
+      },
+      "source_crystal_id": {
+        "format": "int64",
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "story_scopes": {
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "array",
+          "null"
+        ]
+      },
+      "value": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "facet_id"
+    ],
+    "title": "FacetUpdateInput",
+    "type": "object"
+  },
+  "hieronymus_concept_get": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "concept_id": {
+        "format": "int64",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "concept_id"
+    ],
+    "title": "ConceptIdInput",
+    "type": "object"
+  },
+  "hieronymus_concept_list": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "include_global": {
+        "default": true,
+        "type": "boolean"
+      },
+      "semantic_tag": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "series_slug": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "status": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "title": "ConceptListInput",
+    "type": "object"
+  },
+  "hieronymus_concept_merge": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "reason": {
+        "default": "",
+        "type": "string"
+      },
+      "source_concept_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "target_concept_id": {
+        "format": "int64",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "source_concept_id",
+      "target_concept_id"
+    ],
+    "title": "ConceptMergeInput",
+    "type": "object"
+  },
+  "hieronymus_concept_proposals_list": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "title": "NoArgs",
+    "type": "object"
+  },
+  "hieronymus_concept_rename": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "concept_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "new_label": {
+        "type": "string"
+      },
+      "source_crystal_id": {
+        "format": "int64",
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "concept_id",
+      "new_label"
+    ],
+    "title": "ConceptRenameInput",
+    "type": "object"
+  },
+  "hieronymus_concept_semantic_tags_set": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "concept_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "semantic_tags": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "concept_id",
+      "semantic_tags"
+    ],
+    "title": "ConceptTagsInput",
+    "type": "object"
+  },
+  "hieronymus_concept_update": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "concept_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "confidence": {
+        "format": "double",
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "description": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "status": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "concept_id"
+    ],
+    "title": "ConceptUpdateInput",
+    "type": "object"
+  },
+  "hieronymus_crystal_link_concept": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "concept_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "confidence": {
+        "default": 0.2,
+        "format": "double",
+        "type": "number"
+      },
+      "crystal_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "link_type": {
+        "default": "mentions",
+        "type": "string"
+      }
+    },
+    "required": [
+      "crystal_id",
+      "concept_id"
+    ],
+    "title": "CrystalLinkInput",
+    "type": "object"
+  },
+  "hieronymus_crystal_semantic_tags_set": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "confidence": {
+        "default": 0.2,
+        "format": "double",
+        "type": "number"
+      },
+      "crystal_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "semantic_tags": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "crystal_id",
+      "semantic_tags"
+    ],
+    "title": "CrystalTagsInput",
+    "type": "object"
+  },
+  "hieronymus_crystal_story_scopes_set": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "confidence": {
+        "default": 0.2,
+        "format": "double",
+        "type": "number"
+      },
+      "crystal_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "story_scopes": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "crystal_id",
+      "story_scopes"
+    ],
+    "title": "CrystalScopesInput",
+    "type": "object"
+  },
+  "hieronymus_dream": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "provider": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "wait": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "title": "DreamInput",
+    "type": "object"
+  },
+  "hieronymus_feedback": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "correction_text": {
+        "type": "string"
+      },
+      "session_id": {
+        "format": "int64",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "session_id",
+      "correction_text"
+    ],
+    "title": "FeedbackInput",
+    "type": "object"
+  },
+  "hieronymus_memory_add": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "importance": {
+        "default": 3,
+        "format": "int64",
+        "type": "integer"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "series_slug": {
+        "type": "string"
+      },
+      "source_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "source_ref": {
+        "default": "",
+        "type": "string"
+      },
+      "target_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "series_slug",
+      "kind",
+      "text"
+    ],
+    "title": "MemoryAddInput",
+    "type": "object"
+  },
+  "hieronymus_memory_search": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "default": 5,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "query": {
+        "type": "string"
+      },
+      "series_slug": {
+        "type": "string"
+      },
+      "source_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "target_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "series_slug",
+      "query"
+    ],
+    "title": "MemorySearchInput",
+    "type": "object"
+  },
+  "hieronymus_rag_import": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "language_tags": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "path": {
+        "type": "string"
+      },
+      "semantic_tags": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "series_slug": {
+        "type": "string"
+      },
+      "source_ref": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "source_type": {
+        "default": "auto",
+        "type": "string"
+      },
+      "story_scopes": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "series_slug",
+      "path"
+    ],
+    "title": "RagImportInput",
+    "type": "object"
+  },
+  "hieronymus_rag_search": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "default": 10,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "query": {
+        "type": "string"
+      },
+      "series_slug": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "series_slug",
+      "query"
+    ],
+    "title": "RagSearchInput",
+    "type": "object"
+  },
+  "hieronymus_recall": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "chapter": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "limit": {
+        "default": 10,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "query": {
+        "type": "string"
+      },
+      "series_slug": {
+        "type": "string"
+      },
+      "session_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "source_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "target_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "task_type": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "volume": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "session_id",
+      "series_slug",
+      "query"
+    ],
+    "title": "RecallInput",
+    "type": "object"
+  },
+  "hieronymus_recall_feedback": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "miss": {
+        "default": [],
+        "items": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "type": "array"
+      },
+      "session_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "useful": {
+        "default": [],
+        "items": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "session_id"
+    ],
+    "title": "RecallFeedbackInput",
+    "type": "object"
+  },
+  "hieronymus_rule_crystal_archive": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "crystal_id": {
+        "format": "int64",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "crystal_id"
+    ],
+    "title": "CrystalIdInput",
+    "type": "object"
+  },
+  "hieronymus_rule_crystal_validate": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "crystal_id": {
+        "format": "int64",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "crystal_id"
+    ],
+    "title": "CrystalIdInput",
+    "type": "object"
+  },
+  "hieronymus_rule_crystals_list": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "default": 50,
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "series_slug": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "status": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "title": "RuleListInput",
+    "type": "object"
+  },
+  "hieronymus_series_create": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "language_tags": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "slug": {
+        "type": "string"
+      },
+      "source_language": {
+        "default": "",
+        "type": "string"
+      },
+      "target_language": {
+        "default": "",
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "slug",
+      "title"
+    ],
+    "title": "SeriesCreateInput",
+    "type": "object"
+  },
+  "hieronymus_series_init": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "language_tags": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "slug": {
+        "type": "string"
+      },
+      "source_language": {
+        "default": "",
+        "type": "string"
+      },
+      "target_language": {
+        "default": "",
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "slug",
+      "title"
+    ],
+    "title": "SeriesCreateInput",
+    "type": "object"
+  },
+  "hieronymus_series_list": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "title": "NoArgs",
+    "type": "object"
+  },
+  "hieronymus_series_set_language_tags": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "language_tags": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "series_id": {
+        "format": "int64",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "series_id",
+      "language_tags"
+    ],
+    "title": "SeriesTagsInput",
+    "type": "object"
+  },
+  "hieronymus_session_complete": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "session_id": {
+        "format": "int64",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "session_id"
+    ],
+    "title": "SessionIdInput",
+    "type": "object"
+  },
+  "hieronymus_session_start": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "chapter": {
+        "default": "",
+        "type": "string"
+      },
+      "series_slug": {
+        "type": "string"
+      },
+      "source_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "target_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "task_type": {
+        "default": "translation",
+        "type": "string"
+      },
+      "volume": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "series_slug"
+    ],
+    "title": "SessionStartInput",
+    "type": "object"
+  },
+  "hieronymus_short_term_add": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "kind": {
+        "type": "string"
+      },
+      "language_tags": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "metadata": {
+        "default": {}
+      },
+      "rule_intent": {
+        "default": "",
+        "type": "string"
+      },
+      "semantic_tags": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "session_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "soft_origin": {
+        "default": "",
+        "type": "string"
+      },
+      "source_credibility": {
+        "default": "observation",
+        "type": "string"
+      },
+      "source_ref": {
+        "default": "",
+        "type": "string"
+      },
+      "source_role": {
+        "default": "agent",
+        "type": "string"
+      },
+      "story_scopes": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "session_id",
+      "kind",
+      "text"
+    ],
+    "title": "ShortAddInput",
+    "type": "object"
+  },
+  "hieronymus_short_term_add_batch": {
+    "$defs": {
+      "ShortItemInput": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "language_tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "metadata": {
+            "default": {}
+          },
+          "rule_intent": {
+            "default": "",
+            "type": "string"
+          },
+          "semantic_tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "soft_origin": {
+            "default": "",
+            "type": "string"
+          },
+          "source_credibility": {
+            "default": "observation",
+            "type": "string"
+          },
+          "source_ref": {
+            "default": "",
+            "type": "string"
+          },
+          "source_role": {
+            "default": "agent",
+            "type": "string"
+          },
+          "story_scopes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "items": {
+        "items": {
+          "$ref": "#/$defs/ShortItemInput"
+        },
+        "type": "array"
+      },
+      "session_id": {
+        "format": "int64",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "session_id",
+      "items"
+    ],
+    "title": "ShortBatchInput",
+    "type": "object"
+  },
+  "hieronymus_status": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "title": "NoArgs",
+    "type": "object"
+  },
+  "hieronymus_termbase_approve": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "chapter": {
+        "default": "",
+        "type": "string"
+      },
+      "series_slug": {
+        "type": "string"
+      },
+      "source_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "target_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "term_id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "volume": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "series_slug",
+      "term_id"
+    ],
+    "title": "TermApproveInput",
+    "type": "object"
+  },
+  "hieronymus_termbase_contract": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "chapter": {
+        "default": "",
+        "type": "string"
+      },
+      "raw_text": {
+        "type": "string"
+      },
+      "series_slug": {
+        "type": "string"
+      },
+      "source_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "target_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "volume": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "series_slug",
+      "raw_text"
+    ],
+    "title": "ContextTextInput",
+    "type": "object"
+  },
+  "hieronymus_termbase_propose": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "canonical_translation": {
+        "type": "string"
+      },
+      "category": {
+        "type": "string"
+      },
+      "chapter": {
+        "default": "",
+        "type": "string"
+      },
+      "notes": {
+        "default": "",
+        "type": "string"
+      },
+      "series_slug": {
+        "type": "string"
+      },
+      "source_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "source_text": {
+        "type": "string"
+      },
+      "tags": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "target_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "volume": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "series_slug",
+      "category",
+      "source_text",
+      "canonical_translation"
+    ],
+    "title": "TermProposeInput",
+    "type": "object"
+  },
+  "hieronymus_termbase_validate": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "chapter": {
+        "default": "",
+        "type": "string"
+      },
+      "raw_text": {
+        "type": "string"
+      },
+      "series_slug": {
+        "type": "string"
+      },
+      "source_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "target_language": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "translated_text": {
+        "type": "string"
+      },
+      "volume": {
+        "default": "",
+        "type": "string"
+      }
+    },
+    "required": [
+      "series_slug",
+      "raw_text",
+      "translated_text"
+    ],
+    "title": "ValidateTextInput",
+    "type": "object"
+  }
+}

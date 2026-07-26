@@ -297,6 +297,7 @@ async fn read_uses_complete_stored_context_and_optionally_stores_original_observ
             source_text: "攻撃力上昇".into(),
             canonical_translation: "Attack Increase".into(),
             tags: vec![],
+            notes: String::new(),
         })
         .await
         .unwrap();

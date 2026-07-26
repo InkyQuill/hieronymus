@@ -277,7 +277,7 @@ async fn router_registers_every_phase_005_section_2_route() {
         (Method::GET, "/health", StatusCode::OK),
         (Method::GET, "/status", StatusCode::OK),
         (Method::POST, "/shutdown", StatusCode::OK),
-        (Method::POST, "/mcp", StatusCode::NOT_IMPLEMENTED),
+        (Method::POST, "/mcp", StatusCode::NOT_ACCEPTABLE),
         (
             Method::POST,
             "/api/mcp/series_create",
@@ -1037,8 +1037,8 @@ async fn router_mcp_security_matrix_is_route_complete() {
             host: Some(LOCAL_HOST),
             origin: None,
             token: Some(AUTH_TOKEN),
-            status: StatusCode::NOT_IMPLEMENTED,
-            error_code: Some("not_implemented"),
+            status: StatusCode::NOT_ACCEPTABLE,
+            error_code: None,
         },
         SecurityCase {
             name: "MCP missing token",
@@ -1085,8 +1085,8 @@ async fn router_mcp_security_matrix_is_route_complete() {
             host: Some(LOCAL_HOST),
             origin: Some("http://127.0.0.1:9768"),
             token: Some(AUTH_TOKEN),
-            status: StatusCode::NOT_IMPLEMENTED,
-            error_code: Some("not_implemented"),
+            status: StatusCode::NOT_ACCEPTABLE,
+            error_code: None,
         },
         SecurityCase {
             name: "MCP foreign Origin",

@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -24,6 +25,7 @@ rust-embed.workspace = true
 rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 sqlx.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
@@ -38,6 +40,7 @@ uuid.workspace = true
 async-trait.workspace = true
 assert_cmd = "2"
 futures.workspace = true
+insta = { version = "1", features = ["json"] }
 predicates = "3"
 tempfile.workspace = true
 tokio-tungstenite.workspace = true

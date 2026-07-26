@@ -6,7 +6,8 @@ use sqlx::{AssertSqlSafe, QueryBuilder, Sqlite, SqliteConnection, SqlitePool, Tr
 use crate::db::{ConceptFacetRecord, ConceptProposalRecord, ConceptRecord};
 
 use super::models::{
-    Concept, ConceptFacet, ConceptFilter, ConceptProposal, CreateConceptInput, CreateProposalInput,
+    AddConceptFacetInput, Concept, ConceptFacet, ConceptFilter, ConceptProposal,
+    CreateConceptInput, CreateProposalInput, UpdateConceptFacetInput, UpdateConceptInput,
 };
 
 const CONCEPT_COLUMNS: &str = "id, canonical_name, description, scope_type, scope_key, status, confidence, merged_into_concept_id, created_at, updated_at";
@@ -97,6 +98,36 @@ impl<'a> ConceptStore<'a> {
             .ok_or(ConceptError::NotFound { id })
     }
 
+    pub async fn update(&self, id: i64, input: UpdateConceptInput) -> Result<ConceptRecord> {
+        let description = input.description.map(|value| value.trim().to_owned());
+        let status = input
+            .status
+            .map(|value| validate_status(&value))
+            .transpose()?;
+        let confidence = input
+            .confidence
+            .map(|value| validate_confidence(value, "confidence"))
+            .transpose()?;
+        let mut transaction = begin_immediate(self.pool, "update").await?;
+        let result = async {
+            require_active_concept(&mut transaction, id, "update").await?;
+            sqlx::query(
+                "UPDATE concepts SET description = coalesce(?, description), status = coalesce(?, status), confidence = coalesce(?, confidence), updated_at = ? WHERE id = ?",
+            )
+            .bind(description)
+            .bind(status)
+            .bind(confidence)
+            .bind(Utc::now())
+            .bind(id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|source| database("update", source))?;
+            get_concept_on(&mut transaction, id, "update").await
+        }
+        .await;
+        commit_write(transaction, "update", result).await
+    }
+
     pub async fn list(&self, filter: ConceptFilter) -> Result<Vec<Concept>> {
         validate_filter(&filter)?;
         let mut query = QueryBuilder::<Sqlite>::new(format!(
@@ -146,19 +177,49 @@ impl<'a> ConceptStore<'a> {
         facet_type: &str,
         value: &str,
     ) -> Result<ConceptFacetRecord> {
-        let language = normalize_language(language)?;
-        let facet_type = validate_facet_type(facet_type)?;
-        let value = required("value", value)?;
+        self.add_facet_typed(AddConceptFacetInput {
+            concept_id,
+            language: language.to_owned(),
+            facet_type: facet_type.to_owned(),
+            value: value.to_owned(),
+            language_tags: Vec::new(),
+            story_scopes: Vec::new(),
+            semantic_tags: Vec::new(),
+            source_crystal_id: None,
+            confidence: 0.2,
+            is_canonical: false,
+        })
+        .await
+    }
+
+    pub async fn add_facet_typed(
+        &self,
+        mut input: AddConceptFacetInput,
+    ) -> Result<ConceptFacetRecord> {
+        input.language = normalize_language(&input.language)?;
+        input.facet_type = validate_facet_type(&input.facet_type)?;
+        input.value = required("value", &input.value)?;
+        input.confidence = validate_confidence(input.confidence, "confidence")?;
+        input.language_tags = clean_values(&input.language_tags, true);
+        if input.language_tags.is_empty() && !input.language.is_empty() {
+            input.language_tags.push(input.language.clone());
+        }
+        input.story_scopes = clean_values(&input.story_scopes, false);
+        input.semantic_tags = clean_values(&input.semantic_tags, false);
         let mut transaction = begin_immediate(self.pool, "add facet").await?;
         let result = async {
-            require_active_concept(&mut transaction, concept_id, "add facet").await?;
+            require_active_concept(&mut transaction, input.concept_id, "add facet").await?;
+            validate_source_crystal(&mut transaction, input.source_crystal_id, "add facet").await?;
             let now = Utc::now();
-            let id = sqlx::query("INSERT INTO concept_facets(concept_id, language, facet_type, value, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-                .bind(concept_id).bind(&language).bind(&facet_type).bind(&value).bind(now).bind(now)
+            let id = sqlx::query("INSERT INTO concept_facets(concept_id, language, facet_type, value, source_crystal_id, confidence, is_canonical, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind(input.concept_id).bind(&input.language).bind(&input.facet_type).bind(&input.value)
+                .bind(input.source_crystal_id).bind(input.confidence).bind(input.is_canonical).bind(now).bind(now)
                 .execute(&mut *transaction).await.map_err(|source| database("add facet", source))?.last_insert_rowid();
-            if !language.is_empty() {
-                sqlx::query("INSERT INTO concept_facet_language_tags(facet_id, language_tag) VALUES (?, ?)")
-                    .bind(id).bind(&language).execute(&mut *transaction).await.map_err(|source| database("add facet", source))?;
+            replace_facet_texts(&mut transaction, id, "concept_facet_language_tags", "language_tag", &input.language_tags, "add facet").await?;
+            replace_facet_texts(&mut transaction, id, "concept_facet_story_scopes", "story_scope", &input.story_scopes, "add facet").await?;
+            replace_facet_texts(&mut transaction, id, "concept_facet_semantic_tags", "semantic_tag", &input.semantic_tags, "add facet").await?;
+            if input.is_canonical {
+                clear_other_canonical_facets(&mut transaction, id, input.concept_id, &input.facet_type, &input.language, now, "add facet").await?;
             }
             get_facet_on(&mut transaction, id, "add facet").await
         }.await;
@@ -166,18 +227,77 @@ impl<'a> ConceptStore<'a> {
     }
 
     pub async fn update_facet(&self, facet_id: i64, value: &str) -> Result<ConceptFacetRecord> {
-        let value = required("value", value)?;
+        self.update_facet_typed(
+            facet_id,
+            UpdateConceptFacetInput {
+                value: Some(value.to_owned()),
+                ..UpdateConceptFacetInput::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn update_facet_typed(
+        &self,
+        facet_id: i64,
+        mut input: UpdateConceptFacetInput,
+    ) -> Result<ConceptFacetRecord> {
+        input.value = input
+            .value
+            .map(|value| required("value", &value))
+            .transpose()?;
+        input.language = input
+            .language
+            .map(|value| normalize_language(&value))
+            .transpose()?;
+        input.facet_type = input
+            .facet_type
+            .map(|value| validate_facet_type(&value))
+            .transpose()?;
+        input.confidence = input
+            .confidence
+            .map(|value| validate_confidence(value, "confidence"))
+            .transpose()?;
+        input.language_tags = input
+            .language_tags
+            .map(|values| clean_values(&values, true));
+        input.story_scopes = input
+            .story_scopes
+            .map(|values| clean_values(&values, false));
+        input.semantic_tags = input
+            .semantic_tags
+            .map(|values| clean_values(&values, false));
         let mut transaction = begin_immediate(self.pool, "update facet").await?;
         let result = async {
             let facet = get_facet_on(&mut transaction, facet_id, "update facet").await?;
             require_active_concept(&mut transaction, facet.concept_id, "update facet").await?;
-            sqlx::query("UPDATE concept_facets SET value = ?, updated_at = ? WHERE id = ?")
-                .bind(value)
-                .bind(Utc::now())
+            validate_source_crystal(&mut transaction, input.source_crystal_id, "update facet").await?;
+            let language = input.language.as_deref().unwrap_or(&facet.language).to_owned();
+            let facet_type = input.facet_type.as_deref().unwrap_or(&facet.facet_type).to_owned();
+            let now = Utc::now();
+            sqlx::query("UPDATE concept_facets SET value = coalesce(?, value), language = coalesce(?, language), facet_type = coalesce(?, facet_type), source_crystal_id = coalesce(?, source_crystal_id), confidence = coalesce(?, confidence), is_canonical = coalesce(?, is_canonical), updated_at = ? WHERE id = ?")
+                .bind(input.value).bind(input.language).bind(input.facet_type).bind(input.source_crystal_id)
+                .bind(input.confidence).bind(input.is_canonical)
+                .bind(now)
                 .bind(facet_id)
                 .execute(&mut *transaction)
                 .await
                 .map_err(|source| database("update facet", source))?;
+            if let Some(values) = &input.language_tags {
+                replace_facet_texts(&mut transaction, facet_id, "concept_facet_language_tags", "language_tag", values, "update facet").await?;
+            } else if language != facet.language {
+                let values = if language.is_empty() { Vec::new() } else { vec![language.clone()] };
+                replace_facet_texts(&mut transaction, facet_id, "concept_facet_language_tags", "language_tag", &values, "update facet").await?;
+            }
+            if let Some(values) = &input.story_scopes {
+                replace_facet_texts(&mut transaction, facet_id, "concept_facet_story_scopes", "story_scope", values, "update facet").await?;
+            }
+            if let Some(values) = &input.semantic_tags {
+                replace_facet_texts(&mut transaction, facet_id, "concept_facet_semantic_tags", "semantic_tag", values, "update facet").await?;
+            }
+            if input.is_canonical == Some(true) {
+                clear_other_canonical_facets(&mut transaction, facet_id, facet.concept_id, &facet_type, &language, now, "update facet").await?;
+            }
             get_facet_on(&mut transaction, facet_id, "update facet").await
         }
         .await;
@@ -217,11 +337,23 @@ impl<'a> ConceptStore<'a> {
         new_name: &str,
         reason: &str,
     ) -> Result<ConceptRecord> {
+        self.rename_concept_with_source(id, new_name, reason, None)
+            .await
+    }
+
+    pub async fn rename_concept_with_source(
+        &self,
+        id: i64,
+        new_name: &str,
+        reason: &str,
+        source_crystal_id: Option<i64>,
+    ) -> Result<ConceptRecord> {
         let new_name = required("canonical_name", new_name)?;
         let reason = reason.trim();
         let mut transaction = begin_immediate(self.pool, "rename").await?;
         let result = async {
             let concept = require_active_concept(&mut transaction, id, "rename").await?;
+            validate_source_crystal(&mut transaction, source_crystal_id, "rename").await?;
             if concept.canonical_name == new_name {
                 return Ok(concept);
             }
@@ -236,6 +368,7 @@ impl<'a> ConceptStore<'a> {
                 id,
                 &concept.canonical_name,
                 concept.confidence,
+                source_crystal_id,
                 now,
             )
             .await?;
@@ -320,6 +453,7 @@ impl<'a> ConceptStore<'a> {
                     target,
                     &source_row.canonical_name,
                     source_row.confidence,
+                    None,
                     Utc::now(),
                 )
                 .await?;
@@ -588,6 +722,7 @@ async fn ensure_former_label(
     concept_id: i64,
     value: &str,
     confidence: f64,
+    source_crystal_id: Option<i64>,
     now: chrono::DateTime<Utc>,
 ) -> Result<()> {
     let exists: bool = sqlx::query_scalar(
@@ -599,15 +734,85 @@ async fn ensure_former_label(
     .await
     .map_err(|source| database("preserve former label", source))?;
     if !exists {
-        sqlx::query("INSERT INTO concept_facets(concept_id, language, facet_type, value, confidence, created_at, updated_at) VALUES (?, '', 'former_label', ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO concept_facets(concept_id, language, facet_type, value, confidence, source_crystal_id, created_at, updated_at) VALUES (?, '', 'former_label', ?, ?, ?, ?, ?)")
             .bind(concept_id)
             .bind(value)
             .bind(confidence)
+            .bind(source_crystal_id)
             .bind(now)
             .bind(now)
             .execute(&mut *connection)
             .await
             .map_err(|source| database("preserve former label", source))?;
+    }
+    Ok(())
+}
+
+async fn validate_source_crystal(
+    connection: &mut SqliteConnection,
+    crystal_id: Option<i64>,
+    operation: &'static str,
+) -> Result<()> {
+    let Some(crystal_id) = crystal_id else {
+        return Ok(());
+    };
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM crystals WHERE id = ?)")
+        .bind(crystal_id)
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(|source| database(operation, source))?;
+    if exists {
+        Ok(())
+    } else {
+        Err(conflict(operation, "unknown source crystal"))
+    }
+}
+
+async fn clear_other_canonical_facets(
+    connection: &mut SqliteConnection,
+    facet_id: i64,
+    concept_id: i64,
+    facet_type: &str,
+    language: &str,
+    now: chrono::DateTime<Utc>,
+    operation: &'static str,
+) -> Result<()> {
+    sqlx::query("UPDATE concept_facets SET is_canonical = 0, updated_at = ? WHERE id <> ? AND concept_id = ? AND facet_type = ? AND language = ? AND superseded_at IS NULL")
+        .bind(now)
+        .bind(facet_id)
+        .bind(concept_id)
+        .bind(facet_type)
+        .bind(language)
+        .execute(&mut *connection)
+        .await
+        .map_err(|source| database(operation, source))?;
+    Ok(())
+}
+
+async fn replace_facet_texts(
+    connection: &mut SqliteConnection,
+    facet_id: i64,
+    table: &'static str,
+    column: &'static str,
+    values: &[String],
+    operation: &'static str,
+) -> Result<()> {
+    sqlx::query(AssertSqlSafe(format!(
+        "DELETE FROM {table} WHERE facet_id = ?"
+    )))
+    .bind(facet_id)
+    .execute(&mut *connection)
+    .await
+    .map_err(|source| database(operation, source))?;
+    for value in values {
+        sqlx::query(AssertSqlSafe(format!(
+            "INSERT INTO {table}(facet_id, {column}) VALUES (?, ?)"
+        )))
+        .bind(facet_id)
+        .bind(value)
+        .execute(&mut *connection)
+        .await
+        .map_err(|source| database(operation, source))?;
     }
     Ok(())
 }
@@ -740,6 +945,21 @@ fn validate_filter(filter: &ConceptFilter) -> Result<()> {
         return Err(invalid("status", "is unknown"));
     }
     Ok(())
+}
+fn validate_status(value: &str) -> Result<String> {
+    let value = value.trim();
+    if matches!(value, "candidate" | "established" | "archived") {
+        Ok(value.to_owned())
+    } else {
+        Err(invalid("status", "is unknown or cannot be set directly"))
+    }
+}
+fn validate_confidence(value: f64, field: &'static str) -> Result<f64> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(value)
+    } else {
+        Err(invalid(field, "must be finite and between 0 and 1"))
+    }
 }
 fn validate_proposal(mut input: CreateProposalInput) -> Result<CreateProposalInput> {
     input.series_slug = required("series_slug", &input.series_slug)?;

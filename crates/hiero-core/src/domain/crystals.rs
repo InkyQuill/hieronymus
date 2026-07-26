@@ -324,6 +324,26 @@ impl<'a> CrystalStore<'a> {
     }
 
     pub async fn set_story_scopes(&self, id: i64, scopes: &[String]) -> Result<CrystalRecord> {
+        self.set_story_scopes_inner(id, scopes, None).await
+    }
+
+    pub async fn set_story_scopes_with_confidence(
+        &self,
+        id: i64,
+        scopes: &[String],
+        confidence: f64,
+    ) -> Result<CrystalRecord> {
+        validate_score("confidence", confidence)?;
+        self.set_story_scopes_inner(id, scopes, Some(confidence))
+            .await
+    }
+
+    async fn set_story_scopes_inner(
+        &self,
+        id: i64,
+        scopes: &[String],
+        confidence: Option<f64>,
+    ) -> Result<CrystalRecord> {
         let scopes = normalize_texts(scopes, false);
         let mut connection = begin_immediate(self.pool, "set story scopes").await?;
         let result = async {
@@ -338,7 +358,7 @@ impl<'a> CrystalStore<'a> {
                 sqlx::query("INSERT INTO crystal_story_scopes(crystal_id, scope, confidence, created_at) VALUES (?, ?, ?, ?)")
                     .bind(id)
                     .bind(scope)
-                    .bind(crystal.confidence)
+                    .bind(confidence.unwrap_or(crystal.confidence))
                     .bind(now)
                     .execute(&mut *connection)
                     .await
@@ -351,6 +371,26 @@ impl<'a> CrystalStore<'a> {
     }
 
     pub async fn set_semantic_tags(&self, id: i64, tags: &[String]) -> Result<CrystalRecord> {
+        self.set_semantic_tags_inner(id, tags, None).await
+    }
+
+    pub async fn set_semantic_tags_with_confidence(
+        &self,
+        id: i64,
+        tags: &[String],
+        confidence: f64,
+    ) -> Result<CrystalRecord> {
+        validate_score("confidence", confidence)?;
+        self.set_semantic_tags_inner(id, tags, Some(confidence))
+            .await
+    }
+
+    async fn set_semantic_tags_inner(
+        &self,
+        id: i64,
+        tags: &[String],
+        confidence: Option<f64>,
+    ) -> Result<CrystalRecord> {
         let tags = normalize_texts(tags, false);
         let tags_json =
             serde_json::to_string(&tags).map_err(|source| StoreError::Json { source })?;
@@ -367,7 +407,7 @@ impl<'a> CrystalStore<'a> {
                 sqlx::query("INSERT INTO crystal_semantic_tags(crystal_id, tag, confidence, created_at) VALUES (?, ?, ?, ?)")
                     .bind(id)
                     .bind(tag)
-                    .bind(crystal.confidence)
+                    .bind(confidence.unwrap_or(crystal.confidence))
                     .bind(now)
                     .execute(&mut *connection)
                     .await

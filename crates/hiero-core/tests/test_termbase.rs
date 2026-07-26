@@ -25,6 +25,7 @@ fn proposal(source: &str, canonical: &str) -> TermProposal {
         source_text: source.into(),
         canonical_translation: canonical.into(),
         tags: vec!["character".into(), "character".into()],
+        notes: String::new(),
     }
 }
 
@@ -43,6 +44,7 @@ fn proposal_for(
         source_text: source.into(),
         canonical_translation: canonical.into(),
         tags: vec![],
+        notes: String::new(),
     }
 }
 

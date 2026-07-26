@@ -279,6 +279,40 @@ pub struct CreateConceptInput {
     pub scope_key: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct UpdateConceptInput {
+    pub description: Option<String>,
+    pub status: Option<String>,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AddConceptFacetInput {
+    pub concept_id: i64,
+    pub language: String,
+    pub facet_type: String,
+    pub value: String,
+    pub language_tags: Vec<String>,
+    pub story_scopes: Vec<String>,
+    pub semantic_tags: Vec<String>,
+    pub source_crystal_id: Option<i64>,
+    pub confidence: f64,
+    pub is_canonical: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct UpdateConceptFacetInput {
+    pub value: Option<String>,
+    pub language: Option<String>,
+    pub facet_type: Option<String>,
+    pub language_tags: Option<Vec<String>>,
+    pub story_scopes: Option<Vec<String>>,
+    pub semantic_tags: Option<Vec<String>>,
+    pub source_crystal_id: Option<i64>,
+    pub confidence: Option<f64>,
+    pub is_canonical: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConceptFilter {
     pub scope_type: String,
@@ -358,6 +392,7 @@ pub struct TermProposal {
     pub source_text: String,
     pub canonical_translation: String,
     pub tags: Vec<String>,
+    pub notes: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
