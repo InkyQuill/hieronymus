@@ -11,6 +11,8 @@ pub(crate) mod parsing;
 mod phases;
 mod reconsolidation;
 mod reinforcement;
+mod scheduler;
+mod service;
 mod workflows;
 
 pub use audit::{
@@ -50,5 +52,9 @@ pub use reconsolidation::{
 };
 pub use reinforcement::{
     LinkOutcome, LinkReinforcer, ReinforcementManager, select_survivor, useful_pairs,
+};
+pub use scheduler::run_background_loop;
+pub use service::{
+    CycleOptions, DreamService, DreamServiceError, MaintenancePayload, MaintenanceResult,
 };
 pub use workflows::{WorkflowProfile, build_phase_prompt, resolve_workflows};
