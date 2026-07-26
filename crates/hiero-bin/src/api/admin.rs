@@ -241,8 +241,9 @@ async fn dashboard(
     .await
     .map_err(|error| ApiError::internal(request_id.clone(), &error))?
     .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
-    let working = running.is_some() || active_cycle.is_some();
+    let working = active_cycle.is_some();
     let (run_id, cycle_id, current_phase) = running
+        .filter(|_| working)
         .map(|(run_id, cycle_id, phase)| {
             (
                 Some(run_id),
@@ -890,17 +891,16 @@ async fn run_manual_dreaming(
                 resolver,
                 catalog,
             )
-            .with_cleanup_deadline(DAEMON_DREAM_CLEANUP_DEADLINE);
-            let result = service
+            .with_cleanup_deadline(DAEMON_DREAM_CLEANUP_DEADLINE)
+            .with_lifecycle_completion(move || events.notify_refresh());
+            service
                 .run_all(hiero_core::dreaming::CycleOptions {
                     owner: "web_admin".into(),
                     ..hiero_core::dreaming::CycleOptions::default()
                 })
                 .await
                 .map(|_| ())
-                .map_err(anyhow::Error::from);
-            events.notify_refresh();
-            result
+                .map_err(anyhow::Error::from)
         })
         .await;
     if !accepted {

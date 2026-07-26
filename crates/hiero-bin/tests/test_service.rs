@@ -900,7 +900,7 @@ async fn api_admin_dashboard_reports_the_literal_shipping_contract_for_a_backgro
 }
 
 #[tokio::test]
-async fn api_admin_dashboard_ignores_valid_stale_dream_metadata_when_the_lock_is_free() {
+async fn api_admin_dashboard_ignores_stale_metadata_and_running_rows_when_the_lock_is_free() {
     let (state, _) = test_state().await;
     state.config.ensure_directories().unwrap();
     let dream = DreamConfig {
@@ -916,6 +916,23 @@ async fn api_admin_dashboard_ignores_valid_stale_dream_metadata_when_the_lock_is
     std::fs::write(&paths.state_json, serde_json::to_vec(&stale).unwrap()).unwrap();
     #[cfg(unix)]
     std::fs::set_permissions(&paths.state_json, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let now = chrono::Utc::now();
+    let run_id = sqlx::query(
+        "INSERT INTO dream_runs(cycle_id,status,provider,created_at) VALUES(91,'running','stale',?)",
+    )
+    .bind(now)
+    .execute(&state.pool)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    sqlx::query(
+        "INSERT INTO dream_phase_runs(dream_run_id,phase,provider_profile,provider_type,model,status,input_count,created_at) VALUES(?,'relations','stale','stale','stale','running',3,?)",
+    )
+    .bind(run_id)
+    .bind(now)
+    .execute(&state.pool)
+    .await
+    .unwrap();
 
     let response = build_router(state)
         .oneshot(request(Method::GET, "/api/admin/dashboard", Body::empty()))
@@ -923,8 +940,18 @@ async fn api_admin_dashboard_ignores_valid_stale_dream_metadata_when_the_lock_is
         .unwrap();
     let payload = response_json(response).await;
 
-    assert_eq!(payload["dream_status"]["state"], "IDLE");
-    assert_eq!(payload["dream_status"]["owner"], "");
+    assert_eq!(
+        payload["dream_status"],
+        json!({
+            "state": "IDLE",
+            "current_phase": "",
+            "progress": 0.0,
+            "run_id": null,
+            "cycle_id": null,
+            "owner": "",
+            "started_at": ""
+        })
+    );
     assert_eq!(payload["short_term_status"]["drain_in_progress"], false);
     assert!(
         paths.state_json.exists(),

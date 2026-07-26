@@ -780,11 +780,10 @@ async fn production_dream_runner_executes_dream_service_with_an_injected_provide
         profile.provider = "deterministic".into();
         profile.model = "deterministic".into();
     }
-    let runner = StoreDreamRunner::new(state.pool, state.config).with_components(
-        dream_config,
-        ProviderCatalog::default(),
-        resolver,
-    );
+    let mut receiver = state.events.subscribe();
+    let runner = StoreDreamRunner::new(state.pool, state.config.clone())
+        .with_components(dream_config, ProviderCatalog::default(), resolver)
+        .with_notifier(state.events);
 
     let result = runner
         .run(None, false)
@@ -793,6 +792,18 @@ async fn production_dream_runner_executes_dream_service_with_an_injected_provide
     assert!(result["cycle_id"].is_i64());
     assert!(result["status"].is_string());
     assert!(resolved.load(Ordering::Acquire), "dream result: {result}");
+    assert_eq!(
+        receiver.recv().await.unwrap(),
+        hiero_bin::api::events::AdminEvent::Refresh
+    );
+    assert_eq!(
+        receiver.recv().await.unwrap(),
+        hiero_bin::api::events::AdminEvent::Refresh
+    );
+    let lock =
+        hiero_core::dreaming::acquire_dream_cycle_lock(&state.config, "after-mcp-success", false)
+            .expect("success completion refresh must follow lock release");
+    drop(lock);
 }
 
 #[tokio::test]
@@ -846,17 +857,24 @@ async fn mcp_dream_bounds_persistent_audit_cleanup_failure_and_releases_the_cycl
         profile.provider = "deterministic".into();
         profile.model = "deterministic".into();
     }
-    let runner = StoreDreamRunner::new(state.pool, state.config.clone()).with_components(
-        dream_config,
-        ProviderCatalog::default(),
-        resolver,
-    );
+    let mut receiver = state.events.subscribe();
+    let runner = StoreDreamRunner::new(state.pool, state.config.clone())
+        .with_components(dream_config, ProviderCatalog::default(), resolver)
+        .with_notifier(state.events);
 
     let error = tokio::time::timeout(Duration::from_secs(3), runner.run(None, false))
         .await
         .expect("daemon-owned MCP cleanup must be deadline bounded")
         .expect_err("persistent audit failure must be surfaced");
     assert!(error.to_string().contains("audit cleanup"));
+    assert_eq!(
+        receiver.recv().await.unwrap(),
+        hiero_bin::api::events::AdminEvent::Refresh
+    );
+    assert_eq!(
+        receiver.recv().await.unwrap(),
+        hiero_bin::api::events::AdminEvent::Refresh
+    );
     let lock =
         hiero_core::dreaming::acquire_dream_cycle_lock(&state.config, "after-mcp-failure", false)
             .expect("bounded cleanup must release the cross-process lock");
@@ -946,21 +964,10 @@ async fn cancelling_mcp_dream_emits_a_final_refresh_and_releases_the_cycle_lock(
             .unwrap(),
         hiero_bin::api::events::AdminEvent::Refresh
     );
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            if let Ok(lock) = hiero_core::dreaming::acquire_dream_cycle_lock(
-                &state.config,
-                "after-mcp-cancel",
-                false,
-            ) {
-                drop(lock);
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("core cancellation cleanup should release the cycle lock");
+    let lock =
+        hiero_core::dreaming::acquire_dream_cycle_lock(&state.config, "after-mcp-cancel", false)
+            .expect("terminal refresh must follow core cleanup and cycle lock release");
+    drop(lock);
 }
 
 #[tokio::test]

@@ -112,6 +112,7 @@ pub struct DreamService<'a> {
     provider_catalog: Option<ProviderCatalog>,
     cleanup_deadline: Option<Duration>,
     cleanup_failed: Arc<AtomicBool>,
+    lifecycle_completion: Option<Arc<dyn Fn() + Send + Sync>>,
     lifetime: PhantomData<&'a ()>,
 }
 
@@ -131,6 +132,7 @@ impl<'a> DreamService<'a> {
             provider_catalog: None,
             cleanup_deadline: None,
             cleanup_failed: Arc::new(AtomicBool::new(false)),
+            lifecycle_completion: None,
             lifetime: PhantomData,
         }
     }
@@ -151,6 +153,7 @@ impl<'a> DreamService<'a> {
             provider_catalog: Some(provider_catalog),
             cleanup_deadline: None,
             cleanup_failed: Arc::new(AtomicBool::new(false)),
+            lifecycle_completion: None,
             lifetime: PhantomData,
         }
     }
@@ -158,6 +161,18 @@ impl<'a> DreamService<'a> {
     #[must_use]
     pub fn with_cleanup_deadline(mut self, deadline: Duration) -> Self {
         self.cleanup_deadline = Some(deadline);
+        self
+    }
+
+    #[must_use]
+    /// Registers a synchronous callback invoked after supervised cleanup releases the cycle lock.
+    ///
+    /// Callback panics are contained and cannot interrupt audit or lock cleanup.
+    pub fn with_lifecycle_completion(
+        mut self,
+        completion: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        self.lifecycle_completion = Some(Arc::new(completion));
         self
     }
 
@@ -303,6 +318,7 @@ impl<'a> DreamService<'a> {
             provider_catalog: self.provider_catalog.clone(),
             cleanup_deadline: self.cleanup_deadline,
             cleanup_failed: self.cleanup_failed.clone(),
+            lifecycle_completion: self.lifecycle_completion.clone(),
             lifetime: PhantomData,
         }
     }
@@ -1631,6 +1647,8 @@ fn supervise_blocking(
     {
         Ok(runtime) => runtime,
         Err(_) => {
+            drop(guard);
+            invoke_lifecycle_completion(&service);
             let _ = sender.send(Err(DreamServiceError::Domain(
                 "dream cycle supervisor runtime could not start".into(),
             )));
@@ -1700,6 +1718,7 @@ fn supervise_blocking(
     }
 
     drop(guard);
+    invoke_lifecycle_completion(&service);
     match outcome {
         Ok(SupervisorOutcome::Complete(result)) => {
             let result =
@@ -1712,5 +1731,11 @@ fn supervise_blocking(
                 "dream cycle supervisor panicked".into(),
             )));
         }
+    }
+}
+
+fn invoke_lifecycle_completion(service: &DreamService<'_>) {
+    if let Some(completion) = &service.lifecycle_completion {
+        let _ = catch_unwind(AssertUnwindSafe(|| completion()));
     }
 }

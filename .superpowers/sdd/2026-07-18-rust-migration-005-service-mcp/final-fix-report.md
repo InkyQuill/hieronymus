@@ -24,8 +24,9 @@ Resolution:
 - The dashboard now returns the eight categories consumed by the existing console: series, crystals, lessons, short-term memories, sessions, dream runs, pending proposals, and audit events.
 - Short-term status now includes state, thresholds, urgency, and drain counts/progress.
 - Dream status now includes state, current phase, progress, run ID, cycle ID, owner, and start time.
-- Status derives from authoritative SQLite run/phase rows plus the cross-process dream lock, so background and MCP owners report `WORKING`.
+- Dashboard liveness derives exclusively from cross-process OS-lock contention. SQLite run/phase rows provide phase and progress details only while that lock is actively held.
 - Lock metadata is reported as live only while the anchored OS lock remains contended across the metadata read. Valid stale JSON with a free lock reports `IDLE` and is left untouched.
+- Valid stale JSON plus stale `running` audit rows still reports `IDLE` with no active phase, run, cycle, owner, or progress; a held lock with an available row reports the complete `WORKING` details.
 - Frontend `Record<string, unknown>` placeholders were replaced with the complete typed contract. `AdminDashboard.svelte` preserves the same fields and UI; it only removes defensive `String`/`Number` casts that previously hid missing backend fields. This strengthens rather than relaxes the shipping client contract.
 
 ### C. Production admin event publishers
@@ -40,7 +41,8 @@ Resolution:
 - Publications happen only after successful persistence/acceptance. Failed provider validation has a negative regression.
 - The end-to-end regression connects to `/ws/admin`, performs a real provider HTTP mutation, and receives `{"type":"refresh"}`.
 - The stdio compatibility `/api/mcp/{operation}` route constructs the same notifier-aware backend and dream runner as direct `/mcp`; a real compatibility HTTP mutation now has HTTP-to-WebSocket coverage.
-- MCP dream completion publication is owned by a synchronous drop guard, so success, error, and request cancellation all publish the terminal refresh while core cancellation cleanup continues.
+- DreamService owns a transport-neutral synchronous lifecycle callback. The supervisor invokes it only after audit cleanup and `DreamCycleGuard` release; callback panics are contained.
+- Manual-admin and MCP services map that callback to `AdminNotifier`, so success, error, and cancellation publish terminal refresh only after the OS lock becomes reacquirable.
 
 ### D. `series_init` compatibility alias
 
@@ -81,6 +83,7 @@ Observed RED before production changes:
 - oversized asset: the complete 16 MiB + 1 byte file was returned;
 - lifecycle premise: only the recurring construction site called `with_cleanup_deadline`.
 - targeted rereview: valid stale dream JSON alone reported `WORKING`; the compatibility mutation produced no WebSocket event; cancelling an in-flight MCP dream produced no terminal refresh.
+- final targeted rereview: a stale `running` audit row still overrode a free OS lock, and the first cancellation drop guard published its terminal refresh before detached core cleanup released the lock.
 
 Focused GREEN:
 

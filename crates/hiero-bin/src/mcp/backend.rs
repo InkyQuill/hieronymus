@@ -45,16 +45,6 @@ pub struct StoreDreamRunner {
     notifier: Option<AdminNotifier>,
 }
 
-struct CompletionRefreshGuard(Option<AdminNotifier>);
-
-impl Drop for CompletionRefreshGuard {
-    fn drop(&mut self) {
-        if let Some(notifier) = &self.0 {
-            notifier.notify_refresh();
-        }
-    }
-}
-
 impl StoreDreamRunner {
     #[must_use]
     pub fn new(pool: SqlitePool, config: Arc<HieronymusConfig>) -> Self {
@@ -126,21 +116,24 @@ impl DreamRunner for StoreDreamRunner {
         if let Some(notifier) = &self.notifier {
             notifier.notify_refresh();
         }
-        let _completion_refresh = CompletionRefreshGuard(self.notifier.clone());
-        let run = DreamService::new_with_catalog(
+        let mut service = DreamService::new_with_catalog(
             &self.pool,
             &self.config,
             &dream_config,
             resolver,
             catalog,
         )
-        .with_cleanup_deadline(DAEMON_DREAM_CLEANUP_DEADLINE)
-        .run_all(CycleOptions {
-            owner: "mcp".into(),
-            wait,
-            ..CycleOptions::default()
-        })
-        .await;
+        .with_cleanup_deadline(DAEMON_DREAM_CLEANUP_DEADLINE);
+        if let Some(notifier) = self.notifier.clone() {
+            service = service.with_lifecycle_completion(move || notifier.notify_refresh());
+        }
+        let run = service
+            .run_all(CycleOptions {
+                owner: "mcp".into(),
+                wait,
+                ..CycleOptions::default()
+            })
+            .await;
         let run = run?;
         Ok(json!({
             "cycle_id": run.cycle_id,
