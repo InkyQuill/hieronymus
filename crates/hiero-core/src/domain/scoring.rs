@@ -10,6 +10,22 @@ pub struct ScoreDelta {
     pub confidence: f64,
 }
 
+/// Applies the canonical confidence boundary to an untrusted-output penalty.
+#[must_use]
+pub fn apply_malformed_confidence_penalty(confidence: f64, penalty: f64) -> f64 {
+    let confidence = if confidence.is_finite() {
+        confidence
+    } else {
+        0.0
+    };
+    let penalty = if penalty.is_finite() && penalty > 0.0 {
+        penalty
+    } else {
+        0.0
+    };
+    (confidence - penalty).clamp(0.0, 1.0)
+}
+
 pub static IMMEDIATE_EVENT_DELTAS: phf::Map<&str, (f64, f64)> = phf::phf_map! {
     "confirmed_by_user" => (0.15, 0.20),
     "contradicted_by_user" => (-0.20, -0.25),

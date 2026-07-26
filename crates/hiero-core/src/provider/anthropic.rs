@@ -41,7 +41,7 @@ impl DreamProvider for AnthropicProvider {
         c: &TranslationContext,
         m: &[ShortTermMemory],
     ) -> Result<DreamOutput> {
-        parse_output(&self.0.generate(&dream_prompt(c, m)?, false).await?)
+        parse_output(self.0.generate(&dream_prompt(c, m)?, false).await?).await
     }
     async fn run_pass(
         &self,
@@ -49,15 +49,14 @@ impl DreamProvider for AnthropicProvider {
         c: &TranslationContext,
         m: &[ShortTermMemory],
     ) -> Result<serde_json::Value> {
-        serde_json::from_str(
-            &self
-                .0
+        super::parse_pass_output(
+            self.0
                 .generate(
                     &format!("Pass: {}\n{}", p.as_str(), dream_prompt(c, m)?),
                     false,
                 )
                 .await?,
         )
-        .map_err(|_| super::ProviderError::MalformedJson)
+        .await
     }
 }

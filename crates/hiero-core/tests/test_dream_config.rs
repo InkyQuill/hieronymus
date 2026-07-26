@@ -2,10 +2,12 @@ use std::{collections::BTreeMap, fs};
 
 use hiero_core::{
     dreaming::{
-        DreamConfig, DreamConfigError, DreamPhase, PhaseProfile, WorkflowProfile,
-        build_phase_prompt, resolve_workflows,
+        DreamConfig, DreamConfigError, PhaseProfile, WorkflowProfile, build_phase_prompt,
+        resolve_workflows,
     },
-    provider::{PassName, ProviderCatalog, ProviderDefaults, ProviderProfile},
+    provider::{
+        PassName, PassName as DreamPhase, ProviderCatalog, ProviderDefaults, ProviderProfile,
+    },
 };
 
 fn catalog() -> ProviderCatalog {
@@ -38,12 +40,6 @@ fn defaults_match_the_seven_pass_memory_contract() {
     assert_eq!(config.reconsolidation_diff_threshold, 0.20);
     assert_eq!(config.workflows.len(), PassName::ALL.len());
     assert!(config.workflows.values().all(|phase| !phase.enabled));
-}
-
-#[test]
-fn dream_phase_is_the_provider_pass_identifier() {
-    let phase: DreamPhase = PassName::KnowledgeCrystals;
-    assert_eq!(phase.as_str(), "knowledge_crystals");
 }
 
 #[test]

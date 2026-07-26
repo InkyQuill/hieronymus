@@ -2,11 +2,9 @@ use crate::provider::{PassName, ProviderCatalog};
 
 use super::{DreamConfig, DreamConfigError, PhaseProfile};
 
-pub type DreamPhase = PassName;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowProfile {
-    pub phase: DreamPhase,
+    pub phase: PassName,
     pub provider: String,
     pub model: String,
     pub max_records_per_pass: usize,
@@ -69,7 +67,7 @@ fn non_empty(value: &str) -> Option<&str> {
 
 pub fn build_phase_prompt(
     config: &DreamConfig,
-    phase: DreamPhase,
+    phase: PassName,
     input: &serde_json::Value,
 ) -> String {
     let phase_prompt = match phase {

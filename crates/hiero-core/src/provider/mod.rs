@@ -108,6 +108,8 @@ impl PassName {
 pub struct DreamOutput {
     pub crystals: Vec<CandidateCrystal>,
     pub concepts: Vec<ConceptCandidate>,
+    #[serde(skip)]
+    pub recovered: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -119,6 +121,8 @@ pub struct CandidateCrystal {
     pub source_credibility: String,
     pub rule_intent: String,
     pub confidence: f64,
+    #[serde(default, skip_deserializing)]
+    pub malformed_penalty: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -754,8 +758,15 @@ pub(crate) fn dream_prompt(
 ) -> Result<String> {
     serde_json::to_string(&serde_json::json!({"instruction":"Return JSON with crystals and concepts.","context":context,"memories":memories})).map_err(|_| ProviderError::Config("dream input could not be encoded".into()))
 }
-pub(crate) fn parse_output(text: &str) -> Result<DreamOutput> {
-    serde_json::from_str(text).map_err(|_| ProviderError::MalformedJson)
+pub(crate) async fn parse_output(text: String) -> Result<DreamOutput> {
+    crate::dreaming::parse_dream_output_async(text)
+        .await
+        .map_err(|_| ProviderError::MalformedJson)
+}
+pub(crate) async fn parse_pass_output(text: String) -> Result<serde_json::Value> {
+    crate::dreaming::parsing::parse_provider_value_async(text)
+        .await
+        .map_err(|_| ProviderError::MalformedJson)
 }
 
 pub struct ProviderRegistry {

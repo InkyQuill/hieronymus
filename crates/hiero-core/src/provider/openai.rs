@@ -43,11 +43,11 @@ impl DreamProvider for OpenAiProvider {
         memories: &[ShortTermMemory],
     ) -> Result<DreamOutput> {
         parse_output(
-            &self
-                .0
+            self.0
                 .generate(&dream_prompt(context, memories)?, false)
                 .await?,
         )
+        .await
     }
     async fn run_pass(
         &self,
@@ -55,9 +55,8 @@ impl DreamProvider for OpenAiProvider {
         context: &TranslationContext,
         memories: &[ShortTermMemory],
     ) -> Result<serde_json::Value> {
-        serde_json::from_str(
-            &self
-                .0
+        super::parse_pass_output(
+            self.0
                 .generate(
                     &format!(
                         "Pass: {}\n{}",
@@ -68,6 +67,6 @@ impl DreamProvider for OpenAiProvider {
                 )
                 .await?,
         )
-        .map_err(|_| super::ProviderError::MalformedJson)
+        .await
     }
 }
