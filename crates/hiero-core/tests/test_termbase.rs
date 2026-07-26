@@ -53,6 +53,41 @@ fn context(series: &str, source: &str, target: &str) -> TranslationContext {
 }
 
 #[tokio::test]
+async fn candidate_context_uses_the_persisted_non_default_language_pair() {
+    let pool = pool().await;
+    let proposal_context = TranslationContext::new("oso", "ko", "de").with_metadata(
+        &[],
+        &["volume:3".into()],
+        &[],
+        &[],
+    );
+    let id = Termbase::new(&pool, proposal_context.clone())
+        .propose(TermProposal {
+            series_slug: "oso".into(),
+            source_language: "ko".into(),
+            target_language: "de".into(),
+            category: "name".into(),
+            source_text: "호로".into(),
+            canonical_translation: "Holo".into(),
+            tags: vec!["character".into()],
+            notes: String::new(),
+        })
+        .await
+        .unwrap();
+
+    let candidate = Termbase::candidate_context(&pool, id).await.unwrap();
+    assert_eq!(
+        (
+            candidate.series_slug.as_str(),
+            candidate.source_language.as_str(),
+            candidate.target_language.as_str(),
+        ),
+        ("oso", "ko", "de")
+    );
+    assert_eq!(candidate.semantic_tags, ["character"]);
+}
+
+#[tokio::test]
 async fn proposed_terms_are_inert_until_atomic_idempotent_approval() {
     let pool = pool().await;
     let termbase = Termbase::new(&pool, context("oso", "ja", "en"));

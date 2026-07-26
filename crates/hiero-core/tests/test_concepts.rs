@@ -2,7 +2,8 @@ use hiero_core::{
     db::connect_url,
     domain::{
         AddConceptFacetInput, ConceptFilter, ConceptProposalStore, ConceptStore,
-        CreateConceptInput, CreateProposalInput, UpdateConceptFacetInput, UpdateConceptInput,
+        CreateConceptInput, CreateConceptPrimitiveInput, CreateProposalInput,
+        UpdateConceptFacetInput, UpdateConceptInput,
     },
 };
 use sqlx::Row;
@@ -135,6 +136,103 @@ async fn typed_updates_reject_invalid_status_confidence_and_missing_source_cryst
             })
             .await
             .is_err()
+    );
+}
+
+#[tokio::test]
+async fn primitive_create_is_atomic_complete_and_restricts_terminal_statuses() {
+    let pool = pool().await;
+    let store = ConceptStore::new(&pool);
+    let created = store
+        .create_primitive(CreateConceptPrimitiveInput {
+            canonical_name: "Holo".into(),
+            description: "Wise wolf".into(),
+            status: "established".into(),
+            confidence: 0.9,
+            scope_type: "series".into(),
+            scope_key: "series:oso".into(),
+            semantic_tags: vec!["character".into(), "character".into()],
+        })
+        .await
+        .expect("all primitive fields should commit together");
+    assert_eq!(created.semantic_tags, ["character"]);
+    assert_eq!(
+        (
+            created.description.as_str(),
+            created.status.as_str(),
+            created.confidence
+        ),
+        ("Wise wolf", "established", 0.9)
+    );
+    assert!(
+        store
+            .create_primitive(CreateConceptPrimitiveInput {
+                status: "archived".into(),
+                canonical_name: "Archived".into(),
+                ..CreateConceptPrimitiveInput::default()
+            })
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .update(
+                created.id,
+                UpdateConceptInput {
+                    status: Some("archived".into()),
+                    ..UpdateConceptInput::default()
+                },
+            )
+            .await
+            .is_err()
+    );
+    store
+        .archive(created.id, "dedicated operation")
+        .await
+        .unwrap();
+    assert_eq!(store.get(created.id).await.unwrap().status, "archived");
+}
+
+#[tokio::test]
+async fn primitive_create_rolls_back_when_semantic_tag_persistence_fails_late() {
+    let pool = pool().await;
+    let store = ConceptStore::new(&pool);
+    sqlx::query("CREATE TRIGGER reject_concept_tag BEFORE INSERT ON concept_semantic_tags BEGIN SELECT RAISE(ABORT, 'injected tag failure'); END")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(
+        store
+            .create_primitive(CreateConceptPrimitiveInput {
+                canonical_name: "Holo".into(),
+                semantic_tags: vec!["character".into()],
+                ..CreateConceptPrimitiveInput::default()
+            })
+            .await
+            .is_err()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM concepts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn unscoped_list_returns_global_and_series_concepts_in_stable_order() {
+    let pool = pool().await;
+    let store = ConceptStore::new(&pool);
+    let global = store.create(concept("Global", "global", "")).await.unwrap();
+    let series = store
+        .create(concept("Series", "series", "series:oso"))
+        .await
+        .unwrap();
+
+    let rows = store.list_all(None).await.unwrap();
+    assert_eq!(
+        rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+        [global.id, series.id]
     );
 }
 

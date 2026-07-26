@@ -976,3 +976,21 @@ async fn list_and_search_reject_unknown_sessions_even_for_empty_queries() {
         WorkspaceError::SessionNotFound { id: 42 }
     ));
 }
+
+#[tokio::test]
+async fn default_session_reuses_one_matching_active_context() {
+    let pool = pool().await;
+    let context = context(&pool).await;
+    let store = WorkspaceStore::new(&pool);
+
+    let first = store.get_or_start_default_session(&context).await.unwrap();
+    let second = store.get_or_start_default_session(&context).await.unwrap();
+
+    assert_eq!(first.id, second.id);
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_sessions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(second.language_tags, ["ja", "ru", "en"]);
+}

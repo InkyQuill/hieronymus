@@ -27,13 +27,13 @@ use tempfile::TempDir;
 use tokio::sync::broadcast;
 use tower::ServiceExt;
 
-struct FailingBackend;
+struct FailingBackend(&'static str);
 struct FakeDreamRunner;
 
 #[async_trait]
 impl McpBackend for FailingBackend {
     async fn call(&self, _name: &str, _arguments: Value) -> anyhow::Result<Value> {
-        anyhow::bail!("injected backend failure")
+        anyhow::bail!("{}", self.0)
     }
 }
 
@@ -172,7 +172,15 @@ fn catalog_registers_the_exact_forty_unique_tool_names() {
 fn every_registered_tool_has_a_stable_object_schema() {
     let schemas = tool_catalog()
         .into_iter()
-        .map(|tool| (tool.name, tool.input_schema))
+        .map(|tool| {
+            (
+                tool.name,
+                json!({
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                }),
+            )
+        })
         .collect::<std::collections::BTreeMap<_, _>>();
 
     insta::assert_json_snapshot!("all_mcp_tool_schemas", schemas);
@@ -339,6 +347,275 @@ async fn store_backend_dispatches_registry_concept_rule_workspace_termbase_rag_a
 }
 
 #[tokio::test]
+async fn concept_list_without_series_filter_returns_mixed_scopes_flat_and_stable() {
+    let (state, _) = test_state().await;
+    let backend = StoreMcpBackend::new(state.pool, state.config);
+    backend
+        .call(
+            "hieronymus_series_create",
+            json!({"slug": "oso", "title": "OSO", "source_language": "ja", "target_language": "ru"}),
+        )
+        .await
+        .unwrap();
+    for arguments in [
+        json!({"canonical_name": "Global", "semantic_tags": ["shared"]}),
+        json!({"canonical_name": "Series", "series_slug": "oso", "semantic_tags": ["scoped"]}),
+    ] {
+        backend
+            .call("hieronymus_concept_create", arguments)
+            .await
+            .unwrap();
+    }
+
+    let rows = backend
+        .call("hieronymus_concept_list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["canonical_name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["Global", "Series"]
+    );
+    assert!(rows[0].get("record").is_none());
+    assert_eq!(rows[1]["semantic_tags"], json!(["scoped"]));
+}
+
+#[tokio::test]
+async fn concept_facet_and_crystal_results_match_the_flat_python_contract() {
+    let (state, _) = test_state().await;
+    let backend = StoreMcpBackend::new(state.pool.clone(), state.config);
+    backend
+        .call(
+            "hieronymus_series_create",
+            json!({"slug": "oso", "title": "OSO", "source_language": "ja", "target_language": "ru"}),
+        )
+        .await
+        .unwrap();
+    let concept = backend
+        .call(
+            "hieronymus_concept_create",
+            json!({
+                "canonical_name": "Holo",
+                "description": "Wise wolf",
+                "status": "established",
+                "confidence": 0.9,
+                "semantic_tags": ["character"],
+                "series_slug": "oso"
+            }),
+        )
+        .await
+        .unwrap();
+    let concept_id = concept["id"].as_i64().unwrap();
+    assert_eq!(
+        concept,
+        json!({
+            "id": concept_id,
+            "canonical_name": "Holo",
+            "description": "Wise wolf",
+            "status": "established",
+            "confidence": 0.9,
+            "scope_type": "series",
+            "scope_key": "series:oso",
+            "semantic_tags": ["character"],
+            "merged_into_concept_id": null
+        })
+    );
+    assert_eq!(
+        backend
+            .call("hieronymus_concept_get", json!({"concept_id": concept_id}),)
+            .await
+            .unwrap(),
+        concept
+    );
+    let updated = backend
+        .call(
+            "hieronymus_concept_update",
+            json!({"concept_id": concept_id, "description": "Wolf deity"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated["semantic_tags"], json!(["character"]));
+    assert!(updated.get("record").is_none());
+
+    let facet = backend
+        .call(
+            "hieronymus_concept_facet_add",
+            json!({
+                "concept_id": concept_id,
+                "value": "Холо",
+                "language": "ru",
+                "facet_type": "rendering",
+                "confidence": 0.8,
+                "is_canonical": true,
+                "story_scopes": ["volume:1"],
+                "semantic_tags": ["name"]
+            }),
+        )
+        .await
+        .unwrap();
+    let facet_id = facet["id"].as_i64().unwrap();
+    assert_eq!(
+        facet,
+        json!({
+            "id": facet_id,
+            "concept_id": concept_id,
+            "language": "ru",
+            "facet_type": "rendering",
+            "kind": "rendering",
+            "value": "Холо",
+            "confidence": 0.8,
+            "source_crystal_id": null,
+            "language_tags": ["ru"],
+            "story_scopes": ["volume:1"],
+            "semantic_tags": ["name"],
+            "is_canonical": true
+        })
+    );
+    let facet = backend
+        .call(
+            "hieronymus_concept_facet_update",
+            json!({"facet_id": facet_id, "value": "Хоро", "semantic_tags": ["alias"]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(facet["value"], "Хоро");
+    assert_eq!(facet["semantic_tags"], json!(["alias"]));
+    assert!(facet.get("record").is_none());
+
+    let now = chrono::Utc::now();
+    let crystal_id = sqlx::query("INSERT INTO crystals(crystal_type,text,title,scope_type,scope_key,series_slug,source_language,target_language,tags_json,strength,confidence,source_credibility,rule_intent,status,created_at,updated_at) VALUES('lesson','Holo memory','Holo','series','series:oso','oso','ja','ru','[]',0.8,0.9,'observation','','active',?,?)")
+        .bind(now).bind(now).execute(&state.pool).await.unwrap().last_insert_rowid();
+    let crystal = backend
+        .call(
+            "hieronymus_crystal_story_scopes_set",
+            json!({"crystal_id": crystal_id, "story_scopes": ["volume:1"], "confidence": 0.7}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        crystal,
+        json!({
+            "id": crystal_id,
+            "crystal_type": "lesson",
+            "text": "Holo memory",
+            "title": "Holo",
+            "confidence": 0.9,
+            "strength": 0.8,
+            "status": "active",
+            "source_credibility": "observation",
+            "rule_intent": "",
+            "story_scopes": ["volume:1"],
+            "semantic_tags": [],
+            "concept_ids": []
+        })
+    );
+    let crystal = backend
+        .call(
+            "hieronymus_crystal_semantic_tags_set",
+            json!({"crystal_id": crystal_id, "semantic_tags": ["character"], "confidence": 0.8}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(crystal["semantic_tags"], json!(["character"]));
+    assert!(crystal.get("record").is_none());
+    let crystal = backend
+        .call(
+            "hieronymus_crystal_link_concept",
+            json!({"crystal_id": crystal_id, "concept_id": concept_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(crystal["concept_ids"], json!([concept_id]));
+}
+
+#[tokio::test]
+async fn term_approval_uses_candidate_languages_and_default_memory_session_is_reused() {
+    let (state, _) = test_state().await;
+    let backend = StoreMcpBackend::new(state.pool.clone(), state.config);
+    backend
+        .call(
+            "hieronymus_series_create",
+            json!({"slug": "oso", "title": "OSO", "source_language": "ja", "target_language": "ru"}),
+        )
+        .await
+        .unwrap();
+    let term = backend
+        .call(
+            "hieronymus_termbase_propose",
+            json!({
+                "series_slug": "oso",
+                "source_language": "ko",
+                "target_language": "de",
+                "category": "name",
+                "source_text": "호로",
+                "canonical_translation": "Holo"
+            }),
+        )
+        .await
+        .unwrap();
+    backend
+        .call(
+            "hieronymus_termbase_approve",
+            json!({"series_slug": "oso", "term_id": term["term_id"]}),
+        )
+        .await
+        .expect("candidate context should be authoritative");
+
+    for text in ["first", "second"] {
+        backend
+            .call(
+                "hieronymus_memory_add",
+                json!({"series_slug": "oso", "kind": "note", "text": text}),
+            )
+            .await
+            .unwrap();
+    }
+    backend
+        .call(
+            "hieronymus_memory_search",
+            json!({"series_slug": "oso", "query": "first"}),
+        )
+        .await
+        .unwrap();
+    let sessions: i64 = sqlx::query_scalar("SELECT count(*) FROM task_sessions")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(sessions, 1);
+    let memories: i64 = sqlx::query_scalar("SELECT count(*) FROM short_term_memories")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(memories, 2);
+}
+
+#[tokio::test]
+async fn status_uses_shared_doctor_report_instead_of_hard_coded_ok() {
+    let (state, root) = test_state().await;
+    state.config.ensure_directories().unwrap();
+    std::fs::write(
+        root.path().join("config").join("providers.toml"),
+        "invalid = [",
+    )
+    .unwrap();
+    let backend = StoreMcpBackend::new(state.pool, state.config);
+
+    let status = backend.call("hieronymus_status", json!({})).await.unwrap();
+    assert_eq!(status["running"], true);
+    assert!(status["doctor"]["checks"].is_array());
+    assert!(
+        status["doctor"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check["status"] != "ok")
+    );
+}
+
+#[tokio::test]
 async fn production_dream_runner_executes_dream_service_with_an_injected_provider() {
     let (state, _) = test_state().await;
     state.config.ensure_directories().unwrap();
@@ -411,8 +688,53 @@ async fn production_dream_runner_reports_invalid_configuration() {
 }
 
 #[tokio::test]
-async fn http_surfaces_backend_errors_as_tool_errors() {
-    let router = axum::Router::new().nest_service("/mcp", http::service(Arc::new(FailingBackend)));
+async fn http_redacts_secret_path_sql_and_provider_body_from_backend_errors() {
+    for leak in [
+        "secret API key sk-super-secret",
+        "/home/inky/private/providers.toml",
+        "SQLITE_CONSTRAINT: raw SQL statement",
+        "provider body: account balance and prompt",
+    ] {
+        let router =
+            axum::Router::new().nest_service("/mcp", http::service(Arc::new(FailingBackend(leak))));
+        let initialize = router
+            .clone()
+            .oneshot(mcp_request(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "hiero-test", "version": "1"}
+                }
+            })))
+            .await
+            .expect("initialize should complete");
+        let session_id = initialize.headers()["mcp-session-id"].clone();
+        let mut call = mcp_request(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "hieronymus_status", "arguments": {}}
+        }));
+        call.headers_mut().insert("mcp-session-id", session_id);
+        let result = response_json(router.oneshot(call).await.unwrap()).await;
+        let text = result["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(result["result"]["isError"], true);
+        assert_eq!(text, "The tool could not complete the request.");
+        assert!(!text.contains(leak));
+    }
+}
+
+#[tokio::test]
+async fn http_preserves_classified_payload_validation_but_sanitizes_real_database_failure() {
+    let (state, _) = test_state().await;
+    let pool = state.pool.clone();
+    let router = axum::Router::new().nest_service(
+        "/mcp",
+        http::service(Arc::new(StoreMcpBackend::new(pool.clone(), state.config))),
+    );
     let initialize = router
         .clone()
         .oneshot(mcp_request(json!({
@@ -426,24 +748,37 @@ async fn http_surfaces_backend_errors_as_tool_errors() {
             }
         })))
         .await
-        .expect("initialize should complete");
+        .unwrap();
     let session_id = initialize.headers()["mcp-session-id"].clone();
-
-    let mut call = mcp_request(json!({
+    let mut invalid = mcp_request(json!({
         "jsonrpc": "2.0",
         "id": 2,
         "method": "tools/call",
-        "params": {"name": "hieronymus_status", "arguments": {}}
+        "params": {"name": "hieronymus_series_create", "arguments": {"slug": 42}}
     }));
-    call.headers_mut().insert("mcp-session-id", session_id);
-    let result = response_json(router.oneshot(call).await.unwrap()).await;
-
-    assert_eq!(result["result"]["isError"], true);
+    invalid
+        .headers_mut()
+        .insert("mcp-session-id", session_id.clone());
+    let invalid = response_json(router.clone().oneshot(invalid).await.unwrap()).await;
     assert!(
-        result["result"]["content"][0]["text"]
+        invalid["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("injected backend failure")
+            .starts_with("invalid payload for MCP tool")
+    );
+
+    pool.close().await;
+    let mut status = mcp_request(json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {"name": "hieronymus_status", "arguments": {}}
+    }));
+    status.headers_mut().insert("mcp-session-id", session_id);
+    let status = response_json(router.oneshot(status).await.unwrap()).await;
+    assert_eq!(
+        status["result"]["content"][0]["text"],
+        "The tool could not complete the request."
     );
 }
 

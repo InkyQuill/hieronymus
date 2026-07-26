@@ -14,9 +14,9 @@ pub use feedback::{FeedbackError, FeedbackEvent, FeedbackStore};
 pub use models::{
     AddConceptFacetInput, AddCrystalInput, AddMemoryInput, AddMemoryResult, Concept, ConceptFacet,
     ConceptFilter, ConceptMergeProposalInput, ConceptProposal, ContractTerm, CreateConceptInput,
-    CreateProposalInput, Crystal, MemorySource, RecallResult, RuleFilter, ShortMemoryLimits,
-    ShortTermMemory, TaskSession, TermProposal, TranslationContext, UpdateConceptFacetInput,
-    UpdateConceptInput, ValidationFinding, ValidationReport,
+    CreateConceptPrimitiveInput, CreateProposalInput, Crystal, MemorySource, RecallResult,
+    RuleFilter, ShortMemoryLimits, ShortTermMemory, TaskSession, TermProposal, TranslationContext,
+    UpdateConceptFacetInput, UpdateConceptInput, ValidationFinding, ValidationReport,
 };
 pub use rule_parser::{ParsedRule, parse_rule};
 pub use scoring::{

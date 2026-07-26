@@ -211,3 +211,110 @@ exit 0
 - The daemon injects the production `StoreDreamRunner`; provider selection uses an explicit MCP
   override when supplied, otherwise the configured workflow provider, and configuration/provider
   failures surface as MCP tool errors.
+
+## Fix Round 1
+
+Addressed all nine Important review findings without changing the rmcp 2.2 stateful transport:
+
+1. MCP tool failures now log the complete error chain server-side and return the stable
+   `The tool could not complete the request.` message. Only `SafeMcpError` payload-validation
+   failures retain classified client-safe detail. Transport tests prove API secrets, private
+   paths, SQL details, provider bodies, and a real closed-database error are redacted.
+2. An unscoped concept list now uses bounded `ConceptStore::list_all`, returning global and
+   series-scoped concepts in stable id order.
+3. Dedicated concept, facet, and crystal payload builders preserve the established flat Python
+   response contracts, including `semantic_tags`, facet `kind`, normalized side metadata, and
+   crystal concept ids. Literal JSON tests cover concept create/get/update, facet add/update, and
+   all three crystal mutation tools.
+4. `ConceptStore::create_primitive` validates and persists all concept fields and semantic-tag
+   side rows under one `BEGIN IMMEDIATE` transaction. An injected late tag trigger proves total
+   rollback; the MCP adapter calls only this boundary.
+5. Generic concept create/update accepts only `candidate` and `established`; `archived` remains
+   reachable solely through the dedicated archive operation. Core tests cover both rejection
+   paths and successful archival.
+6. Term approval loads `Termbase::candidate_context` first and derives the authoritative
+   series/language pair and persisted context metadata. The approve schema no longer accepts
+   caller-supplied languages; a non-default Korean-to-German proposal approves under a
+   Japanese-to-Russian series default.
+7. MCP status and HTTP status now share `api::system::status_report`, including the live database
+   probe and doctor report. Invalid configuration produces an actual degraded doctor check.
+8. `WorkspaceStore::get_or_start_default_session` atomically finds or inserts the matching active
+   default session. Repeated legacy memory add/search calls share one session and one context.
+9. All tool descriptions now match the Python registrations exactly. The compatibility warning is
+   restored for every decorated legacy wrapper, and descriptions are snapshotted alongside input
+   schemas.
+
+### Fix-round RED evidence
+
+```text
+concept mixed-scope RED:
+called `Option::unwrap()` on a `None` value
+
+flat response RED:
+left contained timestamps and omitted semantic_tags
+right was the established flat MCP object
+
+term approval RED:
+term approve conflicted with existing state:
+term series and language pair do not match the termbase context
+
+status RED:
+left: null
+right: true
+
+sanitization RED:
+left: "secret API key sk-super-secret"
+right: "The tool could not complete the request."
+
+core atomic API RED:
+unresolved import `CreateConceptPrimitiveInput`
+no method named `create_primitive` or `list_all`
+
+default-session RED:
+no method named `get_or_start_default_session`
+
+candidate-context RED:
+no associated item named `candidate_context`
+```
+
+### Fix-round GREEN evidence
+
+```text
+$ cargo test -p hiero-bin --test test_mcp
+running 13 tests
+test result: ok. 13 passed; 0 failed
+
+$ cargo test -p hiero-core --test test_concepts
+running 12 tests
+test result: ok. 12 passed; 0 failed
+
+$ cargo test -p hiero-core --test test_memory
+running 20 tests
+test result: ok. 20 passed; 0 failed
+
+$ cargo test -p hiero-core --test test_termbase
+running 13 tests
+test result: ok. 13 passed; 0 failed
+```
+
+### Fix-round final gates
+
+```text
+$ cargo fmt --all --check
+exit 0
+
+$ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+Finished `dev` profile
+exit 0
+
+$ cargo test --workspace --all-features --locked
+all unit, integration, snapshot, command, and doc tests passed
+exit 0
+
+$ cargo doc --workspace --no-deps --all-features --locked
+Generated target/doc/hiero_bin/index.html and 2 other files
+exit 0
+
+$ git diff --check
+exit 0
+```

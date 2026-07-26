@@ -101,56 +101,54 @@ impl<'a> WorkspaceStore<'a> {
         let mut transaction = begin_immediate(self.pool, "start session").await?;
         let result = async {
             validate_series(&mut transaction, &context).await?;
-            let now = Utc::now();
-            let inserted = sqlx::query(
-                "INSERT INTO task_sessions(series_slug, source_language, target_language, task_type, volume, chapter, status, created_at, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
+            insert_session_in(
+                &mut transaction,
+                &context,
+                &task_type,
+                volume,
+                chapter,
+                "start session",
+            )
+            .await
+        }
+        .await;
+        let id = commit_write(transaction, "start session", result).await?;
+        self.get_session(id).await
+    }
+
+    pub async fn get_or_start_default_session(
+        &self,
+        ctx: &TranslationContext,
+    ) -> Result<TaskSession> {
+        let context = ValidatedContext::try_from(ctx)?;
+        let mut transaction = begin_immediate(self.pool, "default session").await?;
+        let result = async {
+            validate_series(&mut transaction, &context).await?;
+            let existing: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM task_sessions WHERE series_slug = ? AND source_language = ? AND target_language = ? AND task_type = 'translation' AND volume = '' AND chapter = '' AND status = 'active' ORDER BY id LIMIT 1",
             )
             .bind(&context.series_slug)
             .bind(&context.source_language)
             .bind(&context.target_language)
-            .bind(task_type)
-            .bind(volume)
-            .bind(chapter)
-            .bind(now)
-            .bind(now)
-            .execute(&mut *transaction)
+            .fetch_optional(&mut *transaction)
             .await
-            .map_err(|source| database("start session", source))?;
-            let id = inserted.last_insert_rowid();
-            insert_text_values(
-                &mut transaction,
-                "task_session_language_tags",
-                "session_id",
-                id,
-                "language_tag",
-                &context.language_tags,
-                "start session",
-            )
-            .await?;
-            insert_text_values(
-                &mut transaction,
-                "task_session_story_scopes",
-                "session_id",
-                id,
-                "story_scope",
-                &context.story_scopes,
-                "start session",
-            )
-            .await?;
-            insert_text_values(
-                &mut transaction,
-                "task_session_semantic_tags",
-                "session_id",
-                id,
-                "semantic_tag",
-                &context.semantic_tags,
-                "start session",
-            )
-            .await?;
-            Ok(id)
+            .map_err(|source| database("default session", source))?;
+            if let Some(id) = existing {
+                Ok(id)
+            } else {
+                insert_session_in(
+                    &mut transaction,
+                    &context,
+                    "translation",
+                    "",
+                    "",
+                    "default session",
+                )
+                .await
+            }
         }
         .await;
-        let id = commit_write(transaction, "start session", result).await?;
+        let id = commit_write(transaction, "default session", result).await?;
         self.get_session(id).await
     }
 
@@ -831,6 +829,61 @@ async fn load_text_metadata(
         }
     }
     Ok(values)
+}
+
+async fn insert_session_in(
+    connection: &mut SqliteConnection,
+    context: &ValidatedContext,
+    task_type: &str,
+    volume: &str,
+    chapter: &str,
+    operation: &'static str,
+) -> Result<i64> {
+    let now = Utc::now();
+    let id = sqlx::query(
+        "INSERT INTO task_sessions(series_slug, source_language, target_language, task_type, volume, chapter, status, created_at, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
+    )
+    .bind(&context.series_slug)
+    .bind(&context.source_language)
+    .bind(&context.target_language)
+    .bind(task_type)
+    .bind(volume)
+    .bind(chapter)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *connection)
+    .await
+    .map_err(|source| database(operation, source))?
+    .last_insert_rowid();
+    for (table, column, values) in [
+        (
+            "task_session_language_tags",
+            "language_tag",
+            context.language_tags.as_slice(),
+        ),
+        (
+            "task_session_story_scopes",
+            "story_scope",
+            context.story_scopes.as_slice(),
+        ),
+        (
+            "task_session_semantic_tags",
+            "semantic_tag",
+            context.semantic_tags.as_slice(),
+        ),
+    ] {
+        insert_text_values(
+            connection,
+            table,
+            "session_id",
+            id,
+            column,
+            values,
+            operation,
+        )
+        .await?;
+    }
+    Ok(id)
 }
 
 async fn ensure_session(pool: &SqlitePool, id: i64) -> Result<()> {

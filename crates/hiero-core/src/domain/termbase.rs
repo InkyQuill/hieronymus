@@ -50,6 +50,36 @@ impl<'a> Termbase<'a> {
         Self { pool, context }
     }
 
+    pub async fn candidate_context(pool: &SqlitePool, id: i64) -> Result<TranslationContext> {
+        let term = sqlx::query_as::<_, TermRow>("SELECT id,text,scope_type,scope_key,series_slug,source_language,target_language,tags_json,strength,confidence,rule_intent,status FROM crystals WHERE id=? AND trim(rule_intent)<>''")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|source| database("load candidate context", source))?
+            .ok_or(TermbaseError::NotFound { id })?;
+        validate_persisted_term(&term)?;
+        let story_scopes = sqlx::query_scalar::<_, String>(
+            "SELECT scope FROM crystal_story_scopes WHERE crystal_id = ? ORDER BY rowid",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .map_err(|source| database("load candidate context", source))?;
+        let semantic_tags = sqlx::query_scalar::<_, String>(
+            "SELECT tag FROM crystal_semantic_tags WHERE crystal_id = ? ORDER BY rowid",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .map_err(|source| database("load candidate context", source))?;
+        let tags = serde_json::from_str::<Vec<String>>(&term.tags_json)
+            .map_err(|source| TermbaseError::Json { source })?;
+        Ok(
+            TranslationContext::new(term.series_slug, term.source_language, term.target_language)
+                .with_metadata(&[], &story_scopes, &semantic_tags, &tags),
+        )
+    }
+
     pub async fn propose(&self, input: TermProposal) -> Result<i64> {
         let input = validate_proposal(input)?;
         if input.series_slug != self.context.series_slug

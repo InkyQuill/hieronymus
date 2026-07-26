@@ -7,7 +7,8 @@ use crate::db::{ConceptFacetRecord, ConceptProposalRecord, ConceptRecord};
 
 use super::models::{
     AddConceptFacetInput, Concept, ConceptFacet, ConceptFilter, ConceptProposal,
-    CreateConceptInput, CreateProposalInput, UpdateConceptFacetInput, UpdateConceptInput,
+    CreateConceptInput, CreateConceptPrimitiveInput, CreateProposalInput, UpdateConceptFacetInput,
+    UpdateConceptInput,
 };
 
 const CONCEPT_COLUMNS: &str = "id, canonical_name, description, scope_type, scope_key, status, confidence, merged_into_concept_id, created_at, updated_at";
@@ -79,6 +80,49 @@ impl<'a> ConceptStore<'a> {
         commit_write(transaction, "create", result).await
     }
 
+    pub async fn create_primitive(&self, input: CreateConceptPrimitiveInput) -> Result<Concept> {
+        let base = validate_concept_input(CreateConceptInput {
+            canonical_name: input.canonical_name,
+            scope_type: input.scope_type,
+            scope_key: input.scope_key,
+        })?;
+        let description = input.description.trim().to_owned();
+        let status = validate_status(&input.status)?;
+        let confidence = validate_confidence(input.confidence, "confidence")?;
+        let semantic_tags = clean_values(&input.semantic_tags, false);
+        let mut transaction = begin_immediate(self.pool, "create primitive").await?;
+        let result = async {
+            let now = Utc::now();
+            let id = sqlx::query("INSERT INTO concepts(canonical_name, description, scope_type, scope_key, status, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind(&base.canonical_name)
+                .bind(description)
+                .bind(&base.scope_type)
+                .bind(&base.scope_key)
+                .bind(status)
+                .bind(confidence)
+                .bind(now)
+                .bind(now)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|source| database("create primitive", source))?
+                .last_insert_rowid();
+            for tag in semantic_tags {
+                sqlx::query("INSERT INTO concept_semantic_tags(concept_id, tag, confidence, created_at) VALUES (?, ?, ?, ?)")
+                    .bind(id)
+                    .bind(tag)
+                    .bind(confidence)
+                    .bind(now)
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(|source| database("create primitive", source))?;
+            }
+            Ok(id)
+        }
+        .await;
+        let id = commit_write(transaction, "create primitive", result).await?;
+        self.get_enriched(id).await
+    }
+
     pub async fn get(&self, id: i64) -> Result<ConceptRecord> {
         sqlx::query_as::<_, ConceptRecord>(AssertSqlSafe(format!(
             "SELECT {CONCEPT_COLUMNS} FROM concepts WHERE id = ?"
@@ -146,6 +190,21 @@ impl<'a> ConceptStore<'a> {
             .fetch_all(self.pool)
             .await
             .map_err(|source| database("list", source))?;
+        hydrate_concepts(self.pool, records).await
+    }
+
+    pub async fn list_all(&self, status: Option<String>) -> Result<Vec<Concept>> {
+        if let Some(status) = status.as_deref() {
+            validate_list_status(status)?;
+        }
+        let records = sqlx::query_as::<_, ConceptRecord>(AssertSqlSafe(format!(
+            "SELECT {CONCEPT_COLUMNS} FROM concepts WHERE (? IS NULL OR status = ?) ORDER BY id LIMIT 1000"
+        )))
+        .bind(status.as_deref())
+        .bind(status.as_deref())
+        .fetch_all(self.pool)
+        .await
+        .map_err(|source| database("list all", source))?;
         hydrate_concepts(self.pool, records).await
     }
 
@@ -936,19 +995,21 @@ fn validate_concept_input(mut input: CreateConceptInput) -> Result<CreateConcept
 }
 fn validate_filter(filter: &ConceptFilter) -> Result<()> {
     validate_scope(&filter.scope_type, &filter.scope_key)?;
-    if let Some(status) = &filter.status
-        && !matches!(
-            status.as_str(),
-            "candidate" | "established" | "archived" | "merged"
-        )
-    {
-        return Err(invalid("status", "is unknown"));
+    if let Some(status) = &filter.status {
+        validate_list_status(status)?;
     }
     Ok(())
 }
+fn validate_list_status(status: &str) -> Result<()> {
+    if matches!(status, "candidate" | "established" | "archived" | "merged") {
+        Ok(())
+    } else {
+        Err(invalid("status", "is unknown"))
+    }
+}
 fn validate_status(value: &str) -> Result<String> {
     let value = value.trim();
-    if matches!(value, "candidate" | "established" | "archived") {
+    if matches!(value, "candidate" | "established") {
         Ok(value.to_owned())
     } else {
         Err(invalid("status", "is unknown or cannot be set directly"))

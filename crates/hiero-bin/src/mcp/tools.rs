@@ -250,8 +250,6 @@ pub(crate) struct TermProposeInput {
 pub(crate) struct TermApproveInput {
     pub series_slug: String,
     pub term_id: i64,
-    pub source_language: Option<String>,
-    pub target_language: Option<String>,
     #[serde(default)]
     pub volume: String,
     #[serde(default)]
@@ -427,28 +425,62 @@ pub(crate) struct RecallFeedbackInput {
 }
 
 pub fn tool_catalog() -> Vec<ToolContract> {
+    const COMPATIBILITY: &str = "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.";
     let mut tools = vec![
-        contract::<NoArgs>("hieronymus_status", "Report the local service status."),
-        contract::<SeriesCreateInput>("hieronymus_series_create", "Create or update a series."),
-        contract::<SeriesCreateInput>("hieronymus_series_init", "Initialize a series workspace."),
-        contract::<NoArgs>("hieronymus_series_list", "List registered series."),
+        contract::<NoArgs>(
+            "hieronymus_status",
+            "Report MCP adapter mode and discovered local service status.",
+        ),
+        contract::<SeriesCreateInput>(
+            "hieronymus_series_create",
+            "Create or update a language-neutral series.",
+        ),
+        contract::<SeriesCreateInput>("hieronymus_series_init", COMPATIBILITY),
+        contract::<NoArgs>(
+            "hieronymus_series_list",
+            "List registered series with language tags.",
+        ),
         contract::<SeriesTagsInput>(
             "hieronymus_series_set_language_tags",
-            "Replace series language tags.",
+            "Replace language tags for a series without changing compatibility fields.",
         ),
-        contract::<ConceptListInput>("hieronymus_concept_list", "List concepts."),
-        contract::<ConceptIdInput>("hieronymus_concept_get", "Get one concept."),
-        contract::<ConceptCreateInput>("hieronymus_concept_create", "Create a concept."),
-        contract::<ConceptUpdateInput>("hieronymus_concept_update", "Update concept metadata."),
-        contract::<ConceptArchiveInput>("hieronymus_concept_archive", "Archive a concept."),
-        contract::<ConceptMergeInput>("hieronymus_concept_merge", "Merge concepts."),
-        contract::<ConceptRenameInput>("hieronymus_concept_rename", "Rename a concept."),
-        contract::<FacetAddInput>("hieronymus_concept_facet_add", "Add a concept facet."),
-        contract::<FacetUpdateInput>("hieronymus_concept_facet_update", "Update a concept facet."),
-        contract::<ConceptIdInput>("hieronymus_concept_facet_list", "List concept facets."),
+        contract::<ConceptListInput>(
+            "hieronymus_concept_list",
+            "List concepts with optional status, tag, and series-scope filters.",
+        ),
+        contract::<ConceptIdInput>("hieronymus_concept_get", "Get one concept by id."),
+        contract::<ConceptCreateInput>("hieronymus_concept_create", "Create a concept primitive."),
+        contract::<ConceptUpdateInput>(
+            "hieronymus_concept_update",
+            "Update concept mutable metadata.",
+        ),
+        contract::<ConceptArchiveInput>(
+            "hieronymus_concept_archive",
+            "Archive a concept so recall and strict rule logic stop using it.",
+        ),
+        contract::<ConceptMergeInput>(
+            "hieronymus_concept_merge",
+            "Merge one concept into another active concept.",
+        ),
+        contract::<ConceptRenameInput>(
+            "hieronymus_concept_rename",
+            "Rename a concept while retaining the old name as a former-label facet.",
+        ),
+        contract::<FacetAddInput>(
+            "hieronymus_concept_facet_add",
+            "Add a multilingual concept facet.",
+        ),
+        contract::<FacetUpdateInput>(
+            "hieronymus_concept_facet_update",
+            "Update a concept facet primitive.",
+        ),
+        contract::<ConceptIdInput>(
+            "hieronymus_concept_facet_list",
+            "List active facets for a concept.",
+        ),
         contract::<FacetCanonicalInput>(
             "hieronymus_concept_facet_set_canonical",
-            "Set a canonical facet.",
+            "Set one concept facet as canonical for its concept.",
         ),
         contract::<ConceptTagsInput>(
             "hieronymus_concept_semantic_tags_set",
@@ -456,7 +488,7 @@ pub fn tool_catalog() -> Vec<ToolContract> {
         ),
         contract::<CrystalLinkInput>(
             "hieronymus_crystal_link_concept",
-            "Link a crystal to a concept.",
+            "Link a long-term crystal to a concept.",
         ),
         contract::<CrystalScopesInput>(
             "hieronymus_crystal_story_scopes_set",
@@ -468,44 +500,56 @@ pub fn tool_catalog() -> Vec<ToolContract> {
         ),
         contract::<RuleListInput>(
             "hieronymus_rule_crystals_list",
-            "List crystals with non-empty rule intent.",
+            "List rule crystals for review.",
         ),
         contract::<CrystalIdInput>("hieronymus_rule_crystal_archive", "Archive a rule crystal."),
         contract::<CrystalIdInput>(
             "hieronymus_rule_crystal_validate",
-            "Validate a rule crystal.",
+            "Validate rule-crystal shape and deterministic enforceability.",
         ),
-        contract::<ContextTextInput>(
-            "hieronymus_termbase_contract",
-            "Return required approved terms.",
+        contract::<ContextTextInput>("hieronymus_termbase_contract", COMPATIBILITY),
+        contract::<ValidateTextInput>("hieronymus_termbase_validate", COMPATIBILITY),
+        contract::<TermProposeInput>("hieronymus_termbase_propose", COMPATIBILITY),
+        contract::<TermApproveInput>("hieronymus_termbase_approve", COMPATIBILITY),
+        contract::<MemorySearchInput>("hieronymus_memory_search", COMPATIBILITY),
+        contract::<RagImportInput>(
+            "hieronymus_rag_import",
+            "Import a text, markdown, or glossary file into the project RAG store.",
         ),
-        contract::<ValidateTextInput>(
-            "hieronymus_termbase_validate",
-            "Validate translated terminology.",
+        contract::<RagSearchInput>(
+            "hieronymus_rag_search",
+            "Search project RAG chunks for a series.",
         ),
-        contract::<TermProposeInput>("hieronymus_termbase_propose", "Propose a term."),
-        contract::<TermApproveInput>("hieronymus_termbase_approve", "Approve a term."),
-        contract::<MemorySearchInput>("hieronymus_memory_search", "Search translation memory."),
-        contract::<RagImportInput>("hieronymus_rag_import", "Import a RAG source."),
-        contract::<RagSearchInput>("hieronymus_rag_search", "Search RAG chunks."),
-        contract::<MemoryAddInput>("hieronymus_memory_add", "Add user memory."),
-        contract::<SessionStartInput>("hieronymus_session_start", "Start a workflow session."),
+        contract::<MemoryAddInput>("hieronymus_memory_add", COMPATIBILITY),
+        contract::<SessionStartInput>(
+            "hieronymus_session_start",
+            "Start an agent workflow session for a translation context.",
+        ),
         contract::<SessionIdInput>(
             "hieronymus_session_complete",
-            "Complete a workflow session.",
+            "Complete an agent workflow session so it can be dreamed.",
         ),
-        contract::<ShortAddInput>("hieronymus_short_term_add", "Add short-term memory."),
+        contract::<ShortAddInput>(
+            "hieronymus_short_term_add",
+            "Add a short-term memory to an active session.\n\nsource_role is an optional freeform provenance label. It does not control dreaming's\ncrystal type or confidence; use source_credibility and rule_intent for those signals.",
+        ),
         contract::<ShortBatchInput>(
             "hieronymus_short_term_add_batch",
-            "Atomically add short-term memories.",
+            "Atomically add up to 500 short-term memories to one active session.\n\nEach item requires kind and text. source_role is optional freeform provenance metadata and\ndefaults to agent; it does not control dreaming's categorization or confidence.",
         ),
-        contract::<RecallInput>("hieronymus_recall", "Recall memory for a stored session."),
-        contract::<FeedbackInput>("hieronymus_feedback", "Record correction feedback."),
-        contract::<DreamInput>("hieronymus_dream", "Run a dream cycle."),
-        contract::<NoArgs>(
-            "hieronymus_concept_proposals_list",
-            "List pending concept proposals.",
+        contract::<RecallInput>(
+            "hieronymus_recall",
+            "Recall long-term crystals and active short-term memories for a stored session.",
         ),
+        contract::<FeedbackInput>(
+            "hieronymus_feedback",
+            "Record user correction feedback as short-term memory.",
+        ),
+        contract::<DreamInput>(
+            "hieronymus_dream",
+            "Run dreaming over all pending completed-session memories.",
+        ),
+        contract::<NoArgs>("hieronymus_concept_proposals_list", COMPATIBILITY),
         contract::<RecallFeedbackInput>(
             "hieronymus_recall_feedback",
             "After acting on hieronymus_recall results, report crystal ids as {useful: [...], miss: [...]} to record activation outcomes.",

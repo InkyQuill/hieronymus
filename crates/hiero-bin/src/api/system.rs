@@ -6,6 +6,7 @@ use axum::{
 };
 use hiero_core::doctor::{DoctorReport, run_doctor};
 use serde::Serialize;
+use sqlx::SqlitePool;
 
 use crate::daemon::{AppState, RequestId};
 
@@ -20,8 +21,8 @@ pub(crate) struct HealthResponse {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct StatusResponse {
-    running: bool,
-    doctor: DoctorReport,
+    pub(crate) running: bool,
+    pub(crate) doctor: DoctorReport,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,17 +43,27 @@ pub(crate) async fn status(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
 ) -> Result<Json<StatusResponse>, ApiError> {
-    sqlx::query_scalar::<_, i64>("SELECT 1")
-        .fetch_one(&state.pool)
-        .await
-        .map_err(|error| ApiError::internal(request_id.clone(), &error))?;
-    let doctor = tokio::time::timeout(Duration::from_secs(5), run_doctor(&state.config))
+    let report = status_report(&state.pool, &state.config)
         .await
         .map_err(|error| ApiError::internal(request_id, &error))?;
-    Ok(Json(StatusResponse {
+    Ok(Json(report))
+}
+
+pub(crate) async fn status_report(
+    pool: &SqlitePool,
+    config: &hiero_core::config::HieronymusConfig,
+) -> anyhow::Result<StatusResponse> {
+    sqlx::query_scalar::<_, i64>("SELECT 1")
+        .fetch_one(pool)
+        .await
+        .map_err(anyhow::Error::from)?;
+    let doctor = tokio::time::timeout(Duration::from_secs(5), run_doctor(config))
+        .await
+        .map_err(anyhow::Error::from)?;
+    Ok(StatusResponse {
         running: true,
         doctor,
-    }))
+    })
 }
 
 pub(crate) async fn shutdown(State(state): State<AppState>) -> Json<ShutdownResponse> {

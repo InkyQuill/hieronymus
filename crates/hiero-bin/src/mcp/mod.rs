@@ -17,6 +17,12 @@ use serde_json::Value;
 pub use backend::{DreamRunner, McpBackend, StoreDreamRunner, StoreMcpBackend};
 pub use tools::{ToolContract, tool_catalog};
 
+const SANITIZED_TOOL_ERROR: &str = "The tool could not complete the request.";
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(crate) struct SafeMcpError(pub(crate) String);
+
 #[derive(Clone)]
 pub struct McpServer {
     backend: Arc<dyn McpBackend>,
@@ -89,9 +95,17 @@ impl ServerHandler for McpServer {
         let arguments = Value::Object(request.arguments.unwrap_or_default());
         match self.backend.call(request.name.as_ref(), arguments).await {
             Ok(value) => Ok(CallToolResult::structured(value)),
-            Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(
-                error.to_string(),
-            )])),
+            Err(error) => {
+                tracing::error!(
+                    tool = request.name.as_ref(),
+                    error = ?error,
+                    "MCP tool backend failed"
+                );
+                let message = error
+                    .downcast_ref::<SafeMcpError>()
+                    .map_or(SANITIZED_TOOL_ERROR, |safe| safe.0.as_str());
+                Ok(CallToolResult::error(vec![ContentBlock::text(message)]))
+            }
         }
     }
 }

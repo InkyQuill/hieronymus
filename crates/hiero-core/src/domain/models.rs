@@ -279,6 +279,31 @@ pub struct CreateConceptInput {
     pub scope_key: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateConceptPrimitiveInput {
+    pub canonical_name: String,
+    pub description: String,
+    pub status: String,
+    pub confidence: f64,
+    pub scope_type: String,
+    pub scope_key: String,
+    pub semantic_tags: Vec<String>,
+}
+
+impl Default for CreateConceptPrimitiveInput {
+    fn default() -> Self {
+        Self {
+            canonical_name: String::new(),
+            description: String::new(),
+            status: "candidate".into(),
+            confidence: 0.2,
+            scope_type: "global".into(),
+            scope_key: String::new(),
+            semantic_tags: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UpdateConceptInput {
     pub description: Option<String>,

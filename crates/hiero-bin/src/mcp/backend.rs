@@ -5,9 +5,10 @@ use async_trait::async_trait;
 use hiero_core::{
     config::HieronymusConfig,
     domain::{
-        AddConceptFacetInput, AddMemoryInput, ConceptFilter, ConceptProposalStore, ConceptStore,
-        CreateConceptInput, CrystalStore, FeedbackStore, RuleFilter, TermProposal, Termbase,
-        TranslationContext, UpdateConceptFacetInput, UpdateConceptInput, WorkspaceStore,
+        AddConceptFacetInput, AddMemoryInput, Concept, ConceptFacet, ConceptFilter,
+        ConceptProposalStore, ConceptStore, CreateConceptPrimitiveInput, Crystal, CrystalStore,
+        FeedbackStore, RuleFilter, TermProposal, Termbase, TranslationContext,
+        UpdateConceptFacetInput, UpdateConceptInput, WorkspaceStore,
     },
     dreaming::{
         CycleOptions, DreamConfig, DreamPhaseError, DreamProviderResolver, DreamService,
@@ -22,7 +23,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
-use super::tools::*;
+use super::{SafeMcpError, tools::*};
 
 #[async_trait]
 pub trait McpBackend: Send + Sync {
@@ -190,14 +191,6 @@ impl StoreMcpBackend {
             ),
         )
     }
-
-    async fn default_session(&self, context: &TranslationContext) -> Result<i64> {
-        let workspace = WorkspaceStore::new(&self.pool);
-        let session = workspace
-            .start_session(context, "translation", "", "")
-            .await?;
-        Ok(session.id)
-    }
 }
 
 #[async_trait]
@@ -215,7 +208,7 @@ impl McpBackend for StoreMcpBackend {
         match name {
             "hieronymus_status" => {
                 let _: NoArgs = input!(NoArgs);
-                Ok(json!({"mode": "rust", "status": "ok"}))
+                json_value(crate::api::system::status_report(&self.pool, &self.config).await?)
             }
             "hieronymus_series_create" | "hieronymus_series_init" => {
                 let input: SeriesCreateInput = input!(SeriesCreateInput);
@@ -277,23 +270,21 @@ impl McpBackend for StoreMcpBackend {
                     }
                     rows
                 } else {
-                    concepts
-                        .list(ConceptFilter {
-                            scope_type: "global".into(),
-                            scope_key: String::new(),
-                            status: input.status,
-                        })
-                        .await?
+                    concepts.list_all(input.status).await?
                 };
                 if let Some(tag) = input.semantic_tag {
                     rows.retain(|concept| concept.semantic_tags.contains(&tag));
                 }
                 rows.sort_by_key(|concept| concept.id);
-                json_value(rows)
+                Ok(Value::Array(
+                    rows.iter().map(concept_payload).collect::<Vec<_>>(),
+                ))
             }
             "hieronymus_concept_get" => {
                 let input: ConceptIdInput = input!(ConceptIdInput);
-                json_value(concepts.get_enriched(input.concept_id).await?)
+                Ok(concept_payload(
+                    &concepts.get_enriched(input.concept_id).await?,
+                ))
             }
             "hieronymus_concept_create" => {
                 let input: ConceptCreateInput = input!(ConceptCreateInput);
@@ -304,46 +295,40 @@ impl McpBackend for StoreMcpBackend {
                     ("series".into(), format!("series:{}", input.series_slug))
                 };
                 let created = concepts
-                    .create(CreateConceptInput {
+                    .create_primitive(CreateConceptPrimitiveInput {
                         canonical_name: input.canonical_name,
+                        description: input.description,
+                        status: input.status,
+                        confidence: input.confidence,
                         scope_type,
                         scope_key,
+                        semantic_tags: input.semantic_tags,
                     })
                     .await?;
-                let updated = concepts
-                    .update(
-                        created.id,
-                        UpdateConceptInput {
-                            description: Some(input.description),
-                            status: Some(input.status),
-                            confidence: Some(input.confidence),
-                        },
-                    )
-                    .await?;
-                concepts
-                    .set_semantic_tags(created.id, &input.semantic_tags)
-                    .await?;
-                json_value(updated)
+                Ok(concept_payload(&created))
             }
             "hieronymus_concept_update" => {
                 let input: ConceptUpdateInput = input!(ConceptUpdateInput);
-                json_value(
-                    concepts
-                        .update(
-                            input.concept_id,
-                            UpdateConceptInput {
-                                description: input.description,
-                                status: input.status,
-                                confidence: input.confidence,
-                            },
-                        )
-                        .await?,
-                )
+                concepts
+                    .update(
+                        input.concept_id,
+                        UpdateConceptInput {
+                            description: input.description,
+                            status: input.status,
+                            confidence: input.confidence,
+                        },
+                    )
+                    .await?;
+                Ok(concept_payload(
+                    &concepts.get_enriched(input.concept_id).await?,
+                ))
             }
             "hieronymus_concept_archive" => {
                 let input: ConceptArchiveInput = input!(ConceptArchiveInput);
                 concepts.archive(input.concept_id, &input.reason).await?;
-                json_value(concepts.get(input.concept_id).await?)
+                Ok(concept_payload(
+                    &concepts.get_enriched(input.concept_id).await?,
+                ))
             }
             "hieronymus_concept_merge" => {
                 let input: ConceptMergeInput = input!(ConceptMergeInput);
@@ -355,22 +340,23 @@ impl McpBackend for StoreMcpBackend {
                     )
                     .await?;
                 Ok(json!({
-                    "source": concepts.get(input.source_concept_id).await?,
-                    "target": concepts.get(input.target_concept_id).await?,
+                    "source": concept_payload(&concepts.get_enriched(input.source_concept_id).await?),
+                    "target": concept_payload(&concepts.get_enriched(input.target_concept_id).await?),
                 }))
             }
             "hieronymus_concept_rename" => {
                 let input: ConceptRenameInput = input!(ConceptRenameInput);
-                json_value(
-                    concepts
-                        .rename_concept_with_source(
-                            input.concept_id,
-                            &input.new_label,
-                            "mcp",
-                            input.source_crystal_id,
-                        )
-                        .await?,
-                )
+                concepts
+                    .rename_concept_with_source(
+                        input.concept_id,
+                        &input.new_label,
+                        "mcp",
+                        input.source_crystal_id,
+                    )
+                    .await?;
+                Ok(concept_payload(
+                    &concepts.get_enriched(input.concept_id).await?,
+                ))
             }
             "hieronymus_concept_facet_add" => {
                 let input: FacetAddInput = input!(FacetAddInput);
@@ -378,47 +364,64 @@ impl McpBackend for StoreMcpBackend {
                     .facet_type
                     .or(input.kind)
                     .unwrap_or_else(|| "name".into());
-                json_value(
-                    concepts
-                        .add_facet_typed(AddConceptFacetInput {
-                            concept_id: input.concept_id,
-                            language: input.language,
-                            facet_type,
+                let facet = concepts
+                    .add_facet_typed(AddConceptFacetInput {
+                        concept_id: input.concept_id,
+                        language: input.language,
+                        facet_type,
+                        value: input.value,
+                        language_tags: input.language_tags,
+                        story_scopes: input.story_scopes,
+                        semantic_tags: input.semantic_tags,
+                        source_crystal_id: input.source_crystal_id,
+                        confidence: input.confidence,
+                        is_canonical: input.is_canonical,
+                    })
+                    .await?;
+                let facet = concepts
+                    .list_facets(facet.concept_id)
+                    .await?
+                    .into_iter()
+                    .find(|candidate| candidate.id == facet.id)
+                    .ok_or_else(|| anyhow!("created facet disappeared"))?;
+                Ok(facet_payload(&facet))
+            }
+            "hieronymus_concept_facet_update" => {
+                let input: FacetUpdateInput = input!(FacetUpdateInput);
+                let facet = concepts
+                    .update_facet_typed(
+                        input.facet_id,
+                        UpdateConceptFacetInput {
                             value: input.value,
+                            language: input.language,
+                            facet_type: input.facet_type.or(input.kind),
                             language_tags: input.language_tags,
                             story_scopes: input.story_scopes,
                             semantic_tags: input.semantic_tags,
                             source_crystal_id: input.source_crystal_id,
                             confidence: input.confidence,
                             is_canonical: input.is_canonical,
-                        })
-                        .await?,
-                )
-            }
-            "hieronymus_concept_facet_update" => {
-                let input: FacetUpdateInput = input!(FacetUpdateInput);
-                json_value(
-                    concepts
-                        .update_facet_typed(
-                            input.facet_id,
-                            UpdateConceptFacetInput {
-                                value: input.value,
-                                language: input.language,
-                                facet_type: input.facet_type.or(input.kind),
-                                language_tags: input.language_tags,
-                                story_scopes: input.story_scopes,
-                                semantic_tags: input.semantic_tags,
-                                source_crystal_id: input.source_crystal_id,
-                                confidence: input.confidence,
-                                is_canonical: input.is_canonical,
-                            },
-                        )
-                        .await?,
-                )
+                        },
+                    )
+                    .await?;
+                let facet = concepts
+                    .list_facets(facet.concept_id)
+                    .await?
+                    .into_iter()
+                    .find(|candidate| candidate.id == facet.id)
+                    .ok_or_else(|| anyhow!("updated facet disappeared"))?;
+                Ok(facet_payload(&facet))
             }
             "hieronymus_concept_facet_list" => {
                 let input: ConceptIdInput = input!(ConceptIdInput);
-                json_value(concepts.list_facets(input.concept_id).await?)
+                Ok(Value::Array(
+                    concepts
+                        .list_facets(input.concept_id)
+                        .await?
+                        .iter()
+                        .map(facet_payload)
+                        .collect(),
+                ))
             }
             "hieronymus_concept_facet_set_canonical" => {
                 let input: FacetCanonicalInput = input!(FacetCanonicalInput);
@@ -437,14 +440,16 @@ impl McpBackend for StoreMcpBackend {
                     .into_iter()
                     .find(|facet| facet.id == input.facet_id)
                     .ok_or_else(|| anyhow!("canonical facet disappeared after update"))?;
-                json_value(facet)
+                Ok(facet_payload(&facet))
             }
             "hieronymus_concept_semantic_tags_set" => {
                 let input: ConceptTagsInput = input!(ConceptTagsInput);
                 concepts
                     .set_semantic_tags(input.concept_id, &input.semantic_tags)
                     .await?;
-                json_value(concepts.get_enriched(input.concept_id).await?)
+                Ok(concept_payload(
+                    &concepts.get_enriched(input.concept_id).await?,
+                ))
             }
             "hieronymus_crystal_link_concept" => {
                 let input: CrystalLinkInput = input!(CrystalLinkInput);
@@ -456,31 +461,29 @@ impl McpBackend for StoreMcpBackend {
                         input.confidence,
                     )
                     .await?;
-                json_value(crystals.get(input.crystal_id).await?)
+                Ok(crystal_payload(&crystals.get(input.crystal_id).await?))
             }
             "hieronymus_crystal_story_scopes_set" => {
                 let input: CrystalScopesInput = input!(CrystalScopesInput);
-                json_value(
-                    crystals
-                        .set_story_scopes_with_confidence(
-                            input.crystal_id,
-                            &input.story_scopes,
-                            input.confidence,
-                        )
-                        .await?,
-                )
+                crystals
+                    .set_story_scopes_with_confidence(
+                        input.crystal_id,
+                        &input.story_scopes,
+                        input.confidence,
+                    )
+                    .await?;
+                Ok(crystal_payload(&crystals.get(input.crystal_id).await?))
             }
             "hieronymus_crystal_semantic_tags_set" => {
                 let input: CrystalTagsInput = input!(CrystalTagsInput);
-                json_value(
-                    crystals
-                        .set_semantic_tags_with_confidence(
-                            input.crystal_id,
-                            &input.semantic_tags,
-                            input.confidence,
-                        )
-                        .await?,
-                )
+                crystals
+                    .set_semantic_tags_with_confidence(
+                        input.crystal_id,
+                        &input.semantic_tags,
+                        input.confidence,
+                    )
+                    .await?;
+                Ok(crystal_payload(&crystals.get(input.crystal_id).await?))
             }
             "hieronymus_rule_crystals_list" => {
                 let input: RuleListInput = input!(RuleListInput);
@@ -563,15 +566,30 @@ impl McpBackend for StoreMcpBackend {
             }
             "hieronymus_termbase_approve" => {
                 let input: TermApproveInput = input!(TermApproveInput);
-                let context = self
-                    .translation_context(
-                        &input.series_slug,
-                        input.source_language.as_deref(),
-                        input.target_language.as_deref(),
-                        &input.volume,
-                        &input.chapter,
-                    )
-                    .await?;
+                let mut context = Termbase::candidate_context(&self.pool, input.term_id).await?;
+                if context.series_slug != input.series_slug {
+                    bail!("term candidate does not belong to requested series");
+                }
+                let series = registry.get(&context.series_slug).await?;
+                let mut story_scopes = context.story_scopes.clone();
+                story_scopes.extend(
+                    [
+                        (!input.volume.trim().is_empty())
+                            .then(|| format!("volume:{}", input.volume.trim())),
+                        (!input.chapter.trim().is_empty())
+                            .then(|| format!("chapter:{}", input.chapter.trim())),
+                    ]
+                    .into_iter()
+                    .flatten(),
+                );
+                let semantic_tags = context.semantic_tags.clone();
+                let tags = context.tags.clone();
+                context = context.with_metadata(
+                    &series.language_tags,
+                    &story_scopes,
+                    &semantic_tags,
+                    &tags,
+                );
                 Termbase::new(&self.pool, context)
                     .approve_term(input.term_id)
                     .await?;
@@ -588,7 +606,7 @@ impl McpBackend for StoreMcpBackend {
                         "",
                     )
                     .await?;
-                let session_id = self.default_session(&context).await?;
+                let session_id = workspace.get_or_start_default_session(&context).await?.id;
                 json_value(
                     RecallService::new(&self.pool)
                         .recall(session_id, &context, &input.query, input.limit)
@@ -645,7 +663,7 @@ impl McpBackend for StoreMcpBackend {
                         "",
                     )
                     .await?;
-                let session_id = self.default_session(&context).await?;
+                let session_id = workspace.get_or_start_default_session(&context).await?.id;
                 let result = workspace
                     .add_short_term(
                         session_id,
@@ -786,12 +804,61 @@ impl McpBackend for StoreMcpBackend {
 }
 
 fn decode<T: DeserializeOwned>(name: &str, arguments: Value) -> Result<T> {
-    serde_json::from_value(arguments)
-        .with_context(|| format!("invalid payload for MCP tool `{name}`"))
+    serde_json::from_value(arguments).map_err(|error| {
+        SafeMcpError(format!("invalid payload for MCP tool `{name}`: {error}")).into()
+    })
 }
 
 fn json_value(value: impl serde::Serialize) -> Result<Value> {
     serde_json::to_value(value).context("failed to serialize MCP result")
+}
+
+fn concept_payload(concept: &Concept) -> Value {
+    json!({
+        "id": concept.id,
+        "canonical_name": concept.canonical_name,
+        "description": concept.description,
+        "status": concept.status,
+        "confidence": concept.confidence,
+        "scope_type": concept.scope_type,
+        "scope_key": concept.scope_key,
+        "semantic_tags": concept.semantic_tags,
+        "merged_into_concept_id": concept.merged_into_concept_id,
+    })
+}
+
+fn facet_payload(facet: &ConceptFacet) -> Value {
+    json!({
+        "id": facet.id,
+        "concept_id": facet.concept_id,
+        "language": facet.language,
+        "facet_type": facet.facet_type,
+        "kind": facet.facet_type,
+        "value": facet.value,
+        "confidence": facet.confidence,
+        "source_crystal_id": facet.source_crystal_id,
+        "language_tags": facet.language_tags,
+        "story_scopes": facet.story_scopes,
+        "semantic_tags": facet.semantic_tags,
+        "is_canonical": facet.is_canonical,
+    })
+}
+
+fn crystal_payload(crystal: &Crystal) -> Value {
+    json!({
+        "id": crystal.id,
+        "crystal_type": crystal.crystal_type,
+        "text": crystal.text,
+        "title": crystal.title,
+        "confidence": crystal.confidence,
+        "strength": crystal.strength,
+        "status": crystal.status,
+        "source_credibility": crystal.source_credibility,
+        "rule_intent": crystal.rule_intent,
+        "story_scopes": crystal.story_scopes,
+        "semantic_tags": crystal.semantic_tags,
+        "concept_ids": crystal.concept_ids,
+    })
 }
 
 fn short_memory(input: ShortAddInput) -> AddMemoryInput {
