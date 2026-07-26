@@ -550,6 +550,8 @@ const REQUIRED_TABLES: &[&str] = &[
     "concept_facet_semantic_tags",
     "concept_facet_story_scopes",
     "concept_facets",
+    "concept_consolidation_keys",
+    "concept_consolidation_scan",
     "concept_merge_proposals",
     "concept_proposals",
     "concept_renames",
@@ -564,6 +566,7 @@ const REQUIRED_TABLES: &[&str] = &[
     "crystal_story_scopes",
     "crystals",
     "dream_audit_entries",
+    "dream_affected_crystals",
     "dream_phase_runs",
     "dream_runs",
     "memory_events",
@@ -861,6 +864,16 @@ async fn explicit_indexes_have_the_exact_declared_columns() {
             "crystal_links",
             "idx_crystal_links_target",
             vec!["target_crystal_id", "source_crystal_id", "link_type"],
+        ),
+        (
+            "concept_consolidation_keys",
+            "concept_consolidation_keys_lookup_idx",
+            vec![
+                "scope_type",
+                "scope_key",
+                "canonical_name_key",
+                "concept_id",
+            ],
         ),
         ("crystals", "idx_crystals_maintenance", vec!["id"]),
         (
@@ -1164,5 +1177,5 @@ async fn migration_versions_include_fts_and_are_idempotent() {
     .await
     .expect("migration versions should be readable");
 
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 }

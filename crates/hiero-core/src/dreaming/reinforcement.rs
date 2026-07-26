@@ -10,7 +10,11 @@ use crate::{
     values::SOURCE_CREDIBILITY_CONFIDENCE,
 };
 
-use super::{COMBINATION_TEXT_SIMILARITY_THRESHOLD, DreamPhase, DreamPhaseError, text_similarity};
+use super::{
+    COMBINATION_TEXT_SIMILARITY_THRESHOLD, DreamPhase, DreamPhaseError,
+    budget::{AffectedCrystalIds, record_affected},
+    text_similarity,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkOutcome {
@@ -18,27 +22,57 @@ pub enum LinkOutcome {
     Combined { survivor_id: i64, absorbed_id: i64 },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct LinkReinforcer {
     current_cycle: i64,
+    affected: Vec<AffectedCrystalIds>,
 }
 
 impl LinkReinforcer {
     #[must_use]
     pub const fn new(current_cycle: i64) -> Self {
-        Self { current_cycle }
+        Self {
+            current_cycle,
+            affected: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_affected_crystals(
+        mut self,
+        limit: usize,
+        affected: impl IntoIterator<Item = i64>,
+    ) -> Self {
+        self.affected
+            .push(AffectedCrystalIds::with_ids(limit, affected));
+        self
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ReinforcementManager {
     current_cycle: i64,
+    affected: Vec<AffectedCrystalIds>,
 }
 
 impl ReinforcementManager {
     #[must_use]
     pub const fn new(current_cycle: i64) -> Self {
-        Self { current_cycle }
+        Self {
+            current_cycle,
+            affected: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_affected_crystals(
+        mut self,
+        limit: usize,
+        affected: impl IntoIterator<Item = i64>,
+    ) -> Self {
+        self.affected
+            .push(AffectedCrystalIds::with_ids(limit, affected));
+        self
     }
 }
 
@@ -91,12 +125,20 @@ impl DreamPhase for LinkReinforcer {
         input: Self::Input,
     ) -> Result<Self::Output, DreamPhaseError> {
         let mut outcomes = Vec::new();
+        let mut affected = self.affected.clone();
         let current_activations: Vec<_> = input
             .into_iter()
             .filter(|activation| activation.cycle_id == Some(self.current_cycle))
             .collect();
         for (source_id, target_id) in useful_pairs(&current_activations) {
             let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+            if affected
+                .iter()
+                .any(|budget| !budget.can_reserve(&[source_id, target_id]))
+            {
+                transaction.commit().await?;
+                continue;
+            }
             let source = read_crystal(&mut transaction, source_id).await?;
             let target = read_crystal(&mut transaction, target_id).await?;
             if !eligible(&source) || !eligible(&target) {
@@ -138,6 +180,18 @@ impl DreamPhase for LinkReinforcer {
                     target_id,
                 }
             };
+            record_affected(
+                &mut transaction,
+                self.current_cycle,
+                &[source_id, target_id],
+            )
+            .await?;
+            for budget in &mut affected {
+                assert!(
+                    budget.reserve(&[source_id, target_id]),
+                    "the affected crystal budget was checked before mutation"
+                );
+            }
             transaction.commit().await?;
             outcomes.push(outcome);
         }
@@ -184,6 +238,7 @@ impl DreamPhase for ReinforcementManager {
         input: Self::Input,
     ) -> Result<Self::Output, DreamPhaseError> {
         let mut updated = BTreeSet::new();
+        let mut affected = self.affected.clone();
         for event in input {
             let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
             let stored: MemoryEventRecord =
@@ -205,6 +260,13 @@ impl DreamPhase for ReinforcementManager {
                 transaction.commit().await?;
                 continue;
             };
+            if affected
+                .iter()
+                .any(|budget| !budget.can_reserve(&[crystal_id]))
+            {
+                transaction.commit().await?;
+                continue;
+            }
             let crystal = read_crystal(&mut transaction, crystal_id).await?;
             let delta = ScoreDelta {
                 strength: strength_delta,
@@ -230,7 +292,11 @@ impl DreamPhase for ReinforcementManager {
                 .bind(event.id)
                 .execute(&mut *transaction)
                 .await?;
+            record_affected(&mut transaction, self.current_cycle, &[crystal_id]).await?;
             transaction.commit().await?;
+            for budget in &mut affected {
+                assert!(budget.reserve(&[crystal_id]), "the budget was prechecked");
+            }
             updated.insert(crystal_id);
         }
         Ok(updated.into_iter().collect())

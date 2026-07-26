@@ -86,6 +86,37 @@ async fn link_reinforcer_ignores_useful_activations_from_other_cycles() {
 }
 
 #[tokio::test]
+async fn one_crystal_budget_never_permits_a_two_participant_link_or_combination() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let left = store
+        .add(crystal("same text", "expert", 0.7))
+        .await
+        .unwrap();
+    let right = store
+        .add(crystal("same text", "observation", 0.7))
+        .await
+        .unwrap();
+
+    let outcomes = LinkReinforcer::new(9)
+        .with_affected_crystals(1, [])
+        .run(&pool, vec![activation(1, left, 1), activation(2, right, 1)])
+        .await
+        .unwrap();
+
+    assert!(outcomes.is_empty());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM crystal_links")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(store.get(left).await.unwrap().status, "active");
+    assert_eq!(store.get(right).await.unwrap().status, "active");
+}
+
+#[tokio::test]
 async fn link_reinforcer_durably_limits_each_crystal_to_one_combination_per_cycle() {
     let pool = pool().await;
     let store = CrystalStore::new(&pool);

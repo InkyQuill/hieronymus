@@ -9,7 +9,10 @@ use crate::{
     domain::{ScoreDelta, apply_score_delta},
 };
 
-use super::{DreamPhase, DreamPhaseError};
+use super::{
+    DreamPhase, DreamPhaseError,
+    budget::{AffectedCrystalIds, record_affected},
+};
 
 pub const STRENGTH_DECAY_PER_CYCLE: f64 = 0.03;
 pub const CONFIDENCE_DECAY_AFTER_STRENGTH_BELOW: f64 = 0.20;
@@ -60,6 +63,15 @@ impl DecayManager {
             .map(|candidate| candidate.id)
             .collect())
     }
+
+    pub(crate) async fn run_bounded(
+        &self,
+        pool: &SqlitePool,
+        input: DecayScope,
+        affected: Vec<AffectedCrystalIds>,
+    ) -> Result<Vec<i64>, DreamPhaseError> {
+        run_decay(pool, input, affected).await
+    }
 }
 
 #[must_use]
@@ -85,42 +97,53 @@ impl DreamPhase for DecayManager {
         pool: &SqlitePool,
         input: Self::Input,
     ) -> Result<Self::Output, DreamPhaseError> {
-        let candidates = Self::select(pool, &input).await?;
-        let protected = protected_ids(&input);
-        let mut decayed = Vec::with_capacity(candidates.len());
-        for id in candidates {
-            let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
-            let crystal: CrystalRecord = sqlx::query_as("SELECT * FROM crystals WHERE id=?")
-                .bind(id)
-                .fetch_one(&mut *transaction)
-                .await?;
-            if !is_eligible(&crystal, &input, &protected) {
-                transaction.commit().await?;
-                continue;
-            }
-            let already_decayed: bool = sqlx::query_scalar(
-                "SELECT EXISTS(
+        run_decay(pool, input, Vec::new()).await
+    }
+}
+
+async fn run_decay(
+    pool: &SqlitePool,
+    input: DecayScope,
+    mut affected: Vec<AffectedCrystalIds>,
+) -> Result<Vec<i64>, DreamPhaseError> {
+    let candidates = DecayManager::select(pool, &input).await?;
+    let protected = protected_ids(&input);
+    let mut decayed = Vec::with_capacity(candidates.len());
+    for id in candidates {
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        if affected.iter().any(|budget| !budget.can_reserve(&[id])) {
+            transaction.commit().await?;
+            continue;
+        }
+        let crystal: CrystalRecord = sqlx::query_as("SELECT * FROM crystals WHERE id=?")
+            .bind(id)
+            .fetch_one(&mut *transaction)
+            .await?;
+        if !is_eligible(&crystal, &input, &protected) {
+            transaction.commit().await?;
+            continue;
+        }
+        let already_decayed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
                     SELECT 1
                     FROM memory_events
                     WHERE crystal_id=?
                       AND event_type='cycle_decay'
                       AND cycle_id=?
                 )",
-            )
-            .bind(id)
-            .bind(input.current_cycle)
-            .fetch_one(&mut *transaction)
-            .await?;
-            if already_decayed {
-                transaction.commit().await?;
-                continue;
-            }
-            let delta = decay_delta(&crystal);
-            let (strength, confidence, status) = apply_score_delta(&crystal, delta);
-            let now = Utc::now();
-            sqlx::query(
-                "UPDATE crystals SET strength=?,confidence=?,status=?,updated_at=? WHERE id=?",
-            )
+        )
+        .bind(id)
+        .bind(input.current_cycle)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if already_decayed {
+            transaction.commit().await?;
+            continue;
+        }
+        let delta = decay_delta(&crystal);
+        let (strength, confidence, status) = apply_score_delta(&crystal, delta);
+        let now = Utc::now();
+        sqlx::query("UPDATE crystals SET strength=?,confidence=?,status=?,updated_at=? WHERE id=?")
             .bind(strength)
             .bind(confidence)
             .bind(&status)
@@ -128,10 +151,10 @@ impl DreamPhase for DecayManager {
             .bind(id)
             .execute(&mut *transaction)
             .await?;
-            let strength_delta = strength - crystal.strength;
-            let confidence_delta = confidence - crystal.confidence;
-            if strength_delta != 0.0 || confidence_delta != 0.0 {
-                sqlx::query("INSERT INTO memory_events(crystal_id,session_id,event_type,source_role,evidence,strength_delta,confidence_delta,applied,cycle_id,created_at) VALUES (?,NULL,'cycle_decay','system','cycle decay',?,?,1,?,?)")
+        let strength_delta = strength - crystal.strength;
+        let confidence_delta = confidence - crystal.confidence;
+        if strength_delta != 0.0 || confidence_delta != 0.0 {
+            sqlx::query("INSERT INTO memory_events(crystal_id,session_id,event_type,source_role,evidence,strength_delta,confidence_delta,applied,cycle_id,created_at) VALUES (?,NULL,'cycle_decay','system','cycle decay',?,?,1,?,?)")
                     .bind(id)
                     .bind(strength_delta)
                     .bind(confidence_delta)
@@ -139,12 +162,17 @@ impl DreamPhase for DecayManager {
                     .bind(now)
                     .execute(&mut *transaction)
                     .await?;
-                decayed.push(id);
-            }
-            transaction.commit().await?;
+            record_affected(&mut transaction, input.current_cycle, &[id]).await?;
+            decayed.push(id);
         }
-        Ok(decayed)
+        transaction.commit().await?;
+        if decayed.last() == Some(&id) {
+            for budget in &mut affected {
+                assert!(budget.reserve(&[id]), "the budget was prechecked");
+            }
+        }
     }
+    Ok(decayed)
 }
 
 fn protected_ids(scope: &DecayScope) -> BTreeSet<i64> {

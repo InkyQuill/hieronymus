@@ -8,6 +8,7 @@ use hiero_core::{
     },
 };
 use sqlx::Row;
+use std::time::Duration;
 use uuid::Uuid;
 
 async fn pool() -> sqlx::SqlitePool {
@@ -88,6 +89,378 @@ async fn consolidator_persists_stable_casefolded_pending_merge_proposals_idempot
     assert!(rows.iter().all(|row| row.1 == target.id
         && row.2 == "Canonical name and scope are exact duplicates."
         && row.3 == "pending"));
+}
+
+#[tokio::test]
+async fn consolidator_rereads_authoritative_concepts_before_proposing() {
+    let pool = pool().await;
+    migrate(&pool).await.unwrap();
+    let target = concept(&pool, "Shared", "series:oso", "established", 0.8).await;
+    let stale_source = concept(&pool, "shared", "series:oso", "candidate", 0.7).await;
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO dream_runs(cycle_id,status,provider,created_at)
+         VALUES (2,'running','deterministic',CURRENT_TIMESTAMP) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let mut holder = pool.acquire().await.unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE concepts SET canonical_name='Changed' WHERE id=?")
+        .bind(stale_source.id)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let run_pool = pool.clone();
+    let task = tokio::spawn(async move {
+        Consolidator::new(run_id, 10)
+            .run(&run_pool, vec![target, stale_source])
+            .await
+    });
+    tokio::task::yield_now().await;
+    sqlx::query("COMMIT").execute(&mut *holder).await.unwrap();
+    let proposals = task.await.unwrap().unwrap();
+
+    assert!(proposals.is_empty());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM concept_merge_proposals")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn consolidator_sql_failure_rolls_back_the_complete_batch_and_retry_reuses_pool() {
+    let pool = pool().await;
+    migrate(&pool).await.unwrap();
+    let target = concept(&pool, "Shared", "series:oso", "established", 0.8).await;
+    let first = concept(&pool, "shared", "series:oso", "candidate", 0.7).await;
+    let second = concept(&pool, " SHARED ", "series:oso", "candidate", 0.6).await;
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO dream_runs(cycle_id,status,provider,created_at)
+         VALUES (3,'running','deterministic',CURRENT_TIMESTAMP) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER fail_second_merge
+         BEFORE INSERT ON concept_merge_proposals
+         WHEN NEW.source_concept_id={}
+         BEGIN SELECT RAISE(ABORT,'second merge failure'); END",
+        second.id
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let input = vec![target, first, second];
+
+    assert!(
+        Consolidator::new(run_id, 10)
+            .run(&pool, input.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM concept_merge_proposals")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    sqlx::query("DROP TRIGGER fail_second_merge")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        Consolidator::new(run_id, 10)
+            .run(&pool, input)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM concepts")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn consolidator_cancellation_rolls_back_every_proposal_in_its_batch() {
+    let directory = tempfile::tempdir().unwrap();
+    let pool = connect_url(&format!(
+        "sqlite://{}",
+        directory
+            .path()
+            .join("consolidation-cancellation.sqlite")
+            .display()
+    ))
+    .await
+    .unwrap();
+    let target = concept(&pool, "Shared", "series:oso", "established", 0.8).await;
+    let first = concept(&pool, "shared", "series:oso", "candidate", 0.7).await;
+    let second = concept(&pool, " SHARED ", "series:oso", "candidate", 0.6).await;
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO dream_runs(cycle_id,status,provider,created_at)
+         VALUES (4,'running','deterministic',CURRENT_TIMESTAMP) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER slow_second_merge
+         BEFORE INSERT ON concept_merge_proposals
+         WHEN NEW.source_concept_id={}
+         BEGIN
+           SELECT sum(value) FROM (
+             WITH RECURSIVE counter(value) AS (
+               VALUES(0)
+               UNION ALL
+               SELECT value + 1 FROM counter WHERE value < 2000000
+             )
+             SELECT value FROM counter
+           );
+         END",
+        second.id
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let run_pool = pool.clone();
+    let task = tokio::spawn(async move {
+        Consolidator::new(run_id, 10)
+            .run(&run_pool, vec![target, first, second])
+            .await
+    });
+    let mut observer = pool.acquire().await.unwrap();
+    sqlx::query("PRAGMA busy_timeout=0")
+        .execute(&mut *observer)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *observer)
+            .await
+            .is_ok()
+        {
+            sqlx::query("ROLLBACK")
+                .execute(&mut *observer)
+                .await
+                .unwrap();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("consolidation must own its write transaction");
+
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    drop(observer);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM concept_merge_proposals")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn consolidation_scan_advances_across_pages_and_matches_a_split_duplicate_group() {
+    let pool = pool().await;
+    migrate(&pool).await.unwrap();
+    let _first = concept(&pool, "First", "series:oso", "candidate", 0.4).await;
+    let target = concept(&pool, "Shared", "series:oso", "established", 0.8).await;
+    let source = concept(&pool, " shared ", "series:oso", "candidate", 0.7).await;
+    let _fourth = concept(&pool, "Fourth", "series:oso", "candidate", 0.4).await;
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO dream_runs(cycle_id,status,provider,created_at)
+         VALUES (5,'running','deterministic',CURRENT_TIMESTAMP) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let consolidator = Consolidator::new(run_id, 2);
+
+    assert!(consolidator.scan(&pool).await.unwrap().is_empty());
+    let proposals = consolidator.scan(&pool).await.unwrap();
+
+    assert_eq!(
+        proposals
+            .iter()
+            .map(|proposal| (proposal.source_concept_id, proposal.target_concept_id))
+            .collect::<Vec<_>>(),
+        [(source.id, target.id)]
+    );
+    let plan = sqlx::query(
+        "EXPLAIN QUERY PLAN
+         SELECT c.id
+         FROM concepts c
+         JOIN concept_consolidation_keys k ON k.concept_id=c.id
+         WHERE EXISTS(
+           SELECT 1
+           FROM concept_consolidation_keys other
+           WHERE other.scope_type=k.scope_type
+             AND other.scope_key=k.scope_key
+             AND other.canonical_name_key=k.canonical_name_key
+             AND other.concept_id!=k.concept_id
+         )
+         ORDER BY k.scope_type,k.scope_key,k.canonical_name_key,c.id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(plan.iter().any(|row| {
+        row.get::<String, _>("detail")
+            .contains("concept_consolidation_keys_lookup_idx")
+    }));
+}
+
+#[tokio::test]
+async fn consolidation_scan_chooses_the_authoritative_target_from_a_group_larger_than_two_pages() {
+    let pool = pool().await;
+    migrate(&pool).await.unwrap();
+    let mut sources = Vec::new();
+    for confidence in [0.1, 0.2, 0.3, 0.4, 0.5] {
+        sources.push(concept(&pool, "Shared", "series:oso", "candidate", confidence).await);
+    }
+    let target = concept(&pool, " shared ", "series:oso", "established", 0.9).await;
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO dream_runs(cycle_id,status,provider,created_at)
+         VALUES (7,'running','deterministic',CURRENT_TIMESTAMP) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let consolidator = Consolidator::new(run_id, 2);
+
+    for _ in 0..3 {
+        let _ = consolidator.scan(&pool).await.unwrap();
+    }
+
+    let proposals: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT source_concept_id,target_concept_id
+         FROM concept_merge_proposals
+         ORDER BY source_concept_id,target_concept_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(!proposals.is_empty());
+    assert!(proposals.iter().all(|(source_id, target_id)| {
+        sources.iter().any(|source| source.id == *source_id) && *target_id == target.id
+    }));
+}
+
+#[tokio::test]
+async fn consolidation_scan_reaches_high_ids_despite_repeated_low_id_updates() {
+    let pool = pool().await;
+    migrate(&pool).await.unwrap();
+    let mut concepts = Vec::new();
+    for name in ["One", "Two", "Three", "Four", "Five", "Six"] {
+        concepts.push(concept(&pool, name, "series:oso", "candidate", 0.5).await);
+    }
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO dream_runs(cycle_id,status,provider,created_at)
+         VALUES (8,'running','deterministic',CURRENT_TIMESTAMP) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let consolidator = Consolidator::new(run_id, 2);
+
+    for name in ["One A", "One B", "One C", "One D"] {
+        let _ = consolidator.scan(&pool).await.unwrap();
+        sqlx::query("UPDATE concepts SET canonical_name=? WHERE id=?")
+            .bind(name)
+            .bind(concepts[0].id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM concept_consolidation_keys WHERE concept_id=?"
+        )
+        .bind(concepts[5].id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn consolidation_scan_refreshes_changed_keys_and_removes_terminal_entries() {
+    let pool = pool().await;
+    migrate(&pool).await.unwrap();
+    let _first = concept(&pool, "First", "series:oso", "candidate", 0.4).await;
+    let target = concept(&pool, "Shared", "series:oso", "established", 0.8).await;
+    let source = concept(&pool, " shared ", "series:oso", "candidate", 0.7).await;
+    let _fourth = concept(&pool, "Fourth", "series:oso", "candidate", 0.4).await;
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO dream_runs(cycle_id,status,provider,created_at)
+         VALUES (6,'running','deterministic',CURRENT_TIMESTAMP) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let consolidator = Consolidator::new(run_id, 2);
+
+    assert!(consolidator.scan(&pool).await.unwrap().is_empty());
+    sqlx::query("UPDATE concepts SET canonical_name='Changed' WHERE id=?")
+        .bind(target.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(consolidator.scan(&pool).await.unwrap().is_empty());
+    assert!(consolidator.scan(&pool).await.unwrap().is_empty());
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT canonical_name_key FROM concept_consolidation_keys WHERE concept_id=?"
+        )
+        .bind(target.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "changed"
+    );
+
+    sqlx::query("UPDATE concepts SET canonical_name='Shared' WHERE id=?")
+        .bind(target.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(consolidator.scan(&pool).await.unwrap().is_empty());
+    assert!(consolidator.scan(&pool).await.unwrap().is_empty());
+    assert_eq!(consolidator.scan(&pool).await.unwrap().len(), 1);
+    sqlx::query("UPDATE concepts SET status='archived' WHERE id=?")
+        .bind(source.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let _ = consolidator.scan(&pool).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM concept_consolidation_keys WHERE concept_id=?"
+        )
+        .bind(source.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
 }
 
 fn input(text: &str) -> AddCrystalInput {
@@ -230,6 +603,55 @@ async fn reconsolidator_supersedes_with_inherited_metadata_and_concepts() {
             .await
             .unwrap()
             .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn one_crystal_budget_allows_in_place_but_never_two_crystal_supersession() {
+    let pool = pool().await;
+    let store = CrystalStore::new(&pool);
+    let in_place_id = store.add(input("stable wording")).await.unwrap();
+    let superseded_id = store.add(input("old wording")).await.unwrap();
+    let in_place_memory = working_copy(&pool, in_place_id, "stable wording").await;
+    let supersession_memory =
+        working_copy(&pool, superseded_id, "completely revised wording").await;
+    let outcomes = Reconsolidator::new(0.20, 30)
+        .with_affected_crystals(1, [])
+        .run(
+            &pool,
+            vec![
+                (in_place_memory, store.get(in_place_id).await.unwrap()),
+                (
+                    supersession_memory.clone(),
+                    store.get(superseded_id).await.unwrap(),
+                ),
+            ],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcomes,
+        [ReconsolidationOutcome::ReinforcedInPlace {
+            crystal_id: in_place_id
+        }]
+    );
+    assert_eq!(store.get(superseded_id).await.unwrap().status, "active");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM crystals WHERE supersedes_crystal_id=?")
+            .bind(superseded_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        WorkspaceStore::new(&pool)
+            .list_short_term(supersession_memory.session_id)
+            .await
+            .unwrap()
+            .len(),
+        1
     );
 }
 

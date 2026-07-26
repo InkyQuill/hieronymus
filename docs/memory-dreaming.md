@@ -130,6 +130,9 @@ detects duplicate concepts conservatively. Concepts must have the same scope and
 an exact trimmed Unicode-casefolded canonical name. Dreaming records an
 idempotent pending source-to-target merge proposal for review; it never merges
 concepts automatically, and terminology proposals remain a separate contract.
+Duplicate discovery advances through a durable indexed scan, and each batch is
+revalidated and committed atomically, so bounded cycles do not starve
+higher-id concepts or preserve partial proposal batches.
 
 The affected memory set is bounded. It starts with the completed short-term
 memories selected for the cycle, then adds nearby concepts, facets, active rule
@@ -137,8 +140,12 @@ crystals, related ordinary crystals, semantic-tag matches, story-scope matches,
 and explicit links. Dreaming records and changes only that bounded set; it does
 not rescore or rewrite the whole store on each run. Relationship,
 changed-crystal, total-affected-crystal, and long-term-record limits apply to
-provider and algorithmic work; `run_all` shares the long-term-record budget
-across its constituent cycles.
+provider and algorithmic work. These limits count unique crystal IDs: repeated
+work on the same crystal in one cycle or run is charged once, while
+supersession and two-crystal link work count every distinct participant.
+`run_all` shares the long-term-record ID set across its constituent cycles.
+Interrupted algorithm batches resume from the durable affected-ID set, so a
+retry cannot silently reset the cycle limit.
 
 Providers produce structured JSON that Hieronymus validates before applying dream
 outputs. Malformed entries are parsed best-effort when they still contain useful

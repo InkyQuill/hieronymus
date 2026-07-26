@@ -9,7 +9,10 @@ use crate::{
     domain::{Crystal, ScoreDelta, ShortTermMemory, apply_score_delta},
 };
 
-use super::{DreamPhase, DreamPhaseError};
+use super::{
+    DreamPhase, DreamPhaseError,
+    budget::{AffectedCrystalIds, record_affected},
+};
 
 pub const COMBINATION_TEXT_SIMILARITY_THRESHOLD: f64 = 0.80;
 
@@ -30,10 +33,11 @@ pub enum ReconsolidationOutcome {
     },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Reconsolidator {
     threshold: f64,
     current_cycle: i64,
+    affected: Vec<AffectedCrystalIds>,
 }
 
 impl Reconsolidator {
@@ -42,7 +46,19 @@ impl Reconsolidator {
         Self {
             threshold,
             current_cycle,
+            affected: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_affected_crystals(
+        mut self,
+        limit: usize,
+        affected: impl IntoIterator<Item = i64>,
+    ) -> Self {
+        self.affected
+            .push(AffectedCrystalIds::with_ids(limit, affected));
+        self
     }
 }
 
@@ -57,6 +73,7 @@ impl DreamPhase for Reconsolidator {
         input: Self::Input,
     ) -> Result<Self::Output, DreamPhaseError> {
         let mut outcomes = Vec::with_capacity(input.len());
+        let mut affected = self.affected.clone();
         for (memory, source) in input {
             let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
             let (working_text, kind, source_crystal_id, archived_at): (
@@ -85,6 +102,13 @@ impl DreamPhase for Reconsolidator {
                 let outcome =
                     completed_outcome(&mut transaction, &source, memory.id, self.current_cycle)
                         .await?;
+                if !can_reserve_outcome(&affected, outcome) {
+                    transaction.commit().await?;
+                    continue;
+                }
+                record_affected(&mut transaction, self.current_cycle, &outcome_ids(outcome))
+                    .await?;
+                reserve_outcome(&mut affected, outcome);
                 transaction.commit().await?;
                 outcomes.push(outcome);
                 continue;
@@ -94,39 +118,74 @@ impl DreamPhase for Reconsolidator {
                     "working-copy source is no longer active or candidate",
                 ));
             }
-            let outcome =
-                match reconsolidation_decision(&working_text, &source.text, self.threshold) {
-                    ReconsolidationDecision::ReinforceInPlace => {
-                        reinforce_in_place(
-                            &mut transaction,
-                            &source,
-                            memory.id,
-                            self.current_cycle,
-                        )
+            let decision = reconsolidation_decision(&working_text, &source.text, self.threshold);
+            let permitted = match decision {
+                ReconsolidationDecision::ReinforceInPlace => affected
+                    .iter()
+                    .all(|budget| budget.can_reserve(&[source.id])),
+                ReconsolidationDecision::Supersede => affected
+                    .iter()
+                    .all(|budget| budget.can_reserve_with_new(&[source.id], 1)),
+            };
+            if !permitted {
+                transaction.commit().await?;
+                continue;
+            }
+            let outcome = match decision {
+                ReconsolidationDecision::ReinforceInPlace => {
+                    reinforce_in_place(&mut transaction, &source, memory.id, self.current_cycle)
                         .await?;
-                        ReconsolidationOutcome::ReinforcedInPlace {
-                            crystal_id: source.id,
-                        }
+                    ReconsolidationOutcome::ReinforcedInPlace {
+                        crystal_id: source.id,
                     }
-                    ReconsolidationDecision::Supersede => {
-                        let new_id = supersede(
-                            &mut transaction,
-                            &source,
-                            &working_text,
-                            memory.id,
-                            self.current_cycle,
-                        )
-                        .await?;
-                        ReconsolidationOutcome::Superseded {
-                            old_crystal_id: source.id,
-                            new_crystal_id: new_id,
-                        }
+                }
+                ReconsolidationDecision::Supersede => {
+                    let new_id = supersede(
+                        &mut transaction,
+                        &source,
+                        &working_text,
+                        memory.id,
+                        self.current_cycle,
+                    )
+                    .await?;
+                    ReconsolidationOutcome::Superseded {
+                        old_crystal_id: source.id,
+                        new_crystal_id: new_id,
                     }
-                };
+                }
+            };
+            assert!(
+                can_reserve_outcome(&affected, outcome),
+                "the affected crystal budgets were checked before mutation"
+            );
+            record_affected(&mut transaction, self.current_cycle, &outcome_ids(outcome)).await?;
+            reserve_outcome(&mut affected, outcome);
             transaction.commit().await?;
             outcomes.push(outcome);
         }
         Ok(outcomes)
+    }
+}
+
+fn outcome_ids(outcome: ReconsolidationOutcome) -> Vec<i64> {
+    match outcome {
+        ReconsolidationOutcome::ReinforcedInPlace { crystal_id } => vec![crystal_id],
+        ReconsolidationOutcome::Superseded {
+            old_crystal_id,
+            new_crystal_id,
+        } => vec![old_crystal_id, new_crystal_id],
+    }
+}
+
+fn can_reserve_outcome(affected: &[AffectedCrystalIds], outcome: ReconsolidationOutcome) -> bool {
+    let ids = outcome_ids(outcome);
+    affected.iter().all(|budget| budget.can_reserve(&ids))
+}
+
+fn reserve_outcome(affected: &mut [AffectedCrystalIds], outcome: ReconsolidationOutcome) {
+    let ids = outcome_ids(outcome);
+    for budget in affected {
+        assert!(budget.reserve(&ids), "the budget was prechecked");
     }
 }
 

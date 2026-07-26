@@ -190,6 +190,10 @@ produces a stable source-to-target pending proposal; it never auto-merges.
 Pending directed pairs are idempotent. The durable record stores both concept
 ids, a fixed bounded duplicate-name-and-scope rationale, status, dream run id,
 and timestamps, subject to the cycle and run budgets.
+Discovery uses an indexed durable cursor over normalized eligible-concept keys,
+so bounded cycles eventually revisit the complete keyspace instead of repeatedly
+scanning the lowest ids. Each proposal batch is recomputed from authoritative
+rows and inserted atomically under one immediate transaction.
 
 `dreaming::validation` and `dreaming::persistence` are not phases themselves — they're called
 by `Crystallizer`: `validation::normalize_candidate(candidate: &CandidateCrystal) -> Result<CandidateCrystal>`
@@ -380,6 +384,14 @@ impl DreamConfig {
 pub fn resolve_workflows(config: &DreamConfig) -> Vec<(PassName, WorkflowProfile)>;
 pub fn build_prompt(config: &DreamConfig, phase: PassName, input: &serde_json::Value) -> String;
 ```
+
+The changed, total-affected, and per-run long-term limits count unique affected
+crystal ids, not mutation operations. In-place work affects one id;
+supersession affects the old and new ids; link strengthening and combination
+affect both participants. Reusing an already-counted id in another phase of the
+same cycle or run does not consume the limit again.
+The maintenance-cycle ID set is persisted in the same transaction as each
+mutation and reconstructed when an interrupted algorithm batch resumes.
 
 ---
 

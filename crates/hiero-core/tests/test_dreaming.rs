@@ -490,6 +490,29 @@ impl Fixture {
         max_changed: usize,
         enabled: &[PassName],
     ) -> DreamService<'_> {
+        self.service_with_budget(
+            provider,
+            min_pending,
+            per_cycle,
+            per_run,
+            (
+                max_changed,
+                DreamConfig::default().max_long_term_records_affected_per_run,
+            ),
+            enabled,
+        )
+    }
+
+    fn service_with_budget(
+        &self,
+        provider: Arc<dyn DreamProvider>,
+        min_pending: usize,
+        per_cycle: usize,
+        per_run: usize,
+        crystal_limits: (usize, usize),
+        enabled: &[PassName],
+    ) -> DreamService<'_> {
+        let (max_changed, max_long_term) = crystal_limits;
         let resolver: Arc<dyn DreamProviderResolver> = Arc::new(
             move |_: &WorkflowProfile| -> Result<Arc<dyn DreamProvider>, DreamPhaseError> {
                 Ok(provider.clone())
@@ -502,6 +525,7 @@ impl Fixture {
             max_short_term_memories_per_cycle: per_cycle,
             max_short_term_memories_per_run: per_run,
             max_changed_crystals_per_cycle: max_changed,
+            max_long_term_records_affected_per_run: max_long_term,
             ..DreamConfig::default()
         };
         for phase in PassName::ALL {
@@ -1658,6 +1682,63 @@ async fn algorithmic_zero_remaining_budget_never_expands_to_default_decay_limit(
 }
 
 #[tokio::test]
+async fn one_unique_crystal_id_can_be_reconsolidated_and_provider_reinforced_in_one_run() {
+    let fixture = Fixture::new().await;
+    let session_id = fixture.pending_memory().await;
+    let crystal_id = CrystalStore::new(&fixture.pool)
+        .add(AddCrystalInput {
+            text: "pending memory".into(),
+            strength: 0.4,
+            confidence: 0.5,
+            status: "active".into(),
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE short_term_memories
+         SET source_crystal_id=?,kind='working_copy',text='pending memory'
+         WHERE session_id=?",
+    )
+    .bind(crystal_id)
+    .bind(session_id)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    let provider: Arc<dyn DreamProvider> = Arc::new(ReinforcementProvider {
+        crystal_id,
+        strength_delta: 0.07,
+        confidence_delta: 0.03,
+    });
+
+    fixture
+        .service_with_budget(
+            provider,
+            1,
+            10,
+            10,
+            (1, 1),
+            &[PassName::Reinforcement, PassName::CoverageAudit],
+        )
+        .run_cycle(CycleOptions::default())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM memory_events
+             WHERE crystal_id=?
+               AND event_type IN ('reconsolidated_in_place','provider_reinforcement')"
+        )
+        .bind(crystal_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap(),
+        2
+    );
+}
+
+#[tokio::test]
 async fn directed_supersede_preserves_old_to_new_when_old_id_is_greater() {
     let fixture = Fixture::new().await;
     let new_id = CrystalStore::new(&fixture.pool)
@@ -2078,7 +2159,7 @@ async fn late_persistence_failure_retries_algorithmic_work_exactly_once() {
     .execute(&fixture.pool)
     .await
     .unwrap();
-    let service = || fixture.service_with_change_limit(fake(), 1, 10, 10, 4);
+    let service = || fixture.service_with_change_limit(fake(), 1, 10, 10, 6);
     service()
         .run_cycle(CycleOptions::default())
         .await
@@ -2205,6 +2286,95 @@ async fn late_persistence_failure_retries_algorithmic_work_exactly_once() {
             .await
             .unwrap(),
         1
+    );
+}
+
+#[tokio::test]
+async fn resumed_algorithm_batch_preserves_the_unique_crystal_budget() {
+    let fixture = Fixture::new().await;
+    fixture.pending_memory().await;
+    let first = CrystalStore::new(&fixture.pool)
+        .add(AddCrystalInput {
+            title: "first passive".into(),
+            text: "The first passive memory.".into(),
+            status: "active".into(),
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
+    let second = CrystalStore::new(&fixture.pool)
+        .add(AddCrystalInput {
+            title: "second passive".into(),
+            text: "The second passive memory.".into(),
+            status: "active".into(),
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
+    let third = CrystalStore::new(&fixture.pool)
+        .add(AddCrystalInput {
+            title: "third passive".into(),
+            text: "The third passive memory.".into(),
+            status: "active".into(),
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
+    for crystal_id in [first, second, third] {
+        sqlx::query(
+            "INSERT INTO memory_events(
+                crystal_id,event_type,source_role,evidence,
+                strength_delta,confidence_delta,applied,created_at
+             ) VALUES (?,'recalled_again','recall','',0.02,0,0,CURRENT_TIMESTAMP)",
+        )
+        .bind(crystal_id)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "CREATE TRIGGER injected_second_passive_failure
+         BEFORE UPDATE ON crystals
+         WHEN NEW.title='second passive'
+         BEGIN SELECT RAISE(ABORT,'injected passive failure'); END",
+    )
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    let service = || fixture.service_with_change_limit(fake(), 1, 10, 10, 2);
+
+    service()
+        .run_cycle(CycleOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM memory_events
+             WHERE crystal_id=? AND event_type='recalled_again' AND applied=1"
+        )
+        .bind(first)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    sqlx::query("DROP TRIGGER injected_second_passive_failure")
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+    service().run_due().await.unwrap().unwrap();
+
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM memory_events
+             WHERE crystal_id=? AND event_type='recalled_again' AND applied=1"
+        )
+        .bind(third)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap(),
+        0
     );
 }
 
@@ -2355,6 +2525,13 @@ async fn cancelling_in_flight_persistence_rolls_back_outputs_and_retry_converges
         .fetch_one(&fixture.pool)
         .await
         .unwrap(),
+        499
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM dream_affected_crystals")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
         500
     );
 }

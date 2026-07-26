@@ -490,3 +490,119 @@ workspace rerun passed.
 ### Concerns
 
 None.
+
+## Exceptional final fix wave
+
+### RED
+
+- A consolidator that received stale `ConceptRecord` snapshots still produced a
+  merge proposal after the authoritative rows had changed.
+- An injected failure on the second proposal insert left one committed proposal,
+  proving that the batch did not share one transaction. Cancellation coverage
+  exposed the same missing batch rollback boundary.
+- The durable paged scan API and its schema were absent, so the split-page
+  starvation regression did not compile.
+- Limit-one reconsolidation and link regressions did not compile because the
+  affected-crystal admission API did not exist.
+- A duplicate group larger than two scan pages selected a lower-id temporary
+  target instead of the authoritative high-id established target.
+- After a passive-reinforcement failure committed one crystal, retry recreated
+  an empty cycle budget and applied a third unique crystal beyond a limit of two.
+- Immediate cursor rewind on every low-id concept update prevented the scan from
+  ever indexing a higher-id concept.
+
+### GREEN
+
+- `AffectedCrystalIds` admits mutations by unique long-term crystal id.
+  In-place reconsolidation and reinforcement count one id, supersession counts
+  old and new ids, links and combinations count both participants, decay counts
+  the decayed id, and provider-created crystals count their returned ids.
+  Reusing an id across phases or cycles in the same run does not charge it twice.
+- Every actual algorithmic or provider mutation records its affected ids in
+  `dream_affected_crystals` in the same SQLite transaction. Resumed algorithm
+  batches reconstruct both cycle and run admission state from that ledger, so a
+  partial per-item phase cannot reset the hard bound.
+- Limit one allows in-place reconsolidation but blocks supersession, linking, and
+  combination before mutation. The cross-phase regression proves that one
+  crystal can be reconsolidated and provider-reinforced in one run.
+- `Consolidator` owns one `BEGIN IMMEDIATE` transaction for authoritative input
+  rereads, group/target recomputation, the complete bounded proposal batch, and
+  scan cursor advancement. SQL failure and task cancellation roll back the
+  complete batch, while pending directed-pair retries remain idempotent.
+- The consolidator refreshes normalized keys through a durable page cursor and
+  defers proposals until a complete clean sweep. Writes during a sweep mark a
+  subsequent restart without rewinding the active cursor, so higher ids remain
+  reachable; the dirty sweep suppresses proposals before restarting.
+- Complete clean sweeps read every member of each duplicate group, so groups
+  split across pages and groups larger than two pages choose one authoritative
+  target. Existing pending pairs no longer starve later candidates. Terminal or
+  merged concepts are removed from the normalized-key index and remain
+  ineligible.
+
+### Migration and query plan
+
+- Additive migration `0012_concept_consolidation_scan.sql` adds
+  `concept_consolidation_keys`, `concept_consolidation_scan`,
+  `dream_affected_crystals`, the normalized lookup index, and scan-reset/key
+  invalidation triggers. Migrations 0001-0011 remain unchanged.
+- The production duplicate-group `EXPLAIN QUERY PLAN` regression observes
+  `concept_consolidation_keys_lookup_idx`.
+- Migration history, legacy upgrade, FTS object, exact schema, and explicit
+  index suites pass: 93 passed, 0 failed.
+
+### Verification
+
+```text
+cargo test -p hiero-core \
+  --test test_dreaming \
+  --test test_link_reinforcement \
+  --test test_reconsolidation \
+  --locked --no-fail-fast
+67 passed; 0 failed; 1 ignored helper entry point
+
+cargo test -p hiero-core \
+  --test test_providers \
+  --test test_dream_config \
+  --test test_dream_lock \
+  --test test_dream_phases \
+  --test test_reconsolidation \
+  --test test_link_reinforcement \
+  --test test_dreaming \
+  --locked --no-fail-fast
+162 passed; 0 failed; 3 ignored helper entry points
+
+cargo fmt --all -- --check
+passed
+
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+passed
+
+cargo test --workspace --all-targets --all-features --locked --no-fail-fast
+passed; no failed target
+
+cargo doc --workspace --no-deps --all-features --locked
+passed
+
+git diff --check
+passed
+```
+
+### Self-review
+
+- The budget precheck occurs before each mutation; durable ledger insertion
+  occurs before the same transaction commits.
+- New-id admission reserves capacity before insertion and records the returned
+  id, avoiding guessed row ids.
+- Consolidation output remains bounded even though target selection evaluates
+  the complete authoritative group.
+- The durable restart marker lets an active sweep reach high ids while ensuring
+  that a sweep dirtied by relevant concept changes cannot emit proposals.
+- The Rust practices companion audit identified the oversized-group target,
+  retry-reset budget, and cursor-rewind starvation defects; all now have
+  observed RED and exact GREEN regressions.
+- User-facing dreaming documentation and proposal 004 describe unique-id
+  accounting, retry durability, atomic consolidation, and paged discovery.
+
+### Concerns
+
+None.

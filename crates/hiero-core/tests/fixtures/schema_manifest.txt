@@ -42,6 +42,21 @@ COLUMN 9|created_at|TEXT|1|NULL|0
 COLUMN 10|updated_at|TEXT|1|NULL|0
 FK 0|0|crystals|source_crystal_id|id|NO ACTION|SET NULL|NONE
 FK 1|0|concepts|concept_id|id|NO ACTION|CASCADE|NONE
+TABLE concept_consolidation_keys
+SQL CREATE TABLE concept_consolidation_keys (   concept_id INTEGER PRIMARY KEY REFERENCES concepts(id) ON DELETE CASCADE,   scope_type TEXT NOT NULL,   scope_key TEXT NOT NULL,   canonical_name_key TEXT NOT NULL,   updated_at TEXT NOT NULL ) STRICT
+COLUMN 0|concept_id|INTEGER|0|NULL|1
+COLUMN 1|scope_type|TEXT|1|NULL|0
+COLUMN 2|scope_key|TEXT|1|NULL|0
+COLUMN 3|canonical_name_key|TEXT|1|NULL|0
+COLUMN 4|updated_at|TEXT|1|NULL|0
+FK 0|0|concepts|concept_id|id|NO ACTION|CASCADE|NONE
+INDEX 0|concept_consolidation_keys_lookup_idx|0|c|0|scope_type,scope_key,canonical_name_key,concept_id
+TABLE concept_consolidation_scan
+SQL CREATE TABLE concept_consolidation_scan (   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),   after_concept_id INTEGER NOT NULL DEFAULT 0 CHECK (after_concept_id >= 0),   restart_required INTEGER NOT NULL DEFAULT 0 CHECK (restart_required IN (0, 1)),   updated_at TEXT NOT NULL ) STRICT
+COLUMN 0|singleton|INTEGER|0|NULL|1
+COLUMN 1|after_concept_id|INTEGER|1|0|0
+COLUMN 2|restart_required|INTEGER|1|0|0
+COLUMN 3|updated_at|TEXT|1|NULL|0
 TABLE concept_merge_proposals
 SQL CREATE TABLE concept_merge_proposals (   id INTEGER PRIMARY KEY,   source_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,   target_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,   rationale TEXT NOT NULL,   status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),   dream_run_id INTEGER REFERENCES dream_runs(id) ON DELETE SET NULL,   created_at TEXT NOT NULL,   updated_at TEXT NOT NULL,   CHECK (source_concept_id <> target_concept_id) ) STRICT
 COLUMN 0|id|INTEGER|0|NULL|1
@@ -207,6 +222,12 @@ COLUMN 6|payload_json|TEXT|1|'{}'|0
 COLUMN 7|created_at|TEXT|1|NULL|0
 FK 0|0|dream_phase_runs|phase_run_id|id|NO ACTION|SET NULL|NONE
 FK 1|0|dream_runs|dream_run_id|id|NO ACTION|CASCADE|NONE
+TABLE dream_affected_crystals
+SQL CREATE TABLE dream_affected_crystals (   maintenance_cycle_id INTEGER NOT NULL,   crystal_id INTEGER NOT NULL,   created_at TEXT NOT NULL,   PRIMARY KEY (maintenance_cycle_id, crystal_id) ) STRICT
+COLUMN 0|maintenance_cycle_id|INTEGER|1|NULL|1
+COLUMN 1|crystal_id|INTEGER|1|NULL|2
+COLUMN 2|created_at|TEXT|1|NULL|0
+INDEX 0|sqlite_autoindex_dream_affected_crystals_1|1|pk|0|maintenance_cycle_id,crystal_id
 TABLE dream_phase_runs
 SQL CREATE TABLE dream_phase_runs (   id INTEGER PRIMARY KEY,   dream_run_id INTEGER NOT NULL REFERENCES dream_runs(id) ON DELETE CASCADE,   phase TEXT NOT NULL,   provider_profile TEXT NOT NULL,   provider_type TEXT NOT NULL,   model TEXT NOT NULL,   status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),   input_count INTEGER NOT NULL DEFAULT 0,   output_count INTEGER NOT NULL DEFAULT 0,   error TEXT NOT NULL DEFAULT '',   prompt_hash TEXT NOT NULL DEFAULT '',   created_at TEXT NOT NULL,   completed_at TEXT ) STRICT
 COLUMN 0|id|INTEGER|0|NULL|1

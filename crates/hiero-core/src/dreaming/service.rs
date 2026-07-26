@@ -14,7 +14,7 @@ use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 
 use crate::{
     config::HieronymusConfig,
-    db::{ConceptRecord, CrystalActivationRecord, DreamRunRecord, MemoryEventRecord},
+    db::{CrystalActivationRecord, DreamRunRecord, MemoryEventRecord},
     domain::{
         AddCrystalInput, CrystalStore, ScoreDelta, TranslationContext, WorkspaceStore,
         add_crystal_in_transaction, apply_score_delta,
@@ -27,6 +27,7 @@ use super::{
     DreamCycleAlreadyRunning, DreamCycleGuard, DreamPhase, DreamPhaseError, DreamProviderResolver,
     DreamRunCompletion, LinkOutcome, LinkReinforcer, PhaseOutput, PhaseRunStart, Reconsolidator,
     ReinforcementManager, WorkflowProfile, acquire_dream_cycle_lock,
+    budget::{AffectedCrystalIds, load_affected, record_affected},
     execute_provider_passes_with_config, resolve_workflows,
 };
 
@@ -95,6 +96,7 @@ pub type Result<T> = std::result::Result<T, DreamServiceError>;
 struct OutputApplication<'a> {
     run_id: i64,
     cycle_id: i64,
+    maintenance_cycle_id: i64,
     context: &'a TranslationContext,
     memories: &'a [crate::domain::ShortTermMemory],
     outputs: &'a [PhaseOutput],
@@ -567,6 +569,14 @@ impl<'a> DreamService<'a> {
                     .await?
             }
         };
+        let existing_affected = load_affected(&self.pool, stage.maintenance_cycle_id).await?;
+        let mut cycle_budget = AffectedCrystalIds::with_ids(
+            self.dream_config
+                .max_changed_crystals_per_cycle
+                .min(self.dream_config.max_total_affected_crystals),
+            existing_affected.iter().copied(),
+        );
+        long_term_budget.include_existing(existing_affected);
         let mut outputs = Vec::with_capacity(workflows.len());
         for workflow in workflows {
             let phase = DreamAuditStore::new(&self.pool)
@@ -596,6 +606,7 @@ impl<'a> DreamService<'a> {
                 stage.maintenance_cycle_id,
                 &memories,
                 &session_ids,
+                &mut cycle_budget,
                 long_term_budget,
             )
             .await?;
@@ -609,10 +620,12 @@ impl<'a> DreamService<'a> {
                 OutputApplication {
                     run_id,
                     cycle_id,
+                    maintenance_cycle_id: stage.maintenance_cycle_id,
                     context: &context,
                     memories: &memories,
                     outputs: &outputs,
                 },
+                &mut cycle_budget,
                 long_term_budget,
             )
             .await?;
@@ -675,11 +688,13 @@ impl<'a> DreamService<'a> {
         &self,
         transaction: &mut SqliteConnection,
         application: OutputApplication<'_>,
+        cycle_budget: &mut AffectedCrystalIds,
         long_term_budget: &mut LongTermBudget,
     ) -> Result<(usize, usize)> {
         let OutputApplication {
             run_id,
             cycle_id,
+            maintenance_cycle_id,
             context,
             memories,
             outputs,
@@ -687,11 +702,6 @@ impl<'a> DreamService<'a> {
         let allowed: BTreeSet<i64> = memories.iter().map(|memory| memory.id).collect();
         let mut created = 0;
         let mut proposals = 0;
-        let mut affected = ChangeBudget::new(
-            self.dream_config
-                .max_changed_crystals_per_cycle
-                .min(self.dream_config.max_total_affected_crystals),
-        );
         for output in outputs {
             match output {
                 PhaseOutput::Concepts(value) => {
@@ -700,10 +710,6 @@ impl<'a> DreamService<'a> {
                         .iter()
                         .take(self.dream_config.max_related_concepts_per_cycle)
                     {
-                        let record_cost = 1usize.saturating_add(candidate.concept.facets.len());
-                        if !long_term_budget.reserve(record_cost) {
-                            break;
-                        }
                         let now = Utc::now();
                         let concept_id = sqlx::query("INSERT INTO concepts(canonical_name,scope_type,scope_key,status,confidence,created_at,updated_at) VALUES (?,'series',?,'candidate',0.2,?,?)")
                             .bind(candidate.concept.canonical_name.trim())
@@ -736,9 +742,6 @@ impl<'a> DreamService<'a> {
                 }
                 PhaseOutput::TerminologyCandidates(value) => {
                     for candidate in &value.concept_proposals {
-                        if !long_term_budget.reserve(1) {
-                            break;
-                        }
                         let now = Utc::now();
                         sqlx::query("INSERT INTO concept_proposals(dream_run_id,series_slug,source_language,target_language,concept_text,source_form,canonical_rendering,approved_variants_json,forbidden_variants_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'[]','[]','pending',?,?)")
                             .bind(run_id)
@@ -757,7 +760,9 @@ impl<'a> DreamService<'a> {
                 }
                 PhaseOutput::RuleCrystals(value) | PhaseOutput::KnowledgeCrystals(value) => {
                     for candidate in &value.crystals {
-                        if affected.remaining() == 0 || !long_term_budget.reserve(1) {
+                        if !cycle_budget.can_reserve_with_new(&[], 1)
+                            || !long_term_budget.can_reserve_with_new(&[], 1)
+                        {
                             break;
                         }
                         if candidate
@@ -802,7 +807,15 @@ impl<'a> DreamService<'a> {
                                 .execute(&mut *transaction)
                                 .await?;
                         }
-                        assert!(affected.reserve(&[id]), "new crystal budget was prechecked");
+                        assert!(
+                            cycle_budget.reserve(&[id]),
+                            "new crystal budget was prechecked"
+                        );
+                        assert!(
+                            long_term_budget.reserve(&[id]),
+                            "new crystal run budget was prechecked"
+                        );
+                        record_affected(transaction, maintenance_cycle_id, &[id]).await?;
                         created += 1;
                     }
                 }
@@ -812,17 +825,24 @@ impl<'a> DreamService<'a> {
                         .iter()
                         .take(self.dream_config.max_relation_records_per_pass)
                     {
-                        if !affected.reserve(&[relation.source_id, relation.target_id])
-                            || !long_term_budget.reserve(1)
-                        {
+                        let ids = [relation.source_id, relation.target_id];
+                        if !cycle_budget.can_reserve(&ids) || !long_term_budget.can_reserve(&ids) {
                             break;
                         }
-                        sqlx::query("INSERT OR IGNORE INTO crystal_links(source_crystal_id,target_crystal_id,link_type) VALUES (?,?,?)")
+                        let result = sqlx::query("INSERT OR IGNORE INTO crystal_links(source_crystal_id,target_crystal_id,link_type) VALUES (?,?,?)")
                             .bind(relation.source_id)
                             .bind(relation.target_id)
                             .bind(relation.relation.trim())
                             .execute(&mut *transaction)
                             .await?;
+                        if result.rows_affected() == 1 {
+                            record_affected(transaction, maintenance_cycle_id, &ids).await?;
+                            assert!(cycle_budget.reserve(&ids), "relation budget was prechecked");
+                            assert!(
+                                long_term_budget.reserve(&ids),
+                                "relation run budget was prechecked"
+                            );
+                        }
                     }
                 }
                 PhaseOutput::Reinforcement(value) => {
@@ -833,9 +853,8 @@ impl<'a> DreamService<'a> {
                         .into_iter()
                         .take(self.dream_config.max_total_affected_crystals)
                     {
-                        if !affected.reserve(&[candidate.crystal_id])
-                            || !long_term_budget.reserve(1)
-                        {
+                        let ids = [candidate.crystal_id];
+                        if !cycle_budget.can_reserve(&ids) || !long_term_budget.can_reserve(&ids) {
                             break;
                         }
                         Self::apply_provider_reinforcement(
@@ -848,6 +867,15 @@ impl<'a> DreamService<'a> {
                             },
                         )
                         .await?;
+                        assert!(
+                            cycle_budget.reserve(&ids),
+                            "reinforcement budget was prechecked"
+                        );
+                        assert!(
+                            long_term_budget.reserve(&ids),
+                            "reinforcement run budget was prechecked"
+                        );
+                        record_affected(transaction, maintenance_cycle_id, &ids).await?;
                     }
                 }
                 PhaseOutput::CoverageAudit(_) => {}
@@ -898,6 +926,7 @@ impl<'a> DreamService<'a> {
         cycle_id: i64,
         memories: &[crate::domain::ShortTermMemory],
         session_ids: &[i64],
+        cycle_budget: &mut AffectedCrystalIds,
         long_term_budget: &mut LongTermBudget,
     ) -> Result<()> {
         let limit = self
@@ -908,7 +937,7 @@ impl<'a> DreamService<'a> {
         for memory in memories
             .iter()
             .filter(|memory| memory.source_crystal_id.is_some())
-            .take(limit.min(long_term_budget.remaining()))
+            .take(limit)
         {
             let Some(source_crystal_id) = memory.source_crystal_id else {
                 continue;
@@ -923,33 +952,17 @@ impl<'a> DreamService<'a> {
         }
         let reconsolidated =
             Reconsolidator::new(self.dream_config.reconsolidation_diff_threshold, cycle_id)
+                .with_affected_crystals(cycle_budget.limit(), cycle_budget.ids())
+                .with_affected_crystals(long_term_budget.limit(), long_term_budget.ids())
                 .run(&self.pool, working)
                 .await?;
-        long_term_budget.reserve(reconsolidated.len());
-        let mut changed = reconsolidated.len();
+        reserve_reconsolidation_outcomes(cycle_budget, long_term_budget, &reconsolidated);
 
-        let concepts: Vec<ConceptRecord> = sqlx::query_as(
-            "SELECT * FROM concepts
-             WHERE merged_into_concept_id IS NULL
-               AND status IN ('candidate','established')
-             ORDER BY id
-             LIMIT ?",
-        )
-        .bind(self.dream_config.max_related_concepts_per_cycle as i64)
-        .fetch_all(&self.pool)
-        .await?;
-        let proposal_limit = self
-            .dream_config
-            .max_related_concepts_per_cycle
-            .min(long_term_budget.remaining());
-        let consolidated = Consolidator::new(run_id, proposal_limit)
-            .run(&self.pool, concepts)
+        Consolidator::new(run_id, self.dream_config.max_related_concepts_per_cycle)
+            .scan(&self.pool)
             .await?;
-        long_term_budget.reserve(consolidated.len());
 
-        let passive_limit = limit
-            .saturating_sub(changed)
-            .min(long_term_budget.remaining());
+        let passive_limit = limit;
         if passive_limit > 0 {
             let passive_events: Vec<MemoryEventRecord> = sqlx::query_as(
                 "SELECT * FROM memory_events
@@ -965,26 +978,25 @@ impl<'a> DreamService<'a> {
             .fetch_all(&self.pool)
             .await?;
             let reinforced = ReinforcementManager::new(cycle_id)
+                .with_affected_crystals(cycle_budget.limit(), cycle_budget.ids())
+                .with_affected_crystals(long_term_budget.limit(), long_term_budget.ids())
                 .run(&self.pool, passive_events)
                 .await?;
-            long_term_budget.reserve(reinforced.len());
-            changed += reinforced.len();
+            for crystal_id in reinforced {
+                assert!(cycle_budget.reserve(&[crystal_id]));
+                assert!(long_term_budget.reserve(&[crystal_id]));
+            }
         }
 
         let activations = self
-            .bounded_activations(
-                session_ids,
-                cycle_id,
-                limit
-                    .saturating_sub(changed)
-                    .min(long_term_budget.remaining()),
-            )
+            .bounded_activations(session_ids, cycle_id, limit)
             .await?;
         let outcomes = LinkReinforcer::new(cycle_id)
+            .with_affected_crystals(cycle_budget.limit(), cycle_budget.ids())
+            .with_affected_crystals(long_term_budget.limit(), long_term_budget.ids())
             .run(&self.pool, activations.clone())
             .await?;
-        long_term_budget.reserve(outcomes.len());
-        changed += outcomes.len();
+        reserve_link_outcomes(cycle_budget, long_term_budget, &outcomes);
         let recalled_ids = activations
             .iter()
             .map(|activation| activation.crystal_id)
@@ -1002,10 +1014,9 @@ impl<'a> DreamService<'a> {
                 } => [*survivor_id, *absorbed_id],
             })
             .collect();
-        let remaining = limit.saturating_sub(changed);
-        if remaining > 0 && long_term_budget.remaining() > 0 {
+        if limit > 0 {
             let decayed = DecayManager
-                .run(
+                .run_bounded(
                     &self.pool,
                     DecayScope {
                         after_id: 0,
@@ -1013,11 +1024,15 @@ impl<'a> DreamService<'a> {
                         stale_before_cycle: cycle_id,
                         recalled_ids,
                         linked_ids,
-                        limit: remaining.min(long_term_budget.remaining()),
+                        limit,
                     },
+                    vec![cycle_budget.clone(), long_term_budget.clone()],
                 )
                 .await?;
-            long_term_budget.reserve(decayed.len());
+            for crystal_id in decayed {
+                assert!(cycle_budget.reserve(&[crystal_id]));
+                assert!(long_term_budget.reserve(&[crystal_id]));
+            }
         }
         Ok(())
     }
@@ -1472,52 +1487,51 @@ fn canonical_directed_pairs(pairs: &[(i64, i64)]) -> Vec<(i64, i64)> {
         .collect()
 }
 
-struct ChangeBudget {
-    limit: usize,
-    ids: BTreeSet<i64>,
-}
+type ChangeBudget = AffectedCrystalIds;
+type LongTermBudget = AffectedCrystalIds;
 
-impl ChangeBudget {
-    fn new(limit: usize) -> Self {
-        Self {
-            limit,
-            ids: BTreeSet::new(),
-        }
-    }
-
-    fn reserve(&mut self, ids: &[i64]) -> bool {
-        let additional = ids.iter().filter(|id| !self.ids.contains(id)).count();
-        if self.ids.len().saturating_add(additional) > self.limit {
-            return false;
-        }
-        self.ids.extend(ids.iter().copied());
-        true
-    }
-
-    fn remaining(&self) -> usize {
-        self.limit.saturating_sub(self.ids.len())
+fn reserve_reconsolidation_outcomes(
+    cycle_budget: &mut AffectedCrystalIds,
+    long_term_budget: &mut AffectedCrystalIds,
+    outcomes: &[super::ReconsolidationOutcome],
+) {
+    for outcome in outcomes {
+        let ids = match *outcome {
+            super::ReconsolidationOutcome::ReinforcedInPlace { crystal_id } => vec![crystal_id],
+            super::ReconsolidationOutcome::Superseded {
+                old_crystal_id,
+                new_crystal_id,
+            } => vec![old_crystal_id, new_crystal_id],
+        };
+        assert!(cycle_budget.reserve(&ids), "phase prechecked cycle budget");
+        assert!(
+            long_term_budget.reserve(&ids),
+            "phase prechecked run budget"
+        );
     }
 }
 
-struct LongTermBudget {
-    remaining: usize,
-}
-
-impl LongTermBudget {
-    const fn new(limit: usize) -> Self {
-        Self { remaining: limit }
-    }
-
-    const fn remaining(&self) -> usize {
-        self.remaining
-    }
-
-    fn reserve(&mut self, count: usize) -> bool {
-        if count > self.remaining {
-            return false;
-        }
-        self.remaining -= count;
-        true
+fn reserve_link_outcomes(
+    cycle_budget: &mut AffectedCrystalIds,
+    long_term_budget: &mut AffectedCrystalIds,
+    outcomes: &[LinkOutcome],
+) {
+    for outcome in outcomes {
+        let ids = match *outcome {
+            LinkOutcome::Strengthened {
+                source_id,
+                target_id,
+            } => [source_id, target_id],
+            LinkOutcome::Combined {
+                survivor_id,
+                absorbed_id,
+            } => [survivor_id, absorbed_id],
+        };
+        assert!(cycle_budget.reserve(&ids), "phase prechecked cycle budget");
+        assert!(
+            long_term_budget.reserve(&ids),
+            "phase prechecked run budget"
+        );
     }
 }
 

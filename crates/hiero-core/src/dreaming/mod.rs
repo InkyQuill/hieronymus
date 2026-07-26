@@ -1,6 +1,7 @@
 //! Dream-cycle configuration and deterministic workflow resolution.
 
 mod audit;
+mod budget;
 mod concepts;
 mod config;
 mod consolidation;
