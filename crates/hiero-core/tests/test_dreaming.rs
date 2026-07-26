@@ -1142,6 +1142,58 @@ async fn scheduler_shutdown_waits_for_blocked_cycle_cancellation_and_audit_clean
 }
 
 #[tokio::test]
+async fn scheduler_bounds_persistent_audit_cleanup_failure_and_releases_lock() {
+    let fixture = Fixture::new().await;
+    fixture.pending_memory().await;
+    sqlx::query(
+        "CREATE TRIGGER injected_persistent_cleanup_failure
+         BEFORE UPDATE OF status ON dream_runs
+         WHEN OLD.status='running' AND NEW.status='failed'
+         BEGIN SELECT RAISE(ABORT,'injected persistent cleanup failure'); END",
+    )
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    let entered = Arc::new(Notify::new());
+    let service = fixture
+        .service(
+            Arc::new(FakeProvider {
+                failure: None,
+                entered: Some(entered.clone()),
+                release: Some(Arc::new(Notify::new())),
+            }),
+            1,
+        )
+        .with_cleanup_deadline(Duration::from_millis(200));
+    let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+    let controller = async {
+        entered.notified().await;
+        shutdown_tx.send(()).unwrap();
+    };
+
+    let (scheduler, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(
+            run_background_loop(service, Duration::from_millis(10), shutdown_rx),
+            controller
+        )
+    })
+    .await
+    .expect("persistent cleanup failure must remain bounded");
+    let error = scheduler.expect_err("bounded cleanup failure must be surfaced");
+    assert!(error.to_string().contains("audit cleanup"));
+    let lock = acquire_dream_cycle_lock(&fixture.config, "after-bounded-cleanup", false)
+        .expect("bounded cleanup must release the OS lock");
+    drop(lock);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM dream_runs WHERE status='running'")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn each_run_uses_one_exact_series_and_language_context() {
     let fixture = Fixture::new().await;
     fixture.add_series("other", "ja", "de").await;

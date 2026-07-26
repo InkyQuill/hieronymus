@@ -3,6 +3,14 @@
 use std::{process::Stdio, time::Duration};
 
 use assert_cmd::cargo::cargo_bin;
+use hiero_core::{
+    config::HieronymusConfig,
+    db,
+    domain::{AddMemoryInput, TranslationContext, WorkspaceStore},
+    dreaming::{DreamConfig, PhaseProfile, acquire_dream_cycle_lock},
+    provider::{PassName, ProviderCatalog, ProviderProfile},
+    registry::SeriesRegistry,
+};
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
@@ -31,8 +39,81 @@ fn daemon_command(root: &TempDir, port: u16, explicit_start: bool) -> Command {
     command
 }
 
+fn daemon_config(root: &TempDir) -> HieronymusConfig {
+    HieronymusConfig::with_roots(
+        root.path().join("data"),
+        root.path().join("config").join("hieronymus"),
+    )
+}
+
+async fn configure_pending_dream(root: &TempDir, provider_url: Option<&str>) -> HieronymusConfig {
+    let config = daemon_config(root);
+    config.ensure_directories().unwrap();
+    let pool = db::connect(&config).await.unwrap();
+    SeriesRegistry::new(&pool)
+        .create("book", "Book", "en", "ru")
+        .await
+        .unwrap();
+    let workspace = WorkspaceStore::new(&pool);
+    let session = workspace
+        .start_session(
+            &TranslationContext::new("book", "en", "ru"),
+            "translation",
+            "1",
+            "1",
+        )
+        .await
+        .unwrap();
+    workspace
+        .add_short_term(
+            session.id,
+            AddMemoryInput {
+                text: "The daemon must release its real dream lock.".into(),
+                ..AddMemoryInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    workspace.complete_session(session.id).await.unwrap();
+    pool.close().await;
+
+    let mut dream = DreamConfig {
+        enabled: true,
+        schedule_interval_minutes: 1,
+        min_pending_short_term_memories: 1,
+        ..DreamConfig::default()
+    };
+    dream = dream.with_phase(
+        PassName::KnowledgeCrystals,
+        PhaseProfile {
+            provider: "process-test".into(),
+            model: "test-model".into(),
+            enabled: true,
+            max_records_per_pass: 10,
+        },
+    );
+    dream.save(&config).unwrap();
+    if let Some(provider_url) = provider_url {
+        let mut catalog = ProviderCatalog::default();
+        catalog
+            .upsert(
+                ProviderProfile::new("process-test", "Process Test", "openai", provider_url)
+                    .with_inline_credential("process-test-key")
+                    .with_timeout(Duration::from_secs(30)),
+            )
+            .unwrap();
+        catalog.save(config.provider_config_path()).unwrap();
+    }
+    config
+}
+
 async fn spawn_daemon(root: &TempDir, port: u16) -> Child {
     let child = daemon_command(root, port, true).spawn().unwrap();
+    wait_daemon_ready(root, port).await;
+    child
+}
+
+async fn wait_daemon_ready(root: &TempDir, port: u16) {
     let token_path = root
         .path()
         .join("config")
@@ -64,7 +145,6 @@ async fn spawn_daemon(root: &TempDir, port: u16) -> Child {
     })
     .await
     .expect("daemon should start");
-    child
 }
 
 async fn assert_signal_stops_daemon(signal: &str) {
@@ -126,4 +206,167 @@ async fn no_subcommand_prints_status_when_daemon_is_already_running() {
         .await
         .unwrap();
     daemon.wait().await.unwrap();
+}
+
+#[tokio::test]
+async fn fatal_background_dream_failure_stops_the_daemon_immediately() {
+    let root = TempDir::new().unwrap();
+    configure_pending_dream(&root, None).await;
+    let port = random_port().await;
+    let child = daemon_command(&root, port, true).spawn().unwrap();
+
+    let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output())
+        .await
+        .expect("fatal recurring failure should stop the daemon")
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("fatal recurring worker failure"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn disabled_background_dreaming_does_not_load_provider_catalog() {
+    let root = TempDir::new().unwrap();
+    let config = daemon_config(&root);
+    config.ensure_directories().unwrap();
+    std::fs::write(config.provider_config_path(), "not valid = [toml").unwrap();
+    let port = random_port().await;
+    let mut daemon = spawn_daemon(&root, port).await;
+
+    Command::new("kill")
+        .arg("-TERM")
+        .arg(daemon.id().unwrap().to_string())
+        .status()
+        .await
+        .unwrap();
+    assert!(daemon.wait().await.unwrap().success());
+}
+
+#[tokio::test]
+async fn sigterm_releases_an_active_production_dream_lock_before_exit() {
+    let provider = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let provider_url = format!("http://{}/v1", provider.local_addr().unwrap());
+    let root = TempDir::new().unwrap();
+    let config = configure_pending_dream(&root, Some(&provider_url)).await;
+    let (request_started, request_observed) = tokio::sync::oneshot::channel();
+    let provider_task = tokio::spawn(async move {
+        let (mut stream, _) = provider.accept().await.unwrap();
+        let mut request = [0_u8; 4_096];
+        let read = stream.read(&mut request).await.unwrap();
+        assert!(read > 0);
+        let _ = request_started.send(());
+        let mut rest = Vec::new();
+        stream.read_to_end(&mut rest).await.unwrap();
+    });
+    let port = random_port().await;
+    let mut daemon = daemon_command(&root, port, true).spawn().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), request_observed)
+        .await
+        .expect("production dream provider request should start")
+        .unwrap();
+    wait_daemon_ready(&root, port).await;
+    let lock_error = acquire_dream_cycle_lock(&config, "process-test-probe", false)
+        .expect_err("daemon should own the real dream lock");
+    assert!(lock_error.is_already_running());
+
+    Command::new("kill")
+        .arg("-TERM")
+        .arg(daemon.id().unwrap().to_string())
+        .status()
+        .await
+        .unwrap();
+    let exit = tokio::time::timeout(Duration::from_secs(8), daemon.wait())
+        .await
+        .expect("daemon should finish dream cancellation cleanup")
+        .unwrap();
+    assert!(exit.success(), "daemon exit: {exit}");
+    tokio::time::timeout(Duration::from_secs(1), provider_task)
+        .await
+        .expect("provider connection should close before daemon exit completes")
+        .unwrap();
+
+    let cleanup_lock = acquire_dream_cycle_lock(&config, "process-test-after-exit", false)
+        .expect("daemon must release the dream lock before exit");
+    drop(cleanup_lock);
+    let pool = db::connect(&config).await.unwrap();
+    let running: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM dream_runs WHERE status = 'running'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(running, 0);
+}
+
+#[tokio::test]
+async fn sigterm_bounds_persistent_dream_cleanup_failure_without_orphaning_lock() {
+    let provider = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let provider_url = format!("http://{}/v1", provider.local_addr().unwrap());
+    let root = TempDir::new().unwrap();
+    let config = configure_pending_dream(&root, Some(&provider_url)).await;
+    let pool = db::connect(&config).await.unwrap();
+    sqlx::query(
+        "CREATE TRIGGER injected_persistent_cleanup_failure
+         BEFORE UPDATE OF status ON dream_runs
+         WHEN OLD.status='running' AND NEW.status='failed'
+         BEGIN SELECT RAISE(ABORT,'injected persistent cleanup failure'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+    let (request_started, request_observed) = tokio::sync::oneshot::channel();
+    let provider_task = tokio::spawn(async move {
+        let (mut stream, _) = provider.accept().await.unwrap();
+        let mut request = [0_u8; 4_096];
+        assert!(stream.read(&mut request).await.unwrap() > 0);
+        let _ = request_started.send(());
+        let mut rest = Vec::new();
+        stream.read_to_end(&mut rest).await.unwrap();
+    });
+    let port = random_port().await;
+    let daemon = daemon_command(&root, port, true).spawn().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), request_observed)
+        .await
+        .expect("production dream provider request should start")
+        .unwrap();
+    wait_daemon_ready(&root, port).await;
+    let pid = daemon.id().unwrap();
+    Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status()
+        .await
+        .unwrap();
+
+    let output = tokio::time::timeout(Duration::from_secs(5), daemon.wait_with_output())
+        .await
+        .expect("persistent cleanup failure must not prevent process exit")
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("audit cleanup"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    tokio::time::timeout(Duration::from_secs(1), provider_task)
+        .await
+        .expect("provider connection must not outlive daemon shutdown")
+        .unwrap();
+    let lock = acquire_dream_cycle_lock(&config, "after-persistent-cleanup", false)
+        .expect("persistent cleanup failure must still release the OS lock");
+    drop(lock);
+    let pool = db::connect(&config).await.unwrap();
+    let running: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM dream_runs WHERE status = 'running'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(running, 1);
 }

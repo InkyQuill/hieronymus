@@ -49,6 +49,11 @@ pub async fn run_background_loop(
                         // completion acknowledgement for scheduler shutdown.
                         let cleanup_ack = service.acquire_lock("scheduler-shutdown", true).await?;
                         drop(cleanup_ack);
+                        if service.take_cleanup_failure() {
+                            return Err(DreamServiceError::Domain(
+                                "audit cleanup did not complete before the scheduler shutdown deadline".into(),
+                            ));
+                        }
                         return Ok(());
                     }
                 }

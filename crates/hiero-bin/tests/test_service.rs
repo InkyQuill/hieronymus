@@ -1028,24 +1028,58 @@ async fn manual_worker_supervisor_reaps_completion_without_spawn_poll_or_shutdow
 }
 
 #[tokio::test]
-async fn worker_supervisor_surfaces_task_failures_at_shutdown() {
+async fn recurring_worker_failure_is_fatal_before_shutdown() {
     let workers = WorkerSupervisor::default();
+    let mut fatal = workers.subscribe_fatal();
     assert!(
         workers
-            .spawn_result(async { anyhow::bail!("recurring worker failed") })
+            .spawn_recurring(async { anyhow::bail!("recurring worker failed") })
+            .await
+    );
+
+    let error = tokio::time::timeout(Duration::from_secs(1), fatal.recv())
+        .await
+        .expect("fatal worker completion must be reported immediately")
+        .expect("fatal channel should stay open");
+    assert!(error.contains("recurring worker failed"));
+    workers.shutdown().await.unwrap_err();
+}
+
+#[tokio::test]
+async fn recurring_worker_failure_burst_remains_a_fatal_signal_after_channel_lag() {
+    let workers = WorkerSupervisor::default();
+    let mut fatal = workers.subscribe_fatal();
+    for index in 0..20 {
+        assert!(
+            workers
+                .spawn_recurring(async move { anyhow::bail!("burst failure {index}") })
+                .await
+        );
+    }
+    workers.wait_idle().await;
+
+    let failure = workers.receive_fatal(&mut fatal).await;
+    assert!(failure.contains("fatal recurring worker"));
+    workers.shutdown().await.unwrap_err();
+}
+
+#[tokio::test]
+async fn one_shot_worker_error_is_nonfatal() {
+    let workers = WorkerSupervisor::default();
+    let mut fatal = workers.subscribe_fatal();
+    assert!(
+        workers
+            .spawn_result(async { anyhow::bail!("manual dream failed") })
             .await
     );
     workers.wait_idle().await;
 
-    let error = workers
-        .shutdown()
-        .await
-        .expect_err("worker failure must reach the daemon lifecycle");
-    assert!(error.to_string().contains("recurring worker failed"));
+    assert!(fatal.try_recv().is_err());
+    workers.shutdown().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn worker_supervisor_bounds_abort_and_reap_for_a_stalled_worker() {
+async fn worker_supervisor_reports_abort_reap_timeout_as_unclean() {
     struct SlowDrop;
     impl Drop for SlowDrop {
         fn drop(&mut self) {
@@ -1067,10 +1101,41 @@ async fn worker_supervisor_bounds_abort_and_reap_for_a_stalled_worker() {
     );
     entered.notified().await;
 
-    tokio::time::timeout(Duration::from_secs(4), workers.shutdown())
+    let error = tokio::time::timeout(Duration::from_secs(4), workers.shutdown())
         .await
         .expect("supervisor shutdown itself must be bounded")
-        .expect("forced cancellation is a clean shutdown");
+        .expect_err("an unreaped worker is an unclean shutdown");
+    assert!(error.to_string().contains("unclean worker shutdown"));
+    assert_eq!(workers.active_count().await, 1);
+}
+
+#[tokio::test]
+async fn worker_supervisor_reaps_cancelled_futures_before_reporting_idle() {
+    struct DropGuard(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for DropGuard {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    let workers = WorkerSupervisor::default();
+    let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let task_dropped = dropped.clone();
+    let task_entered = entered.clone();
+    assert!(
+        workers
+            .spawn(async move {
+                let _guard = DropGuard(task_dropped);
+                task_entered.notify_one();
+                std::future::pending::<()>().await;
+            })
+            .await
+    );
+    entered.notified().await;
+
+    workers.shutdown().await.unwrap();
+    assert!(dropped.load(std::sync::atomic::Ordering::Acquire));
     assert_eq!(workers.active_count().await, 0);
 }
 
@@ -1080,9 +1145,9 @@ async fn worker_supervisor_bounds_retained_failure_summaries() {
     for index in 0..20 {
         assert!(
             workers
-                .spawn_result(
-                    async move { anyhow::bail!("failure-{index:02}-{}", "x".repeat(2_000)) }
-                )
+                .spawn_recurring(async move {
+                    anyhow::bail!("failure-{index:02}-{}", "x".repeat(2_000))
+                })
                 .await
         );
     }

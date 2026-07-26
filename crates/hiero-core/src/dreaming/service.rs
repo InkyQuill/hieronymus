@@ -4,8 +4,9 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc,
-        atomic::{AtomicI64, Ordering},
+        atomic::{AtomicBool, AtomicI64, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use chrono::Utc;
@@ -109,6 +110,8 @@ pub struct DreamService<'a> {
     dream_config: DreamConfig,
     resolver: Arc<dyn DreamProviderResolver>,
     provider_catalog: Option<ProviderCatalog>,
+    cleanup_deadline: Option<Duration>,
+    cleanup_failed: Arc<AtomicBool>,
     lifetime: PhantomData<&'a ()>,
 }
 
@@ -126,6 +129,8 @@ impl<'a> DreamService<'a> {
             dream_config: dream_config.clone(),
             resolver,
             provider_catalog: None,
+            cleanup_deadline: None,
+            cleanup_failed: Arc::new(AtomicBool::new(false)),
             lifetime: PhantomData,
         }
     }
@@ -144,8 +149,20 @@ impl<'a> DreamService<'a> {
             dream_config: dream_config.clone(),
             resolver,
             provider_catalog: Some(provider_catalog),
+            cleanup_deadline: None,
+            cleanup_failed: Arc::new(AtomicBool::new(false)),
             lifetime: PhantomData,
         }
+    }
+
+    #[must_use]
+    pub fn with_cleanup_deadline(mut self, deadline: Duration) -> Self {
+        self.cleanup_deadline = Some(deadline);
+        self
+    }
+
+    pub(crate) fn take_cleanup_failure(&self) -> bool {
+        self.cleanup_failed.swap(false, Ordering::AcqRel)
     }
 
     #[must_use]
@@ -284,6 +301,8 @@ impl<'a> DreamService<'a> {
             dream_config: self.dream_config.clone(),
             resolver: self.resolver.clone(),
             provider_catalog: self.provider_catalog.clone(),
+            cleanup_deadline: self.cleanup_deadline,
+            cleanup_failed: self.cleanup_failed.clone(),
             lifetime: PhantomData,
         }
     }
@@ -1634,6 +1653,9 @@ fn supervise_blocking(
     let open_run_id = run_id.load(Ordering::Acquire);
     let mut recovery_failure = None;
     if open_run_id != 0 {
+        let cleanup_deadline = service
+            .cleanup_deadline
+            .and_then(|duration| Instant::now().checked_add(duration));
         let reason = match &outcome {
             Ok(SupervisorOutcome::Cancelled) => "dream cycle cancelled",
             Ok(SupervisorOutcome::Complete(_)) => "dream cycle cleanup failed",
@@ -1650,6 +1672,21 @@ fn supervise_blocking(
             ));
         }
         while cleanup.is_err() {
+            if cleanup_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                let cleanup_error = cleanup
+                    .as_ref()
+                    .expect_err("cleanup failure was checked")
+                    .to_string();
+                let deadline_failure =
+                    format!("audit cleanup did not complete before its deadline: {cleanup_error}");
+                recovery_failure = Some(
+                    recovery_failure.map_or(deadline_failure.clone(), |failure| {
+                        format!("{failure}; {deadline_failure}")
+                    }),
+                );
+                service.cleanup_failed.store(true, Ordering::Release);
+                break;
+            }
             runtime.block_on(tokio::time::sleep(std::time::Duration::from_millis(50)));
             cleanup = runtime.block_on(audit.fail_run(
                 open_run_id,
@@ -1657,7 +1694,9 @@ fn supervise_blocking(
                 reason,
             ));
         }
-        run_id.store(0, Ordering::Release);
+        if cleanup.is_ok() {
+            run_id.store(0, Ordering::Release);
+        }
     }
 
     drop(guard);

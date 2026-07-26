@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs::{self, OpenOptions},
     future::Future,
     io::{ErrorKind, Read, Write},
@@ -30,13 +31,19 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, get, post},
 };
-use hiero_core::provider::ProviderTransport;
-use hiero_core::{config::HieronymusConfig, db};
+use hiero_core::{
+    config::HieronymusConfig,
+    db,
+    dreaming::{DreamConfig, DreamPhaseError, DreamService, WorkflowProfile, run_background_loop},
+    provider::{
+        ModelCache, ProviderCatalog, ProviderRegistry, ProviderTransport, ReqwestTransportOptions,
+    },
+};
 use sqlx::SqlitePool;
 use subtle::ConstantTimeEq;
 use tokio::{
     sync::{Notify, broadcast, mpsc, oneshot},
-    task::{JoinHandle, JoinSet},
+    task::{Id, JoinError, JoinHandle, JoinSet},
 };
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
@@ -57,6 +64,7 @@ const AUTH_TOKEN_HEADER: &str = "x-hieronymus-token";
 const WORKER_CHANNEL_CAPACITY: usize = 64;
 const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const WORKER_ABORT_GRACE: Duration = Duration::from_secs(1);
+const WORKER_SHUTDOWN_TOTAL: Duration = Duration::from_secs(4);
 const SERVER_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const LOOPBACK_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 const LOOPBACK_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -79,8 +87,17 @@ pub struct AppState {
 
 type WorkerFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkerKind {
+    OneShot,
+    Recurring,
+}
+
 enum WorkerCommand {
-    Spawn(WorkerFuture),
+    Spawn {
+        kind: WorkerKind,
+        task: WorkerFuture,
+    },
     Shutdown(oneshot::Sender<Result<()>>),
 }
 
@@ -90,6 +107,7 @@ struct WorkerSupervisorInner {
     idle: Arc<Notify>,
     closed: AtomicBool,
     reaper: StdMutex<Option<JoinHandle<()>>>,
+    fatal: broadcast::Sender<String>,
 }
 
 #[derive(Clone)]
@@ -102,10 +120,12 @@ impl Default for WorkerSupervisor {
         let (commands, receiver) = mpsc::channel(WORKER_CHANNEL_CAPACITY);
         let active = Arc::new(AtomicUsize::new(0));
         let idle = Arc::new(Notify::new());
+        let (fatal, _) = broadcast::channel(4);
         let reaper = tokio::spawn(run_worker_supervisor(
             receiver,
             active.clone(),
             idle.clone(),
+            fatal.clone(),
         ));
         Self {
             inner: Arc::new(WorkerSupervisorInner {
@@ -114,6 +134,7 @@ impl Default for WorkerSupervisor {
                 idle,
                 closed: AtomicBool::new(false),
                 reaper: StdMutex::new(Some(reaper)),
+                fatal,
             }),
         }
     }
@@ -132,23 +153,63 @@ impl WorkerSupervisor {
         &self,
         task: impl Future<Output = Result<()>> + Send + 'static,
     ) -> bool {
+        self.spawn_kind(WorkerKind::OneShot, task).await
+    }
+
+    pub async fn spawn_recurring(
+        &self,
+        task: impl Future<Output = Result<()>> + Send + 'static,
+    ) -> bool {
+        self.spawn_kind(WorkerKind::Recurring, task).await
+    }
+
+    async fn spawn_kind(
+        &self,
+        kind: WorkerKind,
+        task: impl Future<Output = Result<()>> + Send + 'static,
+    ) -> bool {
         if self.inner.closed.load(Ordering::Acquire) {
             return false;
         }
         self.inner
             .commands
-            .send(WorkerCommand::Spawn(Box::pin(task)))
+            .send(WorkerCommand::Spawn {
+                kind,
+                task: Box::pin(task),
+            })
             .await
             .is_ok()
     }
 
+    #[must_use]
+    pub fn subscribe_fatal(&self) -> broadcast::Receiver<String> {
+        self.inner.fatal.subscribe()
+    }
+
+    pub async fn receive_fatal(&self, receiver: &mut broadcast::Receiver<String>) -> String {
+        let mut lagged = 0_u64;
+        loop {
+            match receiver.recv().await {
+                Ok(failure) if lagged == 0 => {
+                    return format!("fatal recurring worker failure: {failure}");
+                }
+                Ok(failure) => {
+                    return format!(
+                        "fatal recurring worker failure: {failure}; {lagged} earlier fatal notification(s) were dropped"
+                    );
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    lagged = lagged.saturating_add(skipped);
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    return "fatal recurring worker failure channel closed unexpectedly".into();
+                }
+            }
+        }
+    }
+
     pub async fn shutdown(&self) -> Result<()> {
-        match tokio::time::timeout(
-            WORKER_SHUTDOWN_GRACE + WORKER_ABORT_GRACE,
-            self.shutdown_inner(),
-        )
-        .await
-        {
+        match tokio::time::timeout(WORKER_SHUTDOWN_TOTAL, self.shutdown_inner()).await {
             Ok(result) => result,
             Err(error) => {
                 let reaper = self
@@ -181,7 +242,9 @@ impl WorkerSupervisor {
                     .context("worker supervisor stopped before acknowledging shutdown")?;
             }
         }
-        self.wait_idle().await;
+        if result.is_ok() {
+            self.wait_idle().await;
+        }
         let reaper = self
             .inner
             .reaper
@@ -215,27 +278,45 @@ async fn run_worker_supervisor(
     mut commands: mpsc::Receiver<WorkerCommand>,
     active: Arc<AtomicUsize>,
     idle: Arc<Notify>,
+    fatal: broadcast::Sender<String>,
 ) {
     let mut tasks = JoinSet::new();
+    let mut kinds = HashMap::new();
     let mut failures = Vec::new();
     loop {
         if tasks.is_empty() {
             match commands.recv().await {
-                Some(WorkerCommand::Spawn(task)) => spawn_worker(&mut tasks, &active, task),
+                Some(WorkerCommand::Spawn { kind, task }) => {
+                    spawn_worker(&mut tasks, &mut kinds, &active, kind, task);
+                }
                 Some(WorkerCommand::Shutdown(completed)) => {
-                    finish_worker_shutdown(
+                    let shutdown = finish_worker_shutdown(
                         &mut commands,
                         &mut tasks,
+                        &mut kinds,
                         &active,
                         &idle,
                         &mut failures,
+                        &fatal,
                     )
                     .await;
-                    let _ = completed.send(worker_failures(failures));
+                    let _ =
+                        completed.send(combine_worker_results(shutdown, worker_failures(failures)));
                     return;
                 }
                 None => {
-                    abort_workers(&mut tasks, &active, &idle);
+                    if let Err(error) = abort_workers(
+                        &mut tasks,
+                        &mut kinds,
+                        &active,
+                        &idle,
+                        &mut failures,
+                        &fatal,
+                    )
+                    .await
+                    {
+                        tracing::error!(?error, "worker supervisor closed uncleanly");
+                    }
                     for failure in failures {
                         tracing::error!(failure, "worker task failed after supervisor closed");
                     }
@@ -246,22 +327,36 @@ async fn run_worker_supervisor(
             tokio::select! {
                 command = commands.recv() => {
                     match command {
-                        Some(WorkerCommand::Spawn(task)) => {
-                            spawn_worker(&mut tasks, &active, task);
+                        Some(WorkerCommand::Spawn { kind, task }) => {
+                            spawn_worker(&mut tasks, &mut kinds, &active, kind, task);
                         }
                         Some(WorkerCommand::Shutdown(completed)) => {
-                            finish_worker_shutdown(
+                            let shutdown = finish_worker_shutdown(
                                 &mut commands,
                                 &mut tasks,
+                                &mut kinds,
                                 &active,
                                 &idle,
                                 &mut failures,
+                                &fatal,
                             ).await;
-                            let _ = completed.send(worker_failures(failures));
+                            let _ = completed.send(combine_worker_results(
+                                shutdown,
+                                worker_failures(failures),
+                            ));
                             return;
                         }
                         None => {
-                            abort_workers(&mut tasks, &active, &idle);
+                            if let Err(error) = abort_workers(
+                                &mut tasks,
+                                &mut kinds,
+                                &active,
+                                &idle,
+                                &mut failures,
+                                &fatal,
+                            ).await {
+                                tracing::error!(?error, "worker supervisor closed uncleanly");
+                            }
                             for failure in failures {
                                 tracing::error!(
                                     failure,
@@ -272,9 +367,14 @@ async fn run_worker_supervisor(
                         }
                     }
                 }
-                joined = tasks.join_next() => {
+                joined = tasks.join_next_with_id() => {
                     if let Some(joined) = joined {
-                        record_worker_result(joined, &mut failures);
+                        record_worker_result(
+                            joined,
+                            &mut kinds,
+                            &mut failures,
+                            &fatal,
+                        );
                         record_worker_completion(&active, &idle);
                     }
                 }
@@ -283,27 +383,36 @@ async fn run_worker_supervisor(
     }
 }
 
-fn spawn_worker(tasks: &mut JoinSet<Result<()>>, active: &AtomicUsize, task: WorkerFuture) {
+fn spawn_worker(
+    tasks: &mut JoinSet<Result<()>>,
+    kinds: &mut HashMap<Id, WorkerKind>,
+    active: &AtomicUsize,
+    kind: WorkerKind,
+    task: WorkerFuture,
+) {
     active.fetch_add(1, Ordering::AcqRel);
-    tasks.spawn(task);
+    let handle = tasks.spawn(task);
+    kinds.insert(handle.id(), kind);
 }
 
 async fn finish_worker_shutdown(
     commands: &mut mpsc::Receiver<WorkerCommand>,
     tasks: &mut JoinSet<Result<()>>,
-    active: &AtomicUsize,
-    idle: &Notify,
+    kinds: &mut HashMap<Id, WorkerKind>,
+    active: &Arc<AtomicUsize>,
+    idle: &Arc<Notify>,
     failures: &mut Vec<String>,
-) {
+    fatal: &broadcast::Sender<String>,
+) -> Result<()> {
     commands.close();
     while let Some(command) = commands.recv().await {
-        if let WorkerCommand::Spawn(task) = command {
-            spawn_worker(tasks, active, task);
+        if let WorkerCommand::Spawn { kind, task } = command {
+            spawn_worker(tasks, kinds, active, kind, task);
         }
     }
     let graceful = async {
-        while let Some(joined) = tasks.join_next().await {
-            record_worker_result(joined, failures);
+        while let Some(joined) = tasks.join_next_with_id().await {
+            record_worker_result(joined, kinds, failures, fatal);
             record_worker_completion(active, idle);
         }
     };
@@ -311,20 +420,49 @@ async fn finish_worker_shutdown(
         .await
         .is_err()
     {
-        abort_workers(tasks, active, idle);
+        abort_workers(tasks, kinds, active, idle, failures, fatal).await?;
     }
+    Ok(())
 }
 
-fn abort_workers(tasks: &mut JoinSet<Result<()>>, active: &AtomicUsize, idle: &Notify) {
-    let remaining = tasks.len();
-    tasks.abort_all();
-    if remaining > 0 {
-        active.fetch_sub(remaining, Ordering::AcqRel);
-        idle.notify_waiters();
-        tracing::warn!(
-            remaining,
-            "workers exceeded the graceful shutdown window and were cancelled"
-        );
+async fn abort_workers(
+    tasks: &mut JoinSet<Result<()>>,
+    kinds: &mut HashMap<Id, WorkerKind>,
+    active: &Arc<AtomicUsize>,
+    idle: &Arc<Notify>,
+    failures: &mut Vec<String>,
+    fatal: &broadcast::Sender<String>,
+) -> Result<()> {
+    let mut aborted = std::mem::take(tasks);
+    let mut aborted_kinds = std::mem::take(kinds);
+    aborted.abort_all();
+    let reaper_active = active.clone();
+    let reaper_idle = idle.clone();
+    let fatal = fatal.clone();
+    let mut reaper = tokio::spawn(async move {
+        let mut aborted_failures = Vec::new();
+        while let Some(joined) = aborted.join_next_with_id().await {
+            record_worker_result(joined, &mut aborted_kinds, &mut aborted_failures, &fatal);
+            record_worker_completion(&reaper_active, &reaper_idle);
+        }
+        aborted_failures
+    });
+    match tokio::time::timeout(WORKER_ABORT_GRACE, &mut reaper).await {
+        Ok(Ok(aborted_failures)) => {
+            merge_worker_failures(failures, aborted_failures);
+            Ok(())
+        }
+        Ok(Err(error)) => {
+            Err(anyhow::Error::new(error)
+                .context("unclean worker shutdown: abort reaper task failed"))
+        }
+        Err(error) => {
+            let remaining = active.load(Ordering::Acquire);
+            reaper.abort();
+            Err(anyhow::Error::new(error).context(format!(
+                "unclean worker shutdown: {remaining} worker(s) did not terminate within the abort deadline"
+            )))
+        }
     }
 }
 
@@ -335,15 +473,36 @@ fn record_worker_completion(active: &AtomicUsize, idle: &Notify) {
 }
 
 fn record_worker_result(
-    joined: std::result::Result<Result<()>, tokio::task::JoinError>,
+    joined: std::result::Result<(Id, Result<()>), JoinError>,
+    kinds: &mut HashMap<Id, WorkerKind>,
     failures: &mut Vec<String>,
+    fatal: &broadcast::Sender<String>,
 ) {
+    let id = match &joined {
+        Ok((id, _)) => *id,
+        Err(error) => error.id(),
+    };
+    let kind = kinds.remove(&id).unwrap_or(WorkerKind::Recurring);
     match joined {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => retain_worker_failure(failures, error.to_string()),
+        Ok((_, Ok(()))) => {}
+        Ok((_, Err(error))) if kind == WorkerKind::OneShot => {
+            tracing::error!(?error, "one-shot worker failed");
+        }
+        Ok((_, Err(error))) => report_fatal_worker(failures, fatal, error.to_string()),
         Err(error) if error.is_cancelled() => {}
-        Err(error) => retain_worker_failure(failures, format!("worker task failed: {error}")),
+        Err(error) => {
+            report_fatal_worker(failures, fatal, format!("worker task failed: {error}"));
+        }
     }
+}
+
+fn report_fatal_worker(
+    failures: &mut Vec<String>,
+    fatal: &broadcast::Sender<String>,
+    failure: String,
+) {
+    retain_worker_failure(failures, failure.clone());
+    let _ = fatal.send(failure);
 }
 
 fn retain_worker_failure(failures: &mut Vec<String>, mut failure: String) {
@@ -371,6 +530,23 @@ fn worker_failures(failures: Vec<String>) -> Result<()> {
         failures.join("; ")
     );
     Ok(())
+}
+
+fn merge_worker_failures(failures: &mut Vec<String>, mut additional: Vec<String>) {
+    failures.append(&mut additional);
+    if failures.len() > MAX_RETAINED_WORKER_FAILURES {
+        failures.drain(..failures.len() - MAX_RETAINED_WORKER_FAILURES);
+    }
+}
+
+fn combine_worker_results(shutdown: Result<()>, failures: Result<()>) -> Result<()> {
+    match (shutdown, failures) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(shutdown), Err(failures)) => {
+            Err(shutdown.context(format!("worker failures also occurred: {failures:#}")))
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -429,6 +605,14 @@ where
     let (events, _) = admin_event_channel(64);
     let assets = AssetSource::from_environment().context("failed to configure frontend assets")?;
     let workers = WorkerSupervisor::default();
+    let mut worker_fatal = workers.subscribe_fatal();
+    start_recurring_workers(
+        pool.clone(),
+        Arc::new(config.clone()),
+        shutdown_sender.clone(),
+        &workers,
+    )
+    .await?;
     let router = build_router(AppState {
         pool,
         config: Arc::new(config),
@@ -464,8 +648,22 @@ where
                 Err(error) => Err(anyhow::Error::new(error)
                     .context("daemon graceful shutdown timed out")),
             }
+        },
+        failure = workers.receive_fatal(&mut worker_fatal) => {
+            let _ = shutdown_sender.send(());
+            let drained = tokio::time::timeout(SERVER_SHUTDOWN_GRACE, &mut server).await;
+            match drained {
+                Ok(Ok(())) => Err(anyhow::anyhow!(failure)),
+                Ok(Err(server)) => Err(anyhow::anyhow!(
+                    "{failure}; daemon server also failed: {server}"
+                )),
+                Err(error) => Err(anyhow::Error::new(error).context(format!(
+                    "{failure}; daemon graceful shutdown timed out"
+                ))),
+            }
         }
     };
+    let _ = shutdown_sender.send(());
     let worker_result = workers.shutdown().await;
     match (result, worker_result) {
         (Ok(()), Ok(())) => Ok(()),
@@ -474,6 +672,65 @@ where
             Err(server.context(format!("worker shutdown also failed: {worker:#}")))
         }
     }
+}
+
+async fn start_recurring_workers(
+    pool: SqlitePool,
+    config: Arc<HieronymusConfig>,
+    shutdown: broadcast::Sender<()>,
+    workers: &WorkerSupervisor,
+) -> Result<()> {
+    let load_config = config.clone();
+    let dream_config = tokio::task::spawn_blocking(move || DreamConfig::load(&load_config))
+        .await
+        .context("background dream configuration task failed")??;
+    if !dream_config.enabled {
+        return Ok(());
+    }
+    let catalog_config = config.clone();
+    let catalog = tokio::task::spawn_blocking(move || {
+        ProviderCatalog::load(catalog_config.provider_config_path())
+    })
+    .await
+    .context("background provider catalog task failed")??;
+
+    let interval = Duration::from_secs(
+        dream_config
+            .schedule_interval_minutes
+            .checked_mul(60)
+            .context("background dream interval is out of range")?,
+    );
+    let registry = Arc::new(ProviderRegistry::production(
+        ModelCache::new(128, 1_000_000, Duration::from_secs(24 * 60 * 60)),
+        ReqwestTransportOptions::default(),
+    ));
+    let resolver_catalog = Arc::new(catalog.clone());
+    let resolver = Arc::new(move |workflow: &WorkflowProfile| {
+        registry
+            .resolve(&resolver_catalog, &workflow.provider, &workflow.model)
+            .map(Arc::from)
+            .map_err(DreamPhaseError::Provider)
+    });
+    let shutdown_receiver = shutdown.subscribe();
+    ensure!(
+        workers
+            .spawn_recurring(async move {
+                let service = DreamService::new_with_catalog(
+                    &pool,
+                    &config,
+                    &dream_config,
+                    resolver,
+                    catalog,
+                )
+                .with_cleanup_deadline(WORKER_ABORT_GRACE);
+                run_background_loop(service, interval, shutdown_receiver)
+                    .await
+                    .map_err(anyhow::Error::from)
+            })
+            .await,
+        "worker supervisor rejected the background dream scheduler"
+    );
+    Ok(())
 }
 
 pub async fn await_shutdown_and_broadcast<S>(
