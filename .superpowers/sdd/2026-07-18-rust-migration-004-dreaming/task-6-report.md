@@ -285,3 +285,106 @@ passed
 ### Concerns
 
 None.
+
+## Fix round 2
+
+### RED
+
+Three integration regressions were added before changing production code:
+
+```text
+cargo test -p hiero-core --test test_dreaming \
+  cancelling_many_waiters_does_not_occupy_blocking_workers -- --exact --nocapture
+
+FAILED: the sentinel blocking task timed out while two cancelled lock waiters
+remained parked in lock_exclusive.
+
+cargo test -p hiero-core --test test_dreaming \
+  failed_audit_cleanup_poison_is_visible_and_recovers_before_unlock \
+  -- --exact --nocapture
+
+FAILED: injected fail_run failure never exposed audit-recovery state and the
+forgotten guard could not recover.
+
+cargo test -p hiero-core --test test_dreaming \
+  late_persistence_failure_retries_algorithmic_work_exactly_once \
+  -- --exact --nocapture
+
+FAILED: retry used a new maintenance cycle and applied cycle_decay again after
+the first cycle had already committed reconsolidation, activation claims, link
+reinforcement, and decay.
+```
+
+The late-failure fixture was deliberately strengthened to use a real working
+copy. That exposed the additional requirement that the durable resume record
+must reload the exact original input IDs: reconsolidation may archive the only
+working-copy input before provider output commits.
+
+### GREEN
+
+- The service records durable `algorithm_batch_started`,
+  `algorithm_batch_completed`, and `algorithm_batch_committed` audit stages.
+  The batch identifier is derived from the exact ordered memory IDs, the start
+  stage retains the original maintenance cycle and input IDs, and the committed
+  marker shares the provider-output/source-archive transaction.
+- An unfinished stage is resumed before ordinary pending selection. The service
+  reloads archived working copies from the original input set, reuses the
+  original maintenance cycle, and skips algorithms after the completed marker.
+  Same-cycle activation claims are reselected so cancellation between an
+  algorithm commit and its marker converges through the existing
+  reconsolidation, link, and decay idempotency.
+- Wait-capable lock acquisition now performs short non-waiting OS lock attempts
+  in the blocking pool with cancellation-friendly asynchronous retry sleeps.
+  Cancelling many waiters leaves blocking capacity available while the holder
+  still owns the lock.
+- Audit cleanup failure changes the owned lock state to `audit-recovery`, keeps
+  the supervisor and guard alive, and retries durable `fail_run` closure. The
+  guard is released only after closure succeeds; no descriptor is forgotten.
+- The persistence-cancellation regression now waits for a real decay commit
+  before cancellation and verifies identical scores and event count after
+  retry.
+
+### Verification
+
+Fresh verification against the final fix-round-2 source:
+
+```text
+cargo test -p hiero-core --test test_dreaming --test test_dream_lock \
+  --no-fail-fast
+52 passed; 0 failed; 3 ignored helper entry points
+
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+passed
+
+cargo test --workspace --all-features --no-fail-fast
+passed; no failed suite
+
+cargo doc --workspace --all-features --no-deps
+passed
+
+cargo fmt --all -- --check
+passed
+
+git diff --check
+passed
+```
+
+The first full-workspace run had one unrelated `test_memory` contention timeout
+under suite load. Its exact rerun passed, and the complete workspace rerun then
+passed.
+
+### Self-review
+
+- Provider passes still precede algorithms, and provider persistence still
+  follows algorithms.
+- A retry cannot silently select a smaller input set after reconsolidation
+  archives a working copy.
+- Algorithm mutations use one durable maintenance-cycle identity across
+  failure and cancellation retries.
+- Poison state is externally observable through the existing typed lock
+  contention diagnostic, and owned-state cleanup remains token-safe.
+- No schema migration or unrelated deferred-minor work was introduced.
+
+### Concerns
+
+None.

@@ -367,7 +367,7 @@ impl<'a> WorkspaceStore<'a> {
         dead_code,
         reason = "used by the pending crate-private working-copy consumer"
     )]
-    async fn get_memory(&self, id: i64) -> Result<ShortTermMemory> {
+    pub(crate) async fn get_memory(&self, id: i64) -> Result<ShortTermMemory> {
         let record = sqlx::query_as::<_, ShortTermMemoryRecord>(SELECT_MEMORY)
             .bind(id)
             .fetch_optional(self.pool)

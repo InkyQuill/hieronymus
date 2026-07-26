@@ -9,6 +9,7 @@ use std::{
 };
 
 use chrono::Utc;
+use serde_json::Value;
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 
 use crate::{
@@ -174,12 +175,23 @@ impl<'a> DreamService<'a> {
     }
 
     pub(crate) async fn acquire_lock(&self, owner: &str, wait: bool) -> Result<DreamCycleGuard> {
-        let config = self.config.clone();
         let owner = owner.to_owned();
-        tokio::task::spawn_blocking(move || acquire_dream_cycle_lock(&config, &owner, wait))
+        loop {
+            let config = self.config.clone();
+            let owner = owner.clone();
+            let attempt = tokio::task::spawn_blocking(move || {
+                acquire_dream_cycle_lock(&config, &owner, false)
+            })
             .await
-            .map_err(|_| DreamServiceError::Domain("dream lock worker failed".into()))?
-            .map_err(Into::into)
+            .map_err(|_| DreamServiceError::Domain("dream lock worker failed".into()))?;
+            match attempt {
+                Ok(guard) => return Ok(guard),
+                Err(error) if wait && error.is_already_running() => {
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
 
     pub(crate) async fn run_due_with_lock(
@@ -199,8 +211,9 @@ impl<'a> DreamService<'a> {
         run_id: Option<&Arc<AtomicI64>>,
     ) -> Result<Option<DreamRunRecord>> {
         if !self.dream_config.enabled
-            || self.pending_count().await?
-                < self.dream_config.min_pending_short_term_memories as i64
+            || (self.resumable_algorithm_batch().await?.is_none()
+                && self.pending_count().await?
+                    < self.dream_config.min_pending_short_term_memories as i64)
         {
             return Ok(None);
         }
@@ -429,6 +442,7 @@ impl<'a> DreamService<'a> {
         shared_run_id: Option<&Arc<AtomicI64>>,
     ) -> Result<DreamRunRecord> {
         let pending = self.pending_count().await?;
+        let has_resumable_batch = self.resumable_algorithm_batch().await?.is_some();
         let cycle_id = self.next_cycle_id().await?;
         let provider = self.provider_label();
         let run = DreamAuditStore::new(&self.pool)
@@ -446,7 +460,10 @@ impl<'a> DreamService<'a> {
                 &serde_json::json!({"trigger_type": trigger_type}),
             )
             .await?;
-        if !ignore_minimum && pending < self.dream_config.min_pending_short_term_memories as i64 {
+        if !ignore_minimum
+            && !has_resumable_batch
+            && pending < self.dream_config.min_pending_short_term_memories as i64
+        {
             DreamAuditStore::new(&self.pool)
                 .complete_run(run.id, DreamRunCompletion::new(0, 0, 0))
                 .await?;
@@ -480,7 +497,7 @@ impl<'a> DreamService<'a> {
         cycle_id: i64,
         limit: usize,
     ) -> Result<DreamRunCompletion> {
-        let batches = self.pending_batches(limit).await?;
+        let (batches, resumed_stage) = self.pending_or_resumable_batches(limit).await?;
         if batches.is_empty() {
             return Ok(DreamRunCompletion::new(0, 0, 0));
         }
@@ -495,6 +512,13 @@ impl<'a> DreamService<'a> {
         let context = context.ok_or(DreamServiceError::InvalidInput(
             "selected dream input has no translation context",
         ))?;
+        let stage = match resumed_stage {
+            Some(stage) => stage,
+            None => {
+                self.start_algorithm_batch(run_id, cycle_id, &memories)
+                    .await?
+            }
+        };
         let workflows = self.workflows();
         let mut outputs = Vec::with_capacity(workflows.len());
         for workflow in workflows {
@@ -519,8 +543,12 @@ impl<'a> DreamService<'a> {
             outputs.push(output);
         }
         require_complete_coverage(&outputs, &memories)?;
-        self.run_algorithmic_phases(cycle_id, &memories, &session_ids)
-            .await?;
+        if !stage.algorithms_completed {
+            self.run_algorithmic_phases(stage.maintenance_cycle_id, &memories, &session_ids)
+                .await?;
+            self.complete_algorithm_batch(run_id, &stage.batch_id)
+                .await?;
+        }
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let (created, proposals) = self
             .apply_outputs(
@@ -548,6 +576,16 @@ impl<'a> DreamService<'a> {
         .bind(cycle_id)
         .execute(&mut *transaction)
         .await?;
+        DreamAuditStore::new(&self.pool)
+            .record_in_transaction(
+                &mut transaction,
+                run_id,
+                None,
+                "algorithm_batch_committed",
+                "dream algorithm batch committed",
+                &serde_json::json!({"batch": stage.batch_id}),
+            )
+            .await?;
         transaction.commit().await?;
         Ok(DreamRunCompletion::new(
             memories.len() as i64,
@@ -855,11 +893,14 @@ impl<'a> DreamService<'a> {
         ids.dedup();
         let mut select =
             QueryBuilder::<Sqlite>::new("SELECT * FROM crystal_activations WHERE session_id IN (");
-        let mut separated = select.separated(",");
-        for id in &ids {
-            separated.push_bind(id);
+        {
+            let mut separated = select.separated(",");
+            for id in &ids {
+                separated.push_bind(id);
+            }
+            separated.push_unseparated(") AND outcome='useful' AND (cycle_id IS NULL OR cycle_id=");
         }
-        separated.push_unseparated(") AND outcome='useful' AND cycle_id IS NULL");
+        select.push_bind(cycle_id).push(")");
         select
             .push(" ORDER BY crystal_id,id LIMIT ")
             .push_bind(limit as i64);
@@ -887,6 +928,172 @@ impl<'a> DreamService<'a> {
                 activation
             })
             .collect())
+    }
+
+    async fn pending_or_resumable_batches(
+        &self,
+        limit: usize,
+    ) -> Result<(Vec<PendingBatch>, Option<AlgorithmBatchStage>)> {
+        if let Some(stage) = self.resumable_algorithm_batch().await? {
+            let workspace = WorkspaceStore::new(&self.pool);
+            let mut grouped = Vec::<PendingBatch>::new();
+            for memory_id in &stage.memory_ids {
+                let memory = workspace.get_memory(*memory_id).await.map_err(|_| {
+                    DreamServiceError::InvalidInput("resumable dream memory is unavailable")
+                })?;
+                if let Some(batch) = grouped
+                    .iter_mut()
+                    .find(|batch| batch.session_id == memory.session_id)
+                {
+                    batch.memories.push(memory);
+                    continue;
+                }
+                let session = workspace
+                    .get_session(memory.session_id)
+                    .await
+                    .map_err(|_| {
+                        DreamServiceError::InvalidInput("resumable dream session is unavailable")
+                    })?;
+                let context = TranslationContext::new(
+                    &session.series_slug,
+                    &session.source_language,
+                    &session.target_language,
+                )
+                .with_metadata(
+                    &session.language_tags,
+                    &session.story_scopes,
+                    &session.semantic_tags,
+                    &[],
+                );
+                grouped.push(PendingBatch {
+                    session_id: memory.session_id,
+                    context,
+                    memories: vec![memory],
+                });
+            }
+            return Ok((grouped, Some(stage)));
+        }
+        Ok((self.pending_batches(limit).await?, None))
+    }
+
+    async fn resumable_algorithm_batch(&self) -> Result<Option<AlgorithmBatchStage>> {
+        let entries: Vec<(String, String)> = sqlx::query_as(
+            "SELECT event_type,payload_json
+             FROM dream_audit_entries
+             WHERE event_type IN (
+                'algorithm_batch_started',
+                'algorithm_batch_completed',
+                'algorithm_batch_committed'
+             )
+             ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut stages = Vec::<AlgorithmBatchStage>::new();
+        for (event_type, payload_json) in entries {
+            let payload: Value = serde_json::from_str(&payload_json)
+                .map_err(|_| DreamServiceError::InvalidInput("algorithm batch audit is invalid"))?;
+            let batch_id = payload.get("batch").and_then(Value::as_str).ok_or(
+                DreamServiceError::InvalidInput("algorithm batch identifier is unavailable"),
+            )?;
+            match event_type.as_str() {
+                "algorithm_batch_started" => {
+                    let maintenance_cycle_id = payload
+                        .get("maintenance_cycle_id")
+                        .and_then(Value::as_i64)
+                        .ok_or(DreamServiceError::InvalidInput(
+                            "algorithm batch cycle is unavailable",
+                        ))?;
+                    let memory_ids = payload
+                        .get("memory_ids")
+                        .and_then(Value::as_array)
+                        .ok_or(DreamServiceError::InvalidInput(
+                            "algorithm batch inputs are unavailable",
+                        ))?
+                        .iter()
+                        .map(|id| {
+                            id.as_i64().ok_or(DreamServiceError::InvalidInput(
+                                "algorithm batch input is invalid",
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    stages.push(AlgorithmBatchStage {
+                        batch_id: batch_id.into(),
+                        maintenance_cycle_id,
+                        memory_ids,
+                        algorithms_completed: false,
+                        committed: false,
+                    });
+                }
+                "algorithm_batch_completed" => {
+                    if let Some(stage) = stages
+                        .iter_mut()
+                        .rev()
+                        .find(|stage| stage.batch_id == batch_id)
+                    {
+                        stage.algorithms_completed = true;
+                    }
+                }
+                "algorithm_batch_committed" => {
+                    if let Some(stage) = stages
+                        .iter_mut()
+                        .rev()
+                        .find(|stage| stage.batch_id == batch_id)
+                    {
+                        stage.committed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(stages.into_iter().find(|stage| !stage.committed))
+    }
+
+    async fn start_algorithm_batch(
+        &self,
+        run_id: i64,
+        maintenance_cycle_id: i64,
+        memories: &[crate::domain::ShortTermMemory],
+    ) -> Result<AlgorithmBatchStage> {
+        let memory_ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
+        let batch_id = memory_ids
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        DreamAuditStore::new(&self.pool)
+            .record(
+                run_id,
+                None,
+                "algorithm_batch_started",
+                "dream algorithm batch started",
+                &serde_json::json!({
+                    "batch": batch_id,
+                    "maintenance_cycle_id": maintenance_cycle_id,
+                    "memory_ids": memory_ids,
+                }),
+            )
+            .await?;
+        Ok(AlgorithmBatchStage {
+            batch_id,
+            maintenance_cycle_id,
+            memory_ids,
+            algorithms_completed: false,
+            committed: false,
+        })
+    }
+
+    async fn complete_algorithm_batch(&self, run_id: i64, batch_id: &str) -> Result<()> {
+        DreamAuditStore::new(&self.pool)
+            .record(
+                run_id,
+                None,
+                "algorithm_batch_completed",
+                "dream algorithm batch completed",
+                &serde_json::json!({"batch": batch_id}),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn pending_batches(&self, limit: usize) -> Result<Vec<PendingBatch>> {
@@ -1017,6 +1224,14 @@ struct PendingBatch {
     session_id: i64,
     context: TranslationContext,
     memories: Vec<crate::domain::ShortTermMemory>,
+}
+
+struct AlgorithmBatchStage {
+    batch_id: String,
+    maintenance_cycle_id: i64,
+    memory_ids: Vec<i64>,
+    algorithms_completed: bool,
+    committed: bool,
 }
 
 fn workflow(phase: PassName, profile: &PhaseProfile) -> WorkflowProfile {
@@ -1181,7 +1396,7 @@ enum SupervisorOutcome {
 
 fn supervise_blocking(
     service: DreamService<'static>,
-    guard: DreamCycleGuard,
+    mut guard: DreamCycleGuard,
     request: SupervisedRun,
     mut sender: tokio::sync::oneshot::Sender<Result<SupervisedResult>>,
 ) {
@@ -1212,21 +1427,24 @@ fn supervise_blocking(
 
     let open_run_id = run_id.load(Ordering::Acquire);
     if open_run_id != 0 {
-        let cleanup = runtime.block_on(DreamAuditStore::new(&service.pool).fail_run(
-            open_run_id,
-            DreamRunCompletion::new(0, 0, 0),
-            match &outcome {
-                Ok(SupervisorOutcome::Cancelled) => "dream cycle cancelled",
-                Ok(SupervisorOutcome::Complete(_)) => "dream cycle cleanup failed",
-                Err(_) => "dream cycle supervisor panicked",
-            },
-        ));
-        if let Err(error) = cleanup {
-            // Fail closed: releasing the OS guard with a running audit row would
-            // allow another process to overlap an indeterminate cycle.
-            std::mem::forget(guard);
-            let _ = sender.send(Err(error.into()));
-            return;
+        let reason = match &outcome {
+            Ok(SupervisorOutcome::Cancelled) => "dream cycle cancelled",
+            Ok(SupervisorOutcome::Complete(_)) => "dream cycle cleanup failed",
+            Err(_) => "dream cycle supervisor panicked",
+        };
+        let audit = DreamAuditStore::new(&service.pool);
+        let mut cleanup =
+            runtime.block_on(audit.fail_run(open_run_id, DreamRunCompletion::new(0, 0, 0), reason));
+        if cleanup.is_err() {
+            let _ = guard.mark_audit_recovery();
+        }
+        while cleanup.is_err() {
+            runtime.block_on(tokio::time::sleep(std::time::Duration::from_millis(50)));
+            cleanup = runtime.block_on(audit.fail_run(
+                open_run_id,
+                DreamRunCompletion::new(0, 0, 0),
+                reason,
+            ));
         }
         run_id.store(0, Ordering::Release);
     }

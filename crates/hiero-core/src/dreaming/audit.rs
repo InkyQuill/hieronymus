@@ -260,6 +260,27 @@ impl<'a> DreamAuditStore<'a> {
         Ok(id)
     }
 
+    pub(crate) async fn record_in_transaction(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+        run_id: i64,
+        phase_run_id: Option<i64>,
+        event_type: &str,
+        summary: &str,
+        payload: &Value,
+    ) -> Result<i64, DreamAuditError> {
+        insert_audit(
+            transaction,
+            run_id,
+            phase_run_id,
+            event_type,
+            "info",
+            summary,
+            payload,
+        )
+        .await
+    }
+
     pub async fn list_for_run(&self, run_id: i64) -> Result<Vec<DreamAuditEntry>, DreamAuditError> {
         Ok(sqlx::query_as::<_, DreamAuditEntry>(
             "SELECT * FROM dream_audit_entries WHERE dream_run_id = ? ORDER BY id",

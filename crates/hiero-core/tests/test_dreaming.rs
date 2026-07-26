@@ -11,6 +11,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use futures::future::join_all;
 use hiero_core::{
     config::HieronymusConfig,
     db::{connect_url, migrate},
@@ -525,7 +526,7 @@ async fn run_cycle_persists_output_and_closes_all_audit_records() {
         .fetch_one(&fixture.pool)
         .await
         .unwrap(),
-        7
+        10
     );
 }
 
@@ -954,6 +955,134 @@ async fn cancelling_a_waiting_cycle_does_not_leave_a_detached_lock_owner() {
             .unwrap(),
         0
     );
+}
+
+#[test]
+fn cancelling_many_waiters_does_not_occupy_blocking_workers() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(2)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = Fixture::new().await;
+        let holder = acquire_dream_cycle_lock(&fixture.config, "holder", false).unwrap();
+        let pool = Box::leak(Box::new(fixture.pool.clone()));
+        let config = Box::leak(Box::new(fixture.config.clone()));
+        let dream_config = Box::leak(Box::new(DreamConfig {
+            enabled: true,
+            min_pending_short_term_memories: 1,
+            ..DreamConfig::default()
+        }));
+        let service = DreamService::new(
+            pool,
+            config,
+            dream_config,
+            Arc::new(|_: &WorkflowProfile| {
+                Err(DreamPhaseError::InvalidInput("provider must not run"))
+            }),
+        );
+        let mut waiters = Vec::new();
+        for _ in 0..8 {
+            let service = service.clone();
+            waiters.push(tokio::spawn(async move {
+                service
+                    .run_cycle(CycleOptions {
+                        wait: true,
+                        ..CycleOptions::default()
+                    })
+                    .await
+            }));
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        for waiter in &waiters {
+            waiter.abort();
+        }
+        join_all(waiters).await;
+
+        let sentinel = tokio::task::spawn_blocking(|| 42);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_millis(500), sentinel)
+                .await
+                .expect("cancelled waiters must not strand the blocking pool")
+                .unwrap(),
+            42
+        );
+        drop(holder);
+    });
+}
+
+#[tokio::test]
+async fn failed_audit_cleanup_poison_is_visible_and_recovers_before_unlock() {
+    let fixture = Fixture::new().await;
+    fixture.pending_memory().await;
+    sqlx::query(
+        "CREATE TRIGGER injected_cleanup_failure
+         BEFORE UPDATE OF status ON dream_runs
+         WHEN OLD.status='running' AND NEW.status='failed'
+         BEGIN SELECT RAISE(ABORT,'injected cleanup failure'); END",
+    )
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    let entered = Arc::new(Notify::new());
+    {
+        let service = fixture.service(
+            Arc::new(FakeProvider {
+                failure: None,
+                entered: Some(entered.clone()),
+                release: Some(Arc::new(Notify::new())),
+            }),
+            1,
+        );
+        let cycle = service.run_cycle(CycleOptions::default());
+        tokio::pin!(cycle);
+        tokio::select! {
+            () = entered.notified() => {}
+            result = &mut cycle => panic!("cycle completed before cancellation: {result:?}"),
+        }
+    }
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let error =
+                acquire_dream_cycle_lock(&fixture.config, "must-stay-locked", false).unwrap_err();
+            let owner = error.state.as_ref().map(|state| state.owner.as_str());
+            let running: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM dream_runs WHERE status='running'")
+                    .fetch_one(&fixture.pool)
+                    .await
+                    .unwrap();
+            if owner == Some("audit-recovery") && running == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cleanup failure must enter a visible poison state");
+
+    sqlx::query("DROP TRIGGER injected_cleanup_failure")
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let failed: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM dream_runs WHERE status='failed'")
+                    .fetch_one(&fixture.pool)
+                    .await
+                    .unwrap();
+            if failed == 1
+                && acquire_dream_cycle_lock(&fixture.config, "after-recovery", false).is_ok()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("audit recovery must close the run and release the lock");
 }
 
 #[test]
@@ -1558,9 +1687,196 @@ async fn output_persistence_and_source_archive_are_one_retry_safe_transaction() 
 }
 
 #[tokio::test]
+async fn late_persistence_failure_retries_algorithmic_work_exactly_once() {
+    let fixture = Fixture::new().await;
+    let session_id = fixture.pending_memory().await;
+    let source = CrystalStore::new(&fixture.pool)
+        .add(AddCrystalInput {
+            title: "working source".into(),
+            text: "The term remains stable.".into(),
+            strength: 0.4,
+            confidence: 0.5,
+            status: "active".into(),
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE short_term_memories
+         SET source_crystal_id=?,kind='working_copy'
+         WHERE session_id=?",
+    )
+    .bind(source)
+    .bind(session_id)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    let mut recalled = Vec::new();
+    for (title, text) in [
+        ("first recall", "A red lantern."),
+        ("second recall", "A distant winter river."),
+    ] {
+        let crystal_id = CrystalStore::new(&fixture.pool)
+            .add(AddCrystalInput {
+                title: title.into(),
+                text: text.into(),
+                strength: 0.4,
+                confidence: 0.5,
+                status: "active".into(),
+                ..AddCrystalInput::default()
+            })
+            .await
+            .unwrap();
+        recalled.push(crystal_id);
+        sqlx::query(
+            "INSERT INTO crystal_activations(
+                crystal_id,session_id,recall_query,rank,score,reason,outcome,created_at
+             ) VALUES (?,?,'query',1,1.0,'useful','useful',CURRENT_TIMESTAMP)",
+        )
+        .bind(crystal_id)
+        .bind(session_id)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    }
+    let stale = CrystalStore::new(&fixture.pool)
+        .add(AddCrystalInput {
+            title: "stale".into(),
+            text: "An unrelated stale observation.".into(),
+            strength: 0.5,
+            confidence: 0.5,
+            status: "active".into(),
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER injected_late_failure
+         BEFORE INSERT ON crystals
+         WHEN NEW.title='Stable finding'
+         BEGIN SELECT RAISE(ABORT,'injected late failure'); END",
+    )
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    let service = || fixture.service_with_change_limit(fake(), 1, 10, 10, 4);
+    service()
+        .run_cycle(CycleOptions::default())
+        .await
+        .unwrap_err();
+
+    let algorithm_events_before: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT crystal_id,event_type,cycle_id
+         FROM memory_events
+         WHERE event_type IN ('reconsolidated_in_place','cycle_decay','combined_into')
+         ORDER BY id",
+    )
+    .fetch_all(&fixture.pool)
+    .await
+    .unwrap();
+    assert!(
+        algorithm_events_before
+            .iter()
+            .any(|event| event.0 == source && event.1 == "reconsolidated_in_place")
+    );
+    assert!(
+        algorithm_events_before
+            .iter()
+            .any(|event| event.0 == stale && event.1 == "cycle_decay")
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM crystal_links
+             WHERE source_crystal_id=? AND target_crystal_id=?",
+        )
+        .bind(recalled[0])
+        .bind(recalled[1])
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    let scores_before: Vec<(i64, f64, f64)> =
+        sqlx::query_as("SELECT id,strength,confidence FROM crystals ORDER BY id")
+            .fetch_all(&fixture.pool)
+            .await
+            .unwrap();
+    let activation_cycles_before: Vec<Option<i64>> =
+        sqlx::query_scalar("SELECT cycle_id FROM crystal_activations ORDER BY id")
+            .fetch_all(&fixture.pool)
+            .await
+            .unwrap();
+
+    sqlx::query("DROP TRIGGER injected_late_failure")
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    service().run_due().await.unwrap().unwrap();
+
+    assert_eq!(
+        sqlx::query_as::<_, (i64, String, i64)>(
+            "SELECT crystal_id,event_type,cycle_id
+             FROM memory_events
+             WHERE event_type IN ('reconsolidated_in_place','cycle_decay','combined_into')
+             ORDER BY id",
+        )
+        .fetch_all(&fixture.pool)
+        .await
+        .unwrap(),
+        algorithm_events_before
+    );
+    assert_eq!(
+        sqlx::query_as::<_, (i64, f64, f64)>(
+            "SELECT id,strength,confidence FROM crystals
+             WHERE title!='Stable finding' ORDER BY id",
+        )
+        .fetch_all(&fixture.pool)
+        .await
+        .unwrap(),
+        scores_before
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT cycle_id FROM crystal_activations ORDER BY id",
+        )
+        .fetch_all(&fixture.pool)
+        .await
+        .unwrap(),
+        activation_cycles_before
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM crystals WHERE title='Stable finding'",)
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM short_term_memories WHERE archived_at IS NULL",
+        )
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn cancelling_in_flight_persistence_rolls_back_outputs_and_retry_converges() {
     let fixture = Fixture::new().await;
     fixture.pending_memory().await;
+    let stale = CrystalStore::new(&fixture.pool)
+        .add(AddCrystalInput {
+            title: "cancelled-cycle decay".into(),
+            text: "A stale crystal changed before persistence cancellation.".into(),
+            strength: 0.5,
+            confidence: 0.5,
+            status: "active".into(),
+            ..AddCrystalInput::default()
+        })
+        .await
+        .unwrap();
     {
         let service = fixture.service_with_phases(
             Arc::new(BulkOutputProvider { count: 1000 }),
@@ -1576,13 +1892,13 @@ async fn cancelling_in_flight_persistence_rolls_back_outputs_and_retry_converges
             () = async {
                 loop {
                     let completed: i64 = sqlx::query_scalar(
-                        "SELECT count(*) FROM dream_phase_runs WHERE status='completed'",
+                        "SELECT count(*) FROM dream_audit_entries
+                         WHERE event_type='algorithm_batch_completed'",
                     )
                     .fetch_one(&fixture.pool)
                     .await
                     .unwrap();
-                    if completed == 2 {
-                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    if completed == 1 {
                         break;
                     }
                     tokio::task::yield_now().await;
@@ -1644,6 +1960,20 @@ async fn cancelling_in_flight_persistence_rolls_back_outputs_and_retry_converges
         .unwrap(),
         1
     );
+    let decay_before_retry: (f64, f64, i64) = sqlx::query_as(
+        "SELECT crystals.strength,crystals.confidence,count(memory_events.id)
+         FROM crystals
+         LEFT JOIN memory_events
+           ON memory_events.crystal_id=crystals.id
+          AND memory_events.event_type='cycle_decay'
+         WHERE crystals.id=?
+         GROUP BY crystals.id",
+    )
+    .bind(stale)
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(decay_before_retry.2, 1);
     fixture
         .service_with_phases(
             Arc::new(BulkOutputProvider { count: 1000 }),
@@ -1656,6 +1986,22 @@ async fn cancelling_in_flight_persistence_rolls_back_outputs_and_retry_converges
         .run_cycle(CycleOptions::default())
         .await
         .unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (f64, f64, i64)>(
+            "SELECT crystals.strength,crystals.confidence,count(memory_events.id)
+             FROM crystals
+             LEFT JOIN memory_events
+               ON memory_events.crystal_id=crystals.id
+              AND memory_events.event_type='cycle_decay'
+             WHERE crystals.id=?
+             GROUP BY crystals.id",
+        )
+        .bind(stale)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap(),
+        decay_before_retry
+    );
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM crystals WHERE title LIKE 'Bulk finding %'"

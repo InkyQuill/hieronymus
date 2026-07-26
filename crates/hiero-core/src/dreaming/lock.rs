@@ -61,6 +61,14 @@ impl DreamCycleGuard {
     pub fn state(&self) -> &DreamCycleState {
         &self.state
     }
+
+    pub(crate) fn mark_audit_recovery(&mut self) -> io::Result<()> {
+        let mut recovery_state = self.state.clone();
+        recovery_state.owner = "audit-recovery".into();
+        self.directory.write_state(&recovery_state)?;
+        self.state = recovery_state;
+        Ok(())
+    }
 }
 
 impl Drop for DreamCycleGuard {
