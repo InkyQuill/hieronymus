@@ -398,12 +398,7 @@ async fn api_provider_delete_rejects_workflow_references_and_clears_only_matchin
     assert_eq!(free.status(), StatusCode::OK);
 }
 
-#[tokio::test]
-async fn api_provider_check_and_models_bypass_cache_and_persist_each_live_discovery() {
-    let (mut state, _) = test_state().await;
-    let transport =
-        FakeProviderTransport::with_ollama_models(&[&["cached"], &["fresh"], &["newer"]]);
-    state.provider_transport = Some(transport.clone());
+fn configure_local_provider(state: &AppState) {
     let mut catalog = ProviderCatalog::load(state.config.provider_config_path())
         .expect("empty catalog should load");
     catalog
@@ -417,18 +412,15 @@ async fn api_provider_check_and_models_bypass_cache_and_persist_each_live_discov
     catalog
         .save(state.config.provider_config_path())
         .expect("catalog should save");
-    let router = build_router(state);
+}
 
-    let first = router
-        .clone()
-        .oneshot(request(
-            Method::GET,
-            "/api/providers/local/models",
-            Body::empty(),
-        ))
-        .await
-        .expect("first model refresh should answer");
-    assert_eq!(response_json(first).await["models"], json!(["cached"]));
+#[tokio::test]
+async fn api_provider_check_persists_its_own_live_discovery() {
+    let (mut state, _) = test_state().await;
+    let transport = FakeProviderTransport::with_ollama_models(&[&["check-live"]]);
+    state.provider_transport = Some(transport.clone());
+    configure_local_provider(&state);
+    let router = build_router(state);
 
     let check = router
         .clone()
@@ -441,19 +433,8 @@ async fn api_provider_check_and_models_bypass_cache_and_persist_each_live_discov
         .expect("live check should answer");
     assert_eq!(
         response_json(check).await["check"]["models"],
-        json!(["fresh"])
+        json!(["check-live"])
     );
-
-    let second = router
-        .clone()
-        .oneshot(request(
-            Method::GET,
-            "/api/providers/local/models",
-            Body::empty(),
-        ))
-        .await
-        .expect("second model refresh should answer");
-    assert_eq!(response_json(second).await["models"], json!(["newer"]));
 
     let dream = router
         .oneshot(request(Method::GET, "/api/settings/dream", Body::empty()))
@@ -461,7 +442,7 @@ async fn api_provider_check_and_models_bypass_cache_and_persist_each_live_discov
         .expect("dream settings should answer");
     assert_eq!(
         response_json(dream).await["model_cache"]["providers"]["local"]["models"],
-        json!(["newer"])
+        json!(["check-live"])
     );
     assert_eq!(
         transport
@@ -469,7 +450,48 @@ async fn api_provider_check_and_models_bypass_cache_and_persist_each_live_discov
             .lock()
             .expect("request lock should work")
             .len(),
-        3
+        1
+    );
+}
+
+#[tokio::test]
+async fn api_provider_models_refresh_bypasses_its_own_cached_discovery() {
+    let (mut state, _) = test_state().await;
+    let transport =
+        FakeProviderTransport::with_ollama_models(&[&["models-first"], &["models-refreshed"]]);
+    state.provider_transport = Some(transport.clone());
+    configure_local_provider(&state);
+    let router = build_router(state);
+
+    for expected in ["models-first", "models-refreshed"] {
+        let response = router
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                "/api/providers/local/models",
+                Body::empty(),
+            ))
+            .await
+            .expect("model refresh should answer");
+        assert_eq!(response_json(response).await["models"], json!([expected]));
+    }
+
+    let dream = router
+        .clone()
+        .oneshot(request(Method::GET, "/api/settings/dream", Body::empty()))
+        .await
+        .expect("dream settings should answer");
+    assert_eq!(
+        response_json(dream).await["model_cache"]["providers"]["local"]["models"],
+        json!(["models-refreshed"])
+    );
+    assert_eq!(
+        transport
+            .requests
+            .lock()
+            .expect("request lock should work")
+            .len(),
+        2
     );
 }
 
