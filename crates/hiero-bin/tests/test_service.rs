@@ -49,13 +49,42 @@ fn request(method: Method, path: &str, body: Body) -> Request<Body> {
         .expect("test request should build")
 }
 
-fn request_without_token(method: Method, path: &str) -> Request<Body> {
-    Request::builder()
-        .method(method)
-        .uri(path)
-        .header(header::HOST, LOCAL_HOST)
+#[derive(Clone, Copy)]
+struct SecurityCase {
+    name: &'static str,
+    host: Option<&'static str>,
+    origin: Option<&'static str>,
+    token: Option<&'static str>,
+    status: StatusCode,
+    error_code: Option<&'static str>,
+}
+
+fn security_request(method: Method, path: &str, case: SecurityCase) -> Request<Body> {
+    let mut builder = Request::builder().method(method).uri(path);
+    if let Some(host) = case.host {
+        builder = builder.header(header::HOST, host);
+    }
+    if let Some(origin) = case.origin {
+        builder = builder.header(header::ORIGIN, origin);
+    }
+    if let Some(token) = case.token {
+        builder = builder.header("x-hieronymus-token", token);
+    }
+    builder
         .body(Body::empty())
-        .expect("test request should build")
+        .expect("security test request should build")
+}
+
+async fn assert_security_response(response: Response, case: SecurityCase) {
+    assert_eq!(response.status(), case.status, "{}", case.name);
+    if let Some(error_code) = case.error_code {
+        assert_eq!(
+            response_json(response).await["error"]["code"],
+            error_code,
+            "{}",
+            case.name
+        );
+    }
 }
 
 async fn response_json(response: Response) -> Value {
@@ -98,150 +127,164 @@ async fn router_registers_every_phase_005_section_2_route() {
 }
 
 #[tokio::test]
-async fn router_security_enforces_route_specific_host_origin_and_token_policies() {
+async fn router_mcp_security_matrix_is_route_complete() {
     let (state, _) = test_state().await;
     let router = build_router(state);
     let cases = [
-        (
-            "origin-less MCP with token",
-            Method::POST,
-            Some(LOCAL_HOST),
-            None,
-            Some(AUTH_TOKEN),
-            "/mcp",
-            StatusCode::NOT_IMPLEMENTED,
-        ),
-        (
-            "origin-less MCP without token",
-            Method::POST,
-            Some(LOCAL_HOST),
-            None,
-            None,
-            "/mcp",
-            StatusCode::UNAUTHORIZED,
-        ),
-        (
-            "foreign MCP origin",
-            Method::POST,
-            Some(LOCAL_HOST),
-            Some("https://evil.example"),
-            Some(AUTH_TOKEN),
-            "/mcp",
-            StatusCode::FORBIDDEN,
-        ),
-        (
-            "native lifecycle with token",
-            Method::GET,
-            Some(LOCAL_HOST),
-            None,
-            Some(AUTH_TOKEN),
-            "/health",
-            StatusCode::OK,
-        ),
-        (
-            "native lifecycle without token",
-            Method::GET,
-            Some(LOCAL_HOST),
-            None,
-            None,
-            "/health",
-            StatusCode::UNAUTHORIZED,
-        ),
-        (
-            "same-origin browser admin",
-            Method::GET,
-            Some(LOCAL_HOST),
-            Some("http://127.0.0.1:9768"),
-            None,
-            "/api/providers",
-            StatusCode::NOT_IMPLEMENTED,
-        ),
-        (
-            "origin-less native admin with token",
-            Method::GET,
-            Some(LOCAL_HOST),
-            None,
-            Some(AUTH_TOKEN),
-            "/api/providers",
-            StatusCode::NOT_IMPLEMENTED,
-        ),
-        (
-            "origin-less admin without token",
-            Method::GET,
-            Some(LOCAL_HOST),
-            None,
-            None,
-            "/api/providers",
-            StatusCode::UNAUTHORIZED,
-        ),
-        (
-            "foreign browser admin origin",
-            Method::GET,
-            Some(LOCAL_HOST),
-            Some("https://evil.example"),
-            Some(AUTH_TOKEN),
-            "/api/providers",
-            StatusCode::FORBIDDEN,
-        ),
-        (
-            "missing Host",
-            Method::GET,
-            None,
-            None,
-            Some(AUTH_TOKEN),
-            "/health",
-            StatusCode::FORBIDDEN,
-        ),
-        (
-            "malformed Host authority",
-            Method::GET,
-            Some("127.0.0.1:not-a-port"),
-            None,
-            Some(AUTH_TOKEN),
-            "/health",
-            StatusCode::FORBIDDEN,
-        ),
-        (
-            "wrong loopback port",
-            Method::GET,
-            Some("127.0.0.1:9999"),
-            None,
-            Some(AUTH_TOKEN),
-            "/health",
-            StatusCode::FORBIDDEN,
-        ),
-        (
-            "mismatched loopback Origin",
-            Method::GET,
-            Some(LOCAL_HOST),
-            Some("http://localhost:9768"),
-            Some(AUTH_TOKEN),
-            "/health",
-            StatusCode::FORBIDDEN,
-        ),
+        SecurityCase {
+            name: "MCP correct token and missing Origin",
+            host: Some(LOCAL_HOST),
+            origin: None,
+            token: Some(AUTH_TOKEN),
+            status: StatusCode::NOT_IMPLEMENTED,
+            error_code: Some("not_implemented"),
+        },
+        SecurityCase {
+            name: "MCP missing token",
+            host: Some(LOCAL_HOST),
+            origin: None,
+            token: None,
+            status: StatusCode::UNAUTHORIZED,
+            error_code: Some("unauthorized"),
+        },
+        SecurityCase {
+            name: "MCP wrong token",
+            host: Some(LOCAL_HOST),
+            origin: None,
+            token: Some("wrong-token"),
+            status: StatusCode::UNAUTHORIZED,
+            error_code: Some("unauthorized"),
+        },
+        SecurityCase {
+            name: "MCP missing Host",
+            host: None,
+            origin: None,
+            token: Some(AUTH_TOKEN),
+            status: StatusCode::FORBIDDEN,
+            error_code: Some("forbidden"),
+        },
+        SecurityCase {
+            name: "MCP malformed Host authority",
+            host: Some("127.0.0.1:not-a-port"),
+            origin: None,
+            token: Some(AUTH_TOKEN),
+            status: StatusCode::FORBIDDEN,
+            error_code: Some("forbidden"),
+        },
+        SecurityCase {
+            name: "MCP wrong loopback Host port",
+            host: Some("127.0.0.1:9999"),
+            origin: None,
+            token: Some(AUTH_TOKEN),
+            status: StatusCode::FORBIDDEN,
+            error_code: Some("forbidden"),
+        },
+        SecurityCase {
+            name: "MCP same Origin",
+            host: Some(LOCAL_HOST),
+            origin: Some("http://127.0.0.1:9768"),
+            token: Some(AUTH_TOKEN),
+            status: StatusCode::NOT_IMPLEMENTED,
+            error_code: Some("not_implemented"),
+        },
+        SecurityCase {
+            name: "MCP foreign Origin",
+            host: Some(LOCAL_HOST),
+            origin: Some("https://evil.example"),
+            token: Some(AUTH_TOKEN),
+            status: StatusCode::FORBIDDEN,
+            error_code: Some("forbidden"),
+        },
     ];
 
-    for (name, method, host, origin, token, path, expected) in cases {
-        let mut builder = Request::builder().method(method).uri(path);
-        if let Some(host) = host {
-            builder = builder.header(header::HOST, host);
-        }
-        if let Some(origin) = origin {
-            builder = builder.header(header::ORIGIN, origin);
-        }
-        if let Some(token) = token {
-            builder = builder.header("x-hieronymus-token", token);
-        }
+    for case in cases {
         let response = router
             .clone()
-            .oneshot(
-                builder
-                    .body(Body::empty())
-                    .expect("test request should build"),
-            )
+            .oneshot(security_request(Method::POST, "/mcp", case))
             .await
             .expect("router should answer");
-        assert_eq!(response.status(), expected, "{name}");
+        assert_security_response(response, case).await;
+    }
+}
+
+#[tokio::test]
+async fn router_browser_admin_security_matrix_is_route_complete() {
+    let (state, _) = test_state().await;
+    let router = build_router(state);
+    let cases = [
+        SecurityCase {
+            name: "admin correct token and missing Origin",
+            host: Some(LOCAL_HOST),
+            origin: None,
+            token: Some(AUTH_TOKEN),
+            status: StatusCode::NOT_IMPLEMENTED,
+            error_code: Some("not_implemented"),
+        },
+        SecurityCase {
+            name: "admin missing token and missing Origin",
+            host: Some(LOCAL_HOST),
+            origin: None,
+            token: None,
+            status: StatusCode::UNAUTHORIZED,
+            error_code: Some("unauthorized"),
+        },
+        SecurityCase {
+            name: "admin wrong token and missing Origin",
+            host: Some(LOCAL_HOST),
+            origin: None,
+            token: Some("wrong-token"),
+            status: StatusCode::UNAUTHORIZED,
+            error_code: Some("unauthorized"),
+        },
+        SecurityCase {
+            name: "admin missing Host",
+            host: None,
+            origin: Some("http://127.0.0.1:9768"),
+            token: None,
+            status: StatusCode::FORBIDDEN,
+            error_code: Some("forbidden"),
+        },
+        SecurityCase {
+            name: "admin malformed Host authority",
+            host: Some("127.0.0.1:not-a-port"),
+            origin: Some("http://127.0.0.1:9768"),
+            token: None,
+            status: StatusCode::FORBIDDEN,
+            error_code: Some("forbidden"),
+        },
+        SecurityCase {
+            name: "admin wrong loopback Host port",
+            host: Some("127.0.0.1:9999"),
+            origin: Some("http://127.0.0.1:9768"),
+            token: None,
+            status: StatusCode::FORBIDDEN,
+            error_code: Some("forbidden"),
+        },
+        SecurityCase {
+            name: "admin same Origin without token",
+            host: Some(LOCAL_HOST),
+            origin: Some("http://127.0.0.1:9768"),
+            token: None,
+            status: StatusCode::NOT_IMPLEMENTED,
+            error_code: Some("not_implemented"),
+        },
+        SecurityCase {
+            name: "admin foreign Origin with correct token",
+            host: Some(LOCAL_HOST),
+            origin: Some("https://evil.example"),
+            token: Some(AUTH_TOKEN),
+            status: StatusCode::FORBIDDEN,
+            error_code: Some("forbidden"),
+        },
+    ];
+
+    for case in cases {
+        let response = router
+            .clone()
+            .oneshot(security_request(Method::GET, "/api/providers", case))
+            .await
+            .expect("router should answer");
+        assert_security_response(response, case).await;
     }
 }
 
@@ -356,65 +399,131 @@ async fn router_health_is_cheap_and_status_reports_doctor_checks() {
 }
 
 #[tokio::test]
-async fn router_shutdown_signals_only_after_request_authorization() {
-    let (state, mut shutdown) = test_state().await;
-    let router = build_router(state);
+async fn router_shutdown_security_matrix_is_route_complete_and_side_effect_safe() {
+    let cases = [
+        (
+            SecurityCase {
+                name: "shutdown correct token and missing Origin",
+                host: Some(LOCAL_HOST),
+                origin: None,
+                token: Some(AUTH_TOKEN),
+                status: StatusCode::OK,
+                error_code: None,
+            },
+            true,
+        ),
+        (
+            SecurityCase {
+                name: "shutdown missing token",
+                host: Some(LOCAL_HOST),
+                origin: None,
+                token: None,
+                status: StatusCode::UNAUTHORIZED,
+                error_code: Some("unauthorized"),
+            },
+            false,
+        ),
+        (
+            SecurityCase {
+                name: "shutdown wrong token",
+                host: Some(LOCAL_HOST),
+                origin: None,
+                token: Some("wrong-token"),
+                status: StatusCode::UNAUTHORIZED,
+                error_code: Some("unauthorized"),
+            },
+            false,
+        ),
+        (
+            SecurityCase {
+                name: "shutdown missing Host",
+                host: None,
+                origin: None,
+                token: Some(AUTH_TOKEN),
+                status: StatusCode::FORBIDDEN,
+                error_code: Some("forbidden"),
+            },
+            false,
+        ),
+        (
+            SecurityCase {
+                name: "shutdown malformed Host authority",
+                host: Some("127.0.0.1:not-a-port"),
+                origin: None,
+                token: Some(AUTH_TOKEN),
+                status: StatusCode::FORBIDDEN,
+                error_code: Some("forbidden"),
+            },
+            false,
+        ),
+        (
+            SecurityCase {
+                name: "shutdown wrong loopback Host port",
+                host: Some("127.0.0.1:9999"),
+                origin: None,
+                token: Some(AUTH_TOKEN),
+                status: StatusCode::FORBIDDEN,
+                error_code: Some("forbidden"),
+            },
+            false,
+        ),
+        (
+            SecurityCase {
+                name: "shutdown same Origin with correct token",
+                host: Some(LOCAL_HOST),
+                origin: Some("http://127.0.0.1:9768"),
+                token: Some(AUTH_TOKEN),
+                status: StatusCode::OK,
+                error_code: None,
+            },
+            true,
+        ),
+        (
+            SecurityCase {
+                name: "shutdown same Origin without token",
+                host: Some(LOCAL_HOST),
+                origin: Some("http://127.0.0.1:9768"),
+                token: None,
+                status: StatusCode::UNAUTHORIZED,
+                error_code: Some("unauthorized"),
+            },
+            false,
+        ),
+        (
+            SecurityCase {
+                name: "shutdown foreign Origin with correct token",
+                host: Some(LOCAL_HOST),
+                origin: Some("https://evil.example"),
+                token: Some(AUTH_TOKEN),
+                status: StatusCode::FORBIDDEN,
+                error_code: Some("forbidden"),
+            },
+            false,
+        ),
+    ];
 
-    let missing = router
-        .clone()
-        .oneshot(request_without_token(Method::POST, "/shutdown"))
-        .await
-        .expect("router should answer");
-    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
-
-    let same_origin_without_token = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/shutdown")
-                .header(header::HOST, LOCAL_HOST)
-                .header(header::ORIGIN, "http://127.0.0.1:9768")
-                .body(Body::empty())
-                .expect("test request should build"),
-        )
-        .await
-        .expect("router should answer");
-    assert_eq!(same_origin_without_token.status(), StatusCode::UNAUTHORIZED);
-
-    let wrong = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/shutdown")
-                .header(header::HOST, LOCAL_HOST)
-                .header("x-hieronymus-token", "wrong-token")
-                .body(Body::empty())
-                .expect("test request should build"),
-        )
-        .await
-        .expect("router should answer");
-    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(20), shutdown.recv())
+    for (case, should_signal) in cases {
+        let (state, mut shutdown) = test_state().await;
+        let response = build_router(state)
+            .oneshot(security_request(Method::POST, "/shutdown", case))
             .await
-            .is_err()
-    );
+            .expect("router should answer");
+        if case.error_code.is_some() {
+            assert_security_response(response, case).await;
+        } else {
+            assert_eq!(response.status(), case.status, "{}", case.name);
+            assert_eq!(
+                response_json(response).await,
+                json!({"ok": true, "stopping": true}),
+                "{}",
+                case.name
+            );
+        }
 
-    let accepted = router
-        .oneshot(request(Method::POST, "/shutdown", Body::empty()))
-        .await
-        .expect("router should answer");
-    assert_eq!(accepted.status(), StatusCode::OK);
-    assert_eq!(
-        response_json(accepted).await,
-        json!({"ok": true, "stopping": true})
-    );
-    tokio::time::timeout(Duration::from_secs(1), shutdown.recv())
-        .await
-        .expect("shutdown signal should arrive")
-        .expect("shutdown channel should remain open");
+        let signal = tokio::time::timeout(Duration::from_millis(20), shutdown.recv()).await;
+        let received_shutdown = matches!(signal, Ok(Ok(())));
+        assert_eq!(received_shutdown, should_signal, "{}", case.name);
+    }
 }
 
 #[tokio::test]
