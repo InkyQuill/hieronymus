@@ -1,17 +1,23 @@
 use std::{
+    fs::{self, OpenOptions},
     future::Future,
+    io::{ErrorKind, Read, Write},
     net::{Ipv4Addr, SocketAddr},
+    path::Path,
     str::FromStr,
     sync::Arc,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use anyhow::{Context, Result, ensure};
 use axum::{
     Router,
     body::{Body, to_bytes},
-    extract::Request,
+    extract::{Request, State},
     http::{
-        HeaderValue, StatusCode,
+        HeaderMap, HeaderValue, StatusCode,
         header::{HOST, ORIGIN},
         uri::Authority,
     },
@@ -21,6 +27,7 @@ use axum::{
 };
 use hiero_core::{config::HieronymusConfig, db};
 use sqlx::SqlitePool;
+use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
@@ -34,18 +41,22 @@ use crate::api::{
 
 const BODY_LIMIT: usize = 1_000_000;
 const REQUEST_ID_HEADER: &str = "x-request-id";
+const AUTH_TOKEN_HEADER: &str = "x-hieronymus-token";
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub config: Arc<HieronymusConfig>,
     pub shutdown: broadcast::Sender<()>,
+    pub auth_token: Arc<str>,
+    pub port: u16,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct RequestId(pub(crate) String);
 
 pub fn build_router(state: AppState) -> Router {
+    let security_state = state.clone();
     Router::new()
         .route("/", get(api::placeholder))
         .route("/admin", get(api::placeholder))
@@ -65,7 +76,10 @@ pub fn build_router(state: AppState) -> Router {
                 .layer(middleware::from_fn(assign_request_id))
                 .layer(TraceLayer::new_for_http())
                 .layer(middleware::from_fn(limit_request_body))
-                .layer(middleware::from_fn(validate_host_and_origin)),
+                .layer(middleware::from_fn_with_state(
+                    security_state,
+                    authorize_request,
+                )),
         )
         .with_state(state)
 }
@@ -74,11 +88,8 @@ pub async fn serve<S>(config: HieronymusConfig, port: u16, shutdown: S) -> Resul
 where
     S: Future<Output = ()> + Send + 'static,
 {
-    ensure!(port != 0, "daemon port 0 is not allowed");
-    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let listener = tokio::net::TcpListener::bind(address)
-        .await
-        .with_context(|| format!("failed to bind daemon to {address}"))?;
+    let listener = bind_listener(port).await?;
+    let auth_token = load_or_create_auth_token(&config.auth_token_path())?;
     let pool = db::connect(&config)
         .await
         .context("failed to open daemon database")?;
@@ -87,6 +98,8 @@ where
         pool,
         config: Arc::new(config),
         shutdown: shutdown_sender,
+        auth_token,
+        port,
     });
 
     axum::serve(listener, router)
@@ -98,6 +111,80 @@ where
         })
         .await
         .context("daemon server failed")
+}
+
+pub async fn bind_listener(port: u16) -> Result<tokio::net::TcpListener> {
+    ensure!(port != 0, "daemon port 0 is not allowed");
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    tokio::net::TcpListener::bind(address)
+        .await
+        .with_context(|| format!("failed to bind daemon to {address}"))
+}
+
+pub fn load_or_create_auth_token(path: &Path) -> Result<Arc<str>> {
+    let parent = path
+        .parent()
+        .context("auth token path must have a parent directory")?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "failed to create auth token directory `{}`",
+            parent.display()
+        )
+    })?;
+
+    let generated = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(generated.as_bytes())
+                .and_then(|()| file.write_all(b"\n"))
+                .and_then(|()| file.sync_all())
+                .with_context(|| format!("failed to write auth token `{}`", path.display()))?;
+        }
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to create auth token `{}`", path.display()));
+        }
+    }
+
+    read_auth_token(path)
+}
+
+fn read_auth_token(path: &Path) -> Result<Arc<str>> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect auth token `{}`", path.display()))?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "auth token must be a regular file"
+    );
+    #[cfg(unix)]
+    ensure!(
+        metadata.permissions().mode() & 0o777 == 0o600,
+        "auth token file must have 0600 permissions"
+    );
+
+    let mut contents = String::new();
+    OpenOptions::new()
+        .read(true)
+        .open(path)
+        .with_context(|| format!("failed to open auth token `{}`", path.display()))?
+        .read_to_string(&mut contents)
+        .with_context(|| format!("failed to read auth token `{}`", path.display()))?;
+    let token = contents
+        .strip_suffix("\r\n")
+        .or_else(|| contents.strip_suffix('\n'))
+        .unwrap_or(&contents);
+    ensure!(
+        !token.is_empty()
+            && !token.contains(['\r', '\n'])
+            && token.bytes().all(|byte| byte.is_ascii_graphic()),
+        "auth token file must contain one non-empty ASCII token"
+    );
+    Ok(Arc::from(token))
 }
 
 async fn assign_request_id(mut request: Request, next: Next) -> Response {
@@ -140,7 +227,11 @@ async fn limit_request_body(request: Request, next: Next) -> Response {
     }
 }
 
-async fn validate_host_and_origin(request: Request, next: Next) -> Response {
+async fn authorize_request(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
     let request_id = request
         .extensions()
         .get::<RequestId>()
@@ -154,24 +245,38 @@ async fn validate_host_and_origin(request: Request, next: Next) -> Response {
     else {
         return forbidden(request_id);
     };
-    if !is_loopback_authority(&host) {
+    if !is_expected_authority(&host, state.port) {
         return forbidden(request_id);
     }
 
-    if let Some(origin) = request.headers().get(ORIGIN) {
-        let valid_origin = origin
+    let has_origin = request.headers().contains_key(ORIGIN);
+    if has_origin {
+        let valid_origin = request
+            .headers()
+            .get(ORIGIN)
+            .expect("Origin presence was checked")
             .to_str()
             .ok()
             .and_then(|value| value.parse::<axum::http::Uri>().ok())
             .filter(|uri| uri.scheme_str() == Some("http"))
             .and_then(|uri| uri.authority().cloned())
-            .is_some_and(|origin| same_authority(&host, &origin));
+            .is_some_and(|origin| same_authority(&host, &origin, state.port));
         if !valid_origin {
             return forbidden(request_id);
         }
     }
 
-    next.run(request).await
+    let token_valid = valid_token(request.headers(), &state.auth_token);
+    let authorized = match route_policy(request.uri().path()) {
+        RoutePolicy::Static => true,
+        RoutePolicy::Browser => has_origin || token_valid,
+        RoutePolicy::Authenticated => token_valid,
+    };
+    if authorized {
+        next.run(request).await
+    } else {
+        api::unauthorized(request_id)
+    }
 }
 
 fn forbidden(request_id: RequestId) -> Response {
@@ -184,13 +289,37 @@ fn forbidden(request_id: RequestId) -> Response {
     .into_response()
 }
 
-fn is_loopback_authority(authority: &Authority) -> bool {
-    authority.host().eq_ignore_ascii_case("127.0.0.1")
-        || authority.host().eq_ignore_ascii_case("localhost")
+fn is_expected_authority(authority: &Authority, port: u16) -> bool {
+    (authority.host().eq_ignore_ascii_case("127.0.0.1")
+        || authority.host().eq_ignore_ascii_case("localhost"))
+        && authority.port_u16() == Some(port)
 }
 
-fn same_authority(host: &Authority, origin: &Authority) -> bool {
-    is_loopback_authority(origin)
+fn same_authority(host: &Authority, origin: &Authority, port: u16) -> bool {
+    is_expected_authority(origin, port)
         && host.host().eq_ignore_ascii_case(origin.host())
         && host.port_u16() == origin.port_u16()
+}
+
+fn valid_token(headers: &HeaderMap, expected: &str) -> bool {
+    headers
+        .get(AUTH_TOKEN_HEADER)
+        .is_some_and(|provided| bool::from(provided.as_bytes().ct_eq(expected.as_bytes())))
+}
+
+#[derive(Clone, Copy)]
+enum RoutePolicy {
+    Static,
+    Browser,
+    Authenticated,
+}
+
+fn route_policy(path: &str) -> RoutePolicy {
+    if matches!(path, "/" | "/admin" | "/config") || path.starts_with("/assets/") {
+        RoutePolicy::Static
+    } else if path == "/ws/admin" || (path.starts_with("/api/") && !path.starts_with("/api/mcp/")) {
+        RoutePolicy::Browser
+    } else {
+        RoutePolicy::Authenticated
+    }
 }

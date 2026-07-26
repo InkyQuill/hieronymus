@@ -46,6 +46,7 @@ serde_yaml = "0.9"
 scraper = "0.24"
 sha2 = "0.10"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono", "json"] }
+subtle = "2"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }

@@ -40,3 +40,13 @@ pub(crate) async fn method_not_allowed(Extension(request_id): Extension<RequestI
     )
     .into_response()
 }
+
+pub(crate) fn unauthorized(request_id: RequestId) -> Response {
+    ApiError::new(
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        "valid X-Hieronymus-Token header required",
+        request_id,
+    )
+    .into_response()
+}

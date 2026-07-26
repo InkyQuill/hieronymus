@@ -1,19 +1,23 @@
 use std::{sync::Arc, time::Duration};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
     response::Response,
 };
-use hiero_bin::daemon::{AppState, build_router, serve};
+use hiero_bin::daemon::{AppState, bind_listener, build_router, load_or_create_auth_token, serve};
 use hiero_core::{config::HieronymusConfig, db};
 use serde_json::{Value, json};
 use tempfile::TempDir;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::broadcast;
 use tower::ServiceExt;
 
 const LOCAL_HOST: &str = "127.0.0.1:9768";
 const BODY_LIMIT: usize = 1_000_000;
+const AUTH_TOKEN: &str = "test-auth-token";
 
 async fn test_state() -> (AppState, broadcast::Receiver<()>) {
     let pool = db::connect_url("sqlite::memory:?cache=shared")
@@ -28,6 +32,8 @@ async fn test_state() -> (AppState, broadcast::Receiver<()>) {
             pool,
             config: Arc::new(config),
             shutdown,
+            auth_token: Arc::from(AUTH_TOKEN),
+            port: 9768,
         },
         receiver,
     )
@@ -38,7 +44,17 @@ fn request(method: Method, path: &str, body: Body) -> Request<Body> {
         .method(method)
         .uri(path)
         .header(header::HOST, LOCAL_HOST)
+        .header("x-hieronymus-token", AUTH_TOKEN)
         .body(body)
+        .expect("test request should build")
+}
+
+fn request_without_token(method: Method, path: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::HOST, LOCAL_HOST)
+        .body(Body::empty())
         .expect("test request should build")
 }
 
@@ -82,55 +98,139 @@ async fn router_registers_every_phase_005_section_2_route() {
 }
 
 #[tokio::test]
-async fn router_security_enforces_the_loopback_host_and_origin_matrix() {
+async fn router_security_enforces_route_specific_host_origin_and_token_policies() {
     let (state, _) = test_state().await;
     let router = build_router(state);
     let cases = [
-        (Method::GET, LOCAL_HOST, None, "/health", StatusCode::OK),
         (
+            "origin-less MCP with token",
+            Method::POST,
+            Some(LOCAL_HOST),
+            None,
+            Some(AUTH_TOKEN),
+            "/mcp",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            "origin-less MCP without token",
+            Method::POST,
+            Some(LOCAL_HOST),
+            None,
+            None,
+            "/mcp",
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            "foreign MCP origin",
+            Method::POST,
+            Some(LOCAL_HOST),
+            Some("https://evil.example"),
+            Some(AUTH_TOKEN),
+            "/mcp",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "native lifecycle with token",
             Method::GET,
-            LOCAL_HOST,
-            Some("http://127.0.0.1:9768"),
+            Some(LOCAL_HOST),
+            None,
+            Some(AUTH_TOKEN),
             "/health",
             StatusCode::OK,
         ),
         (
+            "native lifecycle without token",
             Method::GET,
-            "evil.example",
+            Some(LOCAL_HOST),
+            None,
             None,
             "/health",
-            StatusCode::FORBIDDEN,
+            StatusCode::UNAUTHORIZED,
         ),
         (
+            "same-origin browser admin",
             Method::GET,
-            LOCAL_HOST,
-            Some("https://evil.example"),
-            "/health",
-            StatusCode::FORBIDDEN,
-        ),
-        (
-            Method::GET,
-            LOCAL_HOST,
-            Some("http://localhost:9768"),
-            "/health",
-            StatusCode::FORBIDDEN,
-        ),
-        (
-            Method::POST,
-            LOCAL_HOST,
+            Some(LOCAL_HOST),
+            Some("http://127.0.0.1:9768"),
             None,
-            "/mcp",
+            "/api/providers",
             StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            "origin-less native admin with token",
+            Method::GET,
+            Some(LOCAL_HOST),
+            None,
+            Some(AUTH_TOKEN),
+            "/api/providers",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            "origin-less admin without token",
+            Method::GET,
+            Some(LOCAL_HOST),
+            None,
+            None,
+            "/api/providers",
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            "foreign browser admin origin",
+            Method::GET,
+            Some(LOCAL_HOST),
+            Some("https://evil.example"),
+            Some(AUTH_TOKEN),
+            "/api/providers",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "missing Host",
+            Method::GET,
+            None,
+            None,
+            Some(AUTH_TOKEN),
+            "/health",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "malformed Host authority",
+            Method::GET,
+            Some("127.0.0.1:not-a-port"),
+            None,
+            Some(AUTH_TOKEN),
+            "/health",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "wrong loopback port",
+            Method::GET,
+            Some("127.0.0.1:9999"),
+            None,
+            Some(AUTH_TOKEN),
+            "/health",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "mismatched loopback Origin",
+            Method::GET,
+            Some(LOCAL_HOST),
+            Some("http://localhost:9768"),
+            Some(AUTH_TOKEN),
+            "/health",
+            StatusCode::FORBIDDEN,
         ),
     ];
 
-    for (method, host, origin, path, expected) in cases {
-        let mut builder = Request::builder()
-            .method(method)
-            .uri(path)
-            .header(header::HOST, host);
+    for (name, method, host, origin, token, path, expected) in cases {
+        let mut builder = Request::builder().method(method).uri(path);
+        if let Some(host) = host {
+            builder = builder.header(header::HOST, host);
+        }
         if let Some(origin) = origin {
             builder = builder.header(header::ORIGIN, origin);
+        }
+        if let Some(token) = token {
+            builder = builder.header("x-hieronymus-token", token);
         }
         let response = router
             .clone()
@@ -141,7 +241,7 @@ async fn router_security_enforces_the_loopback_host_and_origin_matrix() {
             )
             .await
             .expect("router should answer");
-        assert_eq!(response.status(), expected, "host={host} origin={origin:?}");
+        assert_eq!(response.status(), expected, "{name}");
     }
 }
 
@@ -187,6 +287,7 @@ async fn router_preserves_or_generates_request_ids_on_every_response() {
             Request::builder()
                 .uri("/missing")
                 .header(header::HOST, LOCAL_HOST)
+                .header("x-hieronymus-token", AUTH_TOKEN)
                 .header("x-request-id", "test-request-123")
                 .body(Body::empty())
                 .expect("test request should build"),
@@ -259,19 +360,42 @@ async fn router_shutdown_signals_only_after_request_authorization() {
     let (state, mut shutdown) = test_state().await;
     let router = build_router(state);
 
-    let rejected = router
+    let missing = router
+        .clone()
+        .oneshot(request_without_token(Method::POST, "/shutdown"))
+        .await
+        .expect("router should answer");
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let same_origin_without_token = router
         .clone()
         .oneshot(
             Request::builder()
                 .method(Method::POST)
                 .uri("/shutdown")
-                .header(header::HOST, "evil.example")
+                .header(header::HOST, LOCAL_HOST)
+                .header(header::ORIGIN, "http://127.0.0.1:9768")
                 .body(Body::empty())
                 .expect("test request should build"),
         )
         .await
         .expect("router should answer");
-    assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
+    assert_eq!(same_origin_without_token.status(), StatusCode::UNAUTHORIZED);
+
+    let wrong = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/shutdown")
+                .header(header::HOST, LOCAL_HOST)
+                .header("x-hieronymus-token", "wrong-token")
+                .body(Body::empty())
+                .expect("test request should build"),
+        )
+        .await
+        .expect("router should answer");
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
     assert!(
         tokio::time::timeout(Duration::from_millis(20), shutdown.recv())
             .await
@@ -304,6 +428,7 @@ async fn router_internal_errors_are_sanitized_and_correlated() {
             Request::builder()
                 .uri("/status")
                 .header(header::HOST, LOCAL_HOST)
+                .header("x-hieronymus-token", AUTH_TOKEN)
                 .header("x-request-id", "closed-pool-request")
                 .body(Body::empty())
                 .expect("test request should build"),
@@ -336,6 +461,7 @@ async fn router_method_errors_use_the_stable_json_envelope() {
                 .method(Method::POST)
                 .uri("/health")
                 .header(header::HOST, LOCAL_HOST)
+                .header("x-hieronymus-token", AUTH_TOKEN)
                 .header("x-request-id", "wrong-method-request")
                 .body(Body::empty())
                 .expect("test request should build"),
@@ -356,7 +482,7 @@ async fn router_method_errors_use_the_stable_json_envelope() {
 }
 
 #[tokio::test]
-async fn router_serve_binds_only_to_ipv4_loopback_and_shuts_down_gracefully() {
+async fn router_binding_helper_exposes_the_exact_ipv4_loopback_address() {
     let reservation = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .expect("test port should be reservable");
@@ -366,40 +492,50 @@ async fn router_serve_binds_only_to_ipv4_loopback_and_shuts_down_gracefully() {
         .port();
     drop(reservation);
 
-    let temp = TempDir::new().expect("temporary directory should be created");
-    let config =
-        HieronymusConfig::load(Some(temp.path().join("data"))).expect("test config should load");
-    let (stop, stopped) = oneshot::channel();
-    let server = tokio::spawn(serve(config, port, async move {
-        let _ = stopped.await;
-    }));
-
-    let stream = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if let Ok(stream) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
-                break stream;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("server should accept loopback connections");
-    assert_eq!(
-        stream
-            .local_addr()
-            .expect("client should have a local address")
-            .ip()
-            .to_string(),
-        "127.0.0.1"
-    );
-    drop(stream);
-
-    stop.send(())
-        .expect("shutdown receiver should remain alive");
-    server
+    let listener = bind_listener(port)
         .await
-        .expect("server task should join")
-        .expect("server should shut down cleanly");
+        .expect("daemon listener should bind");
+    assert_eq!(
+        listener.local_addr().expect("listener has an address"),
+        format!("127.0.0.1:{port}")
+            .parse()
+            .expect("expected address should parse")
+    );
+}
+
+#[test]
+fn router_auth_token_file_is_created_once_with_private_permissions() {
+    let temp = TempDir::new().expect("temporary directory should be created");
+    let path = temp.path().join("config").join("auth-token");
+
+    let first = load_or_create_auth_token(&path).expect("token should be created");
+    let second = load_or_create_auth_token(&path).expect("token should be reused");
+
+    assert_eq!(first, second);
+    assert!(first.len() >= 64);
+    #[cfg(unix)]
+    assert_eq!(
+        std::fs::metadata(path)
+            .expect("token metadata should be readable")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn router_auth_token_file_rejects_non_private_existing_permissions() {
+    let temp = TempDir::new().expect("temporary directory should be created");
+    let path = temp.path().join("auth-token");
+    std::fs::write(&path, AUTH_TOKEN).expect("fixture token should be written");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+        .expect("fixture permissions should be set");
+
+    let error = load_or_create_auth_token(&path).expect_err("public token file must be rejected");
+
+    assert!(error.to_string().contains("0600"));
 }
 
 #[tokio::test]
