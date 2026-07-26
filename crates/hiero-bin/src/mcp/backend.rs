@@ -828,12 +828,17 @@ fn concept_payload(concept: &Concept) -> Value {
 }
 
 fn facet_payload(facet: &ConceptFacet) -> Value {
+    let kind = if matches!(facet.facet_type.as_str(), "alias" | "former_label") {
+        "name"
+    } else {
+        facet.facet_type.as_str()
+    };
     json!({
         "id": facet.id,
         "concept_id": facet.concept_id,
         "language": facet.language,
         "facet_type": facet.facet_type,
-        "kind": facet.facet_type,
+        "kind": kind,
         "value": facet.value,
         "confidence": facet.confidence,
         "source_crystal_id": facet.source_crystal_id,

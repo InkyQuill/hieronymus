@@ -484,7 +484,7 @@ pub fn tool_catalog() -> Vec<ToolContract> {
         ),
         contract::<ConceptTagsInput>(
             "hieronymus_concept_semantic_tags_set",
-            "Replace concept semantic tags.",
+            "Replace semantic tags for a concept.",
         ),
         contract::<CrystalLinkInput>(
             "hieronymus_crystal_link_concept",
@@ -492,11 +492,11 @@ pub fn tool_catalog() -> Vec<ToolContract> {
         ),
         contract::<CrystalScopesInput>(
             "hieronymus_crystal_story_scopes_set",
-            "Replace crystal story scopes.",
+            "Replace story scopes for a crystal.",
         ),
         contract::<CrystalTagsInput>(
             "hieronymus_crystal_semantic_tags_set",
-            "Replace crystal semantic tags.",
+            "Replace semantic tags for a crystal.",
         ),
         contract::<RuleListInput>(
             "hieronymus_rule_crystals_list",

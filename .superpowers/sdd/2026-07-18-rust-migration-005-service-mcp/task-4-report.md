@@ -318,3 +318,43 @@ exit 0
 $ git diff --check
 exit 0
 ```
+
+## Fix Round 2
+
+Closed the two remaining compatibility findings without changing any other Task 4 behavior:
+
+1. The flat facet payload now applies the Python compatibility mapping: storage
+   `facet_type` values `alias` and `former_label` serialize as `kind: "name"`;
+   other types such as `rendering` retain their exact type as `kind`. Literal tests cover
+   alias add, update, and list paths plus former-label creation through rename and list.
+2. These descriptions now match Python byte-for-byte and remain in the combined
+   description/schema snapshot:
+   - `hieronymus_concept_semantic_tags_set`: `Replace semantic tags for a concept.`
+   - `hieronymus_crystal_story_scopes_set`: `Replace story scopes for a crystal.`
+   - `hieronymus_crystal_semantic_tags_set`: `Replace semantic tags for a crystal.`
+
+### Round-2 RED/GREEN evidence
+
+```text
+RED facet compatibility:
+left: "alias"
+right: "name"
+
+RED description compatibility:
+left: "Replace concept semantic tags."
+right: "Replace semantic tags for a concept."
+
+$ cargo test -p hiero-bin --test test_mcp
+running 14 tests
+test result: ok. 14 passed; 0 failed
+
+$ cargo fmt --all --check
+exit 0
+
+$ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+Finished `dev` profile
+exit 0
+
+$ git diff --check
+exit 0
+```

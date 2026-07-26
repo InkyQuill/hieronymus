@@ -396,7 +396,7 @@ expression: schemas
     }
   },
   "hieronymus_concept_semantic_tags_set": {
-    "description": "Replace concept semantic tags.",
+    "description": "Replace semantic tags for a concept.",
     "input_schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
@@ -490,7 +490,7 @@ expression: schemas
     }
   },
   "hieronymus_crystal_semantic_tags_set": {
-    "description": "Replace crystal semantic tags.",
+    "description": "Replace semantic tags for a crystal.",
     "input_schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
@@ -520,7 +520,7 @@ expression: schemas
     }
   },
   "hieronymus_crystal_story_scopes_set": {
-    "description": "Replace crystal story scopes.",
+    "description": "Replace story scopes for a crystal.",
     "input_schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,

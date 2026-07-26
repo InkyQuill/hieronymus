@@ -169,6 +169,26 @@ fn catalog_registers_the_exact_forty_unique_tool_names() {
 }
 
 #[test]
+fn python_description_compatibility_strings_are_exact() {
+    let descriptions = tool_catalog()
+        .into_iter()
+        .map(|tool| (tool.name, tool.description))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        descriptions["hieronymus_concept_semantic_tags_set"],
+        "Replace semantic tags for a concept."
+    );
+    assert_eq!(
+        descriptions["hieronymus_crystal_story_scopes_set"],
+        "Replace story scopes for a crystal."
+    );
+    assert_eq!(
+        descriptions["hieronymus_crystal_semantic_tags_set"],
+        "Replace semantic tags for a crystal."
+    );
+}
+
+#[test]
 fn every_registered_tool_has_a_stable_object_schema() {
     let schemas = tool_catalog()
         .into_iter()
@@ -484,6 +504,67 @@ async fn concept_facet_and_crystal_results_match_the_flat_python_contract() {
     assert_eq!(facet["value"], "Хоро");
     assert_eq!(facet["semantic_tags"], json!(["alias"]));
     assert!(facet.get("record").is_none());
+
+    let alias = backend
+        .call(
+            "hieronymus_concept_facet_add",
+            json!({
+                "concept_id": concept_id,
+                "value": "Horo",
+                "language": "ja-Latn",
+                "facet_type": "alias"
+            }),
+        )
+        .await
+        .unwrap();
+    let alias_id = alias["id"].as_i64().unwrap();
+    assert_eq!(alias["facet_type"], "alias");
+    assert_eq!(alias["kind"], "name");
+    let alias = backend
+        .call(
+            "hieronymus_concept_facet_update",
+            json!({"facet_id": alias_id, "value": "Hōro"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(alias["kind"], "name");
+    let listed = backend
+        .call(
+            "hieronymus_concept_facet_list",
+            json!({"concept_id": concept_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|facet| facet["id"] == alias_id)
+            .unwrap()["kind"],
+        "name"
+    );
+    backend
+        .call(
+            "hieronymus_concept_rename",
+            json!({"concept_id": concept_id, "new_label": "Horo"}),
+        )
+        .await
+        .unwrap();
+    let listed = backend
+        .call(
+            "hieronymus_concept_facet_list",
+            json!({"concept_id": concept_id}),
+        )
+        .await
+        .unwrap();
+    let former = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|facet| facet["facet_type"] == "former_label")
+        .unwrap();
+    assert_eq!(former["kind"], "name");
 
     let now = chrono::Utc::now();
     let crystal_id = sqlx::query("INSERT INTO crystals(crystal_type,text,title,scope_type,scope_key,series_slug,source_language,target_language,tags_json,strength,confidence,source_credibility,rule_intent,status,created_at,updated_at) VALUES('lesson','Holo memory','Holo','series','series:oso','oso','ja','ru','[]',0.8,0.9,'observation','','active',?,?)")
