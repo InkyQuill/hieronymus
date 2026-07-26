@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::provider::CandidateCrystal;
 
+use super::RecoveryMetadata;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourcedCrystalCandidate {
@@ -24,6 +26,8 @@ pub struct RelationCandidate {
 pub struct RelationsOutput {
     #[serde(default)]
     pub relations: Vec<RelationCandidate>,
+    #[serde(skip)]
+    pub recovery: RecoveryMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -40,12 +44,16 @@ pub struct ReinforcementCandidate {
 pub struct ReinforcementOutput {
     #[serde(default)]
     pub reinforce: Vec<ReinforcementCandidate>,
+    #[serde(skip)]
+    pub recovery: RecoveryMetadata,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CoverageAuditOutput {
     pub covered_memory_ids: Vec<i64>,
+    #[serde(skip)]
+    pub recovery: RecoveryMetadata,
 }
 
 pub use crate::dreaming::phases::{CoverageAuditPhase, ReinforcementPhase, RelationsPhase};

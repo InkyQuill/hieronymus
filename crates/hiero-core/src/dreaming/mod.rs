@@ -30,10 +30,11 @@ pub use lock::{
 };
 pub use parsing::{
     MALFORMED_OUTPUT_PENALTY, MalformedPayloadError, parse_dream_output, parse_dream_output_async,
-    strip_code_fences,
+    parse_provider_output, strip_code_fences,
 };
 pub use phases::{
-    ConceptsPhase, CrystalPhaseOutput, DreamPhase, DreamPhaseError, PhaseInput, PhaseOutput,
-    TerminologyCandidatesPhase, execute_provider_passes,
+    CatalogDreamProviderResolver, ConceptsPhase, CrystalPhaseOutput, DreamPhase, DreamPhaseError,
+    DreamProviderResolver, PhaseInput, PhaseOutput, RecoveryMetadata, TerminologyCandidatesPhase,
+    execute_provider_passes,
 };
 pub use workflows::{WorkflowProfile, build_phase_prompt, resolve_workflows};

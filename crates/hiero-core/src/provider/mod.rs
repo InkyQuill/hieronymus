@@ -132,6 +132,30 @@ pub struct ConceptCandidate {
     pub facets: Vec<(String, String, String)>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderPassOutput {
+    pub value: serde_json::Value,
+    pub recovered: bool,
+    pub malformed_penalty: f64,
+}
+
+impl ProviderPassOutput {
+    #[must_use]
+    pub const fn direct(value: serde_json::Value) -> Self {
+        Self {
+            value,
+            recovered: false,
+            malformed_penalty: 0.0,
+        }
+    }
+}
+
+impl PartialEq<serde_json::Value> for ProviderPassOutput {
+    fn eq(&self, other: &serde_json::Value) -> bool {
+        self.value == *other
+    }
+}
+
 #[async_trait]
 pub trait DreamProvider: Send + Sync {
     fn name(&self) -> &str;
@@ -145,7 +169,7 @@ pub trait DreamProvider: Send + Sync {
         pass: PassName,
         context: &TranslationContext,
         memories: &[ShortTermMemory],
-    ) -> Result<serde_json::Value>;
+    ) -> Result<ProviderPassOutput>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -763,7 +787,7 @@ pub(crate) async fn parse_output(text: String) -> Result<DreamOutput> {
         .await
         .map_err(|_| ProviderError::MalformedJson)
 }
-pub(crate) async fn parse_pass_output(text: String) -> Result<serde_json::Value> {
+pub(crate) async fn parse_pass_output(text: String) -> Result<ProviderPassOutput> {
     crate::dreaming::parsing::parse_provider_value_async(text)
         .await
         .map_err(|_| ProviderError::MalformedJson)

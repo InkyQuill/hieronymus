@@ -54,7 +54,7 @@ impl DreamProvider for OpenAiProvider {
         pass: PassName,
         context: &TranslationContext,
         memories: &[ShortTermMemory],
-    ) -> Result<serde_json::Value> {
+    ) -> Result<super::ProviderPassOutput> {
         super::parse_pass_output(
             self.0
                 .generate(

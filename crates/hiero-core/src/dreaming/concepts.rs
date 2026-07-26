@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::provider::ConceptCandidate;
 
+use super::RecoveryMetadata;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConceptPhaseCandidate {
@@ -15,6 +17,8 @@ pub struct ConceptPhaseCandidate {
 pub struct ConceptsOutput {
     #[serde(default)]
     pub concepts: Vec<ConceptPhaseCandidate>,
+    #[serde(skip)]
+    pub recovery: RecoveryMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,11 +30,13 @@ pub struct TerminologyCandidate {
     pub source_memory_ids: Vec<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TerminologyCandidatesOutput {
     #[serde(default)]
     pub concept_proposals: Vec<TerminologyCandidate>,
+    #[serde(skip)]
+    pub recovery: RecoveryMetadata,
 }
 
 impl TerminologyCandidatesOutput {

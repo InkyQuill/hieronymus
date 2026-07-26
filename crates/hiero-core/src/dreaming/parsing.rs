@@ -1,6 +1,6 @@
 use crate::{
     domain::apply_malformed_confidence_penalty,
-    provider::{DreamOutput, MAX_RESPONSE_BYTES},
+    provider::{DreamOutput, MAX_RESPONSE_BYTES, ProviderPassOutput},
 };
 
 pub const MALFORMED_OUTPUT_PENALTY: f64 = 0.2;
@@ -8,6 +8,7 @@ const BLOCKING_PARSE_THRESHOLD: usize = 64 * 1024;
 const MAX_OUTPUT_RECORDS: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum MalformedPayloadError {
     #[error("dream payload is empty")]
     Empty,
@@ -21,6 +22,34 @@ pub enum MalformedPayloadError {
     Ambiguous,
     #[error("dream payload parsing task failed")]
     ParseTask,
+}
+
+pub fn parse_provider_output(raw: &str) -> Result<ProviderPassOutput, MalformedPayloadError> {
+    validate_raw(raw)?;
+    if let Ok(value) = serde_json::from_str(raw.trim()) {
+        return Ok(ProviderPassOutput {
+            value,
+            recovered: false,
+            malformed_penalty: 0.0,
+        });
+    }
+
+    let fenced = fenced_candidates(raw);
+    if fenced.len() > 1 {
+        return Err(MalformedPayloadError::Ambiguous);
+    }
+    if let Some(candidate) = fenced.first() {
+        return recovered_provider_output(candidate);
+    }
+
+    let balanced = balanced_candidates(raw);
+    if balanced.len() > 1 {
+        return Err(MalformedPayloadError::Ambiguous);
+    }
+    let Some(candidate) = balanced.first() else {
+        return Err(MalformedPayloadError::Invalid);
+    };
+    recovered_provider_output(candidate)
 }
 
 #[must_use]
@@ -40,12 +69,7 @@ pub fn strip_code_fences(raw: &str) -> &str {
 }
 
 pub fn parse_dream_output(raw: &str) -> Result<DreamOutput, MalformedPayloadError> {
-    if raw.trim().is_empty() {
-        return Err(MalformedPayloadError::Empty);
-    }
-    if raw.len() > MAX_RESPONSE_BYTES {
-        return Err(MalformedPayloadError::TooLarge);
-    }
+    validate_raw(raw)?;
     match decode(raw.trim()) {
         Ok(output) => return Ok(output),
         Err(MalformedPayloadError::Schema) => return Err(MalformedPayloadError::Schema),
@@ -74,27 +98,45 @@ pub async fn parse_dream_output_async(raw: String) -> Result<DreamOutput, Malfor
     if raw.len() < BLOCKING_PARSE_THRESHOLD {
         return parse_dream_output(&raw);
     }
-    tokio::task::spawn_blocking(move || parse_dream_output(&raw))
-        .await
-        .map_err(|_| MalformedPayloadError::ParseTask)?
+    dispatch_blocking(move || parse_dream_output(&raw)).await?
 }
 
 pub(crate) async fn parse_provider_value_async(
     raw: String,
-) -> Result<serde_json::Value, MalformedPayloadError> {
-    if raw.trim().is_empty() {
-        return Err(MalformedPayloadError::Empty);
-    }
-    if raw.len() > MAX_RESPONSE_BYTES {
-        return Err(MalformedPayloadError::TooLarge);
-    }
+) -> Result<ProviderPassOutput, MalformedPayloadError> {
     if raw.len() < BLOCKING_PARSE_THRESHOLD {
-        return serde_json::from_str(&raw).map_err(|_| MalformedPayloadError::Invalid);
+        return parse_provider_output(&raw);
     }
-    tokio::task::spawn_blocking(move || serde_json::from_str(&raw))
+    dispatch_blocking(move || parse_provider_output(&raw)).await?
+}
+
+async fn dispatch_blocking<F, T>(work: F) -> Result<T, MalformedPayloadError>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
         .await
-        .map_err(|_| MalformedPayloadError::ParseTask)?
-        .map_err(|_| MalformedPayloadError::Invalid)
+        .map_err(|_| MalformedPayloadError::ParseTask)
+}
+
+fn validate_raw(raw: &str) -> Result<(), MalformedPayloadError> {
+    if raw.trim().is_empty() {
+        Err(MalformedPayloadError::Empty)
+    } else if raw.len() > MAX_RESPONSE_BYTES {
+        Err(MalformedPayloadError::TooLarge)
+    } else {
+        Ok(())
+    }
+}
+
+fn recovered_provider_output(raw: &str) -> Result<ProviderPassOutput, MalformedPayloadError> {
+    let value = serde_json::from_str(raw).map_err(|_| MalformedPayloadError::Invalid)?;
+    Ok(ProviderPassOutput {
+        value,
+        recovered: true,
+        malformed_penalty: MALFORMED_OUTPUT_PENALTY,
+    })
 }
 
 fn decode(raw: &str) -> Result<DreamOutput, MalformedPayloadError> {
@@ -215,7 +257,30 @@ fn balanced_candidates(raw: &str) -> Vec<&str> {
         }
     }
     candidates
-        .into_iter()
-        .filter(|candidate| decode(candidate).is_ok())
-        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dispatch_blocking;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_dispatch_allows_another_current_thread_task_to_progress() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let parsing = tokio::spawn(dispatch_blocking(move || {
+            started_tx.send(()).expect("test receiver remains alive");
+            release_rx.recv().expect("test releases parser");
+            42
+        }));
+        started_rx.await.unwrap();
+
+        let (progress_tx, progress_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            progress_tx.send(()).unwrap();
+        });
+        progress_rx.await.unwrap();
+
+        release_tx.send(()).unwrap();
+        assert_eq!(parsing.await.unwrap().unwrap(), 42);
+    }
 }

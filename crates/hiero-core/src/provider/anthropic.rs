@@ -48,7 +48,7 @@ impl DreamProvider for AnthropicProvider {
         p: PassName,
         c: &TranslationContext,
         m: &[ShortTermMemory],
-    ) -> Result<serde_json::Value> {
+    ) -> Result<super::ProviderPassOutput> {
         super::parse_pass_output(
             self.0
                 .generate(
