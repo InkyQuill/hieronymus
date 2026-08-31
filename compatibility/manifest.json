@@ -861,10 +861,11 @@
     },
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
-      "disposition": "preserve",
+      "adr": "docs/adr/0014-web-console-replaces-terminal-ui.md",
+      "disposition": "intentionally-change",
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "frontend.route.get.root",
-      "python_entry_point": "hieronymus.service_http:_send_web_app",
+      "python_entry_point": "hieronymus.service_http:do_GET not-found fallback",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::frontend_route_get_root",
       "surface": "frontend",
       "technical_owner": "daemon-mcp-security",
@@ -1047,6 +1048,21 @@
       "id": "http.route.post.api.admin.actions.action",
       "python_entry_point": "hieronymus.service_http:AdminBridge allowlisted action",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_api_admin_actions_action",
+      "surface": "http",
+      "technical_owner": "daemon-mcp-security",
+      "tests": [
+        "tests/compatibility/test_http_inventory.py",
+        "tests/test_service_http.py"
+      ]
+    },
+    {
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "disposition": "intentionally-change",
+      "fixture": "compatibility/fixtures/http/route-cases.json",
+      "id": "http.route.post.api.admin.actions.run_manual_dreaming",
+      "python_entry_point": "hieronymus.service_http:_start_manual_dreaming",
+      "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_api_admin_actions_run_manual_dreaming",
       "surface": "http",
       "technical_owner": "daemon-mcp-security",
       "tests": [

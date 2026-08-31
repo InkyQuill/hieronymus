@@ -6,11 +6,15 @@ import argparse
 import ast
 import json
 import re
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 _ADR_0012 = "docs/adr/0012-mcp-transport-authentication-and-discovery.md"
+_ADR_0014 = "docs/adr/0014-web-console-replaces-terminal-ui.md"
 _ADR_0015 = "docs/adr/0015-mcp-protocol-and-transport.md"
+_MCP_PROTOCOL_REVISION = "2026-07-28"
+_UNSUPPORTED_MCP_PROTOCOL_REVISION = "2025-06-18"
 
 
 @dataclass(frozen=True)
@@ -39,13 +43,16 @@ REVIEWED_ROUTES = (
         "GET",
         "/",
         "frontend",
-        "_send_web_app",
+        "do_GET not-found fallback",
         "public-static",
         "public-static",
-        "preserve",
+        "intentionally-change",
+        _ADR_0014,
         None,
-        None,
-        "text/html",
+        {
+            "current": {"error": "not_found", "path": "string"},
+            "target": "text/html",
+        },
     ),
     Route(
         "frontend.route.get.admin",
@@ -359,6 +366,19 @@ REVIEWED_ROUTES = (
         "AdminActionResult",
     ),
     Route(
+        "http.route.post.api.admin.actions.run_manual_dreaming",
+        "POST",
+        "/api/admin/actions/run_manual_dreaming",
+        "http",
+        "_start_manual_dreaming",
+        _BROWSER_WRITE_AUTH,
+        "browser-session-and-CSRF-token",
+        "intentionally-change",
+        _ADR_0012,
+        {},
+        {"started": "boolean", "status": "string"},
+    ),
+    Route(
         "websocket.route.get.ws.admin",
         "GET",
         "/ws/admin",
@@ -368,8 +388,24 @@ REVIEWED_ROUTES = (
         "browser-session-with-credential-rotation-close",
         "intentionally-change",
         _ADR_0012,
-        "WebSocket upgrade",
-        "admin event frames",
+        {
+            "current": "WebSocket upgrade",
+            "target": {"resume_from_last_event_id": "integer"},
+        },
+        {
+            "current_event": {
+                "type": "string",
+                "timestamp": "ISO-8601 string",
+                "payload": "object",
+            },
+            "target_event": {
+                "version": "integer",
+                "event_id": "integer",
+                "event_type": "string",
+                "payload": "object",
+            },
+            "target_rotation": "credentials_rotated error followed by close",
+        },
     ),
 )
 
@@ -379,6 +415,7 @@ def snapshot_http(repo_root: Path) -> dict[str, object]:
     service_source = (repo_root / "src/hieronymus/service_http.py").read_text(encoding="utf-8")
     python_routes = _python_routes(service_source)
     _assert_python_routes_reviewed(python_routes)
+    _assert_preserved_routes_discovered(python_routes)
     frontend_source = (repo_root / "frontend/src/web/lib/api.ts").read_text(encoding="utf-8")
     frontend_calls = _frontend_calls(frontend_source)
     consumers: dict[tuple[str, str], list[str]] = {}
@@ -415,14 +452,18 @@ def _python_routes(source: str) -> list[dict[str, str]]:
             string_maps[target.id] = keys
 
     discovered: set[tuple[str, str, str]] = set()
+    function_methods = {
+        "do_GET": "GET",
+        "do_POST": "POST",
+        "do_DELETE": "DELETE",
+        "_is_web_route": "GET",
+    }
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name not in {
-            "do_GET",
-            "do_POST",
-            "do_DELETE",
-        }:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        method = node.name.removeprefix("do_")
+        method = function_methods.get(node.name)
+        if method is None:
+            continue
         for candidate in ast.walk(node):
             if isinstance(candidate, ast.Compare):
                 _record_path_comparison(discovered, method, candidate, string_maps)
@@ -448,8 +489,15 @@ def _record_path_comparison(
     if isinstance(node.ops[0], ast.Eq) and isinstance(comparator, ast.Constant):
         if isinstance(comparator.value, str) and comparator.value.startswith("/"):
             discovered.add((method, "exact", comparator.value))
-    elif isinstance(node.ops[0], ast.In) and isinstance(comparator, ast.Name):
-        for path in string_maps.get(comparator.id, ()):
+    elif isinstance(node.ops[0], ast.In):
+        paths: tuple[object, ...] = ()
+        if isinstance(comparator, ast.Name):
+            paths = string_maps.get(comparator.id, ())
+        elif isinstance(comparator, (ast.Set, ast.Tuple, ast.List)):
+            paths = tuple(item.value for item in comparator.elts if isinstance(item, ast.Constant))
+        for path in paths:
+            if not isinstance(path, str) or not path.startswith("/"):
+                continue
             discovered.add((method, "exact", path))
 
 
@@ -480,6 +528,28 @@ def _assert_python_routes_reviewed(discovered: list[dict[str, str]]) -> None:
             )
         if not covered:
             raise ValueError(f"unreviewed Python HTTP route: {method} {match} {value}")
+
+
+def _assert_preserved_routes_discovered(discovered: list[dict[str, str]]) -> None:
+    for route in REVIEWED_ROUTES:
+        if route.disposition != "preserve":
+            continue
+        covered = any(
+            candidate["method"] == route.method
+            and (
+                (candidate["match"] == "exact" and candidate["value"] == route.path_template)
+                or (
+                    candidate["match"] == "prefix"
+                    and route.path_template.startswith(candidate["value"])
+                )
+            )
+            for candidate in discovered
+        )
+        if not covered:
+            raise ValueError(
+                "preserved reviewed route absent from current Python router: "
+                f"{route.method} {route.path_template}"
+            )
 
 
 def _frontend_calls(source: str) -> list[dict[str, object]]:
@@ -593,6 +663,8 @@ def _normalize_frontend_path(expression: str) -> str:
         return "{id}"
 
     value = re.sub(r"\$\{([^}]+)\}", placeholder, value)
+    if value == "/api/admin/actions/run_manual_dreaming":
+        return value
     if value.startswith("/api/admin/actions/"):
         value = "/api/admin/actions/{action}"
     return value.removesuffix("?")
@@ -606,25 +678,128 @@ def _write_json(path: Path, value: object) -> None:
     )
 
 
+def runtime_reference_bodies() -> dict[str, object]:
+    """Return complete normalized bodies from current runtime bridges on a temp root."""
+    from hieronymus.config import HieronymusConfig
+    from hieronymus.dream_providers import ModelSuggestionResult
+    from hieronymus.service_http import status_payload
+    from hieronymus.service_state import ServerState
+    from hieronymus.tui_bridge.admin_api import AdminBridge
+    from hieronymus.tui_bridge.config_api import ConfigBridge
+
+    class FixtureProviderRegistry:
+        def list_model_suggestions(
+            self, _config: object, provider_id: str
+        ) -> ModelSuggestionResult:
+            return ModelSuggestionResult(
+                provider=provider_id,
+                models=["synthetic-model"],
+                source="fixture",
+            )
+
+        def check_profile_connection(
+            self, _config: object, provider_id: str, _profile: object
+        ) -> ModelSuggestionResult:
+            return self.list_model_suggestions(_config, provider_id)
+
+    with tempfile.TemporaryDirectory(prefix="hieronymus-http-compat-") as directory:
+        synthetic_root = Path(directory)
+        config = HieronymusConfig(data_root=synthetic_root / "data")
+        state = ServerState(
+            pid=12345,
+            host="127.0.0.1",
+            port=9768,
+            version="0.7.0",
+            started_at="<TIMESTAMP>",
+            data_root=str(config.data_root),
+            database_path=str(config.database_path),
+            token="compat-secret-do-not-log",
+        )
+        config_bridge = ConfigBridge(config, registry=FixtureProviderRegistry())
+        admin_bridge = AdminBridge(config)
+        bodies = {
+            "status": status_payload(config, state),
+            "admin_dashboard": admin_bridge.dashboard({}),
+            "admin_snapshot": admin_bridge.snapshot({"view": "Crystals", "selected_id": "1"}),
+            "provider_list": config_bridge.provider_list({}),
+            "dream_get": config_bridge.dream_settings({}),
+            "dream_post": config_bridge.save_dream_settings(
+                {"dream": {"dreaming": {"enabled": False}, "workflows": {}}}
+            ),
+            "ingest_get": config_bridge.ingest_settings({}),
+            "ingest_post": config_bridge.save_ingest_settings({"ingest": _ingest_fixture()}),
+            "release_get": config_bridge.release_settings({}),
+            "release_post": config_bridge.save_release_settings(
+                {"release": {"update_channel": "stable"}}
+            ),
+        }
+        provider_draft = _fixture_request_body(
+            {"contract_id": "http.route.post.api.providers", "request_shape": {}}
+        )
+        assert isinstance(provider_draft, dict)
+        bodies["provider_save"] = config_bridge.save_provider(provider_draft)
+        provider_params = {"provider_id": "synthetic-provider"}
+        bodies["provider_detail"] = config_bridge.provider_detail(provider_params)
+        bodies["provider_models"] = config_bridge.provider_models(provider_params)
+        bodies["provider_check"] = config_bridge.check_saved_provider(provider_params)
+        bodies["provider_delete"] = config_bridge.delete_provider(provider_params)
+        return _normalize_runtime_value(bodies, synthetic_root)
+
+
+def _normalize_runtime_value(value: object, synthetic_root: Path) -> object:
+    if isinstance(value, dict):
+        normalized: dict[str, object] = {}
+        for key, item in value.items():
+            if key == "pid":
+                normalized[key] = "<PID>"
+            elif key == "port":
+                normalized[key] = "<PORT>"
+            else:
+                normalized[key] = _normalize_runtime_value(item, synthetic_root)
+        return normalized
+    if isinstance(value, list):
+        return [_normalize_runtime_value(item, synthetic_root) for item in value]
+    if isinstance(value, tuple):
+        return [_normalize_runtime_value(item, synthetic_root) for item in value]
+    if isinstance(value, str):
+        return value.replace(str(synthetic_root), "<SYNTHETIC_ROOT>")
+    return value
+
+
 def _route_cases(snapshot: dict[str, object]) -> dict[str, object]:
     routes = snapshot["routes"]
     assert isinstance(routes, list)
-    return {
-        "routes": [
-            {
-                "contract_id": route["contract_id"],
-                "success": _fixture_outcome(route, success=True),
-                "failure": _fixture_outcome(route, success=False),
-            }
-            for route in routes
-        ]
+    runtime_bodies = runtime_reference_bodies()
+    return {"routes": [_route_case(route, runtime_bodies) for route in routes]}
+
+
+def _route_case(route: dict[str, object], runtime_bodies: dict[str, object]) -> dict[str, object]:
+    success = _fixture_outcome(route, runtime_bodies, success=True)
+    failure = _fixture_outcome(route, runtime_bodies, success=False)
+    contract_id = str(route["contract_id"])
+    case: dict[str, object] = {
+        "contract_id": contract_id,
+        "success": success,
+        "failure": failure,
     }
+    if contract_id == "frontend.route.get.root":
+        failure["response"]["body"] = {"error": "not_found", "path": "/"}
+        case["current"] = failure
+        case["target"] = success
+    if contract_id == "websocket.route.get.ws.admin":
+        case["websocket_contract"] = _websocket_contract()
+    return case
 
 
-def _fixture_outcome(route: dict[str, object], *, success: bool) -> dict[str, object]:
+def _fixture_outcome(
+    route: dict[str, object],
+    runtime_bodies: dict[str, object],
+    *,
+    success: bool,
+) -> dict[str, object]:
     method = str(route["method"])
     path = _concrete_path(str(route["path_template"]))
-    request_headers = _fixture_request_headers(route) if success else {}
+    request_headers = _fixture_request_headers(route, success=success)
     response_status = _success_status(route) if success else _failure_status(route)
     return {
         "request": {
@@ -637,7 +812,11 @@ def _fixture_outcome(route: dict[str, object], *, success: bool) -> dict[str, ob
         "response": {
             "status": response_status,
             "headers": _fixture_response_headers(route, success=success),
-            "body": _fixture_success_body(route) if success else _fixture_failure_body(route),
+            "body": (
+                _fixture_success_body(route, runtime_bodies)
+                if success
+                else _fixture_failure_body(route)
+            ),
         },
         "normalized_log_fields": {
             "method": method,
@@ -657,8 +836,10 @@ def _concrete_path(path_template: str) -> str:
     )
 
 
-def _fixture_request_headers(route: dict[str, object]) -> dict[str, str]:
+def _fixture_request_headers(route: dict[str, object], *, success: bool) -> dict[str, str]:
     contract_id = str(route["contract_id"])
+    if not success and contract_id != "http.route.post.mcp":
+        return {}
     if str(route["current_auth"]) == "public-static":
         return {}
     if contract_id == "websocket.route.get.ws.admin":
@@ -669,7 +850,12 @@ def _fixture_request_headers(route: dict[str, object]) -> dict[str, str]:
             "Upgrade": "websocket",
         }
     if contract_id == "http.route.post.mcp":
-        return {"Authorization": "Bearer compat-secret-do-not-log"}
+        return {
+            "Authorization": "Bearer compat-secret-do-not-log",
+            "MCP-Protocol-Version": (
+                _MCP_PROTOCOL_REVISION if success else _UNSUPPORTED_MCP_PROTOCOL_REVISION
+            ),
+        }
     return {"X-Hieronymus-Token": "compat-secret-do-not-log"}
 
 
@@ -733,8 +919,15 @@ def _failure_status(route: dict[str, object]) -> int:
 
 
 def _fixture_response_headers(route: dict[str, object], *, success: bool) -> dict[str, str]:
+    if not success:
+        return {"Content-Type": "application/json; charset=utf-8"}
     if success and str(route["surface"]) == "websocket":
         return {"Connection": "Upgrade", "Upgrade": "websocket"}
+    contract_id = str(route["contract_id"])
+    if contract_id.startswith("frontend.route.get."):
+        if contract_id == "frontend.route.get.assets.path":
+            return {"Content-Type": "application/javascript"}
+        return {"Content-Type": "text/html; charset=utf-8"}
     response_shape = str(route["response_shape"])
     if response_shape == "text/html":
         return {"Content-Type": "text/html; charset=utf-8"}
@@ -743,7 +936,7 @@ def _fixture_response_headers(route: dict[str, object], *, success: bool) -> dic
     return {"Content-Type": "application/json; charset=utf-8"}
 
 
-def _fixture_success_body(route: dict[str, object]) -> object:
+def _fixture_success_body(route: dict[str, object], runtime_bodies: dict[str, object]) -> object:
     contract_id = str(route["contract_id"])
     if contract_id.startswith("frontend.route.get."):
         return (
@@ -754,14 +947,7 @@ def _fixture_success_body(route: dict[str, object]) -> object:
     if contract_id == "http.route.get.health":
         return {"ok": True, "service": "hieronymus", "version": "<VERSION>"}
     if contract_id == "http.route.get.status":
-        return {
-            "running": True,
-            "pid": "<PID>",
-            "host": "127.0.0.1",
-            "port": "<PORT>",
-            "version": "<VERSION>",
-            "data_root": "<DATA_ROOT>",
-        }
+        return runtime_bodies["status"]
     if contract_id == "http.route.post.shutdown":
         return {"ok": True, "stopping": True}
     if contract_id == "http.route.post.mcp":
@@ -769,54 +955,40 @@ def _fixture_success_body(route: dict[str, object]) -> object:
     if contract_id == "http.route.post.api.mcp.operation":
         return {"result": {"service": {"available": True, "mode": "local-http"}}}
     if contract_id == "http.route.get.api.providers":
-        return {"providers": [], "error": ""}
-    if contract_id in {
-        "http.route.post.api.providers",
-        "http.route.get.api.providers.id",
-    }:
-        return {"provider": _provider_fixture(), "error": ""}
+        return runtime_bodies["provider_list"]
+    if contract_id == "http.route.post.api.providers":
+        return runtime_bodies["provider_save"]
+    if contract_id == "http.route.get.api.providers.id":
+        return runtime_bodies["provider_detail"]
     if contract_id == "http.route.get.api.providers.id.models":
-        return {"models": ["synthetic-model"], "source": "fixture", "error": ""}
+        return runtime_bodies["provider_models"]
     if contract_id == "http.route.post.api.providers.id.check":
-        return {
-            "check": {
-                "ok": True,
-                "models": ["synthetic-model"],
-                "source": "fixture",
-                "error": "",
-            },
-            "error": "",
-        }
+        return runtime_bodies["provider_check"]
     if contract_id == "http.route.delete.api.providers.id":
-        return {"deleted": "synthetic-provider", "error": ""}
+        return runtime_bodies["provider_delete"]
     if contract_id == "http.route.get.api.settings.dream":
-        return {
-            "dream": {"dreaming": {}, "workflows": {}},
-            "providers": [],
-            "model_cache": {"providers": {}},
-            "error": "",
-        }
+        return runtime_bodies["dream_get"]
     if contract_id == "http.route.post.api.settings.dream":
-        return {"dream": {"dreaming": {"enabled": False}, "workflows": {}}, "error": ""}
-    if contract_id in {
-        "http.route.get.api.settings.ingest",
-        "http.route.post.api.settings.ingest",
-    }:
-        return {"ingest": _ingest_fixture(), "error": ""}
-    if contract_id in {
-        "http.route.get.api.settings.release",
-        "http.route.post.api.settings.release",
-    }:
-        return {"release": {"update_channel": "stable"}, "error": ""}
+        return runtime_bodies["dream_post"]
+    if contract_id == "http.route.get.api.settings.ingest":
+        return runtime_bodies["ingest_get"]
+    if contract_id == "http.route.post.api.settings.ingest":
+        return runtime_bodies["ingest_post"]
+    if contract_id == "http.route.get.api.settings.release":
+        return runtime_bodies["release_get"]
+    if contract_id == "http.route.post.api.settings.release":
+        return runtime_bodies["release_post"]
     if contract_id == "http.route.get.api.admin.dashboard":
-        return {"default_view": "Crystals", "views": ["Crystals"], "stats": {}}
+        return runtime_bodies["admin_dashboard"]
     if contract_id == "http.route.get.api.admin.snapshot":
-        return {"snapshot": _admin_snapshot_fixture()}
+        return runtime_bodies["admin_snapshot"]
     if contract_id == "http.route.post.api.admin.actions.action":
         return {
             "result": {"message": "Synthetic action completed"},
             "snapshot": _admin_snapshot_fixture(),
         }
+    if contract_id == "http.route.post.api.admin.actions.run_manual_dreaming":
+        return {"started": True, "status": "running"}
     if contract_id == "websocket.route.get.ws.admin":
         return None
     raise ValueError(f"missing success fixture body: {contract_id}")
@@ -858,7 +1030,9 @@ def _admin_snapshot_fixture() -> dict[str, object]:
 def _fixture_failure_body(route: dict[str, object]) -> object:
     contract_id = str(route["contract_id"])
     if str(route["current_auth"]) == "public-static":
-        return {"error": "not_found"}
+        if contract_id == "frontend.route.get.assets.path":
+            return {"error": "not_found"}
+        return {"error": "web_console_not_built"}
     if contract_id == "http.route.post.mcp":
         return {
             "jsonrpc": "2.0",
@@ -868,6 +1042,45 @@ def _fixture_failure_body(route: dict[str, object]) -> object:
     if str(route["surface"]) == "websocket" or "browser" in str(route["current_auth"]):
         return {"error": "forbidden"}
     return {"error": "unauthorized"}
+
+
+def _websocket_contract() -> dict[str, object]:
+    payload = {"cycle_id": 7, "phase": "crystallization", "run_id": 11}
+    snapshot_request = {
+        "method": "GET",
+        "path": "/api/admin/snapshot?view=Crystals&selected_id=1",
+    }
+    return {
+        "current": {
+            "event": {
+                "type": "dream_phase_progress",
+                "timestamp": "<TIMESTAMP>",
+                "payload": payload,
+            },
+            "resume": {"supported": False},
+            "snapshot_refresh_fallback": {"supported": False},
+        },
+        "target": {
+            "event": {
+                "version": 1,
+                "event_id": 42,
+                "event_type": "dream_phase_progress",
+                "payload": payload,
+            },
+            "resume": {"last_event_id": 41, "replayed_event_ids": [42]},
+            "snapshot_refresh_fallback": {
+                "reason": "last event id is outside retained history",
+                "request": snapshot_request,
+            },
+            "credentials_rotated": {
+                "error": {
+                    "code": "credentials_rotated",
+                    "message": "local service credentials rotated",
+                },
+                "close": {"code": 4001, "reason": "credentials_rotated"},
+            },
+        },
+    }
 
 
 def _merge_manifest(repo_root: Path, snapshot: dict[str, object]) -> None:

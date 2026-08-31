@@ -77,7 +77,7 @@
     {
       "consumer": "startAdminDreaming",
       "method": "POST",
-      "path_template": "/api/admin/actions/{action}"
+      "path_template": "/api/admin/actions/run_manual_dreaming"
     }
   ],
   "python_discovered_routes": [
@@ -85,6 +85,11 @@
       "match": "prefix",
       "method": "DELETE",
       "value": "/api/providers/"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
+      "value": "/admin"
     },
     {
       "match": "exact",
@@ -119,6 +124,11 @@
     {
       "match": "exact",
       "method": "GET",
+      "value": "/config"
+    },
+    {
+      "match": "exact",
+      "method": "GET",
       "value": "/health"
     },
     {
@@ -134,12 +144,22 @@
     {
       "match": "prefix",
       "method": "GET",
+      "value": "/admin/"
+    },
+    {
+      "match": "prefix",
+      "method": "GET",
       "value": "/api/providers/"
     },
     {
       "match": "prefix",
       "method": "GET",
       "value": "/assets/"
+    },
+    {
+      "match": "prefix",
+      "method": "GET",
+      "value": "/config/"
     },
     {
       "match": "exact",
@@ -184,17 +204,23 @@
   ],
   "routes": [
     {
-      "adr": null,
+      "adr": "docs/adr/0014-web-console-replaces-terminal-ui.md",
       "contract_id": "frontend.route.get.root",
       "current_auth": "public-static",
-      "disposition": "preserve",
+      "disposition": "intentionally-change",
       "frontend_consumers": [],
-      "handler": "_send_web_app",
+      "handler": "do_GET not-found fallback",
       "method": "GET",
       "path_template": "/",
       "query_fields": [],
       "request_shape": null,
-      "response_shape": "text/html",
+      "response_shape": {
+        "current": {
+          "error": "not_found",
+          "path": "string"
+        },
+        "target": "text/html"
+      },
       "surface": "frontend",
       "target_auth": "public-static"
     },
@@ -230,12 +256,31 @@
     },
     {
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.api.admin.actions.run_manual_dreaming",
+      "current_auth": "daemon-token-or-same-origin-browser-request",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [
+        "startAdminDreaming"
+      ],
+      "handler": "_start_manual_dreaming",
+      "method": "POST",
+      "path_template": "/api/admin/actions/run_manual_dreaming",
+      "query_fields": [],
+      "request_shape": {},
+      "response_shape": {
+        "started": "boolean",
+        "status": "string"
+      },
+      "surface": "http",
+      "target_auth": "browser-session-and-CSRF-token"
+    },
+    {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "contract_id": "http.route.post.api.admin.actions.action",
       "current_auth": "daemon-token-or-same-origin-browser-request",
       "disposition": "intentionally-change",
       "frontend_consumers": [
-        "runAdminAction",
-        "startAdminDreaming"
+        "runAdminAction"
       ],
       "handler": "AdminBridge allowlisted action",
       "method": "POST",
@@ -662,8 +707,26 @@
       "method": "GET",
       "path_template": "/ws/admin",
       "query_fields": [],
-      "request_shape": "WebSocket upgrade",
-      "response_shape": "admin event frames",
+      "request_shape": {
+        "current": "WebSocket upgrade",
+        "target": {
+          "resume_from_last_event_id": "integer"
+        }
+      },
+      "response_shape": {
+        "current_event": {
+          "payload": "object",
+          "timestamp": "ISO-8601 string",
+          "type": "string"
+        },
+        "target_event": {
+          "event_id": "integer",
+          "event_type": "string",
+          "payload": "object",
+          "version": "integer"
+        },
+        "target_rotation": "credentials_rotated error followed by close"
+      },
       "surface": "websocket",
       "target_auth": "browser-session-with-credential-rotation-close"
     }

@@ -2,6 +2,31 @@
   "routes": [
     {
       "contract_id": "frontend.route.get.root",
+      "current": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/",
+          "status": 404
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "not_found",
+            "path": "/"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 404
+        }
+      },
       "failure": {
         "normalized_log_fields": {
           "credential": "<absent>",
@@ -18,15 +43,38 @@
         },
         "response": {
           "body": {
-            "error": "not_found"
+            "error": "not_found",
+            "path": "/"
           },
           "headers": {
-            "Content-Type": "text/html; charset=utf-8"
+            "Content-Type": "application/json; charset=utf-8"
           },
           "status": 404
         }
       },
       "success": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/",
+          "query": {}
+        },
+        "response": {
+          "body": "<!doctype html><title>Hieronymus Web Console</title>",
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 200
+        }
+      },
+      "target": {
         "normalized_log_fields": {
           "credential": "<absent>",
           "method": "GET",
@@ -67,10 +115,10 @@
         },
         "response": {
           "body": {
-            "error": "not_found"
+            "error": "web_console_not_built"
           },
           "headers": {
-            "Content-Type": "text/html; charset=utf-8"
+            "Content-Type": "application/json; charset=utf-8"
           },
           "status": 404
         }
@@ -116,10 +164,10 @@
         },
         "response": {
           "body": {
-            "error": "not_found"
+            "error": "web_console_not_built"
           },
           "headers": {
-            "Content-Type": "text/html; charset=utf-8"
+            "Content-Type": "application/json; charset=utf-8"
           },
           "status": 404
         }
@@ -142,6 +190,60 @@
           "body": "<!doctype html><title>Hieronymus Web Console</title>",
           "headers": {
             "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.post.api.admin.actions.run_manual_dreaming",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "POST",
+          "path_template": "/api/admin/actions/run_manual_dreaming",
+          "status": 403
+        },
+        "request": {
+          "body": {},
+          "headers": {},
+          "method": "POST",
+          "path": "/api/admin/actions/run_manual_dreaming",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "POST",
+          "path_template": "/api/admin/actions/run_manual_dreaming",
+          "status": 200
+        },
+        "request": {
+          "body": {},
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "POST",
+          "path": "/api/admin/actions/run_manual_dreaming",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "started": true,
+            "status": "running"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
           },
           "status": 200
         }
@@ -263,10 +365,473 @@
         },
         "response": {
           "body": {
+            "command_options": [
+              {
+                "group": "Memory",
+                "hint": "Create a new crystal in the current memory view.",
+                "id": "add_memory",
+                "key": "a",
+                "label": "Add Memory",
+                "requires_selection": false,
+                "views": [
+                  "Crystals",
+                  "Lessons"
+                ]
+              },
+              {
+                "group": "Memory",
+                "hint": "Edit the selected crystal or lesson text.",
+                "id": "edit_memory",
+                "key": "e",
+                "label": "Edit Memory",
+                "requires_selection": true,
+                "views": [
+                  "Crystals",
+                  "Lessons"
+                ]
+              },
+              {
+                "group": "Memory",
+                "hint": "Delete or archive the selected row after confirmation.",
+                "id": "delete_selected",
+                "key": "d",
+                "label": "Delete Selected",
+                "requires_selection": true,
+                "views": [
+                  "Concepts",
+                  "Crystals",
+                  "Lessons"
+                ]
+              },
+              {
+                "group": "Memory",
+                "hint": "Merge the selected concept or crystal into another item.",
+                "id": "merge_selected",
+                "key": "m",
+                "label": "Merge Selected",
+                "requires_selection": true,
+                "views": [
+                  "Concepts",
+                  "Crystals"
+                ]
+              },
+              {
+                "group": "Memory",
+                "hint": "Split the selected crystal or lesson into two memories.",
+                "id": "split_crystal",
+                "key": "s",
+                "label": "Split Crystal",
+                "requires_selection": true,
+                "views": [
+                  "Crystals",
+                  "Lessons"
+                ]
+              },
+              {
+                "group": "Memory",
+                "hint": "Increase strength/confidence for the selected crystal or lesson.",
+                "id": "reinforce_crystal",
+                "key": "+",
+                "label": "Reinforce Crystal",
+                "requires_selection": true,
+                "views": [
+                  "Crystals",
+                  "Lessons"
+                ]
+              },
+              {
+                "group": "Memory",
+                "hint": "Decrease strength/confidence for the selected crystal or lesson.",
+                "id": "decay_crystal",
+                "key": "-",
+                "label": "Decay Crystal",
+                "requires_selection": true,
+                "views": [
+                  "Crystals",
+                  "Lessons"
+                ]
+              },
+              {
+                "group": "Proposals",
+                "hint": "Approve the selected compatibility proposal.",
+                "id": "approve_proposal",
+                "key": "a",
+                "label": "Approve Proposal",
+                "requires_selection": true,
+                "views": [
+                  "Proposals"
+                ]
+              },
+              {
+                "group": "Proposals",
+                "hint": "Reject the selected compatibility proposal.",
+                "id": "reject_proposal",
+                "key": "x",
+                "label": "Reject Proposal",
+                "requires_selection": true,
+                "views": [
+                  "Proposals"
+                ]
+              },
+              {
+                "group": "Inspect",
+                "hint": "Load provenance for the selected crystal or lesson.",
+                "id": "inspect_provenance",
+                "key": "p",
+                "label": "Inspect Provenance",
+                "requires_selection": true,
+                "views": [
+                  "Crystals",
+                  "Lessons"
+                ]
+              },
+              {
+                "group": "Inspect",
+                "hint": "Load recall reason data for the selected crystal or lesson.",
+                "id": "inspect_recall_reasons",
+                "key": "r",
+                "label": "Inspect Recall Reasons",
+                "requires_selection": true,
+                "views": [
+                  "Crystals",
+                  "Lessons"
+                ]
+              },
+              {
+                "group": "Dreaming",
+                "hint": "Run dreaming manually and select the resulting dream run.",
+                "id": "run_manual_dreaming",
+                "key": "D",
+                "label": "Run Manual Dreaming",
+                "requires_selection": false,
+                "views": [
+                  "Dream Runs"
+                ]
+              },
+              {
+                "group": "Dreaming",
+                "hint": "Load the review payload for the selected dream run.",
+                "id": "review_dream_output",
+                "key": "enter",
+                "label": "Review Dream Output",
+                "requires_selection": true,
+                "views": [
+                  "Dream Runs"
+                ]
+              }
+            ],
+            "config_editor": {
+              "config": {
+                "dreaming": {
+                  "enabled": false,
+                  "general_prompt": "Use English as the primary searchable memory language. Preserve Japanese, Russian, and other languages only as terms, names, renderings, quoted evidence, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences.",
+                  "max_changed_crystals_per_cycle": 200,
+                  "max_long_term_records_affected_per_run": 1000,
+                  "max_pending_short_term_memories": 200,
+                  "max_related_concepts_per_cycle": 80,
+                  "max_related_crystals_per_concept": 20,
+                  "max_relation_records_per_pass": 1000,
+                  "max_short_term_memories_per_cycle": 50,
+                  "max_short_term_memories_per_run": 500,
+                  "max_total_affected_crystals": 500,
+                  "min_pending_short_term_memories": 20,
+                  "not_enough_memories_cycle_threshold": 5,
+                  "schedule_interval_minutes": 30
+                },
+                "workflows": {
+                  "concepts": {
+                    "enabled": false,
+                    "max_records_per_pass": 500,
+                    "model": "",
+                    "provider": ""
+                  },
+                  "coverage_audit": {
+                    "enabled": false,
+                    "max_records_per_pass": 500,
+                    "model": "",
+                    "provider": ""
+                  },
+                  "knowledge_crystals": {
+                    "enabled": false,
+                    "max_records_per_pass": 500,
+                    "model": "",
+                    "provider": ""
+                  },
+                  "reinforcement": {
+                    "enabled": false,
+                    "max_records_per_pass": 500,
+                    "model": "",
+                    "provider": ""
+                  },
+                  "relations": {
+                    "enabled": false,
+                    "max_records_per_pass": 500,
+                    "model": "",
+                    "provider": ""
+                  },
+                  "rule_crystals": {
+                    "enabled": false,
+                    "max_records_per_pass": 500,
+                    "model": "",
+                    "provider": ""
+                  },
+                  "terminology_candidates": {
+                    "enabled": false,
+                    "max_records_per_pass": 500,
+                    "model": "",
+                    "provider": ""
+                  }
+                }
+              },
+              "config_error": "",
+              "model_cache": {
+                "providers": {}
+              },
+              "model_cache_warnings": [
+                {
+                  "code": "provider_missing",
+                  "message": "workflow provider is not configured",
+                  "provider": "",
+                  "workflow": "concepts"
+                },
+                {
+                  "code": "provider_missing",
+                  "message": "workflow provider is not configured",
+                  "provider": "",
+                  "workflow": "terminology_candidates"
+                },
+                {
+                  "code": "provider_missing",
+                  "message": "workflow provider is not configured",
+                  "provider": "",
+                  "workflow": "rule_crystals"
+                },
+                {
+                  "code": "provider_missing",
+                  "message": "workflow provider is not configured",
+                  "provider": "",
+                  "workflow": "knowledge_crystals"
+                },
+                {
+                  "code": "provider_missing",
+                  "message": "workflow provider is not configured",
+                  "provider": "",
+                  "workflow": "relations"
+                },
+                {
+                  "code": "provider_missing",
+                  "message": "workflow provider is not configured",
+                  "provider": "",
+                  "workflow": "reinforcement"
+                },
+                {
+                  "code": "provider_missing",
+                  "message": "workflow provider is not configured",
+                  "provider": "",
+                  "workflow": "coverage_audit"
+                }
+              ],
+              "prompts": {
+                "general": "Use English as the primary searchable memory language. Preserve Japanese, Russian, and other languages only as terms, names, renderings, quoted evidence, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences."
+              },
+              "provider_config_error": "",
+              "providers": {
+                "defaults": {
+                  "model": "",
+                  "provider": ""
+                }
+              },
+              "thresholds": {
+                "max_changed_crystals_per_cycle": 200,
+                "max_pending_short_term_memories": 200,
+                "max_related_concepts_per_cycle": 80,
+                "max_related_crystals_per_concept": 20,
+                "max_short_term_memories_per_cycle": 50,
+                "max_total_affected_crystals": 500,
+                "min_pending_short_term_memories": 20,
+                "not_enough_memories_cycle_threshold": 5
+              },
+              "workflows": {
+                "concepts": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "coverage_audit": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "knowledge_crystals": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "reinforcement": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "relations": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "rule_crystals": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "terminology_candidates": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                }
+              }
+            },
             "default_view": "Crystals",
-            "stats": {},
+            "default_view_key": "crystals",
+            "dream_config_error": "",
+            "dream_status": {
+              "current_phase": "",
+              "cycle_id": null,
+              "owner": "",
+              "progress": 0.0,
+              "run_id": null,
+              "started_at": "",
+              "state": "DISABLED"
+            },
+            "header": {
+              "logo": {
+                "alt": "Hieronymus feather logo",
+                "name": "feather",
+                "text": "🪶"
+              },
+              "product": "Hieronymus",
+              "tagline": "Remembers things for you.",
+              "version": "v0.7.0α"
+            },
+            "service": {
+              "reason": "no-state",
+              "running": false
+            },
+            "short_term_status": {
+              "drain_completed": 0,
+              "drain_in_progress": false,
+              "drain_progress": 0.0,
+              "drain_remaining": 0,
+              "drain_total": 0,
+              "max_pending_short_term_memories": 200,
+              "min_pending_short_term_memories": 20,
+              "pending_count": 0,
+              "urgent": false
+            },
+            "snapshot": {
+              "detail": {
+                "body": "",
+                "fields": [],
+                "subtitle": "No rows",
+                "title": "Crystals"
+              },
+              "filters": [],
+              "rows": [],
+              "selected": null,
+              "view": "Crystals"
+            },
+            "stats": {
+              "audit_events": 0,
+              "crystals": 0,
+              "dream_runs": 0,
+              "lessons": 0,
+              "pending_proposals": 0,
+              "series": 0,
+              "sessions": 0,
+              "short_term_memories": 0
+            },
+            "view_keys": [
+              "concepts",
+              "renderings",
+              "crystals",
+              "lessons",
+              "short_term_memory",
+              "short_term_sessions",
+              "dream_runs",
+              "proposals",
+              "dream_audits",
+              "audit_log"
+            ],
+            "view_labels": {
+              "audit_log": "Audit Log",
+              "concepts": "Concepts",
+              "crystals": "Crystals",
+              "dream_audits": "Dream Audits",
+              "dream_runs": "Dream Runs",
+              "lessons": "Lessons",
+              "proposals": "Proposals",
+              "renderings": "Renderings",
+              "short_term_memory": "Short-Term Memory",
+              "short_term_sessions": "Short-Term Sessions"
+            },
+            "view_options": [
+              {
+                "key": "concepts",
+                "label": "Concepts"
+              },
+              {
+                "key": "renderings",
+                "label": "Renderings"
+              },
+              {
+                "key": "crystals",
+                "label": "Crystals"
+              },
+              {
+                "key": "lessons",
+                "label": "Lessons"
+              },
+              {
+                "key": "short_term_memory",
+                "label": "Short-Term Memory"
+              },
+              {
+                "key": "short_term_sessions",
+                "label": "Short-Term Sessions"
+              },
+              {
+                "key": "dream_runs",
+                "label": "Dream Runs"
+              },
+              {
+                "key": "proposals",
+                "label": "Proposals"
+              },
+              {
+                "key": "dream_audits",
+                "label": "Dream Audits"
+              },
+              {
+                "key": "audit_log",
+                "label": "Audit Log"
+              }
+            ],
             "views": [
-              "Crystals"
+              "Concepts",
+              "Renderings",
+              "Crystals",
+              "Lessons",
+              "Short-Term Memory",
+              "Short-Term Sessions",
+              "Dream Runs",
+              "Proposals",
+              "Dream Audits",
+              "Audit Log"
             ]
           },
           "headers": {
@@ -323,16 +888,48 @@
         },
         "response": {
           "body": {
+            "dream_config_error": "",
+            "dream_status": {
+              "current_phase": "",
+              "cycle_id": null,
+              "owner": "",
+              "progress": 0.0,
+              "run_id": null,
+              "started_at": "",
+              "state": "DISABLED"
+            },
+            "short_term_status": {
+              "drain_completed": 0,
+              "drain_in_progress": false,
+              "drain_progress": 0.0,
+              "drain_remaining": 0,
+              "drain_total": 0,
+              "max_pending_short_term_memories": 200,
+              "min_pending_short_term_memories": 20,
+              "pending_count": 0,
+              "urgent": false
+            },
             "snapshot": {
               "detail": {
                 "body": "",
                 "fields": [],
-                "subtitle": "",
-                "title": ""
+                "subtitle": "No rows",
+                "title": "Crystals"
               },
+              "filters": [],
               "rows": [],
               "selected": null,
               "view": "Crystals"
+            },
+            "stats": {
+              "audit_events": 0,
+              "crystals": 0,
+              "dream_runs": 0,
+              "lessons": 0,
+              "pending_proposals": 0,
+              "series": 0,
+              "sessions": 0,
+              "short_term_memories": 0
             }
           },
           "headers": {
@@ -813,8 +1410,66 @@
         "response": {
           "body": {
             "dream": {
-              "dreaming": {},
-              "workflows": {}
+              "dreaming": {
+                "enabled": false,
+                "general_prompt": "Use English as the primary searchable memory language. Preserve Japanese, Russian, and other languages only as terms, names, renderings, quoted evidence, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences.",
+                "max_changed_crystals_per_cycle": 200,
+                "max_long_term_records_affected_per_run": 1000,
+                "max_pending_short_term_memories": 200,
+                "max_related_concepts_per_cycle": 80,
+                "max_related_crystals_per_concept": 20,
+                "max_relation_records_per_pass": 1000,
+                "max_short_term_memories_per_cycle": 50,
+                "max_short_term_memories_per_run": 500,
+                "max_total_affected_crystals": 500,
+                "min_pending_short_term_memories": 20,
+                "not_enough_memories_cycle_threshold": 5,
+                "schedule_interval_minutes": 30
+              },
+              "workflows": {
+                "concepts": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "coverage_audit": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "knowledge_crystals": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "reinforcement": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "relations": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "rule_crystals": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "terminology_candidates": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                }
+              }
             },
             "error": "",
             "model_cache": {
@@ -889,9 +1544,65 @@
           "body": {
             "dream": {
               "dreaming": {
-                "enabled": false
+                "enabled": false,
+                "general_prompt": "Use English as the primary searchable memory language. Preserve Japanese, Russian, and other languages only as terms, names, renderings, quoted evidence, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences.",
+                "max_changed_crystals_per_cycle": 200,
+                "max_long_term_records_affected_per_run": 1000,
+                "max_pending_short_term_memories": 200,
+                "max_related_concepts_per_cycle": 80,
+                "max_related_crystals_per_concept": 20,
+                "max_relation_records_per_pass": 1000,
+                "max_short_term_memories_per_cycle": 50,
+                "max_short_term_memories_per_run": 500,
+                "max_total_affected_crystals": 500,
+                "min_pending_short_term_memories": 20,
+                "not_enough_memories_cycle_threshold": 5,
+                "schedule_interval_minutes": 30
               },
-              "workflows": {}
+              "workflows": {
+                "concepts": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "coverage_audit": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "knowledge_crystals": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "reinforcement": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "relations": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "rule_crystals": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                },
+                "terminology_candidates": {
+                  "enabled": false,
+                  "max_records_per_pass": 500,
+                  "model": "",
+                  "provider": ""
+                }
+              }
             },
             "error": ""
           },
@@ -953,9 +1664,9 @@
               },
               "short_memory": {
                 "rejection_sentence_count": 30,
-                "rejection_symbol_count": 5000,
+                "rejection_symbol_count": 0,
                 "warning_sentence_count": 6,
-                "warning_symbol_count": 1200
+                "warning_symbol_count": 0
               }
             }
           },
@@ -1195,7 +1906,7 @@
             "error": "not_found"
           },
           "headers": {
-            "Content-Type": "application/javascript"
+            "Content-Type": "application/json; charset=utf-8"
           },
           "status": 404
         }
@@ -1241,10 +1952,10 @@
         },
         "response": {
           "body": {
-            "error": "not_found"
+            "error": "web_console_not_built"
           },
           "headers": {
-            "Content-Type": "text/html; charset=utf-8"
+            "Content-Type": "application/json; charset=utf-8"
           },
           "status": 404
         }
@@ -1290,10 +2001,10 @@
         },
         "response": {
           "body": {
-            "error": "not_found"
+            "error": "web_console_not_built"
           },
           "headers": {
-            "Content-Type": "text/html; charset=utf-8"
+            "Content-Type": "application/json; charset=utf-8"
           },
           "status": 404
         }
@@ -1380,7 +2091,7 @@
       "contract_id": "http.route.post.mcp",
       "failure": {
         "normalized_log_fields": {
-          "credential": "<absent>",
+          "credential": "<redacted>",
           "method": "POST",
           "path_template": "/mcp",
           "status": 400
@@ -1392,7 +2103,10 @@
             "method": "initialize",
             "params": {}
           },
-          "headers": {},
+          "headers": {
+            "Authorization": "Bearer compat-secret-do-not-log",
+            "MCP-Protocol-Version": "2025-06-18"
+          },
           "method": "POST",
           "path": "/mcp",
           "query": {}
@@ -1427,7 +2141,8 @@
             "params": {}
           },
           "headers": {
-            "Authorization": "Bearer compat-secret-do-not-log"
+            "Authorization": "Bearer compat-secret-do-not-log",
+            "MCP-Protocol-Version": "2026-07-28"
           },
           "method": "POST",
           "path": "/mcp",
@@ -1546,12 +2261,85 @@
         },
         "response": {
           "body": {
-            "data_root": "<DATA_ROOT>",
+            "config_path": "<SYNTHETIC_ROOT>/data",
+            "data_root": "<SYNTHETIC_ROOT>/data",
+            "database_path": "<SYNTHETIC_ROOT>/data/hieronymus.sqlite",
+            "dreaming": {
+              "active_cycle": null,
+              "active_provider": "deterministic",
+              "cycle_active": false,
+              "enabled": false,
+              "last_error": "",
+              "last_skip_reason": "",
+              "last_skipped_at": null,
+              "last_started_at": null,
+              "max_pending_short_term_memories": 200,
+              "max_short_term_memories_per_cycle": 50,
+              "min_pending_short_term_memories": 20,
+              "not_enough_memories_cycle_threshold": 5,
+              "not_enough_memories_skipped_count": 0,
+              "pending_completed_sessions": 0,
+              "pending_short_term_memories": 0,
+              "schedule_interval_minutes": 30,
+              "skipped_count": 0
+            },
             "host": "127.0.0.1",
+            "housekeeping": {
+              "last_cycle": null,
+              "pending": false
+            },
+            "mcp_adapter": {
+              "available": true,
+              "mode": "local-http"
+            },
             "pid": "<PID>",
             "port": "<PORT>",
+            "providers": [
+              {
+                "api_key_present": false,
+                "base_url": "",
+                "configured": true,
+                "display_name": "Deterministic",
+                "error": "",
+                "model": "",
+                "name": "deterministic",
+                "timeout_seconds": 0.0
+              },
+              {
+                "api_key_present": false,
+                "base_url": "",
+                "configured": false,
+                "display_name": "OpenAI compatible",
+                "error": "provider profile missing",
+                "model": "",
+                "name": "openai",
+                "timeout_seconds": 0.0
+              },
+              {
+                "api_key_present": false,
+                "base_url": "",
+                "configured": false,
+                "display_name": "Gemini",
+                "error": "provider profile missing",
+                "model": "",
+                "name": "gemini",
+                "timeout_seconds": 0.0
+              },
+              {
+                "api_key_present": false,
+                "base_url": "",
+                "configured": false,
+                "display_name": "Anthropic",
+                "error": "provider profile missing",
+                "model": "",
+                "name": "anthropic",
+                "timeout_seconds": 0.0
+              }
+            ],
+            "providers_error": "",
             "running": true,
-            "version": "<VERSION>"
+            "started_at": "<TIMESTAMP>",
+            "version": "0.7.0"
           },
           "headers": {
             "Content-Type": "application/json; charset=utf-8"
@@ -1612,6 +2400,60 @@
             "Upgrade": "websocket"
           },
           "status": 101
+        }
+      },
+      "websocket_contract": {
+        "current": {
+          "event": {
+            "payload": {
+              "cycle_id": 7,
+              "phase": "crystallization",
+              "run_id": 11
+            },
+            "timestamp": "<TIMESTAMP>",
+            "type": "dream_phase_progress"
+          },
+          "resume": {
+            "supported": false
+          },
+          "snapshot_refresh_fallback": {
+            "supported": false
+          }
+        },
+        "target": {
+          "credentials_rotated": {
+            "close": {
+              "code": 4001,
+              "reason": "credentials_rotated"
+            },
+            "error": {
+              "code": "credentials_rotated",
+              "message": "local service credentials rotated"
+            }
+          },
+          "event": {
+            "event_id": 42,
+            "event_type": "dream_phase_progress",
+            "payload": {
+              "cycle_id": 7,
+              "phase": "crystallization",
+              "run_id": 11
+            },
+            "version": 1
+          },
+          "resume": {
+            "last_event_id": 41,
+            "replayed_event_ids": [
+              42
+            ]
+          },
+          "snapshot_refresh_fallback": {
+            "reason": "last event id is outside retained history",
+            "request": {
+              "method": "GET",
+              "path": "/api/admin/snapshot?view=Crystals&selected_id=1"
+            }
+          }
         }
       }
     }
