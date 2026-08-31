@@ -80,6 +80,7 @@ def validate_manifest(manifest: Manifest, repo_root: Path) -> list[str]:
     """Return invariant violations for *manifest* relative to *repo_root*."""
     errors: list[str] = []
     seen_ids: set[str] = set()
+    resolved_repo_root = repo_root.resolve()
 
     for contract in manifest.contracts:
         if contract.id in seen_ids:
@@ -91,12 +92,13 @@ def validate_manifest(manifest: Manifest, repo_root: Path) -> list[str]:
         if not contract.technical_owner.strip():
             errors.append(f"blank technical owner: {contract.id}")
 
-        fixture_path = repo_root / contract.fixture
-        if not fixture_path.is_file():
-            errors.append(f"missing fixture path: {contract.fixture}")
+        fixture_error = _referenced_path_error(resolved_repo_root, contract.fixture, "fixture")
+        if fixture_error is not None:
+            errors.append(fixture_error)
         for test_path in contract.tests:
-            if not (repo_root / test_path).is_file():
-                errors.append(f"missing test path: {test_path}")
+            test_error = _referenced_path_error(resolved_repo_root, test_path, "test")
+            if test_error is not None:
+                errors.append(test_error)
 
         if contract.disposition in {"intentionally-change", "remove"} and not (
             contract.adr and contract.adr.strip()
@@ -123,7 +125,7 @@ def _load_contract(data: object) -> Contract:
 
     surface = _enum(contract_data["surface"], "surface", _SURFACES)
     technical_owner = _string(contract_data["technical_owner"], "technical_owner")
-    if technical_owner.strip() and technical_owner not in _TECHNICAL_OWNERS:
+    if technical_owner not in _TECHNICAL_OWNERS:
         raise ValueError(f"technical_owner must be one of: {', '.join(sorted(_TECHNICAL_OWNERS))}")
 
     adr = contract_data.get("adr")
@@ -182,6 +184,15 @@ def _strings(value: object, name: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError(f"{name} must be an array of strings")
     return tuple(value)
+
+
+def _referenced_path_error(repo_root: Path, reference: str, kind: str) -> str | None:
+    resolved_path = (repo_root / reference).resolve()
+    if not resolved_path.is_relative_to(repo_root):
+        return f"{kind} path outside repository root: {reference}"
+    if not resolved_path.is_file():
+        return f"missing {kind} path: {reference}"
+    return None
 
 
 def _enum(value: object, name: str, values: frozenset[str]) -> str:

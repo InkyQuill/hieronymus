@@ -40,7 +40,7 @@
               "diagnostics"
             ]
           },
-          "acceptance_owner": {"type": "string"},
+          "acceptance_owner": {"type": "string", "pattern": "\\S"},
           "technical_owner": {
             "type": "string",
             "enum": [
@@ -65,7 +65,25 @@
             "enum": ["preserve", "intentionally-change", "remove"]
           },
           "adr": {"type": ["string", "null"]}
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "disposition": {
+                  "enum": ["intentionally-change", "remove"]
+                }
+              },
+              "required": ["disposition"]
+            },
+            "then": {
+              "required": ["adr"],
+              "properties": {
+                "adr": {"type": "string", "pattern": "\\S"}
+              }
+            }
+          }
+        ]
       }
     }
   }
