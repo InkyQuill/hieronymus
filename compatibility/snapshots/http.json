@@ -221,6 +221,7 @@
         },
         "target": "text/html"
       },
+      "runtime_body_key": null,
       "surface": "frontend",
       "target_auth": "public-static"
     },
@@ -236,6 +237,7 @@
       "query_fields": [],
       "request_shape": null,
       "response_shape": "text/html",
+      "runtime_body_key": null,
       "surface": "frontend",
       "target_auth": "public-static"
     },
@@ -251,6 +253,7 @@
       "query_fields": [],
       "request_shape": null,
       "response_shape": "text/html",
+      "runtime_body_key": null,
       "surface": "frontend",
       "target_auth": "public-static"
     },
@@ -271,6 +274,7 @@
         "started": "boolean",
         "status": "string"
       },
+      "runtime_body_key": null,
       "surface": "http",
       "target_auth": "browser-session-and-CSRF-token"
     },
@@ -291,6 +295,7 @@
         "id": "string | number"
       },
       "response_shape": "AdminActionResult",
+      "runtime_body_key": "admin_action",
       "surface": "http",
       "target_auth": "browser-session-and-CSRF-token"
     },
@@ -308,6 +313,7 @@
       "query_fields": [],
       "request_shape": null,
       "response_shape": "AdminDashboard",
+      "runtime_body_key": "admin_dashboard",
       "surface": "http",
       "target_auth": "browser-session"
     },
@@ -328,6 +334,7 @@
       ],
       "request_shape": null,
       "response_shape": "AdminSnapshot",
+      "runtime_body_key": "admin_snapshot",
       "surface": "http",
       "target_auth": "browser-session"
     },
@@ -345,6 +352,7 @@
       "response_shape": {
         "result": "operation-specific JSON value"
       },
+      "runtime_body_key": "private_mcp_status",
       "surface": "http",
       "target_auth": "removed"
     },
@@ -364,6 +372,7 @@
       "response_shape": {
         "providers": "ProviderProfile[]"
       },
+      "runtime_body_key": "provider_list",
       "surface": "http",
       "target_auth": "browser-session"
     },
@@ -385,6 +394,7 @@
       "response_shape": {
         "provider": "ProviderProfile"
       },
+      "runtime_body_key": "provider_save",
       "surface": "http",
       "target_auth": "browser-session-and-CSRF-token"
     },
@@ -405,6 +415,7 @@
         "deleted": "string",
         "error": "string"
       },
+      "runtime_body_key": "provider_delete",
       "surface": "http",
       "target_auth": "browser-session-and-CSRF-token"
     },
@@ -422,6 +433,7 @@
       "response_shape": {
         "provider": "ProviderProfile"
       },
+      "runtime_body_key": "provider_detail",
       "surface": "http",
       "target_auth": "browser-session"
     },
@@ -441,6 +453,7 @@
       "response_shape": {
         "check": "ProviderCheck"
       },
+      "runtime_body_key": "provider_check",
       "surface": "http",
       "target_auth": "browser-session-and-CSRF-token"
     },
@@ -460,6 +473,7 @@
       "response_shape": {
         "models": "string[]"
       },
+      "runtime_body_key": "provider_models",
       "surface": "http",
       "target_auth": "browser-session"
     },
@@ -481,6 +495,7 @@
         "model_cache": "ModelCache",
         "providers": "ProviderProfile[]"
       },
+      "runtime_body_key": "dream_get",
       "surface": "http",
       "target_auth": "browser-session"
     },
@@ -502,6 +517,7 @@
       "response_shape": {
         "dream": "DreamSettings"
       },
+      "runtime_body_key": "dream_post",
       "surface": "http",
       "target_auth": "browser-session-and-CSRF-token"
     },
@@ -521,6 +537,7 @@
       "response_shape": {
         "ingest": "IngestSettings"
       },
+      "runtime_body_key": "ingest_get",
       "surface": "http",
       "target_auth": "browser-session"
     },
@@ -542,6 +559,7 @@
       "response_shape": {
         "ingest": "IngestSettings"
       },
+      "runtime_body_key": "ingest_post",
       "surface": "http",
       "target_auth": "browser-session-and-CSRF-token"
     },
@@ -561,6 +579,7 @@
       "response_shape": {
         "release": "ReleaseSettings"
       },
+      "runtime_body_key": "release_get",
       "surface": "http",
       "target_auth": "browser-session"
     },
@@ -582,6 +601,7 @@
       "response_shape": {
         "release": "ReleaseSettings"
       },
+      "runtime_body_key": "release_post",
       "surface": "http",
       "target_auth": "browser-session-and-CSRF-token"
     },
@@ -597,6 +617,7 @@
       "query_fields": [],
       "request_shape": null,
       "response_shape": "bytes with detected Content-Type",
+      "runtime_body_key": null,
       "surface": "frontend",
       "target_auth": "public-static"
     },
@@ -612,6 +633,7 @@
       "query_fields": [],
       "request_shape": null,
       "response_shape": "text/html",
+      "runtime_body_key": null,
       "surface": "frontend",
       "target_auth": "public-static"
     },
@@ -627,6 +649,7 @@
       "query_fields": [],
       "request_shape": null,
       "response_shape": "text/html",
+      "runtime_body_key": null,
       "surface": "frontend",
       "target_auth": "public-static"
     },
@@ -646,6 +669,7 @@
         "service": "string",
         "version": "string"
       },
+      "runtime_body_key": null,
       "surface": "http",
       "target_auth": "unauthenticated-minimal-liveness"
     },
@@ -661,6 +685,7 @@
       "query_fields": [],
       "request_shape": "MCP JSON-RPC 2.0 request",
       "response_shape": "MCP JSON-RPC 2.0 response or request-scoped SSE stream",
+      "runtime_body_key": null,
       "surface": "http",
       "target_auth": "bearer-token-and-MCP-Protocol-Version"
     },
@@ -679,6 +704,7 @@
         "ok": "boolean",
         "stopping": "boolean"
       },
+      "runtime_body_key": null,
       "surface": "http",
       "target_auth": "bearer-token"
     },
@@ -694,6 +720,7 @@
       "query_fields": [],
       "request_shape": null,
       "response_shape": "StatusPayload",
+      "runtime_body_key": "status",
       "surface": "http",
       "target_auth": "bearer-token"
     },
@@ -727,6 +754,7 @@
         },
         "target_rotation": "credentials_rotated error followed by close"
       },
+      "runtime_body_key": null,
       "surface": "websocket",
       "target_auth": "browser-session-with-credential-rotation-close"
     }

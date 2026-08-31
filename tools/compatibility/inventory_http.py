@@ -8,6 +8,7 @@ import json
 import re
 import tempfile
 from dataclasses import asdict, dataclass
+from functools import cache
 from pathlib import Path
 
 _ADR_0012 = "docs/adr/0012-mcp-transport-authentication-and-discovery.md"
@@ -15,6 +16,9 @@ _ADR_0014 = "docs/adr/0014-web-console-replaces-terminal-ui.md"
 _ADR_0015 = "docs/adr/0015-mcp-protocol-and-transport.md"
 _MCP_PROTOCOL_REVISION = "2026-07-28"
 _UNSUPPORTED_MCP_PROTOCOL_REVISION = "2025-06-18"
+_ISO_8601_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +35,7 @@ class Route:
     request_shape: object
     response_shape: object
     query_fields: tuple[str, ...] = ()
+    runtime_body_key: str | None = None
 
 
 _BROWSER_READ_AUTH = "daemon-token-or-same-origin-browser-request"
@@ -144,6 +149,7 @@ REVIEWED_ROUTES = (
         _ADR_0012,
         None,
         "StatusPayload",
+        runtime_body_key="status",
     ),
     Route(
         "http.route.post.shutdown",
@@ -183,6 +189,7 @@ REVIEWED_ROUTES = (
         _ADR_0015,
         "operation-specific JSON object",
         {"result": "operation-specific JSON value"},
+        runtime_body_key="private_mcp_status",
     ),
     Route(
         "http.route.get.api.providers",
@@ -196,6 +203,7 @@ REVIEWED_ROUTES = (
         _ADR_0012,
         None,
         {"providers": "ProviderProfile[]"},
+        runtime_body_key="provider_list",
     ),
     Route(
         "http.route.post.api.providers",
@@ -209,6 +217,7 @@ REVIEWED_ROUTES = (
         _ADR_0012,
         {"provider": "ProviderDraft"},
         {"provider": "ProviderProfile"},
+        runtime_body_key="provider_save",
     ),
     Route(
         "http.route.get.api.providers.id",
@@ -222,6 +231,7 @@ REVIEWED_ROUTES = (
         _ADR_0012,
         None,
         {"provider": "ProviderProfile"},
+        runtime_body_key="provider_detail",
     ),
     Route(
         "http.route.get.api.providers.id.models",
@@ -235,6 +245,7 @@ REVIEWED_ROUTES = (
         _ADR_0012,
         None,
         {"models": "string[]"},
+        runtime_body_key="provider_models",
     ),
     Route(
         "http.route.post.api.providers.id.check",
@@ -248,6 +259,7 @@ REVIEWED_ROUTES = (
         _ADR_0012,
         {},
         {"check": "ProviderCheck"},
+        runtime_body_key="provider_check",
     ),
     Route(
         "http.route.delete.api.providers.id",
@@ -261,6 +273,7 @@ REVIEWED_ROUTES = (
         _ADR_0012,
         None,
         {"deleted": "string", "error": "string"},
+        runtime_body_key="provider_delete",
     ),
     *(
         Route(
@@ -275,6 +288,7 @@ REVIEWED_ROUTES = (
             _ADR_0012,
             None,
             response,
+            runtime_body_key=f"{name}_get",
         )
         for name, handler, response in (
             (
@@ -303,6 +317,7 @@ REVIEWED_ROUTES = (
             _ADR_0012,
             request,
             response,
+            runtime_body_key=f"{name}_post",
         )
         for name, handler, request, response in (
             (
@@ -337,6 +352,7 @@ REVIEWED_ROUTES = (
         _ADR_0012,
         None,
         "AdminDashboard",
+        runtime_body_key="admin_dashboard",
     ),
     Route(
         "http.route.get.api.admin.snapshot",
@@ -351,6 +367,7 @@ REVIEWED_ROUTES = (
         None,
         "AdminSnapshot",
         ("selected_id", "view"),
+        runtime_body_key="admin_snapshot",
     ),
     Route(
         "http.route.post.api.admin.actions.action",
@@ -364,6 +381,7 @@ REVIEWED_ROUTES = (
         _ADR_0012,
         {"id": "string | number", "confirmed": "boolean?"},
         "AdminActionResult",
+        runtime_body_key="admin_action",
     ),
     Route(
         "http.route.post.api.admin.actions.run_manual_dreaming",
@@ -678,10 +696,15 @@ def _write_json(path: Path, value: object) -> None:
     )
 
 
+@cache
 def runtime_reference_bodies() -> dict[str, object]:
     """Return complete normalized bodies from current runtime bridges on a temp root."""
     from hieronymus.config import HieronymusConfig
+    from hieronymus.crystals import CrystalStore
     from hieronymus.dream_providers import ModelSuggestionResult
+    from hieronymus.mcp_operations import MCP_OPERATION_HANDLERS
+    from hieronymus.memory_models import TranslationContext
+    from hieronymus.registry import Registry
     from hieronymus.service_http import status_payload
     from hieronymus.service_state import ServerState
     from hieronymus.tui_bridge.admin_api import AdminBridge
@@ -719,8 +742,7 @@ def runtime_reference_bodies() -> dict[str, object]:
         admin_bridge = AdminBridge(config)
         bodies = {
             "status": status_payload(config, state),
-            "admin_dashboard": admin_bridge.dashboard({}),
-            "admin_snapshot": admin_bridge.snapshot({"view": "Crystals", "selected_id": "1"}),
+            "private_mcp_status": {"result": MCP_OPERATION_HANDLERS["status"](config, {})},
             "provider_list": config_bridge.provider_list({}),
             "dream_get": config_bridge.dream_settings({}),
             "dream_post": config_bridge.save_dream_settings(
@@ -743,6 +765,33 @@ def runtime_reference_bodies() -> dict[str, object]:
         bodies["provider_models"] = config_bridge.provider_models(provider_params)
         bodies["provider_check"] = config_bridge.check_saved_provider(provider_params)
         bodies["provider_delete"] = config_bridge.delete_provider(provider_params)
+
+        series = Registry(config).create_series(
+            slug="synthetic-series",
+            title="Synthetic Series",
+            source_language="ja",
+            target_language="en",
+        )
+        crystal_id = CrystalStore(config).add_crystal(
+            TranslationContext(
+                series_slug=series.slug,
+                source_language=series.source_language,
+                target_language=series.target_language,
+                task_type="translation",
+            ),
+            crystal_type="rule",
+            title="Synthetic Rule",
+            text="Use Sense, not Feeling.",
+            strength=0.8,
+            confidence=0.9,
+        )
+        bodies["admin_dashboard"] = admin_bridge.dashboard({})
+        bodies["admin_snapshot"] = admin_bridge.snapshot(
+            {"view": "Crystals", "selected_id": str(crystal_id)}
+        )
+        bodies["admin_action"] = admin_bridge.reinforce_crystal(
+            {"id": crystal_id, "confirmed": True}
+        )
         return _normalize_runtime_value(bodies, synthetic_root)
 
 
@@ -762,7 +811,8 @@ def _normalize_runtime_value(value: object, synthetic_root: Path) -> object:
     if isinstance(value, tuple):
         return [_normalize_runtime_value(item, synthetic_root) for item in value]
     if isinstance(value, str):
-        return value.replace(str(synthetic_root), "<SYNTHETIC_ROOT>")
+        normalized = value.replace(str(synthetic_root), "<SYNTHETIC_ROOT>")
+        return "<TIMESTAMP>" if _ISO_8601_TIMESTAMP.fullmatch(normalized) else normalized
     return value
 
 
@@ -944,49 +994,15 @@ def _fixture_success_body(route: dict[str, object], runtime_bodies: dict[str, ob
             if contract_id == "frontend.route.get.assets.path"
             else "<!doctype html><title>Hieronymus Web Console</title>"
         )
+    runtime_body_key = route.get("runtime_body_key")
+    if isinstance(runtime_body_key, str):
+        return runtime_bodies[runtime_body_key]
     if contract_id == "http.route.get.health":
         return {"ok": True, "service": "hieronymus", "version": "<VERSION>"}
-    if contract_id == "http.route.get.status":
-        return runtime_bodies["status"]
     if contract_id == "http.route.post.shutdown":
         return {"ok": True, "stopping": True}
     if contract_id == "http.route.post.mcp":
         return {"jsonrpc": "2.0", "id": 1, "result": {"tools": []}}
-    if contract_id == "http.route.post.api.mcp.operation":
-        return {"result": {"service": {"available": True, "mode": "local-http"}}}
-    if contract_id == "http.route.get.api.providers":
-        return runtime_bodies["provider_list"]
-    if contract_id == "http.route.post.api.providers":
-        return runtime_bodies["provider_save"]
-    if contract_id == "http.route.get.api.providers.id":
-        return runtime_bodies["provider_detail"]
-    if contract_id == "http.route.get.api.providers.id.models":
-        return runtime_bodies["provider_models"]
-    if contract_id == "http.route.post.api.providers.id.check":
-        return runtime_bodies["provider_check"]
-    if contract_id == "http.route.delete.api.providers.id":
-        return runtime_bodies["provider_delete"]
-    if contract_id == "http.route.get.api.settings.dream":
-        return runtime_bodies["dream_get"]
-    if contract_id == "http.route.post.api.settings.dream":
-        return runtime_bodies["dream_post"]
-    if contract_id == "http.route.get.api.settings.ingest":
-        return runtime_bodies["ingest_get"]
-    if contract_id == "http.route.post.api.settings.ingest":
-        return runtime_bodies["ingest_post"]
-    if contract_id == "http.route.get.api.settings.release":
-        return runtime_bodies["release_get"]
-    if contract_id == "http.route.post.api.settings.release":
-        return runtime_bodies["release_post"]
-    if contract_id == "http.route.get.api.admin.dashboard":
-        return runtime_bodies["admin_dashboard"]
-    if contract_id == "http.route.get.api.admin.snapshot":
-        return runtime_bodies["admin_snapshot"]
-    if contract_id == "http.route.post.api.admin.actions.action":
-        return {
-            "result": {"message": "Synthetic action completed"},
-            "snapshot": _admin_snapshot_fixture(),
-        }
     if contract_id == "http.route.post.api.admin.actions.run_manual_dreaming":
         return {"started": True, "status": "running"}
     if contract_id == "websocket.route.get.ws.admin":

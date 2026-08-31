@@ -299,19 +299,87 @@
         },
         "response": {
           "body": {
+            "dream_config_error": "",
+            "dream_status": {
+              "current_phase": "",
+              "cycle_id": null,
+              "owner": "",
+              "progress": 0.0,
+              "run_id": null,
+              "started_at": "",
+              "state": "DISABLED"
+            },
             "result": {
-              "message": "Synthetic action completed"
+              "action": "reinforce",
+              "entity_id": 1,
+              "entity_type": "crystal",
+              "message": "Crystal reinforced"
+            },
+            "short_term_status": {
+              "drain_completed": 0,
+              "drain_in_progress": false,
+              "drain_progress": 0.0,
+              "drain_remaining": 0,
+              "drain_total": 0,
+              "max_pending_short_term_memories": 200,
+              "min_pending_short_term_memories": 20,
+              "pending_count": 0,
+              "urgent": false
             },
             "snapshot": {
               "detail": {
-                "body": "",
-                "fields": [],
-                "subtitle": "",
-                "title": ""
+                "body": "Use Sense, not Feeling.",
+                "fields": [
+                  [
+                    "Series",
+                    "synthetic-series"
+                  ],
+                  [
+                    "Language",
+                    "ja -> en"
+                  ],
+                  [
+                    "Quality",
+                    "100% conf / 95% str"
+                  ]
+                ],
+                "subtitle": "rule / active",
+                "title": "Synthetic Rule"
               },
-              "rows": [],
-              "selected": null,
+              "filters": [],
+              "rows": [
+                {
+                  "id": 1,
+                  "kind": "rule",
+                  "label": "Synthetic Rule",
+                  "language_pair": "ja -> en",
+                  "quality_label": "100% conf / 95% str",
+                  "scope": "synthetic-series",
+                  "status": "active",
+                  "tags": []
+                }
+              ],
+              "selected": {
+                "id": 1,
+                "kind": "rule",
+                "label": "Synthetic Rule",
+                "language_pair": "ja -> en",
+                "quality_label": "100% conf / 95% str",
+                "scope": "synthetic-series",
+                "status": "active",
+                "tags": []
+              },
               "view": "Crystals"
+            },
+            "stats": {
+              "audit_events": 1,
+              "crystals": 1,
+              "dream_runs": 0,
+              "lessons": 0,
+              "pending_proposals": 0,
+              "series": 1,
+              "sessions": 0,
+              "short_term_memories": 0
             }
           },
           "headers": {
@@ -735,23 +803,56 @@
             },
             "snapshot": {
               "detail": {
-                "body": "",
-                "fields": [],
-                "subtitle": "No rows",
-                "title": "Crystals"
+                "body": "Use Sense, not Feeling.",
+                "fields": [
+                  [
+                    "Series",
+                    "synthetic-series"
+                  ],
+                  [
+                    "Language",
+                    "ja -> en"
+                  ],
+                  [
+                    "Quality",
+                    "90% conf / 80% str"
+                  ]
+                ],
+                "subtitle": "rule / active",
+                "title": "Synthetic Rule"
               },
               "filters": [],
-              "rows": [],
-              "selected": null,
+              "rows": [
+                {
+                  "id": 1,
+                  "kind": "rule",
+                  "label": "Synthetic Rule",
+                  "language_pair": "ja -> en",
+                  "quality_label": "90% conf / 80% str",
+                  "scope": "synthetic-series",
+                  "status": "active",
+                  "tags": []
+                }
+              ],
+              "selected": {
+                "id": 1,
+                "kind": "rule",
+                "label": "Synthetic Rule",
+                "language_pair": "ja -> en",
+                "quality_label": "90% conf / 80% str",
+                "scope": "synthetic-series",
+                "status": "active",
+                "tags": []
+              },
               "view": "Crystals"
             },
             "stats": {
               "audit_events": 0,
-              "crystals": 0,
+              "crystals": 1,
               "dream_runs": 0,
               "lessons": 0,
               "pending_proposals": 0,
-              "series": 0,
+              "series": 1,
               "sessions": 0,
               "short_term_memories": 0
             },
@@ -911,23 +1012,56 @@
             },
             "snapshot": {
               "detail": {
-                "body": "",
-                "fields": [],
-                "subtitle": "No rows",
-                "title": "Crystals"
+                "body": "Use Sense, not Feeling.",
+                "fields": [
+                  [
+                    "Series",
+                    "synthetic-series"
+                  ],
+                  [
+                    "Language",
+                    "ja -> en"
+                  ],
+                  [
+                    "Quality",
+                    "90% conf / 80% str"
+                  ]
+                ],
+                "subtitle": "rule / active",
+                "title": "Synthetic Rule"
               },
               "filters": [],
-              "rows": [],
-              "selected": null,
+              "rows": [
+                {
+                  "id": 1,
+                  "kind": "rule",
+                  "label": "Synthetic Rule",
+                  "language_pair": "ja -> en",
+                  "quality_label": "90% conf / 80% str",
+                  "scope": "synthetic-series",
+                  "status": "active",
+                  "tags": []
+                }
+              ],
+              "selected": {
+                "id": 1,
+                "kind": "rule",
+                "label": "Synthetic Rule",
+                "language_pair": "ja -> en",
+                "quality_label": "90% conf / 80% str",
+                "scope": "synthetic-series",
+                "status": "active",
+                "tags": []
+              },
               "view": "Crystals"
             },
             "stats": {
               "audit_events": 0,
-              "crystals": 0,
+              "crystals": 1,
               "dream_runs": 0,
               "lessons": 0,
               "pending_proposals": 0,
-              "series": 0,
+              "series": 1,
               "sessions": 0,
               "short_term_memories": 0
             }
@@ -984,9 +1118,12 @@
         "response": {
           "body": {
             "result": {
+              "data_root": "<SYNTHETIC_ROOT>/data",
+              "database_path": "<SYNTHETIC_ROOT>/data/hieronymus.sqlite",
               "service": {
-                "available": true,
-                "mode": "local-http"
+                "available": false,
+                "mode": "direct-local",
+                "reason": "no running local service discovered"
               }
             }
           },

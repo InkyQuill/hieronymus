@@ -11,6 +11,25 @@ from tools.compatibility.model import load_manifest
 ROOT = Path(__file__).resolve().parents[2]
 SENTINEL = "compat-secret-do-not-log"
 MCP_REVISION = "2026-07-28"
+RUNTIME_BACKED_ROUTES = {
+    "http.route.get.status": "status",
+    "http.route.post.api.mcp.operation": "private_mcp_status",
+    "http.route.get.api.providers": "provider_list",
+    "http.route.post.api.providers": "provider_save",
+    "http.route.get.api.providers.id": "provider_detail",
+    "http.route.get.api.providers.id.models": "provider_models",
+    "http.route.post.api.providers.id.check": "provider_check",
+    "http.route.delete.api.providers.id": "provider_delete",
+    "http.route.get.api.settings.dream": "dream_get",
+    "http.route.post.api.settings.dream": "dream_post",
+    "http.route.get.api.settings.ingest": "ingest_get",
+    "http.route.post.api.settings.ingest": "ingest_post",
+    "http.route.get.api.settings.release": "release_get",
+    "http.route.post.api.settings.release": "release_post",
+    "http.route.get.api.admin.dashboard": "admin_dashboard",
+    "http.route.get.api.admin.snapshot": "admin_snapshot",
+    "http.route.post.api.admin.actions.action": "admin_action",
+}
 
 
 def _route_cases_by_id() -> dict[str, dict[str, object]]:
@@ -273,6 +292,53 @@ def test_runtime_response_fixtures_keep_complete_status_and_dashboard_shapes() -
         "sessions",
         "short_term_memories",
     }
+
+
+def test_private_mcp_status_and_admin_action_keep_complete_runtime_shapes() -> None:
+    cases = _route_cases_by_id()
+    private_status = cases["http.route.post.api.mcp.operation"]["success"]["response"]["body"][
+        "result"
+    ]
+    admin_action = cases["http.route.post.api.admin.actions.action"]["success"]["response"]["body"]
+
+    assert set(private_status) == {"service", "data_root", "database_path"}
+    assert private_status["service"] == {
+        "available": False,
+        "mode": "direct-local",
+        "reason": "no running local service discovered",
+    }
+    assert set(admin_action) == {
+        "result",
+        "stats",
+        "snapshot",
+        "dream_status",
+        "dream_config_error",
+        "short_term_status",
+    }
+    assert admin_action["result"] == {
+        "action": "reinforce",
+        "entity_id": 1,
+        "entity_type": "crystal",
+        "message": "Crystal reinforced",
+    }
+    assert admin_action["stats"]["audit_events"] == 1
+    assert admin_action["snapshot"]["selected"]["label"] == "Synthetic Rule"
+
+
+@pytest.mark.parametrize(
+    ("contract_id", "runtime_body_key"),
+    sorted(RUNTIME_BACKED_ROUTES.items()),
+)
+def test_runtime_backed_route_fixture_matches_fresh_current_output(
+    contract_id: str,
+    runtime_body_key: str,
+) -> None:
+    route = _routes_by_id()[contract_id]
+    fixture_body = _route_cases_by_id()[contract_id]["success"]["response"]["body"]
+    runtime_bodies = runtime_reference_bodies()
+
+    assert route["runtime_body_key"] == runtime_body_key
+    assert fixture_body == runtime_bodies[runtime_body_key]
 
 
 def test_root_route_records_current_404_and_adr_0014_target_shell() -> None:
