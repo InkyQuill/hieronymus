@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tools.compatibility import inventory_cli
 from tools.compatibility.inventory_cli import (
     replay_mcp_entrypoint_case,
     snapshot_cli,
@@ -152,6 +153,8 @@ def test_mcp_entrypoint_fixtures_replay_shipping_stdio_success_and_protocol_fail
         assert case["invocation"] == ["hieronymus-mcp"]
         assert case["entry_point"] == "hieronymus.mcp_server:main"
         assert case["boundary"] == "shipping-stdio-entrypoint"
+        assert case["process_group_drained"] is True
+        assert case["stdout_normalization"] == "initialize-result.serverInfo.version-only"
         assert "tools.compatibility" not in json.dumps(case)
         assert "--replay-mcp-entrypoint" not in json.dumps(case)
         assert case["exit_code"] == 0
@@ -165,8 +168,16 @@ def test_mcp_entrypoint_fixtures_replay_shipping_stdio_success_and_protocol_fail
     ]
     assert success_responses[0]["id"] == 1
     assert success_responses[0]["result"]["protocolVersion"] == "2025-11-25"
+    assert success_responses[0]["result"]["serverInfo"] == {
+        "name": "hieronymus",
+        "version": "<MCP_PACKAGE_VERSION>",
+    }
     assert success_responses[1]["id"] == 2
     assert len(success_responses[1]["result"]["tools"]) == 39
+    protocol = json.loads(
+        (ROOT / "compatibility/fixtures/mcp/protocol.json").read_text(encoding="utf-8")
+    )
+    assert success_responses[1] == protocol["current"]["tools_list"]["response"]
 
     assert [json.loads(line) for line in failure["stdin"].splitlines()] == [
         {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
@@ -184,6 +195,56 @@ def test_mcp_entrypoint_fixtures_replay_shipping_stdio_success_and_protocol_fail
     ]
     assert replay_mcp_entrypoint_case("success") == success
     assert replay_mcp_entrypoint_case("failure") == failure
+    assert not _compatibility_replay_processes()
+
+
+def test_mcp_entrypoint_normalizes_only_volatile_server_package_version() -> None:
+    lock_before = (ROOT / "uv.lock").read_bytes()
+    protocol = json.loads(
+        (ROOT / "compatibility/fixtures/mcp/protocol.json").read_text(encoding="utf-8")
+    )
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": json.loads(json.dumps(protocol["current"]["initialize"]["result"])),
+    }
+    initialize["result"]["serverInfo"]["version"] = "999.0.post-uv-sync"
+    tools_list = protocol["current"]["tools_list"]["response"]
+    raw_stdout = "".join(
+        json.dumps(response, separators=(",", ":"), ensure_ascii=False) + "\n"
+        for response in (initialize, tools_list)
+    )
+    normalized = inventory_cli._normalize_mcp_stdout(raw_stdout)
+    responses = [json.loads(line) for line in normalized.splitlines()]
+
+    assert responses[0]["result"]["serverInfo"] == {
+        "name": "hieronymus",
+        "version": "<MCP_PACKAGE_VERSION>",
+    }
+    assert responses[1] == tools_list
+    assert (ROOT / "uv.lock").read_bytes() == lock_before
+
+
+def test_shipping_mcp_replay_waits_for_complete_responses_before_closing_stdin() -> None:
+    for _attempt in range(8):
+        replay = replay_mcp_entrypoint_case("success")
+        responses = [json.loads(line) for line in replay["stdout"].splitlines()]
+
+        assert [response["id"] for response in responses] == [1, 2]
+        assert len(responses[1]["result"]["tools"]) == 39
+    assert not _compatibility_replay_processes()
+
+
+def _compatibility_replay_processes() -> list[str]:
+    processes = []
+    for cmdline_path in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            command = cmdline_path.read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        if "hieronymus-mcp-compat-" in command:
+            processes.append(command)
+    return processes
 
 
 def _contract_records(snapshot: dict[str, object]) -> list[dict[str, object]]:

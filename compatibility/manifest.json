@@ -2900,6 +2900,16 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_cli_inventory.py::test_mcp_entrypoint_normalizes_only_volatile_server_package_version",
+      "reason": "Compatibility schema and artifact generator validation: test_mcp_entrypoint_normalizes_only_volatile_server_package_version."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_cli_inventory.py::test_shipping_mcp_replay_waits_for_complete_responses_before_closing_stdin",
+      "reason": "Compatibility schema and artifact generator validation: test_shipping_mcp_replay_waits_for_complete_responses_before_closing_stdin."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_cli_inventory.py::test_snapshot_generation_replays_callbacks_only_below_synthetic_root",
       "reason": "Compatibility schema and artifact generator validation: test_snapshot_generation_replays_callbacks_only_below_synthetic_root."
     },

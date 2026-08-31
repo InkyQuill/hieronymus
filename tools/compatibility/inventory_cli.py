@@ -7,9 +7,12 @@ import copy
 import json
 import os
 import re
+import selectors
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from contextlib import contextmanager
 from pathlib import Path
@@ -832,15 +835,10 @@ def replay_mcp_entrypoint_case(outcome: str) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="hieronymus-mcp-compat-") as data_root:
         environment = os.environ.copy()
         environment.update(_mcp_process_environment(data_root))
-        process = subprocess.run(
-            [str(_shipping_mcp_entrypoint())],
-            cwd=Path(__file__).resolve().parents[2],
-            env=environment,
-            check=False,
-            capture_output=True,
-            input=stdin,
-            text=True,
-            timeout=30,
+        return_code, stdout, stderr = _run_shipping_mcp_process(
+            stdin,
+            environment,
+            expected_responses=2 if outcome == "success" else 1,
         )
 
     return {
@@ -850,11 +848,87 @@ def replay_mcp_entrypoint_case(outcome: str) -> dict[str, object]:
         "invocation": _mcp_replay_invocation(),
         "environment": _mcp_replay_environment(),
         "stdin": stdin,
-        "exit_code": process.returncode,
-        "stdout": process.stdout.replace("\r\n", "\n"),
-        "stderr": _normalize_mcp_stderr(process.stderr),
+        "exit_code": return_code,
+        "stdout": _normalize_mcp_stdout(stdout),
+        "stdout_normalization": "initialize-result.serverInfo.version-only",
+        "stderr": _normalize_mcp_stderr(stderr),
         "stderr_normalization": "rich-timestamp-and-source-location-redacted",
+        "process_group_drained": True,
     }
+
+
+def _run_shipping_mcp_process(
+    stdin: str,
+    environment: dict[str, str],
+    *,
+    expected_responses: int,
+) -> tuple[int, str, str]:
+    """Read the bounded response set before closing the shipping server's stdin."""
+    process = subprocess.Popen(
+        [str(_shipping_mcp_entrypoint())],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    deadline = time.monotonic() + 30
+    output = bytearray()
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    try:
+        process.stdin.write(stdin.encode())
+        process.stdin.flush()
+        while output.count(b"\n") < expected_responses:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired("hieronymus-mcp", 30)
+            if not selector.select(remaining):
+                raise subprocess.TimeoutExpired("hieronymus-mcp", 30)
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            output.extend(chunk)
+        process.stdin.close()
+        process.stdin = None
+        remaining = max(deadline - time.monotonic(), 0.1)
+        trailing_stdout, stderr = process.communicate(timeout=remaining)
+        output.extend(trailing_stdout)
+    except BaseException:
+        _terminate_process_group(process)
+        raise
+    finally:
+        selector.close()
+
+    if output.count(b"\n") != expected_responses:
+        raise RuntimeError(
+            "shipping hieronymus-mcp returned "
+            f"{output.count(b'\n')} responses; expected {expected_responses}"
+        )
+    _assert_process_group_drained(process.pid)
+    return process.returncode, output.decode(), stderr.decode()
+
+
+def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is None:
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate(timeout=5)
+
+
+def _assert_process_group_drained(process_group: int) -> None:
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return
+    os.killpg(process_group, signal.SIGTERM)
+    raise RuntimeError("shipping hieronymus-mcp left a descendant process running")
 
 
 def _shipping_mcp_entrypoint() -> Path:
@@ -915,6 +989,22 @@ def _normalize_mcp_stderr(stderr: str) -> str:
         line = re.sub(r"^\[[^]]+\]\s+", "", line)
         line = re.sub(r"\s+[A-Za-z_][A-Za-z0-9_]*\.py:\d+\s*$", "", line)
         normalized.append(line.rstrip())
+    return "\n".join(normalized) + ("\n" if normalized else "")
+
+
+def _normalize_mcp_stdout(stdout: str) -> str:
+    """Normalize only FastMCP's environment-derived initialize package version."""
+    normalized = []
+    for line in stdout.replace("\r\n", "\n").splitlines():
+        message = json.loads(line)
+        result = message.get("result") if isinstance(message, dict) else None
+        server_info = result.get("serverInfo") if isinstance(result, dict) else None
+        if isinstance(server_info, dict) and "protocolVersion" in result:
+            version = server_info.get("version")
+            if not isinstance(version, str) or not version:
+                raise ValueError("MCP initialize response has no server package version")
+            server_info["version"] = "<MCP_PACKAGE_VERSION>"
+        normalized.append(json.dumps(message, separators=(",", ":"), ensure_ascii=False))
     return "\n".join(normalized) + ("\n" if normalized else "")
 
 

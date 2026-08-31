@@ -14,8 +14,10 @@
   "invocation": [
     "hieronymus-mcp"
   ],
+  "process_group_drained": true,
   "stderr": "WARNING  Failed to validate request: Received request before initialization was complete\n",
   "stderr_normalization": "rich-timestamp-and-source-location-redacted",
   "stdin": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{}}\n",
-  "stdout": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"Invalid request parameters\",\"data\":\"\"}}\n"
+  "stdout": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"Invalid request parameters\",\"data\":\"\"}}\n",
+  "stdout_normalization": "initialize-result.serverInfo.version-only"
 }
