@@ -1,9 +1,147 @@
 {
   "cases": [
     {
+      "error_module": "hieronymus.ingest_config",
       "error_type": "IngestConfigError",
-      "id": "ingest.invalid",
-      "message": "short_memory.warning_sentence_count must be at least 1"
+      "files": {
+        "ingest.conf": "[short_memory]\nwarning_sentence_count = 10\nrejection_sentence_count = 5\n"
+      },
+      "id": "ingest.sentence-order",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "short_memory.rejection_sentence_count must be greater than or equal to short_memory.warning_sentence_count",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[short_memory]\nwarning_symbol_count = 100\nrejection_symbol_count = 50\n"
+      },
+      "id": "ingest.symbol-order",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "short_memory.rejection_symbol_count must be greater than or equal to short_memory.warning_symbol_count",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[unknown]\nvalue = 1\n"
+      },
+      "id": "ingest.unknown-root",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "unknown ingest config setting: unknown",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[short_memory]\nextra = 1\n"
+      },
+      "id": "ingest.unknown-short-memory",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "unknown ingest config setting: short_memory.extra",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[learn]\nextra = 1\n"
+      },
+      "id": "ingest.unknown-learn",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "unknown ingest config setting: learn.extra",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[short_memory]\nwarning_sentence_count = true\n"
+      },
+      "id": "ingest.warning-sentence-type",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "short_memory.warning_sentence_count must be an integer",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[short_memory]\nrejection_symbol_count = 1.5\n"
+      },
+      "id": "ingest.rejection-symbol-type",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "short_memory.rejection_symbol_count must be an integer",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[learn]\nmax_block_chars = '1200'\n"
+      },
+      "id": "ingest.max-block-type",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "learn.max_block_chars must be an integer",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[short_memory]\nwarning_sentence_count = 0\n"
+      },
+      "id": "ingest.warning-sentence-minimum",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "short_memory.warning_sentence_count must be at least 1",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[short_memory]\nrejection_sentence_count = 0\n"
+      },
+      "id": "ingest.rejection-sentence-minimum",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "short_memory.rejection_sentence_count must be at least 1",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[short_memory]\nwarning_symbol_count = -1\n"
+      },
+      "id": "ingest.warning-symbol-minimum",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "short_memory.warning_symbol_count must be at least 0",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[short_memory]\nrejection_symbol_count = -1\n"
+      },
+      "id": "ingest.rejection-symbol-minimum",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "short_memory.rejection_symbol_count must be at least 0",
+      "target": "ingest.conf"
+    },
+    {
+      "error_module": "hieronymus.ingest_config",
+      "error_type": "IngestConfigError",
+      "files": {
+        "ingest.conf": "[learn]\nmax_block_chars = 0\n"
+      },
+      "id": "ingest.max-block-minimum",
+      "loader": "hieronymus.ingest_config:load_ingest_config",
+      "message": "learn.max_block_chars must be at least 1",
+      "target": "ingest.conf"
     }
   ],
   "fixture": "compatibility/fixtures/config/failures/ingest.json"

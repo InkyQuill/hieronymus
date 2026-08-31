@@ -5,6 +5,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from tools.compatibility.inventory_state import (
     build_test_ownership,
     collect_test_nodeids,
@@ -212,6 +214,9 @@ def test_node_ownership_does_not_inherit_every_contract_from_its_file() -> None:
         "tests/test_provider_config.py::test_save_and_load_provider_catalog_round_trips_profiles_and_defaults",
         "tests/test_admin_cli.py::test_admin_json_reports_available_tui_and_counts",
         "tests/test_cli_service.py::test_docs_describe_local_web_config_and_llm_providers",
+        "tests/test_provider_config.py::test_provider_catalog_validates_default_provider_exists",
+        "tests/test_provider_config.py::test_load_provider_catalog_rejects_legacy_dream_provider_collision_on_disk",
+        "tests/test_agent_plugin_installers.py::test_json_agent_install_rejects_malformed_section_without_traceback",
     ]
 
     ownership = {
@@ -226,6 +231,14 @@ def test_node_ownership_does_not_inherit_every_contract_from_its_file() -> None:
     assert ownership[node_ids[3]]["contract_ids"] == ["config.provider.roundtrip"]
     assert ownership[node_ids[4]]["contract_ids"] == ["cli.command.hiero.admin"]
     assert ownership[node_ids[5]]["disposition"] == "implementation_internal"
+    assert ownership[node_ids[6]]["contract_ids"] == ["config.provider.failures"]
+    assert ownership[node_ids[7]]["contract_ids"] == ["config.provider.failures"]
+    assert ownership[node_ids[8]]["contract_ids"] == ["agent-integration.target.gemini.failures"]
+    with pytest.raises(ValueError, match="no explicit config ownership rule"):
+        build_test_ownership(
+            ["tests/test_provider_config.py::test_new_unclassified_behavior"],
+            manifest.contracts,
+        )
 
 
 def test_agent_contract_entry_points_are_importable_symbols() -> None:
@@ -332,6 +345,18 @@ def test_distribution_cases_freeze_bootstrap_errors_uninstall_and_idempotence(
     assert cases["install.uv-bootstrap"]["uv_bootstrapped"] is True
     assert cases["install.bun-bootstrap"]["bun_bootstrapped"] is True
     assert cases["install.bun-upgrade"]["bun_upgraded"] is True
+    assert cases["install.missing-python-warning"]["exit_class"] == "success"
+    assert "python3 is not installed" in cases["install.missing-python-warning"]["stderr"]
+    assert cases["install.old-python-warning"]["exit_class"] == "success"
+    assert "Python version is 3.11.9" in cases["install.old-python-warning"]["stderr"]
+    assert cases["install.bun-upgrade-declined"]["exit_class"] == "error"
+    assert cases["install.bun-upgrade-still-old"]["exit_class"] == "error"
+    assert cases["install.uv-bootstrap-not-on-path"]["exit_class"] == "error"
+    assert cases["install.bun-bootstrap-not-on-path"]["exit_class"] == "error"
+    assert cases["install.fresh-clone"]["exit_class"] == "success"
+    assert any(
+        command.startswith("git:clone ") for command in cases["install.fresh-clone"]["commands"]
+    )
     for case_id in (
         "install.missing-git",
         "install.invalid-channel",
@@ -346,6 +371,105 @@ def test_distribution_cases_freeze_bootstrap_errors_uninstall_and_idempotence(
     assert cases["uninstall.interactive-remove"]["data_exists"] is False
     assert cases["uninstall.interactive-keep"]["data_exists"] is True
     assert cases["uninstall.noninteractive-keep"]["data_exists"] is True
+    assert all(
+        branch.get("case_ids") or (branch.get("disposition") and branch.get("reason"))
+        for branch in distribution["branches"]
+    )
+    referenced_cases = {
+        case_id for branch in distribution["branches"] for case_id in branch.get("case_ids", [])
+    }
+    assert set(cases) <= referenced_cases
+
+
+def test_checked_config_failure_fixtures_replay_exact_loader_errors(tmp_path: Path) -> None:
+    fixture_root = ROOT / "compatibility/fixtures/config/failures"
+    required_case_ids = {
+        "provider": {
+            "provider.invalid-toml",
+            "provider.default-provider-missing",
+            "provider.unsupported-type",
+            "provider.missing-type",
+            "provider.missing-url",
+            "provider.unknown-profile-key",
+            "provider.unknown-default-key",
+            "provider.invalid-id",
+            "provider.name-type",
+            "provider.type-type",
+            "provider.url-type",
+            "provider.key-type",
+            "provider.default-provider-type",
+            "provider.default-model-type",
+            "provider.timeout-type",
+            "provider.timeout-zero",
+            "provider.timeout-negative",
+            "provider.timeout-infinite",
+            "provider.legacy-collision",
+            "provider.legacy-missing-type",
+            "provider.legacy-type-mismatch",
+            "provider.legacy-unknown-key",
+        },
+        "dream": {
+            "dream.invalid-toml",
+            "dream.unknown-workflow",
+            "dream.threshold-order",
+            "dream.enabled-workflow-empty-model",
+            "dream.enabled-type",
+            "dream.schedule-type",
+            "dream.workflow-provider-type",
+            "dream.workflow-enabled-type",
+            "dream.schedule-minimum",
+            "dream.pending-minimum",
+            "dream.pending-maximum-minimum",
+            "dream.cycle-maximum-minimum",
+            "dream.not-enough-minimum",
+        },
+        "ingest": {
+            "ingest.sentence-order",
+            "ingest.symbol-order",
+            "ingest.unknown-root",
+            "ingest.unknown-short-memory",
+            "ingest.unknown-learn",
+            "ingest.warning-sentence-type",
+            "ingest.rejection-symbol-type",
+            "ingest.max-block-type",
+            "ingest.warning-sentence-minimum",
+            "ingest.rejection-sentence-minimum",
+            "ingest.warning-symbol-minimum",
+            "ingest.rejection-symbol-minimum",
+            "ingest.max-block-minimum",
+        },
+        "release": {"release.unknown-channel"},
+    }
+    loaders = {
+        "provider": "hieronymus.provider_config:load_provider_catalog",
+        "dream": "hieronymus.dream_config:load_dream_config",
+        "ingest": "hieronymus.ingest_config:load_ingest_config",
+        "release": "hieronymus.release_config:load_release_config",
+    }
+
+    from hieronymus.config import HieronymusConfig
+
+    for name, required_ids in required_case_ids.items():
+        fixture = json.loads((fixture_root / f"{name}.json").read_text(encoding="utf-8"))
+        assert required_ids <= {case["id"] for case in fixture["cases"]}
+        for index, case in enumerate(fixture["cases"]):
+            assert case["loader"] == loaders[name]
+            assert case["target"] in case["files"]
+            assert all(isinstance(content, str) for content in case["files"].values())
+            case_config = HieronymusConfig(data_root=tmp_path / name / str(index) / "hieronymus")
+            case_config.config_root.mkdir(parents=True)
+            for relative_path, content in case["files"].items():
+                destination = case_config.config_root / relative_path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content.encode("utf-8"))
+            module_name, symbol_name = case["loader"].split(":", 1)
+            loader = getattr(importlib.import_module(module_name), symbol_name)
+            expected_type = getattr(
+                importlib.import_module(case["error_module"]), case["error_type"]
+            )
+            with pytest.raises(expected_type) as raised:
+                loader(case_config)
+            assert str(raised.value) == case["message"]
 
 
 def test_agent_cases_freeze_host_config_and_owned_skill_lifecycle(tmp_path: Path) -> None:
@@ -368,6 +492,18 @@ def test_agent_cases_freeze_host_config_and_owned_skill_lifecycle(tmp_path: Path
     assert project_skills["custom_file_preserved"] is True
     assert project_skills["owned_files_removed"] is True
     assert project_skills["uninstall_idempotent"] is True
+    assert integrations["failure_cases"] == [
+        {
+            "id": "gemini.malformed-mcp-servers",
+            "target": "gemini",
+            "config_path": "<HOME>/.gemini/settings.json",
+            "input_bytes": '{"mcpServers": []}\n',
+            "error_type": "ValueError",
+            "message": "expected object at mcpServers in <HOME>/.gemini/settings.json",
+            "host_config_unchanged": True,
+            "managed_assets_absent": True,
+        }
+    ]
 
 
 def test_every_generated_artifact_matches_two_fresh_builds(tmp_path: Path) -> None:

@@ -1,4 +1,16 @@
 {
+  "failure_cases": [
+    {
+      "config_path": "<HOME>/.gemini/settings.json",
+      "error_type": "ValueError",
+      "host_config_unchanged": true,
+      "id": "gemini.malformed-mcp-servers",
+      "input_bytes": "{\"mcpServers\": []}\n",
+      "managed_assets_absent": true,
+      "message": "expected object at mcpServers in <HOME>/.gemini/settings.json",
+      "target": "gemini"
+    }
+  ],
   "fixture": "compatibility/fixtures/agent-integration/current.json",
   "project_skills": {
     "custom_file_preserved": true,

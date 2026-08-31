@@ -382,19 +382,6 @@ def _add_config_contract_cases(config: object, records: dict[str, object]) -> No
         "ingest": load_ingest_config,
         "release": load_release_config,
     }
-    invalid_toml = {
-        "provider": '[broken\nvalue = "unterminated\n',
-        "dream": '[broken\nvalue = "unterminated\n',
-        "ingest": "[short_memory]\nwarning_sentence_count = 0\n",
-        "release": '[updates]\nchannel = "nightly"\n',
-    }
-    config_paths = {
-        "provider": "provider.conf",
-        "dream": "dream.conf",
-        "ingest": "ingest.conf",
-        "release": "release.conf",
-    }
-
     roundtrip_configs = {
         "provider": ProviderCatalog(
             providers={
@@ -441,19 +428,31 @@ def _add_config_contract_cases(config: object, records: dict[str, object]) -> No
             "equal": output == record["payload"],
         }
 
-        failure_config = HieronymusConfig(data_root=case_root / f"{name}-failure")
-        failure_config.config_root.mkdir(parents=True)
-        failure_path = failure_config.config_root / config_paths[name]
-        failure_path.write_text(invalid_toml[name], encoding="utf-8")
-        try:
-            loaders[name](failure_config)
-        except ValueError as error:
-            failure = {"error_type": type(error).__name__, "message": str(error)}
-        else:  # pragma: no cover - a regression is reported as generation failure
-            raise AssertionError(f"{name} invalid config was accepted")
+        failure_cases = []
+        for index, definition in enumerate(_config_failure_inputs()[name]):
+            failure_config = HieronymusConfig(data_root=case_root / f"{name}-failure-{index}")
+            failure_config.config_root.mkdir(parents=True)
+            for relative_path, content in definition["files"].items():
+                destination = failure_config.config_root / relative_path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content.encode("utf-8"))
+            try:
+                loaders[name](failure_config)
+            except ValueError as error:
+                failure_cases.append(
+                    {
+                        **definition,
+                        "error_module": type(error).__module__,
+                        "error_type": type(error).__name__,
+                        "loader": (f"{loaders[name].__module__}:{loaders[name].__name__}"),
+                        "message": str(error),
+                    }
+                )
+            else:  # pragma: no cover - generation must reject stale cases
+                raise AssertionError(f"{definition['id']} invalid config was accepted")
         record["failures"] = {
             "fixture": failure_fixture,
-            "cases": [{"id": f"{name}.invalid", **failure}],
+            "cases": failure_cases,
         }
 
     provider_legacy = HieronymusConfig(data_root=case_root / "provider-legacy")
@@ -521,6 +520,252 @@ def _add_config_contract_cases(config: object, records: dict[str, object]) -> No
         ],
         "output": migrated_dream,
         "persisted_workflows": sorted(migrated_dream["workflows"]),
+    }
+
+
+def _config_failure_inputs() -> dict[str, list[dict[str, object]]]:
+    """Return replayable persisted inputs for every public config failure family."""
+
+    def case(case_id: str, target: str, content: str, **other: str) -> dict[str, object]:
+        return {"id": case_id, "target": target, "files": {target: content, **other}}
+
+    provider_url = 'url = "https://provider.invalid/v1"\n'
+    provider_type = 'type = "openai"\n'
+    return {
+        "provider": [
+            case("provider.invalid-toml", "provider.conf", '[broken\nvalue = "unterminated\n'),
+            case(
+                "provider.default-provider-missing",
+                "provider.conf",
+                '[defaults]\nprovider = "missing"\nmodel = "fixture"\n',
+            ),
+            case(
+                "provider.unsupported-type",
+                "provider.conf",
+                '[bad]\nname = "Bad"\ntype = "made-up"\n' + provider_url,
+            ),
+            case("provider.missing-type", "provider.conf", "[deepseek]\n" + provider_url),
+            case("provider.missing-url", "provider.conf", "[deepseek]\n" + provider_type),
+            case(
+                "provider.unknown-profile-key",
+                "provider.conf",
+                "[deepseek]\n" + provider_type + provider_url + 'extra = "nope"\n',
+            ),
+            case(
+                "provider.unknown-default-key",
+                "provider.conf",
+                '[defaults]\nprovider = ""\nmodel = ""\nextra = "nope"\n',
+            ),
+            case(
+                "provider.invalid-id",
+                "provider.conf",
+                '["deep.seek"]\n' + provider_type + provider_url,
+            ),
+            case(
+                "provider.name-type",
+                "provider.conf",
+                "[deepseek]\nname = 1\n" + provider_type + provider_url,
+            ),
+            case(
+                "provider.type-type",
+                "provider.conf",
+                "[deepseek]\ntype = 1\n" + provider_url,
+            ),
+            case(
+                "provider.url-type",
+                "provider.conf",
+                "[deepseek]\n" + provider_type + "url = 1\n",
+            ),
+            case(
+                "provider.key-type",
+                "provider.conf",
+                "[deepseek]\n" + provider_type + provider_url + "key = 1\n",
+            ),
+            case(
+                "provider.default-provider-type",
+                "provider.conf",
+                "[defaults]\nprovider = 1\n",
+            ),
+            case(
+                "provider.default-model-type",
+                "provider.conf",
+                "[defaults]\nmodel = 1\n",
+            ),
+            case(
+                "provider.timeout-type",
+                "provider.conf",
+                "[deepseek]\n" + provider_type + provider_url + 'timeout_seconds = "slow"\n',
+            ),
+            case(
+                "provider.timeout-zero",
+                "provider.conf",
+                "[deepseek]\n" + provider_type + provider_url + "timeout_seconds = 0\n",
+            ),
+            case(
+                "provider.timeout-negative",
+                "provider.conf",
+                "[deepseek]\n" + provider_type + provider_url + "timeout_seconds = -1\n",
+            ),
+            case(
+                "provider.timeout-infinite",
+                "provider.conf",
+                "[deepseek]\n" + provider_type + provider_url + "timeout_seconds = inf\n",
+            ),
+            case(
+                "provider.legacy-collision",
+                "dream.conf",
+                '[providers.openai]\ntype = "openai"\nendpoint = "https://new.invalid/v1"\n',
+                **{
+                    "provider.conf": (
+                        '[openai]\nname = "Existing"\ntype = "openai"\n'
+                        'url = "https://existing.invalid/v1"\n'
+                    )
+                },
+            ),
+            case(
+                "provider.legacy-missing-type",
+                "dream.conf",
+                '[providers.openai]\nendpoint = "https://provider.invalid/v1"\n',
+            ),
+            case(
+                "provider.legacy-type-mismatch",
+                "dream.conf",
+                '[providers.openai]\ntype = 123\nendpoint = "https://provider.invalid/v1"\n',
+            ),
+            case(
+                "provider.legacy-unknown-key",
+                "dream.conf",
+                '[providers.openai]\ntype = "openai"\n'
+                'endpoint = "https://provider.invalid/v1"\nextra = "nope"\n',
+            ),
+        ],
+        "dream": [
+            case("dream.invalid-toml", "dream.conf", '[broken\nvalue = "unterminated\n'),
+            case(
+                "dream.unknown-workflow",
+                "dream.conf",
+                '[workflows.unknown]\nprovider = ""\nmodel = ""\nenabled = false\n',
+            ),
+            case(
+                "dream.threshold-order",
+                "dream.conf",
+                "[dreaming]\nmin_pending_short_term_memories = 20\n"
+                "max_pending_short_term_memories = 10\n",
+            ),
+            case(
+                "dream.enabled-workflow-empty-model",
+                "dream.conf",
+                '[workflows.knowledge_crystals]\nprovider = "anthropic"\nmodel = ""\n'
+                "enabled = true\n",
+            ),
+            case("dream.enabled-type", "dream.conf", "[dreaming]\nenabled = 'yes'\n"),
+            case(
+                "dream.schedule-type",
+                "dream.conf",
+                "[dreaming]\nschedule_interval_minutes = true\n",
+            ),
+            case(
+                "dream.workflow-provider-type",
+                "dream.conf",
+                "[workflows.knowledge_crystals]\nprovider = 123\n",
+            ),
+            case(
+                "dream.workflow-enabled-type",
+                "dream.conf",
+                "[workflows.knowledge_crystals]\nenabled = 'true'\n",
+            ),
+            case(
+                "dream.schedule-minimum",
+                "dream.conf",
+                "[dreaming]\nschedule_interval_minutes = 0\n",
+            ),
+            case(
+                "dream.pending-minimum",
+                "dream.conf",
+                "[dreaming]\nmin_pending_short_term_memories = -1\n",
+            ),
+            case(
+                "dream.pending-maximum-minimum",
+                "dream.conf",
+                "[dreaming]\nmax_pending_short_term_memories = 0\n",
+            ),
+            case(
+                "dream.cycle-maximum-minimum",
+                "dream.conf",
+                "[dreaming]\nmax_short_term_memories_per_cycle = 0\n",
+            ),
+            case(
+                "dream.not-enough-minimum",
+                "dream.conf",
+                "[dreaming]\nnot_enough_memories_cycle_threshold = 0\n",
+            ),
+        ],
+        "ingest": [
+            case(
+                "ingest.sentence-order",
+                "ingest.conf",
+                "[short_memory]\nwarning_sentence_count = 10\nrejection_sentence_count = 5\n",
+            ),
+            case(
+                "ingest.symbol-order",
+                "ingest.conf",
+                "[short_memory]\nwarning_symbol_count = 100\nrejection_symbol_count = 50\n",
+            ),
+            case("ingest.unknown-root", "ingest.conf", "[unknown]\nvalue = 1\n"),
+            case(
+                "ingest.unknown-short-memory",
+                "ingest.conf",
+                "[short_memory]\nextra = 1\n",
+            ),
+            case("ingest.unknown-learn", "ingest.conf", "[learn]\nextra = 1\n"),
+            case(
+                "ingest.warning-sentence-type",
+                "ingest.conf",
+                "[short_memory]\nwarning_sentence_count = true\n",
+            ),
+            case(
+                "ingest.rejection-symbol-type",
+                "ingest.conf",
+                "[short_memory]\nrejection_symbol_count = 1.5\n",
+            ),
+            case(
+                "ingest.max-block-type",
+                "ingest.conf",
+                "[learn]\nmax_block_chars = '1200'\n",
+            ),
+            case(
+                "ingest.warning-sentence-minimum",
+                "ingest.conf",
+                "[short_memory]\nwarning_sentence_count = 0\n",
+            ),
+            case(
+                "ingest.rejection-sentence-minimum",
+                "ingest.conf",
+                "[short_memory]\nrejection_sentence_count = 0\n",
+            ),
+            case(
+                "ingest.warning-symbol-minimum",
+                "ingest.conf",
+                "[short_memory]\nwarning_symbol_count = -1\n",
+            ),
+            case(
+                "ingest.rejection-symbol-minimum",
+                "ingest.conf",
+                "[short_memory]\nrejection_symbol_count = -1\n",
+            ),
+            case(
+                "ingest.max-block-minimum",
+                "ingest.conf",
+                "[learn]\nmax_block_chars = 0\n",
+            ),
+        ],
+        "release": [
+            case(
+                "release.unknown-channel",
+                "release.conf",
+                '[updates]\nchannel = "nightly"\n',
+            )
+        ],
     }
 
 
@@ -623,8 +868,104 @@ def _distribution_inventory(repo_root: Path, data_root: Path) -> dict[str, objec
         "entry_points": dict(sorted(scripts.items())),
         "fixture": "compatibility/fixtures/install-update/cases.json",
         "cases": cases,
+        "branches": _distribution_branch_inventory(cases),
         "source_sha256": source_hashes,
     }
+
+
+def _distribution_branch_inventory(
+    cases: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    case_ids = {str(case["id"]) for case in cases}
+    branch_cases = {
+        "install.git.present": ["install.stable-success"],
+        "install.git.missing": ["install.missing-git"],
+        "install.python.supported": ["install.stable-success"],
+        "install.python.missing-warning": ["install.missing-python-warning"],
+        "install.python.old-warning": ["install.old-python-warning"],
+        "install.bun.present-supported": ["install.stable-success"],
+        "install.bun.missing-bootstrap": ["install.bun-bootstrap"],
+        "install.bun.bootstrap-completed-without-binary": ["install.bun-bootstrap-not-on-path"],
+        "install.bun.missing-declined": ["install.bun-declined"],
+        "install.bun.old-upgraded": ["install.bun-upgrade"],
+        "install.bun.old-upgrade-declined": ["install.bun-upgrade-declined"],
+        "install.bun.old-after-upgrade": ["install.bun-upgrade-still-old"],
+        "install.uv.present": ["install.stable-success"],
+        "install.uv.missing-bootstrap": ["install.uv-bootstrap"],
+        "install.uv.bootstrap-completed-without-binary": ["install.uv-bootstrap-not-on-path"],
+        "install.uv.missing-declined": ["install.uv-declined"],
+        "install.channel.explicit-stable": ["install.stable-success"],
+        "install.channel.explicit-dev": ["install.dev-success"],
+        "install.channel.invalid": ["install.invalid-channel"],
+        "install.channel.default-noninteractive": ["install.default-noninteractive-stable"],
+        "install.checkout.existing-valid": ["install.stable-success"],
+        "install.checkout.existing-wrong-origin": ["install.wrong-origin"],
+        "install.checkout.existing-non-git": ["install.existing-non-checkout"],
+        "install.checkout.fresh-clone": ["install.fresh-clone"],
+        "install.stable.tags-found": ["install.stable-success"],
+        "install.stable.no-tags": ["install.no-release-tags"],
+        "install.dev.main": ["install.dev-success"],
+        "install.release-config.stable": ["install.stable-success"],
+        "install.release-config.dev": ["install.dev-success"],
+        "install.uv-tool-reinstall": ["install.stable-success"],
+        "install.hiero.present": ["install.hiero-on-path"],
+        "install.hiero.missing-warning": ["install.stable-success"],
+        "install.prerequisite.curl-missing": ["install.missing-curl"],
+        "install.prerequisite.mktemp-missing": ["install.missing-mktemp"],
+        "install.prerequisite.bash-missing": ["install.missing-bash"],
+        "uninstall.option.keep": ["uninstall.keep-data-idempotent"],
+        "uninstall.option.purge": ["uninstall.purge-data"],
+        "uninstall.option.invalid": ["uninstall.invalid-option"],
+        "uninstall.path.empty-root-dot-home": ["uninstall.unsafe-path"],
+        "uninstall.path.parent-segment": ["uninstall.unsafe-parent-path"],
+        "uninstall.path.relative": ["uninstall.unsafe-relative-path"],
+        "uninstall.path.absolute-outside-owned-shape": ["uninstall.unsafe-outside-path"],
+        "uninstall.path.accepted": ["uninstall.keep-data-idempotent"],
+        "uninstall.uv.present-success": ["uninstall.keep-data-idempotent"],
+        "uninstall.uv.present-failure-ignored": ["uninstall.tool-removal-failure-ignored"],
+        "uninstall.uv.missing": ["uninstall.uv-missing"],
+        "uninstall.data.explicit-keep": ["uninstall.keep-data-idempotent"],
+        "uninstall.data.explicit-purge": ["uninstall.purge-data"],
+        "uninstall.data.tty-remove": ["uninstall.interactive-remove"],
+        "uninstall.data.tty-keep": ["uninstall.interactive-keep"],
+        "uninstall.data.noninteractive-keep": ["uninstall.noninteractive-keep"],
+        "uninstall.repeat-safe": ["uninstall.keep-data-idempotent"],
+    }
+    unknown = {case_id for ids in branch_cases.values() for case_id in ids} - case_ids
+    if unknown:
+        raise AssertionError(f"distribution branches reference missing cases: {sorted(unknown)}")
+    branches = [
+        {"id": branch_id, "case_ids": ids} for branch_id, ids in sorted(branch_cases.items())
+    ]
+    branches.extend(
+        [
+            {
+                "id": "install.channel.interactive-selection",
+                "disposition": "implementation_internal",
+                "reason": (
+                    "The /dev/tty prompt adapter is shell-platform plumbing; explicit stable, "
+                    "dev, invalid, and noninteractive-default outcomes are frozen instead."
+                ),
+            },
+            {
+                "id": "install.confirm.interactive-prompt",
+                "disposition": "implementation_internal",
+                "reason": (
+                    "The /dev/tty confirmation adapter is shell-platform plumbing; accepted "
+                    "and declined dependency outcomes are frozen through environment overrides."
+                ),
+            },
+            {
+                "id": "install.data-root.tilde-expansion",
+                "disposition": "implementation_internal",
+                "reason": (
+                    "Tilde string expansion is shell-path plumbing; all persisted release-config "
+                    "effects are frozen with absolute synthetic data roots."
+                ),
+            },
+        ]
+    )
+    return branches
 
 
 def _run_distribution_cases(repo_root: Path, root: Path) -> list[dict[str, object]]:
@@ -632,10 +973,31 @@ def _run_distribution_cases(repo_root: Path, root: Path) -> list[dict[str, objec
         ("install.stable-success", "stable", "normal", 0),
         ("install.dev-success", "dev", "normal", 0),
         ("install.uv-bootstrap", "stable", "uv-bootstrap", 0),
+        (
+            "install.uv-bootstrap-not-on-path",
+            "stable",
+            "uv-bootstrap-missing-binary",
+            1,
+        ),
         ("install.bun-bootstrap", "stable", "bun-bootstrap", 0),
+        (
+            "install.bun-bootstrap-not-on-path",
+            "stable",
+            "bun-bootstrap-missing-binary",
+            1,
+        ),
         ("install.bun-upgrade", "stable", "bun-upgrade", 0),
+        ("install.bun-upgrade-declined", "stable", "bun-upgrade-declined", 1),
+        ("install.bun-upgrade-still-old", "stable", "bun-upgrade-still-old", 1),
+        ("install.missing-python-warning", "stable", "missing-python", 0),
+        ("install.old-python-warning", "stable", "old-python", 0),
+        ("install.fresh-clone", "stable", "fresh-clone", 0),
+        ("install.default-noninteractive-stable", "", "default-channel", 0),
+        ("install.hiero-on-path", "stable", "hiero-present", 0),
         ("install.missing-git", "stable", "missing-git", 1),
         ("install.missing-curl", "stable", "missing-curl", 1),
+        ("install.missing-mktemp", "stable", "missing-mktemp", 1),
+        ("install.missing-bash", "stable", "missing-bash", 1),
         ("install.uv-declined", "stable", "uv-declined", 1),
         ("install.bun-declined", "stable", "bun-declined", 1),
         ("install.no-release-tags", "stable", "no-release-tags", 1),
@@ -648,13 +1010,25 @@ def _run_distribution_cases(repo_root: Path, root: Path) -> list[dict[str, objec
         for case_id, channel, scenario, expected in install_specs
     ]
     uninstall_specs = (
-        ("uninstall.keep-data-idempotent", "--keep-data", None, True, 0),
-        ("uninstall.purge-data", "--purge-data", None, False, 0),
-        ("uninstall.interactive-remove", None, "yes\n", False, 0),
-        ("uninstall.interactive-keep", None, "no\n", True, 0),
-        ("uninstall.noninteractive-keep", None, None, True, 0),
-        ("uninstall.invalid-option", "--invalid", None, True, 1),
-        ("uninstall.unsafe-path", "--keep-data", None, True, 1),
+        ("uninstall.keep-data-idempotent", "--keep-data", None, True, 0, "normal"),
+        ("uninstall.purge-data", "--purge-data", None, False, 0, "normal"),
+        ("uninstall.interactive-remove", None, "yes\n", False, 0, "normal"),
+        ("uninstall.interactive-keep", None, "no\n", True, 0, "normal"),
+        ("uninstall.noninteractive-keep", None, None, True, 0, "normal"),
+        ("uninstall.invalid-option", "--invalid", None, True, 1, "normal"),
+        ("uninstall.unsafe-path", "--keep-data", None, True, 1, "home-path"),
+        ("uninstall.unsafe-parent-path", "--keep-data", None, True, 1, "parent-path"),
+        ("uninstall.unsafe-relative-path", "--keep-data", None, True, 1, "relative-path"),
+        ("uninstall.unsafe-outside-path", "--keep-data", None, True, 1, "outside-path"),
+        ("uninstall.uv-missing", "--keep-data", None, True, 0, "uv-missing"),
+        (
+            "uninstall.tool-removal-failure-ignored",
+            "--keep-data",
+            None,
+            True,
+            0,
+            "uv-fails",
+        ),
     )
     cases.extend(
         _run_uninstall_case(
@@ -665,8 +1039,9 @@ def _run_distribution_cases(repo_root: Path, root: Path) -> list[dict[str, objec
             interactive_input,
             expects_data,
             expected,
+            scenario,
         )
-        for case_id, option, interactive_input, expects_data, expected in uninstall_specs
+        for case_id, option, interactive_input, expects_data, expected, scenario in uninstall_specs
     )
     return cases
 
@@ -710,8 +1085,9 @@ def _run_install_case(
     root.mkdir(parents=True)
     home = root / "home"
     app = root / "managed" / "hieronymus" / "app"
-    app.mkdir(parents=True)
-    (app / ".git").mkdir()
+    if scenario != "fresh-clone":
+        app.mkdir(parents=True)
+        (app / ".git").mkdir()
     if scenario == "existing-non-checkout":
         (app / ".git").rmdir()
     data = root / "config" / "hieronymus"
@@ -719,6 +1095,8 @@ def _run_install_case(
     temp_root = root / "tmp"
     temp_root.mkdir()
     fake_bin = _base_fake_bin(root)
+    if scenario == "missing-mktemp":
+        (fake_bin / "mktemp").unlink()
     git_origin = (
         "https://example.invalid/wrong.git"
         if scenario == "wrong-origin"
@@ -729,6 +1107,7 @@ def _run_install_case(
             fake_bin / "git",
             f'''#!/bin/sh
 echo "git:$@" >> "{log}"
+if [ "$1" = "clone" ]; then mkdir -p "$3/.git"; exit 0; fi
 if [ "$1" = "-C" ] && [ "$3" = "remote" ]; then echo "{git_origin}"; exit 0; fi
 if [ "$1" = "ls-remote" ] && [ "{scenario}" != "no-release-tags" ]; then
   echo "0 refs/tags/v1.2.3"
@@ -737,32 +1116,73 @@ fi
 exit 0
 ''',
         )
-    _write_executable(fake_bin / "python3", "#!/bin/sh\nexit 0\n")
+    if scenario == "old-python":
+        _write_executable(
+            fake_bin / "python3",
+            """#!/bin/sh
+if printf '%s' "$2" | grep -q print; then echo "3.11.9"; exit 0; fi
+exit 1
+""",
+        )
+        grep = shutil.which("grep")
+        if grep is None:
+            raise RuntimeError("grep is required for installer fixture generation")
+        (fake_bin / "grep").symlink_to(grep)
+    elif scenario != "missing-python":
+        _write_executable(fake_bin / "python3", "#!/bin/sh\nexit 0\n")
     uv_template = root / "uv-template"
     _write_executable(
         uv_template,
         f'#!/bin/sh\necho "uv:$@" >> "{log}"\nexit 0\n',
     )
-    if scenario not in {"uv-bootstrap", "uv-declined"}:
+    if scenario not in {
+        "uv-bootstrap",
+        "uv-bootstrap-missing-binary",
+        "uv-declined",
+        "missing-mktemp",
+    }:
         shutil.copy2(uv_template, fake_bin / "uv")
     bun_template = root / "bun-template"
     _write_executable(
         bun_template,
         f'''#!/bin/sh
 echo "bun:$@" >> "{log}"
-if [ "$1" = "upgrade" ]; then echo "1.3.14" > "{root / "bun-version"}"; exit 0; fi
+if [ "$1" = "upgrade" ]; then
+  if [ "{scenario}" != "bun-upgrade-still-old" ]; then echo "1.3.14" > "{root / "bun-version"}"; fi
+  exit 0
+fi
 if [ "$1" = "--version" ]; then
   if [ -f "{root / "bun-version"}" ]; then cat "{root / "bun-version"}"; else echo "1.3.14"; fi
 fi
 exit 0
 ''',
     )
-    if scenario == "bun-upgrade":
+    if scenario in {"bun-upgrade", "bun-upgrade-declined", "bun-upgrade-still-old"}:
         (root / "bun-version").write_text("1.2.0\n", encoding="utf-8")
         shutil.copy2(bun_template, fake_bin / "bun")
-    elif scenario not in {"bun-bootstrap", "bun-declined", "missing-curl"}:
+    elif scenario not in {
+        "bun-bootstrap",
+        "bun-bootstrap-missing-binary",
+        "bun-declined",
+        "missing-curl",
+        "missing-bash",
+    }:
         shutil.copy2(bun_template, fake_bin / "bun")
     if scenario != "missing-curl":
+        uv_install_body = (
+            "exit 0"
+            if scenario == "uv-bootstrap-missing-binary"
+            else '''mkdir -p "$HOME/.local/bin"
+cp "$HIERONYMUS_FIXTURE_UV" "$HOME/.local/bin/uv"
+chmod +x "$HOME/.local/bin/uv"'''
+        )
+        bun_install_body = (
+            "exit 0"
+            if scenario == "bun-bootstrap-missing-binary"
+            else '''mkdir -p "$HOME/.bun/bin"
+cp "$HIERONYMUS_FIXTURE_BUN" "$HOME/.bun/bin/bun"
+chmod +x "$HOME/.bun/bin/bun"'''
+        )
         _write_executable(
             fake_bin / "curl",
             f'''#!/bin/sh
@@ -776,15 +1196,11 @@ done
 if [ -n "$output" ]; then
   cat > "$output" <<'EOF'
 #!/bin/sh
-mkdir -p "$HOME/.local/bin"
-cp "$HIERONYMUS_FIXTURE_UV" "$HOME/.local/bin/uv"
-chmod +x "$HOME/.local/bin/uv"
+{uv_install_body}
 EOF
 else
   cat <<'EOF'
-mkdir -p "$HOME/.bun/bin"
-cp "$HIERONYMUS_FIXTURE_BUN" "$HOME/.bun/bin/bun"
-chmod +x "$HOME/.bun/bin/bun"
+{bun_install_body}
 EOF
 fi
 ''',
@@ -792,7 +1208,8 @@ fi
     bash = shutil.which("bash")
     if bash is None:
         raise RuntimeError("bash is required for installer fixture generation")
-    (fake_bin / "bash").symlink_to(bash)
+    if scenario != "missing-bash":
+        (fake_bin / "bash").symlink_to(bash)
     environment = {
         "HOME": str(home),
         "PATH": str(fake_bin),
@@ -800,10 +1217,16 @@ fi
         "HIERONYMUS_APP_DIR": str(app),
         "HIERONYMUS_DATA_ROOT": str(data),
         "HIERONYMUS_INSTALL_CHANNEL": channel,
-        "HIERONYMUS_INSTALL_YES": ("0" if scenario in {"uv-declined", "bun-declined"} else "1"),
+        "HIERONYMUS_INSTALL_YES": (
+            "0" if scenario in {"uv-declined", "bun-declined", "bun-upgrade-declined"} else "1"
+        ),
         "HIERONYMUS_FIXTURE_UV": str(uv_template),
         "HIERONYMUS_FIXTURE_BUN": str(bun_template),
     }
+    if scenario == "default-channel":
+        environment.pop("HIERONYMUS_INSTALL_CHANNEL")
+    if scenario == "hiero-present":
+        _write_executable(fake_bin / "hiero", "#!/bin/sh\nexit 0\n")
     result = subprocess.run(
         ["/bin/sh", str(repo_root / "install.sh")],
         cwd=repo_root,
@@ -839,20 +1262,31 @@ def _run_uninstall_case(
     interactive_input: str | None,
     expects_data: bool,
     expected_exit: int,
+    scenario: str,
 ) -> dict[str, object]:
     root.mkdir(parents=True)
     home = root / "home"
     home.mkdir()
-    app = home if case_id == "uninstall.unsafe-path" else root / "managed/hieronymus/app"
+    app = {
+        "home-path": home,
+        "parent-path": Path("../hieronymus/app"),
+        "relative-path": Path("relative/hieronymus/app"),
+        "outside-path": root / "outside/app",
+    }.get(scenario, root / "managed/hieronymus/app")
     data = root / "config/hieronymus"
-    if app != home:
+    if app.is_absolute() and app != home:
         app.mkdir(parents=True)
         (app / "sentinel").write_text("app\n", encoding="utf-8")
     data.mkdir(parents=True)
     (data / "sentinel").write_text("data\n", encoding="utf-8")
     fake_bin = _base_fake_bin(root)
     log = root / "commands.log"
-    _write_executable(fake_bin / "uv", f'#!/bin/sh\necho "uv:$@" >> "{log}"\nexit 0\n')
+    if scenario != "uv-missing":
+        uv_exit = 1 if scenario == "uv-fails" else 0
+        _write_executable(
+            fake_bin / "uv",
+            f'#!/bin/sh\necho "uv:$@" >> "{log}"\nexit {uv_exit}\n',
+        )
     environment = {
         "HOME": str(home),
         "PATH": str(fake_bin),
@@ -916,7 +1350,7 @@ def _run_uninstall_case(
             command == "uv:tool uninstall hieronymus"
             for command in _normalized_command_log(log, root)
         ),
-        "app_exists": app.exists(),
+        "app_exists": app.exists() if app.is_absolute() else False,
         "data_exists": first_data_exists,
         "repeat_idempotent": idempotent,
     }
@@ -940,7 +1374,7 @@ def _normalized_command_log(path: Path, root: Path) -> list[str]:
 
 
 def _agent_integration_inventory(data_root: Path) -> dict[str, object]:
-    from hieronymus.agent_plugins import available_plugins
+    from hieronymus.agent_plugins import available_plugins, resolve_plugin
     from hieronymus.config import HieronymusConfig
     from hieronymus.project_skills import install_project_skills, uninstall_project_skills
 
@@ -992,9 +1426,40 @@ def _agent_integration_inventory(data_root: Path) -> dict[str, object]:
     after_first_uninstall = _relative_file_hashes(workspace, workspace)
     uninstall_project_skills(workspace, ("agents", "claude"))
     after_second_uninstall = _relative_file_hashes(workspace, workspace)
+
+    previous_home = os.environ["HOME"]
+    failure_home = data_root / ".synthetic-agent-failure-home"
+    failure_settings = failure_home / ".gemini/settings.json"
+    failure_settings.parent.mkdir(parents=True)
+    malformed_input = '{"mcpServers": []}\n'
+    failure_settings.write_text(malformed_input, encoding="utf-8")
+    failure_config = HieronymusConfig(data_root=data_root / ".synthetic-agent-failure-data")
+    os.environ["HOME"] = str(failure_home)
+    try:
+        try:
+            resolve_plugin("gemini").install(failure_config)
+        except ValueError as error:
+            failure_case = {
+                "id": "gemini.malformed-mcp-servers",
+                "target": "gemini",
+                "config_path": "<HOME>/.gemini/settings.json",
+                "input_bytes": malformed_input,
+                "error_type": type(error).__name__,
+                "message": str(error).replace(str(failure_home), "<HOME>"),
+                "host_config_unchanged": failure_settings.read_text(encoding="utf-8")
+                == malformed_input,
+                "managed_assets_absent": not (
+                    failure_config.agent_plugins_root / "gemini"
+                ).exists(),
+            }
+        else:  # pragma: no cover - fixture generation rejects stale failure cases
+            raise AssertionError("Gemini accepted a malformed mcpServers section")
+    finally:
+        os.environ["HOME"] = previous_home
     return {
         "fixture": "compatibility/fixtures/agent-integration/current.json",
         "targets": targets,
+        "failure_cases": [failure_case],
         "project_skills": {
             "python_entry_point": "hieronymus.project_skills:install_project_skills",
             "targets": ["agents", "claude"],
@@ -1234,6 +1699,20 @@ def _state_contracts() -> list[dict[str, object]]:
         )
     contracts.append(
         _contract(
+            "agent-integration.target.gemini.failures",
+            "agent-integration",
+            "daemon-mcp-security",
+            "hieronymus.agent_plugins.gemini:GeminiPlugin",
+            [
+                "tests/compatibility/test_state_inventory.py",
+                "tests/test_agent_plugin_installers.py",
+            ],
+            "compatibility/fixtures/agent-integration/current.json",
+            "crates/hiero-cli/tests/agent_contract.rs::gemini_failures",
+        )
+    )
+    contracts.append(
+        _contract(
             "agent-integration.project-skills",
             "agent-integration",
             "daemon-mcp-security",
@@ -1325,14 +1804,41 @@ def _public_contract_ids(node_id: str, contracts: list[object]) -> set[str]:
         None,
     )
     if config_kind is not None:
-        if any(marker in normalized for marker in ("migrat", "legacy", "canonicalizes")):
-            candidate = f"config.{config_kind}.legacy"
-        elif any(marker in normalized for marker in ("reject", "unreadable", "invalid", "error")):
+        if any(
+            marker in normalized
+            for marker in (
+                "reject",
+                "unreadable",
+                "invalid",
+                "error",
+                "reports_",
+                "validates_default_provider_exists",
+            )
+        ):
             candidate = f"config.{config_kind}.failures"
+        elif any(marker in normalized for marker in ("migrat", "legacy", "canonicalizes")):
+            candidate = f"config.{config_kind}.legacy"
         elif any(marker in normalized for marker in ("round_trip", "save_and_load", "persists")):
             candidate = f"config.{config_kind}.roundtrip"
-        else:
+        elif any(
+            marker in normalized
+            for marker in (
+                "_path_live",
+                "_paths_live",
+                "test_default_",
+                "_defaults_when_missing",
+                "redacted_",
+                "_accepts_supported_",
+                "_defaults_provider_name_",
+                "_allows_default_",
+                "_does_not_write_provider_profiles_or_secrets",
+                "_deprecated_",
+                "_existence_is_validated_outside_",
+            )
+        ):
             candidate = f"config.{config_kind}.current"
+        else:
+            raise ValueError(f"no explicit config ownership rule for {node_id}")
         return {candidate}
 
     if node_file == "tests/test_db_compatibility.py":
@@ -1358,6 +1864,8 @@ def _public_contract_ids(node_id: str, contracts: list[object]) -> set[str]:
             explicit = {target for target in targets if f"[{target}]" in normalized}
         if "reserved_targets" in normalized:
             explicit = {"mimo", "pi", "hermes"}
+        if normalized == "test_json_agent_install_rejects_malformed_section_without_traceback":
+            return {"agent-integration.target.gemini.failures"}
         return {f"agent-integration.target.{target}" for target in explicit}
 
     owning_contracts = [

@@ -2127,6 +2127,20 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
       "fixture": "compatibility/fixtures/agent-integration/current.json",
+      "id": "agent-integration.target.gemini.failures",
+      "python_entry_point": "hieronymus.agent_plugins.gemini:GeminiPlugin",
+      "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::gemini_failures",
+      "surface": "agent-integration",
+      "technical_owner": "daemon-mcp-security",
+      "tests": [
+        "tests/compatibility/test_state_inventory.py",
+        "tests/test_agent_plugin_installers.py"
+      ]
+    },
+    {
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "disposition": "preserve",
+      "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.project-skills",
       "python_entry_point": "hieronymus.project_skills:install_project_skills",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::project_skills",
@@ -2465,6 +2479,11 @@
       "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_state_inventory.py::test_agent_contract_entry_points_are_importable_symbols",
       "reason": "Compatibility schema and artifact generator validation: test_agent_contract_entry_points_are_importable_symbols."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_checked_config_failure_fixtures_replay_exact_loader_errors",
+      "reason": "Compatibility schema and artifact generator validation: test_checked_config_failure_fixtures_replay_exact_loader_errors."
     },
     {
       "disposition": "implementation_internal",
@@ -3157,9 +3176,11 @@
       "node_id": "tests/test_agent_plugin_installers.py::test_json_agent_install_patches_config_and_reports_installed[opencode-.config/opencode-.config/opencode/plugin.json-existing_payload1-opencode-plugin-*.json-opencode/plugin.json-plugins]"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugin_installers.py::test_json_agent_install_rejects_malformed_section_without_traceback",
-      "reason": "Distribution and agent integration implementation: test_json_agent_install_rejects_malformed_section_without_traceback."
+      "contract_ids": [
+        "agent-integration.target.gemini.failures"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugin_installers.py::test_json_agent_install_rejects_malformed_section_without_traceback"
     },
     {
       "disposition": "implementation_internal",
@@ -4890,7 +4911,7 @@
     },
     {
       "contract_ids": [
-        "config.dream.legacy"
+        "config.dream.failures"
       ],
       "disposition": "public_contract",
       "node_id": "tests/test_dream_config.py::test_load_dream_config_rejects_unknown_workflow_without_migrating"
@@ -6832,7 +6853,7 @@
     },
     {
       "contract_ids": [
-        "config.provider.legacy"
+        "config.provider.failures"
       ],
       "disposition": "public_contract",
       "node_id": "tests/test_provider_config.py::test_load_provider_catalog_rejects_legacy_dream_provider_collision_on_disk"
@@ -6867,7 +6888,7 @@
     },
     {
       "contract_ids": [
-        "config.provider.legacy"
+        "config.provider.failures"
       ],
       "disposition": "public_contract",
       "node_id": "tests/test_provider_config.py::test_load_provider_catalog_reports_unreadable_legacy_dream_conf"
@@ -6888,28 +6909,28 @@
     },
     {
       "contract_ids": [
-        "config.provider.legacy"
+        "config.provider.failures"
       ],
       "disposition": "public_contract",
       "node_id": "tests/test_provider_config.py::test_migrate_dream_provider_payload_rejects_missing_type"
     },
     {
       "contract_ids": [
-        "config.provider.legacy"
+        "config.provider.failures"
       ],
       "disposition": "public_contract",
       "node_id": "tests/test_provider_config.py::test_migrate_dream_provider_payload_rejects_profile_collision"
     },
     {
       "contract_ids": [
-        "config.provider.legacy"
+        "config.provider.failures"
       ],
       "disposition": "public_contract",
       "node_id": "tests/test_provider_config.py::test_migrate_dream_provider_payload_rejects_type_mismatch"
     },
     {
       "contract_ids": [
-        "config.provider.legacy"
+        "config.provider.failures"
       ],
       "disposition": "public_contract",
       "node_id": "tests/test_provider_config.py::test_migrate_dream_provider_payload_rejects_unknown_keys"
@@ -6986,7 +7007,7 @@
     },
     {
       "contract_ids": [
-        "config.provider.current"
+        "config.provider.failures"
       ],
       "disposition": "public_contract",
       "node_id": "tests/test_provider_config.py::test_provider_catalog_validates_default_provider_exists"

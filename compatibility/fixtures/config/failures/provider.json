@@ -1,9 +1,247 @@
 {
   "cases": [
     {
+      "error_module": "hieronymus.provider_config",
       "error_type": "ProviderCatalogError",
-      "id": "provider.invalid",
-      "message": "provider.conf is not valid TOML: Expected ']' at the end of a table declaration (at line 1, column 8)"
+      "files": {
+        "provider.conf": "[broken\nvalue = \"unterminated\n"
+      },
+      "id": "provider.invalid-toml",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "provider.conf is not valid TOML: Expected ']' at the end of a table declaration (at line 1, column 8)",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[defaults]\nprovider = \"missing\"\nmodel = \"fixture\"\n"
+      },
+      "id": "provider.default-provider-missing",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "default provider is missing: missing",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[bad]\nname = \"Bad\"\ntype = \"made-up\"\nurl = \"https://provider.invalid/v1\"\n"
+      },
+      "id": "provider.unsupported-type",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "unsupported provider type for bad: made-up",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\nurl = \"https://provider.invalid/v1\"\n"
+      },
+      "id": "provider.missing-type",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.deepseek.type is required",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\ntype = \"openai\"\n"
+      },
+      "id": "provider.missing-url",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.deepseek.url is required",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\ntype = \"openai\"\nurl = \"https://provider.invalid/v1\"\nextra = \"nope\"\n"
+      },
+      "id": "provider.unknown-profile-key",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "unknown provider config setting: deepseek.extra",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[defaults]\nprovider = \"\"\nmodel = \"\"\nextra = \"nope\"\n"
+      },
+      "id": "provider.unknown-default-key",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "unknown provider config setting: defaults.extra",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[\"deep.seek\"]\ntype = \"openai\"\nurl = \"https://provider.invalid/v1\"\n"
+      },
+      "id": "provider.invalid-id",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "invalid provider id: deep.seek",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\nname = 1\ntype = \"openai\"\nurl = \"https://provider.invalid/v1\"\n"
+      },
+      "id": "provider.name-type",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.deepseek.name must be a string",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\ntype = 1\nurl = \"https://provider.invalid/v1\"\n"
+      },
+      "id": "provider.type-type",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.deepseek.type must be a string",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\ntype = \"openai\"\nurl = 1\n"
+      },
+      "id": "provider.url-type",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.deepseek.url must be a string",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\ntype = \"openai\"\nurl = \"https://provider.invalid/v1\"\nkey = 1\n"
+      },
+      "id": "provider.key-type",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.deepseek.key must be a string",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[defaults]\nprovider = 1\n"
+      },
+      "id": "provider.default-provider-type",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "defaults.provider must be a string",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[defaults]\nmodel = 1\n"
+      },
+      "id": "provider.default-model-type",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "defaults.model must be a string",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\ntype = \"openai\"\nurl = \"https://provider.invalid/v1\"\ntimeout_seconds = \"slow\"\n"
+      },
+      "id": "provider.timeout-type",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.deepseek.timeout_seconds must be a number",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\ntype = \"openai\"\nurl = \"https://provider.invalid/v1\"\ntimeout_seconds = 0\n"
+      },
+      "id": "provider.timeout-zero",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.deepseek.timeout_seconds must be greater than 0",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\ntype = \"openai\"\nurl = \"https://provider.invalid/v1\"\ntimeout_seconds = -1\n"
+      },
+      "id": "provider.timeout-negative",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.deepseek.timeout_seconds must be greater than 0",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "provider.conf": "[deepseek]\ntype = \"openai\"\nurl = \"https://provider.invalid/v1\"\ntimeout_seconds = inf\n"
+      },
+      "id": "provider.timeout-infinite",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.deepseek.timeout_seconds must be finite and greater than 0",
+      "target": "provider.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "dream.conf": "[providers.openai]\ntype = \"openai\"\nendpoint = \"https://new.invalid/v1\"\n",
+        "provider.conf": "[openai]\nname = \"Existing\"\ntype = \"openai\"\nurl = \"https://existing.invalid/v1\"\n"
+      },
+      "id": "provider.legacy-collision",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "dream.conf migration would overwrite provider profile: openai",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "dream.conf": "[providers.openai]\nendpoint = \"https://provider.invalid/v1\"\n"
+      },
+      "id": "provider.legacy-missing-type",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.openai.type is required",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "dream.conf": "[providers.openai]\ntype = 123\nendpoint = \"https://provider.invalid/v1\"\n"
+      },
+      "id": "provider.legacy-type-mismatch",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "providers.openai.type must be a string",
+      "target": "dream.conf"
+    },
+    {
+      "error_module": "hieronymus.provider_config",
+      "error_type": "ProviderCatalogError",
+      "files": {
+        "dream.conf": "[providers.openai]\ntype = \"openai\"\nendpoint = \"https://provider.invalid/v1\"\nextra = \"nope\"\n"
+      },
+      "id": "provider.legacy-unknown-key",
+      "loader": "hieronymus.provider_config:load_provider_catalog",
+      "message": "unknown provider config setting: providers.openai.extra",
+      "target": "dream.conf"
     }
   ],
   "fixture": "compatibility/fixtures/config/failures/provider.json"
