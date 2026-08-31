@@ -23,6 +23,11 @@ Rule-crystal text, FTS tokens, and recall metadata are projections of the
 structured rule. Updating the authoritative rule refreshes its projections in
 the same transaction or queues a rebuildable projection repair.
 
+ADR 0010's database-upgrade track owns the `term_rules`/`term_rule_forms`
+schema and typed migration from legacy strict terms, aliases, tags, concepts,
+and existing rule crystals. This terminology track owns validation and runtime
+lifecycle only after conversion; it performs no migration-on-read.
+
 ## Recall Result
 
 A recall response contains:
@@ -49,6 +54,13 @@ deterministic contract.
 Spreading activation is one hop and bounded by the remaining result budget. It
 uses persisted links plus activation evidence; it does not perform writes while
 ranking. Duplicate entities are merged with traceable reason components.
+
+RAG and semantic hits are advisory evidence. Before fusion, the service computes
+the applicable active contract from query/source context. Each conflicting RAG
+hit is annotated with `conflicts_with_rule_ids`; it remains inspectable but
+cannot remove, satisfy, rewrite, or outrank the separate contract section.
+Answer/validation success is impossible until the post-retrieval contract check
+passes or returns an explicit ambiguity warning.
 
 ## Working Copies And Feedback
 
@@ -81,6 +93,8 @@ cycle. Concepts do not decay as crystals.
 ## Acceptance Criteria
 
 - Fuzzy and semantic results cannot alter or hide applicable active contracts.
+- Conflicting RAG chunks remain evidence but are identified and cannot satisfy
+  deterministic validation.
 - Active deterministic rules survive arbitrary passive decay and miss events.
 - Recall/feedback is correlated and idempotent across repeated recalls in one
   session.

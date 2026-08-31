@@ -5,7 +5,8 @@
 ## Goal
 
 Open fresh Rust databases and upgrade supported Python databases without silent
-data loss, split roots, partial conversion, or an unusable rollback.
+data loss, split roots, partial conversion, or a false promise of Python
+rollback after the one-way cutover.
 
 ## Schema Identification
 
@@ -35,20 +36,36 @@ without writing the source database, backup, config, or indexes.
 ## Upgrade Protocol
 
 1. Resolve and lock the explicit data root; refuse if the daemon is active.
-2. Run preflight and require a safe result.
-3. Create and fsync a timestamped sibling backup using SQLite's backup API.
-4. Record backup metadata and source application version outside the database.
-5. Begin an exclusive upgrade and create the schema-version metadata.
-6. Run ordered SQL steps and typed Rust converters.
-7. Rebuild external-content FTS tables from authoritative rows.
-8. Run `foreign_key_check`, integrity checks, domain invariants, and row
+2. Run joint database/config preflight and require a safe result.
+3. Render, parse, cross-validate, fsync, and checksum staged current-format
+   config files without promoting them.
+4. Create and fsync a timestamped sibling database/config backup set.
+5. Write a root-level cutover journal in `prepared` state with source/target and
+   staged/backup checksums.
+6. Begin an exclusive upgrade and create the schema-version metadata.
+7. Run ordered SQL steps and typed Rust converters through the same transaction
+   handle; converters cannot commit, open a second write connection, or mutate
+   filesystem config.
+8. Rebuild external-content FTS tables from authoritative rows.
+9. Run `foreign_key_check`, integrity checks, domain invariants, and row
    accounting.
-9. Commit and atomically write the successful upgrade receipt.
-10. Enqueue semantic rebuild; semantic artifacts are not copied as authority.
+10. Commit once and set the cutover journal to `database_committed`.
+11. Atomically promote staged config files and set the journal to `complete`.
+12. Write the successful receipt and enqueue semantic rebuild; semantic
+    artifacts are not copied as authority.
 
-An interrupted transaction rolls back. An interruption after commit but before
-receipt is recovered by inspecting the committed schema version and verification
-markers; it does not rerun non-idempotent conversion.
+SQL steps, typed converters, FTS rebuild, authoritative row accounting, foreign
+key checks, and target schema-version write share one exclusive transaction.
+The transaction commits once, after verification. An interrupted transaction
+rolls back. An interruption after commit but before receipt is recovered by
+inspecting the committed schema version and verification markers; it does not
+rerun non-idempotent conversion.
+
+The daemon starts only when the cutover journal is absent or `complete`. A crash
+after database commit but before config promotion is an explicit
+`config_promotion_required` state, not rollback: rerunning `hiero migrate`
+verifies the staged checksums, resumes atomic file promotion, completes the
+journal, and never reruns the committed database converters.
 
 ## Terminology Conversion
 
@@ -66,6 +83,14 @@ skipped with a bounded reason code, or blocking error. Row-count equality alone
 is insufficient; deterministic validation fixtures must produce equivalent
 findings before and after conversion.
 
+The database-upgrade track owns the target `term_rules` and `term_rule_forms`
+schema plus conversion into it. `term_rules` stores lifecycle, scope, concept,
+canonical rendering, matching policy, provenance, revision linkage, and the
+optional advisory projection id. `term_rule_forms` stores source, approved, and
+forbidden forms with language and case sensitivity. The typed converter records
+legacy strict-term, alias, tag, concept, and rule-crystal ids alongside all
+target ids. Runtime terminology code never migrates on read.
+
 ## Other Conversion Rules
 
 Existing series, sessions, memories, crystals, concepts, facets, proposals,
@@ -79,20 +104,24 @@ format going forward. Boolean and JSON text fields are validated before insert;
 invalid values block or receive an explicit supported repair, never silent
 coercion.
 
-## Rollback And Retention
+## Backup Retention And Rust Recovery
 
 The receipt records backup checksum, prior application version, target version,
-and migration report checksum. Rollback stops Rust, restores the verified backup,
-and reinstalls the recorded Python release. The installer never deletes the
-last verified pre-upgrade backup automatically.
+and migration report checksum. Python downgrade/reinstallation is unsupported
+after a successful cutover. The installer never deletes the last verified
+pre-upgrade backup automatically. Rust recovery copies that backup, imports it
+with the current converter into a new Rust database, verifies the result, and
+atomically promotes it; it never launches Python or opens the backup in place.
 
 ## Acceptance Criteria
 
 - Fresh, each supported legacy, current Python, corrupt, and interrupted-upgrade
   fixtures behave as specified.
 - Dry-run performs no writes.
-- Failure injection at every protocol step leaves either the original database
-  or a verified committed target, never an ambiguous half-state.
+- Failure injection at every protocol step leaves the original database, a
+  verified committed target with explicit `config_promotion_required`, or a
+  complete cutover; the daemon never starts in the middle state.
 - Foreign keys, FTS content, ledgers, and deterministic validation pass after
   conversion.
-- Restoring the backup and running the recorded Python version is rehearsed.
+- Importing the immutable backup through current Rust recovery tooling is
+  rehearsed; no acceptance path depends on a Python runtime.

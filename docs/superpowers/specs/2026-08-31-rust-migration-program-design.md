@@ -12,6 +12,9 @@ This document is the map for the migration program. Detailed behavior is owned
 by the linked specifications and ADRs. The documents under
 `docs/rust-migration-proposal/` remain useful analysis but are not normative.
 
+On acceptance, ADR 0008 supersedes ADR 0005's Python-authority paragraph and
+controls that conflict. ADR 0005 continues to own the durable product model.
+
 ## Governing Decisions
 
 - [ADR 0008](../../adr/0008-rust-reimplementation-authority-and-cutover.md):
@@ -31,18 +34,21 @@ by the linked specifications and ADRs. The documents under
 
 1. [Compatibility contracts](2026-08-31-rust-compatibility-contracts-design.md)
    defines the inventory and parity evidence.
-2. [Database upgrade](2026-08-31-rust-database-upgrade-design.md) defines
-   preflight, conversion, verification, and rollback.
-3. [Terminology and memory](2026-08-31-rust-terminology-memory-design.md)
+2. [Data-root and config migration](2026-08-31-rust-data-root-config-migration-design.md)
+   defines file locations, config conversion, credentials, and atomic promotion.
+3. [Database upgrade](2026-08-31-rust-database-upgrade-design.md) defines
+   preflight, conversion, verification, and one-way cutover recovery.
+4. [Terminology and memory](2026-08-31-rust-terminology-memory-design.md)
    defines authoritative rules, recall, feedback, and reconsolidation.
-4. [Dreaming](2026-08-31-rust-dreaming-design.md) defines phase boundaries,
+5. [Dreaming](2026-08-31-rust-dreaming-design.md) defines phase boundaries,
    locking, bounded mutation, and audit.
-5. [Semantic RAG](2026-08-31-rust-semantic-rag-design.md) defines authoritative
+6. [Semantic RAG](2026-08-31-rust-semantic-rag-design.md) defines authoritative
    RAG storage, jobs, generations, and fallback.
-6. [Daemon, MCP, and security](2026-08-31-rust-daemon-mcp-security-design.md)
+7. [Daemon, MCP, and security](2026-08-31-rust-daemon-mcp-security-design.md)
    defines lifecycle, discovery, authentication, and network contracts.
-7. [Distribution and cutover](2026-08-31-rust-distribution-cutover-design.md)
-   defines build artifacts, installation, release rehearsal, and rollback.
+8. [Distribution and cutover](2026-08-31-rust-distribution-cutover-design.md)
+   defines build artifacts, installation, one-way release rehearsal, and
+   post-cutover Rust recovery.
 
 ## Architecture
 
@@ -60,17 +66,32 @@ SQLite remains authoritative. FTS tables and the semantic index are rebuilt
 from ordinary SQLite rows. Configuration and generated agent integrations are
 local files governed by explicit compatibility contracts.
 
+All credentials and secret-bearing configuration values cross domain boundaries
+as `Secret<T>`. Redacted DTO projections are the only way they enter logging,
+diagnostics, audit, CLI JSON, MCP, HTTP, or frontend serialization.
+
+## Contract Ownership
+
+Pavel Obruchnikov `<me@inkyquill.net>` is the acceptance owner for every public
+compatibility surface until a manifest entry explicitly delegates another
+named owner. Technical ownership is split by normative spec: data/config and
+database upgrade; terminology/memory; dreaming; semantic RAG; daemon/MCP/
+security; and distribution/cutover. Every manifest entry records both the named
+acceptance owner and one of these technical owners.
+
 ## Program Sequence
 
 1. Freeze behavior in a machine-readable compatibility manifest and fixtures.
-2. Run dependency spikes for MCP transport, semantic native dependencies,
-   frontend embedding, and legacy database import.
+2. Produce qualification records for MCP transport, semantic native
+   dependencies, frontend embedding, and legacy database import before writing
+   the dependent implementation plan.
 3. Build the Rust workspace and contract harness.
 4. Implement upgrade tooling before any destructive cutover path.
 5. Implement vertical product slices: configuration/series, terminology,
    memory/recall, RAG/semantic, dreaming, daemon/transports, frontend.
 6. Produce native release artifacts and install them in clean environments.
-7. Rehearse upgrade, normal use, failure, and rollback.
+7. Rehearse upgrade, normal use, pre-commit failure recovery, and Rust-only
+   backup recovery.
 8. Cut over managed installation only after all gates in ADR 0008 pass.
 
 ## Global Invariants
@@ -82,7 +103,7 @@ local files governed by explicit compatibility contracts.
 - A failed upgrade does not leave a database marked as upgraded.
 - Normal mutations use one daemon-owned domain path across CLI, MCP, and web.
 - Secret values do not appear in URLs, logs, discovery records, diagnostics, or
-  frontend JSON.
+  frontend JSON; the `Secret<T>` type and redacted projections enforce this.
 - Semantic retrieval failure degrades to FTS5 rather than failing recall.
 - Every bounded background operation is resumable, auditable, or safely
   repeatable.
@@ -92,5 +113,6 @@ local files governed by explicit compatibility contracts.
 
 The program design is accepted when the ADRs and child specifications have
 been reviewed together, contradictions with current accepted ADRs are resolved,
-and each compatibility surface has an owner and test strategy. Detailed
-implementation plans are written only after that review.
+and each compatibility surface has its named acceptance owner, technical owner,
+and test strategy recorded. Detailed implementation plans are written only
+after that review.

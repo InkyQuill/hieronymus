@@ -28,8 +28,10 @@ generation becomes active only after all expected chunks are indexed and its
 manifest verifies. Search never mixes generations or dimensions.
 
 Vector records carry `chunk_id`, `series_slug`, checksum, generation id, and
-embedding. Filtering by series occurs inside vector search or through an
-over-fetch strategy whose recall loss is measured and accepted explicitly.
+embedding. Series isolation is correctness-critical: filtering occurs before
+ANN ranking. If the selected backend cannot pre-filter reliably, Hieronymus uses
+one physical vector table/index per series. Over-fetch followed by post-filtering
+is rejected because it can silently lose eligible results.
 
 Durable jobs record kind, status, generation, cursor, total and completed
 counts, attempt count, last error, cancellation request, lease owner/expiry,
@@ -37,11 +39,19 @@ created/started/completed timestamps, and model identity. Jobs resume safely
 after daemon crashes and never hold a SQLite write transaction during model
 inference or LanceDB writes.
 
-Release targets are supported only after native build, install, model-load,
-index, search, fallback, and uninstall tests pass on that target. Initially this
-means Linux x86_64 and macOS targets proven by the spike. Windows remains
-experimental until daemon lifecycle and native semantic dependencies pass the
-same gates.
+The first Rust cutover supports `x86_64-unknown-linux-gnu`. FTS5-only operation
+is the required baseline; semantic retrieval is enabled in the release only if
+the qualification record shows: clean native build, install/uninstall, checksum
+verified model load, 10,000-chunk filtered index build, zero cross-series hits
+across the contract corpus, crash/cancel recovery, FTS fallback, and a complete
+50-query run without panic or corruption. Failure of any item ships the same
+Linux release in FTS5-only mode.
+
+macOS and Windows are not supported by the initial cutover. Promoting another
+target requires a later ADR with the same measured qualification record plus its
+daemon-service lifecycle tests. The dependency spike selects versions and
+records measurements; it does not decide series-isolation semantics or weaken
+the promotion criteria above.
 
 ## Consequences
 

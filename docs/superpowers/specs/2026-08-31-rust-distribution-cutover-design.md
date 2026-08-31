@@ -44,16 +44,18 @@ installer never performs a hidden destructive schema upgrade.
 No Python, Node, or Bun is required on the target machine. Uninstall removes
 the binary, service definition, and generated integration entries only after
 confirmation; it preserves databases, configuration, models, backups, and
-audit data by default.
+audit data by default. The release and installer contain no Python interpreter,
+wheel, environment, or rollback bundle.
 
-## Update
+## Update And One-Way Cutover
 
 Update downloads alongside the current version, verifies it, checks protocol
 and schema compatibility, stops the service, switches the version link, and
 starts/health-checks the new daemon. If health fails before a schema upgrade,
-the link returns to the prior binary. After a schema upgrade, rollback follows
-the database backup procedure rather than launching an older binary against a
-newer schema.
+the link returns to the prior binary. After a schema upgrade, downgrade is
+unsupported: the updater never launches an older binary against a newer schema
+and never installs Python. Recovery uses the current Rust release and the
+immutable pre-upgrade backup/import path.
 
 Agent integration generation uses discovered endpoints and supported transport
 capabilities. Update refreshes generated entries only after the new daemon is
@@ -70,15 +72,17 @@ For each release candidate, CI or a controlled matrix performs:
   tests;
 - forced daemon crash and restart;
 - failed update before schema change;
-- full restore of the pre-upgrade database and Python release;
+- Rust-only import and promotion from the immutable pre-upgrade backup;
 - uninstall with user-data preservation.
 
 ## Support Matrix
 
-A target is listed as supported only when its native release rehearsal passes.
-Targets that compile but fail lifecycle or semantic tests are experimental and
-do not receive the default installer path. The published matrix records whether
-semantic retrieval is native, optional, or FTS-only.
+The initial supported target is `x86_64-unknown-linux-gnu`. Its required mode is
+FTS5-only; semantic retrieval is enabled only when ADR 0013's measured Linux
+qualification record passes in full. macOS and Windows do not receive the
+initial installer. A later ADR may add a target only after native release and
+service-lifecycle rehearsal; compilation alone is insufficient. The published
+matrix records whether semantic retrieval is enabled or FTS-only.
 
 ## Acceptance Criteria
 
@@ -86,6 +90,6 @@ semantic retrieval is native, optional, or FTS-only.
 - Checksums/signatures and atomic install/update failure paths are tested.
 - A required database upgrade is always explicit and backed up.
 - Failed pre-schema updates restore the previous binary automatically.
-- Post-schema rollback is documented and rehearsed with the recorded backup.
+- Post-schema downgrade is rejected; Rust-only backup recovery is rehearsed.
 - Uninstall preserves user data unless a separate explicit delete-data action
   identifies the exact target.

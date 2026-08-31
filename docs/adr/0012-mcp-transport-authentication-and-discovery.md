@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed.
+Proposed. On acceptance, this ADR supersedes the “no authentication,
+authorization, TLS, or remote-deployment security layer” non-goal in
+`docs/superpowers/specs/2026-07-18-remediation-and-semantic-rag-design.md` for
+the local daemon. Remote deployment and TLS remain non-goals.
 
 ## Context
 
@@ -20,9 +23,17 @@ WebSocket upgrade, status details, and shutdown. `/health` may return only a
 minimal unauthenticated liveness response with no paths, versions, or user data.
 
 The token is generated with a cryptographically secure RNG, stored separately
-from discovery metadata, written atomically with user-only permissions, and
-redacted from logs and diagnostics. Token rotation invalidates existing MCP and
-WebSocket sessions.
+from discovery metadata, and written atomically with user-only permissions.
+All secret-bearing domain values use a single `Secret<T>` newtype whose
+`Debug`, `Display`, tracing-value, and serialization behavior is redacted by
+default. Only the credential loader and outbound provider/auth header builders
+may call an explicit `expose_secret()` method. Public API DTOs cannot contain
+`Secret<T>` and must be constructed through redacting projection functions.
+
+Token rotation sends an explicit `credentials_rotated` close/error to current
+MCP and WebSocket sessions, then terminates them. Clients do not silently retry
+mutations. They rediscover credentials, reauthenticate, and may retry only
+operations declared idempotent or carrying an idempotency key.
 
 Browser bootstrapping uses a short-lived, single-use launch grant created by
 `hiero config` or `hiero admin`. The grant is exchanged over loopback for a

@@ -11,9 +11,12 @@ than reproduce the Python god-class in Rust.
 
 The daemon scheduler and authenticated manual requests enqueue dream work. One
 worker owns a dream cycle for a data root. An OS-level lock protects exclusive
-debug or maintenance invocations from overlapping daemon work. Lock acquisition
-is nonblocking on Tokio worker threads; waiting uses bounded asynchronous retry
-or a blocking thread.
+debug or maintenance invocations from overlapping daemon work. Every acquisition
+performs exactly one nonblocking `try_lock_exclusive` on a dedicated blocking
+thread. Scheduler contention records `locked` and skips the tick; a manual
+daemon request returns conflict; exclusive CLI maintenance exits nonzero with
+the recorded owner. There is no wait/retry mode. The guard holds the file handle
+for the complete cycle and releases it on drop.
 
 Every run has a durable run id, trigger type, owner instance, input snapshot,
 status, and phase records. Recovery marks abandoned leases and either resumes a
@@ -51,6 +54,10 @@ Network requests have configured timeouts, bounded retry for retryable failures,
 request ids, and redacted audit data. Provider output is size-limited before
 parse. Code fences may be removed, but accepted data must deserialize into the
 phase schema and pass domain validation.
+
+Provider keys and bearer credentials remain `Secret<T>` values. Audit and
+provider DTO builders accept only redacted projections; only the outbound HTTP
+header builder may expose the provider key.
 
 Malformed-output penalties apply only to identifiable accepted candidates or
 the phase audit. A payload that cannot identify a crystal cannot mutate an

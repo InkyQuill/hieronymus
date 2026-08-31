@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed.
+Proposed. On acceptance, this ADR supersedes ADR 0005's statement under
+`### Rule Crystals` that Hieronymus has no separate structured terminology
+authority, and ADR 0003 Decision 4's equivalent rule-crystal-only storage
+decision. Rule crystals remain the searchable/advisory projection of the
+structured authority.
 
 ## Context
 
@@ -44,6 +48,22 @@ Structured rule data includes concept identity, source forms, canonical target
 rendering, approved and forbidden variants, language tags, story scope where
 applicable, matching policy, status, provenance, and revision relationship.
 Rendered crystal prose is derived display/search content.
+
+The Rust schema stores this authority in `term_rules` and `term_rule_forms`;
+`term_rules` owns lifecycle, scope, concept, canonical rendering, matching
+policy, provenance, and revision linkage, while `term_rule_forms` owns source,
+approved, and forbidden forms with language and case sensitivity. A rule may
+reference its advisory crystal projection, but that projection is not the
+authority. ADR 0010's typed database converter owns migration from
+`strict_terms`, aliases, tags, and existing rule crystals into these tables.
+
+RAG ingestion and retrieval are advisory, but their output is contract-aware.
+Applicable active rules are computed from the user query/source context before
+RAG fusion and returned in the separate deterministic contract. RAG chunks that
+contain conflicting target renderings are retained as evidence but carry a
+`conflicts_with_rule_ids` marker and cannot suppress, rewrite, or satisfy the
+active contract. Any generated answer or validation path evaluates the contract
+after retrieval and before returning success.
 
 ## Recall Feedback
 

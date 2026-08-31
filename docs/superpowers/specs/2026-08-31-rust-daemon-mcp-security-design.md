@@ -19,6 +19,15 @@ material, or binding fails. An occupied configured port is an error; no silent
 port scan occurs. A chosen override is persisted/discovered so plugins never
 hard-code the default port.
 
+Before binding or publishing discovery, startup runs read-only schema, config,
+and cutover-journal classification. It starts only for the current supported
+Rust schema, current config versions, and complete/absent journal. A legacy
+Python schema exits with `migration_required`; legacy config exits with
+`config_migration_required`; a committed database awaiting config promotion
+exits with `config_promotion_required`. Stable diagnostics include the exact
+migration/resume command. Newer, unknown, corrupt, and other partial states fail
+closed. Daemon startup never performs schema or config migration.
+
 Graceful shutdown stops admission, closes MCP/WebSocket sessions, signals
 workers, waits for bounded work, rolls back unfinished transactions, closes the
 semantic index, removes matching discovery state, and releases ownership.
@@ -35,6 +44,17 @@ WebSocket authentication occurs during upgrade and inherits token rotation and
 session expiry. `/shutdown`, status details, admin, config, MCP, and stdio proxy
 operations use the same policy. Logs redact authorization, cookies, API keys,
 launch grants, and query strings.
+
+Credentials and provider keys use the shared `Secret<T>` type. Its `Debug`,
+`Display`, tracing, and serialization forms are redacted; public DTO types cannot
+contain it. Only credential loaders and outbound header builders can call
+`expose_secret()`. Tests send sentinel secrets through every error/log/audit/DTO
+path and fail if the literal sentinel appears.
+
+Token rotation emits `credentials_rotated`, hard-closes MCP and WebSocket
+sessions, and requires rediscovery plus reauthentication. Clients never silently
+replay mutations. Automatic retry is limited to declared idempotent reads or
+requests carrying an accepted idempotency key.
 
 ## MCP
 
@@ -79,6 +99,8 @@ and database/index health without triggering downloads.
 - Every current frontend request matches a tested Rust route contract.
 - Unauthenticated and cross-origin mutation attempts fail.
 - Tokens/grants do not appear in URLs or logs.
+- Sentinel secret tests cover logs, errors, audit, diagnostics, MCP/HTTP JSON,
+  WebSocket events, and frontend payloads through one `Secret<T>` mechanism.
 - Stdio and HTTP MCP expose identical registered schemas and results.
 - Non-default ports and token rotation propagate through discovery/plugins.
 - Kill/restart/stale-discovery tests recover without concurrent daemon writers.

@@ -57,22 +57,31 @@ state.
 ## Search And Fusion
 
 FTS and semantic lanes apply the same series/context eligibility rules before
-fusion. Vector filtering uses stored `series_slug`; if the selected LanceDB API
-cannot filter before ANN, the dependency spike must quantify and approve an
-over-fetch policy before implementation.
+fusion. Vector filtering uses stored `series_slug` before ANN ranking. If the
+selected backend cannot prove pre-filtering, the implementation uses one
+physical vector table/index per series. Post-filtered over-fetch is prohibited.
 
 Reciprocal rank fusion combines ranks, never incomparable raw BM25 and distance
 scores. Constants and tie-breaking are stable and tested. Missing semantic
 state returns FTS results with a structured degraded-mode warning. Corrupt or
 dimension-mismatched hits are excluded and schedule repair.
 
+Before either lane is fused, recall computes the applicable deterministic term
+contract from the same query/source context. Conflicting chunks receive
+`conflicts_with_rule_ids` metadata. RRF ranks advisory evidence only; it cannot
+remove or satisfy the separate contract. The final response runs the
+post-retrieval contract check defined by the terminology spec.
+
 ## Dependency Spike
 
-Before implementation, compile and run the chosen LanceDB and ONNX stack on
-each candidate target. The spike must prove model loading, batch embedding,
-filtered insert/search/delete, generation isolation, binary size, first-run
-download, and FTS fallback. Exact crate versions and features are selected from
-the spike and locked; proposal versions are not reused blindly.
+Before the semantic implementation plan, compile and run the chosen LanceDB and
+ONNX stack on `x86_64-unknown-linux-gnu`. The qualification record must include
+exact crate versions/features, binary size, model checksum and load result,
+10,000-chunk per-series filtered build, zero cross-series hits over the contract
+corpus, insert/search/delete, generation isolation, crash/cancel recovery, a
+complete 50-query run, and FTS fallback. Exact versions are locked in
+`Cargo.lock`. Any failed criterion disables semantic retrieval for the initial
+release; it does not defer a correctness decision.
 
 ## Acceptance Criteria
 
@@ -82,4 +91,5 @@ the spike and locked; proposal versions are not reused blindly.
 - Crash/retry/cancel tests preserve the prior active generation.
 - FTS-only mode supports import and search without model download.
 - Series filtering cannot return cross-series chunks.
+- RAG and semantic results cannot suppress or satisfy deterministic contracts.
 - No SQLite write transaction spans inference or LanceDB I/O.

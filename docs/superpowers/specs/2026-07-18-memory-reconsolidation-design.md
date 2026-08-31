@@ -1,6 +1,8 @@
 # Memory Reconsolidation Design
 
-**Status:** Approved for implementation planning on 2026-07-18 (revised after review)
+**Status:** Approved for the Python baseline on 2026-07-18. Proposed ADR 0011
+supersedes this design for Rust wherever it permits active deterministic rules
+to decay, archive passively, or be displaced by ranked recall.
 
 ## Context
 

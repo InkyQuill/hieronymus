@@ -37,8 +37,8 @@ daemon endpoint. Supported service managers are:
 
 - Linux: systemd user service;
 - macOS: LaunchAgent;
-- Windows: per-user startup integration selected during the Windows support
-  spike; Windows is not declared supported until this path passes CI.
+- Windows is outside the initial supported cutover. Adding it requires a later
+  ADR that selects and verifies a per-user service mechanism.
 
 The daemon writes bounded logs and a non-secret discovery record atomically.
 The record contains protocol version, endpoint, process identity, start time,
@@ -48,8 +48,22 @@ and process-instance comparison, never by PID existence alone.
 
 Dreaming remains protected by an OS-level cross-process lock because exclusive
 offline maintenance and manual debug execution can still be separate
-processes. Synchronous file-lock acquisition must run outside Tokio worker
-threads or use bounded asynchronous retry.
+processes. Every caller performs one nonblocking OS `try_lock_exclusive` on a
+dedicated blocking thread. The scheduler skips the tick and records `locked`;
+manual daemon requests return conflict; exclusive CLI maintenance exits with a
+diagnostic naming the current owner. No caller waits or retries while holding a
+Tokio worker thread. The guard owns the open file handle for the entire critical
+section and releases it on drop.
+
+Before binding a port or publishing discovery, daemon startup performs the same
+read-only schema and config classification as `hiero migrate --dry-run`. Only
+the current supported Rust schema, current config versions, and a complete or
+absent cutover journal may start. A legacy Python schema exits with
+`migration_required`; legacy config exits with `config_migration_required`; a
+post-database/pre-config cutover exits with `config_promotion_required`. Each
+diagnostic includes the exact command. Newer, unknown, corrupt, or partially
+upgraded state fails closed. Startup never auto-migrates and never publishes
+readiness for rejected state.
 
 ## Consequences
 
