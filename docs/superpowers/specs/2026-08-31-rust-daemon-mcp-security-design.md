@@ -1,0 +1,84 @@
+# Rust Daemon, MCP, And Security Design
+
+**Status:** Proposed for review on 2026-08-31.
+
+## Goal
+
+Provide a discoverable local daemon whose CLI, MCP, WebSocket, and browser
+surfaces share authentication, domain behavior, and graceful lifecycle.
+
+## Lifecycle And Discovery
+
+`hiero daemon` runs in the foreground. `hiero start`, `stop`, `restart`, and
+`status` operate through the platform service integration and versioned
+discovery record. Startup acquires data-root ownership, opens and verifies the
+database, binds loopback, writes discovery atomically, then reports ready.
+
+Startup fails without changing discovery if schema verification, authentication
+material, or binding fails. An occupied configured port is an error; no silent
+port scan occurs. A chosen override is persisted/discovered so plugins never
+hard-code the default port.
+
+Graceful shutdown stops admission, closes MCP/WebSocket sessions, signals
+workers, waits for bounded work, rolls back unfinished transactions, closes the
+semantic index, removes matching discovery state, and releases ownership.
+
+## Authentication
+
+All service endpoints except minimal `/health` require authentication. Native
+clients use `Authorization: Bearer`. Browser entry uses a single-use launch
+grant exchanged for an HttpOnly, SameSite=Strict session plus CSRF token.
+Mutations require the session and CSRF header. Host and Origin validation are
+additional browser defenses, not replacements for credentials.
+
+WebSocket authentication occurs during upgrade and inherits token rotation and
+session expiry. `/shutdown`, status details, admin, config, MCP, and stdio proxy
+operations use the same policy. Logs redact authorization, cookies, API keys,
+launch grants, and query strings.
+
+## MCP
+
+One tool registry owns tool names, descriptions, JSON schemas, and result/error
+mapping. Streamable HTTP and stdio expose this same registry. The stdio adapter
+does not duplicate domain schemas and does not access SQLite. It discovers,
+starts if allowed, authenticates, negotiates protocol versions, and proxies the
+session with bounded reconnect behavior.
+
+The compatibility manifest initially contains the 39 current MCP tools. New
+recall-feedback behavior is added as a versioned contract using `recall_id`,
+activation ids, and idempotency key. Removal of stdio requires a later ADR and
+host-support evidence; it is not merely marked for unspecified future deletion.
+
+## HTTP And Frontend Contracts
+
+Routes are generated or tested against the actual TypeScript client types. The
+contract inventory fixes method, path, auth, request envelope, response
+envelope, status codes, and error body. In particular, provider save/check/model
+and manual dreaming must preserve the shipping frontend shapes unless an
+accepted contract change updates both sides atomically.
+
+Static assets are served from an embedded asset abstraction using `rust-embed`
+lookup/iteration, not a filesystem `ServeDir`. Development may use an explicit
+filesystem override. Unknown client-side routes fall back to embedded
+`index.html`; missing actual assets return 404.
+
+WebSocket messages have a version, event id, event type, and payload. Clients
+resume from the last event id when retained; otherwise the server instructs a
+snapshot refresh. Lag does not silently produce a partial admin view.
+
+## Service Installation
+
+Service definitions use the absolute installed binary and explicit data root.
+They set restart/backoff and log policies appropriate to the platform. Install,
+upgrade, and uninstall are idempotent and do not remove user data. `doctor`
+reports service definition, discovery, auth permissions, protocol compatibility,
+and database/index health without triggering downloads.
+
+## Acceptance Criteria
+
+- Every current frontend request matches a tested Rust route contract.
+- Unauthenticated and cross-origin mutation attempts fail.
+- Tokens/grants do not appear in URLs or logs.
+- Stdio and HTTP MCP expose identical registered schemas and results.
+- Non-default ports and token rotation propagate through discovery/plugins.
+- Kill/restart/stale-discovery tests recover without concurrent daemon writers.
