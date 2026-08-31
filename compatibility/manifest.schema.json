@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hieronymus Rust Compatibility Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "python_reference", "contracts"],
+  "properties": {
+    "manifest_version": {"type": "integer"},
+    "python_reference": {"type": "string"},
+    "contracts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "surface",
+          "acceptance_owner",
+          "technical_owner",
+          "python_entry_point",
+          "tests",
+          "fixture",
+          "rust_test_target",
+          "disposition"
+        ],
+        "properties": {
+          "id": {"type": "string"},
+          "surface": {
+            "type": "string",
+            "enum": [
+              "cli",
+              "mcp",
+              "http",
+              "websocket",
+              "config",
+              "database",
+              "agent-integration",
+              "frontend",
+              "install-update",
+              "diagnostics"
+            ]
+          },
+          "acceptance_owner": {"type": "string"},
+          "technical_owner": {
+            "type": "string",
+            "enum": [
+              "data-config",
+              "database-upgrade",
+              "terminology-memory",
+              "dreaming",
+              "semantic-rag",
+              "daemon-mcp-security",
+              "distribution-cutover"
+            ]
+          },
+          "python_entry_point": {"type": "string"},
+          "tests": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "fixture": {"type": "string"},
+          "rust_test_target": {"type": "string"},
+          "disposition": {
+            "type": "string",
+            "enum": ["preserve", "intentionally-change", "remove"]
+          },
+          "adr": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}
