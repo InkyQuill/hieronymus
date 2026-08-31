@@ -5,6 +5,10 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
+import subprocess
+import sys
+import tempfile
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -24,6 +28,8 @@ _ENTRY_POINT_GROUPS: dict[str, click.Group] = {
     "hieronymus.agent_hooks:main": agent_hook_main,
     "hieronymus.cli:main": cli_main,
 }
+_MCP_REPLAY_OPTION = "--replay-mcp-entrypoint"
+_MCP_REPLAY_OUTCOME_ENV = "HIERONYMUS_MCP_FIXTURE_OUTCOME"
 
 
 def snapshot_cli(repo_root: Path) -> dict[str, object]:
@@ -135,7 +141,7 @@ def _script_contract(name: str, entry_point: str) -> dict[str, object]:
         "hiero": ("help-root.txt", "failure-root.txt"),
         "hieronymus": ("help-hieronymus-root.txt", "failure-hieronymus-root.txt"),
         "hieronymus-agent-hook": ("agent-hook-help.txt", "agent-hook-failure.txt"),
-        "hieronymus-mcp": ("mcp-entrypoint-success.txt", "mcp-entrypoint-failure.txt"),
+        "hieronymus-mcp": ("mcp-entrypoint-success.json", "mcp-entrypoint-failure.json"),
     }
     success_name, failure_name = fixture_names[name]
     contract_id = f"cli.script.{name}"
@@ -160,7 +166,18 @@ def _script_contract(name: str, entry_point: str) -> dict[str, object]:
             }
         )
     else:
-        record.update({"kind": "stdio", "exit_behavior": {"success": 0, "failure": "non-zero"}})
+        record.update(
+            {
+                "kind": "stdio",
+                "success_args": [_MCP_REPLAY_OPTION, "success"],
+                "failure_args": [_MCP_REPLAY_OPTION, "failure"],
+                "success_invocation": _mcp_replay_invocation("success"),
+                "failure_invocation": _mcp_replay_invocation("failure"),
+                "success_environment": _mcp_replay_environment("success"),
+                "failure_environment": _mcp_replay_environment("failure"),
+                "exit_behavior": {"success": 0, "failure": 1},
+            }
+        )
     return record
 
 
@@ -327,16 +344,101 @@ def _write_non_click_entrypoint_fixtures(repo_root: Path, snapshot: dict[str, ob
     assert isinstance(scripts, dict)
     contract = scripts["hieronymus-mcp"]
     assert isinstance(contract, dict)
-    _write_text_fixture(
-        repo_root,
-        str(contract["success_fixture"]),
-        "entry point: hieronymus.mcp_server:main\ncanonical Rust route: hiero mcp\n",
+    success = replay_mcp_entrypoint_case("success")
+    failure = replay_mcp_entrypoint_case("failure")
+    if (success["exit_code"], failure["exit_code"]) != (0, 1):
+        raise RuntimeError("unexpected replayed MCP entrypoint exit behavior")
+    _write_json_fixture(repo_root, str(contract["success_fixture"]), success)
+    _write_json_fixture(repo_root, str(contract["failure_fixture"]), failure)
+
+
+def replay_mcp_entrypoint_case(outcome: str) -> dict[str, object]:
+    """Replay one isolated MCP startup outcome and capture process behavior."""
+    if outcome not in {"success", "failure"}:
+        raise ValueError(f"unknown MCP replay outcome: {outcome}")
+
+    args = [_MCP_REPLAY_OPTION, outcome]
+    with tempfile.TemporaryDirectory(prefix="hieronymus-mcp-compat-") as data_root:
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "HIERONYMUS_DATA_ROOT": data_root,
+                _MCP_REPLAY_OUTCOME_ENV: outcome,
+            }
+        )
+        process = subprocess.run(
+            [sys.executable, "-m", "tools.compatibility.inventory_cli", *args],
+            cwd=Path(__file__).resolve().parents[2],
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    return {
+        "args": args,
+        "invocation": _mcp_replay_invocation(outcome),
+        "environment": _mcp_replay_environment(outcome),
+        "exit_code": process.returncode,
+        "stdout": process.stdout.replace("\r\n", "\n"),
+        "stderr": process.stderr.replace("\r\n", "\n"),
+    }
+
+
+def _mcp_replay_environment(outcome: str) -> dict[str, str]:
+    return {
+        "HIERONYMUS_DATA_ROOT": "<PATH>",
+        _MCP_REPLAY_OUTCOME_ENV: outcome,
+    }
+
+
+def _mcp_replay_invocation(outcome: str) -> list[str]:
+    return [
+        "<PYTHON>",
+        "-m",
+        "tools.compatibility.inventory_cli",
+        _MCP_REPLAY_OPTION,
+        outcome,
+    ]
+
+
+def _write_json_fixture(repo_root: Path, reference: str, payload: dict[str, object]) -> None:
+    destination = repo_root / reference
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
-    _write_text_fixture(
-        repo_root,
-        str(contract["failure_fixture"]),
-        "stdio startup failures must exit non-zero without protocol output\n",
-    )
+
+
+class _McpReplayServer:
+    def __init__(self, outcome: str) -> None:
+        self.outcome = outcome
+
+    def run(self, *, transport: str) -> None:
+        if transport != "stdio":
+            raise AssertionError(f"unexpected MCP transport: {transport}")
+        if self.outcome == "failure":
+            sys.stderr.write("synthetic MCP startup failure\n")
+            raise SystemExit(1)
+
+
+def _replay_mcp_entrypoint(outcome: str) -> int:
+    configured_outcome = os.environ.get(_MCP_REPLAY_OUTCOME_ENV)
+    if configured_outcome != outcome:
+        raise RuntimeError(
+            f"MCP replay environment mismatch: expected {outcome}, got {configured_outcome}"
+        )
+
+    from hieronymus import mcp_server
+
+    shipping_server = mcp_server.server
+    mcp_server.server = _McpReplayServer(outcome)
+    try:
+        mcp_server.main()
+    finally:
+        mcp_server.server = shipping_server
+    return 0
 
 
 def _write_contract_fixtures(repo_root: Path, snapshot: dict[str, object]) -> None:
@@ -362,9 +464,16 @@ def _write_contract_fixtures(repo_root: Path, snapshot: dict[str, object]) -> No
             "failure": {
                 "args": record["failure_args"],
                 "fixture": record["failure_fixture"],
-                "exit_code": (2 if record["exit_behavior"].get("usage_error") == 2 else "non-zero"),
+                "exit_code": record["exit_behavior"].get(
+                    "usage_error", record["exit_behavior"].get("failure")
+                ),
             },
         }
+        if "success_environment" in record:
+            payload["success"]["invocation"] = record["success_invocation"]
+            payload["failure"]["invocation"] = record["failure_invocation"]
+            payload["success"]["environment"] = record["success_environment"]
+            payload["failure"]["environment"] = record["failure_environment"]
         destination = repo_root / fixture_contract
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(
@@ -493,7 +602,14 @@ def _owning_tests(contract_id: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true", help="write the checked-in snapshot")
+    parser.add_argument(
+        _MCP_REPLAY_OPTION,
+        choices=("success", "failure"),
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
+    if args.replay_mcp_entrypoint is not None:
+        return _replay_mcp_entrypoint(args.replay_mcp_entrypoint)
     repo_root = Path(__file__).resolve().parents[2]
     snapshot = write_snapshot(repo_root) if args.write else snapshot_cli(repo_root)
     if args.write:

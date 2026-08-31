@@ -1,0 +1,20 @@
+{
+  "args": [
+    "--replay-mcp-entrypoint",
+    "failure"
+  ],
+  "environment": {
+    "HIERONYMUS_DATA_ROOT": "<PATH>",
+    "HIERONYMUS_MCP_FIXTURE_OUTCOME": "failure"
+  },
+  "exit_code": 1,
+  "invocation": [
+    "<PYTHON>",
+    "-m",
+    "tools.compatibility.inventory_cli",
+    "--replay-mcp-entrypoint",
+    "failure"
+  ],
+  "stderr": "synthetic MCP startup failure\n",
+  "stdout": ""
+}

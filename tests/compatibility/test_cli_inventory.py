@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tools.compatibility.inventory_cli import snapshot_cli, write_snapshot
+from tools.compatibility.inventory_cli import (
+    replay_mcp_entrypoint_case,
+    snapshot_cli,
+    write_snapshot,
+)
 from tools.compatibility.model import load_manifest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -110,6 +114,55 @@ def test_legacy_entrypoints_record_canonical_rust_routes() -> None:
         ("hiero", "agent-hook", "session-end"),
         ("hiero", "agent-hook", "session-start"),
     }
+
+
+def test_mcp_entrypoint_fixtures_replay_distinct_success_and_failure() -> None:
+    snapshot = snapshot_cli(ROOT)
+    record = snapshot["script_contracts"]["hieronymus-mcp"]
+    expected_success = {
+        "args": ["--replay-mcp-entrypoint", "success"],
+        "invocation": [
+            "<PYTHON>",
+            "-m",
+            "tools.compatibility.inventory_cli",
+            "--replay-mcp-entrypoint",
+            "success",
+        ],
+        "environment": {
+            "HIERONYMUS_DATA_ROOT": "<PATH>",
+            "HIERONYMUS_MCP_FIXTURE_OUTCOME": "success",
+        },
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+    }
+    expected_failure = {
+        "args": ["--replay-mcp-entrypoint", "failure"],
+        "invocation": [
+            "<PYTHON>",
+            "-m",
+            "tools.compatibility.inventory_cli",
+            "--replay-mcp-entrypoint",
+            "failure",
+        ],
+        "environment": {
+            "HIERONYMUS_DATA_ROOT": "<PATH>",
+            "HIERONYMUS_MCP_FIXTURE_OUTCOME": "failure",
+        },
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "synthetic MCP startup failure\n",
+    }
+
+    assert record["success_args"] != record["failure_args"]
+    assert json.loads((ROOT / record["success_fixture"]).read_text(encoding="utf-8")) == (
+        expected_success
+    )
+    assert json.loads((ROOT / record["failure_fixture"]).read_text(encoding="utf-8")) == (
+        expected_failure
+    )
+    assert replay_mcp_entrypoint_case("success") == expected_success
+    assert replay_mcp_entrypoint_case("failure") == expected_failure
 
 
 def _contract_records(snapshot: dict[str, object]) -> list[dict[str, object]]:

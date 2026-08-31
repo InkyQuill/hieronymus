@@ -4649,15 +4649,43 @@
       "contract_id": "cli.script.hieronymus-mcp",
       "entry_point": "hieronymus.mcp_server:main",
       "exit_behavior": {
-        "failure": "non-zero",
+        "failure": 1,
         "success": 0
       },
-      "failure_args": [],
-      "failure_fixture": "compatibility/fixtures/cli/mcp-entrypoint-failure.txt",
+      "failure_args": [
+        "--replay-mcp-entrypoint",
+        "failure"
+      ],
+      "failure_environment": {
+        "HIERONYMUS_DATA_ROOT": "<PATH>",
+        "HIERONYMUS_MCP_FIXTURE_OUTCOME": "failure"
+      },
+      "failure_fixture": "compatibility/fixtures/cli/mcp-entrypoint-failure.json",
+      "failure_invocation": [
+        "<PYTHON>",
+        "-m",
+        "tools.compatibility.inventory_cli",
+        "--replay-mcp-entrypoint",
+        "failure"
+      ],
       "fixture_contract": "compatibility/fixtures/cli/contracts/cli_script_hieronymus_mcp.json",
       "kind": "stdio",
-      "success_args": [],
-      "success_fixture": "compatibility/fixtures/cli/mcp-entrypoint-success.txt"
+      "success_args": [
+        "--replay-mcp-entrypoint",
+        "success"
+      ],
+      "success_environment": {
+        "HIERONYMUS_DATA_ROOT": "<PATH>",
+        "HIERONYMUS_MCP_FIXTURE_OUTCOME": "success"
+      },
+      "success_fixture": "compatibility/fixtures/cli/mcp-entrypoint-success.json",
+      "success_invocation": [
+        "<PYTHON>",
+        "-m",
+        "tools.compatibility.inventory_cli",
+        "--replay-mcp-entrypoint",
+        "success"
+      ]
     }
   },
   "scripts": {
