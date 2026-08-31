@@ -1,0 +1,10 @@
+{
+  "cases": [
+    {
+      "error_type": "DreamConfigError",
+      "id": "dream.invalid",
+      "message": "dream.conf is not valid TOML: Expected ']' at the end of a table declaration (at line 1, column 8)"
+    }
+  ],
+  "fixture": "compatibility/fixtures/config/failures/dream.json"
+}

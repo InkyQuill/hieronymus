@@ -1,138 +1,294 @@
 {
-  "agent_integrations": [
-    {
-      "aliases": [],
-      "config_paths": [
-        "~/.claude.json"
+  "agent_integrations": {
+    "fixture": "compatibility/fixtures/agent-integration/current.json",
+    "project_skills": {
+      "custom_file_preserved": true,
+      "installed_files": {
+        ".agents/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+        ".agents/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+        ".agents/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+        ".agents/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+        ".agents/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+        ".agents/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+        ".agents/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+        ".agents/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+        ".claude/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+        ".claude/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+        ".claude/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+        ".claude/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+        ".claude/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+        ".claude/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+        ".claude/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+        ".claude/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21"
+      },
+      "owned_files_removed": true,
+      "python_entry_point": "hieronymus.project_skills:install_project_skills",
+      "reinstall_idempotent": true,
+      "targets": [
+        "agents",
+        "claude"
       ],
-      "contract_id": "agent-integration.target.claude",
-      "detect_paths": [
-        "~/.claude",
-        "~/.claude.json"
-      ],
-      "installs_managed_config": true,
-      "required_asset_paths": [
-        ".claude-plugin/plugin.json",
-        "mcp/hieronymus.mcp.json",
-        "skills/hieronymus-recall/SKILL.md"
-      ],
-      "target": "claude"
+      "uninstall_idempotent": true
     },
-    {
-      "aliases": [],
-      "config_paths": [
-        "~/.codex/config.toml"
-      ],
-      "contract_id": "agent-integration.target.codex",
-      "detect_paths": [
-        "~/.codex"
-      ],
-      "installs_managed_config": true,
-      "required_asset_paths": [
-        ".codex-plugin/plugin.json",
-        ".mcp.json",
-        "skills/hieronymus-recall/SKILL.md"
-      ],
-      "target": "codex"
-    },
-    {
-      "aliases": [],
-      "config_paths": [
-        "~/.openclaw/openclaw.json"
-      ],
-      "contract_id": "agent-integration.target.openclaw",
-      "detect_paths": [
-        "~/.openclaw"
-      ],
-      "installs_managed_config": true,
-      "required_asset_paths": [
-        "openclaw/plugin.json",
-        "mcp/hieronymus.mcp.json",
-        "skills/hieronymus-recall/SKILL.md"
-      ],
-      "target": "openclaw"
-    },
-    {
-      "aliases": [],
-      "config_paths": [
-        "~/.config/opencode/plugin.json"
-      ],
-      "contract_id": "agent-integration.target.opencode",
-      "detect_paths": [
-        "~/.config/opencode"
-      ],
-      "installs_managed_config": true,
-      "required_asset_paths": [
-        "opencode/plugin.json",
-        "mcp/hieronymus.mcp.json",
-        "skills/hieronymus-recall/SKILL.md"
-      ],
-      "target": "opencode"
-    },
-    {
-      "aliases": [],
-      "config_paths": [
-        "~/.gemini/settings.json"
-      ],
-      "contract_id": "agent-integration.target.gemini",
-      "detect_paths": [
-        "~/.gemini"
-      ],
-      "installs_managed_config": true,
-      "required_asset_paths": [
-        "gemini-extension.json",
-        "mcp/hieronymus.mcp.json",
-        "skills/hieronymus-recall/SKILL.md"
-      ],
-      "target": "gemini"
-    },
-    {
-      "aliases": [
-        "xiaomi-mimo",
-        "xiaomi_mimo",
-        "mimocode"
-      ],
-      "config_paths": [
-        "~/.config/mimocode"
-      ],
-      "contract_id": "agent-integration.target.mimo",
-      "detect_paths": [
-        "~/.mimocode",
-        "~/.config/mimocode"
-      ],
-      "installs_managed_config": false,
-      "required_asset_paths": [],
-      "target": "mimo"
-    },
-    {
-      "aliases": [],
-      "config_paths": [
-        "~/.pi/config.json"
-      ],
-      "contract_id": "agent-integration.target.pi",
-      "detect_paths": [
-        "~/.pi"
-      ],
-      "installs_managed_config": false,
-      "required_asset_paths": [],
-      "target": "pi"
-    },
-    {
-      "aliases": [],
-      "config_paths": [
-        "~/.hermes/config.json"
-      ],
-      "contract_id": "agent-integration.target.hermes",
-      "detect_paths": [
-        "~/.hermes"
-      ],
-      "installs_managed_config": false,
-      "required_asset_paths": [],
-      "target": "hermes"
-    }
-  ],
+    "targets": [
+      {
+        "aliases": [],
+        "availability_installed": true,
+        "config_paths": [
+          "~/.claude.json"
+        ],
+        "contract_id": "agent-integration.target.claude",
+        "detect_paths": [
+          "~/.claude",
+          "~/.claude.json"
+        ],
+        "generated_files": {
+          "<DATA_ROOT>/agent-plugins/claude/.claude-plugin/plugin.json": "9e909d7fb12d5baffbcf350e3502d46d87cf0d9d829e77bd852c95d9c06d3b60",
+          "<DATA_ROOT>/agent-plugins/claude/hooks/hooks.codex.json": "837d3fd07c5cfd9792d2047f021104deca93baa6953ce0403d45d77734b46ca3",
+          "<DATA_ROOT>/agent-plugins/claude/mcp/hieronymus.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+          "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+          "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+          "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+          "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+          "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+          "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+          "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+          "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+          "<HOME>/.claude.json": "c118325150c45eaf5a262c8a2f6c0eff0ec6698d4d7addc7fb32912fa39759c5"
+        },
+        "installs_managed_config": true,
+        "python_entry_point": "hieronymus.agent_plugins.claude:ClaudePlugin",
+        "reinstall_idempotent": true,
+        "reinstall_result_kind": "installed",
+        "required_asset_paths": [
+          ".claude-plugin/plugin.json",
+          "mcp/hieronymus.mcp.json",
+          "skills/hieronymus-recall/SKILL.md"
+        ],
+        "result_kind": "installed",
+        "target": "claude"
+      },
+      {
+        "aliases": [],
+        "availability_installed": true,
+        "config_paths": [
+          "~/.codex/config.toml"
+        ],
+        "contract_id": "agent-integration.target.codex",
+        "detect_paths": [
+          "~/.codex"
+        ],
+        "generated_files": {
+          "<DATA_ROOT>/agent-plugins/codex/.codex-plugin/plugin.json": "2bda777b7041a371d5a8d96239671b4e184fb020db0fbc660b8606b943a07b40",
+          "<DATA_ROOT>/agent-plugins/codex/.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+          "<DATA_ROOT>/agent-plugins/codex/hooks/hooks.codex.json": "837d3fd07c5cfd9792d2047f021104deca93baa6953ce0403d45d77734b46ca3",
+          "<DATA_ROOT>/agent-plugins/codex/mcp/hieronymus.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+          "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+          "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+          "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+          "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+          "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+          "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+          "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+          "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+          "<HOME>/.codex/config.toml": "b63e6df9e009e542eb299d9ebe6eed9ed8b3f542f55dbfbba3749b73caa7ee89"
+        },
+        "installs_managed_config": true,
+        "python_entry_point": "hieronymus.agent_plugins.codex:CodexPlugin",
+        "reinstall_idempotent": true,
+        "reinstall_result_kind": "installed",
+        "required_asset_paths": [
+          ".codex-plugin/plugin.json",
+          ".mcp.json",
+          "skills/hieronymus-recall/SKILL.md"
+        ],
+        "result_kind": "installed",
+        "target": "codex"
+      },
+      {
+        "aliases": [],
+        "availability_installed": true,
+        "config_paths": [
+          "~/.openclaw/openclaw.json"
+        ],
+        "contract_id": "agent-integration.target.openclaw",
+        "detect_paths": [
+          "~/.openclaw"
+        ],
+        "generated_files": {
+          "<DATA_ROOT>/agent-plugins/openclaw/hooks/hooks.codex.json": "837d3fd07c5cfd9792d2047f021104deca93baa6953ce0403d45d77734b46ca3",
+          "<DATA_ROOT>/agent-plugins/openclaw/mcp/hieronymus.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+          "<DATA_ROOT>/agent-plugins/openclaw/openclaw/plugin.json": "9e909d7fb12d5baffbcf350e3502d46d87cf0d9d829e77bd852c95d9c06d3b60",
+          "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+          "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+          "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+          "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+          "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+          "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+          "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+          "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+          "<HOME>/.openclaw/openclaw.json": "a8e577062fb11e28c601a3d3c5932125d3526f334627e471f3aac3d183187b9a"
+        },
+        "installs_managed_config": true,
+        "python_entry_point": "hieronymus.agent_plugins.openclaw:OpenClawPlugin",
+        "reinstall_idempotent": true,
+        "reinstall_result_kind": "installed",
+        "required_asset_paths": [
+          "openclaw/plugin.json",
+          "mcp/hieronymus.mcp.json",
+          "skills/hieronymus-recall/SKILL.md"
+        ],
+        "result_kind": "installed",
+        "target": "openclaw"
+      },
+      {
+        "aliases": [],
+        "availability_installed": true,
+        "config_paths": [
+          "~/.config/opencode/plugin.json"
+        ],
+        "contract_id": "agent-integration.target.opencode",
+        "detect_paths": [
+          "~/.config/opencode"
+        ],
+        "generated_files": {
+          "<DATA_ROOT>/agent-plugins/opencode/hooks/hooks.codex.json": "837d3fd07c5cfd9792d2047f021104deca93baa6953ce0403d45d77734b46ca3",
+          "<DATA_ROOT>/agent-plugins/opencode/mcp/hieronymus.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+          "<DATA_ROOT>/agent-plugins/opencode/opencode/plugin.json": "4e30a13c307179dbcce04a5635e806c68edf3d8f4352dc51ead75ca7210d5082",
+          "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+          "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+          "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+          "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+          "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+          "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+          "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+          "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+          "<HOME>/.config/opencode/plugin.json": "21405a8a242c8675c3680b93cb3ca044ce773aba3dfb3773b1ee87d7c44d0cc4"
+        },
+        "installs_managed_config": true,
+        "python_entry_point": "hieronymus.agent_plugins.opencode:OpenCodePlugin",
+        "reinstall_idempotent": true,
+        "reinstall_result_kind": "installed",
+        "required_asset_paths": [
+          "opencode/plugin.json",
+          "mcp/hieronymus.mcp.json",
+          "skills/hieronymus-recall/SKILL.md"
+        ],
+        "result_kind": "installed",
+        "target": "opencode"
+      },
+      {
+        "aliases": [],
+        "availability_installed": true,
+        "config_paths": [
+          "~/.gemini/settings.json"
+        ],
+        "contract_id": "agent-integration.target.gemini",
+        "detect_paths": [
+          "~/.gemini"
+        ],
+        "generated_files": {
+          "<DATA_ROOT>/agent-plugins/gemini/gemini-extension.json": "7753330256f29108708cffe9553b79dd5b4bd3122af4ab9f466969f426f924d0",
+          "<DATA_ROOT>/agent-plugins/gemini/hooks/hooks.codex.json": "837d3fd07c5cfd9792d2047f021104deca93baa6953ce0403d45d77734b46ca3",
+          "<DATA_ROOT>/agent-plugins/gemini/mcp/hieronymus.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+          "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+          "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+          "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+          "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+          "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+          "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+          "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+          "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+          "<HOME>/.gemini/settings.json": "287dcbda36e9498c9f3f3684fb45472ea929f7cc4185defebf88d7f8f9debaea"
+        },
+        "installs_managed_config": true,
+        "python_entry_point": "hieronymus.agent_plugins.gemini:GeminiPlugin",
+        "reinstall_idempotent": true,
+        "reinstall_result_kind": "installed",
+        "required_asset_paths": [
+          "gemini-extension.json",
+          "mcp/hieronymus.mcp.json",
+          "skills/hieronymus-recall/SKILL.md"
+        ],
+        "result_kind": "installed",
+        "target": "gemini"
+      },
+      {
+        "aliases": [
+          "xiaomi-mimo",
+          "xiaomi_mimo",
+          "mimocode"
+        ],
+        "availability_installed": false,
+        "config_paths": [
+          "~/.config/mimocode"
+        ],
+        "contract_id": "agent-integration.target.mimo",
+        "detect_paths": [
+          "~/.mimocode",
+          "~/.config/mimocode"
+        ],
+        "generated_files": {},
+        "installs_managed_config": false,
+        "python_entry_point": "hieronymus.agent_plugins.reserved:MimoPlugin",
+        "reinstall_idempotent": true,
+        "reinstall_result_kind": "reserved",
+        "required_asset_paths": [],
+        "result_kind": "reserved",
+        "target": "mimo"
+      },
+      {
+        "aliases": [],
+        "availability_installed": false,
+        "config_paths": [
+          "~/.pi/config.json"
+        ],
+        "contract_id": "agent-integration.target.pi",
+        "detect_paths": [
+          "~/.pi"
+        ],
+        "generated_files": {},
+        "installs_managed_config": false,
+        "python_entry_point": "hieronymus.agent_plugins.reserved:PiPlugin",
+        "reinstall_idempotent": true,
+        "reinstall_result_kind": "reserved",
+        "required_asset_paths": [],
+        "result_kind": "reserved",
+        "target": "pi"
+      },
+      {
+        "aliases": [],
+        "availability_installed": false,
+        "config_paths": [
+          "~/.hermes/config.json"
+        ],
+        "contract_id": "agent-integration.target.hermes",
+        "detect_paths": [
+          "~/.hermes"
+        ],
+        "generated_files": {},
+        "installs_managed_config": false,
+        "python_entry_point": "hieronymus.agent_plugins.reserved:HermesPlugin",
+        "reinstall_idempotent": true,
+        "reinstall_result_kind": "reserved",
+        "required_asset_paths": [],
+        "result_kind": "reserved",
+        "target": "hermes"
+      }
+    ]
+  },
   "config": {
     "dream": {
+      "failures": {
+        "cases": [
+          {
+            "error_type": "DreamConfigError",
+            "id": "dream.invalid",
+            "message": "dream.conf is not valid TOML: Expected ']' at the end of a table declaration (at line 1, column 8)"
+          }
+        ],
+        "fixture": "compatibility/fixtures/config/failures/dream.json"
+      },
       "field_contracts": {
         "dreaming.enabled": "config.dream.current",
         "dreaming.general_prompt": "config.dream.current",
@@ -222,6 +378,91 @@
         "workflows.terminology_candidates.provider"
       ],
       "fixture": "compatibility/fixtures/config/current/dream.json",
+      "fixtures": {
+        "current": "compatibility/fixtures/config/current/dream.json",
+        "failures": "compatibility/fixtures/config/failures/dream.json",
+        "legacy": "compatibility/fixtures/config/legacy/dream.json",
+        "roundtrip": "compatibility/fixtures/config/roundtrip/dream.json"
+      },
+      "legacy": {
+        "fixture": "compatibility/fixtures/config/legacy/dream.json",
+        "output": {
+          "dreaming": {
+            "enabled": false,
+            "general_prompt": "Use English as the primary searchable memory language. Preserve Japanese, Russian, and other languages only as terms, names, renderings, quoted evidence, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences.",
+            "max_changed_crystals_per_cycle": 200,
+            "max_long_term_records_affected_per_run": 1000,
+            "max_pending_short_term_memories": 200,
+            "max_related_concepts_per_cycle": 80,
+            "max_related_crystals_per_concept": 20,
+            "max_relation_records_per_pass": 1000,
+            "max_short_term_memories_per_cycle": 50,
+            "max_short_term_memories_per_run": 500,
+            "max_total_affected_crystals": 500,
+            "min_pending_short_term_memories": 20,
+            "not_enough_memories_cycle_threshold": 5,
+            "schedule_interval_minutes": 30
+          },
+          "workflows": {
+            "concepts": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "coverage_audit": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "knowledge_crystals": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "reinforcement": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "relations": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "rule_crystals": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "terminology_candidates": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            }
+          }
+        },
+        "persisted_workflows": [
+          "concepts",
+          "coverage_audit",
+          "knowledge_crystals",
+          "reinforcement",
+          "relations",
+          "rule_crystals",
+          "terminology_candidates"
+        ],
+        "source_workflows": [
+          "crystallization",
+          "relation_discovery",
+          "reinforcement_compaction"
+        ]
+      },
       "payload": {
         "dreaming": {
           "enabled": false,
@@ -283,9 +524,147 @@
             "provider": ""
           }
         }
+      },
+      "roundtrip": {
+        "equal": true,
+        "fixture": "compatibility/fixtures/config/roundtrip/dream.json",
+        "input": {
+          "dreaming": {
+            "enabled": false,
+            "general_prompt": "Use English as the primary searchable memory language. Preserve Japanese, Russian, and other languages only as terms, names, renderings, quoted evidence, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences.",
+            "max_changed_crystals_per_cycle": 200,
+            "max_long_term_records_affected_per_run": 1000,
+            "max_pending_short_term_memories": 200,
+            "max_related_concepts_per_cycle": 80,
+            "max_related_crystals_per_concept": 20,
+            "max_relation_records_per_pass": 1000,
+            "max_short_term_memories_per_cycle": 50,
+            "max_short_term_memories_per_run": 500,
+            "max_total_affected_crystals": 500,
+            "min_pending_short_term_memories": 20,
+            "not_enough_memories_cycle_threshold": 5,
+            "schedule_interval_minutes": 30
+          },
+          "workflows": {
+            "concepts": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "coverage_audit": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "knowledge_crystals": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "reinforcement": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "relations": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "rule_crystals": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "terminology_candidates": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            }
+          }
+        },
+        "output": {
+          "dreaming": {
+            "enabled": false,
+            "general_prompt": "Use English as the primary searchable memory language. Preserve Japanese, Russian, and other languages only as terms, names, renderings, quoted evidence, or metadata. Long-term crystals must be 1-2 sentences. Short-term memories must be 1-6 sentences.",
+            "max_changed_crystals_per_cycle": 200,
+            "max_long_term_records_affected_per_run": 1000,
+            "max_pending_short_term_memories": 200,
+            "max_related_concepts_per_cycle": 80,
+            "max_related_crystals_per_concept": 20,
+            "max_relation_records_per_pass": 1000,
+            "max_short_term_memories_per_cycle": 50,
+            "max_short_term_memories_per_run": 500,
+            "max_total_affected_crystals": 500,
+            "min_pending_short_term_memories": 20,
+            "not_enough_memories_cycle_threshold": 5,
+            "schedule_interval_minutes": 30
+          },
+          "workflows": {
+            "concepts": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "coverage_audit": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "knowledge_crystals": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "reinforcement": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "relations": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "rule_crystals": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            },
+            "terminology_candidates": {
+              "enabled": false,
+              "max_records_per_pass": 500,
+              "model": "",
+              "provider": ""
+            }
+          }
+        }
       }
     },
     "ingest": {
+      "failures": {
+        "cases": [
+          {
+            "error_type": "IngestConfigError",
+            "id": "ingest.invalid",
+            "message": "short_memory.warning_sentence_count must be at least 1"
+          }
+        ],
+        "fixture": "compatibility/fixtures/config/failures/ingest.json"
+      },
       "field_contracts": {
         "learn.max_block_chars": "config.ingest.current",
         "short_memory.rejection_sentence_count": "config.ingest.current",
@@ -301,6 +680,11 @@
         "short_memory.warning_symbol_count"
       ],
       "fixture": "compatibility/fixtures/config/current/ingest.json",
+      "fixtures": {
+        "current": "compatibility/fixtures/config/current/ingest.json",
+        "failures": "compatibility/fixtures/config/failures/ingest.json",
+        "roundtrip": "compatibility/fixtures/config/roundtrip/ingest.json"
+      },
       "payload": {
         "learn": {
           "max_block_chars": 1200
@@ -311,9 +695,45 @@
           "warning_sentence_count": 6,
           "warning_symbol_count": 0
         }
+      },
+      "roundtrip": {
+        "equal": true,
+        "fixture": "compatibility/fixtures/config/roundtrip/ingest.json",
+        "input": {
+          "learn": {
+            "max_block_chars": 1200
+          },
+          "short_memory": {
+            "rejection_sentence_count": 30,
+            "rejection_symbol_count": 0,
+            "warning_sentence_count": 6,
+            "warning_symbol_count": 0
+          }
+        },
+        "output": {
+          "learn": {
+            "max_block_chars": 1200
+          },
+          "short_memory": {
+            "rejection_sentence_count": 30,
+            "rejection_symbol_count": 0,
+            "warning_sentence_count": 6,
+            "warning_symbol_count": 0
+          }
+        }
       }
     },
     "provider": {
+      "failures": {
+        "cases": [
+          {
+            "error_type": "ProviderCatalogError",
+            "id": "provider.invalid",
+            "message": "provider.conf is not valid TOML: Expected ']' at the end of a table declaration (at line 1, column 8)"
+          }
+        ],
+        "fixture": "compatibility/fixtures/config/failures/provider.json"
+      },
       "field_contracts": {
         "defaults.model": "config.provider.current",
         "defaults.provider": "config.provider.current",
@@ -333,6 +753,40 @@
         "providers.<id>.url"
       ],
       "fixture": "compatibility/fixtures/config/current/provider.json",
+      "fixtures": {
+        "current": "compatibility/fixtures/config/current/provider.json",
+        "failures": "compatibility/fixtures/config/failures/provider.json",
+        "legacy": "compatibility/fixtures/config/legacy/provider.json",
+        "roundtrip": "compatibility/fixtures/config/roundtrip/provider.json"
+      },
+      "legacy": {
+        "fixture": "compatibility/fixtures/config/legacy/provider.json",
+        "output": {
+          "defaults": {
+            "model": "",
+            "provider": ""
+          },
+          "legacy_provider": {
+            "key": {
+              "configured": true
+            },
+            "name": "Legacy Provider",
+            "timeout_seconds": 30.0,
+            "type": "openai",
+            "url": "https://legacy.invalid/v1"
+          }
+        },
+        "persisted": true,
+        "source": {
+          "legacy_provider": {
+            "api_key": {
+              "configured": true
+            },
+            "endpoint": "https://legacy.invalid/v1",
+            "type": "openai"
+          }
+        }
+      },
       "payload": {
         "defaults": {
           "model": "fixture-model",
@@ -347,9 +801,53 @@
           "type": "openai",
           "url": "https://provider.invalid/v1"
         }
+      },
+      "roundtrip": {
+        "equal": true,
+        "fixture": "compatibility/fixtures/config/roundtrip/provider.json",
+        "input": {
+          "defaults": {
+            "model": "fixture-model",
+            "provider": "synthetic_openai"
+          },
+          "synthetic_openai": {
+            "key": {
+              "configured": true
+            },
+            "name": "Synthetic OpenAI",
+            "timeout_seconds": 30.0,
+            "type": "openai",
+            "url": "https://provider.invalid/v1"
+          }
+        },
+        "output": {
+          "defaults": {
+            "model": "fixture-model",
+            "provider": "synthetic_openai"
+          },
+          "synthetic_openai": {
+            "key": {
+              "configured": true
+            },
+            "name": "Synthetic OpenAI",
+            "timeout_seconds": 30.0,
+            "type": "openai",
+            "url": "https://provider.invalid/v1"
+          }
+        }
       }
     },
     "release": {
+      "failures": {
+        "cases": [
+          {
+            "error_type": "ReleaseConfigError",
+            "id": "release.invalid",
+            "message": "updates.channel must be one of: dev, stable"
+          }
+        ],
+        "fixture": "compatibility/fixtures/config/failures/release.json"
+      },
       "field_contracts": {
         "updates.channel": "config.release.current"
       },
@@ -357,9 +855,28 @@
         "updates.channel"
       ],
       "fixture": "compatibility/fixtures/config/current/release.json",
+      "fixtures": {
+        "current": "compatibility/fixtures/config/current/release.json",
+        "failures": "compatibility/fixtures/config/failures/release.json",
+        "roundtrip": "compatibility/fixtures/config/roundtrip/release.json"
+      },
       "payload": {
         "updates": {
           "channel": "stable"
+        }
+      },
+      "roundtrip": {
+        "equal": true,
+        "fixture": "compatibility/fixtures/config/roundtrip/release.json",
+        "input": {
+          "updates": {
+            "channel": "stable"
+          }
+        },
+        "output": {
+          "updates": {
+            "channel": "stable"
+          }
         }
       }
     }
@@ -3477,9 +3994,11 @@
       "concept_facet_language_tags": [
         {
           "from": "facet_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "concept_facets",
           "to": "id"
         }
@@ -3487,9 +4006,11 @@
       "concept_facet_semantic_tags": [
         {
           "from": "facet_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "concept_facets",
           "to": "id"
         }
@@ -3497,9 +4018,11 @@
       "concept_facet_story_scopes": [
         {
           "from": "facet_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "concept_facets",
           "to": "id"
         }
@@ -3507,17 +4030,21 @@
       "concept_facets": [
         {
           "from": "source_crystal_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "SET NULL",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         },
         {
           "from": "concept_id",
+          "id": 1,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "concepts",
           "to": "id"
         }
@@ -3525,17 +4052,21 @@
       "concept_renames": [
         {
           "from": "dream_run_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "SET NULL",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "dream_runs",
           "to": "id"
         },
         {
           "from": "concept_id",
+          "id": 1,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "concepts",
           "to": "id"
         }
@@ -3543,9 +4074,11 @@
       "concept_semantic_tags": [
         {
           "from": "concept_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "concepts",
           "to": "id"
         }
@@ -3553,9 +4086,11 @@
       "concepts": [
         {
           "from": "merged_into_concept_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "NO ACTION",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "concepts",
           "to": "id"
         }
@@ -3563,17 +4098,21 @@
       "crystal_activations": [
         {
           "from": "session_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "task_sessions",
           "to": "id"
         },
         {
           "from": "crystal_id",
+          "id": 1,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         }
@@ -3581,17 +4120,21 @@
       "crystal_concepts": [
         {
           "from": "concept_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "concepts",
           "to": "id"
         },
         {
           "from": "crystal_id",
+          "id": 1,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         }
@@ -3599,9 +4142,11 @@
       "crystal_language_tags": [
         {
           "from": "crystal_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         }
@@ -3609,17 +4154,21 @@
       "crystal_links": [
         {
           "from": "target_crystal_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         },
         {
           "from": "source_crystal_id",
+          "id": 1,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         }
@@ -3627,9 +4176,11 @@
       "crystal_semantic_tags": [
         {
           "from": "crystal_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         }
@@ -3637,17 +4188,21 @@
       "crystal_sources": [
         {
           "from": "short_term_memory_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "short_term_memories",
           "to": "id"
         },
         {
           "from": "crystal_id",
+          "id": 1,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         }
@@ -3655,9 +4210,11 @@
       "crystal_story_scopes": [
         {
           "from": "crystal_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         }
@@ -3665,9 +4222,11 @@
       "crystals": [
         {
           "from": "supersedes_crystal_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "SET NULL",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         }
@@ -3675,17 +4234,21 @@
       "dream_audit_entries": [
         {
           "from": "phase_run_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "SET NULL",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "dream_phase_runs",
           "to": "id"
         },
         {
           "from": "dream_run_id",
+          "id": 1,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "dream_runs",
           "to": "id"
         }
@@ -3693,9 +4256,11 @@
       "dream_phase_runs": [
         {
           "from": "dream_run_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "dream_runs",
           "to": "id"
         }
@@ -3703,17 +4268,21 @@
       "memory_events": [
         {
           "from": "session_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "SET NULL",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "task_sessions",
           "to": "id"
         },
         {
           "from": "crystal_id",
+          "id": 1,
           "match": "NONE",
           "on_delete": "SET NULL",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "crystals",
           "to": "id"
         }
@@ -3721,9 +4290,11 @@
       "rag_chunk_language_tags": [
         {
           "from": "chunk_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "rag_chunks",
           "to": "id"
         }
@@ -3731,9 +4302,11 @@
       "rag_chunk_semantic_tags": [
         {
           "from": "chunk_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "rag_chunks",
           "to": "id"
         }
@@ -3741,9 +4314,11 @@
       "rag_chunk_story_scopes": [
         {
           "from": "chunk_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "rag_chunks",
           "to": "id"
         }
@@ -3751,33 +4326,41 @@
       "rag_chunks": [
         {
           "from": "source_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "rag_sources",
           "to": "id"
         },
         {
           "from": "series_slug",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 1,
           "table": "rag_sources",
           "to": "series_slug"
         },
         {
           "from": "series_slug",
+          "id": 1,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "series",
           "to": "slug"
         },
         {
           "from": "source_id",
+          "id": 2,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "rag_sources",
           "to": "id"
         }
@@ -3785,9 +4368,11 @@
       "rag_sources": [
         {
           "from": "series_slug",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "series",
           "to": "slug"
         }
@@ -3795,9 +4380,11 @@
       "series_language_tags": [
         {
           "from": "series_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "series",
           "to": "id"
         }
@@ -3805,9 +4392,11 @@
       "short_term_memories": [
         {
           "from": "session_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "task_sessions",
           "to": "id"
         }
@@ -3815,9 +4404,11 @@
       "short_term_memory_language_tags": [
         {
           "from": "memory_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "short_term_memories",
           "to": "id"
         }
@@ -3825,9 +4416,11 @@
       "short_term_memory_semantic_tags": [
         {
           "from": "memory_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "short_term_memories",
           "to": "id"
         }
@@ -3835,9 +4428,11 @@
       "short_term_memory_story_scopes": [
         {
           "from": "memory_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "short_term_memories",
           "to": "id"
         }
@@ -3845,9 +4440,11 @@
       "strict_concept_proposals": [
         {
           "from": "dream_run_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "SET NULL",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "dream_runs",
           "to": "id"
         }
@@ -3855,9 +4452,11 @@
       "strict_term_aliases": [
         {
           "from": "term_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "strict_terms",
           "to": "id"
         }
@@ -3865,9 +4464,11 @@
       "strict_term_tags": [
         {
           "from": "term_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "strict_terms",
           "to": "id"
         }
@@ -3875,9 +4476,11 @@
       "strict_terms": [
         {
           "from": "series_slug",
+          "id": 0,
           "match": "NONE",
           "on_delete": "NO ACTION",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "series",
           "to": "slug"
         }
@@ -3885,9 +4488,11 @@
       "task_session_language_tags": [
         {
           "from": "session_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "task_sessions",
           "to": "id"
         }
@@ -3895,9 +4500,11 @@
       "task_session_semantic_tags": [
         {
           "from": "session_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "task_sessions",
           "to": "id"
         }
@@ -3905,9 +4512,11 @@
       "task_session_story_scopes": [
         {
           "from": "session_id",
+          "id": 0,
           "match": "NONE",
           "on_delete": "CASCADE",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "task_sessions",
           "to": "id"
         }
@@ -3915,9 +4524,11 @@
       "task_sessions": [
         {
           "from": "series_slug",
+          "id": 0,
           "match": "NONE",
           "on_delete": "NO ACTION",
           "on_update": "NO ACTION",
+          "seq": 0,
           "table": "series",
           "to": "slug"
         }
@@ -3926,21 +4537,768 @@
     "indexes": [
       {
         "columns": [
-          "series_slug"
+          {
+            "cid": 2,
+            "name": "series_slug",
+            "seq": 0
+          }
         ],
         "name": "rag_chunks_series_slug_idx",
+        "origin": "c",
+        "partial": false,
         "sql": "CREATE INDEX rag_chunks_series_slug_idx on rag_chunks(series_slug)",
         "table": "rag_chunks",
         "unique": false
       },
       {
         "columns": [
-          "source_id"
+          {
+            "cid": 1,
+            "name": "source_id",
+            "seq": 0
+          }
         ],
         "name": "rag_chunks_source_id_idx",
+        "origin": "c",
+        "partial": false,
         "sql": "CREATE INDEX rag_chunks_source_id_idx on rag_chunks(source_id)",
         "table": "rag_chunks",
         "unique": false
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "k",
+            "seq": 0
+          }
+        ],
+        "name": "sqlite_autoindex_concept_facet_fts_config_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "concept_facet_fts_config",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "segid",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "term",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_concept_facet_fts_idx_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "concept_facet_fts_idx",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "facet_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "language_tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_concept_facet_language_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "concept_facet_language_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "facet_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "semantic_tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_concept_facet_semantic_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "concept_facet_semantic_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "facet_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "story_scope",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_concept_facet_story_scopes_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "concept_facet_story_scopes",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "concept_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_concept_semantic_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "concept_semantic_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "k",
+            "seq": 0
+          }
+        ],
+        "name": "sqlite_autoindex_concepts_fts_config_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "concepts_fts_config",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "segid",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "term",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_concepts_fts_idx_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "concepts_fts_idx",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "crystal_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "concept_id",
+            "seq": 1
+          },
+          {
+            "cid": 2,
+            "name": "link_type",
+            "seq": 2
+          }
+        ],
+        "name": "sqlite_autoindex_crystal_concepts_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "crystal_concepts",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "crystal_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "language_tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_crystal_language_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "crystal_language_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "source_crystal_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "target_crystal_id",
+            "seq": 1
+          },
+          {
+            "cid": 2,
+            "name": "link_type",
+            "seq": 2
+          }
+        ],
+        "name": "sqlite_autoindex_crystal_links_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "crystal_links",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "crystal_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_crystal_semantic_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "crystal_semantic_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "crystal_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "short_term_memory_id",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_crystal_sources_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "crystal_sources",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "crystal_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "scope",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_crystal_story_scopes_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "crystal_story_scopes",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "k",
+            "seq": 0
+          }
+        ],
+        "name": "sqlite_autoindex_crystals_fts_config_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "crystals_fts_config",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "segid",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "term",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_crystals_fts_idx_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "crystals_fts_idx",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 1,
+            "name": "cycle_id",
+            "seq": 0
+          }
+        ],
+        "name": "sqlite_autoindex_dream_runs_1",
+        "origin": "u",
+        "partial": false,
+        "sql": null,
+        "table": "dream_runs",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "source_table",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "source_id",
+            "seq": 1
+          },
+          {
+            "cid": 2,
+            "name": "target_table",
+            "seq": 2
+          }
+        ],
+        "name": "sqlite_autoindex_memory_graph_migration_ledger_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "memory_graph_migration_ledger",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "chunk_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "language_tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_rag_chunk_language_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "rag_chunk_language_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "chunk_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "semantic_tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_rag_chunk_semantic_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "rag_chunk_semantic_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "chunk_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "story_scope",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_rag_chunk_story_scopes_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "rag_chunk_story_scopes",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "k",
+            "seq": 0
+          }
+        ],
+        "name": "sqlite_autoindex_rag_chunks_fts_config_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "rag_chunks_fts_config",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "segid",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "term",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_rag_chunks_fts_idx_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "rag_chunks_fts_idx",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "series_slug",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_rag_sources_1",
+        "origin": "u",
+        "partial": false,
+        "sql": null,
+        "table": "rag_sources",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 1,
+            "name": "series_slug",
+            "seq": 0
+          },
+          {
+            "cid": 2,
+            "name": "source_ref",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_rag_sources_2",
+        "origin": "u",
+        "partial": false,
+        "sql": null,
+        "table": "rag_sources",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 1,
+            "name": "slug",
+            "seq": 0
+          }
+        ],
+        "name": "sqlite_autoindex_series_1",
+        "origin": "u",
+        "partial": false,
+        "sql": null,
+        "table": "series",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "series_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "language_tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_series_language_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "series_language_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "k",
+            "seq": 0
+          }
+        ],
+        "name": "sqlite_autoindex_short_term_memories_fts_config_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "short_term_memories_fts_config",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "segid",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "term",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_short_term_memories_fts_idx_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "short_term_memories_fts_idx",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "memory_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "language_tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_short_term_memory_language_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "short_term_memory_language_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "memory_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "semantic_tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_short_term_memory_semantic_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "short_term_memory_semantic_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "memory_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "story_scope",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_short_term_memory_story_scopes_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "short_term_memory_story_scopes",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "term_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_strict_term_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "strict_term_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "k",
+            "seq": 0
+          }
+        ],
+        "name": "sqlite_autoindex_strict_terms_fts_config_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "strict_terms_fts_config",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "segid",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "term",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_strict_terms_fts_idx_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "strict_terms_fts_idx",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "session_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "language_tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_task_session_language_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "task_session_language_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "session_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "semantic_tag",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_task_session_semantic_tags_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "task_session_semantic_tags",
+        "unique": true
+      },
+      {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "session_id",
+            "seq": 0
+          },
+          {
+            "cid": 1,
+            "name": "story_scope",
+            "seq": 1
+          }
+        ],
+        "name": "sqlite_autoindex_task_session_story_scopes_1",
+        "origin": "pk",
+        "partial": false,
+        "sql": null,
+        "table": "task_session_story_scopes",
+        "unique": true
       }
     ],
     "migration_sources": [
@@ -4288,64 +5646,343 @@
     ]
   },
   "distribution": {
+    "cases": [
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [
+          "bun:--version",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+          "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+          "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+        ],
+        "exit_class": "success",
+        "id": "install.stable-success",
+        "release_config": "[updates]\nchannel = \"stable\"\n",
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "",
+        "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [
+          "bun:--version",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch origin main",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach FETCH_HEAD",
+          "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+        ],
+        "exit_class": "success",
+        "id": "install.dev-success",
+        "release_config": "[updates]\nchannel = \"dev\"\n",
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "",
+        "stdout": "Hieronymus installed successfully from main (dev).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [
+          "bun:--version",
+          "curl:-LsSf https://astral.sh/uv/install.sh -o <CASE_ROOT>/tmp/hieronymus-uv-install.<RANDOM>",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+          "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+          "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+        ],
+        "exit_class": "success",
+        "id": "install.uv-bootstrap",
+        "release_config": "[updates]\nchannel = \"stable\"\n",
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "",
+        "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+        "uv_bootstrapped": true
+      },
+      {
+        "bun_bootstrapped": true,
+        "bun_upgraded": false,
+        "commands": [
+          "curl:-fsSL https://bun.sh/install",
+          "bun:--version",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+          "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+          "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+        ],
+        "exit_class": "success",
+        "id": "install.bun-bootstrap",
+        "release_config": "[updates]\nchannel = \"stable\"\n",
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "",
+        "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": true,
+        "commands": [
+          "bun:--version",
+          "bun:upgrade",
+          "bun:--version",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+          "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app checkout --detach v1.10.0",
+          "uv:tool install --force --reinstall <CASE_ROOT>/managed/hieronymus/app"
+        ],
+        "exit_class": "success",
+        "id": "install.bun-upgrade",
+        "release_config": "[updates]\nchannel = \"stable\"\n",
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "",
+        "stdout": "Hieronymus installed successfully from v1.10.0 (stable).\nManaged checkout: <CASE_ROOT>/managed/hieronymus/app\nUpdate channel config: <CASE_ROOT>/config/hieronymus/release.conf\nIf 'hiero' is not on PATH, add <CASE_ROOT>/home/.local/bin to PATH.\n",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [],
+        "exit_class": "error",
+        "id": "install.missing-git",
+        "release_config": null,
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "error: required command not found: git\n",
+        "stdout": "",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [],
+        "exit_class": "error",
+        "id": "install.missing-curl",
+        "release_config": null,
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "error: required command not found: curl\n",
+        "stdout": "",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [
+          "bun:--version"
+        ],
+        "exit_class": "error",
+        "id": "install.uv-declined",
+        "release_config": null,
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "error: uv is required to install Hieronymus\n",
+        "stdout": "",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [],
+        "exit_class": "error",
+        "id": "install.bun-declined",
+        "release_config": null,
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "error: Bun >= 1.3 is required to build the Hieronymus web console\n",
+        "stdout": "",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [
+          "bun:--version",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app fetch --tags origin",
+          "git:ls-remote --tags https://github.com/InkyQuill/hieronymus.git"
+        ],
+        "exit_class": "error",
+        "id": "install.no-release-tags",
+        "release_config": null,
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "error: stable install requested, but no release tags were found\n       Set HIERONYMUS_INSTALL_CHANNEL=dev to install latest main.\n",
+        "stdout": "",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [
+          "bun:--version"
+        ],
+        "exit_class": "error",
+        "id": "install.existing-non-checkout",
+        "release_config": null,
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "error: <CASE_ROOT>/managed/hieronymus/app exists but is not a git checkout\n",
+        "stdout": "",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [
+          "bun:--version"
+        ],
+        "exit_class": "error",
+        "id": "install.invalid-channel",
+        "release_config": null,
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "error: HIERONYMUS_INSTALL_CHANNEL must be stable or dev\n",
+        "stdout": "",
+        "uv_bootstrapped": false
+      },
+      {
+        "bun_bootstrapped": false,
+        "bun_upgraded": false,
+        "commands": [
+          "bun:--version",
+          "git:-C <CASE_ROOT>/managed/hieronymus/app remote get-url origin"
+        ],
+        "exit_class": "error",
+        "id": "install.wrong-origin",
+        "release_config": null,
+        "source": "install.sh",
+        "source_sha256": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
+        "stderr": "error: existing checkout origin remote does not match https://github.com/InkyQuill/hieronymus.git\n",
+        "stdout": "",
+        "uv_bootstrapped": false
+      },
+      {
+        "app_exists": false,
+        "commands": [
+          "uv:tool uninstall hieronymus",
+          "uv:tool uninstall hieronymus"
+        ],
+        "data_exists": true,
+        "exit_class": "success",
+        "id": "uninstall.keep-data-idempotent",
+        "repeat_idempotent": true,
+        "source": "uninstall.sh",
+        "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+        "stderr": "",
+        "stdout": "Kept Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+        "tool_removal_attempted": true
+      },
+      {
+        "app_exists": false,
+        "commands": [
+          "uv:tool uninstall hieronymus"
+        ],
+        "data_exists": false,
+        "exit_class": "success",
+        "id": "uninstall.purge-data",
+        "repeat_idempotent": null,
+        "source": "uninstall.sh",
+        "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+        "stderr": "",
+        "stdout": "Removed Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+        "tool_removal_attempted": true
+      },
+      {
+        "app_exists": false,
+        "commands": [
+          "uv:tool uninstall hieronymus"
+        ],
+        "data_exists": false,
+        "exit_class": "success",
+        "id": "uninstall.interactive-remove",
+        "repeat_idempotent": null,
+        "source": "uninstall.sh",
+        "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+        "stderr": "",
+        "stdout": "Remove Hieronymus settings and data at <CASE_ROOT>/config/hieronymus? [y/N] Removed Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+        "tool_removal_attempted": true
+      },
+      {
+        "app_exists": false,
+        "commands": [
+          "uv:tool uninstall hieronymus"
+        ],
+        "data_exists": true,
+        "exit_class": "success",
+        "id": "uninstall.interactive-keep",
+        "repeat_idempotent": null,
+        "source": "uninstall.sh",
+        "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+        "stderr": "",
+        "stdout": "Remove Hieronymus settings and data at <CASE_ROOT>/config/hieronymus? [y/N] Kept Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+        "tool_removal_attempted": true
+      },
+      {
+        "app_exists": false,
+        "commands": [
+          "uv:tool uninstall hieronymus"
+        ],
+        "data_exists": true,
+        "exit_class": "success",
+        "id": "uninstall.noninteractive-keep",
+        "repeat_idempotent": null,
+        "source": "uninstall.sh",
+        "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+        "stderr": "",
+        "stdout": "Kept Hieronymus settings and data: <CASE_ROOT>/config/hieronymus\nHieronymus uninstalled.\n",
+        "tool_removal_attempted": true
+      },
+      {
+        "app_exists": true,
+        "commands": [],
+        "data_exists": true,
+        "exit_class": "error",
+        "id": "uninstall.invalid-option",
+        "repeat_idempotent": null,
+        "source": "uninstall.sh",
+        "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+        "stderr": "error: unknown option: --invalid\nusage: /home/inky/Development/hieronymus/.worktrees/rust-compatibility-freeze/uninstall.sh [--keep-data|--purge-data]\n",
+        "stdout": "",
+        "tool_removal_attempted": false
+      },
+      {
+        "app_exists": true,
+        "commands": [],
+        "data_exists": true,
+        "exit_class": "error",
+        "id": "uninstall.unsafe-path",
+        "repeat_idempotent": null,
+        "source": "uninstall.sh",
+        "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
+        "stderr": "error: refusing unsafe path for APP_DIR: <CASE_ROOT>/home\n",
+        "stdout": "",
+        "tool_removal_attempted": false
+      }
+    ],
     "entry_points": {
       "hiero": "hieronymus.cli:main",
       "hieronymus": "hieronymus.cli:main",
       "hieronymus-agent-hook": "hieronymus.agent_hooks:main",
       "hieronymus-mcp": "hieronymus.mcp_server:main"
     },
-    "installer_behaviors": [
-      {
-        "contract_id": "install-update.install-script",
-        "id": "install.managed-checkout",
-        "source": "install.sh"
-      },
-      {
-        "contract_id": "install-update.install-script",
-        "id": "install.origin-guard",
-        "source": "install.sh"
-      },
-      {
-        "contract_id": "install-update.install-script",
-        "id": "install.stable-latest-semver-tag",
-        "source": "install.sh"
-      },
-      {
-        "contract_id": "install-update.install-script",
-        "id": "install.dev-main",
-        "source": "install.sh"
-      },
-      {
-        "contract_id": "install-update.install-script",
-        "id": "install.release-channel-config",
-        "source": "install.sh"
-      },
-      {
-        "contract_id": "install-update.install-script",
-        "id": "install.uv-tool-reinstall",
-        "source": "install.sh"
-      },
-      {
-        "contract_id": "install-update.uninstall-script",
-        "id": "uninstall.safe-path-guards",
-        "source": "uninstall.sh"
-      },
-      {
-        "contract_id": "install-update.uninstall-script",
-        "id": "uninstall.keep-data",
-        "source": "uninstall.sh"
-      },
-      {
-        "contract_id": "install-update.uninstall-script",
-        "id": "uninstall.purge-data",
-        "source": "uninstall.sh"
-      },
-      {
-        "contract_id": "install-update.uninstall-script",
-        "id": "uninstall.noninteractive-keeps-data",
-        "source": "uninstall.sh"
-      }
-    ],
+    "fixture": "compatibility/fixtures/install-update/cases.json",
     "source_sha256": {
       "install.sh": "a5f38ae0fd1893f4145fc229b68688600a11a49ade35b49b185660fc9285c45e",
       "uninstall.sh": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383"
@@ -4445,6 +6082,7 @@
       "tests/compatibility/test_manifest.py::test_loader_enforces_conditional_test_ownership_fields[ownership3-unexpected fields]",
       "tests/compatibility/test_manifest.py::test_loader_parses_typed_public_and_internal_test_ownership",
       "tests/compatibility/test_manifest.py::test_loader_rejects_blank_technical_owner",
+      "tests/compatibility/test_manifest.py::test_loader_rejects_empty_test_path_segment_for_internal_ownership",
       "tests/compatibility/test_manifest.py::test_loader_rejects_missing_required_contract_field",
       "tests/compatibility/test_manifest.py::test_loader_rejects_unknown_enum_value[disposition-defer]",
       "tests/compatibility/test_manifest.py::test_loader_rejects_unknown_enum_value[surface-private-api]",
@@ -4457,12 +6095,19 @@
       "tests/compatibility/test_mcp_inventory.py::test_every_registered_tool_has_manifest_contract_and_complete_fixtures",
       "tests/compatibility/test_mcp_inventory.py::test_mcp_snapshot_matches_fastmcp_registry",
       "tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_records_adr_pinned_boundary_without_manifest_duplication",
+      "tests/compatibility/test_state_inventory.py::test_agent_cases_freeze_host_config_and_owned_skill_lifecycle",
+      "tests/compatibility/test_state_inventory.py::test_agent_contract_entry_points_are_importable_symbols",
       "tests/compatibility/test_state_inventory.py::test_checked_in_state_snapshot_matches_fresh_synthetic_inventory",
       "tests/compatibility/test_state_inventory.py::test_collect_test_nodeids_returns_only_sorted_pytest_node_ids",
+      "tests/compatibility/test_state_inventory.py::test_config_contract_cases_capture_round_trips_failures_and_migrations",
       "tests/compatibility/test_state_inventory.py::test_config_inventory_redacts_secret_values_to_configured_flags",
       "tests/compatibility/test_state_inventory.py::test_database_inventory_includes_schema_objects_and_application_ledgers",
+      "tests/compatibility/test_state_inventory.py::test_distribution_cases_freeze_bootstrap_errors_uninstall_and_idempotence",
+      "tests/compatibility/test_state_inventory.py::test_every_generated_artifact_matches_two_fresh_builds",
       "tests/compatibility/test_state_inventory.py::test_every_python_test_has_manifest_disposition",
+      "tests/compatibility/test_state_inventory.py::test_node_ownership_does_not_inherit_every_contract_from_its_file",
       "tests/compatibility/test_state_inventory.py::test_sqlite_contract_is_stable_for_dynamic_object_names",
+      "tests/compatibility/test_state_inventory.py::test_state_snapshot_covers_config_failures_migrations_and_replayable_integrations",
       "tests/compatibility/test_state_inventory.py::test_state_snapshot_uses_only_explicit_synthetic_root",
       "tests/test_admin_actions.py::test_activate_global_lesson_rejects_already_active_without_second_audit",
       "tests/test_admin_actions.py::test_admin_crystal_lifecycle_actions_update_links_status_scope_and_audit",

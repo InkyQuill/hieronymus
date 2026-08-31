@@ -1,0 +1,278 @@
+{
+  "fixture": "compatibility/fixtures/agent-integration/current.json",
+  "project_skills": {
+    "custom_file_preserved": true,
+    "installed_files": {
+      ".agents/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+      ".agents/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+      ".agents/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+      ".agents/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+      ".agents/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+      ".agents/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+      ".agents/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+      ".agents/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+      ".claude/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+      ".claude/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+      ".claude/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+      ".claude/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+      ".claude/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+      ".claude/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+      ".claude/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+      ".claude/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21"
+    },
+    "owned_files_removed": true,
+    "python_entry_point": "hieronymus.project_skills:install_project_skills",
+    "reinstall_idempotent": true,
+    "targets": [
+      "agents",
+      "claude"
+    ],
+    "uninstall_idempotent": true
+  },
+  "targets": [
+    {
+      "aliases": [],
+      "availability_installed": true,
+      "config_paths": [
+        "~/.claude.json"
+      ],
+      "contract_id": "agent-integration.target.claude",
+      "detect_paths": [
+        "~/.claude",
+        "~/.claude.json"
+      ],
+      "generated_files": {
+        "<DATA_ROOT>/agent-plugins/claude/.claude-plugin/plugin.json": "9e909d7fb12d5baffbcf350e3502d46d87cf0d9d829e77bd852c95d9c06d3b60",
+        "<DATA_ROOT>/agent-plugins/claude/hooks/hooks.codex.json": "837d3fd07c5cfd9792d2047f021104deca93baa6953ce0403d45d77734b46ca3",
+        "<DATA_ROOT>/agent-plugins/claude/mcp/hieronymus.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+        "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+        "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+        "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+        "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+        "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+        "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+        "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+        "<DATA_ROOT>/agent-plugins/claude/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+        "<HOME>/.claude.json": "c118325150c45eaf5a262c8a2f6c0eff0ec6698d4d7addc7fb32912fa39759c5"
+      },
+      "installs_managed_config": true,
+      "python_entry_point": "hieronymus.agent_plugins.claude:ClaudePlugin",
+      "reinstall_idempotent": true,
+      "reinstall_result_kind": "installed",
+      "required_asset_paths": [
+        ".claude-plugin/plugin.json",
+        "mcp/hieronymus.mcp.json",
+        "skills/hieronymus-recall/SKILL.md"
+      ],
+      "result_kind": "installed",
+      "target": "claude"
+    },
+    {
+      "aliases": [],
+      "availability_installed": true,
+      "config_paths": [
+        "~/.codex/config.toml"
+      ],
+      "contract_id": "agent-integration.target.codex",
+      "detect_paths": [
+        "~/.codex"
+      ],
+      "generated_files": {
+        "<DATA_ROOT>/agent-plugins/codex/.codex-plugin/plugin.json": "2bda777b7041a371d5a8d96239671b4e184fb020db0fbc660b8606b943a07b40",
+        "<DATA_ROOT>/agent-plugins/codex/.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+        "<DATA_ROOT>/agent-plugins/codex/hooks/hooks.codex.json": "837d3fd07c5cfd9792d2047f021104deca93baa6953ce0403d45d77734b46ca3",
+        "<DATA_ROOT>/agent-plugins/codex/mcp/hieronymus.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+        "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+        "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+        "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+        "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+        "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+        "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+        "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+        "<DATA_ROOT>/agent-plugins/codex/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+        "<HOME>/.codex/config.toml": "b63e6df9e009e542eb299d9ebe6eed9ed8b3f542f55dbfbba3749b73caa7ee89"
+      },
+      "installs_managed_config": true,
+      "python_entry_point": "hieronymus.agent_plugins.codex:CodexPlugin",
+      "reinstall_idempotent": true,
+      "reinstall_result_kind": "installed",
+      "required_asset_paths": [
+        ".codex-plugin/plugin.json",
+        ".mcp.json",
+        "skills/hieronymus-recall/SKILL.md"
+      ],
+      "result_kind": "installed",
+      "target": "codex"
+    },
+    {
+      "aliases": [],
+      "availability_installed": true,
+      "config_paths": [
+        "~/.openclaw/openclaw.json"
+      ],
+      "contract_id": "agent-integration.target.openclaw",
+      "detect_paths": [
+        "~/.openclaw"
+      ],
+      "generated_files": {
+        "<DATA_ROOT>/agent-plugins/openclaw/hooks/hooks.codex.json": "837d3fd07c5cfd9792d2047f021104deca93baa6953ce0403d45d77734b46ca3",
+        "<DATA_ROOT>/agent-plugins/openclaw/mcp/hieronymus.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+        "<DATA_ROOT>/agent-plugins/openclaw/openclaw/plugin.json": "9e909d7fb12d5baffbcf350e3502d46d87cf0d9d829e77bd852c95d9c06d3b60",
+        "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+        "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+        "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+        "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+        "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+        "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+        "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+        "<DATA_ROOT>/agent-plugins/openclaw/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+        "<HOME>/.openclaw/openclaw.json": "a8e577062fb11e28c601a3d3c5932125d3526f334627e471f3aac3d183187b9a"
+      },
+      "installs_managed_config": true,
+      "python_entry_point": "hieronymus.agent_plugins.openclaw:OpenClawPlugin",
+      "reinstall_idempotent": true,
+      "reinstall_result_kind": "installed",
+      "required_asset_paths": [
+        "openclaw/plugin.json",
+        "mcp/hieronymus.mcp.json",
+        "skills/hieronymus-recall/SKILL.md"
+      ],
+      "result_kind": "installed",
+      "target": "openclaw"
+    },
+    {
+      "aliases": [],
+      "availability_installed": true,
+      "config_paths": [
+        "~/.config/opencode/plugin.json"
+      ],
+      "contract_id": "agent-integration.target.opencode",
+      "detect_paths": [
+        "~/.config/opencode"
+      ],
+      "generated_files": {
+        "<DATA_ROOT>/agent-plugins/opencode/hooks/hooks.codex.json": "837d3fd07c5cfd9792d2047f021104deca93baa6953ce0403d45d77734b46ca3",
+        "<DATA_ROOT>/agent-plugins/opencode/mcp/hieronymus.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+        "<DATA_ROOT>/agent-plugins/opencode/opencode/plugin.json": "4e30a13c307179dbcce04a5635e806c68edf3d8f4352dc51ead75ca7210d5082",
+        "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+        "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+        "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+        "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+        "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+        "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+        "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+        "<DATA_ROOT>/agent-plugins/opencode/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+        "<HOME>/.config/opencode/plugin.json": "21405a8a242c8675c3680b93cb3ca044ce773aba3dfb3773b1ee87d7c44d0cc4"
+      },
+      "installs_managed_config": true,
+      "python_entry_point": "hieronymus.agent_plugins.opencode:OpenCodePlugin",
+      "reinstall_idempotent": true,
+      "reinstall_result_kind": "installed",
+      "required_asset_paths": [
+        "opencode/plugin.json",
+        "mcp/hieronymus.mcp.json",
+        "skills/hieronymus-recall/SKILL.md"
+      ],
+      "result_kind": "installed",
+      "target": "opencode"
+    },
+    {
+      "aliases": [],
+      "availability_installed": true,
+      "config_paths": [
+        "~/.gemini/settings.json"
+      ],
+      "contract_id": "agent-integration.target.gemini",
+      "detect_paths": [
+        "~/.gemini"
+      ],
+      "generated_files": {
+        "<DATA_ROOT>/agent-plugins/gemini/gemini-extension.json": "7753330256f29108708cffe9553b79dd5b4bd3122af4ab9f466969f426f924d0",
+        "<DATA_ROOT>/agent-plugins/gemini/hooks/hooks.codex.json": "837d3fd07c5cfd9792d2047f021104deca93baa6953ce0403d45d77734b46ca3",
+        "<DATA_ROOT>/agent-plugins/gemini/mcp/hieronymus.mcp.json": "95e2bed319d500d11791f895534d86c8a258bd5ec74829be9bd547d6b45a91d6",
+        "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-bootstrap/SKILL.md": "e139ef144a51d0fb017e11dad90afcecc4a7063e261de56629aef595c71821ab",
+        "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-learn/SKILL.md": "598f65f8bd775b97bbe962af343c6f955b5b35256e024283ecb5ce94b6fc38ed",
+        "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-orchestrate/SKILL.md": "c9a4aa22bf81cb6ee2a41186de39d90505983b4a18684978d96aff4cb9ccb9ec",
+        "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-read/SKILL.md": "b34223eacffb9f75cd5c37fe7dbf9a1726d08e062e0e25fc97535c88318b855a",
+        "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-recall/SKILL.md": "50b861fb1e9b60577fdf501b33deb6c42b74a906e3696a57d807879f99c26edf",
+        "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-remember/SKILL.md": "4d01cceea175374b06921f116965e51470f7ae64b5935ec3788e137b6534d186",
+        "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-review/SKILL.md": "fe755038a233aaa7f20891062f92098549d183782e7d34e7f1958852dc8dd5b8",
+        "<DATA_ROOT>/agent-plugins/gemini/skills/hieronymus-translate/SKILL.md": "37cdfb040f88a8fc7e54c2de04aa0ae7d26bfb5212f5fe2fac920b07e294bd21",
+        "<HOME>/.gemini/settings.json": "287dcbda36e9498c9f3f3684fb45472ea929f7cc4185defebf88d7f8f9debaea"
+      },
+      "installs_managed_config": true,
+      "python_entry_point": "hieronymus.agent_plugins.gemini:GeminiPlugin",
+      "reinstall_idempotent": true,
+      "reinstall_result_kind": "installed",
+      "required_asset_paths": [
+        "gemini-extension.json",
+        "mcp/hieronymus.mcp.json",
+        "skills/hieronymus-recall/SKILL.md"
+      ],
+      "result_kind": "installed",
+      "target": "gemini"
+    },
+    {
+      "aliases": [
+        "xiaomi-mimo",
+        "xiaomi_mimo",
+        "mimocode"
+      ],
+      "availability_installed": false,
+      "config_paths": [
+        "~/.config/mimocode"
+      ],
+      "contract_id": "agent-integration.target.mimo",
+      "detect_paths": [
+        "~/.mimocode",
+        "~/.config/mimocode"
+      ],
+      "generated_files": {},
+      "installs_managed_config": false,
+      "python_entry_point": "hieronymus.agent_plugins.reserved:MimoPlugin",
+      "reinstall_idempotent": true,
+      "reinstall_result_kind": "reserved",
+      "required_asset_paths": [],
+      "result_kind": "reserved",
+      "target": "mimo"
+    },
+    {
+      "aliases": [],
+      "availability_installed": false,
+      "config_paths": [
+        "~/.pi/config.json"
+      ],
+      "contract_id": "agent-integration.target.pi",
+      "detect_paths": [
+        "~/.pi"
+      ],
+      "generated_files": {},
+      "installs_managed_config": false,
+      "python_entry_point": "hieronymus.agent_plugins.reserved:PiPlugin",
+      "reinstall_idempotent": true,
+      "reinstall_result_kind": "reserved",
+      "required_asset_paths": [],
+      "result_kind": "reserved",
+      "target": "pi"
+    },
+    {
+      "aliases": [],
+      "availability_installed": false,
+      "config_paths": [
+        "~/.hermes/config.json"
+      ],
+      "contract_id": "agent-integration.target.hermes",
+      "detect_paths": [
+        "~/.hermes"
+      ],
+      "generated_files": {},
+      "installs_managed_config": false,
+      "python_entry_point": "hieronymus.agent_plugins.reserved:HermesPlugin",
+      "reinstall_idempotent": true,
+      "reinstall_result_kind": "reserved",
+      "required_asset_paths": [],
+      "result_kind": "reserved",
+      "target": "hermes"
+    }
+  ]
+}

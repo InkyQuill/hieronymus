@@ -1,0 +1,10 @@
+{
+  "cases": [
+    {
+      "error_type": "IngestConfigError",
+      "id": "ingest.invalid",
+      "message": "short_memory.warning_sentence_count must be at least 1"
+    }
+  ],
+  "fixture": "compatibility/fixtures/config/failures/ingest.json"
+}

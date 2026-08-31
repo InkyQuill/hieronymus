@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -197,7 +198,7 @@ def _load_test_ownership(data: object) -> TestOwnership:
     _require_fields(ownership_data, required_fields, "test ownership")
 
     node_id = _string(ownership_data["node_id"], "test ownership node_id")
-    if not node_id.startswith("tests/") or "::" not in node_id:
+    if re.fullmatch(r"tests/.+::.+", node_id) is None:
         raise ValueError("test ownership node_id must be a pytest node id under tests/")
 
     if disposition == "public_contract":

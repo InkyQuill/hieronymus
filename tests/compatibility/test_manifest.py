@@ -277,6 +277,26 @@ def test_loader_enforces_conditional_test_ownership_fields(
         load_manifest(path)
 
 
+def test_loader_rejects_empty_test_path_segment_for_internal_ownership(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    payload = {
+        "manifest_version": 1,
+        "python_reference": "0.7.0",
+        "contracts": [complete_contract()],
+        "test_ownership": [
+            {
+                "node_id": "tests/::test_private_helper",
+                "disposition": "implementation_internal",
+                "reason": "Exercises a Python-only helper implementation.",
+            }
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="pytest node id"):
+        load_manifest(path)
+
+
 def test_manifest_validation_rejects_duplicate_nodes_unknown_contracts_and_file_mismatches(
     tmp_path: Path,
 ) -> None:

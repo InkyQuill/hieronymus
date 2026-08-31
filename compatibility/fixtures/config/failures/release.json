@@ -1,0 +1,10 @@
+{
+  "cases": [
+    {
+      "error_type": "ReleaseConfigError",
+      "id": "release.invalid",
+      "message": "updates.channel must be one of: dev, stable"
+    }
+  ],
+  "fixture": "compatibility/fixtures/config/failures/release.json"
+}
