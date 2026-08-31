@@ -1,0 +1,1619 @@
+{
+  "routes": [
+    {
+      "contract_id": "frontend.route.get.root",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/",
+          "status": 404
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "not_found"
+          },
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 404
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/",
+          "query": {}
+        },
+        "response": {
+          "body": "<!doctype html><title>Hieronymus Web Console</title>",
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "frontend.route.get.admin",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/admin",
+          "status": 404
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/admin",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "not_found"
+          },
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 404
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/admin",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/admin",
+          "query": {}
+        },
+        "response": {
+          "body": "<!doctype html><title>Hieronymus Web Console</title>",
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "frontend.route.get.admin.path",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/admin/{path}",
+          "status": 404
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/admin/fixture",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "not_found"
+          },
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 404
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/admin/{path}",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/admin/fixture",
+          "query": {}
+        },
+        "response": {
+          "body": "<!doctype html><title>Hieronymus Web Console</title>",
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.post.api.admin.actions.action",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "POST",
+          "path_template": "/api/admin/actions/{action}",
+          "status": 403
+        },
+        "request": {
+          "body": {
+            "confirmed": true,
+            "id": 1
+          },
+          "headers": {},
+          "method": "POST",
+          "path": "/api/admin/actions/reinforce_crystal",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "POST",
+          "path_template": "/api/admin/actions/{action}",
+          "status": 200
+        },
+        "request": {
+          "body": {
+            "confirmed": true,
+            "id": 1
+          },
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "POST",
+          "path": "/api/admin/actions/reinforce_crystal",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "result": {
+              "message": "Synthetic action completed"
+            },
+            "snapshot": {
+              "detail": {
+                "body": "",
+                "fields": [],
+                "subtitle": "",
+                "title": ""
+              },
+              "rows": [],
+              "selected": null,
+              "view": "Crystals"
+            }
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.get.api.admin.dashboard",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/api/admin/dashboard",
+          "status": 403
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/api/admin/dashboard",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/api/admin/dashboard",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "GET",
+          "path": "/api/admin/dashboard",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "default_view": "Crystals",
+            "stats": {},
+            "views": [
+              "Crystals"
+            ]
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.get.api.admin.snapshot",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/api/admin/snapshot",
+          "status": 403
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/api/admin/snapshot",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/api/admin/snapshot",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "GET",
+          "path": "/api/admin/snapshot",
+          "query": {
+            "selected_id": "1",
+            "view": "Crystals"
+          }
+        },
+        "response": {
+          "body": {
+            "snapshot": {
+              "detail": {
+                "body": "",
+                "fields": [],
+                "subtitle": "",
+                "title": ""
+              },
+              "rows": [],
+              "selected": null,
+              "view": "Crystals"
+            }
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.post.api.mcp.operation",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "POST",
+          "path_template": "/api/mcp/{operation}",
+          "status": 401
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "POST",
+          "path": "/api/mcp/status",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "unauthorized"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 401
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "POST",
+          "path_template": "/api/mcp/{operation}",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "POST",
+          "path": "/api/mcp/status",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "result": {
+              "service": {
+                "available": true,
+                "mode": "local-http"
+              }
+            }
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.get.api.providers",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/api/providers",
+          "status": 403
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/api/providers",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/api/providers",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "GET",
+          "path": "/api/providers",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "",
+            "providers": []
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.post.api.providers",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "POST",
+          "path_template": "/api/providers",
+          "status": 403
+        },
+        "request": {
+          "body": {
+            "provider": {
+              "id": "synthetic-provider",
+              "key": "compat-secret-do-not-log",
+              "name": "Synthetic Provider",
+              "timeout_seconds": "30",
+              "type": "openai",
+              "url": "https://provider.invalid/v1"
+            }
+          },
+          "headers": {},
+          "method": "POST",
+          "path": "/api/providers",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "POST",
+          "path_template": "/api/providers",
+          "status": 200
+        },
+        "request": {
+          "body": {
+            "provider": {
+              "id": "synthetic-provider",
+              "key": "compat-secret-do-not-log",
+              "name": "Synthetic Provider",
+              "timeout_seconds": "30",
+              "type": "openai",
+              "url": "https://provider.invalid/v1"
+            }
+          },
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "POST",
+          "path": "/api/providers",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "",
+            "provider": {
+              "id": "synthetic-provider",
+              "key_configured": true,
+              "model": "",
+              "name": "Synthetic Provider",
+              "timeout_seconds": 30.0,
+              "type": "openai",
+              "url": "https://provider.invalid/v1"
+            }
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.delete.api.providers.id",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "DELETE",
+          "path_template": "/api/providers/{id}",
+          "status": 403
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "DELETE",
+          "path": "/api/providers/synthetic-provider",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "DELETE",
+          "path_template": "/api/providers/{id}",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "DELETE",
+          "path": "/api/providers/synthetic-provider",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "deleted": "synthetic-provider",
+            "error": ""
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.get.api.providers.id",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/api/providers/{id}",
+          "status": 403
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/api/providers/synthetic-provider",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/api/providers/{id}",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "GET",
+          "path": "/api/providers/synthetic-provider",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "",
+            "provider": {
+              "id": "synthetic-provider",
+              "key_configured": true,
+              "model": "",
+              "name": "Synthetic Provider",
+              "timeout_seconds": 30.0,
+              "type": "openai",
+              "url": "https://provider.invalid/v1"
+            }
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.post.api.providers.id.check",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "POST",
+          "path_template": "/api/providers/{id}/check",
+          "status": 403
+        },
+        "request": {
+          "body": {},
+          "headers": {},
+          "method": "POST",
+          "path": "/api/providers/synthetic-provider/check",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "POST",
+          "path_template": "/api/providers/{id}/check",
+          "status": 200
+        },
+        "request": {
+          "body": {},
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "POST",
+          "path": "/api/providers/synthetic-provider/check",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "check": {
+              "error": "",
+              "models": [
+                "synthetic-model"
+              ],
+              "ok": true,
+              "source": "fixture"
+            },
+            "error": ""
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.get.api.providers.id.models",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/api/providers/{id}/models",
+          "status": 403
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/api/providers/synthetic-provider/models",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/api/providers/{id}/models",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "GET",
+          "path": "/api/providers/synthetic-provider/models",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "",
+            "models": [
+              "synthetic-model"
+            ],
+            "source": "fixture"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.get.api.settings.dream",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/api/settings/dream",
+          "status": 403
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/api/settings/dream",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/api/settings/dream",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "GET",
+          "path": "/api/settings/dream",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "dream": {
+              "dreaming": {},
+              "workflows": {}
+            },
+            "error": "",
+            "model_cache": {
+              "providers": {}
+            },
+            "providers": []
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.post.api.settings.dream",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "POST",
+          "path_template": "/api/settings/dream",
+          "status": 403
+        },
+        "request": {
+          "body": {
+            "dream": {
+              "dreaming": {
+                "enabled": false
+              },
+              "workflows": {}
+            }
+          },
+          "headers": {},
+          "method": "POST",
+          "path": "/api/settings/dream",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "POST",
+          "path_template": "/api/settings/dream",
+          "status": 200
+        },
+        "request": {
+          "body": {
+            "dream": {
+              "dreaming": {
+                "enabled": false
+              },
+              "workflows": {}
+            }
+          },
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "POST",
+          "path": "/api/settings/dream",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "dream": {
+              "dreaming": {
+                "enabled": false
+              },
+              "workflows": {}
+            },
+            "error": ""
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.get.api.settings.ingest",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/api/settings/ingest",
+          "status": 403
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/api/settings/ingest",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/api/settings/ingest",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "GET",
+          "path": "/api/settings/ingest",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "",
+            "ingest": {
+              "learn": {
+                "max_block_chars": 1200
+              },
+              "short_memory": {
+                "rejection_sentence_count": 30,
+                "rejection_symbol_count": 5000,
+                "warning_sentence_count": 6,
+                "warning_symbol_count": 1200
+              }
+            }
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.post.api.settings.ingest",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "POST",
+          "path_template": "/api/settings/ingest",
+          "status": 403
+        },
+        "request": {
+          "body": {
+            "ingest": {
+              "learn": {
+                "max_block_chars": 1200
+              },
+              "short_memory": {
+                "rejection_sentence_count": 30,
+                "rejection_symbol_count": 5000,
+                "warning_sentence_count": 6,
+                "warning_symbol_count": 1200
+              }
+            }
+          },
+          "headers": {},
+          "method": "POST",
+          "path": "/api/settings/ingest",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "POST",
+          "path_template": "/api/settings/ingest",
+          "status": 200
+        },
+        "request": {
+          "body": {
+            "ingest": {
+              "learn": {
+                "max_block_chars": 1200
+              },
+              "short_memory": {
+                "rejection_sentence_count": 30,
+                "rejection_symbol_count": 5000,
+                "warning_sentence_count": 6,
+                "warning_symbol_count": 1200
+              }
+            }
+          },
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "POST",
+          "path": "/api/settings/ingest",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "",
+            "ingest": {
+              "learn": {
+                "max_block_chars": 1200
+              },
+              "short_memory": {
+                "rejection_sentence_count": 30,
+                "rejection_symbol_count": 5000,
+                "warning_sentence_count": 6,
+                "warning_symbol_count": 1200
+              }
+            }
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.get.api.settings.release",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/api/settings/release",
+          "status": 403
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/api/settings/release",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/api/settings/release",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "GET",
+          "path": "/api/settings/release",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "",
+            "release": {
+              "update_channel": "stable"
+            }
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.post.api.settings.release",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "POST",
+          "path_template": "/api/settings/release",
+          "status": 403
+        },
+        "request": {
+          "body": {
+            "release": {
+              "update_channel": "stable"
+            }
+          },
+          "headers": {},
+          "method": "POST",
+          "path": "/api/settings/release",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "POST",
+          "path_template": "/api/settings/release",
+          "status": 200
+        },
+        "request": {
+          "body": {
+            "release": {
+              "update_channel": "stable"
+            }
+          },
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "POST",
+          "path": "/api/settings/release",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "",
+            "release": {
+              "update_channel": "stable"
+            }
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "frontend.route.get.assets.path",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/assets/{path}",
+          "status": 404
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/assets/fixture",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "not_found"
+          },
+          "headers": {
+            "Content-Type": "application/javascript"
+          },
+          "status": 404
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/assets/{path}",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/assets/fixture",
+          "query": {}
+        },
+        "response": {
+          "body": "console.log('Hieronymus fixture');",
+          "headers": {
+            "Content-Type": "application/javascript"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "frontend.route.get.config",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/config",
+          "status": 404
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/config",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "not_found"
+          },
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 404
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/config",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/config",
+          "query": {}
+        },
+        "response": {
+          "body": "<!doctype html><title>Hieronymus Web Console</title>",
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "frontend.route.get.config.path",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/config/{path}",
+          "status": 404
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/config/fixture",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "not_found"
+          },
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 404
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/config/{path}",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/config/fixture",
+          "query": {}
+        },
+        "response": {
+          "body": "<!doctype html><title>Hieronymus Web Console</title>",
+          "headers": {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.get.health",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/health",
+          "status": 401
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/health",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "unauthorized"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 401
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/health",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "GET",
+          "path": "/health",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "ok": true,
+            "service": "hieronymus",
+            "version": "<VERSION>"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.post.mcp",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "POST",
+          "path_template": "/mcp",
+          "status": 400
+        },
+        "request": {
+          "body": {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {}
+          },
+          "headers": {},
+          "method": "POST",
+          "path": "/mcp",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": {
+              "code": -32600,
+              "message": "unsupported MCP protocol version"
+            },
+            "id": 1,
+            "jsonrpc": "2.0"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 400
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "POST",
+          "path_template": "/mcp",
+          "status": 200
+        },
+        "request": {
+          "body": {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "tools/list",
+            "params": {}
+          },
+          "headers": {
+            "Authorization": "Bearer compat-secret-do-not-log"
+          },
+          "method": "POST",
+          "path": "/mcp",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "result": {
+              "tools": []
+            }
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.post.shutdown",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "POST",
+          "path_template": "/shutdown",
+          "status": 401
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "POST",
+          "path": "/shutdown",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "unauthorized"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 401
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "POST",
+          "path_template": "/shutdown",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "POST",
+          "path": "/shutdown",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "ok": true,
+            "stopping": true
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "http.route.get.status",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/status",
+          "status": 401
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/status",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "unauthorized"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 401
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/status",
+          "status": 200
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "X-Hieronymus-Token": "compat-secret-do-not-log"
+          },
+          "method": "GET",
+          "path": "/status",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "data_root": "<DATA_ROOT>",
+            "host": "127.0.0.1",
+            "pid": "<PID>",
+            "port": "<PORT>",
+            "running": true,
+            "version": "<VERSION>"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 200
+        }
+      }
+    },
+    {
+      "contract_id": "websocket.route.get.ws.admin",
+      "failure": {
+        "normalized_log_fields": {
+          "credential": "<absent>",
+          "method": "GET",
+          "path_template": "/ws/admin",
+          "status": 403
+        },
+        "request": {
+          "body": null,
+          "headers": {},
+          "method": "GET",
+          "path": "/ws/admin",
+          "query": {}
+        },
+        "response": {
+          "body": {
+            "error": "forbidden"
+          },
+          "headers": {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          "status": 403
+        }
+      },
+      "success": {
+        "normalized_log_fields": {
+          "credential": "<redacted>",
+          "method": "GET",
+          "path_template": "/ws/admin",
+          "status": 101
+        },
+        "request": {
+          "body": null,
+          "headers": {
+            "Cookie": "hieronymus_token=compat-secret-do-not-log",
+            "Origin": "http://127.0.0.1:<PORT>",
+            "Sec-WebSocket-Key": "Zml4dHVyZS13ZWJzb2NrZXQta2V5",
+            "Upgrade": "websocket"
+          },
+          "method": "GET",
+          "path": "/ws/admin",
+          "query": {}
+        },
+        "response": {
+          "body": null,
+          "headers": {
+            "Connection": "Upgrade",
+            "Upgrade": "websocket"
+          },
+          "status": 101
+        }
+      }
+    }
+  ]
+}
