@@ -19,8 +19,10 @@ material, or binding fails. An occupied configured port is an error; no silent
 port scan occurs. A chosen override is persisted/discovered so plugins never
 hard-code the default port.
 
-Before binding or publishing discovery, startup runs read-only schema, config,
-and cutover-journal classification. It starts only for the current supported
+Before binding or publishing discovery, startup runs the shared bounded
+`StateClassifier`, which reads only version markers, required-file presence,
+and cutover-journal state. It does not execute typed conversion or full
+integrity/index verification. It starts only for the current supported
 Rust schema, current config versions, and complete/absent journal. A legacy
 Python schema exits with `migration_required`; legacy config exits with
 `config_migration_required`; a committed database awaiting config promotion
@@ -59,15 +61,18 @@ requests carrying an accepted idempotency key.
 ## MCP
 
 One tool registry owns tool names, descriptions, JSON schemas, and result/error
-mapping. Streamable HTTP and stdio expose this same registry. The stdio adapter
-does not duplicate domain schemas and does not access SQLite. It discovers,
-starts if allowed, authenticates, negotiates protocol versions, and proxies the
-session with bounded reconnect behavior.
+mapping. Per ADR 0015, the exact MCP revision is `2026-07-28`. Streamable HTTP
+uses JSON-RPC HTTP POST at `/mcp` with JSON or request-scoped SSE responses;
+stdio uses newline-delimited JSON-RPC. Both expose this same registry. The stdio
+adapter does not duplicate domain schemas and does not access SQLite. It
+discovers, starts if allowed, authenticates, negotiates the pinned protocol,
+and proxies `/mcp` with bounded reconnect behavior.
 
-The compatibility manifest initially contains the 39 current MCP tools. New
-recall-feedback behavior is added as a versioned contract using `recall_id`,
-activation ids, and idempotency key. Removal of stdio requires a later ADR and
-host-support evidence; it is not merely marked for unspecified future deletion.
+The compatibility manifest owns the current registry snapshot and derives its
+tool count. New recall-feedback behavior is added as a versioned contract using
+`recall_id`, activation ids, and idempotency key. The Python private operation
+bridge is not MCP and is intentionally removed by ADR 0015. Removal of stdio
+requires a later ADR and host-support evidence.
 
 ## HTTP And Frontend Contracts
 
@@ -76,6 +81,11 @@ contract inventory fixes method, path, auth, request envelope, response
 envelope, status codes, and error body. In particular, provider save/check/model
 and manual dreaming must preserve the shipping frontend shapes unless an
 accepted contract change updates both sides atomically.
+
+The manifest contains a concrete entry for every current route in the route
+families listed by the compatibility spec, including health/status/shutdown,
+providers, settings, admin actions/snapshots, admin WebSocket, static SPA
+routes/assets, the removed Python operation bridge, and the new `/mcp` endpoint.
 
 Static assets are served from an embedded asset abstraction using `rust-embed`
 lookup/iteration, not a filesystem `ServeDir`. Development may use an explicit

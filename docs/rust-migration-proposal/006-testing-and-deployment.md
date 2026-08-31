@@ -50,7 +50,7 @@ async fn setup_test_db() -> SqlitePool {
 | `test_rule_crystals.rs` | Rule-intent parsing, `list_rule_intent`, concept enrichment | `tests/test_termbase_validate.py` |
 | `test_termbase.rs` | Propose/approve/contract/validate against rule-intent crystals only | `tests/test_termbase_contract.py` |
 | `test_service.rs` | HTTP routes, MCP protocol, WebSocket events, `/api/admin`+`/api/settings` contract shapes | `tests/test_service_app.py` |
-| `test_mcp.rs` | All 39 existing MCP tools + `hieronymus_recall_feedback` via HTTP transport | `tests/test_mcp_http.py` |
+| `test_mcp.rs` | Manifest-derived MCP registry + `hieronymus_recall_feedback` over ADR 0015 transports | `tests/test_mcp_http.py` |
 | `test_agent.rs` | Plugin installs, config generation, skill installation | `tests/test_agent_plugin_installers.py` |
 | `test_cli.rs` | CLI command parsing, boundary rules, JSON output | `tests/test_cli.py` |
 | `test_doctor.rs` | System diagnostics, checks, redaction | `tests/test_doctor.py` |
@@ -152,7 +152,7 @@ No Python, Node, Bun, or other runtime prerequisite checks — "if it installs, 
 
 | Question | Scope |
 |---|---|
-| MCP SDK v2 migration | Current design targets MCP v1 via `rmcp` (005 §1); revisit when v2 stabilizes |
+| Future MCP revision | ADR 0015 pins `2026-07-28`; any revision or compatibility-window change requires an ADR and fixtures |
 | ONNX model distribution | The multilingual embedding model is ~470MB (003 §5.1); consider bundling a smaller default or documenting the first-run download clearly |
 | Agent skill bundling | Currently `rust-embed` for skill assets (001 §5); may move to a standalone agent-skills repository if assets grow large enough to bloat the binary |
 | Windows support | `cargo-dist` covers the target, but the daemon/signal-handling path (005 §4) is unix-tested first; needs explicit Windows CI verification before calling it supported |

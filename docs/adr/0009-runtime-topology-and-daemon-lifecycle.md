@@ -55,10 +55,14 @@ diagnostic naming the current owner. No caller waits or retries while holding a
 Tokio worker thread. The guard owns the open file handle for the entire critical
 section and releases it on drop.
 
-Before binding a port or publishing discovery, daemon startup performs the same
-read-only schema and config classification as `hiero migrate --dry-run`. Only
-the current supported Rust schema, current config versions, and a complete or
-absent cutover journal may start. A legacy Python schema exits with
+Before binding a port or publishing discovery, daemon startup runs the shared
+bounded `StateClassifier`. Classification reads schema/config version markers,
+required file presence, and the cutover-journal state; it does not run typed
+converters, integrity scans, backups, or index work. `hiero migrate --dry-run`
+begins with this classifier but additionally performs the full converter and
+verification rehearsal defined by ADR 0010. Only the current supported Rust
+schema, current config versions, and a complete or absent cutover journal may
+start. A legacy Python schema exits with
 `migration_required`; legacy config exits with `config_migration_required`; a
 post-database/pre-config cutover exits with `config_promotion_required`. Each
 diagnostic includes the exact command. Newer, unknown, corrupt, or partially

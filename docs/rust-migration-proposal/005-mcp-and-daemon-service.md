@@ -5,8 +5,12 @@ route and tool calls, 004 for `DreamService` and the cross-process dream lock). 
 dual-transport MCP server, the unified Axum HTTP/WebSocket daemon, signal handling, and
 frontend asset embedding.
 
-**Parity target:** all 39 MCP tools from `mcp_server.py` (transcribed by name below, not
-estimated — the first draft of this doc under-counted at "37"), plus one new tool for the
+**Normative override:** ADR 0015 owns the MCP protocol and transports. In
+particular, `/api/mcp/{operation}` is a private Python bridge, not Streamable
+HTTP, and is removed at Rust cutover. The compatibility manifest owns the live
+tool registry and derives its count.
+
+**Parity target:** every MCP tool in the authoritative registration snapshot, plus one new tool for the
 reconsolidation feedback signal (003 §3); the full HTTP route surface from
 `service_http.py`/`service_app.py`; the admin/config REST API from `tui_bridge/`, with
 **request/response shapes pinned from the actual frontend client** (`frontend/src/web/lib/api.ts`)
@@ -24,11 +28,11 @@ header-based only, over a token file with `0600` permissions from the start (001
 
 ## 1. Multi-Transport MCP Server
 
-1. **HTTP (preferred)**: `rmcp` crate, MCP v1 Streamable HTTP, mounted at `/mcp` (SSE
-   server→client, HTTP POST client→server).
-2. **Stdio (compatibility shim)**: `hiero mcp` (001 §4) dials `127.0.0.1:9768/api/mcp/{operation}`
-   for each request, maintains the MCP session over stdio, returns identical tool schemas and
-   results. Marked for removal once agent plugins (001 §5) have adopted HTTP transport.
+1. **HTTP:** MCP revision `2026-07-28` Streamable HTTP mounted at `/mcp`, as
+   pinned by ADR 0015.
+2. **Stdio:** `hiero mcp` exposes newline-delimited MCP JSON-RPC and proxies the
+   authenticated standard `/mcp` endpoint. It is a supported transport, not a
+   private-operation shim marked for automatic removal.
 
 ```rust
 pub fn register_tools(server: &mut McpServer, backend: Arc<dyn McpBackend>);
@@ -63,7 +67,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/status", get(status_handler))
         .route("/shutdown", post(shutdown_handler))
         .nest("/mcp", mcp_routes())                                     // §1
-        .route("/api/mcp/{operation}", post(mcp_proxy_handler))         // stdio shim compat, marked for removal
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -80,9 +83,10 @@ status here; it's just another process contending for the same lock file.
 
 ---
 
-## 3. MCP Tools (39 existing + 1 new)
+## 3. MCP Tools (Manifest Snapshot Plus One Proposed Addition)
 
-Transcribed from `mcp_server.py`'s `@server.tool` registrations (39 confirmed by direct count),
+Transcribed from `mcp_server.py`'s `@server.tool` registrations; the compatibility
+manifest derives and reports the count,
 grouped by backing store. `hieronymus_rule_crystals_*` now operate on crystals with non-empty
 `rule_intent` (003 §2.4's `list_rule_intent`), not a `crystal_type == 'rule'` filter — same tool
 names, corrected backing query per §3's rule-intent model in 003.

@@ -175,6 +175,12 @@ Three new/changed phases, each implementing the `DreamPhase` trait from 004 §2:
 
 ## Rule-Intent Crystals
 
+> **Rust cutover override:** ADR 0011 supersedes this section for active
+> deterministic rules. The decay behavior below remains historical Python
+> baseline and applies only to advisory rule-intent memories in the Rust model.
+> Active structured rules never decay; only an authenticated, audited user
+> lifecycle action can replace, archive, or supersede them.
+
 Archive immunity for `crystal_type == 'rule' && status == 'active'` is removed. In its place,
 `apply_score_delta` (003 §2.5) dampens decay deltas by a flat factor (default `0.5`, i.e. half
 the normal decay rate) when `!crystal.rule_intent.trim().is_empty()`, optionally further scaled

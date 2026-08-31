@@ -5,8 +5,10 @@
 Proposed. On acceptance, this ADR supersedes ADR 0005's statement under
 `### Rule Crystals` that Hieronymus has no separate structured terminology
 authority, and ADR 0003 Decision 4's equivalent rule-crystal-only storage
-decision. Rule crystals remain the searchable/advisory projection of the
-structured authority.
+decision. It also supersedes ADR 0005 `### Rule Crystals` where that section
+prohibits manual promotion and gives dreaming authority to activate rules.
+Rule crystals remain the searchable/advisory projection of the structured
+authority.
 
 ## Context
 
@@ -38,11 +40,16 @@ includes a separate deterministic-contract section when applicable, so callers
 cannot mistake ranking order for enforcement order. Validation evaluates that
 section before advisory findings.
 
-Rule lifecycle transitions are transactional and audited. Provider output and
-dreaming may propose rules but cannot activate them unless the existing product
-policy explicitly permits that transition and deterministic validation of the
-structured rule succeeds. Malformed or ambiguous provider output never becomes
-active.
+Rule lifecycle transitions are transactional and audited. Only an
+authenticated user acting through the explicit rule-approval operation may
+transition `candidate` to `active`, replace an active rule, archive it, or
+supersede it. The operation records actor identity, prior and resulting
+revision ids, timestamp, and reason, and succeeds only after deterministic
+validation of the structured rule. Provider output, dreaming, imports of new
+unapproved material, and passive scoring may create or update candidates but
+cannot activate them. Malformed or ambiguous provider output never becomes
+active. Existing approved legacy rules keep their active status through ADR
+0010's audited migration; migration is preservation, not autonomous approval.
 
 Structured rule data includes concept identity, source forms, canonical target
 rendering, approved and forbidden variants, language tags, story scope where

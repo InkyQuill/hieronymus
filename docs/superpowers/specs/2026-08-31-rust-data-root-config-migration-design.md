@@ -17,7 +17,8 @@ as a unit by `--data-root` or `HIERONYMUS_DATA_ROOT`. Rust keeps these paths:
 - `provider.conf`: provider profiles, defaults, endpoints, timeouts, and keys;
 - `dream.conf`: dream settings, prompts, caps, and workflow assignments;
 - `ingest.conf`: short-memory and Learn ingestion policy;
-- `release.conf`: update channel state until replaced by a later ADR;
+- `release.conf`: authoritative `updates.channel = "stable"|"dev"` selection,
+  governed by ADR 0006 and the distribution spec;
 - `llmcache.tmp`: derived provider-model cache, safe to invalidate;
 - `backups/`: immutable migration backups and receipts;
 - `agent-plugins/`: generated local integration artifacts.
@@ -57,6 +58,11 @@ with `toml_edit` so comments, ordering, and unknown supported keys survive.
 incompatible. Generated plugin files are not
 trusted as configuration input; they are regenerated after daemon health using
 the versioned discovery contract.
+
+`release.conf` remains at the same path and is not absorbed into discovery or
+the database. Unknown channels fail preflight. Both channels consume signed
+release manifests; channel selection changes which signed feed is consulted,
+not whether verification is required.
 
 ## Atomic File Protocol
 

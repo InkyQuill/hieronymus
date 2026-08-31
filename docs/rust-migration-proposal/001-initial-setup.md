@@ -37,7 +37,7 @@ none of them require cross-referencing an external "master" document.
 | Manual FTS insert/delete in application code | SQLite triggers (002 §3) | Eliminates index drift |
 | `ThreadingHTTPServer` | `axum` on Tokio | All async, native WebSocket support |
 | `json`/`toml`/`yaml`/`ini` parsing | `serde` + `serde_json` + `toml` | Unified serialization |
-| `FastMCP` (Python SDK) | `rmcp` (Rust MCP SDK) | Native Rust, MCP v1 compatible |
+| `FastMCP` (Python SDK) | qualified Rust MCP implementation | Must implement ADR 0015's pinned protocol revision and transports |
 | `fastembed` | `ort` (ONNX Runtime) + custom model loading | Lazy, ONNX-native |
 | `lancedb` (Python) | `lancedb` (Rust crate) | Native LanceDB |
 | `@dataclass(frozen=True)` | `#[derive(Debug, Clone, Serialize, Deserialize)]` structs | Equivalent safety, no `object.__setattr__` escape hatch needed |

@@ -47,8 +47,10 @@ its plugin uses `hiero mcp`; the stdio adapter reads the local token and proxies
 the authenticated MCP session. It starts the per-user daemon when absent and
 returns a bounded diagnostic if startup or protocol negotiation fails.
 
-The discovery record contains a protocol version. Clients reject incompatible
-major versions and report the remediation command instead of guessing routes.
+The discovery record contains the application discovery version and ADR 0015's
+exact MCP revision. Clients reject unsupported versions and report the
+remediation command instead of guessing routes or treating the private Python
+operation bridge as MCP.
 Port overrides are written into discovery/configuration; generated plugins must
 not hard-code `9768`.
 

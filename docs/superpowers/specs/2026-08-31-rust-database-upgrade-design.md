@@ -30,8 +30,13 @@ conversion counts, unsupported rows with reasons, required free space, target
 schema, backup path, and whether conversion is safe. API keys and memory text
 are not copied into diagnostics.
 
-`hiero migrate --dry-run` performs the full read and transformation validation
-without writing the source database, backup, config, or indexes.
+The shared bounded `StateClassifier` only identifies schema/config/journal
+state and is safe on every daemon start. `hiero migrate --dry-run` begins with
+that result, then performs the full typed transformation and verification
+against a disposable target database and staged in-memory config model. It
+writes neither the source database nor authoritative backup, config, job, or
+index state; temporary dry-run artifacts are outside the data root and removed
+after reporting.
 
 ## Upgrade Protocol
 
@@ -49,13 +54,18 @@ without writing the source database, backup, config, or indexes.
 8. Rebuild external-content FTS tables from authoritative rows.
 9. Run `foreign_key_check`, integrity checks, domain invariants, and row
    accounting.
-10. Commit once and set the cutover journal to `database_committed`.
-11. Atomically promote staged config files and set the journal to `complete`.
-12. Write the successful receipt and enqueue semantic rebuild; semantic
-    artifacts are not copied as authority.
+10. In the same transaction, create a durable semantic-rebuild job in
+    `pending` state for the new authoritative generation; no live handoff is
+    attempted while the daemon is stopped.
+11. Commit once and set the cutover journal to `database_committed`.
+12. Atomically promote staged config files and set the journal to `complete`.
+13. Write the successful receipt. The daemon claims the pending job only after
+    the cutover journal is `complete`; semantic artifacts are not copied as
+    authority.
 
 SQL steps, typed converters, FTS rebuild, authoritative row accounting, foreign
-key checks, and target schema-version write share one exclusive transaction.
+key checks, target schema-version write, and durable semantic-job creation
+share one exclusive transaction.
 The transaction commits once, after verification. An interrupted transaction
 rolls back. An interruption after commit but before receipt is recovered by
 inspecting the committed schema version and verification markers; it does not

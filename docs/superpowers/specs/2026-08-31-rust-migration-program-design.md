@@ -13,7 +13,9 @@ by the linked specifications and ADRs. The documents under
 `docs/rust-migration-proposal/` remain useful analysis but are not normative.
 
 On acceptance, ADR 0008 supersedes ADR 0005's Python-authority paragraph and
-controls that conflict. ADR 0005 continues to own the durable product model.
+controls that conflict. ADR 0011 controls deterministic rule authority, and ADR
+0014 controls the interactive frontend. ADR 0005 continues to own the durable
+product model only where those narrower later decisions do not supersede it.
 
 ## Governing Decisions
 
@@ -29,6 +31,10 @@ controls that conflict. ADR 0005 continues to own the durable product model.
   authenticated local transports and versioned discovery.
 - [ADR 0013](../../adr/0013-semantic-index-and-platform-support.md): derived
   semantic index and empirically gated platforms.
+- [ADR 0014](../../adr/0014-web-console-replaces-terminal-ui.md): Svelte web
+  console replaces the retired terminal UI.
+- [ADR 0015](../../adr/0015-mcp-protocol-and-transport.md): exact MCP revision,
+  standard stdio, and Streamable HTTP transports.
 
 ## Specification Set
 
@@ -57,10 +63,12 @@ domain library owns typed models, validation, scoring, stores, migration
 conversion, and provider-independent algorithms. The binary owns CLI parsing,
 daemon lifecycle, transports, service installation, and presentation.
 
-The daemon is the normal writer for SQLite and the sole writer for the semantic
-index. Short-lived CLI and stdio processes communicate with it. Exclusive
-maintenance commands acquire the data-root ownership lock before opening the
-database for mutation.
+The daemon is the sole normal/live writer for SQLite and the semantic index.
+Short-lived CLI and stdio processes communicate with it. Offline rebuild and
+other exclusive maintenance commands may write only while the daemon is
+stopped and they hold the data-root ownership lock; they use the same index
+implementation, generation manifest, and durable job protocol as daemon
+workers.
 
 SQLite remains authoritative. FTS tables and the semantic index are rebuilt
 from ordinary SQLite rows. Configuration and generated agent integrations are

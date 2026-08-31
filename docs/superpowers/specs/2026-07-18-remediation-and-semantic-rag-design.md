@@ -1,6 +1,8 @@
 # Remediation, Stable Web MCP, And Semantic RAG Design
 
-**Status:** Approved for implementation planning on 2026-07-18
+**Status:** Approved for implementation planning on 2026-07-18. Its local-auth
+non-goal is superseded by ADR 0012; its “MCP v1/v2” package-generation language
+and transport ambiguity are superseded by ADR 0015.
 
 ## Context
 
@@ -33,7 +35,8 @@ that correctness and migration work lands before broader architectural changes.
 - No automatic fallback to another port when the configured port is occupied.
 - No replacement of SQLite as the authoritative application and RAG corpus database.
 - No Qdrant implementation; only a backend boundary that permits one later.
-- No MCP SDK v2 migration; the project remains on a bounded v1 dependency until v2 is reviewed.
+- No independent SDK-generation decision; ADR 0015 owns the exact MCP protocol
+  revision and transports.
 - No unrelated web-console redesign.
 
 ## Program Sequence

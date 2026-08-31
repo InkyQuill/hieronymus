@@ -11,8 +11,13 @@ reconsolidation, feedback, and semantic evidence to remain graded and revisable.
 
 An active approved rule has structured match and rendering data. Its lifecycle
 is `candidate`, `active`, `superseded`, or `archived`. Only an audited explicit
-transition can leave `active`. Passive decay and recall feedback never change
-that lifecycle.
+authenticated user action can transition `candidate` to `active`, replace an
+active rule, or make an active rule leave `active`. The approve/change request
+records actor, reason, prior revision, and idempotency key and must pass
+deterministic validation transactionally. Dreaming and provider output can
+only create or refine candidates. Passive decay and recall feedback never
+change that lifecycle. Supported legacy active rules retain status during the
+audited database conversion.
 
 Termbase contract returns the applicable active rules for source text and
 translation context. Validation checks canonical and forbidden renderings and
@@ -100,4 +105,6 @@ cycle. Concepts do not decay as crystals.
   session.
 - Working-copy dedup and feedback event consumption do not lose activations.
 - Reconsolidation cannot bypass the rule lifecycle.
+- Candidate activation and active-rule changes require an authenticated,
+  audited user operation; dreaming has no activation capability.
 - Python compatibility fixtures yield equivalent deterministic findings.

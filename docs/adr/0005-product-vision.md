@@ -8,6 +8,9 @@ ADR 0008 is accepted, Python remains authoritative. [ADR 0011](0011-deterministi
 is proposed to amend `### Rule Crystals` by making structured rules the
 authority and rule crystals their searchable/advisory projection. Until ADR
 0011 is accepted, ADR 0005's rule-crystal-only model remains authoritative.
+[ADR 0014](0014-web-console-replaces-terminal-ui.md) is proposed to supersede
+the retired React/OpenTUI surface, terminal-application section, related
+install/runtime requirements, browser non-goal, and OpenTUI test references.
 `provider.conf` owns provider profiles and API keys; `dream.conf` owns workflow
 assignments, prompts, trigger settings, and caps.
 

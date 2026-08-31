@@ -29,6 +29,31 @@ the report rather than copied into this specification. The
 manifest must not cite nonexistent test files. Every current test maps to one or
 more entries or is marked implementation-internal with a reason.
 
+The CLI/agent inventory explicitly includes all installed entry points:
+`hiero`, `hieronymus`, `hieronymus-agent-hook`, and `hieronymus-mcp`. The Rust
+dispositions are defined by the distribution spec: one canonical binary plus
+compatibility command links and argv routing, with canonical subcommands
+`hiero agent-hook` and `hiero mcp`.
+
+The HTTP/WebSocket inventory must enumerate, rather than infer from frontend
+tests, at least these current route families with every concrete method and
+shape taken from the Python router and Svelte client:
+
+- `GET /health`, `GET /status`, and `POST /shutdown`;
+- private Python bridge `POST /api/mcp/{operation}` and its ADR 0015 removal;
+- `GET|POST /api/providers`, `GET /api/providers/{id}`,
+  `GET /api/providers/{id}/models`, `POST /api/providers/{id}/check`, and
+  `DELETE /api/providers/{id}`;
+- `GET|POST /api/settings/{dream,ingest,release}`;
+- `GET /api/admin/dashboard`, `GET /api/admin/snapshot`, and
+  `POST /api/admin/actions/{action}`;
+- `GET /ws/admin` WebSocket upgrade;
+- embedded `/`, `/admin`, `/config`, client-side fallbacks, and `/assets/*`;
+- new standard `POST /mcp` Streamable HTTP from ADR 0015.
+
+The manifest records which routes are preserved, authentication-changed,
+removed, or added; grouping a family never substitutes for concrete entries.
+
 ## Contract Fixtures
 
 Fixtures are immutable JSON, text, TOML, SQLite, and filesystem trees stored
@@ -38,6 +63,8 @@ synthetic. Fixtures cover:
 - human CLI output only where user-facing wording is intentional;
 - JSON CLI output and exit codes for automation;
 - MCP tool names, descriptions, input schemas, result envelopes, and errors;
+- MCP revision `2026-07-28`, initialize/capability behavior, newline-delimited
+  stdio framing, `/mcp` HTTP POST/SSE behavior, and unsupported-version errors;
 - exact HTTP methods, paths, request bodies, response bodies, status codes, and
   authentication requirements;
 - WebSocket message types and reconnect behavior;

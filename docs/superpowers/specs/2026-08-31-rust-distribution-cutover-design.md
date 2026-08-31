@@ -4,8 +4,9 @@
 
 ## Goal
 
-Build, install, upgrade, and if necessary roll back a self-contained Rust release
-without requiring language runtimes on the user's machine.
+Build, install, upgrade, and recover a self-contained Rust release without
+requiring language runtimes on the user's machine or promising post-migration
+rollback.
 
 ## Build Ownership
 
@@ -23,6 +24,18 @@ Native release jobs run on each supported target. The pipeline produces the
 binary/archive, checksums, software bill of materials, build provenance, and
 signed release metadata. Static TLS configuration avoids a system OpenSSL
 dependency, but native semantic dependencies are validated separately.
+
+ADR 0006 makes Pavel Obruchnikov `<me@inkyquill.net>` the human release
+authority. Both `stable` and `dev` channels publish a signed release manifest
+through the protected release workflow. Signing is Sigstore keyless: verification
+pins issuer `https://token.actions.githubusercontent.com`, repository
+`InkyQuill/hieronymus`, and workflow identity
+`https://github.com/InkyQuill/hieronymus/.github/workflows/release.yml@refs/heads/main`.
+The signed bundle, certificate identity, transparency proof, manifest checksum,
+and artifact checksum must all verify. The protected workflow requires Pavel's
+release approval; a tag, checksum, or GitHub account alone is insufficient.
+Changing issuer, repository, workflow identity, or approval authority requires
+an ADR-backed trust-root update shipped before releases using the new identity.
 
 ## Installer
 
@@ -46,6 +59,15 @@ the binary, service definition, and generated integration entries only after
 confirmation; it preserves databases, configuration, models, backups, and
 audit data by default. The release and installer contain no Python interpreter,
 wheel, environment, or rollback bundle.
+
+The installer exposes one binary. It creates command links for the existing
+entry points during the first Rust compatibility line: `hiero` is canonical,
+`hieronymus` routes to the same CLI, `hieronymus-agent-hook` routes by `argv[0]`
+to `hiero agent-hook session-start|session-end`, and `hieronymus-mcp` routes to
+`hiero mcp`. Generated integrations are rewritten to the canonical commands
+only after daemon health.
+The links preserve existing host configuration; removing any link requires a
+later ADR and compatibility-manifest disposition.
 
 ## Update And One-Way Cutover
 
