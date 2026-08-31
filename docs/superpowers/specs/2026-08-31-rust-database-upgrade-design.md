@@ -1,6 +1,6 @@
 # Rust Database Upgrade Design
 
-**Status:** Proposed for review on 2026-08-31.
+**Status:** Accepted on 2026-08-31.
 
 ## Goal
 

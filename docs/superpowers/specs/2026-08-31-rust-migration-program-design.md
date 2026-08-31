@@ -1,6 +1,6 @@
 # Rust Migration Program Design
 
-**Status:** Proposed for review on 2026-08-31.
+**Status:** Accepted on 2026-08-31.
 
 ## Purpose
 
@@ -12,7 +12,7 @@ This document is the map for the migration program. Detailed behavior is owned
 by the linked specifications and ADRs. The documents under
 `docs/rust-migration-proposal/` remain useful analysis but are not normative.
 
-On acceptance, ADR 0008 supersedes ADR 0005's Python-authority paragraph and
+ADR 0008 supersedes ADR 0005's Python-authority paragraph and
 controls that conflict. ADR 0011 controls deterministic rule authority, and ADR
 0014 controls the interactive frontend. ADR 0005 continues to own the durable
 product model only where those narrower later decisions do not supersede it.

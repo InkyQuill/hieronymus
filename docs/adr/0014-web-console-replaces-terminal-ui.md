@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. On acceptance, this ADR supersedes ADR 0002, ADR 0004, and the
+Accepted on 2026-08-31. This ADR supersedes ADR 0002, ADR 0004, and the
 React/OpenTUI product-surface, terminal-application, install/runtime, non-goal,
 and test references in ADR 0005. Those texts remain historical descriptions of
 retired implementations.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. On acceptance, this ADR supersedes ADR 0005's statement under
+Accepted on 2026-08-31. This ADR supersedes ADR 0005's statement under
 `### Rule Crystals` that Hieronymus has no separate structured terminology
 authority, and ADR 0003 Decision 4's equivalent rule-crystal-only storage
 decision. It also supersedes ADR 0005 `### Rule Crystals` where that section

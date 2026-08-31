@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. On acceptance, this ADR supersedes uses of the package-generation
+Accepted on 2026-08-31. This ADR supersedes uses of the package-generation
 labels “MCP v1,” “MCP SDK v2,” and any description of
 `/api/mcp/{operation}` as Streamable HTTP in earlier plans and Rust proposal
 documents. It narrows ADR 0012's versioned-discovery decision with an exact

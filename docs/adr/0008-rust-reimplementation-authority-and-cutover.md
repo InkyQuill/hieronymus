@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. If accepted, this ADR supersedes the Python-authority paragraph in
+Accepted on 2026-08-31. This ADR supersedes the Python-authority paragraph in
 [ADR 0005 §Decision](0005-product-vision.md#decision), specifically the decision
 that Python remains authoritative for backend behavior. ADR 0005's product
 model and non-language-specific boundaries remain current.
@@ -26,7 +26,7 @@ Reimplement Hieronymus as a Rust workspace and distribute it as one `hiero`
 binary. Use an ADR-first, contract-gated program rather than treating the six
 existing proposal documents as implementation-ready specifications.
 
-On acceptance, this narrower, later ADR controls any conflict with ADR 0005's
+This narrower, later ADR controls any conflict with ADR 0005's
 Python-authority paragraph. The authority order during the migration is:
 
 1. project instructions and ADR 0008's Rust replacement/cutover decision;

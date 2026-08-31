@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. On acceptance, this ADR supersedes the “no authentication,
+Accepted on 2026-08-31. This ADR supersedes the “no authentication,
 authorization, TLS, or remote-deployment security layer” non-goal in
 `docs/superpowers/specs/2026-07-18-remediation-and-semantic-rag-design.md` for
 the local daemon. Remote deployment and TLS remain non-goals.
