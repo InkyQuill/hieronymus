@@ -32,6 +32,7 @@ _TECHNICAL_OWNERS = frozenset(
     }
 )
 _DISPOSITIONS = frozenset({"preserve", "intentionally-change", "remove"})
+_TEST_DISPOSITIONS = frozenset({"public_contract", "implementation_internal"})
 
 
 @dataclass(frozen=True)
@@ -49,10 +50,19 @@ class Contract:
 
 
 @dataclass(frozen=True)
+class TestOwnership:
+    node_id: str
+    disposition: str
+    contract_ids: tuple[str, ...] = ()
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
 class Manifest:
     manifest_version: int
     python_reference: str
     contracts: tuple[Contract, ...]
+    test_ownership: tuple[TestOwnership, ...]
 
 
 def load_manifest(path: Path) -> Manifest:
@@ -61,18 +71,24 @@ def load_manifest(path: Path) -> Manifest:
     manifest_data = _mapping(data, "manifest")
     _require_fields(
         manifest_data,
-        {"manifest_version", "python_reference", "contracts"},
+        {"manifest_version", "python_reference", "contracts", "test_ownership"},
         "manifest",
     )
 
     contracts_data = manifest_data["contracts"]
     if not isinstance(contracts_data, list):
         raise ValueError("manifest contracts must be an array")
+    test_ownership_data = manifest_data["test_ownership"]
+    if not isinstance(test_ownership_data, list):
+        raise ValueError("manifest test_ownership must be an array")
 
     return Manifest(
         manifest_version=_integer(manifest_data["manifest_version"], "manifest_version"),
         python_reference=_string(manifest_data["python_reference"], "python_reference"),
         contracts=tuple(_load_contract(contract_data) for contract_data in contracts_data),
+        test_ownership=tuple(
+            _load_test_ownership(ownership_data) for ownership_data in test_ownership_data
+        ),
     )
 
 
@@ -80,6 +96,7 @@ def validate_manifest(manifest: Manifest, repo_root: Path) -> list[str]:
     """Return invariant violations for *manifest* relative to *repo_root*."""
     errors: list[str] = []
     seen_ids: set[str] = set()
+    contracts_by_id = {contract.id: contract for contract in manifest.contracts}
     resolved_repo_root = repo_root.resolve()
 
     for contract in manifest.contracts:
@@ -104,6 +121,25 @@ def validate_manifest(manifest: Manifest, repo_root: Path) -> list[str]:
             contract.adr and contract.adr.strip()
         ):
             errors.append(f"missing adr for {contract.disposition} contract: {contract.id}")
+
+    seen_node_ids: set[str] = set()
+    for ownership in manifest.test_ownership:
+        if ownership.node_id in seen_node_ids:
+            errors.append(f"duplicate test ownership node id: {ownership.node_id}")
+        seen_node_ids.add(ownership.node_id)
+
+        node_file = ownership.node_id.split("::", 1)[0]
+        for contract_id in ownership.contract_ids:
+            contract = contracts_by_id.get(contract_id)
+            if contract is None:
+                errors.append(
+                    f"unknown contract id for test ownership: {ownership.node_id}: {contract_id}"
+                )
+            elif node_file not in contract.tests:
+                errors.append(
+                    "test ownership contract does not own node file: "
+                    f"{ownership.node_id}: {contract_id}"
+                )
 
     return errors
 
@@ -143,6 +179,46 @@ def _load_contract(data: object) -> Contract:
         rust_test_target=_string(contract_data["rust_test_target"], "rust_test_target"),
         disposition=_enum(contract_data["disposition"], "disposition", _DISPOSITIONS),
         adr=adr,
+    )
+
+
+def _load_test_ownership(data: object) -> TestOwnership:
+    ownership_data = _mapping(data, "test ownership")
+    disposition = _enum(
+        ownership_data.get("disposition"),
+        "test ownership disposition",
+        _TEST_DISPOSITIONS,
+    )
+    required_fields = {"node_id", "disposition"}
+    if disposition == "public_contract":
+        required_fields.add("contract_ids")
+    else:
+        required_fields.add("reason")
+    _require_fields(ownership_data, required_fields, "test ownership")
+
+    node_id = _string(ownership_data["node_id"], "test ownership node_id")
+    if not node_id.startswith("tests/") or "::" not in node_id:
+        raise ValueError("test ownership node_id must be a pytest node id under tests/")
+
+    if disposition == "public_contract":
+        contract_ids = _strings(ownership_data["contract_ids"], "test ownership contract_ids")
+        if not contract_ids:
+            raise ValueError("test ownership contract_ids must not be empty")
+        if len(set(contract_ids)) != len(contract_ids):
+            raise ValueError("test ownership contract_ids must be unique")
+        return TestOwnership(
+            node_id=node_id,
+            disposition=disposition,
+            contract_ids=contract_ids,
+        )
+
+    reason = _string(ownership_data["reason"], "test ownership reason")
+    if not reason.strip():
+        raise ValueError("test ownership reason must not be blank")
+    return TestOwnership(
+        node_id=node_id,
+        disposition=disposition,
+        reason=reason,
     )
 
 

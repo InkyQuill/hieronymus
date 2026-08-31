@@ -3,7 +3,7 @@
   "title": "Hieronymus Rust Compatibility Manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["manifest_version", "python_reference", "contracts"],
+  "required": ["manifest_version", "python_reference", "contracts", "test_ownership"],
   "properties": {
     "manifest_version": {"type": "integer"},
     "python_reference": {"type": "string"},
@@ -81,6 +81,50 @@
               "properties": {
                 "adr": {"type": "string", "pattern": "\\S"}
               }
+            }
+          }
+        ]
+      }
+    },
+    "test_ownership": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["node_id", "disposition"],
+        "properties": {
+          "node_id": {"type": "string", "pattern": "^tests/.+::.+"},
+          "disposition": {
+            "type": "string",
+            "enum": ["public_contract", "implementation_internal"]
+          },
+          "contract_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "\\S"}
+          },
+          "reason": {"type": "string", "pattern": "\\S"}
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {"disposition": {"const": "public_contract"}},
+              "required": ["disposition"]
+            },
+            "then": {
+              "required": ["contract_ids"],
+              "not": {"required": ["reason"]}
+            }
+          },
+          {
+            "if": {
+              "properties": {"disposition": {"const": "implementation_internal"}},
+              "required": ["disposition"]
+            },
+            "then": {
+              "required": ["reason"],
+              "not": {"required": ["contract_ids"]}
             }
           }
         ]

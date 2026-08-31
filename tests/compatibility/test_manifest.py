@@ -33,6 +33,7 @@ def write_manifest(path: Path, contracts: list[dict[str, object]]) -> None:
                 "manifest_version": 1,
                 "python_reference": "0.7.0",
                 "contracts": contracts,
+                "test_ownership": [],
             }
         ),
         encoding="utf-8",
@@ -190,3 +191,137 @@ def test_loader_rejects_unknown_enum_value(tmp_path: Path, field: str, value: st
 
     with pytest.raises(ValueError, match=field):
         load_manifest(path)
+
+
+def test_loader_parses_typed_public_and_internal_test_ownership(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    payload = {
+        "manifest_version": 1,
+        "python_reference": "0.7.0",
+        "contracts": [complete_contract()],
+        "test_ownership": [
+            {
+                "node_id": "tests/test_cli.py::test_public_contract",
+                "disposition": "public_contract",
+                "contract_ids": ["cli.hiero"],
+            },
+            {
+                "node_id": "tests/test_helpers.py::test_private_helper",
+                "disposition": "implementation_internal",
+                "reason": "Exercises a Python-only helper implementation.",
+            },
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    manifest = load_manifest(path)
+
+    assert manifest.test_ownership[0].contract_ids == ("cli.hiero",)
+    assert manifest.test_ownership[0].reason is None
+    assert manifest.test_ownership[1].contract_ids == ()
+    assert manifest.test_ownership[1].reason == "Exercises a Python-only helper implementation."
+
+
+@pytest.mark.parametrize(
+    ("ownership", "error"),
+    [
+        (
+            {
+                "node_id": "tests/test_cli.py::test_public_contract",
+                "disposition": "public_contract",
+            },
+            "contract_ids",
+        ),
+        (
+            {
+                "node_id": "tests/test_helpers.py::test_private_helper",
+                "disposition": "implementation_internal",
+            },
+            "reason",
+        ),
+        (
+            {
+                "node_id": "tests/test_cli.py::test_public_contract",
+                "disposition": "public_contract",
+                "contract_ids": ["cli.hiero"],
+                "reason": "not allowed",
+            },
+            "unexpected fields",
+        ),
+        (
+            {
+                "node_id": "tests/test_helpers.py::test_private_helper",
+                "disposition": "implementation_internal",
+                "reason": "Python-only helper.",
+                "contract_ids": ["cli.hiero"],
+            },
+            "unexpected fields",
+        ),
+    ],
+)
+def test_loader_enforces_conditional_test_ownership_fields(
+    tmp_path: Path,
+    ownership: dict[str, object],
+    error: str,
+) -> None:
+    path = tmp_path / "manifest.json"
+    payload = {
+        "manifest_version": 1,
+        "python_reference": "0.7.0",
+        "contracts": [complete_contract()],
+        "test_ownership": [ownership],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=error):
+        load_manifest(path)
+
+
+def test_manifest_validation_rejects_duplicate_nodes_unknown_contracts_and_file_mismatches(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "manifest.json"
+    payload = {
+        "manifest_version": 1,
+        "python_reference": "0.7.0",
+        "contracts": [complete_contract()],
+        "test_ownership": [
+            {
+                "node_id": "tests/test_cli.py::test_one",
+                "disposition": "public_contract",
+                "contract_ids": ["missing.contract"],
+            },
+            {
+                "node_id": "tests/test_cli.py::test_one",
+                "disposition": "public_contract",
+                "contract_ids": ["cli.hiero"],
+            },
+            {
+                "node_id": "tests/test_workspace.py::test_wrong_file",
+                "disposition": "public_contract",
+                "contract_ids": ["cli.hiero"],
+            },
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert validate_manifest(load_manifest(path), ROOT) == [
+        "unknown contract id for test ownership: tests/test_cli.py::test_one: missing.contract",
+        "duplicate test ownership node id: tests/test_cli.py::test_one",
+        "test ownership contract does not own node file: "
+        "tests/test_workspace.py::test_wrong_file: cli.hiero",
+    ]
+
+
+def test_schema_defines_strict_conditional_test_ownership_records() -> None:
+    schema = json.loads((ROOT / "compatibility/manifest.schema.json").read_text(encoding="utf-8"))
+    ownership = schema["properties"]["test_ownership"]["items"]
+
+    assert "test_ownership" in schema["required"]
+    assert ownership["additionalProperties"] is False
+    assert ownership["properties"]["disposition"]["enum"] == [
+        "public_contract",
+        "implementation_internal",
+    ]
+    assert ownership["allOf"][0]["then"]["required"] == ["contract_ids"]
+    assert ownership["allOf"][1]["then"]["required"] == ["reason"]

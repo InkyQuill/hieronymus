@@ -1,0 +1,15 @@
+{
+  "defaults": {
+    "model": "fixture-model",
+    "provider": "synthetic_openai"
+  },
+  "synthetic_openai": {
+    "key": {
+      "configured": true
+    },
+    "name": "Synthetic OpenAI",
+    "timeout_seconds": 30.0,
+    "type": "openai",
+    "url": "https://provider.invalid/v1"
+  }
+}
