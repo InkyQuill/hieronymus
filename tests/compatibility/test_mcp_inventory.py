@@ -38,6 +38,8 @@ def test_every_registered_tool_has_manifest_contract_and_complete_fixtures() -> 
         contract = mcp_contracts[tool_name]
 
         assert contract.surface == "mcp"
+        assert contract.acceptance_owner == "Pavel Obruchnikov <me@inkyquill.net>"
+        assert contract.technical_owner == "daemon-mcp-security"
         assert contract.python_entry_point == f"hieronymus.mcp_server:{tool_name}"
         assert contract.fixture == str(success_input.relative_to(ROOT))
         assert contract.rust_test_target == (

@@ -457,16 +457,6 @@ def _behavior_tests(tool_name: str) -> list[str]:
     return tests
 
 
-def _technical_owner(tool_name: str) -> str:
-    if "rag_" in tool_name:
-        return "semantic-rag"
-    if tool_name in {"hieronymus_dream", "hieronymus_concept_proposals_list"}:
-        return "dreaming"
-    if tool_name == "hieronymus_status":
-        return "daemon-mcp-security"
-    return "terminology-memory"
-
-
 def _write_tool_fixtures(repo_root: Path, tools: list[dict[str, object]]) -> None:
     fixture_root = repo_root / "compatibility/fixtures/mcp"
     for tool in tools:
@@ -498,7 +488,7 @@ def _merge_manifest(repo_root: Path, tools: list[dict[str, object]]) -> None:
                 "id": f"mcp.tool.{tool_name}",
                 "surface": "mcp",
                 "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
-                "technical_owner": _technical_owner(tool_name),
+                "technical_owner": "daemon-mcp-security",
                 "python_entry_point": f"hieronymus.mcp_server:{tool_name}",
                 "tests": _behavior_tests(tool_name),
                 "fixture": (f"compatibility/fixtures/mcp/{tool_name}/success.input.json"),

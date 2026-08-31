@@ -792,7 +792,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_archive",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_archive",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -806,7 +806,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_create",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_create",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -820,7 +820,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_facet_add",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_facet_add",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -834,7 +834,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_facet_list",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_facet_list",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -848,7 +848,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_facet_set_canonical",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_facet_set_canonical",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -862,7 +862,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_facet_update",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_facet_update",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -876,7 +876,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_get",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_get",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -890,7 +890,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_list",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_list",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -904,7 +904,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_merge",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_merge",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -918,7 +918,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_proposals_list",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_proposals_list",
       "surface": "mcp",
-      "technical_owner": "dreaming",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -932,7 +932,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_rename",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_rename",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -946,7 +946,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_semantic_tags_set",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_semantic_tags_set",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -960,7 +960,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_update",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_update",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -974,7 +974,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_crystal_link_concept",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_crystal_link_concept",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -988,7 +988,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_crystal_semantic_tags_set",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_crystal_semantic_tags_set",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -1002,7 +1002,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_crystal_story_scopes_set",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_crystal_story_scopes_set",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -1016,7 +1016,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_dream",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_dream",
       "surface": "mcp",
-      "technical_owner": "dreaming",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1030,7 +1030,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_feedback",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_feedback",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1044,7 +1044,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_memory_add",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_memory_add",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1058,7 +1058,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_memory_search",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_memory_search",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1072,7 +1072,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_rag_import",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_rag_import",
       "surface": "mcp",
-      "technical_owner": "semantic-rag",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_rag.py"
@@ -1086,7 +1086,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_rag_search",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_rag_search",
       "surface": "mcp",
-      "technical_owner": "semantic-rag",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_rag.py"
@@ -1100,7 +1100,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_recall",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_recall",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1114,7 +1114,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_rule_crystal_archive",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_rule_crystal_archive",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -1128,7 +1128,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_rule_crystal_validate",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_rule_crystal_validate",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -1142,7 +1142,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_rule_crystals_list",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_rule_crystals_list",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1156,7 +1156,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_series_create",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_series_create",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -1170,7 +1170,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_series_init",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_series_init",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_memory_primitives.py"
@@ -1184,7 +1184,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_series_list",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_series_list",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_series_language_tags.py"
@@ -1198,7 +1198,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_series_set_language_tags",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_series_set_language_tags",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_series_language_tags.py"
@@ -1212,7 +1212,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_session_complete",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_session_complete",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1226,7 +1226,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_session_start",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_session_start",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1240,7 +1240,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_short_term_add",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_short_term_add",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_agent_ingestion.py"
@@ -1254,7 +1254,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_short_term_add_batch",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_short_term_add_batch",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_agent_ingestion.py"
@@ -1282,7 +1282,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_termbase_approve",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_termbase_approve",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1296,7 +1296,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_termbase_contract",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_termbase_contract",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1310,7 +1310,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_termbase_propose",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_termbase_propose",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
@@ -1324,7 +1324,7 @@
       "python_entry_point": "hieronymus.mcp_server:hieronymus_termbase_validate",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_termbase_validate",
       "surface": "mcp",
-      "technical_owner": "terminology-memory",
+      "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_mcp_inventory.py",
         "tests/test_mcp_server.py"
