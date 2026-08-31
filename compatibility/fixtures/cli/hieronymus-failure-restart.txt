@@ -1,0 +1,4 @@
+Usage: hieronymus restart [OPTIONS]
+Try 'hieronymus restart --help' for help.
+
+Error: No such option: --compat-invalid-option

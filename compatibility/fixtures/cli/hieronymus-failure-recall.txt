@@ -1,0 +1,4 @@
+Usage: hieronymus recall [OPTIONS] SESSION_ID
+Try 'hieronymus recall --help' for help.
+
+Error: Missing argument 'SESSION_ID'.

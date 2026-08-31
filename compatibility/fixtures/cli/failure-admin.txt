@@ -1,0 +1,4 @@
+Usage: hiero admin [OPTIONS]
+Try 'hiero admin --help' for help.
+
+Error: No such option: --compat-invalid-option

@@ -1,0 +1,4 @@
+Usage: hiero status [OPTIONS]
+Try 'hiero status --help' for help.
+
+Error: No such option: --compat-invalid-option

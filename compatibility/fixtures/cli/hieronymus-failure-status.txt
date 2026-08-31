@@ -1,0 +1,4 @@
+Usage: hieronymus status [OPTIONS]
+Try 'hieronymus status --help' for help.
+
+Error: No such option: --compat-invalid-option

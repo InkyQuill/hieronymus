@@ -1,0 +1,4 @@
+Usage: hiero validate [OPTIONS] SERIES_SLUG
+Try 'hiero validate --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

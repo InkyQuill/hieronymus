@@ -1,0 +1,10 @@
+Usage: hiero rag import [OPTIONS] SERIES_SLUG PATH
+
+Options:
+  --type [auto|text|glossary]
+  --source-ref TEXT
+  --language-tag TEXT
+  --story-scope TEXT
+  --semantic-tag TEXT
+  --json
+  --help                       Show this message and exit.

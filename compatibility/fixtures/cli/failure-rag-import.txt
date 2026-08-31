@@ -1,0 +1,4 @@
+Usage: hiero rag import [OPTIONS] SERIES_SLUG PATH
+Try 'hiero rag import --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

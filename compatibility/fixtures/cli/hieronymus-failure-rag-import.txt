@@ -1,0 +1,4 @@
+Usage: hieronymus rag import [OPTIONS] SERIES_SLUG PATH
+Try 'hieronymus rag import --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

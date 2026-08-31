@@ -1,0 +1,15 @@
+{
+  "contract_id": "cli.command.hieronymus.rag.import",
+  "failure": {
+    "args": [],
+    "exit_code": 2,
+    "fixture": "compatibility/fixtures/cli/hieronymus-failure-rag-import.txt"
+  },
+  "success": {
+    "args": [
+      "--help"
+    ],
+    "exit_code": 0,
+    "fixture": "compatibility/fixtures/cli/hieronymus-help-rag-import.txt"
+  }
+}

@@ -1,0 +1,12 @@
+Usage: hiero skills install [OPTIONS]
+
+  Install bundled skills in selected project agent directories.
+
+Options:
+  --target [agents|claude]  Target to update. May be repeated. Omit only for
+                            interactive multi-select; non-TTY calls require a
+                            target.
+  --dry-run                 Report actions without modifying the workspace.
+  --yes                     Accept only the interactive selection confirmation;
+                            ignored with explicit targets.
+  --help                    Show this message and exit.

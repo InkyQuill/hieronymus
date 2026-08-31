@@ -1,0 +1,4 @@
+Usage: hiero propose-term [OPTIONS] SERIES_SLUG
+Try 'hiero propose-term --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

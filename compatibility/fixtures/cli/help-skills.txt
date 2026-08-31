@@ -1,0 +1,10 @@
+Usage: hiero skills [OPTIONS] COMMAND [ARGS]...
+
+  Install the full Hieronymus workflow skill bundle in this project.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  install    Install bundled skills in selected project agent directories.
+  uninstall  Remove only bundled skills from selected project agent...

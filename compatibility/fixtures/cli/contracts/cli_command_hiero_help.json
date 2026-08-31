@@ -1,0 +1,17 @@
+{
+  "contract_id": "cli.command.hiero.help",
+  "failure": {
+    "args": [
+      "--compat-invalid-option"
+    ],
+    "exit_code": 2,
+    "fixture": "compatibility/fixtures/cli/failure-help.txt"
+  },
+  "success": {
+    "args": [
+      "--help"
+    ],
+    "exit_code": 0,
+    "fixture": "compatibility/fixtures/cli/help-help.txt"
+  }
+}

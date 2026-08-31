@@ -1,0 +1,4 @@
+Usage: hieronymus-agent-hook session-start [OPTIONS]
+Try 'hieronymus-agent-hook session-start --help' for help.
+
+Error: No such option: --compat-invalid-option

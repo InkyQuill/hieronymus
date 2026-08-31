@@ -1,0 +1,9 @@
+Usage: hiero propose-term [OPTIONS] SERIES_SLUG
+
+Options:
+  --category TEXT     [required]
+  --source TEXT       [required]
+  --translation TEXT  [required]
+  --tag TEXT
+  --json
+  --help              Show this message and exit.

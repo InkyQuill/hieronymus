@@ -1,0 +1,13 @@
+{
+  "contract_id": "cli.script.hieronymus-mcp",
+  "failure": {
+    "args": [],
+    "exit_code": "non-zero",
+    "fixture": "compatibility/fixtures/cli/mcp-entrypoint-failure.txt"
+  },
+  "success": {
+    "args": [],
+    "exit_code": 0,
+    "fixture": "compatibility/fixtures/cli/mcp-entrypoint-success.txt"
+  }
+}

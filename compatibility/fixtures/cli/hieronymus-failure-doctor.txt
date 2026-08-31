@@ -1,0 +1,4 @@
+Usage: hieronymus doctor [OPTIONS]
+Try 'hieronymus doctor --help' for help.
+
+Error: No such option: --compat-invalid-option

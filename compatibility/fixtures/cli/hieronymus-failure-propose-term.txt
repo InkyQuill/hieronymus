@@ -1,0 +1,4 @@
+Usage: hieronymus propose-term [OPTIONS] SERIES_SLUG
+Try 'hieronymus propose-term --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

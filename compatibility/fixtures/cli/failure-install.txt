@@ -1,0 +1,4 @@
+Usage: hiero install [OPTIONS] [APP]
+Try 'hiero install --help' for help.
+
+Error: No such option: --compat-invalid-option

@@ -1,0 +1,8 @@
+Usage: hiero init-series [OPTIONS] SLUG
+
+Options:
+  --title TEXT            [required]
+  --source-language TEXT
+  --target-language TEXT
+  --json
+  --help                  Show this message and exit.

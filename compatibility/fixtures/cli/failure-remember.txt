@@ -1,0 +1,4 @@
+Usage: hiero remember [OPTIONS] SERIES_SLUG
+Try 'hiero remember --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

@@ -1,0 +1,4 @@
+Usage: hieronymus-agent-hook session-end [OPTIONS]
+Try 'hieronymus-agent-hook session-end --help' for help.
+
+Error: No such option: --compat-invalid-option

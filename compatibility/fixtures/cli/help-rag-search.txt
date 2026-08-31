@@ -1,0 +1,6 @@
+Usage: hiero rag search [OPTIONS] SERIES_SLUG QUERY
+
+Options:
+  --limit INTEGER
+  --json
+  --help           Show this message and exit.

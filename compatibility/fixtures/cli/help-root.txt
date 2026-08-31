@@ -1,0 +1,28 @@
+Usage: hiero [OPTIONS] COMMAND [ARGS]...
+
+Options:
+  --data-root DIRECTORY
+  --help                 Show this message and exit.
+
+Commands:
+  admin
+  config            Open the configuration web console.
+  doctor
+  dream
+  feedback
+  help
+  init-series
+  install
+  propose-term
+  rag
+  recall
+  remember
+  remember-short
+  restart
+  session-complete
+  session-start
+  skills            Install the full Hieronymus workflow skill bundle in...
+  status
+  stop
+  update
+  validate

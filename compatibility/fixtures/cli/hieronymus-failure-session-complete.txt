@@ -1,0 +1,4 @@
+Usage: hieronymus session-complete [OPTIONS] SESSION_ID
+Try 'hieronymus session-complete --help' for help.
+
+Error: Missing argument 'SESSION_ID'.

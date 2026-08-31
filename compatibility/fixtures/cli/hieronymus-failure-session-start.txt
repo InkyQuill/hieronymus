@@ -1,0 +1,4 @@
+Usage: hieronymus session-start [OPTIONS] SERIES_SLUG
+Try 'hieronymus session-start --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

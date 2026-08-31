@@ -1,0 +1,4 @@
+Usage: hiero feedback [OPTIONS] CRYSTAL_ID
+Try 'hiero feedback --help' for help.
+
+Error: Missing argument 'CRYSTAL_ID'.

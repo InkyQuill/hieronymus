@@ -1,0 +1,4 @@
+Usage: hiero session-start [OPTIONS] SERIES_SLUG
+Try 'hiero session-start --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

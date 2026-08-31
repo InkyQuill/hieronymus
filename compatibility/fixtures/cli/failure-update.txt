@@ -1,0 +1,4 @@
+Usage: hiero update [OPTIONS]
+Try 'hiero update --help' for help.
+
+Error: No such option: --compat-invalid-option

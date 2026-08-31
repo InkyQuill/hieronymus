@@ -1,0 +1,4 @@
+Usage: hieronymus install [OPTIONS] [APP]
+Try 'hieronymus install --help' for help.
+
+Error: No such option: --compat-invalid-option

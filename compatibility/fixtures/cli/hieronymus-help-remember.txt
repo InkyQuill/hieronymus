@@ -1,0 +1,8 @@
+Usage: hieronymus remember [OPTIONS] SERIES_SLUG
+
+Options:
+  --kind TEXT        [required]
+  --text TEXT        [required]
+  --source-ref TEXT
+  --json
+  --help             Show this message and exit.

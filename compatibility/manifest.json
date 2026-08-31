@@ -1,5 +1,790 @@
 {
   "manifest_version": 1,
   "python_reference": "0.7.0",
-  "contracts": []
+  "contracts": [
+    {
+      "id": "cli.command.hiero.admin",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_admin_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_admin.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_admin",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.config",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_config.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_config",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.doctor",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_doctor.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_doctor",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.dream",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_dream.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_dream",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.feedback",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_feedback.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_feedback",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.help",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_help.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_help",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.init-series",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_init_series.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_init_series",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.install",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_install.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_install",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.propose-term",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_propose_term.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_propose_term",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.rag",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_rag_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_rag.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_rag",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.rag.import",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_rag_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_rag_import.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_rag_import",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.rag.search",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_rag_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_rag_search.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_rag_search",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.recall",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_recall.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_recall",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.remember",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_remember.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_remember",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.remember-short",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_remember_short.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_remember_short",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.restart",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_restart.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_restart",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.session-complete",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_session_complete.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_session_complete",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.session-start",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_session_start.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_session_start",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.skills",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_project_skills.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_skills.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_skills",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.skills.install",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_project_skills.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_skills_install.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_skills_install",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.skills.uninstall",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_project_skills.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_skills_uninstall.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_skills_uninstall",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.status",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_status.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_status",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.stop",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_stop.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_stop",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.update",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_update.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_update",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hiero.validate",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_validate.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_validate",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus-agent-hook.session-end",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.agent_hooks:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_agent_hooks.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_agent_hook_session_end.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_agent_hook_session_end",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus-agent-hook.session-start",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.agent_hooks:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_agent_hooks.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_agent_hook_session_start.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_agent_hook_session_start",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.admin",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_admin_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_admin.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_admin",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.config",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_config.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_config",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.doctor",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_doctor.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_doctor",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.dream",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_dream.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_dream",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.feedback",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_feedback.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_feedback",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.help",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_help.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_help",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.init-series",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_init_series.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_init_series",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.install",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_install.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_install",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.propose-term",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_propose_term.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_propose_term",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.rag",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_rag_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_rag.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_rag",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.rag.import",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_rag_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_rag_import.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_rag_import",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.rag.search",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_rag_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_rag_search.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_rag_search",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.recall",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_recall.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_recall",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.remember",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_remember.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_remember",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.remember-short",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_remember_short.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_remember_short",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.restart",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_restart.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_restart",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.session-complete",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_session_complete.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_session_complete",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.session-start",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_session_start.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_session_start",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.skills",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_project_skills.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_skills.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_skills",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.skills.install",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_project_skills.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_skills_install.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_skills_install",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.skills.uninstall",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_project_skills.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_skills_uninstall.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_skills_uninstall",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.status",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_status.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_status",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.stop",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_stop.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_stop",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.update",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_update.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_update",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.command.hieronymus.validate",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_validate.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_validate",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.script.hiero",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli_service.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_script_hiero.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_script_hiero",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.script.hieronymus",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.cli:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_cli.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_script_hieronymus.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_script_hieronymus",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.script.hieronymus-agent-hook",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.agent_hooks:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_agent_hooks.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_script_hieronymus_agent_hook.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_script_hieronymus_agent_hook",
+      "disposition": "preserve"
+    },
+    {
+      "id": "cli.script.hieronymus-mcp",
+      "surface": "cli",
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "technical_owner": "distribution-cutover",
+      "python_entry_point": "hieronymus.mcp_server:main",
+      "tests": [
+        "tests/compatibility/test_cli_inventory.py",
+        "tests/test_mcp_server.py"
+      ],
+      "fixture": "compatibility/fixtures/cli/contracts/cli_script_hieronymus_mcp.json",
+      "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_script_hieronymus_mcp",
+      "disposition": "preserve"
+    }
+  ]
 }

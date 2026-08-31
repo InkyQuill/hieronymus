@@ -1,0 +1,4 @@
+Usage: hieronymus dream [OPTIONS]
+Try 'hieronymus dream --help' for help.
+
+Error: No such option: --compat-invalid-option

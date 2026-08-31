@@ -1,0 +1,15 @@
+{
+  "contract_id": "cli.command.hiero.propose-term",
+  "failure": {
+    "args": [],
+    "exit_code": 2,
+    "fixture": "compatibility/fixtures/cli/failure-propose-term.txt"
+  },
+  "success": {
+    "args": [
+      "--help"
+    ],
+    "exit_code": 0,
+    "fixture": "compatibility/fixtures/cli/help-propose-term.txt"
+  }
+}

@@ -1,0 +1,4 @@
+Usage: hiero dream [OPTIONS]
+Try 'hiero dream --help' for help.
+
+Error: No such option: --compat-invalid-option

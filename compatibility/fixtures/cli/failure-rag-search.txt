@@ -1,0 +1,4 @@
+Usage: hiero rag search [OPTIONS] SERIES_SLUG QUERY
+Try 'hiero rag search --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

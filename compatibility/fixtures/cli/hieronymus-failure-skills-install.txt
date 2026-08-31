@@ -1,0 +1,4 @@
+Usage: hieronymus skills install [OPTIONS]
+Try 'hieronymus skills install --help' for help.
+
+Error: No such option: --compat-invalid-option

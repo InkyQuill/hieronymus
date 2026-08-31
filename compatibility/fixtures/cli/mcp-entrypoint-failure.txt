@@ -1,0 +1,1 @@
+stdio startup failures must exit non-zero without protocol output

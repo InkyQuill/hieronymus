@@ -1,0 +1,4 @@
+Usage: hieronymus remember [OPTIONS] SERIES_SLUG
+Try 'hieronymus remember --help' for help.
+
+Error: Missing argument 'SERIES_SLUG'.

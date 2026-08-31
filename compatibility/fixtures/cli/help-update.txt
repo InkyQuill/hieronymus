@@ -1,0 +1,8 @@
+Usage: hiero update [OPTIONS]
+
+Options:
+  --check
+  --dev                   Allow updating to the latest main commit.
+  --json
+  --target [latest|main]  Override the configured update channel for this run.
+  --help                  Show this message and exit.

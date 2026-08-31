@@ -1,0 +1,4 @@
+Usage: hiero skills uninstall [OPTIONS]
+Try 'hiero skills uninstall --help' for help.
+
+Error: No such option: --compat-invalid-option

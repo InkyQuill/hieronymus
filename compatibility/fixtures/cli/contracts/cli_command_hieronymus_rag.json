@@ -1,0 +1,17 @@
+{
+  "contract_id": "cli.command.hieronymus.rag",
+  "failure": {
+    "args": [
+      "--compat-invalid-option"
+    ],
+    "exit_code": 2,
+    "fixture": "compatibility/fixtures/cli/hieronymus-failure-rag.txt"
+  },
+  "success": {
+    "args": [
+      "--help"
+    ],
+    "exit_code": 0,
+    "fixture": "compatibility/fixtures/cli/hieronymus-help-rag.txt"
+  }
+}

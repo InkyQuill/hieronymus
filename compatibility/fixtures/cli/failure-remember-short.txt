@@ -1,0 +1,4 @@
+Usage: hiero remember-short [OPTIONS] SESSION_ID
+Try 'hiero remember-short --help' for help.
+
+Error: Missing argument 'SESSION_ID'.
