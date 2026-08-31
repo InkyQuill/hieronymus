@@ -1,0 +1,44 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "query": "Cooking Talent",
+        "series_slug": "synthetic-series"
+      },
+      "name": "hieronymus_rag_search"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"source\": \"rag\",\n  \"id\": 1,\n  \"title\": \"chapter.txt paragraph 1\",\n  \"kind\": \"text\",\n  \"text\": \"Cooking Talent appears here.\",\n  \"display_text\": \"Cooking Talent appears here.\",\n  \"source_ref\": \"chapter.txt\",\n  \"chunk_kind\": \"text\",\n  \"location\": \"paragraph 1\",\n  \"metadata\": {},\n  \"language_tags\": [],\n  \"story_scopes\": [],\n  \"semantic_tags\": [],\n  \"score\": 2.75e-6,\n  \"rank_reason\": \"rag project text match\"\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "result": [
+        {
+          "chunk_kind": "text",
+          "display_text": "Cooking Talent appears here.",
+          "id": 1,
+          "kind": "text",
+          "language_tags": [],
+          "location": "paragraph 1",
+          "metadata": {},
+          "rank_reason": "rag project text match",
+          "score": 2.75e-06,
+          "semantic_tags": [],
+          "source": "rag",
+          "source_ref": "chapter.txt",
+          "story_scopes": [],
+          "text": "Cooking Talent appears here.",
+          "title": "chapter.txt paragraph 1"
+        }
+      ]
+    }
+  }
+}

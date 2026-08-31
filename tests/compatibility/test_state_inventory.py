@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tools.compatibility import inventory_state
 from tools.compatibility.inventory_state import (
     build_test_ownership,
     collect_test_nodeids,
@@ -239,6 +240,46 @@ def test_node_ownership_does_not_inherit_every_contract_from_its_file() -> None:
             ["tests/test_provider_config.py::test_new_unclassified_behavior"],
             manifest.contracts,
         )
+
+
+def test_http_and_agent_behavior_nodes_have_explicit_public_contract_ownership() -> None:
+    manifest = load_manifest(ROOT / "compatibility/manifest.json")
+    ownership = {item.node_id: item for item in manifest.test_ownership}
+
+    assert ownership[
+        "tests/test_service_http.py::test_health_endpoint_returns_daemon_identity"
+    ].contract_ids == ("http.route.get.health",)
+    assert ownership[
+        "tests/test_service_http.py::test_provider_api_creates_and_lists_custom_profiles"
+    ].contract_ids == (
+        "http.route.get.api.providers",
+        "http.route.post.api.providers",
+    )
+    assert ownership[
+        "tests/test_agent_hooks.py::test_hook_session_end_outputs_json"
+    ].contract_ids == ("cli.command.hieronymus-agent-hook.session-end",)
+    assert not [
+        item
+        for item in manifest.test_ownership
+        if item.disposition == "implementation_internal"
+        and item.node_id.startswith(("tests/test_service_http.py::", "tests/test_agent_hooks.py::"))
+    ]
+
+
+def test_http_and_agent_ownership_rules_do_not_grant_false_file_level_coverage() -> None:
+    manifest = load_manifest(ROOT / "compatibility/manifest.json")
+    synthetic = build_test_ownership(
+        [
+            "tests/test_service_http.py::test_python_only_request_helper",
+            "tests/test_agent_hooks.py::test_python_only_discovery_helper",
+        ],
+        manifest.contracts,
+    )
+
+    assert [item["disposition"] for item in synthetic] == [
+        "implementation_internal",
+        "implementation_internal",
+    ]
 
 
 def test_agent_contract_entry_points_are_importable_symbols() -> None:
@@ -529,3 +570,116 @@ def test_checked_in_state_snapshot_matches_fresh_synthetic_inventory(tmp_path: P
     expected = json.loads((ROOT / "compatibility/snapshots/state.json").read_text(encoding="utf-8"))
 
     assert snapshot_state(ROOT, tmp_path / "data-root") == expected
+
+
+def test_collect_frontend_test_nodeids_uses_vitest_case_listing() -> None:
+    node_ids = inventory_state.collect_frontend_test_nodeids(ROOT)
+
+    assert node_ids == sorted(node_ids)
+    assert len(node_ids) == 16
+    assert (
+        "frontend/src/web/components/editors.test.ts::"
+        "provider editor opens, submits edited fields, and closes"
+    ) in node_ids
+    assert all(node_id.startswith("frontend/src/") and "::" in node_id for node_id in node_ids)
+
+
+def test_collect_frontend_test_nodeids_fails_explicitly_without_bun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(inventory_state.shutil, "which", lambda _name: None)
+
+    with pytest.raises(RuntimeError, match="Bun is required to collect frontend Vitest nodes"):
+        inventory_state.collect_frontend_test_nodeids(ROOT)
+
+
+def test_every_frontend_vitest_case_has_typed_manifest_ownership() -> None:
+    manifest = load_manifest(ROOT / "compatibility/manifest.json")
+    collected = set(inventory_state.collect_frontend_test_nodeids(ROOT))
+    ownership = {item.node_id: item for item in manifest.frontend_test_ownership}
+
+    assert set(ownership) == collected
+    assert all(
+        item.contract_ids if item.disposition == "public_contract" else item.reason
+        for item in ownership.values()
+    )
+
+
+def test_frontend_ownership_does_not_inherit_route_contracts_from_a_test_file() -> None:
+    manifest = load_manifest(ROOT / "compatibility/manifest.json")
+    nodes = [
+        "frontend/src/web/components/editors.test.ts::"
+        "provider editor opens, submits edited fields, and closes",
+        "frontend/src/web/components/editors.test.ts::"
+        "dreaming editor submits the toggled schedule state",
+        "frontend/src/web/components/editors.test.ts::unrelated visual helper",
+    ]
+
+    ownership = {
+        item["node_id"]: item
+        for item in inventory_state.build_frontend_test_ownership(nodes, manifest.contracts)
+    }
+
+    assert ownership[nodes[0]]["contract_ids"] == ["http.route.post.api.providers"]
+    assert ownership[nodes[1]]["contract_ids"] == ["http.route.post.api.settings.dream"]
+    assert ownership[nodes[2]]["disposition"] == "implementation_internal"
+    assert "specific public request" in ownership[nodes[2]]["reason"]
+
+
+def test_owned_data_root_paths_link_to_one_layout_contract(tmp_path: Path) -> None:
+    snapshot = snapshot_state(ROOT, tmp_path / "data-root")
+    manifest = load_manifest(ROOT / "compatibility/manifest.json")
+    contract = next(item for item in manifest.contracts if item.id == "data-root.layout")
+
+    assert contract.acceptance_owner == "Pavel Obruchnikov <me@inkyquill.net>"
+    assert contract.technical_owner == "data-config"
+    assert contract.python_entry_point == "hieronymus.config:HieronymusConfig"
+    assert contract.rust_test_target == "crates/hiero-config/tests/data_root_contract.rs::layout"
+    assert all(item["contract_id"] == "data-root.layout" for item in snapshot["owned_paths"])
+
+
+def test_database_fixture_freezes_representative_rows_and_preflight_variants(
+    tmp_path: Path,
+) -> None:
+    database = snapshot_state(ROOT, tmp_path / "data-root")["database"]
+
+    row_counts = database["row_counts"]
+    for table in (
+        "strict_terms",
+        "strict_term_aliases",
+        "concepts",
+        "concept_facets",
+        "crystals",
+        "task_sessions",
+        "short_term_memories",
+        "memory_events",
+        "crystal_activations",
+        "rag_sources",
+        "rag_chunks",
+        "memory_graph_migration_ledger",
+    ):
+        assert row_counts[table] >= 1, table
+
+    variants = {item["id"]: item for item in database["variants"]}
+    assert {
+        "current-python",
+        "supported-legacy-python",
+        "empty",
+        "partial-python",
+        "corrupt",
+        "unknown-schema",
+    } <= set(variants)
+    assert variants["current-python"]["expected"] == {
+        "classification": "supported-python",
+        "foreign_key_violations": 0,
+        "integrity": "ok",
+        "safe_to_convert": True,
+    }
+    assert variants["supported-legacy-python"]["expected"]["safe_to_convert"] is True
+    assert variants["partial-python"]["expected"]["safe_to_convert"] is False
+    assert variants["corrupt"]["expected"]["classification"] == "corrupt"
+
+    for variant in variants.values():
+        fixture = ROOT / variant["fixture"]
+        assert fixture.is_file()
+        assert inventory_state.preflight_database(fixture) == variant["expected"]

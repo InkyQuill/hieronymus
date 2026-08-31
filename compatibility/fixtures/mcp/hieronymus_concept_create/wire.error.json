@@ -1,0 +1,26 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "confidence": 0.8,
+        "description": "Synthetic game-system concept.",
+        "semantic_tags": [
+          "ability"
+        ]
+      },
+      "name": "hieronymus_concept_create"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_concept_create: 1 validation error for hieronymus_concept_createArguments\ncanonical_name\n  Field required [type=missing, input_value={'description': 'Syntheti...ntic_tags': ['ability']}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "params": {
+    "arguments": {
+      "include_global": {
+        "invalid": "expected scalar"
+      },
+      "semantic_tag": "ability",
+      "status": "candidate"
+    },
+    "name": "hieronymus_concept_list"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

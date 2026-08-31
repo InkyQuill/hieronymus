@@ -1,0 +1,12 @@
+{
+  "params": {
+    "arguments": {
+      "reason": "Synthetic merge case.",
+      "target_concept_id": 2
+    },
+    "name": "hieronymus_concept_merge"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

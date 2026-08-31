@@ -622,6 +622,27 @@
       "target_auth": "public-static"
     },
     {
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "contract_id": "http.route.post.auth.launch-grant.exchange",
+      "current_auth": "absent",
+      "disposition": "intentionally-change",
+      "frontend_consumers": [],
+      "handler": "ADR 0012 launch-grant exchange",
+      "method": "POST",
+      "path_template": "/auth/launch-grant/exchange",
+      "query_fields": [],
+      "request_shape": {
+        "launch_grant": "single-use secret"
+      },
+      "response_shape": {
+        "csrf_token": "secret",
+        "session": "HttpOnly SameSite=Strict cookie"
+      },
+      "runtime_body_key": null,
+      "surface": "http",
+      "target_auth": "single-use-launch-grant-with-host-origin"
+    },
+    {
       "adr": null,
       "contract_id": "frontend.route.get.config",
       "current_auth": "public-static",

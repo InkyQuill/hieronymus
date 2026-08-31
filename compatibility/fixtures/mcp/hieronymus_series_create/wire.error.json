@@ -1,0 +1,28 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "language_tags": [
+          "ja",
+          "en"
+        ],
+        "source_language": "ja",
+        "target_language": "en",
+        "title": "Synthetic Series"
+      },
+      "name": "hieronymus_series_create"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_series_create: 1 validation error for hieronymus_series_createArguments\nslug\n  Field required [type=missing, input_value={'title': 'Synthetic Seri...age_tags': ['ja', 'en']}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

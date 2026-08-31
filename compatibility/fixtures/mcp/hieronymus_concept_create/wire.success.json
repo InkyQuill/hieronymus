@@ -1,0 +1,40 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "canonical_name": "Sense",
+        "confidence": 0.8,
+        "description": "Synthetic game-system concept.",
+        "semantic_tags": [
+          "ability"
+        ]
+      },
+      "name": "hieronymus_concept_create"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"id\": 1,\n  \"canonical_name\": \"Sense\",\n  \"description\": \"Synthetic game-system concept.\",\n  \"status\": \"candidate\",\n  \"confidence\": 0.8,\n  \"scope_type\": \"global\",\n  \"scope_key\": \"\",\n  \"semantic_tags\": [\n    \"ability\"\n  ],\n  \"merged_into_concept_id\": null\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "canonical_name": "Sense",
+      "confidence": 0.8,
+      "description": "Synthetic game-system concept.",
+      "id": 1,
+      "merged_into_concept_id": null,
+      "scope_key": "",
+      "scope_type": "global",
+      "semantic_tags": [
+        "ability"
+      ],
+      "status": "candidate"
+    }
+  }
+}

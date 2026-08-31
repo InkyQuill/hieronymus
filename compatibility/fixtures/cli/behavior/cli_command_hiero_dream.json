@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "args": [],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "dream"
+      ],
+      "stderr": "",
+      "stdout": "Dream run 1: completed\n"
+    },
+    {
+      "args": [
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "dream"
+      ],
+      "stderr": "",
+      "stdout": "{\"created_crystal_count\": 0, \"cycle_id\": 1, \"error\": null, \"input_count\": 0, \"proposal_count\": 0, \"provider\": \"synthetic\", \"status\": \"completed\"}\n"
+    },
+    {
+      "args": [
+        "--provider",
+        "unknown-provider"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "dream"
+      ],
+      "stderr": "Error: unknown dream provider: unknown-provider\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hiero.dream"
+}

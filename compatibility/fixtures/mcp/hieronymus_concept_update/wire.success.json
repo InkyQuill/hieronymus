@@ -1,0 +1,38 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "concept_id": 1,
+        "confidence": 0.9,
+        "description": "Approved synthetic concept.",
+        "status": "established"
+      },
+      "name": "hieronymus_concept_update"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"id\": 1,\n  \"canonical_name\": \"Sense\",\n  \"description\": \"Approved synthetic concept.\",\n  \"status\": \"established\",\n  \"confidence\": 0.9,\n  \"scope_type\": \"global\",\n  \"scope_key\": \"\",\n  \"semantic_tags\": [\n    \"ability\"\n  ],\n  \"merged_into_concept_id\": null\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "canonical_name": "Sense",
+      "confidence": 0.9,
+      "description": "Approved synthetic concept.",
+      "id": 1,
+      "merged_into_concept_id": null,
+      "scope_key": "",
+      "scope_type": "global",
+      "semantic_tags": [
+        "ability"
+      ],
+      "status": "established"
+    }
+  }
+}

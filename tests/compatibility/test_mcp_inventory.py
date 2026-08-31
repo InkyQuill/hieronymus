@@ -34,7 +34,10 @@ def test_every_registered_tool_has_manifest_contract_and_complete_fixtures() -> 
         fixture_dir = ROOT / "compatibility/fixtures/mcp" / tool_name
         success_input = fixture_dir / "success.input.json"
         success_output = fixture_dir / "success.output.json"
+        error_input = fixture_dir / "error.input.json"
         error_output = fixture_dir / "error.output.json"
+        wire_success = fixture_dir / "wire.success.json"
+        wire_error = fixture_dir / "wire.error.json"
         contract = mcp_contracts[tool_name]
 
         assert contract.surface == "mcp"
@@ -48,29 +51,69 @@ def test_every_registered_tool_has_manifest_contract_and_complete_fixtures() -> 
         assert contract.disposition == "preserve"
         assert "tests/compatibility/test_mcp_inventory.py" in contract.tests
         assert len(contract.tests) > 1
-        assert json.loads(success_input.read_text(encoding="utf-8")) is not None
+        success_arguments = json.loads(success_input.read_text(encoding="utf-8"))
+        assert success_arguments is not None
         assert json.loads(success_output.read_text(encoding="utf-8")) is not None
+        error_case = json.loads(error_input.read_text(encoding="utf-8"))
+        assert error_case["params"]["name"] == tool_name
+        assert set(error_case) == {"params", "setup"}
+        assert error_case["setup"]
         error = json.loads(error_output.read_text(encoding="utf-8"))
         assert set(error) == {"error"}
         assert set(error["error"]) == {"message", "type"}
+        success_envelope = json.loads(wire_success.read_text(encoding="utf-8"))
+        error_envelope = json.loads(wire_error.read_text(encoding="utf-8"))
+        assert success_envelope["request"]["method"] == "tools/call"
+        assert success_envelope["request"]["params"]["name"] == tool_name
+        assert success_envelope["result"]["isError"] is False
+        assert "content" in success_envelope["result"]
+        assert "structuredContent" in success_envelope["result"]
+        assert error_envelope["request"]["params"] == error_case["params"]
+        assert error_envelope["result"]["isError"] is True
+        assert error_envelope["result"]["content"]
 
 
-def test_protocol_fixture_records_adr_pinned_boundary_without_manifest_duplication() -> None:
+def test_protocol_fixture_records_real_and_adr_pinned_wire_boundaries() -> None:
     snapshot = snapshot_mcp()
     protocol = json.loads(
         (ROOT / "compatibility/fixtures/mcp/protocol.json").read_text(encoding="utf-8")
     )
     manifest = load_manifest(ROOT / "compatibility/manifest.json")
 
-    assert protocol == {
-        "protocol_revision": "2026-07-28",
-        "transports": ["stdio", "streamable-http"],
-        "private_python_bridge": {
-            "path": "/api/mcp/{operation}",
-            "classification": "private_python_bridge",
-            "disposition": "remove",
-            "adr": "docs/adr/0015-mcp-protocol-and-transport.md",
-        },
+    assert protocol["target"]["basis"] == "adr-backed-target"
+    assert protocol["target"]["initialize"]["request"]["params"]["protocolVersion"] == (
+        "2026-07-28"
+    )
+    assert protocol["target"]["initialize"]["result"]["protocolVersion"] == "2026-07-28"
+    assert protocol["target"]["initialize"]["result"]["capabilities"]["tools"] == {
+        "listChanged": False
+    }
+    assert protocol["target"]["unsupported_version"]["response"]["error"]["code"] == -32602
+    stdio = protocol["target"]["stdio"]
+    assert stdio["request_line"].endswith("\n")
+    assert stdio["response_line"].endswith("\n")
+    assert "\n" not in stdio["request_line"][:-1]
+    assert "\n" not in stdio["response_line"][:-1]
+    assert stdio["diagnostics_stream"] == "stderr"
+    http = protocol["target"]["streamable_http"]
+    assert http["request"]["method"] == "POST"
+    assert http["request"]["path"] == "/mcp"
+    assert http["request"]["headers"]["MCP-Protocol-Version"] == "2026-07-28"
+    assert http["responses"][0]["content_type"] == "application/json"
+    assert http["responses"][1]["content_type"] == "text/event-stream"
+    assert (
+        protocol["registry_identity"]["stdio"] == protocol["registry_identity"]["streamable_http"]
+    )
+    assert protocol["registry_identity"]["stdio"] == [tool["name"] for tool in snapshot["tools"]]
+    assert protocol["current"]["basis"] == "current-python-server"
+    assert protocol["current"]["initialize"]["result"]["capabilities"]["tools"] == {
+        "listChanged": False
+    }
+    assert protocol["private_python_bridge"] == {
+        "path": "/api/mcp/{operation}",
+        "classification": "private_python_bridge",
+        "disposition": "remove",
+        "adr": "docs/adr/0015-mcp-protocol-and-transport.md",
     }
     assert snapshot["private_python_bridge"] == protocol["private_python_bridge"]
     assert all(

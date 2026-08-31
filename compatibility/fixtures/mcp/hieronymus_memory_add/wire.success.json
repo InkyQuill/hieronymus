@@ -1,0 +1,30 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "importance": 5,
+        "kind": "correction",
+        "series_slug": "synthetic-series",
+        "source_ref": "chapter-2",
+        "text": "Use Sense, not Feeling."
+      },
+      "name": "hieronymus_memory_add"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"memory_id\": 1,\n  \"storage\": \"short_term\"\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "memory_id": 1,
+      "storage": "short_term"
+    }
+  }
+}

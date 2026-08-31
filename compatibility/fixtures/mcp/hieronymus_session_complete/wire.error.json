@@ -1,0 +1,20 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {},
+      "name": "hieronymus_session_complete"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_session_complete: 1 validation error for hieronymus_session_completeArguments\nsession_id\n  Field required [type=missing, input_value={}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

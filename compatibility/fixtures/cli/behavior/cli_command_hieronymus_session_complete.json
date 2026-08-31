@@ -1,0 +1,54 @@
+{
+  "cases": [
+    {
+      "args": [
+        "1"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "session-complete"
+      ],
+      "stderr": "",
+      "stdout": "Session 1 completed\n"
+    },
+    {
+      "args": [
+        "1",
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "session-complete"
+      ],
+      "stderr": "",
+      "stdout": "{\"completed\": true, \"session_id\": 1}\n"
+    },
+    {
+      "args": [
+        "999"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "session-complete"
+      ],
+      "stderr": "Error: unknown session: 999\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hieronymus.session-complete"
+}

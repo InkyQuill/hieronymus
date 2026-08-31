@@ -1,0 +1,18 @@
+{
+  "params": {
+    "arguments": {
+      "language": "en",
+      "language_tags": [
+        "en"
+      ],
+      "semantic_tags": [
+        "canonical"
+      ],
+      "value": "Sense"
+    },
+    "name": "hieronymus_concept_facet_update"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {},
+      "name": "hieronymus_dream"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"cycle_id\": 1,\n  \"status\": \"completed\",\n  \"provider\": \"deterministic\",\n  \"input_count\": 1,\n  \"created_crystal_count\": 1,\n  \"proposal_count\": 0\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "created_crystal_count": 1,
+      "cycle_id": 1,
+      "input_count": 1,
+      "proposal_count": 0,
+      "provider": "deterministic",
+      "status": "completed"
+    }
+  }
+}

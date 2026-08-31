@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "args": [
+        "1",
+        "--role",
+        "agent",
+        "--kind",
+        "correction",
+        "--text",
+        "Use Sense."
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "remember-short"
+      ],
+      "stderr": "",
+      "stdout": "Short-term memory 1 stored\n"
+    },
+    {
+      "args": [
+        "1",
+        "--role",
+        "agent",
+        "--kind",
+        "correction",
+        "--text",
+        "Use Sense.",
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "remember-short"
+      ],
+      "stderr": "",
+      "stdout": "{\"memory_id\": 1}\n"
+    },
+    {
+      "args": [
+        "999",
+        "--role",
+        "agent",
+        "--kind",
+        "correction",
+        "--text",
+        "Sense"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "remember-short"
+      ],
+      "stderr": "Error: unknown session: 999\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hiero.remember-short"
+}

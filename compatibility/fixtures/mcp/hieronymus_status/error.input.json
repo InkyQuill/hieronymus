@@ -1,0 +1,9 @@
+{
+  "params": {
+    "arguments": {},
+    "name": "hieronymus_status"
+  },
+  "setup": {
+    "data_root": "file"
+  }
+}

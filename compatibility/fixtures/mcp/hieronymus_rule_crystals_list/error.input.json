@@ -1,0 +1,15 @@
+{
+  "params": {
+    "arguments": {
+      "limit": {
+        "invalid": "expected scalar"
+      },
+      "series_slug": "synthetic-series",
+      "status": "active"
+    },
+    "name": "hieronymus_rule_crystals_list"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

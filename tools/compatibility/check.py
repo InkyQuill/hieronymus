@@ -122,6 +122,9 @@ def _cli_inventory(
             raise RuntimeError(f"unexpected Click exit behavior for {script_name}")
         artifacts[str(record["success_fixture"])] = success_output.encode("utf-8")
         artifacts[str(record["failure_fixture"])] = failure_output.encode("utf-8")
+        artifacts[str(record["behavior_fixture"])] = _json_bytes(
+            inventory_cli._click_behavior_fixture(script_name, record)
+        )
 
     mcp_entrypoint = script_contracts["hieronymus-mcp"]
     assert isinstance(mcp_entrypoint, dict)
@@ -132,6 +135,15 @@ def _cli_inventory(
         raise RuntimeError("unexpected replayed MCP entrypoint exit behavior")
     artifacts[str(mcp_entrypoint["success_fixture"])] = _json_bytes(success)
     artifacts[str(mcp_entrypoint["failure_fixture"])] = _json_bytes(failure)
+    artifacts[str(mcp_entrypoint["behavior_fixture"])] = _json_bytes(
+        {
+            "contract_id": mcp_entrypoint["contract_id"],
+            "cases": [
+                {**success, "id": "stdio-success", "expected": "success"},
+                {**failure, "id": "stdio-failure", "expected": "semantic-failure"},
+            ],
+        }
+    )
 
     for script_name, rows in commands.items():
         entry_point = scripts[script_name]
@@ -156,6 +168,9 @@ def _cli_inventory(
                 raise RuntimeError(f"unexpected Click exit behavior for {program_name}")
             artifacts[str(row["success_fixture"])] = success_output.encode("utf-8")
             artifacts[str(row["failure_fixture"])] = failure_output.encode("utf-8")
+            artifacts[str(row["behavior_fixture"])] = _json_bytes(
+                inventory_cli._click_behavior_fixture(script_name, row)
+            )
 
     for record in records:
         contract = {
@@ -172,6 +187,7 @@ def _cli_inventory(
                     "usage_error", record["exit_behavior"].get("failure")
                 ),
             },
+            "behavior_fixture": record["behavior_fixture"],
         }
         if "success_environment" in record:
             contract["success"]["invocation"] = record["success_invocation"]
@@ -193,11 +209,7 @@ def _cli_inventory(
 def _mcp_inventory() -> tuple[dict[str, bytes], set[str], list[dict[str, object]]]:
     snapshot = inventory_mcp.snapshot_mcp()
     artifacts = {"compatibility/snapshots/mcp.json": _json_bytes(snapshot)}
-    protocol = {
-        "protocol_revision": snapshot["protocol_revision"],
-        "transports": snapshot["transports"],
-        "private_python_bridge": snapshot["private_python_bridge"],
-    }
+    protocol = inventory_mcp._protocol_fixture(snapshot)
     artifacts["compatibility/fixtures/mcp/protocol.json"] = _json_bytes(protocol)
 
     tools = snapshot["tools"]
@@ -218,14 +230,14 @@ def _mcp_inventory() -> tuple[dict[str, bytes], set[str], list[dict[str, object]
                 "fixture": f"compatibility/fixtures/mcp/{tool_name}/success.input.json",
                 "rust_test_target": (f"crates/hiero-mcp/tests/registry_contract.rs::{tool_name}"),
                 "disposition": "preserve",
+                "last_python_release": "0.7.0",
+                "first_rust_release": None,
+                "implementation_status": "outstanding",
             }
         )
-        with tempfile.TemporaryDirectory(prefix="hieronymus-mcp-check-") as directory:
-            success_input, success_output = inventory_mcp._fixture_case(tool_name, Path(directory))
         fixture_root = f"compatibility/fixtures/mcp/{tool_name}"
-        artifacts[f"{fixture_root}/success.input.json"] = _json_bytes(success_input)
-        artifacts[f"{fixture_root}/success.output.json"] = _json_bytes(success_output)
-        artifacts[f"{fixture_root}/error.output.json"] = _json_bytes(inventory_mcp._DATA_ROOT_ERROR)
+        for filename, payload in inventory_mcp._tool_fixture_payloads(tool).items():
+            artifacts[f"{fixture_root}/{filename}"] = _json_bytes(payload)
     return artifacts, inventory_ids, manifest_contracts
 
 
@@ -352,6 +364,9 @@ def generate_inventory(repo_root: Path) -> GeneratedInventory:
         "test_ownership": inventory_state.build_test_ownership(
             state_snapshot["tests"]["node_ids"], contracts
         ),
+        "frontend_test_ownership": inventory_state.build_frontend_test_ownership(
+            state_snapshot["tests"]["frontend_node_ids"], contracts
+        ),
     }
     artifacts[str(MANIFEST)] = _state_json_bytes(expected_manifest)
     artifacts["compatibility/fixtures/diagnostics/check-success.txt"] = (
@@ -423,6 +438,36 @@ def _count_lines(values: list[str]) -> list[str]:
     return [f"  {name}: {count}" for name, count in sorted(Counter(values).items())]
 
 
+def _contract_state_lines(manifest: Manifest) -> list[str]:
+    categories = {
+        "implemented": sorted(
+            contract.id
+            for contract in manifest.contracts
+            if contract.implementation_status == "implemented"
+        ),
+        "changed": sorted(
+            contract.id
+            for contract in manifest.contracts
+            if contract.disposition == "intentionally-change"
+        ),
+        "removed": sorted(
+            contract.id for contract in manifest.contracts if contract.disposition == "remove"
+        ),
+        "outstanding": sorted(
+            contract.id
+            for contract in manifest.contracts
+            if contract.implementation_status == "outstanding"
+        ),
+    }
+    lines = ["Implementation state:"]
+    for category, contract_ids in categories.items():
+        lines.append(f"  {category} ({len(contract_ids)}):")
+        lines.extend(f"    {contract_id}" for contract_id in contract_ids)
+        if not contract_ids:
+            lines.append("    (none)")
+    return lines
+
+
 def render_parity_summary(manifest: Manifest) -> str:
     """Render deterministic counts derived only from the current manifest."""
     lines = [
@@ -434,9 +479,13 @@ def render_parity_summary(manifest: Manifest) -> str:
         *_count_lines([contract.disposition for contract in manifest.contracts]),
         "By technical owner:",
         *_count_lines([contract.technical_owner for contract in manifest.contracts]),
+        *_contract_state_lines(manifest),
         f"Test ownership: {len(manifest.test_ownership)}",
         "By test-ownership disposition:",
         *_count_lines([ownership.disposition for ownership in manifest.test_ownership]),
+        f"Frontend test ownership: {len(manifest.frontend_test_ownership)}",
+        "By frontend test-ownership disposition:",
+        *_count_lines([ownership.disposition for ownership in manifest.frontend_test_ownership]),
     ]
     return "\n".join(lines)
 

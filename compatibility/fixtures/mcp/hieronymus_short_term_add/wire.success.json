@@ -1,0 +1,32 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "kind": "correction",
+        "metadata": {
+          "line": 12
+        },
+        "session_id": 1,
+        "source_ref": "chapter-2",
+        "source_role": "agent",
+        "text": "Use Sense as a game-system term."
+      },
+      "name": "hieronymus_short_term_add"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"memory_id\": 1\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "memory_id": 1
+    }
+  }
+}

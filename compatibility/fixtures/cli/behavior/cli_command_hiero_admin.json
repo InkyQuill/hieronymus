@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "args": [],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "admin"
+      ],
+      "stderr": "",
+      "stdout": "Open synthetic web console: /admin\n"
+    },
+    {
+      "args": [
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "admin"
+      ],
+      "stderr": "",
+      "stdout": "{\"counts\": {\"audit_events\": 0, \"crystals\": 0, \"dream_runs\": 0, \"lessons\": 0, \"pending_proposals\": 0, \"series\": 0, \"sessions\": 0, \"short_term_memories\": 0}, \"dream_config_error\": \"\", \"dream_status\": {\"current_phase\": \"\", \"cycle_id\": null, \"owner\": \"\", \"progress\": 0.0, \"run_id\": null, \"started_at\": \"\", \"state\": \"DISABLED\"}, \"header\": {\"logo\": {\"alt\": \"Hieronymus feather logo\", \"name\": \"feather\", \"text\": \"🪶\"}, \"product\": \"Hieronymus\", \"tagline\": \"Remembers things for you.\", \"version\": \"v0.7.0α\"}, \"service\": {\"reason\": \"no-state\", \"running\": false}, \"short_term_status\": {\"drain_completed\": 0, \"drain_in_progress\": false, \"drain_progress\": 0.0, \"drain_remaining\": 0, \"drain_total\": 0, \"max_pending_short_term_memories\": 200, \"min_pending_short_term_memories\": 20, \"pending_count\": 0, \"urgent\": false}, \"tui\": \"available\", \"view_keys\": [\"concepts\", \"renderings\", \"crystals\", \"lessons\", \"short_term_memory\", \"short_term_sessions\", \"dream_runs\", \"proposals\", \"dream_audits\", \"audit_log\"], \"view_labels\": {\"audit_log\": \"Audit Log\", \"concepts\": \"Concepts\", \"crystals\": \"Crystals\", \"dream_audits\": \"Dream Audits\", \"dream_runs\": \"Dream Runs\", \"lessons\": \"Lessons\", \"proposals\": \"Proposals\", \"renderings\": \"Renderings\", \"short_term_memory\": \"Short-Term Memory\", \"short_term_sessions\": \"Short-Term Sessions\"}, \"view_options\": [{\"key\": \"concepts\", \"label\": \"Concepts\"}, {\"key\": \"renderings\", \"label\": \"Renderings\"}, {\"key\": \"crystals\", \"label\": \"Crystals\"}, {\"key\": \"lessons\", \"label\": \"Lessons\"}, {\"key\": \"short_term_memory\", \"label\": \"Short-Term Memory\"}, {\"key\": \"short_term_sessions\", \"label\": \"Short-Term Sessions\"}, {\"key\": \"dream_runs\", \"label\": \"Dream Runs\"}, {\"key\": \"proposals\", \"label\": \"Proposals\"}, {\"key\": \"dream_audits\", \"label\": \"Dream Audits\"}, {\"key\": \"audit_log\", \"label\": \"Audit Log\"}], \"views\": [\"Concepts\", \"Renderings\", \"Crystals\", \"Lessons\", \"Short-Term Memory\", \"Short-Term Sessions\", \"Dream Runs\", \"Proposals\", \"Dream Audits\", \"Audit Log\"]}\n"
+    },
+    {
+      "args": [],
+      "basis": "shipping-callback",
+      "exit_code": 2,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "admin"
+      ],
+      "stderr": "Usage: hiero [OPTIONS] COMMAND [ARGS]...\nTry 'hiero --help' for help.\n\nError: Invalid value for '--data-root': Directory '<SYNTHETIC_ROOT>/data' is a file.\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hiero.admin"
+}

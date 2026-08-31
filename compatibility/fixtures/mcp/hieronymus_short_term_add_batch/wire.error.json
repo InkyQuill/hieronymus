@@ -1,0 +1,35 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "items": [
+          {
+            "kind": "reading-conclusion",
+            "source_ref": "chapter-1",
+            "source_role": "agent",
+            "text": "The narrator distrusts the council."
+          },
+          {
+            "kind": "reading-conclusion",
+            "source_ref": "chapter-1",
+            "source_role": "agent",
+            "text": "The council controls the city."
+          }
+        ]
+      },
+      "name": "hieronymus_short_term_add_batch"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_short_term_add_batch: 1 validation error for hieronymus_short_term_add_batchArguments\nsession_id\n  Field required [type=missing, input_value={'items': [{'source_role'...rce_ref': 'chapter-1'}]}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

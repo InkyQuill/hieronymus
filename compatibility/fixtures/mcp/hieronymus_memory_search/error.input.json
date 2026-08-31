@@ -1,0 +1,11 @@
+{
+  "params": {
+    "arguments": {
+      "query": "Sense"
+    },
+    "name": "hieronymus_memory_search"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "query": "Sense UI",
+        "series_slug": "synthetic-series"
+      },
+      "name": "hieronymus_recall"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_recall: 1 validation error for hieronymus_recallArguments\nsession_id\n  Field required [type=missing, input_value={'series_slug': 'syntheti...s', 'query': 'Sense UI'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

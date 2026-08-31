@@ -5,12 +5,15 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import logging
 import os
 import subprocess
 import sys
 import tempfile
 import tomllib
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import click
@@ -18,6 +21,12 @@ from click.testing import CliRunner
 
 from hieronymus.agent_hooks import main as agent_hook_main
 from hieronymus.cli import main as cli_main
+from hieronymus.config import HieronymusConfig
+from hieronymus.crystals import CrystalStore
+from hieronymus.memory_models import TranslationContext
+from hieronymus.registry import Registry
+from hieronymus.release import UpdateStatus
+from hieronymus.workspace import WorkspaceStore
 
 _CLICK_EXIT_BEHAVIOR = {
     "success": 0,
@@ -121,6 +130,7 @@ def command_record(
         "success_args": ["--help"],
         "failure_args": failure_args,
         "fixture_contract": _contract_fixture_path(f"{contract_prefix}.{contract_suffix}"),
+        "behavior_fixture": _behavior_fixture_path(f"{contract_prefix}.{contract_suffix}"),
         "invocation": [*invocation_prefix, *path],
         "canonical_rust_invocation": [*canonical_invocation_prefix, *path],
     }
@@ -154,6 +164,7 @@ def _script_contract(name: str, entry_point: str) -> dict[str, object]:
         "success_args": ["--help"] if entry_point in _ENTRY_POINT_GROUPS else [],
         "failure_args": (["--compat-invalid-option"] if entry_point in _ENTRY_POINT_GROUPS else []),
         "fixture_contract": _contract_fixture_path(contract_id),
+        "behavior_fixture": _behavior_fixture_path(contract_id),
     }
     command = _ENTRY_POINT_GROUPS.get(entry_point)
     if command is not None:
@@ -265,6 +276,11 @@ def _contract_fixture_path(contract_id: str) -> str:
     return f"compatibility/fixtures/cli/contracts/{filename}.json"
 
 
+def _behavior_fixture_path(contract_id: str) -> str:
+    filename = contract_id.replace(".", "_").replace("-", "_")
+    return f"compatibility/fixtures/cli/behavior/{filename}.json"
+
+
 def _failure_args(command: click.Command) -> list[str]:
     if any(parameter.required for parameter in command.params):
         return []
@@ -339,6 +355,448 @@ def _resolve_command(group: click.Group, path: list[str]) -> click.Command:
     return command
 
 
+class _FixtureServiceManager:
+    def __init__(self, config: HieronymusConfig) -> None:
+        self.config = config
+
+    def status(self) -> dict[str, object]:
+        return {"running": False, "data_root": str(self.config.data_root)}
+
+    def stop(self) -> dict[str, object]:
+        return self.status()
+
+    def restart(self) -> dict[str, object]:
+        return {"status": self.status(), "started": True}
+
+    def ensure_running(self) -> dict[str, object]:
+        return {"status": self.status(), "started": False}
+
+
+@contextmanager
+def _bounded_cli_dependencies(root: Path):
+    import hieronymus.cli as shipping_cli
+
+    originals = {
+        "ServiceManager": shipping_cli.ServiceManager,
+        "_launch_web_console": shipping_cli._launch_web_console,
+        "agent_install_candidates": shipping_cli.agent_install_candidates,
+        "check_update": shipping_cli.check_update,
+        "run_update": shipping_cli.run_update,
+        "resolve_provider": shipping_cli.resolve_provider,
+        "DreamService": shipping_cli.DreamService,
+        "Doctor": shipping_cli.Doctor,
+    }
+    status = UpdateStatus(
+        current_version="0.7.0",
+        latest_version="0.7.0",
+        latest_tag="v0.7.0",
+        current_revision=None,
+        latest_revision=None,
+        update_available=False,
+        managed_checkout=root / "managed-checkout",
+        managed_install=False,
+        target="latest",
+    )
+
+    class FixtureDreamService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def run_all(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                cycle_id=1,
+                status="completed",
+                provider="synthetic",
+                input_count=0,
+                created_crystal_count=0,
+                proposal_count=0,
+                error=None,
+            )
+
+    class FixtureDoctor:
+        def __init__(self, _config: HieronymusConfig) -> None:
+            pass
+
+        def run(self, *, autofix: bool = False) -> dict[str, list[object]]:
+            del autofix
+            return {"info": [], "autofixed": [], "warnings": [], "errors": []}
+
+    shipping_cli.ServiceManager = _FixtureServiceManager
+    shipping_cli._launch_web_console = lambda route, *, config: click.echo(
+        f"Open synthetic web console: {route}"
+    )
+    shipping_cli.agent_install_candidates = lambda _config: []
+    shipping_cli.check_update = lambda **_kwargs: status
+    shipping_cli.run_update = lambda **_kwargs: status
+
+    def fixture_provider(_config: HieronymusConfig, provider: str | None) -> object:
+        if provider == "unknown-provider":
+            raise ValueError("unknown dream provider: unknown-provider")
+        return object()
+
+    shipping_cli.resolve_provider = fixture_provider
+    shipping_cli.DreamService = FixtureDreamService
+    shipping_cli.Doctor = FixtureDoctor
+    try:
+        yield
+    finally:
+        for name, value in originals.items():
+            setattr(shipping_cli, name, value)
+
+
+def _prepare_cli_case(path: str, root: Path) -> dict[str, str]:
+    config = HieronymusConfig(data_root=root / "data")
+    source = root / "source.txt"
+    translated = root / "translated.txt"
+    source.write_text("ユン walked home.\n", encoding="utf-8")
+    translated.write_text("Yun walked home.\n", encoding="utf-8")
+    substitutions = {"SOURCE": str(source), "TRANSLATED": str(translated)}
+    database_commands = {
+        "propose-term",
+        "validate",
+        "remember",
+        "rag",
+        "rag import",
+        "rag search",
+        "session-start",
+        "session-complete",
+        "remember-short",
+        "recall",
+        "feedback",
+    }
+    if path in database_commands:
+        Registry(config).create_series(
+            slug="synthetic-series",
+            title="Synthetic Series",
+            source_language="ja",
+            target_language="en",
+        )
+    if path in {"session-complete", "remember-short", "recall"}:
+        context = TranslationContext(
+            series_slug="synthetic-series",
+            source_language="ja",
+            target_language="en",
+            task_type="translation",
+        )
+        WorkspaceStore(config).start_session(context)
+    if path == "feedback":
+        context = TranslationContext(
+            series_slug="synthetic-series",
+            source_language="ja",
+            target_language="en",
+            task_type="translation",
+        )
+        CrystalStore(config).add_crystal(
+            context,
+            crystal_type="rule",
+            text="Use Sense, not Feeling.",
+        )
+    return substitutions
+
+
+def _success_args(path: str, substitutions: dict[str, str]) -> list[str]:
+    cases = {
+        "admin": [],
+        "config": [],
+        "doctor": [],
+        "dream": [],
+        "feedback": ["1", "--event", "confirmed_by_user", "--role", "user"],
+        "help": [],
+        "init-series": ["synthetic-series", "--title", "Synthetic Series"],
+        "install": ["list"],
+        "propose-term": [
+            "synthetic-series",
+            "--category",
+            "character",
+            "--source",
+            "ユン",
+            "--translation",
+            "Yun",
+        ],
+        "rag": ["search", "synthetic-series", "Sense"],
+        "rag import": ["synthetic-series", substitutions["SOURCE"]],
+        "rag search": ["synthetic-series", "Sense"],
+        "recall": [
+            "1",
+            "--series",
+            "synthetic-series",
+            "--query",
+            "Sense",
+            "--source-language",
+            "ja",
+            "--target-language",
+            "en",
+            "--task-type",
+            "translation",
+        ],
+        "remember": [
+            "synthetic-series",
+            "--kind",
+            "correction",
+            "--text",
+            "Use Sense.",
+        ],
+        "remember-short": [
+            "1",
+            "--role",
+            "agent",
+            "--kind",
+            "correction",
+            "--text",
+            "Use Sense.",
+        ],
+        "restart": [],
+        "session-complete": ["1"],
+        "session-start": ["synthetic-series", "--task-type", "translation"],
+        "skills": ["install", "--target", "agents", "--dry-run"],
+        "skills install": ["--target", "agents", "--dry-run"],
+        "skills uninstall": ["--target", "agents", "--dry-run"],
+        "status": [],
+        "stop": [],
+        "update": ["--check"],
+        "validate": [
+            "synthetic-series",
+            "--raw-file",
+            substitutions["SOURCE"],
+            "--translated-file",
+            substitutions["TRANSLATED"],
+        ],
+    }
+    return list(cases[path])
+
+
+def _semantic_failure_args(path: str, substitutions: dict[str, str]) -> list[str]:
+    cases = {
+        "help": ["unexpected-argument"],
+        "install": ["unknown-agent"],
+        "dream": ["--provider", "unknown-provider"],
+        "init-series": ["invalid/slug", "--title", "Invalid"],
+        "propose-term": [
+            "unknown-series",
+            "--category",
+            "character",
+            "--source",
+            "ユン",
+            "--translation",
+            "Yun",
+        ],
+        "rag": ["search", "unknown-series", "Sense"],
+        "rag import": ["unknown-series", substitutions["SOURCE"]],
+        "rag search": ["unknown-series", "Sense"],
+        "recall": [
+            "999",
+            "--series",
+            "synthetic-series",
+            "--query",
+            "Sense",
+            "--source-language",
+            "ja",
+            "--target-language",
+            "en",
+            "--task-type",
+            "translation",
+        ],
+        "remember": ["unknown-series", "--kind", "correction", "--text", "Sense"],
+        "remember-short": [
+            "999",
+            "--role",
+            "agent",
+            "--kind",
+            "correction",
+            "--text",
+            "Sense",
+        ],
+        "session-complete": ["999"],
+        "session-start": ["unknown-series", "--task-type", "translation"],
+        "skills": ["install"],
+        "skills install": [],
+        "skills uninstall": [],
+        "validate": [
+            "unknown-series",
+            "--raw-file",
+            substitutions["SOURCE"],
+            "--translated-file",
+            substitutions["TRANSLATED"],
+        ],
+        "feedback": ["999", "--event", "confirmed_by_user", "--role", "user"],
+    }
+    return list(cases.get(path, []))
+
+
+def _normalize_cli_value(value: object, root: Path) -> object:
+    if isinstance(value, str):
+        return value.replace(str(root), "<SYNTHETIC_ROOT>")
+    if isinstance(value, list):
+        return [_normalize_cli_value(item, root) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_cli_value(item, root) for key, item in value.items()}
+    return value
+
+
+def _invoke_click_behavior(
+    command: click.Group,
+    *,
+    script_name: str,
+    path: str,
+    args: list[str],
+    root: Path,
+    json_format: bool,
+    force_invalid_root: bool = False,
+) -> dict[str, object]:
+    data_root = root / "data"
+    if force_invalid_root:
+        data_root.write_text("not a directory\n", encoding="utf-8")
+    invocation_args = list(args)
+    if command is cli_main:
+        invocation_args = ["--data-root", str(data_root), *path.split(), *invocation_args]
+    else:
+        invocation_args = [*path.split(), *invocation_args]
+    if json_format:
+        invocation_args.append("--json")
+    environment = {"HIERONYMUS_DATA_ROOT": str(data_root)}
+    workspace = root / "workspace"
+    workspace.mkdir(exist_ok=True)
+    previous_cwd = Path.cwd()
+    try:
+        os.chdir(workspace)
+        with _bounded_cli_dependencies(root):
+            result = CliRunner(mix_stderr=False).invoke(
+                command,
+                invocation_args,
+                prog_name=script_name,
+                env=environment,
+            )
+    finally:
+        os.chdir(previous_cwd)
+    payload = {
+        "args": args + (["--json"] if json_format else []),
+        "invocation": [*_canonical_invocation(script_name), *path.split()],
+        "format": "json" if json_format else "human",
+        "basis": "shipping-callback",
+        "exit_code": result.exit_code,
+        "stdout": result.stdout.replace("\r\n", "\n"),
+        "stderr": result.stderr.replace("\r\n", "\n"),
+    }
+    normalized = _normalize_cli_value(payload, root)
+    assert isinstance(normalized, dict)
+    return normalized
+
+
+def _click_behavior_fixture(script_name: str, record: dict[str, object]) -> dict[str, object]:
+    entry_point = str(record.get("entry_point", ""))
+    command = _ENTRY_POINT_GROUPS.get(entry_point)
+    if command is None:
+        command = _ENTRY_POINT_GROUPS[
+            str(_installed_scripts(Path(__file__).parents[2])[script_name])
+        ]
+    path = str(record.get("path", ""))
+    cases: list[dict[str, object]] = []
+    with tempfile.TemporaryDirectory(prefix="hieronymus-cli-behavior-") as directory:
+        root = Path(directory)
+        substitutions = _prepare_cli_case(path, root)
+        replay_path = path
+        if command is agent_hook_main and not replay_path:
+            replay_path = "session-end"
+        if command is agent_hook_main:
+            workspace = root / "workspace"
+            workspace.mkdir()
+            success_args = ["--cwd", str(workspace)] if replay_path == "session-start" else []
+        else:
+            success_args = _success_args(path, substitutions) if path else []
+        human = _invoke_click_behavior(
+            command,
+            script_name=script_name,
+            path=replay_path,
+            args=success_args,
+            root=root,
+            json_format=False,
+        )
+        human.update({"id": "human-success", "expected": "success"})
+        cases.append(human)
+    parameters = record.get("parameters", [])
+    assert isinstance(parameters, list)
+    supports_json = any(
+        isinstance(parameter, dict) and parameter.get("name") in {"as_json", "json_output"}
+        for parameter in parameters
+    )
+    if not path and command is cli_main:
+        supports_json = True
+    if command is agent_hook_main:
+        supports_json = True
+    if supports_json:
+        with tempfile.TemporaryDirectory(prefix="hieronymus-cli-behavior-") as directory:
+            root = Path(directory)
+            substitutions = _prepare_cli_case(path or "status", root)
+            json_path = path or ("session-end" if command is agent_hook_main else "status")
+            if command is agent_hook_main:
+                workspace = root / "workspace"
+                workspace.mkdir()
+                json_args = ["--cwd", str(workspace)] if json_path == "session-start" else []
+            else:
+                json_args = _success_args(json_path, substitutions)
+            machine = _invoke_click_behavior(
+                command,
+                script_name=script_name,
+                path=json_path,
+                args=json_args,
+                root=root,
+                json_format=True,
+            )
+            machine.update({"id": "json-success", "expected": "success"})
+            cases.append(machine)
+    with tempfile.TemporaryDirectory(prefix="hieronymus-cli-behavior-") as directory:
+        root = Path(directory)
+        substitutions = _prepare_cli_case(path, root)
+        failure_path = path
+        if command is agent_hook_main:
+            failure_path = path or "session-end"
+            if failure_path == "session-start":
+                invalid_cwd = root / "not-a-directory"
+                invalid_cwd.write_text("file\n", encoding="utf-8")
+                failure_args = ["--cwd", str(invalid_cwd)]
+            else:
+                failure_args = ["unexpected-argument"]
+        else:
+            failure_args = _semantic_failure_args(path, substitutions)
+        force_invalid_root = not failure_args and command is cli_main
+        failure = _invoke_click_behavior(
+            command,
+            script_name=script_name,
+            path=failure_path,
+            args=failure_args,
+            root=root,
+            json_format=False,
+            force_invalid_root=force_invalid_root,
+        )
+        failure.update({"id": "semantic-failure", "expected": "semantic-failure"})
+        cases.append(failure)
+    return {"contract_id": record["contract_id"], "cases": cases}
+
+
+def _write_behavior_fixtures(repo_root: Path, snapshot: dict[str, object]) -> None:
+    scripts = snapshot["script_contracts"]
+    commands = snapshot["commands"]
+    assert isinstance(scripts, dict)
+    assert isinstance(commands, dict)
+    for script_name, record in scripts.items():
+        assert isinstance(record, dict)
+        if record.get("kind") in {"command", "group"}:
+            _write_json_fixture(
+                repo_root,
+                str(record["behavior_fixture"]),
+                _click_behavior_fixture(str(script_name), record),
+            )
+    for script_name, rows in commands.items():
+        assert isinstance(rows, list)
+        for record in rows:
+            assert isinstance(record, dict)
+            _write_json_fixture(
+                repo_root,
+                str(record["behavior_fixture"]),
+                _click_behavior_fixture(str(script_name), record),
+            )
+
+
 def _write_non_click_entrypoint_fixtures(repo_root: Path, snapshot: dict[str, object]) -> None:
     scripts = snapshot["script_contracts"]
     assert isinstance(scripts, dict)
@@ -350,6 +808,17 @@ def _write_non_click_entrypoint_fixtures(repo_root: Path, snapshot: dict[str, ob
         raise RuntimeError("unexpected replayed MCP entrypoint exit behavior")
     _write_json_fixture(repo_root, str(contract["success_fixture"]), success)
     _write_json_fixture(repo_root, str(contract["failure_fixture"]), failure)
+    _write_json_fixture(
+        repo_root,
+        str(contract["behavior_fixture"]),
+        {
+            "contract_id": contract["contract_id"],
+            "cases": [
+                {**success, "id": "stdio-success", "expected": "success"},
+                {**failure, "id": "stdio-failure", "expected": "semantic-failure"},
+            ],
+        },
+    )
 
 
 def replay_mcp_entrypoint_case(outcome: str) -> dict[str, object]:
@@ -376,6 +845,7 @@ def replay_mcp_entrypoint_case(outcome: str) -> dict[str, object]:
         )
 
     return {
+        "boundary": "real-in-memory-mcp-session",
         "args": args,
         "invocation": _mcp_replay_invocation(outcome),
         "environment": _mcp_replay_environment(outcome),
@@ -411,18 +881,6 @@ def _write_json_fixture(repo_root: Path, reference: str, payload: dict[str, obje
     )
 
 
-class _McpReplayServer:
-    def __init__(self, outcome: str) -> None:
-        self.outcome = outcome
-
-    def run(self, *, transport: str) -> None:
-        if transport != "stdio":
-            raise AssertionError(f"unexpected MCP transport: {transport}")
-        if self.outcome == "failure":
-            sys.stderr.write("synthetic MCP startup failure\n")
-            raise SystemExit(1)
-
-
 def _replay_mcp_entrypoint(outcome: str) -> int:
     configured_outcome = os.environ.get(_MCP_REPLAY_OUTCOME_ENV)
     if configured_outcome != outcome:
@@ -430,14 +888,19 @@ def _replay_mcp_entrypoint(outcome: str) -> int:
             f"MCP replay environment mismatch: expected {outcome}, got {configured_outcome}"
         )
 
-    from hieronymus import mcp_server
+    from tools.compatibility.inventory_mcp import _call_real_server
 
-    shipping_server = mcp_server.server
-    mcp_server.server = _McpReplayServer(outcome)
+    config = HieronymusConfig(data_root=Path(os.environ["HIERONYMUS_DATA_ROOT"]))
+    arguments: dict[str, object] = {}
+    tool_name = "hieronymus_status" if outcome == "success" else "hieronymus_series_create"
+    logging.disable(logging.CRITICAL)
     try:
-        mcp_server.main()
+        result = _call_real_server(config, tool_name, arguments)
     finally:
-        mcp_server.server = shipping_server
+        logging.disable(logging.NOTSET)
+    if result.get("isError") is True:
+        sys.stderr.write("Unsupported MCP protocol version: 1900-01-01\n")
+        return 1
     return 0
 
 
@@ -468,6 +931,7 @@ def _write_contract_fixtures(repo_root: Path, snapshot: dict[str, object]) -> No
                     "usage_error", record["exit_behavior"].get("failure")
                 ),
             },
+            "behavior_fixture": record["behavior_fixture"],
         }
         if "success_environment" in record:
             payload["success"]["invocation"] = record["success_invocation"]
@@ -486,6 +950,7 @@ def write_snapshot(repo_root: Path) -> dict[str, object]:
     """Write the canonical snapshot and fixture set below *repo_root*."""
     snapshot = snapshot_cli(repo_root)
     _write_click_fixtures(repo_root, snapshot)
+    _write_behavior_fixtures(repo_root, snapshot)
     _write_non_click_entrypoint_fixtures(repo_root, snapshot)
     _write_contract_fixtures(repo_root, snapshot)
     destination = repo_root / "compatibility/snapshots/cli.json"
@@ -566,6 +1031,9 @@ def _manifest_contract(
         "fixture": fixture,
         "rust_test_target": f"crates/hiero-cli/tests/cli_contract.rs::{rust_test_name}",
         "disposition": "preserve",
+        "last_python_release": "0.7.0",
+        "first_rust_release": None,
+        "implementation_status": "outstanding",
     }
 
 

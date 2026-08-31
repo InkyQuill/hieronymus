@@ -1,0 +1,26 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "limit": {
+          "invalid": "expected scalar"
+        },
+        "series_slug": "synthetic-series",
+        "status": "active"
+      },
+      "name": "hieronymus_rule_crystals_list"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_rule_crystals_list: 1 validation error for hieronymus_rule_crystals_listArguments\nlimit\n  Input should be a valid integer [type=int_type, input_value={'invalid': 'expected scalar'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/int_type",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

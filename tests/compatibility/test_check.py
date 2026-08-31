@@ -50,6 +50,9 @@ def _manifest(*, fixture: str = "fixture.json") -> Manifest:
                 fixture=fixture,
                 rust_test_target="crates/hiero-cli/tests/cli_contract.rs::status",
                 disposition="preserve",
+                last_python_release="0.7.0",
+                first_rust_release=None,
+                implementation_status="outstanding",
             ),
             Contract(
                 id="http.route.get.status",
@@ -61,6 +64,9 @@ def _manifest(*, fixture: str = "fixture.json") -> Manifest:
                 fixture=fixture,
                 rust_test_target="crates/hiero-daemon/tests/http_contract.rs::status",
                 disposition="intentionally-change",
+                last_python_release="0.7.0",
+                first_rust_release=None,
+                implementation_status="outstanding",
                 adr="docs/adr/0012-local-service-authentication.md",
             ),
         ),
@@ -81,6 +87,7 @@ def _manifest(*, fixture: str = "fixture.json") -> Manifest:
                 contract_ids=("http.route.get.status",),
             ),
         ),
+        frontend_test_ownership=(),
     )
 
 
@@ -149,7 +156,7 @@ def test_manifest_failures_report_invalid_manifest_and_missing_references(tmp_pa
     assert manifest is None
     assert failures == [
         "invalid manifest: manifest missing required fields: contracts, "
-        "manifest_version, python_reference, test_ownership"
+        "frontend_test_ownership, manifest_version, python_reference, test_ownership"
     ]
 
     manifest_path.write_text(
@@ -165,9 +172,13 @@ def test_manifest_failures_report_invalid_manifest_and_missing_references(tmp_pa
     "tests": ["tests/missing.py"],
     "fixture": "compatibility/fixtures/missing.json",
     "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::status",
-    "disposition": "preserve"
+    "disposition": "preserve",
+    "last_python_release": "0.7.0",
+    "first_rust_release": null,
+    "implementation_status": "outstanding"
   }],
-  "test_ownership": []
+  "test_ownership": [],
+  "frontend_test_ownership": []
 }\n""",
         encoding="utf-8",
     )
@@ -212,10 +223,22 @@ By disposition:
 By technical owner:
   daemon-mcp-security: 1
   distribution-cutover: 1
+Implementation state:
+  implemented (0):
+    (none)
+  changed (1):
+    http.route.get.status
+  removed (0):
+    (none)
+  outstanding (2):
+    cli.command.hiero.status
+    http.route.get.status
 Test ownership: 3
 By test-ownership disposition:
   implementation_internal: 1
-  public_contract: 2"""
+  public_contract: 2
+Frontend test ownership: 0
+By frontend test-ownership disposition:"""
     )
 
 
@@ -287,64 +310,21 @@ def test_canonical_check_passes_without_writing_repo_or_caller_state(tmp_path: P
     ).read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize(
-    ("relative_path", "expected_diagnostic"),
-    [
+def test_canonical_check_reports_one_sorted_composite_failure_without_writing(
+    tmp_path: Path,
+) -> None:
+    repo_copy = _copy_tracked_repository(tmp_path / "repo")
+    expected_failures = []
+    for relative_path, diagnostic in (
         ("compatibility/snapshots/cli.json", "snapshot drift"),
         ("compatibility/snapshots/mcp.json", "snapshot drift"),
         ("compatibility/snapshots/http.json", "snapshot drift"),
         ("compatibility/snapshots/state.json", "snapshot drift"),
         ("compatibility/fixtures/database/minimal-python.sqlite", "fixture drift"),
-    ],
-)
-def test_canonical_check_reports_each_family_drift_without_writing(
-    tmp_path: Path, relative_path: str, expected_diagnostic: str
-) -> None:
-    repo_copy = _copy_tracked_repository(tmp_path / "repo")
-    target = repo_copy / relative_path
-    target.write_bytes(target.read_bytes() + b"\nDRIFT")
-
-    result = _invoke_canonical_check(repo_copy, tmp_path / "caller")
-
-    assert result.returncode == 1
-    assert f"{expected_diagnostic}: {relative_path}\n" in result.stdout
-    assert "Parity summary\n" in result.stdout
-
-
-def test_canonical_check_reports_invalid_manifest_without_writing(tmp_path: Path) -> None:
-    repo_copy = _copy_tracked_repository(tmp_path / "repo")
-    (repo_copy / "compatibility/manifest.json").write_text("{}\n", encoding="utf-8")
-
-    result = _invoke_canonical_check(repo_copy, tmp_path / "caller")
-
-    assert result.returncode == 1
-    assert "invalid manifest: manifest missing required fields:" in result.stdout
-
-
-@pytest.mark.parametrize(
-    "relative_path",
-    [
-        "compatibility/fixtures/mcp/orphan-tool/stale.json",
-        "compatibility/fixtures/cli/stale-fixture.txt",
-        "compatibility/snapshots/stale.json",
-    ],
-)
-def test_canonical_check_rejects_orphan_generated_artifacts_without_writing(
-    tmp_path: Path, relative_path: str
-) -> None:
-    repo_copy = _copy_tracked_repository(tmp_path / "repo")
-    orphan = repo_copy / relative_path
-    orphan.parent.mkdir(parents=True, exist_ok=True)
-    orphan.write_text("stale\n", encoding="utf-8")
-
-    result = _invoke_canonical_check(repo_copy, tmp_path / "caller")
-
-    assert result.returncode == 1
-    assert f"unexpected generated artifact: {relative_path}\n" in result.stdout
-
-
-def test_canonical_check_sorts_real_failures_before_summary(tmp_path: Path) -> None:
-    repo_copy = _copy_tracked_repository(tmp_path / "repo")
+    ):
+        target = repo_copy / relative_path
+        target.write_bytes(target.read_bytes() + b"\nDRIFT")
+        expected_failures.append(f"{diagnostic}: {relative_path}")
     for relative_path in (
         "compatibility/snapshots/z-stale.json",
         "compatibility/fixtures/cli/a-stale.txt",
@@ -352,22 +332,20 @@ def test_canonical_check_sorts_real_failures_before_summary(tmp_path: Path) -> N
         orphan = repo_copy / relative_path
         orphan.parent.mkdir(parents=True, exist_ok=True)
         orphan.write_text("stale\n", encoding="utf-8")
+        expected_failures.append(f"unexpected generated artifact: {relative_path}")
 
     result = _invoke_canonical_check(repo_copy, tmp_path / "caller")
 
     assert result.returncode == 1
     failure_lines = result.stdout.split("Parity summary\n", 1)[0].splitlines()[1:]
     assert failure_lines == sorted(failure_lines)
-    assert failure_lines == [
-        "unexpected generated artifact: compatibility/fixtures/cli/a-stale.txt",
-        "unexpected generated artifact: compatibility/snapshots/z-stale.json",
-    ]
+    assert failure_lines == sorted(expected_failures)
 
 
 def _copy_tracked_repository(destination: Path) -> Path:
     destination.mkdir(parents=True)
     tracked = subprocess.run(
-        ["git", "ls-files", "-z"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -384,8 +362,12 @@ def _copy_tracked_repository(destination: Path) -> Path:
         else:
             shutil.copy2(source, target)
     # CI performs ``uv sync --dev`` before the canonical no-sync gate.  Reuse
-    # that already-synced environment without copying or mutating it.
+    # that already-synced environment and the Bun-installed frontend dependencies
+    # without copying or mutating either dependency tree.
     (destination / ".venv").symlink_to(ROOT / ".venv", target_is_directory=True)
+    (destination / "frontend/node_modules").symlink_to(
+        ROOT / "frontend/node_modules", target_is_directory=True
+    )
     return destination
 
 

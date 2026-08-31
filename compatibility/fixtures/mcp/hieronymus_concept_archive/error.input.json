@@ -1,0 +1,11 @@
+{
+  "params": {
+    "arguments": {
+      "reason": "Synthetic archive case."
+    },
+    "name": "hieronymus_concept_archive"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

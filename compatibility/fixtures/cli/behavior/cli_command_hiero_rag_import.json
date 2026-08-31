@@ -1,0 +1,60 @@
+{
+  "cases": [
+    {
+      "args": [
+        "synthetic-series",
+        "<SYNTHETIC_ROOT>/source.txt"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "rag",
+        "import"
+      ],
+      "stderr": "",
+      "stdout": "Imported 1 RAG chunk(s) from <SYNTHETIC_ROOT>/source.txt\n"
+    },
+    {
+      "args": [
+        "synthetic-series",
+        "<SYNTHETIC_ROOT>/source.txt",
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "rag",
+        "import"
+      ],
+      "stderr": "",
+      "stdout": "{\"checksum\": \"e6717bb8d32ae6866ddc5fcd2039de3a8ae4e5b6d23e95970e164bfee0482a1d\", \"chunk_count\": 1, \"content_type\": \"txt\", \"metadata\": {\"normalized_format\": \"text\", \"normalized_path\": \"<SYNTHETIC_ROOT>/source.txt\", \"original_path\": \"<SYNTHETIC_ROOT>/source.txt\"}, \"normalized_format\": \"text\", \"normalized_path\": \"<SYNTHETIC_ROOT>/source.txt\", \"series_slug\": \"synthetic-series\", \"skipped\": false, \"source_id\": 1, \"source_ref\": \"<SYNTHETIC_ROOT>/source.txt\", \"source_type\": \"text\"}\n"
+    },
+    {
+      "args": [
+        "unknown-series",
+        "<SYNTHETIC_ROOT>/source.txt"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "rag",
+        "import"
+      ],
+      "stderr": "Error: unknown series: unknown-series\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hiero.rag.import"
+}

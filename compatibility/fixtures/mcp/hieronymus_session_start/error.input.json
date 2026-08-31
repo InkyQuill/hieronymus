@@ -1,0 +1,12 @@
+{
+  "params": {
+    "arguments": {
+      "chapter": "2",
+      "volume": "1"
+    },
+    "name": "hieronymus_session_start"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

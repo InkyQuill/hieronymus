@@ -1,0 +1,15 @@
+{
+  "params": {
+    "arguments": {
+      "confidence": 0.9,
+      "story_scopes": [
+        "volume:1",
+        "chapter:2"
+      ]
+    },
+    "name": "hieronymus_crystal_story_scopes_set"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

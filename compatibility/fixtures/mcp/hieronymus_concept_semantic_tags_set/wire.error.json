@@ -1,0 +1,25 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "semantic_tags": [
+          "ability",
+          "ui"
+        ]
+      },
+      "name": "hieronymus_concept_semantic_tags_set"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_concept_semantic_tags_set: 1 validation error for hieronymus_concept_semantic_tags_setArguments\nconcept_id\n  Field required [type=missing, input_value={'semantic_tags': ['ability', 'ui']}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

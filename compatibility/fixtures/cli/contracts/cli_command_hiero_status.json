@@ -1,4 +1,5 @@
 {
+  "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_status.json",
   "contract_id": "cli.command.hiero.status",
   "failure": {
     "args": [

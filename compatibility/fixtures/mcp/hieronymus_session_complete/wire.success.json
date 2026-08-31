@@ -1,0 +1,26 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "session_id": 1
+      },
+      "name": "hieronymus_session_complete"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"session_id\": 1,\n  \"completed\": true\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "completed": true,
+      "session_id": 1
+    }
+  }
+}

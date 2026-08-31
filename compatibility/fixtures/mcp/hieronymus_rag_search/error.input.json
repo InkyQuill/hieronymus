@@ -1,0 +1,11 @@
+{
+  "params": {
+    "arguments": {
+      "query": "Cooking Talent"
+    },
+    "name": "hieronymus_rag_search"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

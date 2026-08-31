@@ -1,0 +1,15 @@
+{
+  "params": {
+    "arguments": {
+      "language_tags": [
+        "ja",
+        "en",
+        "fantasy"
+      ]
+    },
+    "name": "hieronymus_series_set_language_tags"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

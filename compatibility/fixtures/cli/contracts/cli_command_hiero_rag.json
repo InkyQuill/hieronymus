@@ -1,4 +1,5 @@
 {
+  "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_rag.json",
   "contract_id": "cli.command.hiero.rag",
   "failure": {
     "args": [

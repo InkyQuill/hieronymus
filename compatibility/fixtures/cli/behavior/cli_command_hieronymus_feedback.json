@@ -1,0 +1,66 @@
+{
+  "cases": [
+    {
+      "args": [
+        "1",
+        "--event",
+        "confirmed_by_user",
+        "--role",
+        "user"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "feedback"
+      ],
+      "stderr": "",
+      "stdout": "Feedback event 1 recorded\n"
+    },
+    {
+      "args": [
+        "1",
+        "--event",
+        "confirmed_by_user",
+        "--role",
+        "user",
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "feedback"
+      ],
+      "stderr": "",
+      "stdout": "{\"event_id\": 1}\n"
+    },
+    {
+      "args": [
+        "999",
+        "--event",
+        "confirmed_by_user",
+        "--role",
+        "user"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "feedback"
+      ],
+      "stderr": "Error: unknown crystal: 999\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hieronymus.feedback"
+}

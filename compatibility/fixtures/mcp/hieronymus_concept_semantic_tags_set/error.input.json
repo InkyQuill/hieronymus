@@ -1,0 +1,14 @@
+{
+  "params": {
+    "arguments": {
+      "semantic_tags": [
+        "ability",
+        "ui"
+      ]
+    },
+    "name": "hieronymus_concept_semantic_tags_set"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

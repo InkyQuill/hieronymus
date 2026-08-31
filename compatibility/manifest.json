@@ -3,8 +3,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_admin.json",
       "id": "cli.command.hiero.admin",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_admin",
       "surface": "cli",
@@ -17,8 +20,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_config.json",
       "id": "cli.command.hiero.config",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_config",
       "surface": "cli",
@@ -31,8 +37,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_doctor.json",
       "id": "cli.command.hiero.doctor",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_doctor",
       "surface": "cli",
@@ -45,8 +54,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_dream.json",
       "id": "cli.command.hiero.dream",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_dream",
       "surface": "cli",
@@ -59,8 +71,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_feedback.json",
       "id": "cli.command.hiero.feedback",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_feedback",
       "surface": "cli",
@@ -73,8 +88,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_help.json",
       "id": "cli.command.hiero.help",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_help",
       "surface": "cli",
@@ -87,8 +105,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_init_series.json",
       "id": "cli.command.hiero.init-series",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_init_series",
       "surface": "cli",
@@ -101,8 +122,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_install.json",
       "id": "cli.command.hiero.install",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_install",
       "surface": "cli",
@@ -115,8 +139,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_propose_term.json",
       "id": "cli.command.hiero.propose-term",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_propose_term",
       "surface": "cli",
@@ -129,8 +156,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_rag.json",
       "id": "cli.command.hiero.rag",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_rag",
       "surface": "cli",
@@ -143,8 +173,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_rag_import.json",
       "id": "cli.command.hiero.rag.import",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_rag_import",
       "surface": "cli",
@@ -157,8 +190,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_rag_search.json",
       "id": "cli.command.hiero.rag.search",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_rag_search",
       "surface": "cli",
@@ -171,8 +207,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_recall.json",
       "id": "cli.command.hiero.recall",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_recall",
       "surface": "cli",
@@ -185,8 +224,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_remember.json",
       "id": "cli.command.hiero.remember",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_remember",
       "surface": "cli",
@@ -199,8 +241,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_remember_short.json",
       "id": "cli.command.hiero.remember-short",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_remember_short",
       "surface": "cli",
@@ -213,8 +258,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_restart.json",
       "id": "cli.command.hiero.restart",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_restart",
       "surface": "cli",
@@ -227,8 +275,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_session_complete.json",
       "id": "cli.command.hiero.session-complete",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_session_complete",
       "surface": "cli",
@@ -241,8 +292,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_session_start.json",
       "id": "cli.command.hiero.session-start",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_session_start",
       "surface": "cli",
@@ -255,8 +309,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_skills.json",
       "id": "cli.command.hiero.skills",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_skills",
       "surface": "cli",
@@ -269,8 +326,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_skills_install.json",
       "id": "cli.command.hiero.skills.install",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_skills_install",
       "surface": "cli",
@@ -283,8 +343,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_skills_uninstall.json",
       "id": "cli.command.hiero.skills.uninstall",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_skills_uninstall",
       "surface": "cli",
@@ -297,8 +360,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_status.json",
       "id": "cli.command.hiero.status",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_status",
       "surface": "cli",
@@ -311,8 +377,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_stop.json",
       "id": "cli.command.hiero.stop",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_stop",
       "surface": "cli",
@@ -325,8 +394,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_update.json",
       "id": "cli.command.hiero.update",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_update",
       "surface": "cli",
@@ -339,8 +411,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hiero_validate.json",
       "id": "cli.command.hiero.validate",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hiero_validate",
       "surface": "cli",
@@ -353,8 +428,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_agent_hook_session_end.json",
       "id": "cli.command.hieronymus-agent-hook.session-end",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_hooks:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_agent_hook_session_end",
       "surface": "cli",
@@ -367,8 +445,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_agent_hook_session_start.json",
       "id": "cli.command.hieronymus-agent-hook.session-start",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_hooks:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_agent_hook_session_start",
       "surface": "cli",
@@ -381,8 +462,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_admin.json",
       "id": "cli.command.hieronymus.admin",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_admin",
       "surface": "cli",
@@ -395,8 +479,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_config.json",
       "id": "cli.command.hieronymus.config",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_config",
       "surface": "cli",
@@ -409,8 +496,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_doctor.json",
       "id": "cli.command.hieronymus.doctor",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_doctor",
       "surface": "cli",
@@ -423,8 +513,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_dream.json",
       "id": "cli.command.hieronymus.dream",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_dream",
       "surface": "cli",
@@ -437,8 +530,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_feedback.json",
       "id": "cli.command.hieronymus.feedback",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_feedback",
       "surface": "cli",
@@ -451,8 +547,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_help.json",
       "id": "cli.command.hieronymus.help",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_help",
       "surface": "cli",
@@ -465,8 +564,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_init_series.json",
       "id": "cli.command.hieronymus.init-series",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_init_series",
       "surface": "cli",
@@ -479,8 +581,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_install.json",
       "id": "cli.command.hieronymus.install",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_install",
       "surface": "cli",
@@ -493,8 +598,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_propose_term.json",
       "id": "cli.command.hieronymus.propose-term",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_propose_term",
       "surface": "cli",
@@ -507,8 +615,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_rag.json",
       "id": "cli.command.hieronymus.rag",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_rag",
       "surface": "cli",
@@ -521,8 +632,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_rag_import.json",
       "id": "cli.command.hieronymus.rag.import",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_rag_import",
       "surface": "cli",
@@ -535,8 +649,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_rag_search.json",
       "id": "cli.command.hieronymus.rag.search",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_rag_search",
       "surface": "cli",
@@ -549,8 +666,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_recall.json",
       "id": "cli.command.hieronymus.recall",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_recall",
       "surface": "cli",
@@ -563,8 +683,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_remember.json",
       "id": "cli.command.hieronymus.remember",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_remember",
       "surface": "cli",
@@ -577,8 +700,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_remember_short.json",
       "id": "cli.command.hieronymus.remember-short",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_remember_short",
       "surface": "cli",
@@ -591,8 +717,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_restart.json",
       "id": "cli.command.hieronymus.restart",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_restart",
       "surface": "cli",
@@ -605,8 +734,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_session_complete.json",
       "id": "cli.command.hieronymus.session-complete",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_session_complete",
       "surface": "cli",
@@ -619,8 +751,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_session_start.json",
       "id": "cli.command.hieronymus.session-start",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_session_start",
       "surface": "cli",
@@ -633,8 +768,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_skills.json",
       "id": "cli.command.hieronymus.skills",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_skills",
       "surface": "cli",
@@ -647,8 +785,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_skills_install.json",
       "id": "cli.command.hieronymus.skills.install",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_skills_install",
       "surface": "cli",
@@ -661,8 +802,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_skills_uninstall.json",
       "id": "cli.command.hieronymus.skills.uninstall",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_skills_uninstall",
       "surface": "cli",
@@ -675,8 +819,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_status.json",
       "id": "cli.command.hieronymus.status",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_status",
       "surface": "cli",
@@ -689,8 +836,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_stop.json",
       "id": "cli.command.hieronymus.stop",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_stop",
       "surface": "cli",
@@ -703,8 +853,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_update.json",
       "id": "cli.command.hieronymus.update",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_update",
       "surface": "cli",
@@ -717,8 +870,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_command_hieronymus_validate.json",
       "id": "cli.command.hieronymus.validate",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_command_hieronymus_validate",
       "surface": "cli",
@@ -731,8 +887,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_script_hiero.json",
       "id": "cli.script.hiero",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_script_hiero",
       "surface": "cli",
@@ -745,8 +904,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_script_hieronymus.json",
       "id": "cli.script.hieronymus",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.cli:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_script_hieronymus",
       "surface": "cli",
@@ -759,8 +921,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_script_hieronymus_agent_hook.json",
       "id": "cli.script.hieronymus-agent-hook",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_hooks:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_script_hieronymus_agent_hook",
       "surface": "cli",
@@ -773,8 +938,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/cli/contracts/cli_script_hieronymus_mcp.json",
       "id": "cli.script.hieronymus-mcp",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:main",
       "rust_test_target": "crates/hiero-cli/tests/cli_contract.rs::cli_script_hieronymus_mcp",
       "surface": "cli",
@@ -787,8 +955,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "frontend.route.get.admin",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:_send_web_app",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::frontend_route_get_admin",
       "surface": "frontend",
@@ -802,8 +973,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "frontend.route.get.admin.path",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:_send_web_app",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::frontend_route_get_admin_path",
       "surface": "frontend",
@@ -817,8 +991,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "frontend.route.get.assets.path",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:_send_web_asset",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::frontend_route_get_assets_path",
       "surface": "frontend",
@@ -832,8 +1009,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "frontend.route.get.config",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:_send_web_app",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::frontend_route_get_config",
       "surface": "frontend",
@@ -847,8 +1027,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "frontend.route.get.config.path",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:_send_web_app",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::frontend_route_get_config_path",
       "surface": "frontend",
@@ -863,8 +1046,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0014-web-console-replaces-terminal-ui.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "frontend.route.get.root",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:do_GET not-found fallback",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::frontend_route_get_root",
       "surface": "frontend",
@@ -879,8 +1065,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.delete.api.providers.id",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.delete_provider",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_delete_api_providers_id",
       "surface": "http",
@@ -894,8 +1083,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.get.api.admin.dashboard",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:AdminBridge.dashboard",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_get_api_admin_dashboard",
       "surface": "http",
@@ -909,8 +1101,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.get.api.admin.snapshot",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:AdminBridge.snapshot",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_get_api_admin_snapshot",
       "surface": "http",
@@ -924,8 +1119,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.get.api.providers",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.provider_list",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_get_api_providers",
       "surface": "http",
@@ -939,8 +1137,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.get.api.providers.id",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.provider_detail",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_get_api_providers_id",
       "surface": "http",
@@ -954,8 +1155,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.get.api.providers.id.models",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.provider_models",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_get_api_providers_id_models",
       "surface": "http",
@@ -969,8 +1173,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.get.api.settings.dream",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.dream_settings",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_get_api_settings_dream",
       "surface": "http",
@@ -984,8 +1191,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.get.api.settings.ingest",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.ingest_settings",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_get_api_settings_ingest",
       "surface": "http",
@@ -999,8 +1209,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.get.api.settings.release",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.release_settings",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_get_api_settings_release",
       "surface": "http",
@@ -1014,8 +1227,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.get.health",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:do_GET",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_get_health",
       "surface": "http",
@@ -1029,8 +1245,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.get.status",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:status_payload",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_get_status",
       "surface": "http",
@@ -1044,23 +1263,30 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.post.api.admin.actions.action",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:AdminBridge allowlisted action",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_api_admin_actions_action",
       "surface": "http",
       "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_http_inventory.py",
-        "tests/test_service_http.py"
+        "tests/test_service_http.py",
+        "frontend/src/web/components/MemoryViews.test.ts"
       ]
     },
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.post.api.admin.actions.run_manual_dreaming",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:_start_manual_dreaming",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_api_admin_actions_run_manual_dreaming",
       "surface": "http",
@@ -1074,8 +1300,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0015-mcp-protocol-and-transport.md",
       "disposition": "remove",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.post.api.mcp.operation",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:MCP_OPERATION_HANDLERS",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_api_mcp_operation",
       "surface": "http",
@@ -1089,23 +1318,30 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.post.api.providers",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.save_provider",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_api_providers",
       "surface": "http",
       "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_http_inventory.py",
-        "tests/test_service_http.py"
+        "tests/test_service_http.py",
+        "frontend/src/web/components/editors.test.ts"
       ]
     },
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.post.api.providers.id.check",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.check_saved_provider",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_api_providers_id_check",
       "surface": "http",
@@ -1119,23 +1355,30 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.post.api.settings.dream",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.save_dream_settings",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_api_settings_dream",
       "surface": "http",
       "technical_owner": "daemon-mcp-security",
       "tests": [
         "tests/compatibility/test_http_inventory.py",
-        "tests/test_service_http.py"
+        "tests/test_service_http.py",
+        "frontend/src/web/components/editors.test.ts"
       ]
     },
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.post.api.settings.ingest",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.save_ingest_settings",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_api_settings_ingest",
       "surface": "http",
@@ -1149,8 +1392,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.post.api.settings.release",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:ConfigBridge.save_release_settings",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_api_settings_release",
       "surface": "http",
@@ -1162,10 +1408,31 @@
     },
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
+      "disposition": "intentionally-change",
+      "first_rust_release": null,
+      "fixture": "compatibility/fixtures/http/route-cases.json",
+      "id": "http.route.post.auth.launch-grant.exchange",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
+      "python_entry_point": "hieronymus.service_http:ADR 0012 launch-grant exchange",
+      "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_auth_launch_grant_exchange",
+      "surface": "http",
+      "technical_owner": "daemon-mcp-security",
+      "tests": [
+        "tests/compatibility/test_http_inventory.py",
+        "tests/test_service_http.py"
+      ]
+    },
+    {
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0015-mcp-protocol-and-transport.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.post.mcp",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:standard Streamable HTTP endpoint",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_mcp",
       "surface": "http",
@@ -1179,8 +1446,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "http.route.post.shutdown",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:do_POST",
       "rust_test_target": "crates/hiero-daemon/tests/http_contract.rs::http_route_post_shutdown",
       "surface": "http",
@@ -1193,8 +1463,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_archive/success.input.json",
       "id": "mcp.tool.hieronymus_concept_archive",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_archive",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_archive",
       "surface": "mcp",
@@ -1207,8 +1480,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_create/success.input.json",
       "id": "mcp.tool.hieronymus_concept_create",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_create",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_create",
       "surface": "mcp",
@@ -1221,8 +1497,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_facet_add/success.input.json",
       "id": "mcp.tool.hieronymus_concept_facet_add",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_facet_add",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_facet_add",
       "surface": "mcp",
@@ -1235,8 +1514,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_facet_list/success.input.json",
       "id": "mcp.tool.hieronymus_concept_facet_list",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_facet_list",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_facet_list",
       "surface": "mcp",
@@ -1249,8 +1531,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_facet_set_canonical/success.input.json",
       "id": "mcp.tool.hieronymus_concept_facet_set_canonical",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_facet_set_canonical",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_facet_set_canonical",
       "surface": "mcp",
@@ -1263,8 +1548,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_facet_update/success.input.json",
       "id": "mcp.tool.hieronymus_concept_facet_update",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_facet_update",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_facet_update",
       "surface": "mcp",
@@ -1277,8 +1565,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_get/success.input.json",
       "id": "mcp.tool.hieronymus_concept_get",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_get",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_get",
       "surface": "mcp",
@@ -1291,8 +1582,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_list/success.input.json",
       "id": "mcp.tool.hieronymus_concept_list",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_list",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_list",
       "surface": "mcp",
@@ -1305,8 +1599,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_merge/success.input.json",
       "id": "mcp.tool.hieronymus_concept_merge",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_merge",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_merge",
       "surface": "mcp",
@@ -1319,8 +1616,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_proposals_list/success.input.json",
       "id": "mcp.tool.hieronymus_concept_proposals_list",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_proposals_list",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_proposals_list",
       "surface": "mcp",
@@ -1333,8 +1633,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_rename/success.input.json",
       "id": "mcp.tool.hieronymus_concept_rename",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_rename",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_rename",
       "surface": "mcp",
@@ -1347,8 +1650,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_semantic_tags_set/success.input.json",
       "id": "mcp.tool.hieronymus_concept_semantic_tags_set",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_semantic_tags_set",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_semantic_tags_set",
       "surface": "mcp",
@@ -1361,8 +1667,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_concept_update/success.input.json",
       "id": "mcp.tool.hieronymus_concept_update",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_concept_update",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_concept_update",
       "surface": "mcp",
@@ -1375,8 +1684,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_crystal_link_concept/success.input.json",
       "id": "mcp.tool.hieronymus_crystal_link_concept",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_crystal_link_concept",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_crystal_link_concept",
       "surface": "mcp",
@@ -1389,8 +1701,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_crystal_semantic_tags_set/success.input.json",
       "id": "mcp.tool.hieronymus_crystal_semantic_tags_set",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_crystal_semantic_tags_set",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_crystal_semantic_tags_set",
       "surface": "mcp",
@@ -1403,8 +1718,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_crystal_story_scopes_set/success.input.json",
       "id": "mcp.tool.hieronymus_crystal_story_scopes_set",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_crystal_story_scopes_set",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_crystal_story_scopes_set",
       "surface": "mcp",
@@ -1417,8 +1735,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_dream/success.input.json",
       "id": "mcp.tool.hieronymus_dream",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_dream",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_dream",
       "surface": "mcp",
@@ -1431,8 +1752,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_feedback/success.input.json",
       "id": "mcp.tool.hieronymus_feedback",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_feedback",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_feedback",
       "surface": "mcp",
@@ -1445,8 +1769,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_memory_add/success.input.json",
       "id": "mcp.tool.hieronymus_memory_add",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_memory_add",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_memory_add",
       "surface": "mcp",
@@ -1459,8 +1786,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_memory_search/success.input.json",
       "id": "mcp.tool.hieronymus_memory_search",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_memory_search",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_memory_search",
       "surface": "mcp",
@@ -1473,8 +1803,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_rag_import/success.input.json",
       "id": "mcp.tool.hieronymus_rag_import",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_rag_import",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_rag_import",
       "surface": "mcp",
@@ -1487,8 +1820,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json",
       "id": "mcp.tool.hieronymus_rag_search",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_rag_search",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_rag_search",
       "surface": "mcp",
@@ -1501,8 +1837,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_recall/success.input.json",
       "id": "mcp.tool.hieronymus_recall",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_recall",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_recall",
       "surface": "mcp",
@@ -1515,8 +1854,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_rule_crystal_archive/success.input.json",
       "id": "mcp.tool.hieronymus_rule_crystal_archive",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_rule_crystal_archive",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_rule_crystal_archive",
       "surface": "mcp",
@@ -1529,8 +1871,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_rule_crystal_validate/success.input.json",
       "id": "mcp.tool.hieronymus_rule_crystal_validate",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_rule_crystal_validate",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_rule_crystal_validate",
       "surface": "mcp",
@@ -1543,8 +1888,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_rule_crystals_list/success.input.json",
       "id": "mcp.tool.hieronymus_rule_crystals_list",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_rule_crystals_list",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_rule_crystals_list",
       "surface": "mcp",
@@ -1557,8 +1905,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_series_create/success.input.json",
       "id": "mcp.tool.hieronymus_series_create",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_series_create",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_series_create",
       "surface": "mcp",
@@ -1571,8 +1922,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_series_init/success.input.json",
       "id": "mcp.tool.hieronymus_series_init",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_series_init",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_series_init",
       "surface": "mcp",
@@ -1585,8 +1939,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_series_list/success.input.json",
       "id": "mcp.tool.hieronymus_series_list",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_series_list",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_series_list",
       "surface": "mcp",
@@ -1599,8 +1956,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_series_set_language_tags/success.input.json",
       "id": "mcp.tool.hieronymus_series_set_language_tags",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_series_set_language_tags",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_series_set_language_tags",
       "surface": "mcp",
@@ -1613,8 +1973,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_session_complete/success.input.json",
       "id": "mcp.tool.hieronymus_session_complete",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_session_complete",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_session_complete",
       "surface": "mcp",
@@ -1627,8 +1990,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_session_start/success.input.json",
       "id": "mcp.tool.hieronymus_session_start",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_session_start",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_session_start",
       "surface": "mcp",
@@ -1641,8 +2007,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_short_term_add/success.input.json",
       "id": "mcp.tool.hieronymus_short_term_add",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_short_term_add",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_short_term_add",
       "surface": "mcp",
@@ -1655,8 +2024,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_short_term_add_batch/success.input.json",
       "id": "mcp.tool.hieronymus_short_term_add_batch",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_short_term_add_batch",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_short_term_add_batch",
       "surface": "mcp",
@@ -1669,8 +2041,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_status/success.input.json",
       "id": "mcp.tool.hieronymus_status",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_status",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_status",
       "surface": "mcp",
@@ -1683,8 +2058,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_termbase_approve/success.input.json",
       "id": "mcp.tool.hieronymus_termbase_approve",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_termbase_approve",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_termbase_approve",
       "surface": "mcp",
@@ -1697,8 +2075,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_termbase_contract/success.input.json",
       "id": "mcp.tool.hieronymus_termbase_contract",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_termbase_contract",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_termbase_contract",
       "surface": "mcp",
@@ -1711,8 +2092,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_termbase_propose/success.input.json",
       "id": "mcp.tool.hieronymus_termbase_propose",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_termbase_propose",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_termbase_propose",
       "surface": "mcp",
@@ -1725,8 +2109,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/mcp/hieronymus_termbase_validate/success.input.json",
       "id": "mcp.tool.hieronymus_termbase_validate",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.mcp_server:hieronymus_termbase_validate",
       "rust_test_target": "crates/hiero-mcp/tests/registry_contract.rs::hieronymus_termbase_validate",
       "surface": "mcp",
@@ -1740,8 +2127,11 @@
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "adr": "docs/adr/0012-mcp-transport-authentication-and-discovery.md",
       "disposition": "intentionally-change",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/http/route-cases.json",
       "id": "websocket.route.get.ws.admin",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.service_http:_handle_admin_websocket",
       "rust_test_target": "crates/hiero-daemon/tests/websocket_contract.rs::websocket_route_get_ws_admin",
       "surface": "websocket",
@@ -1754,8 +2144,28 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
+      "fixture": "compatibility/snapshots/state.json",
+      "id": "data-root.layout",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
+      "python_entry_point": "hieronymus.config:HieronymusConfig",
+      "rust_test_target": "crates/hiero-config/tests/data_root_contract.rs::layout",
+      "surface": "config",
+      "technical_owner": "data-config",
+      "tests": [
+        "tests/compatibility/test_state_inventory.py",
+        "tests/test_config.py"
+      ]
+    },
+    {
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/diagnostics/check-success.txt",
       "id": "diagnostics.compatibility.check",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "tools.compatibility.check:main",
       "rust_test_target": "crates/hiero-compatibility/tests/freeze.rs::compatibility_check",
       "surface": "diagnostics",
@@ -1767,8 +2177,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/current/provider.json",
       "id": "config.provider.current",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.provider_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::provider_current",
       "surface": "config",
@@ -1781,8 +2194,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/current/dream.json",
       "id": "config.dream.current",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.dream_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::dream_current",
       "surface": "config",
@@ -1795,8 +2211,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/current/ingest.json",
       "id": "config.ingest.current",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.ingest_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::ingest_current",
       "surface": "config",
@@ -1809,8 +2228,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/current/release.json",
       "id": "config.release.current",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.release_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::release_current",
       "surface": "config",
@@ -1823,8 +2245,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/database/minimal-python.sqlite",
       "id": "database.schema.current",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.registry:Registry",
       "rust_test_target": "crates/hiero-db/tests/schema_contract.rs::current_schema",
       "surface": "database",
@@ -1837,8 +2262,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/database/minimal-python.sqlite",
       "id": "database.migrations.current",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.db:apply_migration",
       "rust_test_target": "crates/hiero-db/tests/schema_contract.rs::migration_ledgers",
       "surface": "database",
@@ -1850,9 +2278,30 @@
     },
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "adr": "docs/adr/0010-data-locations-schema-ownership-and-upgrade.md",
+      "disposition": "intentionally-change",
+      "first_rust_release": null,
+      "fixture": "compatibility/snapshots/state.json",
+      "id": "database.upgrade.preflight",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
+      "python_entry_point": "tools.compatibility.inventory_state:preflight_database",
+      "rust_test_target": "crates/hiero-db/tests/upgrade_contract.rs::preflight_variants",
+      "surface": "database",
+      "technical_owner": "database-upgrade",
+      "tests": [
+        "tests/compatibility/test_state_inventory.py",
+        "tests/test_db_compatibility.py"
+      ]
+    },
+    {
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/install-update/cases.json",
       "id": "install-update.install-script",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "install.sh",
       "rust_test_target": "crates/hiero-cli/tests/install_contract.rs::install_script",
       "surface": "install-update",
@@ -1865,8 +2314,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/install-update/cases.json",
       "id": "install-update.uninstall-script",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "uninstall.sh",
       "rust_test_target": "crates/hiero-cli/tests/install_contract.rs::uninstall_script",
       "surface": "install-update",
@@ -1879,8 +2331,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/roundtrip/provider.json",
       "id": "config.provider.roundtrip",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.provider_config:load_provider_catalog",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::provider_roundtrip",
       "surface": "config",
@@ -1893,8 +2348,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/failures/provider.json",
       "id": "config.provider.failures",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.provider_config:load_provider_catalog",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::provider_failures",
       "surface": "config",
@@ -1907,8 +2365,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/legacy/provider.json",
       "id": "config.provider.legacy",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.provider_config:load_provider_catalog",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::provider_legacy",
       "surface": "config",
@@ -1921,8 +2382,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/roundtrip/dream.json",
       "id": "config.dream.roundtrip",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.dream_config:load_dream_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::dream_roundtrip",
       "surface": "config",
@@ -1935,8 +2399,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/failures/dream.json",
       "id": "config.dream.failures",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.dream_config:load_dream_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::dream_failures",
       "surface": "config",
@@ -1949,8 +2416,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/legacy/dream.json",
       "id": "config.dream.legacy",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.dream_config:load_dream_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::dream_legacy",
       "surface": "config",
@@ -1963,8 +2433,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/roundtrip/ingest.json",
       "id": "config.ingest.roundtrip",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.ingest_config:load_ingest_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::ingest_roundtrip",
       "surface": "config",
@@ -1977,8 +2450,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/failures/ingest.json",
       "id": "config.ingest.failures",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.ingest_config:load_ingest_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::ingest_failures",
       "surface": "config",
@@ -1991,8 +2467,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/roundtrip/release.json",
       "id": "config.release.roundtrip",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.release_config:load_release_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::release_roundtrip",
       "surface": "config",
@@ -2005,8 +2484,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/config/failures/release.json",
       "id": "config.release.failures",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.release_config:load_release_config",
       "rust_test_target": "crates/hiero-config/tests/config_contract.rs::release_failures",
       "surface": "config",
@@ -2019,8 +2501,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.target.claude",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_plugins.claude:ClaudePlugin",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::claude",
       "surface": "agent-integration",
@@ -2034,8 +2519,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.target.codex",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_plugins.codex:CodexPlugin",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::codex",
       "surface": "agent-integration",
@@ -2049,8 +2537,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.target.openclaw",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_plugins.openclaw:OpenClawPlugin",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::openclaw",
       "surface": "agent-integration",
@@ -2064,8 +2555,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.target.opencode",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_plugins.opencode:OpenCodePlugin",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::opencode",
       "surface": "agent-integration",
@@ -2079,8 +2573,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.target.gemini",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_plugins.gemini:GeminiPlugin",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::gemini",
       "surface": "agent-integration",
@@ -2094,8 +2591,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.target.mimo",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_plugins.reserved:MimoPlugin",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::mimo",
       "surface": "agent-integration",
@@ -2109,8 +2609,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.target.pi",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_plugins.reserved:PiPlugin",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::pi",
       "surface": "agent-integration",
@@ -2124,8 +2627,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.target.hermes",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_plugins.reserved:HermesPlugin",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::hermes",
       "surface": "agent-integration",
@@ -2139,8 +2645,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.target.gemini.failures",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.agent_plugins.gemini:GeminiPlugin",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::gemini_failures",
       "surface": "agent-integration",
@@ -2153,8 +2662,11 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "first_rust_release": null,
       "fixture": "compatibility/fixtures/agent-integration/current.json",
       "id": "agent-integration.project-skills",
+      "implementation_status": "outstanding",
+      "last_python_release": "0.7.0",
       "python_entry_point": "hieronymus.project_skills:install_project_skills",
       "rust_test_target": "crates/hiero-cli/tests/agent_contract.rs::project_skills",
       "surface": "agent-integration",
@@ -2163,6 +2675,94 @@
         "tests/compatibility/test_state_inventory.py",
         "tests/test_project_skills.py"
       ]
+    }
+  ],
+  "frontend_test_ownership": [
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/app.test.ts::accent foregrounds use a contrast-safe semantic text token",
+      "reason": "Frontend implementation behavior with no specific public request contract: accent foregrounds use a contrast-safe semantic text token."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/app.test.ts::all navigation links retain 44px interaction targets",
+      "reason": "Frontend implementation behavior with no specific public request contract: all navigation links retain 44px interaction targets."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/app.test.ts::inline error alerts use the semantic danger background",
+      "reason": "Frontend implementation behavior with no specific public request contract: inline error alerts use the semantic danger background."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/app.test.ts::legacy stylesheets remain deleted",
+      "reason": "Frontend implementation behavior with no specific public request contract: legacy stylesheets remain deleted."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/app.test.ts::the Tailwind stylesheet contains only used shared component selectors",
+      "reason": "Frontend implementation behavior with no specific public request contract: the Tailwind stylesheet contains only used shared component selectors."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/app.test.ts::the editor dialog source contract remains viewport-bounded and right-aligned",
+      "reason": "Frontend implementation behavior with no specific public request contract: the editor dialog source contract remains viewport-bounded and right-aligned."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/app.test.ts::the primary header wraps into accessible mobile navigation",
+      "reason": "Frontend implementation behavior with no specific public request contract: the primary header wraps into accessible mobile navigation."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/app.test.ts::the semantic theme exposes required runtime tokens and utilities",
+      "reason": "Frontend implementation behavior with no specific public request contract: the semantic theme exposes required runtime tokens and utilities."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/app.test.ts::the web entry imports the Tailwind stylesheet",
+      "reason": "Frontend implementation behavior with no specific public request contract: the web entry imports the Tailwind stylesheet."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/app.test.ts::the web stylesheet configures Tailwind and the data-theme dark variant",
+      "reason": "Frontend implementation behavior with no specific public request contract: the web stylesheet configures Tailwind and the data-theme dark variant."
+    },
+    {
+      "contract_ids": [
+        "http.route.post.api.admin.actions.action"
+      ],
+      "disposition": "public_contract",
+      "node_id": "frontend/src/web/components/MemoryViews.test.ts::destructive memory actions require confirmation and send the exact payload"
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/components/MemoryViews.test.ts::memory rows load by keyboard activation:  ",
+      "reason": "Frontend implementation behavior with no specific public request contract: memory rows load by keyboard activation:  ."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/components/MemoryViews.test.ts::memory rows load by keyboard activation: {Enter}",
+      "reason": "Frontend implementation behavior with no specific public request contract: memory rows load by keyboard activation: {Enter}."
+    },
+    {
+      "contract_ids": [
+        "http.route.post.api.settings.dream"
+      ],
+      "disposition": "public_contract",
+      "node_id": "frontend/src/web/components/editors.test.ts::dreaming editor submits the toggled schedule state"
+    },
+    {
+      "contract_ids": [
+        "http.route.post.api.providers"
+      ],
+      "disposition": "public_contract",
+      "node_id": "frontend/src/web/components/editors.test.ts::provider editor opens, submits edited fields, and closes"
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "frontend/src/web/lib/theme.svelte.test.ts::theme toggle applies and persists the selected theme",
+      "reason": "Frontend implementation behavior with no specific public request contract: theme toggle applies and persists the selected theme."
     }
   ],
   "manifest_version": 1,
@@ -2225,70 +2825,7 @@
         "diagnostics.compatibility.check"
       ],
       "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_canonical_check_rejects_orphan_generated_artifacts_without_writing[compatibility/fixtures/cli/stale-fixture.txt]"
-    },
-    {
-      "contract_ids": [
-        "diagnostics.compatibility.check"
-      ],
-      "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_canonical_check_rejects_orphan_generated_artifacts_without_writing[compatibility/fixtures/mcp/orphan-tool/stale.json]"
-    },
-    {
-      "contract_ids": [
-        "diagnostics.compatibility.check"
-      ],
-      "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_canonical_check_rejects_orphan_generated_artifacts_without_writing[compatibility/snapshots/stale.json]"
-    },
-    {
-      "contract_ids": [
-        "diagnostics.compatibility.check"
-      ],
-      "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/fixtures/database/minimal-python.sqlite-fixture drift]"
-    },
-    {
-      "contract_ids": [
-        "diagnostics.compatibility.check"
-      ],
-      "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/cli.json-snapshot drift]"
-    },
-    {
-      "contract_ids": [
-        "diagnostics.compatibility.check"
-      ],
-      "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/http.json-snapshot drift]"
-    },
-    {
-      "contract_ids": [
-        "diagnostics.compatibility.check"
-      ],
-      "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/mcp.json-snapshot drift]"
-    },
-    {
-      "contract_ids": [
-        "diagnostics.compatibility.check"
-      ],
-      "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/state.json-snapshot drift]"
-    },
-    {
-      "contract_ids": [
-        "diagnostics.compatibility.check"
-      ],
-      "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_invalid_manifest_without_writing"
-    },
-    {
-      "contract_ids": [
-        "diagnostics.compatibility.check"
-      ],
-      "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_canonical_check_sorts_real_failures_before_summary"
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_one_sorted_composite_failure_without_writing"
     },
     {
       "contract_ids": [
@@ -2337,6 +2874,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_cli_inventory.py::test_every_click_command_has_real_behavior_successes_and_semantic_failure",
+      "reason": "Compatibility schema and artifact generator validation: test_every_click_command_has_real_behavior_successes_and_semantic_failure."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_cli_inventory.py::test_every_public_cli_contract_has_success_failure_fixtures_and_manifest_entry",
       "reason": "Compatibility schema and artifact generator validation: test_every_public_cli_contract_has_success_failure_fixtures_and_manifest_entry."
     },
@@ -2357,8 +2899,13 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/compatibility/test_cli_inventory.py::test_snapshot_generation_never_executes_click_callbacks",
-      "reason": "Compatibility schema and artifact generator validation: test_snapshot_generation_never_executes_click_callbacks."
+      "node_id": "tests/compatibility/test_cli_inventory.py::test_snapshot_generation_replays_callbacks_only_below_synthetic_root",
+      "reason": "Compatibility schema and artifact generator validation: test_snapshot_generation_replays_callbacks_only_below_synthetic_root."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_http_inventory.py::test_every_changed_route_has_separate_replayable_current_and_target_outcomes",
+      "reason": "Compatibility schema and artifact generator validation: test_every_changed_route_has_separate_replayable_current_and_target_outcomes."
     },
     {
       "disposition": "implementation_internal",
@@ -2374,6 +2921,11 @@
       "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_http_inventory.py::test_http_snapshot_matches_router_and_frontend_sources",
       "reason": "Compatibility schema and artifact generator validation: test_http_snapshot_matches_router_and_frontend_sources."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_http_inventory.py::test_launch_grant_exchange_sets_strict_http_only_session_and_csrf",
+      "reason": "Compatibility schema and artifact generator validation: test_launch_grant_exchange_sets_strict_http_only_session_and_csrf."
     },
     {
       "disposition": "implementation_internal",
@@ -2512,6 +3064,21 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_http_inventory.py::test_target_browser_auth_covers_host_origin_csrf_success_and_failures",
+      "reason": "Compatibility schema and artifact generator validation: test_target_browser_auth_covers_host_origin_csrf_success_and_failures."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_http_inventory.py::test_target_health_is_unauthenticated_minimal_liveness",
+      "reason": "Compatibility schema and artifact generator validation: test_target_health_is_unauthenticated_minimal_liveness."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_http_inventory.py::test_target_websocket_uses_cookie_origin_resume_and_rotation_cases",
+      "reason": "Compatibility schema and artifact generator validation: test_target_websocket_uses_cookie_origin_resume_and_rotation_cases."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_http_inventory.py::test_unreviewed_python_router_branch_is_rejected",
       "reason": "Compatibility schema and artifact generator validation: test_unreviewed_python_router_branch_is_rejected."
     },
@@ -2542,8 +3109,18 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_manifest.py::test_contract_release_state_is_typed_and_outstanding_requires_no_rust_release",
+      "reason": "Compatibility schema and artifact generator validation: test_contract_release_state_is_typed_and_outstanding_requires_no_rust_release."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_manifest.py::test_duplicate_complete_contract_id_is_rejected",
       "reason": "Compatibility schema and artifact generator validation: test_duplicate_complete_contract_id_is_rejected."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_manifest.py::test_frontend_test_ownership_has_a_strict_separate_node_namespace",
+      "reason": "Compatibility schema and artifact generator validation: test_frontend_test_ownership_has_a_strict_separate_node_namespace."
     },
     {
       "disposition": "implementation_internal",
@@ -2612,6 +3189,16 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_manifest.py::test_release_state_consistency_is_validated[implemented-None-implemented contract missing first Rust release]",
+      "reason": "Compatibility schema and artifact generator validation: test_release_state_consistency_is_validated."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_manifest.py::test_release_state_consistency_is_validated[outstanding-1.0.0-outstanding contract has first Rust release]",
+      "reason": "Compatibility schema and artifact generator validation: test_release_state_consistency_is_validated."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_manifest.py::test_schema_defines_strict_conditional_test_ownership_records",
       "reason": "Compatibility schema and artifact generator validation: test_schema_defines_strict_conditional_test_ownership_records."
     },
@@ -2619,6 +3206,11 @@
       "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_manifest.py::test_schema_requires_nonblank_acceptance_owner_and_adr_for_changes",
       "reason": "Compatibility schema and artifact generator validation: test_schema_requires_nonblank_acceptance_owner_and_adr_for_changes."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_manifest.py::test_schema_requires_release_state_and_frontend_ownership",
+      "reason": "Compatibility schema and artifact generator validation: test_schema_requires_release_state_and_frontend_ownership."
     },
     {
       "disposition": "implementation_internal",
@@ -2637,8 +3229,8 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_records_adr_pinned_boundary_without_manifest_duplication",
-      "reason": "Compatibility schema and artifact generator validation: test_protocol_fixture_records_adr_pinned_boundary_without_manifest_duplication."
+      "node_id": "tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_records_real_and_adr_pinned_wire_boundaries",
+      "reason": "Compatibility schema and artifact generator validation: test_protocol_fixture_records_real_and_adr_pinned_wire_boundaries."
     },
     {
       "disposition": "implementation_internal",
@@ -2662,6 +3254,16 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_collect_frontend_test_nodeids_fails_explicitly_without_bun",
+      "reason": "Compatibility schema and artifact generator validation: test_collect_frontend_test_nodeids_fails_explicitly_without_bun."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_collect_frontend_test_nodeids_uses_vitest_case_listing",
+      "reason": "Compatibility schema and artifact generator validation: test_collect_frontend_test_nodeids_uses_vitest_case_listing."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_state_inventory.py::test_collect_test_nodeids_returns_only_sorted_pytest_node_ids",
       "reason": "Validates the Python pytest collection parser; inventory implementation only."
     },
@@ -2677,6 +3279,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_database_fixture_freezes_representative_rows_and_preflight_variants",
+      "reason": "Compatibility schema and artifact generator validation: test_database_fixture_freezes_representative_rows_and_preflight_variants."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_state_inventory.py::test_database_inventory_includes_schema_objects_and_application_ledgers",
       "reason": "Compatibility schema and artifact generator validation: test_database_inventory_includes_schema_objects_and_application_ledgers."
     },
@@ -2684,6 +3291,11 @@
       "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_state_inventory.py::test_distribution_cases_freeze_bootstrap_errors_uninstall_and_idempotence",
       "reason": "Compatibility schema and artifact generator validation: test_distribution_cases_freeze_bootstrap_errors_uninstall_and_idempotence."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_every_frontend_vitest_case_has_typed_manifest_ownership",
+      "reason": "Compatibility schema and artifact generator validation: test_every_frontend_vitest_case_has_typed_manifest_ownership."
     },
     {
       "disposition": "implementation_internal",
@@ -2697,8 +3309,28 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_frontend_ownership_does_not_inherit_route_contracts_from_a_test_file",
+      "reason": "Compatibility schema and artifact generator validation: test_frontend_ownership_does_not_inherit_route_contracts_from_a_test_file."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_http_and_agent_behavior_nodes_have_explicit_public_contract_ownership",
+      "reason": "Compatibility schema and artifact generator validation: test_http_and_agent_behavior_nodes_have_explicit_public_contract_ownership."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_http_and_agent_ownership_rules_do_not_grant_false_file_level_coverage",
+      "reason": "Compatibility schema and artifact generator validation: test_http_and_agent_ownership_rules_do_not_grant_false_file_level_coverage."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_state_inventory.py::test_node_ownership_does_not_inherit_every_contract_from_its_file",
       "reason": "Compatibility schema and artifact generator validation: test_node_ownership_does_not_inherit_every_contract_from_its_file."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_owned_data_root_paths_link_to_one_layout_contract",
+      "reason": "Compatibility schema and artifact generator validation: test_owned_data_root_paths_link_to_one_layout_contract."
     },
     {
       "disposition": "implementation_internal",
@@ -3147,34 +3779,46 @@
       "reason": "Distribution and agent integration implementation: test_discover_project_context_walks_upward_and_applies_defaults."
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_hooks.py::test_hook_session_end_outputs_json",
-      "reason": "Distribution and agent integration implementation: test_hook_session_end_outputs_json."
+      "contract_ids": [
+        "cli.command.hieronymus-agent-hook.session-end"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_hooks.py::test_hook_session_end_outputs_json"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_hooks.py::test_hook_session_start_human_output_is_concise",
-      "reason": "Distribution and agent integration implementation: test_hook_session_start_human_output_is_concise."
+      "contract_ids": [
+        "cli.command.hieronymus-agent-hook.session-start"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_hooks.py::test_hook_session_start_human_output_is_concise"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_hooks.py::test_hook_session_start_json_includes_discovered_service",
-      "reason": "Distribution and agent integration implementation: test_hook_session_start_json_includes_discovered_service."
+      "contract_ids": [
+        "cli.command.hieronymus-agent-hook.session-start"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_hooks.py::test_hook_session_start_json_includes_discovered_service"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_hooks.py::test_hook_session_start_json_includes_missing_service_discovery",
-      "reason": "Distribution and agent integration implementation: test_hook_session_start_json_includes_missing_service_discovery."
+      "contract_ids": [
+        "cli.command.hieronymus-agent-hook.session-start"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_hooks.py::test_hook_session_start_json_includes_missing_service_discovery"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_hooks.py::test_hook_session_start_outputs_context_when_project_file_exists",
-      "reason": "Distribution and agent integration implementation: test_hook_session_start_outputs_context_when_project_file_exists."
+      "contract_ids": [
+        "cli.command.hieronymus-agent-hook.session-start"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_hooks.py::test_hook_session_start_outputs_context_when_project_file_exists"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_hooks.py::test_hook_session_start_outputs_missing_context_when_no_project_file",
-      "reason": "Distribution and agent integration implementation: test_hook_session_start_outputs_missing_context_when_no_project_file."
+      "contract_ids": [
+        "cli.command.hieronymus-agent-hook.session-start"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_hooks.py::test_hook_session_start_outputs_missing_context_when_no_project_file"
     },
     {
       "disposition": "implementation_internal",
@@ -8076,109 +8720,160 @@
       "reason": "Daemon, transport, and UI bridge implementation: test_discover_local_service_reports_unhealthy_service_state."
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_admin_dashboard_api_returns_local_admin_snapshot",
-      "reason": "Daemon, transport, and UI bridge implementation: test_admin_dashboard_api_returns_local_admin_snapshot."
+      "contract_ids": [
+        "http.route.get.api.admin.dashboard"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_admin_dashboard_api_returns_local_admin_snapshot"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_admin_memory_actions_are_explicitly_allowlisted",
-      "reason": "Daemon, transport, and UI bridge implementation: test_admin_memory_actions_are_explicitly_allowlisted."
+      "contract_ids": [
+        "http.route.post.api.admin.actions.action"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_admin_memory_actions_are_explicitly_allowlisted"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_admin_snapshot_api_accepts_a_view_parameter",
-      "reason": "Daemon, transport, and UI bridge implementation: test_admin_snapshot_api_accepts_a_view_parameter."
+      "contract_ids": [
+        "http.route.get.api.admin.snapshot"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_admin_snapshot_api_accepts_a_view_parameter"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_admin_websocket_rejects_foreign_origin",
-      "reason": "Daemon, transport, and UI bridge implementation: test_admin_websocket_rejects_foreign_origin."
+      "contract_ids": [
+        "websocket.route.get.ws.admin"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_admin_websocket_rejects_foreign_origin"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_config_and_admin_memory_routes_serve_the_web_application_after_session_setup",
-      "reason": "Daemon, transport, and UI bridge implementation: test_config_and_admin_memory_routes_serve_the_web_application_after_session_setup."
+      "contract_ids": [
+        "frontend.route.get.admin",
+        "frontend.route.get.config"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_config_and_admin_memory_routes_serve_the_web_application_after_session_setup"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_config_page_is_available_without_a_browser_token",
-      "reason": "Daemon, transport, and UI bridge implementation: test_config_page_is_available_without_a_browser_token."
+      "contract_ids": [
+        "frontend.route.get.config"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_config_page_is_available_without_a_browser_token"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_health_endpoint_returns_daemon_identity",
-      "reason": "Daemon, transport, and UI bridge implementation: test_health_endpoint_returns_daemon_identity."
+      "contract_ids": [
+        "http.route.get.health"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_health_endpoint_returns_daemon_identity"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_local_origin_can_use_admin_api_without_token",
-      "reason": "Daemon, transport, and UI bridge implementation: test_local_origin_can_use_admin_api_without_token."
+      "contract_ids": [
+        "http.route.get.api.admin.dashboard"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_local_origin_can_use_admin_api_without_token"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_mcp_route_executes_series_operation_in_daemon",
-      "reason": "Daemon, transport, and UI bridge implementation: test_mcp_route_executes_series_operation_in_daemon."
+      "contract_ids": [
+        "http.route.post.api.mcp.operation"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_mcp_route_executes_series_operation_in_daemon"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_mcp_route_rejects_unknown_operation",
-      "reason": "Daemon, transport, and UI bridge implementation: test_mcp_route_rejects_unknown_operation."
+      "contract_ids": [
+        "http.route.post.api.mcp.operation"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_mcp_route_rejects_unknown_operation"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_provider_api_creates_and_lists_custom_profiles",
-      "reason": "Daemon, transport, and UI bridge implementation: test_provider_api_creates_and_lists_custom_profiles."
+      "contract_ids": [
+        "http.route.get.api.providers",
+        "http.route.post.api.providers"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_provider_api_creates_and_lists_custom_profiles"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_provider_check_api_returns_a_structured_failure",
-      "reason": "Daemon, transport, and UI bridge implementation: test_provider_check_api_returns_a_structured_failure."
+      "contract_ids": [
+        "http.route.post.api.providers.id.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_provider_check_api_returns_a_structured_failure"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_same_origin_browser_get_without_origin_is_accepted",
-      "reason": "Daemon, transport, and UI bridge implementation: test_same_origin_browser_get_without_origin_is_accepted."
+      "contract_ids": [
+        "http.route.get.api.admin.dashboard"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_same_origin_browser_get_without_origin_is_accepted"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_service_endpoints_reject_missing_or_wrong_token",
-      "reason": "Daemon, transport, and UI bridge implementation: test_service_endpoints_reject_missing_or_wrong_token."
+      "contract_ids": [
+        "http.route.get.health",
+        "http.route.get.status",
+        "http.route.post.shutdown"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_service_endpoints_reject_missing_or_wrong_token"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_settings_apis_are_scoped_to_their_configuration_files",
-      "reason": "Daemon, transport, and UI bridge implementation: test_settings_apis_are_scoped_to_their_configuration_files."
+      "contract_ids": [
+        "http.route.get.api.settings.dream",
+        "http.route.get.api.settings.ingest",
+        "http.route.get.api.settings.release",
+        "http.route.post.api.settings.dream",
+        "http.route.post.api.settings.ingest",
+        "http.route.post.api.settings.release"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_settings_apis_are_scoped_to_their_configuration_files"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_shutdown_endpoint_stops_server",
-      "reason": "Daemon, transport, and UI bridge implementation: test_shutdown_endpoint_stops_server."
+      "contract_ids": [
+        "http.route.post.shutdown"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_shutdown_endpoint_stops_server"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_status_endpoint_reports_active_dream_cycle",
-      "reason": "Daemon, transport, and UI bridge implementation: test_status_endpoint_reports_active_dream_cycle."
+      "contract_ids": [
+        "http.route.get.status"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_status_endpoint_reports_active_dream_cycle"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_status_endpoint_returns_paths_and_pid",
-      "reason": "Daemon, transport, and UI bridge implementation: test_status_endpoint_returns_paths_and_pid."
+      "contract_ids": [
+        "http.route.get.status"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_status_endpoint_returns_paths_and_pid"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_status_endpoint_survives_an_obsolete_dream_workflow_config",
-      "reason": "Daemon, transport, and UI bridge implementation: test_status_endpoint_survives_an_obsolete_dream_workflow_config."
+      "contract_ids": [
+        "http.route.get.status"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_status_endpoint_survives_an_obsolete_dream_workflow_config"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_status_payload_degrades_when_dreaming_status_fails",
-      "reason": "Daemon, transport, and UI bridge implementation: test_status_payload_degrades_when_dreaming_status_fails."
+      "contract_ids": [
+        "http.route.get.status"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_status_payload_degrades_when_dreaming_status_fails"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_service_http.py::test_web_assets_require_the_same_local_session",
-      "reason": "Daemon, transport, and UI bridge implementation: test_web_assets_require_the_same_local_session."
+      "contract_ids": [
+        "frontend.route.get.assets.path"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_service_http.py::test_web_assets_require_the_same_local_session"
     },
     {
       "disposition": "implementation_internal",

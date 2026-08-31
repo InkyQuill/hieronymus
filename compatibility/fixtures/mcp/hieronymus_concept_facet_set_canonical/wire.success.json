@@ -1,0 +1,43 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "concept_id": 1,
+        "facet_id": 1
+      },
+      "name": "hieronymus_concept_facet_set_canonical"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"id\": 1,\n  \"concept_id\": 1,\n  \"language\": \"ja\",\n  \"facet_type\": \"name\",\n  \"kind\": \"name\",\n  \"value\": \"センス\",\n  \"confidence\": 0.9,\n  \"source_crystal_id\": null,\n  \"language_tags\": [\n    \"ja\"\n  ],\n  \"story_scopes\": [\n    \"volume:1\"\n  ],\n  \"semantic_tags\": [\n    \"ability\"\n  ],\n  \"is_canonical\": true\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "concept_id": 1,
+      "confidence": 0.9,
+      "facet_type": "name",
+      "id": 1,
+      "is_canonical": true,
+      "kind": "name",
+      "language": "ja",
+      "language_tags": [
+        "ja"
+      ],
+      "semantic_tags": [
+        "ability"
+      ],
+      "source_crystal_id": null,
+      "story_scopes": [
+        "volume:1"
+      ],
+      "value": "センス"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "language": "en",
+        "language_tags": [
+          "en"
+        ],
+        "semantic_tags": [
+          "canonical"
+        ],
+        "value": "Sense"
+      },
+      "name": "hieronymus_concept_facet_update"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_concept_facet_update: 1 validation error for hieronymus_concept_facet_updateArguments\nfacet_id\n  Field required [type=missing, input_value={'value': 'Sense', 'langu...ic_tags': ['canonical']}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "params": {
+    "arguments": {
+      "raw_text": "ユン walked home."
+    },
+    "name": "hieronymus_termbase_contract"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

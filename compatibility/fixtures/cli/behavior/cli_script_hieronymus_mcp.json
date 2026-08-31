@@ -1,0 +1,51 @@
+{
+  "cases": [
+    {
+      "args": [
+        "--replay-mcp-entrypoint",
+        "success"
+      ],
+      "boundary": "real-in-memory-mcp-session",
+      "environment": {
+        "HIERONYMUS_DATA_ROOT": "<PATH>",
+        "HIERONYMUS_MCP_FIXTURE_OUTCOME": "success"
+      },
+      "exit_code": 0,
+      "expected": "success",
+      "id": "stdio-success",
+      "invocation": [
+        "<PYTHON>",
+        "-m",
+        "tools.compatibility.inventory_cli",
+        "--replay-mcp-entrypoint",
+        "success"
+      ],
+      "stderr": "",
+      "stdout": ""
+    },
+    {
+      "args": [
+        "--replay-mcp-entrypoint",
+        "failure"
+      ],
+      "boundary": "real-in-memory-mcp-session",
+      "environment": {
+        "HIERONYMUS_DATA_ROOT": "<PATH>",
+        "HIERONYMUS_MCP_FIXTURE_OUTCOME": "failure"
+      },
+      "exit_code": 1,
+      "expected": "semantic-failure",
+      "id": "stdio-failure",
+      "invocation": [
+        "<PYTHON>",
+        "-m",
+        "tools.compatibility.inventory_cli",
+        "--replay-mcp-entrypoint",
+        "failure"
+      ],
+      "stderr": "Unsupported MCP protocol version: 1900-01-01\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.script.hieronymus-mcp"
+}

@@ -1,0 +1,11 @@
+{
+  "params": {
+    "arguments": {
+      "new_label": "Sense Ability"
+    },
+    "name": "hieronymus_concept_rename"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

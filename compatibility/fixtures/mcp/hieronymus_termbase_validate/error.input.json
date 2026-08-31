@@ -1,0 +1,12 @@
+{
+  "params": {
+    "arguments": {
+      "raw_text": "ユン walked home.",
+      "translated_text": "Yun walked home."
+    },
+    "name": "hieronymus_termbase_validate"
+  },
+  "setup": {
+    "validation": "invalid"
+  }
+}

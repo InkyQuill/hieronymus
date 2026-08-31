@@ -21,6 +21,9 @@ def complete_contract(*, contract_id: str = "cli.hiero", **overrides: object) ->
         "fixture": "README.md",
         "rust_test_target": "crates/hiero/tests/cli.rs",
         "disposition": "preserve",
+        "last_python_release": "0.7.0",
+        "first_rust_release": None,
+        "implementation_status": "outstanding",
     }
     contract.update(overrides)
     return contract
@@ -34,6 +37,7 @@ def write_manifest(path: Path, contracts: list[dict[str, object]]) -> None:
                 "python_reference": "0.7.0",
                 "contracts": contracts,
                 "test_ownership": [],
+                "frontend_test_ownership": [],
             }
         ),
         encoding="utf-8",
@@ -211,6 +215,7 @@ def test_loader_parses_typed_public_and_internal_test_ownership(tmp_path: Path) 
                 "reason": "Exercises a Python-only helper implementation.",
             },
         ],
+        "frontend_test_ownership": [],
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -270,6 +275,7 @@ def test_loader_enforces_conditional_test_ownership_fields(
         "python_reference": "0.7.0",
         "contracts": [complete_contract()],
         "test_ownership": [ownership],
+        "frontend_test_ownership": [],
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -290,6 +296,7 @@ def test_loader_rejects_empty_test_path_segment_for_internal_ownership(tmp_path:
                 "reason": "Exercises a Python-only helper implementation.",
             }
         ],
+        "frontend_test_ownership": [],
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -322,6 +329,7 @@ def test_manifest_validation_rejects_duplicate_nodes_unknown_contracts_and_file_
                 "contract_ids": ["cli.hiero"],
             },
         ],
+        "frontend_test_ownership": [],
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -345,3 +353,114 @@ def test_schema_defines_strict_conditional_test_ownership_records() -> None:
     ]
     assert ownership["allOf"][0]["then"]["required"] == ["contract_ids"]
     assert ownership["allOf"][1]["then"]["required"] == ["reason"]
+
+
+def test_contract_release_state_is_typed_and_outstanding_requires_no_rust_release(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "manifest.json"
+    contract = complete_contract(
+        last_python_release="0.7.0",
+        first_rust_release=None,
+        implementation_status="outstanding",
+    )
+    payload = {
+        "manifest_version": 1,
+        "python_reference": "0.7.0",
+        "contracts": [contract],
+        "test_ownership": [],
+        "frontend_test_ownership": [],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    manifest = load_manifest(path)
+
+    assert manifest.contracts[0].last_python_release == "0.7.0"
+    assert manifest.contracts[0].first_rust_release is None
+    assert manifest.contracts[0].implementation_status == "outstanding"
+    assert validate_manifest(manifest, ROOT) == []
+
+
+@pytest.mark.parametrize(
+    ("implementation_status", "first_rust_release", "expected_error"),
+    [
+        ("outstanding", "1.0.0", "outstanding contract has first Rust release"),
+        ("implemented", None, "implemented contract missing first Rust release"),
+    ],
+)
+def test_release_state_consistency_is_validated(
+    tmp_path: Path,
+    implementation_status: str,
+    first_rust_release: str | None,
+    expected_error: str,
+) -> None:
+    path = tmp_path / "manifest.json"
+    contract = complete_contract(
+        last_python_release="0.7.0",
+        first_rust_release=first_rust_release,
+        implementation_status=implementation_status,
+    )
+    payload = {
+        "manifest_version": 1,
+        "python_reference": "0.7.0",
+        "contracts": [contract],
+        "test_ownership": [],
+        "frontend_test_ownership": [],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert validate_manifest(load_manifest(path), ROOT) == [f"{expected_error}: cli.hiero"]
+
+
+def test_frontend_test_ownership_has_a_strict_separate_node_namespace(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    contract = complete_contract(
+        surface="frontend",
+        tests=["frontend/src/web/app.test.ts"],
+        last_python_release="0.7.0",
+        first_rust_release=None,
+        implementation_status="outstanding",
+    )
+    payload = {
+        "manifest_version": 1,
+        "python_reference": "0.7.0",
+        "contracts": [contract],
+        "test_ownership": [],
+        "frontend_test_ownership": [
+            {
+                "node_id": "frontend/src/web/app.test.ts::renders the console shell",
+                "disposition": "public_contract",
+                "contract_ids": ["cli.hiero"],
+            }
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    manifest = load_manifest(path)
+
+    assert manifest.frontend_test_ownership[0].node_id.endswith("::renders the console shell")
+    assert validate_manifest(manifest, ROOT) == []
+
+    payload["frontend_test_ownership"][0]["node_id"] = "tests/test_cli.py::wrong namespace"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="frontend Vitest node id"):
+        load_manifest(path)
+
+
+def test_schema_requires_release_state_and_frontend_ownership() -> None:
+    schema = json.loads((ROOT / "compatibility/manifest.schema.json").read_text(encoding="utf-8"))
+    contract = schema["properties"]["contracts"]["items"]
+
+    assert {
+        "last_python_release",
+        "first_rust_release",
+        "implementation_status",
+    } <= set(contract["required"])
+    assert contract["properties"]["implementation_status"]["enum"] == [
+        "outstanding",
+        "implemented",
+    ]
+    assert "frontend_test_ownership" in schema["required"]
+    assert schema["properties"]["frontend_test_ownership"]["items"]["properties"]["node_id"][
+        "pattern"
+    ].startswith("^frontend/")

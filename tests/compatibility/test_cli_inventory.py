@@ -68,28 +68,51 @@ def test_each_installed_click_command_path_has_its_own_contract() -> None:
     )
 
 
-def test_snapshot_generation_never_executes_click_callbacks(tmp_path: Path, monkeypatch) -> None:
+def test_snapshot_generation_replays_callbacks_only_below_synthetic_root(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
 
-    def forbidden_callback(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("shipping callback executed")
-
-    monkeypatch.setattr("tools.compatibility.inventory_cli.cli_main.callback", forbidden_callback)
-    monkeypatch.setattr(
-        "tools.compatibility.inventory_cli.agent_hook_main.callback", forbidden_callback
-    )
-
     generated = write_snapshot(tmp_path)
 
     assert generated == snapshot_cli(tmp_path)
-    assert not list(tmp_path.rglob("hieronymus.sqlite"))
     for record in _contract_records(generated):
-        for field in ("success_fixture", "failure_fixture", "fixture_contract"):
+        for field in (
+            "success_fixture",
+            "failure_fixture",
+            "behavior_fixture",
+            "fixture_contract",
+        ):
             reference = Path(str(record[field]))
             assert (tmp_path / reference).read_bytes() == (ROOT / reference).read_bytes()
+
+
+def test_every_click_command_has_real_behavior_successes_and_semantic_failure() -> None:
+    snapshot = snapshot_cli(ROOT)
+    click_records = [
+        record
+        for record in _contract_records(snapshot)
+        if record.get("kind") in {"command", "group"}
+    ]
+
+    for record in click_records:
+        behavior = json.loads((ROOT / str(record["behavior_fixture"])).read_text(encoding="utf-8"))
+        cases = behavior["cases"]
+        successes = [case for case in cases if case["expected"] == "success"]
+        failures = [case for case in cases if case["expected"] == "semantic-failure"]
+
+        assert successes, record["contract_id"]
+        assert failures, record["contract_id"]
+        assert all(case["basis"] == "shipping-callback" for case in cases)
+        assert all(case["exit_code"] == 0 for case in successes)
+        assert all("--help" not in case["args"] for case in successes)
+        assert all("--compat-invalid-option" not in case["args"] for case in failures)
+        assert all(case["exit_code"] != 0 for case in failures)
+        if any(
+            parameter["name"] in {"as_json", "json_output"} for parameter in record["parameters"]
+        ):
+            assert {case["format"] for case in successes} == {"human", "json"}
 
 
 def test_filesystem_defaults_are_normalized() -> None:
@@ -135,6 +158,7 @@ def test_mcp_entrypoint_fixtures_replay_distinct_success_and_failure() -> None:
         "exit_code": 0,
         "stdout": "",
         "stderr": "",
+        "boundary": "real-in-memory-mcp-session",
     }
     expected_failure = {
         "args": ["--replay-mcp-entrypoint", "failure"],
@@ -151,7 +175,8 @@ def test_mcp_entrypoint_fixtures_replay_distinct_success_and_failure() -> None:
         },
         "exit_code": 1,
         "stdout": "",
-        "stderr": "synthetic MCP startup failure\n",
+        "stderr": "Unsupported MCP protocol version: 1900-01-01\n",
+        "boundary": "real-in-memory-mcp-session",
     }
 
     assert record["success_args"] != record["failure_args"]

@@ -30,6 +30,15 @@ _SELECTED_ROOT_PATHS = (
     ("backups/", "directory"),
     ("agent-plugins/", "directory"),
 )
+_DATABASE_VARIANT_FILES = {
+    "current-python": "minimal-python.sqlite",
+    "supported-legacy-python": "legacy-python.sqlite",
+    "empty": "empty.sqlite",
+    "partial-python": "partial-python.sqlite",
+    "corrupt": "corrupt.sqlite",
+    "unknown-schema": "unknown-schema.sqlite",
+}
+_FIXED_TIMESTAMP = "2000-01-01T00:00:00+00:00"
 
 
 def collect_test_nodeids(repo_root: Path) -> list[str]:
@@ -53,6 +62,77 @@ def collect_test_nodeids(repo_root: Path) -> list[str]:
             if line.startswith("tests/") and "::" in line
         }
     )
+
+
+def collect_frontend_test_nodeids(repo_root: Path) -> list[str]:
+    """Collect individual Vitest cases through Vitest's JSON listing boundary."""
+    bun = shutil.which("bun")
+    if bun is None:
+        raise RuntimeError("Bun is required to collect frontend Vitest nodes")
+    bun_path = Path(bun)
+    if bun_path.parent.name == "shims" and bun_path.parent.parent.name == "mise":
+        installed_bun = bun_path.parent.parent / "installs/bun/latest/bin/bun"
+        if installed_bun.is_file():
+            bun_path = installed_bun
+
+    resolved_repo_root = repo_root.resolve()
+    frontend_root = resolved_repo_root / "frontend"
+    vitest_entrypoint = frontend_root / "node_modules/vitest/vitest.mjs"
+    if not vitest_entrypoint.is_file():
+        raise RuntimeError(
+            "frontend Vitest dependencies are missing; run bun install --cwd frontend"
+        )
+    with tempfile.TemporaryDirectory(prefix="hieronymus-vitest-collection-") as temp_dir:
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "BUN_INSTALL_CACHE_DIR": str(Path(temp_dir) / "bun-cache"),
+                "BUN_RUNTIME_TRANSPILER_CACHE_PATH": "0",
+                "HOME": str(Path(temp_dir) / "home"),
+            }
+        )
+        try:
+            result = subprocess.run(
+                [
+                    str(bun_path),
+                    str(vitest_entrypoint),
+                    "list",
+                    "--json",
+                    "--no-color",
+                ],
+                cwd=frontend_root,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("frontend Vitest collection timed out") from error
+    if result.returncode != 0:
+        diagnostic = result.stderr.strip() or result.stdout.strip() or "unknown Vitest failure"
+        raise RuntimeError(f"frontend Vitest collection failed: {diagnostic}")
+    try:
+        rows = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("frontend Vitest collection did not return JSON") from error
+    if not isinstance(rows, list):
+        raise RuntimeError("frontend Vitest collection must return an array")
+
+    node_ids: list[str] = []
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("file"), str)
+            or not isinstance(row.get("name"), str)
+        ):
+            raise RuntimeError("frontend Vitest collection returned an invalid test record")
+        test_file = Path(row["file"]).resolve()
+        if not test_file.is_relative_to(frontend_root):
+            raise RuntimeError(f"frontend Vitest test outside frontend root: {test_file}")
+        relative_file = test_file.relative_to(resolved_repo_root).as_posix()
+        node_ids.append(f"{relative_file}::{row['name']}")
+    return sorted(node_ids)
 
 
 def sqlite_contract(connection: sqlite3.Connection) -> dict[str, object]:
@@ -195,7 +275,10 @@ def snapshot_state(repo_root: Path, data_root: Path) -> dict[str, object]:
         "database": database_inventory,
         "distribution": _distribution_inventory(resolved_repo_root, resolved_data_root),
         "agent_integrations": agent_integrations,
-        "tests": {"node_ids": collect_test_nodeids(resolved_repo_root)},
+        "tests": {
+            "node_ids": collect_test_nodeids(resolved_repo_root),
+            "frontend_node_ids": collect_frontend_test_nodeids(resolved_repo_root),
+        },
     }
 
 
@@ -781,29 +864,142 @@ def _leaf_paths(value: object, prefix: str = "") -> list[str]:
 
 
 def _build_database_inventory(repo_root: Path, data_root: Path) -> dict[str, object]:
+    from hieronymus.concepts import ConceptStore
     from hieronymus.config import HieronymusConfig
+    from hieronymus.crystals import CrystalStore
+    from hieronymus.memory_migration import MemoryGraphMigrator
+    from hieronymus.memory_models import TranslationContext
+    from hieronymus.rag_store import RagStore
+    from hieronymus.recall import RecallService
     from hieronymus.registry import Registry
+    from hieronymus.scoring import FeedbackStore
+    from hieronymus.termbase import Termbase
+    from hieronymus.workspace import WorkspaceStore
 
     config = HieronymusConfig(data_root=data_root)
     registry = Registry(config)
-    registry.create_series(
+    series = registry.create_series(
         slug="fixture-series",
         title="Compatibility Fixture",
         source_language="ja",
         target_language="ru",
+        language_tags=("ja", "ru", "literary"),
+    )
+    context = TranslationContext(
+        series_slug=series.slug,
+        source_language=series.source_language,
+        target_language=series.target_language,
+        task_type="translation",
+        volume="1",
+        chapter="2",
+        language_tags=("ja", "ru", "literary"),
+        story_scopes=("volume:1", "chapter:2"),
+        semantic_tags=("ability", "politics"),
     )
 
+    termbase = Termbase(config, context)
+    term_id = termbase.propose(
+        category="ability",
+        source_text="センス",
+        canonical_translation="Чутьё",
+        tags=["ability", "ui"],
+        notes="Synthetic deterministic terminology rule.",
+    )
+    termbase.add_alias(
+        term_id,
+        kind="forbidden_variant",
+        text="Ощущение",
+        language="ru",
+        case_sensitive=True,
+    )
+    termbase.approve(term_id)
+    MemoryGraphMigrator(config).run()
+
+    concepts = ConceptStore(config)
+    concept = concepts.create_concept(
+        "Council",
+        description="Synthetic political institution.",
+        status="established",
+        confidence=0.9,
+        scope_type="series",
+        scope_key="series:fixture-series",
+        semantic_tags=("politics",),
+    )
+    concepts.add_facet(
+        concept.id,
+        "評議会",
+        language="ja",
+        language_tags=("ja",),
+        kind="name",
+        confidence=0.9,
+        is_canonical=True,
+        story_scopes=("volume:1",),
+        semantic_tags=("politics",),
+    )
+
+    workspace = WorkspaceStore(config)
+    session = workspace.start_session(context)
+    memory_id = workspace.add_short_term_memory(
+        session.id,
+        source_role="user",
+        kind="correction",
+        text="The Council must remain capitalized.",
+        source_ref="volume-1/chapter-2",
+        metadata={"line": 12, "synthetic": True},
+        language_tags=("en",),
+        story_scopes=("chapter:2",),
+        semantic_tags=("politics",),
+        source_credibility="user_correction",
+        rule_intent="capitalization",
+    )
+    crystal_id = CrystalStore(config).add_crystal(
+        context,
+        crystal_type="concept_note",
+        title="Council capitalization",
+        text="The Council is a named political institution.",
+        strength=0.8,
+        confidence=0.9,
+        story_scopes=("volume:1",),
+        semantic_tags=("politics",),
+        language_tags=("en", "ja"),
+        concept_ids=(concept.id,),
+        source_memory_ids=[memory_id],
+    )
+    FeedbackStore(config).record(
+        crystal_id,
+        "confirmed_by_user",
+        "user",
+        "Synthetic compatibility confirmation.",
+        session.id,
+    )
+
+    rag_source = data_root.parent / "compatibility-rag-source.txt"
+    rag_source.write_text(
+        "The Council appoints the city archivist.\nSense appears in the status screen.\n",
+        encoding="utf-8",
+    )
+    RagStore(config).import_file(
+        series.slug,
+        rag_source,
+        source_ref="fixture-volume-1.txt",
+        language_tags=("en",),
+        story_scopes=("volume:1",),
+        semantic_tags=("politics",),
+    )
+    RecallService(config).recall(session.id, context, "Council", limit=10)
+    workspace.complete_session(session.id)
+
     with sqlite3.connect(config.database_path) as connection:
-        connection.execute(
-            "update series set created_at = ?, updated_at = ?",
-            ("2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00"),
-        )
-        connection.execute(
-            "update series_language_tags set created_at = ?",
-            ("2000-01-01T00:00:00+00:00",),
-        )
+        connection.row_factory = sqlite3.Row
+        _normalize_database_fixture(connection)
         connection.commit()
         contract = sqlite_contract(connection)
+        row_counts = {
+            table["name"]: int(
+                connection.execute(f'select count(*) from "{table["name"]}"').fetchone()[0]
+            )
+            for table in contract["tables"]
+        }
         ledger_names = [
             table["name"]
             for table in contract["tables"]
@@ -816,11 +1012,33 @@ def _build_database_inventory(repo_root: Path, data_root: Path) -> dict[str, obj
             }
             for name in ledger_names
         }
+        representative_rows = {
+            name: _table_rows(connection, name)
+            for name in (
+                "strict_terms",
+                "strict_term_aliases",
+                "concepts",
+                "concept_facets",
+                "crystals",
+                "task_sessions",
+                "short_term_memories",
+                "memory_events",
+                "crystal_activations",
+                "rag_sources",
+                "rag_chunks",
+                "memory_graph_migration_ledger",
+            )
+        }
+
+    variants = _build_database_variants(data_root, config.database_path)
 
     migration_root = repo_root / "src/hieronymus/migrations"
     return {
         **contract,
         "fixture": "compatibility/fixtures/database/minimal-python.sqlite",
+        "row_counts": row_counts,
+        "representative_rows": representative_rows,
+        "variants": variants,
         "application_migration_ledgers": ledgers,
         "migration_sources": sorted(path.name for path in migration_root.glob("*.sql")),
         "object_contracts": {
@@ -831,7 +1049,189 @@ def _build_database_inventory(repo_root: Path, data_root: Path) -> dict[str, obj
             "foreign_keys": "database.schema.current",
             "application_migration_ledgers": "database.migrations.current",
             "migration_sources": "database.migrations.current",
+            "row_counts": "database.schema.current",
+            "representative_rows": "database.schema.current",
+            "variants": "database.upgrade.preflight",
         },
+    }
+
+
+def _normalize_database_fixture(connection: sqlite3.Connection) -> None:
+    """Normalize only volatile fields after data was created through public stores."""
+    table_names = [
+        str(row[0])
+        for row in connection.execute(
+            "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'"
+        )
+    ]
+    timestamp_names = {
+        "created_at",
+        "updated_at",
+        "completed_at",
+        "last_activity_at",
+        "migrated_at",
+        "archived_at",
+        "superseded_at",
+    }
+    for table_name in table_names:
+        columns = {
+            str(row[0])
+            for row in connection.execute("select name from pragma_table_info(?)", (table_name,))
+        }
+        for column_name in sorted(timestamp_names & columns):
+            quoted_table = '"' + table_name.replace('"', '""') + '"'
+            quoted_column = '"' + column_name.replace('"', '""') + '"'
+            connection.execute(
+                f"update {quoted_table} set {quoted_column} = ? "
+                f"where {quoted_column} is not null and {quoted_column} != ''",
+                (_FIXED_TIMESTAMP,),
+            )
+    if "rag_sources" in table_names:
+        rows = connection.execute("select id, metadata_json from rag_sources").fetchall()
+        for row in rows:
+            metadata = json.loads(row["metadata_json"])
+            for key in ("original_path", "normalized_path"):
+                if key in metadata:
+                    metadata[key] = f"<SYNTHETIC_SOURCE>/{Path(str(metadata[key])).name}"
+            connection.execute(
+                "update rag_sources set metadata_json = ? where id = ?",
+                (json.dumps(metadata, ensure_ascii=False, sort_keys=True), int(row["id"])),
+            )
+
+
+def _build_database_variants(
+    data_root: Path,
+    current_database_path: Path,
+) -> list[dict[str, object]]:
+    variant_root = data_root / ".compatibility-database-variants"
+    variant_root.mkdir(parents=True, exist_ok=True)
+    current_path = variant_root / _DATABASE_VARIANT_FILES["current-python"]
+    with (
+        sqlite3.connect(current_database_path) as source,
+        sqlite3.connect(current_path) as destination,
+    ):
+        source.backup(destination)
+
+    legacy_path = variant_root / _DATABASE_VARIANT_FILES["supported-legacy-python"]
+    with sqlite3.connect(legacy_path) as connection:
+        connection.executescript(
+            """
+            create table series (
+              id integer primary key,
+              slug text not null unique,
+              title text not null,
+              default_source_language text not null default '',
+              default_target_language text not null default '',
+              created_at text not null,
+              updated_at text not null
+            );
+            create table strict_terms (
+              id integer primary key,
+              series_slug text not null,
+              source_language text not null,
+              target_language text not null,
+              category text not null,
+              source_text text not null,
+              canonical_translation text not null,
+              status text not null,
+              notes text not null default '',
+              created_at text not null,
+              updated_at text not null
+            );
+            create table crystals (
+              id integer primary key,
+              crystal_type text not null,
+              text text not null,
+              title text not null default '',
+              scope_type text not null,
+              scope_key text not null default '',
+              series_slug text not null default '',
+              source_language text not null default '',
+              target_language text not null default '',
+              tags_json text not null default '[]',
+              strength real not null,
+              confidence real not null,
+              status text not null,
+              created_at text not null,
+              updated_at text not null
+            );
+            insert into series values (
+              1, 'fixture-series', 'Legacy Fixture', 'ja', 'ru',
+              '2000-01-01T00:00:00+00:00', '2000-01-01T00:00:00+00:00'
+            );
+            """
+        )
+
+    empty_path = variant_root / _DATABASE_VARIANT_FILES["empty"]
+    empty_path.touch()
+    partial_path = variant_root / _DATABASE_VARIANT_FILES["partial-python"]
+    with sqlite3.connect(partial_path) as connection:
+        connection.execute("create table series (id integer primary key, slug text not null)")
+    corrupt_path = variant_root / _DATABASE_VARIANT_FILES["corrupt"]
+    corrupt_path.write_bytes(b"not a sqlite database\n")
+    unknown_path = variant_root / _DATABASE_VARIANT_FILES["unknown-schema"]
+    with sqlite3.connect(unknown_path) as connection:
+        connection.execute("create table unrelated_application (id integer primary key)")
+
+    records = []
+    for variant_id, filename in _DATABASE_VARIANT_FILES.items():
+        path = variant_root / filename
+        records.append(
+            {
+                "id": variant_id,
+                "fixture": f"compatibility/fixtures/database/{filename}",
+                "expected": preflight_database(path),
+            }
+        )
+    return records
+
+
+def preflight_database(path: Path) -> dict[str, object]:
+    """Classify one SQLite fixture read-only using the accepted upgrade boundary."""
+    uri = f"file:{path.resolve().as_posix()}?mode=ro"
+    try:
+        with sqlite3.connect(uri, uri=True) as connection:
+            integrity_row = connection.execute("pragma integrity_check").fetchone()
+            integrity = str(integrity_row[0]) if integrity_row else "unknown"
+            foreign_key_violations = len(connection.execute("pragma foreign_key_check").fetchall())
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "select name from sqlite_master "
+                    "where type = 'table' and name not like 'sqlite_%'"
+                )
+            }
+            if not tables:
+                classification = "empty"
+                safe_to_convert = False
+            elif {"series", "strict_terms", "crystals", "task_sessions", "rag_sources"} <= tables:
+                crystal_columns = {
+                    str(row[1]) for row in connection.execute("pragma table_info(crystals)")
+                }
+                if {"source_credibility", "rule_intent", "soft_origin"} <= crystal_columns:
+                    classification = "supported-python"
+                else:
+                    classification = "supported-legacy-python"
+                safe_to_convert = integrity == "ok" and foreign_key_violations == 0
+            elif {"series", "strict_terms", "crystals"} <= tables:
+                classification = "supported-legacy-python"
+                safe_to_convert = integrity == "ok" and foreign_key_violations == 0
+            elif "series" in tables or tables.intersection({"strict_terms", "crystals"}):
+                classification = "partial-python"
+                safe_to_convert = False
+            else:
+                classification = "unknown-schema"
+                safe_to_convert = False
+    except sqlite3.DatabaseError:
+        classification = "corrupt"
+        integrity = "unreadable"
+        foreign_key_violations = 0
+        safe_to_convert = False
+    return {
+        "classification": classification,
+        "foreign_key_violations": foreign_key_violations,
+        "integrity": integrity,
+        "safe_to_convert": safe_to_convert,
     }
 
 
@@ -1526,6 +1926,7 @@ def _owned_path_inventory(data_root: Path) -> list[dict[str, object]]:
             "path": path,
             "kind": kind,
             "exists": (data_root / path.rstrip("/")).exists(),
+            "contract_id": "data-root.layout",
         }
         for path, kind in _SELECTED_ROOT_PATHS
     ]
@@ -1541,6 +1942,15 @@ def _sha256(path: Path) -> str:
 
 def _state_contracts() -> list[dict[str, object]]:
     contracts = [
+        _contract(
+            "data-root.layout",
+            "config",
+            "data-config",
+            "hieronymus.config:HieronymusConfig",
+            ["tests/compatibility/test_state_inventory.py", "tests/test_config.py"],
+            "compatibility/snapshots/state.json",
+            "crates/hiero-config/tests/data_root_contract.rs::layout",
+        ),
         _contract(
             "diagnostics.compatibility.check",
             "diagnostics",
@@ -1606,6 +2016,17 @@ def _state_contracts() -> list[dict[str, object]]:
             ],
             "compatibility/fixtures/database/minimal-python.sqlite",
             "crates/hiero-db/tests/schema_contract.rs::migration_ledgers",
+        ),
+        _contract(
+            "database.upgrade.preflight",
+            "database",
+            "database-upgrade",
+            "tools.compatibility.inventory_state:preflight_database",
+            ["tests/compatibility/test_state_inventory.py", "tests/test_db_compatibility.py"],
+            "compatibility/snapshots/state.json",
+            "crates/hiero-db/tests/upgrade_contract.rs::preflight_variants",
+            disposition="intentionally-change",
+            adr="docs/adr/0010-data-locations-schema-ownership-and-upgrade.md",
         ),
         _contract(
             "install-update.install-script",
@@ -1746,10 +2167,13 @@ def _contract(
     tests: list[str],
     fixture: str,
     rust_test_target: str,
+    *,
+    disposition: str = "preserve",
+    adr: str | None = None,
 ) -> dict[str, object]:
-    return {
+    contract: dict[str, object] = {
         "acceptance_owner": _ACCEPTANCE_OWNER,
-        "disposition": "preserve",
+        "disposition": disposition,
         "fixture": fixture,
         "id": contract_id,
         "python_entry_point": python_entry_point,
@@ -1757,7 +2181,13 @@ def _contract(
         "surface": surface,
         "technical_owner": technical_owner,
         "tests": tests,
+        "last_python_release": "0.7.0",
+        "first_rust_release": None,
+        "implementation_status": "outstanding",
     }
+    if adr is not None:
+        contract["adr"] = adr
+    return contract
 
 
 def build_test_ownership(
@@ -1792,6 +2222,56 @@ def build_test_ownership(
     return ownership
 
 
+def build_frontend_test_ownership(
+    node_ids: Iterable[str],
+    contracts: Iterable[object],
+) -> list[dict[str, object]]:
+    """Classify each Vitest case without granting file-level route coverage."""
+    contract_list = list(contracts)
+    contract_ids = {_contract_value(contract, "id") for contract in contract_list}
+    public_nodes = {
+        (
+            "frontend/src/web/components/editors.test.ts::"
+            "provider editor opens, submits edited fields, and closes"
+        ): {"http.route.post.api.providers"},
+        (
+            "frontend/src/web/components/editors.test.ts::"
+            "dreaming editor submits the toggled schedule state"
+        ): {"http.route.post.api.settings.dream"},
+        (
+            "frontend/src/web/components/MemoryViews.test.ts::"
+            "destructive memory actions require confirmation and send the exact payload"
+        ): {"http.route.post.api.admin.actions.action"},
+    }
+    ownership: list[dict[str, object]] = []
+    for node_id in sorted(node_ids):
+        matched = public_nodes.get(node_id, set())
+        missing = matched - contract_ids
+        if missing:
+            raise ValueError(f"frontend ownership references missing contracts: {sorted(missing)}")
+        if matched:
+            ownership.append(
+                {
+                    "contract_ids": sorted(matched),
+                    "disposition": "public_contract",
+                    "node_id": node_id,
+                }
+            )
+            continue
+        _node_file, test_name = node_id.split("::", 1)
+        ownership.append(
+            {
+                "disposition": "implementation_internal",
+                "node_id": node_id,
+                "reason": (
+                    "Frontend implementation behavior with no specific public request contract: "
+                    f"{test_name}."
+                ),
+            }
+        )
+    return ownership
+
+
 def _contract_value(contract: object, field: str) -> object:
     if isinstance(contract, Mapping):
         return contract[field]
@@ -1801,6 +2281,72 @@ def _contract_value(contract: object, field: str) -> object:
 def _public_contract_ids(node_id: str, contracts: list[object]) -> set[str]:
     node_file, test_case = node_id.split("::", 1)
     normalized = test_case.lower().replace("-", "_")
+
+    if node_file == "tests/test_agent_hooks.py":
+        if normalized.startswith("test_hook_session_start_"):
+            return {"cli.command.hieronymus-agent-hook.session-start"}
+        if normalized.startswith("test_hook_session_end_"):
+            return {"cli.command.hieronymus-agent-hook.session-end"}
+        return set()
+
+    if node_file == "tests/test_service_http.py":
+        service_http_contracts = {
+            "test_health_endpoint_returns_daemon_identity": {"http.route.get.health"},
+            "test_config_page_is_available_without_a_browser_token": {"frontend.route.get.config"},
+            "test_config_and_admin_memory_routes_serve_the_web_application_after_session_setup": {
+                "frontend.route.get.admin",
+                "frontend.route.get.config",
+            },
+            "test_web_assets_require_the_same_local_session": {"frontend.route.get.assets.path"},
+            "test_provider_api_creates_and_lists_custom_profiles": {
+                "http.route.get.api.providers",
+                "http.route.post.api.providers",
+            },
+            "test_provider_check_api_returns_a_structured_failure": {
+                "http.route.post.api.providers.id.check"
+            },
+            "test_settings_apis_are_scoped_to_their_configuration_files": {
+                "http.route.get.api.settings.dream",
+                "http.route.get.api.settings.ingest",
+                "http.route.get.api.settings.release",
+                "http.route.post.api.settings.dream",
+                "http.route.post.api.settings.ingest",
+                "http.route.post.api.settings.release",
+            },
+            "test_admin_dashboard_api_returns_local_admin_snapshot": {
+                "http.route.get.api.admin.dashboard"
+            },
+            "test_local_origin_can_use_admin_api_without_token": {
+                "http.route.get.api.admin.dashboard"
+            },
+            "test_same_origin_browser_get_without_origin_is_accepted": {
+                "http.route.get.api.admin.dashboard"
+            },
+            "test_admin_websocket_rejects_foreign_origin": {"websocket.route.get.ws.admin"},
+            "test_admin_snapshot_api_accepts_a_view_parameter": {
+                "http.route.get.api.admin.snapshot"
+            },
+            "test_admin_memory_actions_are_explicitly_allowlisted": {
+                "http.route.post.api.admin.actions.action"
+            },
+            "test_mcp_route_rejects_unknown_operation": {"http.route.post.api.mcp.operation"},
+            "test_mcp_route_executes_series_operation_in_daemon": {
+                "http.route.post.api.mcp.operation"
+            },
+            "test_status_endpoint_returns_paths_and_pid": {"http.route.get.status"},
+            "test_status_endpoint_reports_active_dream_cycle": {"http.route.get.status"},
+            "test_status_payload_degrades_when_dreaming_status_fails": {"http.route.get.status"},
+            "test_status_endpoint_survives_an_obsolete_dream_workflow_config": {
+                "http.route.get.status"
+            },
+            "test_shutdown_endpoint_stops_server": {"http.route.post.shutdown"},
+            "test_service_endpoints_reject_missing_or_wrong_token": {
+                "http.route.get.health",
+                "http.route.get.status",
+                "http.route.post.shutdown",
+            },
+        }
+        return service_http_contracts.get(normalized, set())
 
     if node_file == "tests/compatibility/test_check.py":
         test_name = normalized.split("[", 1)[0]
@@ -1993,6 +2539,12 @@ def generate_state_artifacts(repo_root: Path, data_root: Path) -> dict[str, byte
         ),
         "compatibility/fixtures/install-update/cases.json": _json_bytes(snapshot["distribution"]),
     }
+    for variant in snapshot["database"]["variants"]:
+        if variant["id"] == "current-python":
+            continue
+        filename = Path(str(variant["fixture"])).name
+        source = data_root / ".compatibility-database-variants" / filename
+        artifacts[str(variant["fixture"])] = source.read_bytes()
     for _name, record in snapshot["config"].items():
         artifacts[record["fixtures"]["current"]] = _json_bytes(record["payload"])
         for behavior in ("roundtrip", "failures", "legacy"):
@@ -2001,12 +2553,22 @@ def generate_state_artifacts(repo_root: Path, data_root: Path) -> dict[str, byte
 
     manifest_path = repo_root / "compatibility/manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    original_contracts = manifest["contracts"][:123]
-    if len(original_contracts) != 123:
-        raise ValueError("expected the accepted 123 transport contracts")
+    state_contract_ids = {str(contract["id"]) for contract in _state_contracts()}
+    original_contracts = [
+        contract
+        for contract in manifest["contracts"]
+        if str(contract.get("id")) not in state_contract_ids
+    ]
     contracts = [*original_contracts, *_state_contracts()]
+    for contract in contracts:
+        contract.setdefault("last_python_release", str(manifest["python_reference"]))
+        contract.setdefault("first_rust_release", None)
+        contract.setdefault("implementation_status", "outstanding")
     manifest["contracts"] = contracts
     manifest["test_ownership"] = build_test_ownership(snapshot["tests"]["node_ids"], contracts)
+    manifest["frontend_test_ownership"] = build_frontend_test_ownership(
+        snapshot["tests"]["frontend_node_ids"], contracts
+    )
     artifacts["compatibility/manifest.json"] = _json_bytes(manifest)
     artifacts["compatibility/fixtures/diagnostics/check-success.txt"] = (
         _render_compatibility_success(manifest).encode()
@@ -2023,6 +2585,36 @@ def _render_compatibility_success(manifest: dict[str, object]) -> str:
     def count_lines(values: list[str]) -> list[str]:
         return [f"  {name}: {count}" for name, count in sorted(Counter(values).items())]
 
+    categories = {
+        "implemented": sorted(
+            str(contract["id"])
+            for contract in contracts
+            if contract["implementation_status"] == "implemented"
+        ),
+        "changed": sorted(
+            str(contract["id"])
+            for contract in contracts
+            if contract["disposition"] == "intentionally-change"
+        ),
+        "removed": sorted(
+            str(contract["id"]) for contract in contracts if contract["disposition"] == "remove"
+        ),
+        "outstanding": sorted(
+            str(contract["id"])
+            for contract in contracts
+            if contract["implementation_status"] == "outstanding"
+        ),
+    }
+    implementation_lines = ["Implementation state:"]
+    for category, contract_ids in categories.items():
+        implementation_lines.append(f"  {category} ({len(contract_ids)}):")
+        implementation_lines.extend(f"    {contract_id}" for contract_id in contract_ids)
+        if not contract_ids:
+            implementation_lines.append("    (none)")
+
+    frontend_test_ownership = manifest["frontend_test_ownership"]
+    assert isinstance(frontend_test_ownership, list)
+
     lines = [
         "Compatibility check passed",
         "Parity summary",
@@ -2033,9 +2625,13 @@ def _render_compatibility_success(manifest: dict[str, object]) -> str:
         *count_lines([str(contract["disposition"]) for contract in contracts]),
         "By technical owner:",
         *count_lines([str(contract["technical_owner"]) for contract in contracts]),
+        *implementation_lines,
         f"Test ownership: {len(test_ownership)}",
         "By test-ownership disposition:",
         *count_lines([str(ownership["disposition"]) for ownership in test_ownership]),
+        f"Frontend test ownership: {len(frontend_test_ownership)}",
+        "By frontend test-ownership disposition:",
+        *count_lines([str(ownership["disposition"]) for ownership in frontend_test_ownership]),
     ]
     return "\n".join(lines) + "\n"
 

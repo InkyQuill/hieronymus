@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import tempfile
 from pathlib import Path
+
+from mcp import types as mcp_types
+from mcp.shared.memory import create_connected_server_and_client_session
 
 from hieronymus import mcp_server
 from hieronymus.config import HieronymusConfig
@@ -34,6 +38,7 @@ _DATA_ROOT_ERROR = {
         "message": "data root is not a directory: <DATA_ROOT>",
     }
 }
+_ADR = "docs/adr/0015-mcp-protocol-and-transport.md"
 
 
 def _sort_object_keys(value: object) -> object:
@@ -176,12 +181,65 @@ def _propose_term(config: HieronymusConfig) -> int:
     return int(result["term_id"])
 
 
-def _fixture_case(tool_name: str, root: Path) -> tuple[dict[str, object], object]:
+class _BoundaryDaemonClient:
+    """Bound the real MCP server above its network-only daemon hop."""
+
+    def __init__(self, config: HieronymusConfig) -> None:
+        self.config = config
+
+    def invoke(self, operation: str, arguments: dict[str, object]) -> object:
+        if self.config.data_root.exists() and not self.config.data_root.is_dir():
+            raise ValueError(f"data root is not a directory: {self.config.data_root}")
+        if operation == "status":
+            return {"service": {"available": True, "mode": "local-http"}}
+        return mcp_server.invoke_daemon_operation(self.config, operation, arguments)
+
+
+async def _call_real_server_async(
+    config: HieronymusConfig,
+    tool_name: str,
+    arguments: dict[str, object],
+) -> dict[str, object]:
+    original_client = mcp_server._daemon_client
+    mcp_server._daemon_client = lambda: _BoundaryDaemonClient(config)
+    try:
+        async with create_connected_server_and_client_session(mcp_server.server) as session:
+            result = await session.call_tool(tool_name, arguments)
+    finally:
+        mcp_server._daemon_client = original_client
+    envelope = result.model_dump(mode="json", by_alias=True, exclude_none=True)
+    assert isinstance(envelope, dict)
+    return envelope
+
+
+def _call_real_server(
+    config: HieronymusConfig,
+    tool_name: str,
+    arguments: dict[str, object],
+) -> dict[str, object]:
+    logging.disable(logging.CRITICAL)
+    try:
+        return asyncio.run(_call_real_server_async(config, tool_name, arguments))
+    finally:
+        logging.disable(logging.NOTSET)
+
+
+def _fixture_case(
+    tool_name: str,
+    root: Path,
+    *,
+    wire: bool = False,
+) -> tuple[dict[str, object], object]:
     config = HieronymusConfig(data_root=root / "data")
 
     if tool_name == "hieronymus_status":
         arguments: dict[str, object] = {}
-        return arguments, {"service": {"available": True, "mode": "local-http"}}
+        output = (
+            _call_real_server(config, tool_name, arguments)
+            if wire
+            else {"service": {"available": True, "mode": "local-http"}}
+        )
+        return arguments, output
     if tool_name in {"hieronymus_series_create", "hieronymus_series_init"}:
         arguments = dict(_SERIES_ARGUMENTS)
     elif tool_name == "hieronymus_series_list":
@@ -418,7 +476,11 @@ def _fixture_case(tool_name: str, root: Path) -> tuple[dict[str, object], object
     else:
         raise ValueError(f"missing synthetic MCP fixture case: {tool_name}")
 
-    output = _invoke(config, tool_name, arguments)
+    output = (
+        _call_real_server(config, tool_name, arguments)
+        if wire
+        else _invoke(config, tool_name, arguments)
+    )
     normalized_arguments = _replace_root(arguments, root)
     normalized_output = _replace_root(output, root)
     assert isinstance(normalized_arguments, dict)
@@ -460,13 +522,185 @@ def _behavior_tests(tool_name: str) -> list[str]:
 def _write_tool_fixtures(repo_root: Path, tools: list[dict[str, object]]) -> None:
     fixture_root = repo_root / "compatibility/fixtures/mcp"
     for tool in tools:
-        tool_name = str(tool["name"])
-        with tempfile.TemporaryDirectory(prefix="hieronymus-mcp-compat-") as directory:
-            success_input, success_output = _fixture_case(tool_name, Path(directory))
-        tool_root = fixture_root / tool_name
-        _write_json(tool_root / "success.input.json", success_input)
-        _write_json(tool_root / "success.output.json", success_output)
-        _write_json(tool_root / "error.output.json", _DATA_ROOT_ERROR)
+        tool_root = fixture_root / str(tool["name"])
+        for filename, payload in _tool_fixture_payloads(tool).items():
+            _write_json(tool_root / filename, payload)
+
+
+def _tool_fixture_payloads(tool: dict[str, object]) -> dict[str, object]:
+    tool_name = str(tool["name"])
+    with tempfile.TemporaryDirectory(prefix="hieronymus-mcp-compat-") as directory:
+        success_input, success_output = _fixture_case(tool_name, Path(directory))
+    with tempfile.TemporaryDirectory(prefix="hieronymus-mcp-wire-") as directory:
+        wire_input, wire_success = _fixture_case(tool_name, Path(directory), wire=True)
+    assert wire_input == success_input
+    input_schema = tool["input_schema"]
+    assert isinstance(input_schema, dict)
+    error_arguments, invalid_root = _error_arguments(input_schema, success_input)
+    with tempfile.TemporaryDirectory(prefix="hieronymus-mcp-error-") as directory:
+        error_root = Path(directory)
+        config = HieronymusConfig(data_root=error_root / "data")
+        if invalid_root:
+            config.data_root.parent.mkdir(parents=True, exist_ok=True)
+            config.data_root.write_text("not a directory\n", encoding="utf-8")
+        wire_error = _replace_root(
+            _call_real_server(config, tool_name, error_arguments), error_root
+        )
+    error_params = {"name": tool_name, "arguments": error_arguments}
+    error_input = {
+        "setup": {"data_root": "file"} if invalid_root else {"validation": "invalid"},
+        "params": error_params,
+    }
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": tool_name, "arguments": success_input},
+    }
+    error_request = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": error_params,
+    }
+    return {
+        "success.input.json": success_input,
+        "success.output.json": success_output,
+        "error.input.json": error_input,
+        "error.output.json": _DATA_ROOT_ERROR,
+        "wire.success.json": {"request": request, "result": wire_success},
+        "wire.error.json": {"request": error_request, "result": wire_error},
+    }
+
+
+def _error_arguments(
+    input_schema: dict[str, object],
+    success_input: dict[str, object],
+) -> tuple[dict[str, object], bool]:
+    arguments = dict(success_input)
+    required = input_schema.get("required", [])
+    assert isinstance(required, list)
+    if required:
+        arguments.pop(str(required[0]), None)
+        return arguments, False
+    properties = input_schema.get("properties", {})
+    assert isinstance(properties, dict)
+    if properties:
+        property_name = sorted(properties)[0]
+        arguments[property_name] = {"invalid": "expected scalar"}
+        return arguments, False
+    return arguments, True
+
+
+def _json_line(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+
+
+def _protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]:
+    tools = snapshot["tools"]
+    assert isinstance(tools, list)
+    tool_names = [str(tool["name"]) for tool in tools if isinstance(tool, dict)]
+    current_options = mcp_server.server._mcp_server.create_initialization_options()
+    current_capabilities = current_options.capabilities.model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
+    client = {"name": "compatibility-replay", "version": "1.0.0"}
+    initialize_request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": _PROTOCOL_REVISION,
+            "capabilities": {},
+            "clientInfo": client,
+        },
+    }
+    initialize_result = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "protocolVersion": _PROTOCOL_REVISION,
+            "capabilities": {"tools": {"listChanged": False}},
+            "serverInfo": {"name": "hieronymus", "version": "rust-cutover-target"},
+        },
+    }
+    list_request = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+    list_result = {"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}}
+    return {
+        "current": {
+            "basis": "current-python-server",
+            "initialize": {
+                "request": {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": mcp_types.LATEST_PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": client,
+                    },
+                },
+                "result": {
+                    "protocolVersion": mcp_types.LATEST_PROTOCOL_VERSION,
+                    "capabilities": current_capabilities,
+                    "serverInfo": {
+                        "name": current_options.server_name,
+                        "version": current_options.server_version,
+                    },
+                },
+            },
+        },
+        "target": {
+            "basis": "adr-backed-target",
+            "adr": _ADR,
+            "initialize": {"request": initialize_request, "result": initialize_result["result"]},
+            "tools_list": {"request": list_request, "response": list_result},
+            "stdio": {
+                "framing": "newline-delimited-json-rpc",
+                "request_line": _json_line(list_request),
+                "response_line": _json_line(list_result),
+                "diagnostics_stream": "stderr",
+            },
+            "streamable_http": {
+                "request": {
+                    "method": "POST",
+                    "path": "/mcp",
+                    "headers": {
+                        "Content-Type": "application/json",
+                        "MCP-Protocol-Version": _PROTOCOL_REVISION,
+                    },
+                    "body": list_request,
+                },
+                "responses": [
+                    {"content_type": "application/json", "body": list_result},
+                    {
+                        "content_type": "text/event-stream",
+                        "events": [{"event": "message", "data": list_result}],
+                    },
+                ],
+            },
+            "unsupported_version": {
+                "request": {
+                    **initialize_request,
+                    "params": {**initialize_request["params"], "protocolVersion": "1900-01-01"},
+                },
+                "response": {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": {
+                        "code": -32602,
+                        "message": "Unsupported MCP protocol version: 1900-01-01",
+                        "data": {"supported": [_PROTOCOL_REVISION]},
+                    },
+                },
+            },
+        },
+        "registry_identity": {
+            "stdio": tool_names,
+            "streamable_http": tool_names,
+        },
+        "private_python_bridge": snapshot["private_python_bridge"],
+    }
 
 
 def _merge_manifest(repo_root: Path, tools: list[dict[str, object]]) -> None:
@@ -494,6 +728,9 @@ def _merge_manifest(repo_root: Path, tools: list[dict[str, object]]) -> None:
                 "fixture": (f"compatibility/fixtures/mcp/{tool_name}/success.input.json"),
                 "rust_test_target": (f"crates/hiero-mcp/tests/registry_contract.rs::{tool_name}"),
                 "disposition": "preserve",
+                "last_python_release": "0.7.0",
+                "first_rust_release": None,
+                "implementation_status": "outstanding",
             }
         )
     manifest["contracts"] = [*preserved, *mcp_contracts]
@@ -506,11 +743,7 @@ def write_snapshot(repo_root: Path) -> dict[str, object]:
     _write_json(repo_root / "compatibility/snapshots/mcp.json", snapshot)
     _write_json(
         repo_root / "compatibility/fixtures/mcp/protocol.json",
-        {
-            "protocol_revision": snapshot["protocol_revision"],
-            "transports": snapshot["transports"],
-            "private_python_bridge": snapshot["private_python_bridge"],
-        },
+        _protocol_fixture(snapshot),
     )
     tools = snapshot["tools"]
     assert isinstance(tools, list)

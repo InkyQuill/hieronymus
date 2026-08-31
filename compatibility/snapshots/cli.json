@@ -63,6 +63,7 @@
   "commands": {
     "hiero": [
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_admin.json",
         "canonical_rust_invocation": [
           "hiero",
           "admin"
@@ -109,6 +110,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-admin.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_config.json",
         "canonical_rust_invocation": [
           "hiero",
           "config"
@@ -155,6 +157,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-config.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_doctor.json",
         "canonical_rust_invocation": [
           "hiero",
           "doctor"
@@ -217,6 +220,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-doctor.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_dream.json",
         "canonical_rust_invocation": [
           "hiero",
           "dream"
@@ -295,6 +299,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-dream.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_feedback.json",
         "canonical_rust_invocation": [
           "hiero",
           "feedback"
@@ -419,6 +424,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-feedback.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_help.json",
         "canonical_rust_invocation": [
           "hiero",
           "help"
@@ -448,6 +454,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-help.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_init_series.json",
         "canonical_rust_invocation": [
           "hiero",
           "init-series"
@@ -556,6 +563,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-init-series.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_install.json",
         "canonical_rust_invocation": [
           "hiero",
           "install"
@@ -650,6 +658,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-install.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_propose_term.json",
         "canonical_rust_invocation": [
           "hiero",
           "propose-term"
@@ -774,6 +783,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-propose-term.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_rag.json",
         "canonical_rust_invocation": [
           "hiero",
           "rag"
@@ -803,6 +813,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-rag.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_rag_import.json",
         "canonical_rust_invocation": [
           "hiero",
           "rag",
@@ -974,6 +985,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-rag-import.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_rag_search.json",
         "canonical_rust_invocation": [
           "hiero",
           "rag",
@@ -1068,6 +1080,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-rag-search.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_recall.json",
         "canonical_rust_invocation": [
           "hiero",
           "recall"
@@ -1256,6 +1269,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-recall.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_remember.json",
         "canonical_rust_invocation": [
           "hiero",
           "remember"
@@ -1364,6 +1378,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-remember.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_remember_short.json",
         "canonical_rust_invocation": [
           "hiero",
           "remember-short"
@@ -1488,6 +1503,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-remember-short.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_restart.json",
         "canonical_rust_invocation": [
           "hiero",
           "restart"
@@ -1534,6 +1550,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-restart.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_session_complete.json",
         "canonical_rust_invocation": [
           "hiero",
           "session-complete"
@@ -1594,6 +1611,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-session-complete.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_session_start.json",
         "canonical_rust_invocation": [
           "hiero",
           "session-start"
@@ -1734,6 +1752,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-session-start.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_skills.json",
         "canonical_rust_invocation": [
           "hiero",
           "skills"
@@ -1763,6 +1782,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-skills.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_skills_install.json",
         "canonical_rust_invocation": [
           "hiero",
           "skills",
@@ -1848,6 +1868,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-skills-install.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_skills_uninstall.json",
         "canonical_rust_invocation": [
           "hiero",
           "skills",
@@ -1933,6 +1954,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-skills-uninstall.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_status.json",
         "canonical_rust_invocation": [
           "hiero",
           "status"
@@ -1979,6 +2001,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-status.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_stop.json",
         "canonical_rust_invocation": [
           "hiero",
           "stop"
@@ -2025,6 +2048,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-stop.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_update.json",
         "canonical_rust_invocation": [
           "hiero",
           "update"
@@ -2124,6 +2148,7 @@
         "success_fixture": "compatibility/fixtures/cli/help-update.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hiero_validate.json",
         "canonical_rust_invocation": [
           "hiero",
           "validate"
@@ -2232,6 +2257,7 @@
     ],
     "hieronymus": [
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_admin.json",
         "canonical_rust_invocation": [
           "hiero",
           "admin"
@@ -2278,6 +2304,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-admin.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_config.json",
         "canonical_rust_invocation": [
           "hiero",
           "config"
@@ -2324,6 +2351,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-config.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_doctor.json",
         "canonical_rust_invocation": [
           "hiero",
           "doctor"
@@ -2386,6 +2414,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-doctor.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_dream.json",
         "canonical_rust_invocation": [
           "hiero",
           "dream"
@@ -2464,6 +2493,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-dream.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_feedback.json",
         "canonical_rust_invocation": [
           "hiero",
           "feedback"
@@ -2588,6 +2618,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-feedback.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_help.json",
         "canonical_rust_invocation": [
           "hiero",
           "help"
@@ -2617,6 +2648,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-help.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_init_series.json",
         "canonical_rust_invocation": [
           "hiero",
           "init-series"
@@ -2725,6 +2757,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-init-series.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_install.json",
         "canonical_rust_invocation": [
           "hiero",
           "install"
@@ -2819,6 +2852,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-install.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_propose_term.json",
         "canonical_rust_invocation": [
           "hiero",
           "propose-term"
@@ -2943,6 +2977,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-propose-term.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_rag.json",
         "canonical_rust_invocation": [
           "hiero",
           "rag"
@@ -2972,6 +3007,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-rag.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_rag_import.json",
         "canonical_rust_invocation": [
           "hiero",
           "rag",
@@ -3143,6 +3179,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-rag-import.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_rag_search.json",
         "canonical_rust_invocation": [
           "hiero",
           "rag",
@@ -3237,6 +3274,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-rag-search.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_recall.json",
         "canonical_rust_invocation": [
           "hiero",
           "recall"
@@ -3425,6 +3463,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-recall.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_remember.json",
         "canonical_rust_invocation": [
           "hiero",
           "remember"
@@ -3533,6 +3572,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-remember.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_remember_short.json",
         "canonical_rust_invocation": [
           "hiero",
           "remember-short"
@@ -3657,6 +3697,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-remember-short.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_restart.json",
         "canonical_rust_invocation": [
           "hiero",
           "restart"
@@ -3703,6 +3744,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-restart.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_session_complete.json",
         "canonical_rust_invocation": [
           "hiero",
           "session-complete"
@@ -3763,6 +3805,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-session-complete.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_session_start.json",
         "canonical_rust_invocation": [
           "hiero",
           "session-start"
@@ -3903,6 +3946,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-session-start.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_skills.json",
         "canonical_rust_invocation": [
           "hiero",
           "skills"
@@ -3932,6 +3976,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-skills.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_skills_install.json",
         "canonical_rust_invocation": [
           "hiero",
           "skills",
@@ -4017,6 +4062,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-skills-install.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_skills_uninstall.json",
         "canonical_rust_invocation": [
           "hiero",
           "skills",
@@ -4102,6 +4148,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-skills-uninstall.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_status.json",
         "canonical_rust_invocation": [
           "hiero",
           "status"
@@ -4148,6 +4195,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-status.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_stop.json",
         "canonical_rust_invocation": [
           "hiero",
           "stop"
@@ -4194,6 +4242,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-stop.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_update.json",
         "canonical_rust_invocation": [
           "hiero",
           "update"
@@ -4293,6 +4342,7 @@
         "success_fixture": "compatibility/fixtures/cli/hieronymus-help-update.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_validate.json",
         "canonical_rust_invocation": [
           "hiero",
           "validate"
@@ -4401,6 +4451,7 @@
     ],
     "hieronymus-agent-hook": [
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_agent_hook_session_end.json",
         "canonical_rust_invocation": [
           "hiero",
           "agent-hook",
@@ -4448,6 +4499,7 @@
         "success_fixture": "compatibility/fixtures/cli/agent-hook-help-session-end.txt"
       },
       {
+        "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_agent_hook_session_start.json",
         "canonical_rust_invocation": [
           "hiero",
           "agent-hook",
@@ -4521,6 +4573,7 @@
   },
   "script_contracts": {
     "hiero": {
+      "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_script_hiero.json",
       "canonical_rust_invocation": [
         "hiero"
       ],
@@ -4569,6 +4622,7 @@
       "success_fixture": "compatibility/fixtures/cli/help-root.txt"
     },
     "hieronymus": {
+      "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_script_hieronymus.json",
       "canonical_rust_invocation": [
         "hiero"
       ],
@@ -4617,6 +4671,7 @@
       "success_fixture": "compatibility/fixtures/cli/help-hieronymus-root.txt"
     },
     "hieronymus-agent-hook": {
+      "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_script_hieronymus_agent_hook.json",
       "canonical_rust_invocation": [
         "hiero",
         "agent-hook"
@@ -4642,6 +4697,7 @@
       "success_fixture": "compatibility/fixtures/cli/agent-hook-help.txt"
     },
     "hieronymus-mcp": {
+      "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_script_hieronymus_mcp.json",
       "canonical_rust_invocation": [
         "hiero",
         "mcp"

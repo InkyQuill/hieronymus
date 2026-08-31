@@ -33,6 +33,7 @@ _TECHNICAL_OWNERS = frozenset(
     }
 )
 _DISPOSITIONS = frozenset({"preserve", "intentionally-change", "remove"})
+_IMPLEMENTATION_STATUSES = frozenset({"outstanding", "implemented"})
 _TEST_DISPOSITIONS = frozenset({"public_contract", "implementation_internal"})
 
 
@@ -47,6 +48,9 @@ class Contract:
     fixture: str
     rust_test_target: str
     disposition: str
+    last_python_release: str
+    first_rust_release: str | None
+    implementation_status: str
     adr: str | None = None
 
 
@@ -64,6 +68,7 @@ class Manifest:
     python_reference: str
     contracts: tuple[Contract, ...]
     test_ownership: tuple[TestOwnership, ...]
+    frontend_test_ownership: tuple[TestOwnership, ...]
 
 
 def load_manifest(path: Path) -> Manifest:
@@ -72,7 +77,13 @@ def load_manifest(path: Path) -> Manifest:
     manifest_data = _mapping(data, "manifest")
     _require_fields(
         manifest_data,
-        {"manifest_version", "python_reference", "contracts", "test_ownership"},
+        {
+            "manifest_version",
+            "python_reference",
+            "contracts",
+            "test_ownership",
+            "frontend_test_ownership",
+        },
         "manifest",
     )
 
@@ -82,6 +93,9 @@ def load_manifest(path: Path) -> Manifest:
     test_ownership_data = manifest_data["test_ownership"]
     if not isinstance(test_ownership_data, list):
         raise ValueError("manifest test_ownership must be an array")
+    frontend_test_ownership_data = manifest_data["frontend_test_ownership"]
+    if not isinstance(frontend_test_ownership_data, list):
+        raise ValueError("manifest frontend_test_ownership must be an array")
 
     return Manifest(
         manifest_version=_integer(manifest_data["manifest_version"], "manifest_version"),
@@ -89,6 +103,10 @@ def load_manifest(path: Path) -> Manifest:
         contracts=tuple(_load_contract(contract_data) for contract_data in contracts_data),
         test_ownership=tuple(
             _load_test_ownership(ownership_data) for ownership_data in test_ownership_data
+        ),
+        frontend_test_ownership=tuple(
+            _load_test_ownership(ownership_data, frontend=True)
+            for ownership_data in frontend_test_ownership_data
         ),
     )
 
@@ -109,6 +127,12 @@ def validate_manifest(manifest: Manifest, repo_root: Path) -> list[str]:
             errors.append(f"blank acceptance owner: {contract.id}")
         if not contract.technical_owner.strip():
             errors.append(f"blank technical owner: {contract.id}")
+        if not contract.last_python_release.strip():
+            errors.append(f"blank last Python release: {contract.id}")
+        if contract.implementation_status == "outstanding" and contract.first_rust_release:
+            errors.append(f"outstanding contract has first Rust release: {contract.id}")
+        if contract.implementation_status == "implemented" and not contract.first_rust_release:
+            errors.append(f"implemented contract missing first Rust release: {contract.id}")
 
         fixture_error = _referenced_path_error(resolved_repo_root, contract.fixture, "fixture")
         if fixture_error is not None:
@@ -123,10 +147,34 @@ def validate_manifest(manifest: Manifest, repo_root: Path) -> list[str]:
         ):
             errors.append(f"missing adr for {contract.disposition} contract: {contract.id}")
 
+    _validate_test_ownership(
+        manifest.test_ownership,
+        contracts_by_id,
+        errors,
+        namespace="Python",
+    )
+    _validate_test_ownership(
+        manifest.frontend_test_ownership,
+        contracts_by_id,
+        errors,
+        namespace="frontend",
+    )
+
+    return errors
+
+
+def _validate_test_ownership(
+    ownership_records: tuple[TestOwnership, ...],
+    contracts_by_id: dict[str, Contract],
+    errors: list[str],
+    *,
+    namespace: str,
+) -> None:
     seen_node_ids: set[str] = set()
-    for ownership in manifest.test_ownership:
+    for ownership in ownership_records:
         if ownership.node_id in seen_node_ids:
-            errors.append(f"duplicate test ownership node id: {ownership.node_id}")
+            prefix = "" if namespace == "Python" else f"{namespace} "
+            errors.append(f"duplicate {prefix}test ownership node id: {ownership.node_id}")
         seen_node_ids.add(ownership.node_id)
 
         node_file = ownership.node_id.split("::", 1)[0]
@@ -142,8 +190,6 @@ def validate_manifest(manifest: Manifest, repo_root: Path) -> list[str]:
                     f"{ownership.node_id}: {contract_id}"
                 )
 
-    return errors
-
 
 def _load_contract(data: object) -> Contract:
     contract_data = _mapping(data, "contract")
@@ -157,6 +203,9 @@ def _load_contract(data: object) -> Contract:
         "fixture",
         "rust_test_target",
         "disposition",
+        "last_python_release",
+        "first_rust_release",
+        "implementation_status",
     }
     _require_fields(contract_data, required_fields, "contract", optional_fields={"adr"})
 
@@ -168,6 +217,9 @@ def _load_contract(data: object) -> Contract:
     adr = contract_data.get("adr")
     if adr is not None:
         adr = _string(adr, "adr")
+    first_rust_release = contract_data["first_rust_release"]
+    if first_rust_release is not None:
+        first_rust_release = _string(first_rust_release, "first_rust_release")
 
     return Contract(
         id=_string(contract_data["id"], "id"),
@@ -179,11 +231,18 @@ def _load_contract(data: object) -> Contract:
         fixture=_string(contract_data["fixture"], "fixture"),
         rust_test_target=_string(contract_data["rust_test_target"], "rust_test_target"),
         disposition=_enum(contract_data["disposition"], "disposition", _DISPOSITIONS),
+        last_python_release=_string(contract_data["last_python_release"], "last_python_release"),
+        first_rust_release=first_rust_release,
+        implementation_status=_enum(
+            contract_data["implementation_status"],
+            "implementation_status",
+            _IMPLEMENTATION_STATUSES,
+        ),
         adr=adr,
     )
 
 
-def _load_test_ownership(data: object) -> TestOwnership:
+def _load_test_ownership(data: object, *, frontend: bool = False) -> TestOwnership:
     ownership_data = _mapping(data, "test ownership")
     disposition = _enum(
         ownership_data.get("disposition"),
@@ -198,7 +257,10 @@ def _load_test_ownership(data: object) -> TestOwnership:
     _require_fields(ownership_data, required_fields, "test ownership")
 
     node_id = _string(ownership_data["node_id"], "test ownership node_id")
-    if re.fullmatch(r"tests/.+::.+", node_id) is None:
+    node_pattern = r"frontend/src/.+\.test\.ts::.+" if frontend else r"tests/.+::.+"
+    if re.fullmatch(node_pattern, node_id) is None:
+        if frontend:
+            raise ValueError("frontend test ownership node_id must be a frontend Vitest node id")
         raise ValueError("test ownership node_id must be a pytest node id under tests/")
 
     if disposition == "public_contract":

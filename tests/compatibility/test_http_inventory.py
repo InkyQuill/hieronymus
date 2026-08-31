@@ -176,7 +176,10 @@ def test_route_cases_cover_every_route_and_do_not_disclose_credentials() -> None
     }
     for case in cases:
         expected_case_fields = {"contract_id", "failure", "success"}
-        if case["contract_id"] == "frontend.route.get.root":
+        route = next(
+            route for route in snapshot["routes"] if route["contract_id"] == case["contract_id"]
+        )
+        if route["disposition"] in {"intentionally-change", "remove"}:
             expected_case_fields |= {"current", "target"}
         if case["contract_id"] == "websocket.route.get.ws.admin":
             expected_case_fields.add("websocket_contract")
@@ -194,6 +197,21 @@ def test_route_cases_cover_every_route_and_do_not_disclose_credentials() -> None
                 sort_keys=True,
             )
             assert SENTINEL not in non_request_fields
+        if route["disposition"] == "intentionally-change":
+            for outcome in [
+                case["current"]["success"],
+                *case["current"]["failures"],
+                case["target"]["success"],
+                *case["target"]["failures"],
+            ]:
+                non_request_fields = json.dumps(
+                    {
+                        "response": outcome["response"],
+                        "normalized_log_fields": outcome["normalized_log_fields"],
+                    },
+                    sort_keys=True,
+                )
+                assert SENTINEL not in non_request_fields
 
     credential_values = {
         value.removeprefix("Bearer ")
@@ -207,26 +225,23 @@ def test_route_cases_cover_every_route_and_do_not_disclose_credentials() -> None
 
 def test_streamable_http_fixture_authenticates_version_negotiation() -> None:
     case = _route_cases_by_id()["http.route.post.mcp"]
-    success_headers = case["success"]["request"]["headers"]
-    failure_headers = case["failure"]["request"]["headers"]
+    success_headers = case["target"]["success"]["request"]["headers"]
+    unsupported = next(
+        failure for failure in case["target"]["failures"] if failure["id"] == "unsupported-version"
+    )
+    failure_headers = unsupported["request"]["headers"]
 
     assert success_headers == {
+        "Host": "127.0.0.1:<PORT>",
         "Authorization": f"Bearer {SENTINEL}",
         "MCP-Protocol-Version": MCP_REVISION,
     }
     assert failure_headers["Authorization"] == f"Bearer {SENTINEL}"
     assert failure_headers["MCP-Protocol-Version"] != MCP_REVISION
-    assert case["failure"]["response"] == {
+    assert unsupported["response"] == {
         "status": 400,
         "headers": {"Content-Type": "application/json; charset=utf-8"},
-        "body": {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "error": {
-                "code": -32600,
-                "message": "unsupported MCP protocol version",
-            },
-        },
+        "body": {"error": "unsupported_mcp_protocol_version"},
     }
 
 
@@ -347,12 +362,12 @@ def test_root_route_records_current_404_and_adr_0014_target_shell() -> None:
 
     assert route["disposition"] == "intentionally-change"
     assert route["adr"] == "docs/adr/0014-web-console-replaces-terminal-ui.md"
-    assert case["current"]["response"] == {
+    assert case["current"]["success"]["response"] == {
         "status": 404,
         "headers": {"Content-Type": "application/json; charset=utf-8"},
         "body": {"error": "not_found", "path": "/"},
     }
-    assert case["target"]["response"] == {
+    assert case["target"]["success"]["response"] == {
         "status": 200,
         "headers": {"Content-Type": "text/html; charset=utf-8"},
         "body": "<!doctype html><title>Hieronymus Web Console</title>",
@@ -438,3 +453,115 @@ def test_route_manifest_contracts_have_uniform_ownership_and_adr_rulings() -> No
     assert route_contracts["http.route.post.mcp"].adr == (
         "docs/adr/0015-mcp-protocol-and-transport.md"
     )
+
+
+def test_every_changed_route_has_separate_replayable_current_and_target_outcomes() -> None:
+    routes = _routes_by_id()
+    cases = _route_cases_by_id()
+
+    for contract_id, route in routes.items():
+        if route["disposition"] != "intentionally-change":
+            continue
+        case = cases[contract_id]
+        assert case["current"]["basis"] == "current-python-runtime"
+        assert case["target"]["basis"] == "adr-backed-target"
+        assert case["target"]["adr"] == route["adr"]
+        assert {"success", "failures"} <= set(case["target"])
+        assert case["current"] is not case["target"]
+
+
+def test_target_health_is_unauthenticated_minimal_liveness() -> None:
+    health = _route_cases_by_id()["http.route.get.health"]
+
+    assert health["current"]["success"]["request"]["headers"] == {"X-Hieronymus-Token": SENTINEL}
+    assert health["current"]["success"]["response"]["body"] == {
+        "ok": True,
+        "service": "hieronymus",
+        "version": "<VERSION>",
+    }
+    assert health["target"]["success"]["request"]["headers"] == {"Host": "127.0.0.1:<PORT>"}
+    assert health["target"]["success"]["response"]["body"] == {"ok": True}
+    assert "service" not in health["target"]["success"]["response"]["body"]
+    assert "version" not in health["target"]["success"]["response"]["body"]
+
+
+def test_launch_grant_exchange_sets_strict_http_only_session_and_csrf() -> None:
+    exchange = _route_cases_by_id()["http.route.post.auth.launch-grant.exchange"]
+    target = exchange["target"]
+
+    assert target["success"]["request"] == {
+        "method": "POST",
+        "path": "/auth/launch-grant/exchange",
+        "query": {},
+        "headers": {
+            "Content-Type": "application/json",
+            "Host": "127.0.0.1:<PORT>",
+            "Origin": "http://127.0.0.1:<PORT>",
+        },
+        "body": {"launch_grant": "<SINGLE_USE_LAUNCH_GRANT>"},
+    }
+    assert target["success"]["response"] == {
+        "status": 200,
+        "headers": {
+            "Content-Type": "application/json; charset=utf-8",
+            "Set-Cookie": ("hieronymus_session=<SESSION>; Path=/; HttpOnly; SameSite=Strict"),
+        },
+        "body": {"csrf_token": "<CSRF_TOKEN>"},
+    }
+    failure_ids = {failure["id"] for failure in target["failures"]}
+    assert {"grant-reuse", "invalid-host", "cross-origin"} <= failure_ids
+
+
+def test_target_browser_auth_covers_host_origin_csrf_success_and_failures() -> None:
+    cases = _route_cases_by_id()
+    read = cases["http.route.get.api.providers"]["target"]
+    write = cases["http.route.post.api.providers"]["target"]
+
+    assert read["success"]["request"]["headers"] == {
+        "Cookie": "hieronymus_session=<SESSION>",
+        "Host": "127.0.0.1:<PORT>",
+        "Origin": "http://127.0.0.1:<PORT>",
+    }
+    assert write["success"]["request"]["headers"] == {
+        "Cookie": "hieronymus_session=<SESSION>",
+        "Host": "127.0.0.1:<PORT>",
+        "Origin": "http://127.0.0.1:<PORT>",
+        "X-CSRF-Token": "<CSRF_TOKEN>",
+    }
+    assert {failure["id"] for failure in read["failures"]} == {
+        "cross-origin",
+        "invalid-host",
+        "missing-session",
+    }
+    assert {failure["id"] for failure in write["failures"]} == {
+        "cross-origin",
+        "invalid-csrf",
+        "invalid-host",
+        "missing-csrf",
+        "missing-session",
+    }
+
+
+def test_target_websocket_uses_cookie_origin_resume_and_rotation_cases() -> None:
+    case = _route_cases_by_id()["websocket.route.get.ws.admin"]
+    target = case["target"]
+
+    assert target["success"]["request"]["headers"] == {
+        "Cookie": "hieronymus_session=<SESSION>",
+        "Host": "127.0.0.1:<PORT>",
+        "Origin": "http://127.0.0.1:<PORT>",
+        "Sec-WebSocket-Key": "Zml4dHVyZS13ZWJzb2NrZXQta2V5",
+        "Upgrade": "websocket",
+    }
+    assert target["success"]["request"]["body"] == {"resume_from_event_id": 41}
+    assert target["websocket"]["resume"] == {
+        "last_event_id": 41,
+        "replayed_event_ids": [42],
+    }
+    assert target["websocket"]["credentials_rotated"]["close"]["reason"] == ("credentials_rotated")
+    assert {failure["id"] for failure in target["failures"]} == {
+        "cross-origin",
+        "expired-session",
+        "invalid-host",
+        "missing-session",
+    }

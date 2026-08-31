@@ -1,4 +1,5 @@
 {
+  "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_rag.json",
   "contract_id": "cli.command.hieronymus.rag",
   "failure": {
     "args": [

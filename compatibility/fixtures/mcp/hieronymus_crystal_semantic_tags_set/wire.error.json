@@ -1,0 +1,26 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "confidence": 0.9,
+        "semantic_tags": [
+          "ability",
+          "ui"
+        ]
+      },
+      "name": "hieronymus_crystal_semantic_tags_set"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_crystal_semantic_tags_set: 1 validation error for hieronymus_crystal_semantic_tags_setArguments\ncrystal_id\n  Field required [type=missing, input_value={'semantic_tags': ['abili...ui'], 'confidence': 0.9}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

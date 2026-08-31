@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import json
 import re
 import tempfile
@@ -150,6 +151,19 @@ REVIEWED_ROUTES = (
         None,
         "StatusPayload",
         runtime_body_key="status",
+    ),
+    Route(
+        "http.route.post.auth.launch-grant.exchange",
+        "POST",
+        "/auth/launch-grant/exchange",
+        "http",
+        "ADR 0012 launch-grant exchange",
+        "absent",
+        "single-use-launch-grant-with-host-origin",
+        "intentionally-change",
+        _ADR_0012,
+        {"launch_grant": "single-use secret"},
+        {"csrf_token": "secret", "session": "HttpOnly SameSite=Strict cookie"},
     ),
     Route(
         "http.route.post.shutdown",
@@ -824,21 +838,81 @@ def _route_cases(snapshot: dict[str, object]) -> dict[str, object]:
 
 
 def _route_case(route: dict[str, object], runtime_bodies: dict[str, object]) -> dict[str, object]:
-    success = _fixture_outcome(route, runtime_bodies, success=True)
-    failure = _fixture_outcome(route, runtime_bodies, success=False)
+    success = _current_success_outcome(route, runtime_bodies)
+    failure = _current_failure_outcome(route, runtime_bodies)
     contract_id = str(route["contract_id"])
     case: dict[str, object] = {
         "contract_id": contract_id,
         "success": success,
         "failure": failure,
     }
-    if contract_id == "frontend.route.get.root":
-        failure["response"]["body"] = {"error": "not_found", "path": "/"}
-        case["current"] = failure
-        case["target"] = success
-    if contract_id == "websocket.route.get.ws.admin":
-        case["websocket_contract"] = _websocket_contract()
+    if route["disposition"] == "intentionally-change":
+        case["current"] = {
+            "basis": "current-python-runtime",
+            "success": success,
+            "failures": [failure],
+        }
+        case["target"] = {
+            "basis": "adr-backed-target",
+            "adr": route["adr"],
+            "success": _target_success_outcome(route, runtime_bodies),
+            "failures": _target_failure_outcomes(route, runtime_bodies),
+        }
+        if contract_id == "websocket.route.get.ws.admin":
+            case["target"]["websocket"] = _websocket_contract()["target"]
+            case["current"]["websocket"] = _websocket_contract()["current"]
+            case["websocket_contract"] = _websocket_contract()
+    elif route["disposition"] == "remove":
+        case["current"] = {
+            "basis": "current-python-runtime",
+            "success": success,
+            "failures": [failure],
+        }
+        case["target"] = {
+            "basis": "adr-backed-target",
+            "adr": route["adr"],
+            "removed": True,
+            "response": {
+                "status": 404,
+                "headers": {"Content-Type": "application/json; charset=utf-8"},
+                "body": {"error": "not_found"},
+            },
+        }
     return case
+
+
+def _current_success_outcome(
+    route: dict[str, object], runtime_bodies: dict[str, object]
+) -> dict[str, object]:
+    outcome = _fixture_outcome(route, runtime_bodies, success=True)
+    contract_id = str(route["contract_id"])
+    if contract_id in {
+        "frontend.route.get.root",
+        "http.route.post.mcp",
+        "http.route.post.auth.launch-grant.exchange",
+    }:
+        outcome["request"]["headers"] = {}
+        outcome["response"] = {
+            "status": 404,
+            "headers": {"Content-Type": "application/json; charset=utf-8"},
+            "body": {"error": "not_found", "path": outcome["request"]["path"]},
+        }
+        outcome["normalized_log_fields"]["status"] = 404
+        outcome["normalized_log_fields"]["credential"] = "<absent>"
+    return outcome
+
+
+def _current_failure_outcome(
+    route: dict[str, object], runtime_bodies: dict[str, object]
+) -> dict[str, object]:
+    contract_id = str(route["contract_id"])
+    if contract_id in {
+        "frontend.route.get.root",
+        "http.route.post.mcp",
+        "http.route.post.auth.launch-grant.exchange",
+    }:
+        return copy.deepcopy(_current_success_outcome(route, runtime_bodies))
+    return _fixture_outcome(route, runtime_bodies, success=False)
 
 
 def _fixture_outcome(
@@ -875,6 +949,161 @@ def _fixture_outcome(
             "credential": "<redacted>" if request_headers else "<absent>",
         },
     }
+
+
+def _target_success_outcome(
+    route: dict[str, object], runtime_bodies: dict[str, object]
+) -> dict[str, object]:
+    """Build an ADR-backed target case without consulting current_auth."""
+    outcome = _fixture_outcome(route, runtime_bodies, success=True)
+    contract_id = str(route["contract_id"])
+    target_auth = str(route["target_auth"])
+    outcome["request"]["headers"] = _target_request_headers(
+        contract_id=contract_id,
+        target_auth=target_auth,
+    )
+    outcome["normalized_log_fields"]["credential"] = (
+        "<absent>"
+        if target_auth in {"public-static", "unauthenticated-minimal-liveness"}
+        else "<redacted>"
+    )
+
+    if contract_id == "http.route.get.health":
+        outcome["response"]["body"] = {"ok": True}
+    elif contract_id == "frontend.route.get.root":
+        outcome["response"] = {
+            "status": 200,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": "<!doctype html><title>Hieronymus Web Console</title>",
+        }
+    elif contract_id == "http.route.post.auth.launch-grant.exchange":
+        outcome["request"]["body"] = {"launch_grant": "<SINGLE_USE_LAUNCH_GRANT>"}
+        outcome["response"] = {
+            "status": 200,
+            "headers": {
+                "Content-Type": "application/json; charset=utf-8",
+                "Set-Cookie": ("hieronymus_session=<SESSION>; Path=/; HttpOnly; SameSite=Strict"),
+            },
+            "body": {"csrf_token": "<CSRF_TOKEN>"},
+        }
+    elif contract_id == "websocket.route.get.ws.admin":
+        outcome["request"]["body"] = {"resume_from_event_id": 41}
+    outcome["normalized_log_fields"]["status"] = outcome["response"]["status"]
+    return outcome
+
+
+def _target_request_headers(*, contract_id: str, target_auth: str) -> dict[str, str]:
+    base = {"Host": "127.0.0.1:<PORT>"}
+    if target_auth in {"public-static", "unauthenticated-minimal-liveness"}:
+        return base
+    if target_auth == "bearer-token":
+        return {**base, "Authorization": "Bearer compat-secret-do-not-log"}
+    if target_auth == "bearer-token-and-MCP-Protocol-Version":
+        return {
+            **base,
+            "Authorization": "Bearer compat-secret-do-not-log",
+            "MCP-Protocol-Version": _MCP_PROTOCOL_REVISION,
+        }
+    if target_auth == "single-use-launch-grant-with-host-origin":
+        return {
+            **base,
+            "Origin": "http://127.0.0.1:<PORT>",
+            "Content-Type": "application/json",
+        }
+    if target_auth in {"browser-session", "browser-session-and-CSRF-token"}:
+        headers = {
+            **base,
+            "Origin": "http://127.0.0.1:<PORT>",
+            "Cookie": "hieronymus_session=<SESSION>",
+        }
+        if target_auth == "browser-session-and-CSRF-token":
+            headers["X-CSRF-Token"] = "<CSRF_TOKEN>"
+        return headers
+    if target_auth == "browser-session-with-credential-rotation-close":
+        return {
+            **base,
+            "Origin": "http://127.0.0.1:<PORT>",
+            "Cookie": "hieronymus_session=<SESSION>",
+            "Sec-WebSocket-Key": "Zml4dHVyZS13ZWJzb2NrZXQta2V5",
+            "Upgrade": "websocket",
+        }
+    raise ValueError(f"missing target authentication fixture: {contract_id}: {target_auth}")
+
+
+def _target_failure_outcomes(
+    route: dict[str, object], runtime_bodies: dict[str, object]
+) -> list[dict[str, object]]:
+    success = _target_success_outcome(route, runtime_bodies)
+    target_auth = str(route["target_auth"])
+    contract_id = str(route["contract_id"])
+
+    if target_auth == "public-static":
+        failure_ids = ["invalid-host"]
+    elif target_auth == "unauthenticated-minimal-liveness":
+        failure_ids = ["invalid-host"]
+    elif target_auth == "single-use-launch-grant-with-host-origin":
+        failure_ids = ["cross-origin", "grant-reuse", "invalid-host"]
+    elif target_auth == "browser-session":
+        failure_ids = ["cross-origin", "invalid-host", "missing-session"]
+    elif target_auth == "browser-session-and-CSRF-token":
+        failure_ids = [
+            "cross-origin",
+            "invalid-csrf",
+            "invalid-host",
+            "missing-csrf",
+            "missing-session",
+        ]
+    elif target_auth == "browser-session-with-credential-rotation-close":
+        failure_ids = ["cross-origin", "expired-session", "invalid-host", "missing-session"]
+    elif target_auth == "bearer-token-and-MCP-Protocol-Version":
+        failure_ids = ["invalid-host", "missing-bearer", "unsupported-version"]
+    elif target_auth == "bearer-token":
+        failure_ids = ["invalid-host", "missing-bearer"]
+    else:
+        raise ValueError(f"missing target failure fixtures: {contract_id}: {target_auth}")
+
+    return [_target_failure(success, failure_id) for failure_id in failure_ids]
+
+
+def _target_failure(success: dict[str, object], failure_id: str) -> dict[str, object]:
+    outcome = copy.deepcopy(success)
+    outcome["id"] = failure_id
+    headers = outcome["request"]["headers"]
+    if failure_id == "invalid-host":
+        headers["Host"] = "attacker.invalid"
+        status, error = 400, "invalid_host"
+    elif failure_id == "cross-origin":
+        headers["Origin"] = "https://attacker.invalid"
+        status, error = 403, "forbidden_origin"
+    elif failure_id in {"missing-session", "expired-session"}:
+        if failure_id == "missing-session":
+            headers.pop("Cookie", None)
+        else:
+            headers["Cookie"] = "hieronymus_session=<EXPIRED_SESSION>"
+        status, error = 401, "unauthorized"
+    elif failure_id in {"missing-csrf", "invalid-csrf"}:
+        if failure_id == "missing-csrf":
+            headers.pop("X-CSRF-Token", None)
+        else:
+            headers["X-CSRF-Token"] = "<INVALID_CSRF_TOKEN>"
+        status, error = 403, "csrf_failed"
+    elif failure_id == "grant-reuse":
+        status, error = 401, "launch_grant_already_used"
+    elif failure_id == "missing-bearer":
+        headers.pop("Authorization", None)
+        status, error = 401, "unauthorized"
+    elif failure_id == "unsupported-version":
+        headers["MCP-Protocol-Version"] = _UNSUPPORTED_MCP_PROTOCOL_REVISION
+        status, error = 400, "unsupported_mcp_protocol_version"
+    else:
+        raise ValueError(f"unknown target failure fixture: {failure_id}")
+    outcome["response"] = {
+        "status": status,
+        "headers": {"Content-Type": "application/json; charset=utf-8"},
+        "body": {"error": error},
+    }
+    outcome["normalized_log_fields"]["status"] = status
+    return outcome
 
 
 def _concrete_path(path_template: str) -> str:
@@ -1003,6 +1232,8 @@ def _fixture_success_body(route: dict[str, object], runtime_bodies: dict[str, ob
         return {"ok": True, "stopping": True}
     if contract_id == "http.route.post.mcp":
         return {"jsonrpc": "2.0", "id": 1, "result": {"tools": []}}
+    if contract_id == "http.route.post.auth.launch-grant.exchange":
+        return {}
     if contract_id == "http.route.post.api.admin.actions.run_manual_dreaming":
         return {"started": True, "status": "running"}
     if contract_id == "websocket.route.get.ws.admin":
@@ -1131,6 +1362,15 @@ def _manifest_contract(route: dict[str, object]) -> dict[str, object]:
     tests = ["tests/compatibility/test_http_inventory.py", "tests/test_service_http.py"]
     if surface == "frontend":
         tests.append("frontend/src/web/app.test.ts")
+    frontend_behavior_tests = {
+        "http.route.post.api.providers": "frontend/src/web/components/editors.test.ts",
+        "http.route.post.api.settings.dream": "frontend/src/web/components/editors.test.ts",
+        (
+            "http.route.post.api.admin.actions.action"
+        ): "frontend/src/web/components/MemoryViews.test.ts",
+    }
+    if contract_id in frontend_behavior_tests:
+        tests.append(frontend_behavior_tests[contract_id])
     contract: dict[str, object] = {
         "id": contract_id,
         "surface": surface,
@@ -1141,6 +1381,9 @@ def _manifest_contract(route: dict[str, object]) -> dict[str, object]:
         "fixture": "compatibility/fixtures/http/route-cases.json",
         "rust_test_target": f"crates/hiero-daemon/tests/{target_file}::{rust_name}",
         "disposition": route["disposition"],
+        "last_python_release": "0.7.0",
+        "first_rust_release": None,
+        "implementation_status": "outstanding",
     }
     if route["adr"] is not None:
         contract["adr"] = route["adr"]

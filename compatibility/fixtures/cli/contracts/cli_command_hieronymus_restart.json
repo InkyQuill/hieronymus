@@ -1,4 +1,5 @@
 {
+  "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_command_hieronymus_restart.json",
   "contract_id": "cli.command.hieronymus.restart",
   "failure": {
     "args": [

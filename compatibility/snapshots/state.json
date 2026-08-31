@@ -1424,7 +1424,36 @@
           "target_id",
           "created_at"
         ],
-        "rows": []
+        "rows": [
+          {
+            "created_at": "2000-01-01T00:00:00+00:00",
+            "source_id": "1",
+            "source_table": "strict_terms",
+            "target_id": 1,
+            "target_table": "concepts"
+          },
+          {
+            "created_at": "2000-01-01T00:00:00+00:00",
+            "source_id": "1:source",
+            "source_table": "strict_terms",
+            "target_id": 1,
+            "target_table": "concept_facets"
+          },
+          {
+            "created_at": "2000-01-01T00:00:00+00:00",
+            "source_id": "1:rendering",
+            "source_table": "strict_terms",
+            "target_id": 2,
+            "target_table": "concept_facets"
+          },
+          {
+            "created_at": "2000-01-01T00:00:00+00:00",
+            "source_id": "1",
+            "source_table": "strict_terms",
+            "target_id": 1,
+            "target_table": "crystals"
+          }
+        ]
       }
     },
     "columns": {
@@ -5844,8 +5873,347 @@
       "foreign_keys": "database.schema.current",
       "indexes": "database.schema.current",
       "migration_sources": "database.migrations.current",
+      "representative_rows": "database.schema.current",
+      "row_counts": "database.schema.current",
       "tables": "database.schema.current",
-      "triggers": "database.schema.current"
+      "triggers": "database.schema.current",
+      "variants": "database.upgrade.preflight"
+    },
+    "representative_rows": {
+      "concept_facets": [
+        {
+          "concept_id": 1,
+          "confidence": 0.95,
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "facet_type": "name",
+          "id": 1,
+          "is_canonical": 1,
+          "language": "ja",
+          "source_crystal_id": null,
+          "superseded_at": null,
+          "updated_at": "2000-01-01T00:00:00+00:00",
+          "value": "\u30bb\u30f3\u30b9"
+        },
+        {
+          "concept_id": 1,
+          "confidence": 0.95,
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "facet_type": "rendering",
+          "id": 2,
+          "is_canonical": 0,
+          "language": "ru",
+          "source_crystal_id": null,
+          "superseded_at": null,
+          "updated_at": "2000-01-01T00:00:00+00:00",
+          "value": "\u0427\u0443\u0442\u044c\u0451"
+        },
+        {
+          "concept_id": 2,
+          "confidence": 0.9,
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "facet_type": "name",
+          "id": 3,
+          "is_canonical": 1,
+          "language": "ja",
+          "source_crystal_id": null,
+          "superseded_at": null,
+          "updated_at": "2000-01-01T00:00:00+00:00",
+          "value": "\u8a55\u8b70\u4f1a"
+        }
+      ],
+      "concepts": [
+        {
+          "canonical_name": "\u30bb\u30f3\u30b9",
+          "confidence": 0.95,
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "description": "Synthetic deterministic terminology rule.",
+          "id": 1,
+          "merged_into_concept_id": null,
+          "scope_key": "series:fixture-series",
+          "scope_type": "series",
+          "status": "established",
+          "updated_at": "2000-01-01T00:00:00+00:00"
+        },
+        {
+          "canonical_name": "Council",
+          "confidence": 0.9,
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "description": "Synthetic political institution.",
+          "id": 2,
+          "merged_into_concept_id": null,
+          "scope_key": "series:fixture-series",
+          "scope_type": "series",
+          "status": "established",
+          "updated_at": "2000-01-01T00:00:00+00:00"
+        }
+      ],
+      "crystal_activations": [
+        {
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "crystal_id": 2,
+          "cycle_id": null,
+          "id": 1,
+          "rank": 1,
+          "reason": "weighted search match",
+          "recall_query": "Council",
+          "score": 2.7646315171647444,
+          "session_id": 1
+        }
+      ],
+      "crystals": [
+        {
+          "confidence": 0.95,
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "created_cycle": 0,
+          "crystal_type": "rule",
+          "id": 1,
+          "is_inferred": 0,
+          "last_activated_cycle": null,
+          "last_reinforced_cycle": null,
+          "malformed_penalty": 0.0,
+          "rule_intent": "",
+          "scope_key": "series:fixture-series",
+          "scope_type": "series",
+          "series_slug": "fixture-series",
+          "soft_origin": null,
+          "source_credibility": "user_rule",
+          "source_language": "ja",
+          "status": "active",
+          "strength": 0.8,
+          "supersedes_crystal_id": null,
+          "tags_json": "[\"ability\", \"ui\"]",
+          "target_language": "ru",
+          "text": "\u30bb\u30f3\u30b9 is translated as \u0427\u0443\u0442\u044c\u0451, not \u041e\u0449\u0443\u0449\u0435\u043d\u0438\u0435.",
+          "title": "",
+          "updated_at": "2000-01-01T00:00:00+00:00"
+        },
+        {
+          "confidence": 1.0,
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "created_cycle": 0,
+          "crystal_type": "concept_note",
+          "id": 2,
+          "is_inferred": 0,
+          "last_activated_cycle": null,
+          "last_reinforced_cycle": null,
+          "malformed_penalty": 0.0,
+          "rule_intent": "",
+          "scope_key": "series:fixture-series",
+          "scope_type": "series",
+          "series_slug": "fixture-series",
+          "soft_origin": "",
+          "source_credibility": "observation",
+          "source_language": "ja",
+          "status": "active",
+          "strength": 0.9500000000000001,
+          "supersedes_crystal_id": null,
+          "tags_json": "[\"politics\"]",
+          "target_language": "ru",
+          "text": "The Council is a named political institution.",
+          "title": "Council capitalization",
+          "updated_at": "2000-01-01T00:00:00+00:00"
+        }
+      ],
+      "memory_events": [
+        {
+          "applied": 1,
+          "confidence_delta": 0.2,
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "crystal_id": 2,
+          "cycle_id": null,
+          "event_type": "confirmed_by_user",
+          "evidence": "Synthetic compatibility confirmation.",
+          "id": 1,
+          "session_id": 1,
+          "source_role": "user",
+          "strength_delta": 0.15
+        }
+      ],
+      "memory_graph_migration_ledger": [
+        {
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "source_id": "1",
+          "source_table": "strict_terms",
+          "target_id": 1,
+          "target_table": "concepts"
+        },
+        {
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "source_id": "1:source",
+          "source_table": "strict_terms",
+          "target_id": 1,
+          "target_table": "concept_facets"
+        },
+        {
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "source_id": "1:rendering",
+          "source_table": "strict_terms",
+          "target_id": 2,
+          "target_table": "concept_facets"
+        },
+        {
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "source_id": "1",
+          "source_table": "strict_terms",
+          "target_id": 1,
+          "target_table": "crystals"
+        }
+      ],
+      "rag_chunks": [
+        {
+          "chunk_kind": "text",
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "display_text": "The Council appoints the city archivist. Sense appears in the status screen.",
+          "id": 1,
+          "location": "paragraph 1",
+          "metadata_json": "{}",
+          "series_slug": "fixture-series",
+          "source_id": 1,
+          "text": "The Council appoints the city archivist. Sense appears in the status screen."
+        }
+      ],
+      "rag_sources": [
+        {
+          "checksum": "a3d10b7c0c11ef4f6a2e2b17e3bf6fe38d659850da7174ab85a26a84c7ff26f5",
+          "content_type": "txt",
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "id": 1,
+          "metadata_json": "{\"normalized_format\": \"text\", \"normalized_path\": \"<SYNTHETIC_SOURCE>/compatibility-rag-source.txt\", \"original_path\": \"<SYNTHETIC_SOURCE>/compatibility-rag-source.txt\"}",
+          "series_slug": "fixture-series",
+          "source_ref": "fixture-volume-1.txt",
+          "source_type": "text",
+          "updated_at": "2000-01-01T00:00:00+00:00"
+        }
+      ],
+      "short_term_memories": [
+        {
+          "archived_at": null,
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "id": 1,
+          "kind": "correction",
+          "metadata_json": "{\"language_tags\": [\"en\"], \"line\": 12, \"rule_intent\": \"capitalization\", \"semantic_tags\": [\"politics\"], \"sentence_count\": 1, \"source_credibility\": \"user_correction\", \"story_scopes\": [\"chapter:2\"], \"symbol_count\": 36, \"synthetic\": true}",
+          "rule_intent": "capitalization",
+          "session_id": 1,
+          "soft_origin": "",
+          "source_credibility": "user_correction",
+          "source_ref": "volume-1/chapter-2",
+          "source_role": "user",
+          "text": "The Council must remain capitalized."
+        }
+      ],
+      "strict_term_aliases": [
+        {
+          "case_sensitive": 1,
+          "id": 1,
+          "kind": "forbidden_variant",
+          "language": "ru",
+          "term_id": 1,
+          "text": "\u041e\u0449\u0443\u0449\u0435\u043d\u0438\u0435"
+        }
+      ],
+      "strict_terms": [
+        {
+          "canonical_translation": "\u0427\u0443\u0442\u044c\u0451",
+          "category": "ability",
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "id": 1,
+          "notes": "Synthetic deterministic terminology rule.",
+          "series_slug": "fixture-series",
+          "source_language": "ja",
+          "source_text": "\u30bb\u30f3\u30b9",
+          "status": "approved",
+          "target_language": "ru",
+          "updated_at": "2000-01-01T00:00:00+00:00"
+        }
+      ],
+      "task_sessions": [
+        {
+          "chapter": "2",
+          "completed_at": "2000-01-01T00:00:00+00:00",
+          "created_at": "2000-01-01T00:00:00+00:00",
+          "cycle_id": null,
+          "id": 1,
+          "last_activity_at": "2000-01-01T00:00:00+00:00",
+          "series_slug": "fixture-series",
+          "source_language": "ja",
+          "status": "completed",
+          "target_language": "ru",
+          "task_type": "translation",
+          "volume": "1"
+        }
+      ]
+    },
+    "row_counts": {
+      "audit_log": 0,
+      "concept_facet_fts": 3,
+      "concept_facet_fts_config": 1,
+      "concept_facet_fts_data": 9,
+      "concept_facet_fts_docsize": 3,
+      "concept_facet_fts_idx": 7,
+      "concept_facet_language_tags": 3,
+      "concept_facet_semantic_tags": 1,
+      "concept_facet_story_scopes": 1,
+      "concept_facets": 3,
+      "concept_renames": 0,
+      "concept_semantic_tags": 3,
+      "concepts": 2,
+      "concepts_fts": 2,
+      "concepts_fts_config": 1,
+      "concepts_fts_data": 7,
+      "concepts_fts_docsize": 2,
+      "concepts_fts_idx": 5,
+      "crystal_activations": 1,
+      "crystal_concepts": 2,
+      "crystal_language_tags": 4,
+      "crystal_links": 0,
+      "crystal_semantic_tags": 3,
+      "crystal_sources": 1,
+      "crystal_story_scopes": 1,
+      "crystals": 2,
+      "crystals_fts": 2,
+      "crystals_fts_config": 1,
+      "crystals_fts_data": 5,
+      "crystals_fts_docsize": 2,
+      "crystals_fts_idx": 3,
+      "dream_audit_entries": 0,
+      "dream_phase_runs": 0,
+      "dream_runs": 0,
+      "memory_events": 1,
+      "memory_graph_migration_ledger": 4,
+      "rag_chunk_language_tags": 1,
+      "rag_chunk_semantic_tags": 1,
+      "rag_chunk_story_scopes": 1,
+      "rag_chunks": 1,
+      "rag_chunks_fts": 1,
+      "rag_chunks_fts_config": 1,
+      "rag_chunks_fts_data": 4,
+      "rag_chunks_fts_docsize": 1,
+      "rag_chunks_fts_idx": 2,
+      "rag_sources": 1,
+      "series": 1,
+      "series_language_tags": 3,
+      "short_term_memories": 1,
+      "short_term_memories_fts": 1,
+      "short_term_memories_fts_config": 1,
+      "short_term_memories_fts_data": 3,
+      "short_term_memories_fts_docsize": 1,
+      "short_term_memories_fts_idx": 1,
+      "short_term_memory_language_tags": 1,
+      "short_term_memory_semantic_tags": 1,
+      "short_term_memory_story_scopes": 1,
+      "strict_concept_proposals": 0,
+      "strict_term_aliases": 1,
+      "strict_term_tags": 2,
+      "strict_terms": 1,
+      "strict_terms_fts": 1,
+      "strict_terms_fts_config": 1,
+      "strict_terms_fts_data": 3,
+      "strict_terms_fts_docsize": 1,
+      "strict_terms_fts_idx": 1,
+      "task_session_language_tags": 3,
+      "task_session_semantic_tags": 2,
+      "task_session_story_scopes": 2,
+      "task_sessions": 1
     },
     "tables": [
       {
@@ -6174,6 +6542,68 @@
         "name": "rag_chunks_au",
         "sql": "CREATE TRIGGER rag_chunks_au after update on rag_chunks begin insert into rag_chunks_fts(rag_chunks_fts, rowid, text, display_text, location) values ('delete', old.id, old.text, old.display_text, old.location); insert into rag_chunks_fts(rowid, text, display_text, location) values (new.id, new.text, new.display_text, new.location); end",
         "table": "rag_chunks"
+      }
+    ],
+    "variants": [
+      {
+        "expected": {
+          "classification": "supported-python",
+          "foreign_key_violations": 0,
+          "integrity": "ok",
+          "safe_to_convert": true
+        },
+        "fixture": "compatibility/fixtures/database/minimal-python.sqlite",
+        "id": "current-python"
+      },
+      {
+        "expected": {
+          "classification": "supported-legacy-python",
+          "foreign_key_violations": 0,
+          "integrity": "ok",
+          "safe_to_convert": true
+        },
+        "fixture": "compatibility/fixtures/database/legacy-python.sqlite",
+        "id": "supported-legacy-python"
+      },
+      {
+        "expected": {
+          "classification": "empty",
+          "foreign_key_violations": 0,
+          "integrity": "ok",
+          "safe_to_convert": false
+        },
+        "fixture": "compatibility/fixtures/database/empty.sqlite",
+        "id": "empty"
+      },
+      {
+        "expected": {
+          "classification": "partial-python",
+          "foreign_key_violations": 0,
+          "integrity": "ok",
+          "safe_to_convert": false
+        },
+        "fixture": "compatibility/fixtures/database/partial-python.sqlite",
+        "id": "partial-python"
+      },
+      {
+        "expected": {
+          "classification": "corrupt",
+          "foreign_key_violations": 0,
+          "integrity": "unreadable",
+          "safe_to_convert": false
+        },
+        "fixture": "compatibility/fixtures/database/corrupt.sqlite",
+        "id": "corrupt"
+      },
+      {
+        "expected": {
+          "classification": "unknown-schema",
+          "foreign_key_violations": 0,
+          "integrity": "ok",
+          "safe_to_convert": false
+        },
+        "fixture": "compatibility/fixtures/database/unknown-schema.sqlite",
+        "id": "unknown-schema"
       }
     ]
   },
@@ -7113,47 +7543,73 @@
   },
   "owned_paths": [
     {
+      "contract_id": "data-root.layout",
       "exists": true,
       "kind": "file",
       "path": "hieronymus.sqlite"
     },
     {
+      "contract_id": "data-root.layout",
       "exists": true,
       "kind": "file",
       "path": "provider.conf"
     },
     {
+      "contract_id": "data-root.layout",
       "exists": true,
       "kind": "file",
       "path": "dream.conf"
     },
     {
+      "contract_id": "data-root.layout",
       "exists": true,
       "kind": "file",
       "path": "ingest.conf"
     },
     {
+      "contract_id": "data-root.layout",
       "exists": true,
       "kind": "file",
       "path": "release.conf"
     },
     {
+      "contract_id": "data-root.layout",
       "exists": true,
       "kind": "file",
       "path": "llmcache.tmp"
     },
     {
+      "contract_id": "data-root.layout",
       "exists": true,
       "kind": "directory",
       "path": "backups/"
     },
     {
+      "contract_id": "data-root.layout",
       "exists": true,
       "kind": "directory",
       "path": "agent-plugins/"
     }
   ],
   "tests": {
+    "frontend_node_ids": [
+      "frontend/src/web/app.test.ts::accent foregrounds use a contrast-safe semantic text token",
+      "frontend/src/web/app.test.ts::all navigation links retain 44px interaction targets",
+      "frontend/src/web/app.test.ts::inline error alerts use the semantic danger background",
+      "frontend/src/web/app.test.ts::legacy stylesheets remain deleted",
+      "frontend/src/web/app.test.ts::the Tailwind stylesheet contains only used shared component selectors",
+      "frontend/src/web/app.test.ts::the editor dialog source contract remains viewport-bounded and right-aligned",
+      "frontend/src/web/app.test.ts::the primary header wraps into accessible mobile navigation",
+      "frontend/src/web/app.test.ts::the semantic theme exposes required runtime tokens and utilities",
+      "frontend/src/web/app.test.ts::the web entry imports the Tailwind stylesheet",
+      "frontend/src/web/app.test.ts::the web stylesheet configures Tailwind and the data-theme dark variant",
+      "frontend/src/web/components/MemoryViews.test.ts::destructive memory actions require confirmation and send the exact payload",
+      "frontend/src/web/components/MemoryViews.test.ts::memory rows load by keyboard activation:  ",
+      "frontend/src/web/components/MemoryViews.test.ts::memory rows load by keyboard activation: {Enter}",
+      "frontend/src/web/components/editors.test.ts::dreaming editor submits the toggled schedule state",
+      "frontend/src/web/components/editors.test.ts::provider editor opens, submits edited fields, and closes",
+      "frontend/src/web/lib/theme.svelte.test.ts::theme toggle applies and persists the selected theme"
+    ],
     "node_ids": [
       "tests/compatibility/test_check.py::test_artifact_diffs_compare_exact_bytes_and_report_missing_files",
       "tests/compatibility/test_check.py::test_artifact_diffs_reject_unexpected_generated_artifacts[compatibility/fixtures/cli/stale-fixture.txt]",
@@ -7165,16 +7621,7 @@
       "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/mcp.json-snapshot drift]",
       "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/state.json-snapshot drift]",
       "tests/compatibility/test_check.py::test_canonical_check_passes_without_writing_repo_or_caller_state",
-      "tests/compatibility/test_check.py::test_canonical_check_rejects_orphan_generated_artifacts_without_writing[compatibility/fixtures/cli/stale-fixture.txt]",
-      "tests/compatibility/test_check.py::test_canonical_check_rejects_orphan_generated_artifacts_without_writing[compatibility/fixtures/mcp/orphan-tool/stale.json]",
-      "tests/compatibility/test_check.py::test_canonical_check_rejects_orphan_generated_artifacts_without_writing[compatibility/snapshots/stale.json]",
-      "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/fixtures/database/minimal-python.sqlite-fixture drift]",
-      "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/cli.json-snapshot drift]",
-      "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/http.json-snapshot drift]",
-      "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/mcp.json-snapshot drift]",
-      "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/state.json-snapshot drift]",
-      "tests/compatibility/test_check.py::test_canonical_check_reports_invalid_manifest_without_writing",
-      "tests/compatibility/test_check.py::test_canonical_check_sorts_real_failures_before_summary",
+      "tests/compatibility/test_check.py::test_canonical_check_reports_one_sorted_composite_failure_without_writing",
       "tests/compatibility/test_check.py::test_inventory_coverage_rejects_unreviewed_items",
       "tests/compatibility/test_check.py::test_main_exits_one_with_sorted_drift_and_parity_summary",
       "tests/compatibility/test_check.py::test_manifest_failures_report_invalid_manifest_and_missing_references",
@@ -7182,14 +7629,17 @@
       "tests/compatibility/test_check.py::test_report_sorts_failures_before_summary",
       "tests/compatibility/test_cli_inventory.py::test_cli_snapshot_matches_shipping_commands",
       "tests/compatibility/test_cli_inventory.py::test_each_installed_click_command_path_has_its_own_contract",
+      "tests/compatibility/test_cli_inventory.py::test_every_click_command_has_real_behavior_successes_and_semantic_failure",
       "tests/compatibility/test_cli_inventory.py::test_every_public_cli_contract_has_success_failure_fixtures_and_manifest_entry",
       "tests/compatibility/test_cli_inventory.py::test_filesystem_defaults_are_normalized",
       "tests/compatibility/test_cli_inventory.py::test_legacy_entrypoints_record_canonical_rust_routes",
       "tests/compatibility/test_cli_inventory.py::test_mcp_entrypoint_fixtures_replay_distinct_success_and_failure",
-      "tests/compatibility/test_cli_inventory.py::test_snapshot_generation_never_executes_click_callbacks",
+      "tests/compatibility/test_cli_inventory.py::test_snapshot_generation_replays_callbacks_only_below_synthetic_root",
+      "tests/compatibility/test_http_inventory.py::test_every_changed_route_has_separate_replayable_current_and_target_outcomes",
       "tests/compatibility/test_http_inventory.py::test_every_frontend_request_has_a_route_contract",
       "tests/compatibility/test_http_inventory.py::test_frontend_consumers_keep_their_actual_methods_and_templates",
       "tests/compatibility/test_http_inventory.py::test_http_snapshot_matches_router_and_frontend_sources",
+      "tests/compatibility/test_http_inventory.py::test_launch_grant_exchange_sets_strict_http_only_session_and_csrf",
       "tests/compatibility/test_http_inventory.py::test_manual_dreaming_has_a_distinct_frontend_and_route_shape",
       "tests/compatibility/test_http_inventory.py::test_preserved_route_missing_from_current_router_is_rejected",
       "tests/compatibility/test_http_inventory.py::test_private_mcp_status_and_admin_action_keep_complete_runtime_shapes",
@@ -7217,13 +7667,18 @@
       "tests/compatibility/test_http_inventory.py::test_runtime_response_fixtures_keep_complete_status_and_dashboard_shapes",
       "tests/compatibility/test_http_inventory.py::test_static_runtime_failures_are_json_not_success_content_types",
       "tests/compatibility/test_http_inventory.py::test_streamable_http_fixture_authenticates_version_negotiation",
+      "tests/compatibility/test_http_inventory.py::test_target_browser_auth_covers_host_origin_csrf_success_and_failures",
+      "tests/compatibility/test_http_inventory.py::test_target_health_is_unauthenticated_minimal_liveness",
+      "tests/compatibility/test_http_inventory.py::test_target_websocket_uses_cookie_origin_resume_and_rotation_cases",
       "tests/compatibility/test_http_inventory.py::test_unreviewed_python_router_branch_is_rejected",
       "tests/compatibility/test_http_inventory.py::test_websocket_fixture_freezes_events_resume_fallback_and_rotation",
       "tests/compatibility/test_manifest.py::test_absolute_fixture_and_parent_test_paths_outside_repository_are_rejected",
       "tests/compatibility/test_manifest.py::test_blank_acceptance_owner_and_missing_adr_for_changed_contract_are_rejected[intentionally-change]",
       "tests/compatibility/test_manifest.py::test_blank_acceptance_owner_and_missing_adr_for_changed_contract_are_rejected[remove]",
       "tests/compatibility/test_manifest.py::test_checked_in_manifest_is_valid",
+      "tests/compatibility/test_manifest.py::test_contract_release_state_is_typed_and_outstanding_requires_no_rust_release",
       "tests/compatibility/test_manifest.py::test_duplicate_complete_contract_id_is_rejected",
+      "tests/compatibility/test_manifest.py::test_frontend_test_ownership_has_a_strict_separate_node_namespace",
       "tests/compatibility/test_manifest.py::test_loader_enforces_conditional_test_ownership_fields[ownership0-contract_ids]",
       "tests/compatibility/test_manifest.py::test_loader_enforces_conditional_test_ownership_fields[ownership1-reason]",
       "tests/compatibility/test_manifest.py::test_loader_enforces_conditional_test_ownership_fields[ownership2-unexpected fields]",
@@ -7237,24 +7692,35 @@
       "tests/compatibility/test_manifest.py::test_loader_rejects_unknown_enum_value[technical_owner-frontend-team]",
       "tests/compatibility/test_manifest.py::test_manifest_validation_rejects_duplicate_nodes_unknown_contracts_and_file_mismatches",
       "tests/compatibility/test_manifest.py::test_missing_fixture_and_test_paths_are_rejected",
+      "tests/compatibility/test_manifest.py::test_release_state_consistency_is_validated[implemented-None-implemented contract missing first Rust release]",
+      "tests/compatibility/test_manifest.py::test_release_state_consistency_is_validated[outstanding-1.0.0-outstanding contract has first Rust release]",
       "tests/compatibility/test_manifest.py::test_schema_defines_strict_conditional_test_ownership_records",
       "tests/compatibility/test_manifest.py::test_schema_requires_nonblank_acceptance_owner_and_adr_for_changes",
+      "tests/compatibility/test_manifest.py::test_schema_requires_release_state_and_frontend_ownership",
       "tests/compatibility/test_manifest.py::test_symlinked_fixture_and_test_paths_outside_repository_are_rejected",
       "tests/compatibility/test_mcp_inventory.py::test_every_registered_tool_has_manifest_contract_and_complete_fixtures",
       "tests/compatibility/test_mcp_inventory.py::test_mcp_snapshot_matches_fastmcp_registry",
-      "tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_records_adr_pinned_boundary_without_manifest_duplication",
+      "tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_records_real_and_adr_pinned_wire_boundaries",
       "tests/compatibility/test_state_inventory.py::test_agent_cases_freeze_host_config_and_owned_skill_lifecycle",
       "tests/compatibility/test_state_inventory.py::test_agent_contract_entry_points_are_importable_symbols",
       "tests/compatibility/test_state_inventory.py::test_checked_config_failure_fixtures_replay_exact_loader_errors",
       "tests/compatibility/test_state_inventory.py::test_checked_in_state_snapshot_matches_fresh_synthetic_inventory",
+      "tests/compatibility/test_state_inventory.py::test_collect_frontend_test_nodeids_fails_explicitly_without_bun",
+      "tests/compatibility/test_state_inventory.py::test_collect_frontend_test_nodeids_uses_vitest_case_listing",
       "tests/compatibility/test_state_inventory.py::test_collect_test_nodeids_returns_only_sorted_pytest_node_ids",
       "tests/compatibility/test_state_inventory.py::test_config_contract_cases_capture_round_trips_failures_and_migrations",
       "tests/compatibility/test_state_inventory.py::test_config_inventory_redacts_secret_values_to_configured_flags",
+      "tests/compatibility/test_state_inventory.py::test_database_fixture_freezes_representative_rows_and_preflight_variants",
       "tests/compatibility/test_state_inventory.py::test_database_inventory_includes_schema_objects_and_application_ledgers",
       "tests/compatibility/test_state_inventory.py::test_distribution_cases_freeze_bootstrap_errors_uninstall_and_idempotence",
+      "tests/compatibility/test_state_inventory.py::test_every_frontend_vitest_case_has_typed_manifest_ownership",
       "tests/compatibility/test_state_inventory.py::test_every_generated_artifact_matches_two_fresh_builds",
       "tests/compatibility/test_state_inventory.py::test_every_python_test_has_manifest_disposition",
+      "tests/compatibility/test_state_inventory.py::test_frontend_ownership_does_not_inherit_route_contracts_from_a_test_file",
+      "tests/compatibility/test_state_inventory.py::test_http_and_agent_behavior_nodes_have_explicit_public_contract_ownership",
+      "tests/compatibility/test_state_inventory.py::test_http_and_agent_ownership_rules_do_not_grant_false_file_level_coverage",
       "tests/compatibility/test_state_inventory.py::test_node_ownership_does_not_inherit_every_contract_from_its_file",
+      "tests/compatibility/test_state_inventory.py::test_owned_data_root_paths_link_to_one_layout_contract",
       "tests/compatibility/test_state_inventory.py::test_sqlite_contract_is_stable_for_dynamic_object_names",
       "tests/compatibility/test_state_inventory.py::test_state_snapshot_covers_config_failures_migrations_and_replayable_integrations",
       "tests/compatibility/test_state_inventory.py::test_state_snapshot_uses_only_explicit_synthetic_root",

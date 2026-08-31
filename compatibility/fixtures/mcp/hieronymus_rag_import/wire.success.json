@@ -1,0 +1,44 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "language_tags": [
+          "en"
+        ],
+        "path": "<SYNTHETIC_ROOT>/chapter.txt",
+        "series_slug": "synthetic-series",
+        "source_ref": "chapter.txt"
+      },
+      "name": "hieronymus_rag_import"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"source_id\": 1,\n  \"series_slug\": \"synthetic-series\",\n  \"source_ref\": \"chapter.txt\",\n  \"source_type\": \"text\",\n  \"content_type\": \"txt\",\n  \"checksum\": \"08498e86df44f00e399b9580b7d447678b0295b900546336c5d1f0874b4f809d\",\n  \"metadata\": {\n    \"original_path\": \"<SYNTHETIC_ROOT>/chapter.txt\",\n    \"normalized_path\": \"<SYNTHETIC_ROOT>/chapter.txt\",\n    \"normalized_format\": \"text\"\n  },\n  \"chunk_count\": 1,\n  \"skipped\": false,\n  \"normalized_path\": \"<SYNTHETIC_ROOT>/chapter.txt\",\n  \"normalized_format\": \"text\"\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "checksum": "08498e86df44f00e399b9580b7d447678b0295b900546336c5d1f0874b4f809d",
+      "chunk_count": 1,
+      "content_type": "txt",
+      "metadata": {
+        "normalized_format": "text",
+        "normalized_path": "<SYNTHETIC_ROOT>/chapter.txt",
+        "original_path": "<SYNTHETIC_ROOT>/chapter.txt"
+      },
+      "normalized_format": "text",
+      "normalized_path": "<SYNTHETIC_ROOT>/chapter.txt",
+      "series_slug": "synthetic-series",
+      "skipped": false,
+      "source_id": 1,
+      "source_ref": "chapter.txt",
+      "source_type": "text"
+    }
+  }
+}

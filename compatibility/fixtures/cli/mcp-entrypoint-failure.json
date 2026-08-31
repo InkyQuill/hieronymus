@@ -3,6 +3,7 @@
     "--replay-mcp-entrypoint",
     "failure"
   ],
+  "boundary": "real-in-memory-mcp-session",
   "environment": {
     "HIERONYMUS_DATA_ROOT": "<PATH>",
     "HIERONYMUS_MCP_FIXTURE_OUTCOME": "failure"
@@ -15,6 +16,6 @@
     "--replay-mcp-entrypoint",
     "failure"
   ],
-  "stderr": "synthetic MCP startup failure\n",
+  "stderr": "Unsupported MCP protocol version: 1900-01-01\n",
   "stdout": ""
 }

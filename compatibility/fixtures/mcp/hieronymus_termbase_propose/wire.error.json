@@ -1,0 +1,28 @@
+{
+  "request": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "canonical_translation": "Yun",
+        "category": "character",
+        "notes": "Synthetic character name.",
+        "source_text": "ユン",
+        "tags": [
+          "name"
+        ]
+      },
+      "name": "hieronymus_termbase_propose"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "Error executing tool hieronymus_termbase_propose: 1 validation error for hieronymus_termbase_proposeArguments\nseries_slug\n  Field required [type=missing, input_value={'category': 'character',...thetic character name.'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "type": "text"
+      }
+    ],
+    "isError": true
+  }
+}

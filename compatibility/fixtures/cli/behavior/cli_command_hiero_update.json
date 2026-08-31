@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "args": [
+        "--check"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "human",
+      "id": "human-success",
+      "invocation": [
+        "hiero",
+        "update"
+      ],
+      "stderr": "",
+      "stdout": "🪶 Hieronymus v0.7.0α\nRemembers things for you.\n\nNo update available: v0.7.0α\nmanaged checkout: <SYNTHETIC_ROOT>/managed-checkout\n"
+    },
+    {
+      "args": [
+        "--check",
+        "--json"
+      ],
+      "basis": "shipping-callback",
+      "exit_code": 0,
+      "expected": "success",
+      "format": "json",
+      "id": "json-success",
+      "invocation": [
+        "hiero",
+        "update"
+      ],
+      "stderr": "",
+      "stdout": "{\"current_revision\": null, \"current_version\": \"0.7.0\", \"latest_revision\": null, \"latest_tag\": \"v0.7.0\", \"latest_version\": \"0.7.0\", \"managed_checkout\": \"<SYNTHETIC_ROOT>/managed-checkout\", \"managed_install\": false, \"target\": \"latest\", \"update_available\": false}\n"
+    },
+    {
+      "args": [],
+      "basis": "shipping-callback",
+      "exit_code": 2,
+      "expected": "semantic-failure",
+      "format": "human",
+      "id": "semantic-failure",
+      "invocation": [
+        "hiero",
+        "update"
+      ],
+      "stderr": "Usage: hiero [OPTIONS] COMMAND [ARGS]...\nTry 'hiero --help' for help.\n\nError: Invalid value for '--data-root': Directory '<SYNTHETIC_ROOT>/data' is a file.\n",
+      "stdout": ""
+    }
+  ],
+  "contract_id": "cli.command.hiero.update"
+}

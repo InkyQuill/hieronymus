@@ -1,0 +1,27 @@
+{
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "series_slug": "synthetic-series",
+        "term_id": 1
+      },
+      "name": "hieronymus_termbase_approve"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "text": "{\n  \"term_id\": 1,\n  \"approved\": true\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "approved": true,
+      "term_id": 1
+    }
+  }
+}
