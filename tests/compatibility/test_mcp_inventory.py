@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
-from tools.compatibility.inventory_mcp import snapshot_mcp
+from hieronymus import mcp_server
+from hieronymus.config import HieronymusConfig
+from tools.compatibility.inventory_mcp import _call_real_server, _replace_root, snapshot_mcp
 from tools.compatibility.model import load_manifest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,7 +22,9 @@ def test_mcp_snapshot_matches_fastmcp_registry() -> None:
     assert len(snapshot["tools"]) == snapshot["derived_tool_count"]
 
 
-def test_every_registered_tool_has_manifest_contract_and_complete_fixtures() -> None:
+def test_every_registered_tool_has_manifest_contract_and_complete_fixtures(
+    tmp_path: Path,
+) -> None:
     snapshot = snapshot_mcp()
     tool_names = {str(tool["name"]) for tool in snapshot["tools"]}
     manifest = load_manifest(ROOT / "compatibility/manifest.json")
@@ -72,6 +77,23 @@ def test_every_registered_tool_has_manifest_contract_and_complete_fixtures() -> 
         assert error_envelope["result"]["isError"] is True
         assert error_envelope["result"]["content"]
 
+        replay_root = tmp_path / tool_name
+        config = HieronymusConfig(data_root=replay_root / "data")
+        if error_case["setup"] == {"data_root": "file"}:
+            config.data_root.parent.mkdir(parents=True, exist_ok=True)
+            config.data_root.write_text("not a directory\n", encoding="utf-8")
+        replayed_result = _replace_root(
+            _call_real_server(config, tool_name, error_case["params"]["arguments"]),
+            replay_root,
+        )
+        assert replayed_result == error_envelope["result"]
+        assert error == {
+            "error": {
+                "message": replayed_result["content"][0]["text"],
+                "type": "MCPToolError",
+            }
+        }
+
 
 def test_protocol_fixture_records_real_and_adr_pinned_wire_boundaries() -> None:
     snapshot = snapshot_mcp()
@@ -109,6 +131,31 @@ def test_protocol_fixture_records_real_and_adr_pinned_wire_boundaries() -> None:
     assert protocol["current"]["initialize"]["result"]["capabilities"]["tools"] == {
         "listChanged": False
     }
+    current_tools = asyncio.run(mcp_server.server.list_tools())
+    exact_current_envelope = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "tools": [
+                tool.model_dump(mode="json", by_alias=True, exclude_none=True)
+                for tool in current_tools
+            ]
+        },
+    }
+    assert protocol["current"]["tools_list"] == {
+        "request": {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        "response": exact_current_envelope,
+    }
+    snapshot_registry = {tool["name"]: tool["input_schema"] for tool in snapshot["tools"]}
+    current_registry = {
+        tool["name"]: tool["inputSchema"]
+        for tool in protocol["current"]["tools_list"]["response"]["result"]["tools"]
+    }
+    target_registry = {
+        tool["name"]: tool["input_schema"]
+        for tool in protocol["target"]["tools_list"]["response"]["result"]["tools"]
+    }
+    assert current_registry == target_registry == snapshot_registry
     assert protocol["private_python_bridge"] == {
         "path": "/api/mcp/{operation}",
         "classification": "private_python_bridge",

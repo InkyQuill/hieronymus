@@ -1,6 +1,6 @@
 {
   "error": {
-    "message": "data root is not a directory: <DATA_ROOT>",
-    "type": "ValueError"
+    "message": "Error executing tool hieronymus_concept_rename: 1 validation error for hieronymus_concept_renameArguments\nconcept_id\n  Field required [type=missing, input_value={'new_label': 'Sense Ability'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
   }
 }

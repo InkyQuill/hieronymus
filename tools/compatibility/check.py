@@ -131,7 +131,7 @@ def _cli_inventory(
     records.append(mcp_entrypoint)
     success = inventory_cli.replay_mcp_entrypoint_case("success")
     failure = inventory_cli.replay_mcp_entrypoint_case("failure")
-    if (success["exit_code"], failure["exit_code"]) != (0, 1):
+    if (success["exit_code"], failure["exit_code"]) != (0, 0):
         raise RuntimeError("unexpected replayed MCP entrypoint exit behavior")
     artifacts[str(mcp_entrypoint["success_fixture"])] = _json_bytes(success)
     artifacts[str(mcp_entrypoint["failure_fixture"])] = _json_bytes(failure)

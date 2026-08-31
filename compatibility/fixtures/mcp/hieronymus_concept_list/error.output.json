@@ -1,6 +1,6 @@
 {
   "error": {
-    "message": "data root is not a directory: <DATA_ROOT>",
-    "type": "ValueError"
+    "message": "Error executing tool hieronymus_concept_list: 1 validation error for hieronymus_concept_listArguments\ninclude_global\n  Input should be a valid boolean [type=bool_type, input_value={'invalid': 'expected scalar'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/bool_type",
+    "type": "MCPToolError"
   }
 }

@@ -2,41 +2,35 @@
   "behavior_fixture": "compatibility/fixtures/cli/behavior/cli_script_hieronymus_mcp.json",
   "contract_id": "cli.script.hieronymus-mcp",
   "failure": {
-    "args": [
-      "--replay-mcp-entrypoint",
-      "failure"
-    ],
+    "args": [],
     "environment": {
+      "COLUMNS": "500",
+      "FORCE_COLOR": "0",
       "HIERONYMUS_DATA_ROOT": "<PATH>",
-      "HIERONYMUS_MCP_FIXTURE_OUTCOME": "failure"
+      "LINES": "100",
+      "NO_COLOR": "1",
+      "TERM": "dumb"
     },
-    "exit_code": 1,
+    "exit_code": 0,
     "fixture": "compatibility/fixtures/cli/mcp-entrypoint-failure.json",
     "invocation": [
-      "<PYTHON>",
-      "-m",
-      "tools.compatibility.inventory_cli",
-      "--replay-mcp-entrypoint",
-      "failure"
+      "hieronymus-mcp"
     ]
   },
   "success": {
-    "args": [
-      "--replay-mcp-entrypoint",
-      "success"
-    ],
+    "args": [],
     "environment": {
+      "COLUMNS": "500",
+      "FORCE_COLOR": "0",
       "HIERONYMUS_DATA_ROOT": "<PATH>",
-      "HIERONYMUS_MCP_FIXTURE_OUTCOME": "success"
+      "LINES": "100",
+      "NO_COLOR": "1",
+      "TERM": "dumb"
     },
     "exit_code": 0,
     "fixture": "compatibility/fixtures/cli/mcp-entrypoint-success.json",
     "invocation": [
-      "<PYTHON>",
-      "-m",
-      "tools.compatibility.inventory_cli",
-      "--replay-mcp-entrypoint",
-      "success"
+      "hieronymus-mcp"
     ]
   }
 }

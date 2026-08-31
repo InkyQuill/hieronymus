@@ -1947,7 +1947,11 @@ def _state_contracts() -> list[dict[str, object]]:
             "config",
             "data-config",
             "hieronymus.config:HieronymusConfig",
-            ["tests/compatibility/test_state_inventory.py", "tests/test_config.py"],
+            [
+                "tests/compatibility/test_state_inventory.py",
+                "tests/test_agent_plugins.py",
+                "tests/test_config.py",
+            ],
             "compatibility/snapshots/state.json",
             "crates/hiero-config/tests/data_root_contract.rs::layout",
         ),
@@ -2348,6 +2352,53 @@ def _public_contract_ids(node_id: str, contracts: list[object]) -> set[str]:
         }
         return service_http_contracts.get(normalized, set())
 
+    if node_file == "tests/test_agent_plugins.py":
+        all_targets = {
+            f"agent-integration.target.{target}"
+            for target in (
+                "claude",
+                "codex",
+                "openclaw",
+                "opencode",
+                "gemini",
+                "mimo",
+                "pi",
+                "hermes",
+            )
+        }
+        agent_plugin_contracts = {
+            "test_available_plugins_lists_canonical_targets_in_order": all_targets,
+            "test_resolve_plugin_returns_provider": {"agent-integration.target.codex"},
+            "test_resolve_plugin_normalizes_lower_case_name": {"agent-integration.target.codex"},
+            "test_resolve_plugin_supports_aliases": {"agent-integration.target.mimo"},
+            "test_resolve_plugin_reports_supported_targets": all_targets,
+            "test_config_has_agent_plugins_root": {"data-root.layout"},
+            "test_codex_availability_requires_host_marker_for_install": {
+                "agent-integration.target.codex"
+            },
+            "test_codex_availability_detects_assets_and_managed_marker": {
+                "agent-integration.target.codex"
+            },
+            "test_codex_availability_rejects_stale_marker_without_entries": {
+                "agent-integration.target.codex"
+            },
+            "test_codex_availability_rejects_incomplete_asset_directory": {
+                "agent-integration.target.codex"
+            },
+            "test_codex_availability_rejects_symlink_required_asset": {
+                "agent-integration.target.codex"
+            },
+            "test_codex_availability_rejects_symlink_asset_directory": {
+                "agent-integration.target.codex"
+            },
+            "test_reserved_provider_ignores_stale_managed_marker": {"agent-integration.target.pi"},
+            "test_mimo_availability_detects_mimocode_home": {"agent-integration.target.mimo"},
+            "test_reserved_plugins_report_reserved_install_plan": {"agent-integration.target.pi"},
+            "test_claude_availability_checks_all_detect_paths": {"agent-integration.target.claude"},
+            "test_plugin_plan_includes_availability": {"agent-integration.target.codex"},
+        }
+        return agent_plugin_contracts.get(normalized, set())
+
     if node_file == "tests/compatibility/test_check.py":
         test_name = normalized.split("[", 1)[0]
         public_tests = {
@@ -2486,6 +2537,25 @@ def _internal_test_reason(node_id: str) -> str:
         raise ValueError(f"no explicit aggregate-check ownership rule for {node_id}")
     if node_id.endswith("test_collect_test_nodeids_returns_only_sorted_pytest_node_ids"):
         return "Validates the Python pytest collection parser; inventory implementation only."
+    if node_file == "tests/test_agent_plugins.py":
+        reasons = {
+            "test_availability_json_paths_are_fresh_lists": (
+                "Checks defensive list-copy freshness in the Python JSON serializer; no public "
+                "agent-target behavior is added."
+            ),
+            "test_invalid_plugin_reports_empty_detect_paths": (
+                "Checks the abstract Python plugin-base invariant for test-only invalid "
+                "subclasses; no supported agent target has this shape."
+            ),
+            "test_invalid_plugin_reports_empty_config_paths": (
+                "Checks the abstract Python plugin-base invariant for test-only invalid "
+                "subclasses; no supported agent target has this shape."
+            ),
+        }
+        normalized = test_case.lower().replace("-", "_").split("[", 1)[0]
+        if normalized not in reasons:
+            raise ValueError(f"no explicit agent-plugin ownership rule for {node_id}")
+        return reasons[normalized]
     name = Path(node_file).stem
     categories = (
         (
@@ -2554,11 +2624,14 @@ def generate_state_artifacts(repo_root: Path, data_root: Path) -> dict[str, byte
     manifest_path = repo_root / "compatibility/manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     state_contract_ids = {str(contract["id"]) for contract in _state_contracts()}
-    original_contracts = [
-        contract
-        for contract in manifest["contracts"]
-        if str(contract.get("id")) not in state_contract_ids
-    ]
+    original_contracts = sorted(
+        (
+            contract
+            for contract in manifest["contracts"]
+            if str(contract.get("id")) not in state_contract_ids
+        ),
+        key=lambda contract: str(contract["id"]),
+    )
     contracts = [*original_contracts, *_state_contracts()]
     for contract in contracts:
         contract.setdefault("last_python_release", str(manifest["python_reference"]))

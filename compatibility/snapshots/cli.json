@@ -4705,43 +4705,39 @@
       "contract_id": "cli.script.hieronymus-mcp",
       "entry_point": "hieronymus.mcp_server:main",
       "exit_behavior": {
-        "failure": 1,
+        "failure": 0,
         "success": 0
       },
-      "failure_args": [
-        "--replay-mcp-entrypoint",
-        "failure"
-      ],
+      "failure_args": [],
       "failure_environment": {
+        "COLUMNS": "500",
+        "FORCE_COLOR": "0",
         "HIERONYMUS_DATA_ROOT": "<PATH>",
-        "HIERONYMUS_MCP_FIXTURE_OUTCOME": "failure"
+        "LINES": "100",
+        "NO_COLOR": "1",
+        "TERM": "dumb"
       },
       "failure_fixture": "compatibility/fixtures/cli/mcp-entrypoint-failure.json",
       "failure_invocation": [
-        "<PYTHON>",
-        "-m",
-        "tools.compatibility.inventory_cli",
-        "--replay-mcp-entrypoint",
-        "failure"
+        "hieronymus-mcp"
       ],
+      "failure_stdin": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{}}\n",
       "fixture_contract": "compatibility/fixtures/cli/contracts/cli_script_hieronymus_mcp.json",
       "kind": "stdio",
-      "success_args": [
-        "--replay-mcp-entrypoint",
-        "success"
-      ],
+      "success_args": [],
       "success_environment": {
+        "COLUMNS": "500",
+        "FORCE_COLOR": "0",
         "HIERONYMUS_DATA_ROOT": "<PATH>",
-        "HIERONYMUS_MCP_FIXTURE_OUTCOME": "success"
+        "LINES": "100",
+        "NO_COLOR": "1",
+        "TERM": "dumb"
       },
       "success_fixture": "compatibility/fixtures/cli/mcp-entrypoint-success.json",
       "success_invocation": [
-        "<PYTHON>",
-        "-m",
-        "tools.compatibility.inventory_cli",
-        "--replay-mcp-entrypoint",
-        "success"
-      ]
+        "hieronymus-mcp"
+      ],
+      "success_stdin": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{\"capabilities\":{},\"clientInfo\":{\"name\":\"compatibility-replay\",\"version\":\"1.0.0\"},\"protocolVersion\":\"2025-11-25\"}}\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}\n{\"id\":2,\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{}}\n"
     }
   },
   "scripts": {

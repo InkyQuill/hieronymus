@@ -282,6 +282,60 @@ def test_http_and_agent_ownership_rules_do_not_grant_false_file_level_coverage()
     ]
 
 
+def test_agent_plugin_registry_resolver_and_availability_nodes_are_public_contracts() -> None:
+    manifest = load_manifest(ROOT / "compatibility/manifest.json")
+    ownership = {item.node_id: item for item in manifest.test_ownership}
+    prefix = "tests/test_agent_plugins.py::"
+    all_targets = {
+        f"agent-integration.target.{target}"
+        for target in ("claude", "codex", "openclaw", "opencode", "gemini", "mimo", "pi", "hermes")
+    }
+
+    assert (
+        set(
+            ownership[
+                prefix + "test_available_plugins_lists_canonical_targets_in_order"
+            ].contract_ids
+        )
+        == all_targets
+    )
+    assert ownership[prefix + "test_resolve_plugin_returns_provider"].contract_ids == (
+        "agent-integration.target.codex",
+    )
+    assert ownership[prefix + "test_resolve_plugin_supports_aliases"].contract_ids == (
+        "agent-integration.target.mimo",
+    )
+    assert ownership[
+        prefix + "test_codex_availability_detects_assets_and_managed_marker"
+    ].contract_ids == ("agent-integration.target.codex",)
+    assert ownership[prefix + "test_mimo_availability_detects_mimocode_home"].contract_ids == (
+        "agent-integration.target.mimo",
+    )
+    assert ownership[prefix + "test_claude_availability_checks_all_detect_paths"].contract_ids == (
+        "agent-integration.target.claude",
+    )
+    internal = {
+        item.node_id
+        for item in manifest.test_ownership
+        if item.disposition == "implementation_internal" and item.node_id.startswith(prefix)
+    }
+    assert internal == {
+        prefix + "test_availability_json_paths_are_fresh_lists",
+        prefix + "test_invalid_plugin_reports_empty_detect_paths",
+        prefix + "test_invalid_plugin_reports_empty_config_paths",
+    }
+
+
+def test_agent_plugin_ownership_does_not_silently_internalize_new_public_behavior() -> None:
+    manifest = load_manifest(ROOT / "compatibility/manifest.json")
+
+    with pytest.raises(ValueError, match="no explicit agent-plugin ownership rule"):
+        build_test_ownership(
+            ["tests/test_agent_plugins.py::test_new_public_resolver_behavior"],
+            manifest.contracts,
+        )
+
+
 def test_agent_contract_entry_points_are_importable_symbols() -> None:
     manifest = load_manifest(ROOT / "compatibility/manifest.json")
 

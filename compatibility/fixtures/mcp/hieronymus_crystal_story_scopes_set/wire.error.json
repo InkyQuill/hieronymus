@@ -17,7 +17,7 @@
   "result": {
     "content": [
       {
-        "text": "Error executing tool hieronymus_crystal_story_scopes_set: 1 validation error for hieronymus_crystal_story_scopes_setArguments\ncrystal_id\n  Field required [type=missing, input_value={'story_scopes': ['volume...:2'], 'confidence': 0.9}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "text": "Error executing tool hieronymus_crystal_story_scopes_set: 1 validation error for hieronymus_crystal_story_scopes_setArguments\ncrystal_id\n  Field required [type=missing, input_value={'confidence': 0.9, 'stor...volume:1', 'chapter:2']}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
         "type": "text"
       }
     ],

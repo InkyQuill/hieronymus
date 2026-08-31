@@ -1,6 +1,6 @@
 {
   "error": {
-    "message": "data root is not a directory: <DATA_ROOT>",
-    "type": "ValueError"
+    "message": "Error executing tool hieronymus_memory_add: 1 validation error for hieronymus_memory_addArguments\nseries_slug\n  Field required [type=missing, input_value={'importance': 5, 'kind':...se Sense, not Feeling.'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
   }
 }

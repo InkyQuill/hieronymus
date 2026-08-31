@@ -2155,6 +2155,7 @@
       "technical_owner": "data-config",
       "tests": [
         "tests/compatibility/test_state_inventory.py",
+        "tests/test_agent_plugins.py",
         "tests/test_config.py"
       ]
     },
@@ -2894,8 +2895,8 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/compatibility/test_cli_inventory.py::test_mcp_entrypoint_fixtures_replay_distinct_success_and_failure",
-      "reason": "Compatibility schema and artifact generator validation: test_mcp_entrypoint_fixtures_replay_distinct_success_and_failure."
+      "node_id": "tests/compatibility/test_cli_inventory.py::test_mcp_entrypoint_fixtures_replay_shipping_stdio_success_and_protocol_failure",
+      "reason": "Compatibility schema and artifact generator validation: test_mcp_entrypoint_fixtures_replay_shipping_stdio_success_and_protocol_failure."
     },
     {
       "disposition": "implementation_internal",
@@ -3241,6 +3242,16 @@
       "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_state_inventory.py::test_agent_contract_entry_points_are_importable_symbols",
       "reason": "Compatibility schema and artifact generator validation: test_agent_contract_entry_points_are_importable_symbols."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_agent_plugin_ownership_does_not_silently_internalize_new_public_behavior",
+      "reason": "Compatibility schema and artifact generator validation: test_agent_plugin_ownership_does_not_silently_internalize_new_public_behavior."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_agent_plugin_registry_resolver_and_availability_nodes_are_public_contracts",
+      "reason": "Compatibility schema and artifact generator validation: test_agent_plugin_registry_resolver_and_availability_nodes_are_public_contracts."
     },
     {
       "disposition": "implementation_internal",
@@ -4083,102 +4094,150 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/test_agent_plugins.py::test_availability_json_paths_are_fresh_lists",
-      "reason": "Distribution and agent integration implementation: test_availability_json_paths_are_fresh_lists."
+      "reason": "Checks defensive list-copy freshness in the Python JSON serializer; no public agent-target behavior is added."
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_available_plugins_lists_canonical_targets_in_order",
-      "reason": "Distribution and agent integration implementation: test_available_plugins_lists_canonical_targets_in_order."
+      "contract_ids": [
+        "agent-integration.target.claude",
+        "agent-integration.target.codex",
+        "agent-integration.target.gemini",
+        "agent-integration.target.hermes",
+        "agent-integration.target.mimo",
+        "agent-integration.target.openclaw",
+        "agent-integration.target.opencode",
+        "agent-integration.target.pi"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_available_plugins_lists_canonical_targets_in_order"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_claude_availability_checks_all_detect_paths",
-      "reason": "Distribution and agent integration implementation: test_claude_availability_checks_all_detect_paths."
+      "contract_ids": [
+        "agent-integration.target.claude"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_claude_availability_checks_all_detect_paths"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_codex_availability_detects_assets_and_managed_marker",
-      "reason": "Distribution and agent integration implementation: test_codex_availability_detects_assets_and_managed_marker."
+      "contract_ids": [
+        "agent-integration.target.codex"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_codex_availability_detects_assets_and_managed_marker"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_codex_availability_rejects_incomplete_asset_directory",
-      "reason": "Distribution and agent integration implementation: test_codex_availability_rejects_incomplete_asset_directory."
+      "contract_ids": [
+        "agent-integration.target.codex"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_codex_availability_rejects_incomplete_asset_directory"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_codex_availability_rejects_stale_marker_without_entries",
-      "reason": "Distribution and agent integration implementation: test_codex_availability_rejects_stale_marker_without_entries."
+      "contract_ids": [
+        "agent-integration.target.codex"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_codex_availability_rejects_stale_marker_without_entries"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_codex_availability_rejects_symlink_asset_directory",
-      "reason": "Distribution and agent integration implementation: test_codex_availability_rejects_symlink_asset_directory."
+      "contract_ids": [
+        "agent-integration.target.codex"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_codex_availability_rejects_symlink_asset_directory"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_codex_availability_rejects_symlink_required_asset",
-      "reason": "Distribution and agent integration implementation: test_codex_availability_rejects_symlink_required_asset."
+      "contract_ids": [
+        "agent-integration.target.codex"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_codex_availability_rejects_symlink_required_asset"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_codex_availability_requires_host_marker_for_install",
-      "reason": "Distribution and agent integration implementation: test_codex_availability_requires_host_marker_for_install."
+      "contract_ids": [
+        "agent-integration.target.codex"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_codex_availability_requires_host_marker_for_install"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_config_has_agent_plugins_root",
-      "reason": "Distribution and agent integration implementation: test_config_has_agent_plugins_root."
+      "contract_ids": [
+        "data-root.layout"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_config_has_agent_plugins_root"
     },
     {
       "disposition": "implementation_internal",
       "node_id": "tests/test_agent_plugins.py::test_invalid_plugin_reports_empty_config_paths",
-      "reason": "Distribution and agent integration implementation: test_invalid_plugin_reports_empty_config_paths."
+      "reason": "Checks the abstract Python plugin-base invariant for test-only invalid subclasses; no supported agent target has this shape."
     },
     {
       "disposition": "implementation_internal",
       "node_id": "tests/test_agent_plugins.py::test_invalid_plugin_reports_empty_detect_paths",
-      "reason": "Distribution and agent integration implementation: test_invalid_plugin_reports_empty_detect_paths."
+      "reason": "Checks the abstract Python plugin-base invariant for test-only invalid subclasses; no supported agent target has this shape."
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_mimo_availability_detects_mimocode_home",
-      "reason": "Distribution and agent integration implementation: test_mimo_availability_detects_mimocode_home."
+      "contract_ids": [
+        "agent-integration.target.mimo"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_mimo_availability_detects_mimocode_home"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_plugin_plan_includes_availability",
-      "reason": "Distribution and agent integration implementation: test_plugin_plan_includes_availability."
+      "contract_ids": [
+        "agent-integration.target.codex"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_plugin_plan_includes_availability"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_reserved_plugins_report_reserved_install_plan",
-      "reason": "Distribution and agent integration implementation: test_reserved_plugins_report_reserved_install_plan."
+      "contract_ids": [
+        "agent-integration.target.pi"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_reserved_plugins_report_reserved_install_plan"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_reserved_provider_ignores_stale_managed_marker",
-      "reason": "Distribution and agent integration implementation: test_reserved_provider_ignores_stale_managed_marker."
+      "contract_ids": [
+        "agent-integration.target.pi"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_reserved_provider_ignores_stale_managed_marker"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_resolve_plugin_normalizes_lower_case_name",
-      "reason": "Distribution and agent integration implementation: test_resolve_plugin_normalizes_lower_case_name."
+      "contract_ids": [
+        "agent-integration.target.codex"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_resolve_plugin_normalizes_lower_case_name"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_resolve_plugin_reports_supported_targets",
-      "reason": "Distribution and agent integration implementation: test_resolve_plugin_reports_supported_targets."
+      "contract_ids": [
+        "agent-integration.target.claude",
+        "agent-integration.target.codex",
+        "agent-integration.target.gemini",
+        "agent-integration.target.hermes",
+        "agent-integration.target.mimo",
+        "agent-integration.target.openclaw",
+        "agent-integration.target.opencode",
+        "agent-integration.target.pi"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_resolve_plugin_reports_supported_targets"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_resolve_plugin_returns_provider",
-      "reason": "Distribution and agent integration implementation: test_resolve_plugin_returns_provider."
+      "contract_ids": [
+        "agent-integration.target.codex"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_resolve_plugin_returns_provider"
     },
     {
-      "disposition": "implementation_internal",
-      "node_id": "tests/test_agent_plugins.py::test_resolve_plugin_supports_aliases",
-      "reason": "Distribution and agent integration implementation: test_resolve_plugin_supports_aliases."
+      "contract_ids": [
+        "agent-integration.target.mimo"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/test_agent_plugins.py::test_resolve_plugin_supports_aliases"
     },
     {
       "disposition": "implementation_internal",

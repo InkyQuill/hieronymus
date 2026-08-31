@@ -25,7 +25,7 @@
   "result": {
     "content": [
       {
-        "text": "Error executing tool hieronymus_concept_facet_add: 1 validation error for hieronymus_concept_facet_addArguments\nconcept_id\n  Field required [type=missing, input_value={'value': 'センス', 'l...ntic_tags': ['ability']}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "text": "Error executing tool hieronymus_concept_facet_add: 1 validation error for hieronymus_concept_facet_addArguments\nconcept_id\n  Field required [type=missing, input_value={'confidence': 0.9, 'kind...], 'value': 'センス'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
         "type": "text"
       }
     ],

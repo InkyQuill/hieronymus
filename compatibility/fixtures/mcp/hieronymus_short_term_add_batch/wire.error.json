@@ -26,7 +26,7 @@
   "result": {
     "content": [
       {
-        "text": "Error executing tool hieronymus_short_term_add_batch: 1 validation error for hieronymus_short_term_add_batchArguments\nsession_id\n  Field required [type=missing, input_value={'items': [{'source_role'...rce_ref': 'chapter-1'}]}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "text": "Error executing tool hieronymus_short_term_add_batch: 1 validation error for hieronymus_short_term_add_batchArguments\nsession_id\n  Field required [type=missing, input_value={'items': [{'kind': 'read...l controls the city.'}]}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
         "type": "text"
       }
     ],

@@ -139,55 +139,51 @@ def test_legacy_entrypoints_record_canonical_rust_routes() -> None:
     }
 
 
-def test_mcp_entrypoint_fixtures_replay_distinct_success_and_failure() -> None:
+def test_mcp_entrypoint_fixtures_replay_shipping_stdio_success_and_protocol_failure() -> None:
     snapshot = snapshot_cli(ROOT)
     record = snapshot["script_contracts"]["hieronymus-mcp"]
-    expected_success = {
-        "args": ["--replay-mcp-entrypoint", "success"],
-        "invocation": [
-            "<PYTHON>",
-            "-m",
-            "tools.compatibility.inventory_cli",
-            "--replay-mcp-entrypoint",
-            "success",
-        ],
-        "environment": {
-            "HIERONYMUS_DATA_ROOT": "<PATH>",
-            "HIERONYMUS_MCP_FIXTURE_OUTCOME": "success",
-        },
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": "",
-        "boundary": "real-in-memory-mcp-session",
-    }
-    expected_failure = {
-        "args": ["--replay-mcp-entrypoint", "failure"],
-        "invocation": [
-            "<PYTHON>",
-            "-m",
-            "tools.compatibility.inventory_cli",
-            "--replay-mcp-entrypoint",
-            "failure",
-        ],
-        "environment": {
-            "HIERONYMUS_DATA_ROOT": "<PATH>",
-            "HIERONYMUS_MCP_FIXTURE_OUTCOME": "failure",
-        },
-        "exit_code": 1,
-        "stdout": "",
-        "stderr": "Unsupported MCP protocol version: 1900-01-01\n",
-        "boundary": "real-in-memory-mcp-session",
-    }
+    success = json.loads((ROOT / record["success_fixture"]).read_text(encoding="utf-8"))
+    failure = json.loads((ROOT / record["failure_fixture"]).read_text(encoding="utf-8"))
 
-    assert record["success_args"] != record["failure_args"]
-    assert json.loads((ROOT / record["success_fixture"]).read_text(encoding="utf-8")) == (
-        expected_success
-    )
-    assert json.loads((ROOT / record["failure_fixture"]).read_text(encoding="utf-8")) == (
-        expected_failure
-    )
-    assert replay_mcp_entrypoint_case("success") == expected_success
-    assert replay_mcp_entrypoint_case("failure") == expected_failure
+    assert record["entry_point"] == "hieronymus.mcp_server:main"
+    assert record["success_args"] == record["failure_args"] == []
+    for case in (success, failure):
+        assert case["args"] == []
+        assert case["invocation"] == ["hieronymus-mcp"]
+        assert case["entry_point"] == "hieronymus.mcp_server:main"
+        assert case["boundary"] == "shipping-stdio-entrypoint"
+        assert "tools.compatibility" not in json.dumps(case)
+        assert "--replay-mcp-entrypoint" not in json.dumps(case)
+        assert case["exit_code"] == 0
+
+    success_requests = [json.loads(line) for line in success["stdin"].splitlines()]
+    success_responses = [json.loads(line) for line in success["stdout"].splitlines()]
+    assert [request["method"] for request in success_requests] == [
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
+    ]
+    assert success_responses[0]["id"] == 1
+    assert success_responses[0]["result"]["protocolVersion"] == "2025-11-25"
+    assert success_responses[1]["id"] == 2
+    assert len(success_responses[1]["result"]["tools"]) == 39
+
+    assert [json.loads(line) for line in failure["stdin"].splitlines()] == [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    ]
+    assert [json.loads(line) for line in failure["stdout"].splitlines()] == [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32602,
+                "message": "Invalid request parameters",
+                "data": "",
+            },
+        }
+    ]
+    assert replay_mcp_entrypoint_case("success") == success
+    assert replay_mcp_entrypoint_case("failure") == failure
 
 
 def _contract_records(snapshot: dict[str, object]) -> list[dict[str, object]]:

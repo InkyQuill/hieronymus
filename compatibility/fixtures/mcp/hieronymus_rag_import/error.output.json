@@ -1,6 +1,6 @@
 {
   "error": {
-    "message": "data root is not a directory: <DATA_ROOT>",
-    "type": "ValueError"
+    "message": "Error executing tool hieronymus_rag_import: 1 validation error for hieronymus_rag_importArguments\nseries_slug\n  Field required [type=missing, input_value={'language_tags': ['en'],...rce_ref': 'chapter.txt'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
   }
 }

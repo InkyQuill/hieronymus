@@ -1,6 +1,6 @@
 {
   "error": {
-    "message": "data root is not a directory: <DATA_ROOT>",
-    "type": "ValueError"
+    "message": "Error executing tool hieronymus_termbase_contract: 1 validation error for hieronymus_termbase_contractArguments\nseries_slug\n  Field required [type=missing, input_value={'raw_text': 'ユン walked home.'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
   }
 }

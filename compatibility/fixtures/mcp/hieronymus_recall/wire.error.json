@@ -14,7 +14,7 @@
   "result": {
     "content": [
       {
-        "text": "Error executing tool hieronymus_recall: 1 validation error for hieronymus_recallArguments\nsession_id\n  Field required [type=missing, input_value={'series_slug': 'syntheti...s', 'query': 'Sense UI'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "text": "Error executing tool hieronymus_recall: 1 validation error for hieronymus_recallArguments\nsession_id\n  Field required [type=missing, input_value={'query': 'Sense UI', 'se...ug': 'synthetic-series'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
         "type": "text"
       }
     ],

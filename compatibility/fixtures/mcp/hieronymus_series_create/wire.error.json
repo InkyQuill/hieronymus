@@ -19,7 +19,7 @@
   "result": {
     "content": [
       {
-        "text": "Error executing tool hieronymus_series_create: 1 validation error for hieronymus_series_createArguments\nslug\n  Field required [type=missing, input_value={'title': 'Synthetic Seri...age_tags': ['ja', 'en']}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "text": "Error executing tool hieronymus_series_create: 1 validation error for hieronymus_series_createArguments\nslug\n  Field required [type=missing, input_value={'language_tags': ['ja', ...le': 'Synthetic Series'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
         "type": "text"
       }
     ],

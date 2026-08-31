@@ -19,7 +19,7 @@
   "result": {
     "content": [
       {
-        "text": "Error executing tool hieronymus_short_term_add: 1 validation error for hieronymus_short_term_addArguments\nsession_id\n  Field required [type=missing, input_value={'kind': 'correction', 't...metadata': {'line': 12}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+        "text": "Error executing tool hieronymus_short_term_add: 1 validation error for hieronymus_short_term_addArguments\nsession_id\n  Field required [type=missing, input_value={'kind': 'correction', 'm...as a game-system term.'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
         "type": "text"
       }
     ],

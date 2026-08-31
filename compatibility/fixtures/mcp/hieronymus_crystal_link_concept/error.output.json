@@ -1,6 +1,6 @@
 {
   "error": {
-    "message": "data root is not a directory: <DATA_ROOT>",
-    "type": "ValueError"
+    "message": "Error executing tool hieronymus_crystal_link_concept: 1 validation error for hieronymus_crystal_link_conceptArguments\ncrystal_id\n  Field required [type=missing, input_value={'concept_id': 1, 'confidence': 0.9}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
   }
 }

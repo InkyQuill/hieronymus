@@ -1,6 +1,6 @@
 {
   "error": {
-    "message": "data root is not a directory: <DATA_ROOT>",
-    "type": "ValueError"
+    "message": "Error executing tool hieronymus_series_set_language_tags: 1 validation error for hieronymus_series_set_language_tagsArguments\nseries_id\n  Field required [type=missing, input_value={'language_tags': ['ja', 'en', 'fantasy']}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
   }
 }

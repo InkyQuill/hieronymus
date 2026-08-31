@@ -32,12 +32,6 @@ _SERIES_ARGUMENTS = {
     "target_language": "en",
     "language_tags": ["ja", "en"],
 }
-_DATA_ROOT_ERROR = {
-    "error": {
-        "type": "ValueError",
-        "message": "data root is not a directory: <DATA_ROOT>",
-    }
-}
 _ADR = "docs/adr/0015-mcp-protocol-and-transport.md"
 
 
@@ -536,7 +530,9 @@ def _tool_fixture_payloads(tool: dict[str, object]) -> dict[str, object]:
     assert wire_input == success_input
     input_schema = tool["input_schema"]
     assert isinstance(input_schema, dict)
-    error_arguments, invalid_root = _error_arguments(input_schema, success_input)
+    raw_error_arguments, invalid_root = _error_arguments(input_schema, success_input)
+    error_arguments = _sort_object_keys(raw_error_arguments)
+    assert isinstance(error_arguments, dict)
     with tempfile.TemporaryDirectory(prefix="hieronymus-mcp-error-") as directory:
         error_root = Path(directory)
         config = HieronymusConfig(data_root=error_root / "data")
@@ -546,6 +542,7 @@ def _tool_fixture_payloads(tool: dict[str, object]) -> dict[str, object]:
         wire_error = _replace_root(
             _call_real_server(config, tool_name, error_arguments), error_root
         )
+    assert isinstance(wire_error, dict)
     error_params = {"name": tool_name, "arguments": error_arguments}
     error_input = {
         "setup": {"data_root": "file"} if invalid_root else {"validation": "invalid"},
@@ -567,10 +564,23 @@ def _tool_fixture_payloads(tool: dict[str, object]) -> dict[str, object]:
         "success.input.json": success_input,
         "success.output.json": success_output,
         "error.input.json": error_input,
-        "error.output.json": _DATA_ROOT_ERROR,
+        "error.output.json": _legacy_error_output(wire_error),
         "wire.success.json": {"request": request, "result": wire_success},
         "wire.error.json": {"request": error_request, "result": wire_error},
     }
+
+
+def _legacy_error_output(wire_error: dict[str, object]) -> dict[str, object]:
+    """Normalize the real MCP tool failure for the legacy error fixture shape."""
+    if wire_error.get("isError") is not True:
+        raise ValueError("MCP error replay unexpectedly succeeded")
+    content = wire_error.get("content")
+    if not isinstance(content, list) or not content or not isinstance(content[0], dict):
+        raise ValueError("MCP error replay did not return textual error content")
+    message = content[0].get("text")
+    if not isinstance(message, str) or not message:
+        raise ValueError("MCP error replay returned an empty error message")
+    return {"error": {"message": message, "type": "MCPToolError"}}
 
 
 def _error_arguments(
@@ -604,6 +614,7 @@ def _protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]:
     current_capabilities = current_options.capabilities.model_dump(
         mode="json", by_alias=True, exclude_none=True
     )
+    current_tools = asyncio.run(mcp_server.server.list_tools())
     client = {"name": "compatibility-replay", "version": "1.0.0"}
     initialize_request = {
         "jsonrpc": "2.0",
@@ -626,6 +637,16 @@ def _protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]:
     }
     list_request = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
     list_result = {"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}}
+    current_list_result = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "tools": [
+                tool.model_dump(mode="json", by_alias=True, exclude_none=True)
+                for tool in current_tools
+            ]
+        },
+    }
     return {
         "current": {
             "basis": "current-python-server",
@@ -649,6 +670,7 @@ def _protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]:
                     },
                 },
             },
+            "tools_list": {"request": list_request, "response": current_list_result},
         },
         "target": {
             "basis": "adr-backed-target",

@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -18,6 +18,7 @@ from typing import Any
 
 import click
 from click.testing import CliRunner
+from mcp import types as mcp_types
 
 from hieronymus.agent_hooks import main as agent_hook_main
 from hieronymus.cli import main as cli_main
@@ -37,8 +38,7 @@ _ENTRY_POINT_GROUPS: dict[str, click.Group] = {
     "hieronymus.agent_hooks:main": agent_hook_main,
     "hieronymus.cli:main": cli_main,
 }
-_MCP_REPLAY_OPTION = "--replay-mcp-entrypoint"
-_MCP_REPLAY_OUTCOME_ENV = "HIERONYMUS_MCP_FIXTURE_OUTCOME"
+_MCP_ENTRY_POINT = "hieronymus.mcp_server:main"
 
 
 def snapshot_cli(repo_root: Path) -> dict[str, object]:
@@ -180,13 +180,15 @@ def _script_contract(name: str, entry_point: str) -> dict[str, object]:
         record.update(
             {
                 "kind": "stdio",
-                "success_args": [_MCP_REPLAY_OPTION, "success"],
-                "failure_args": [_MCP_REPLAY_OPTION, "failure"],
-                "success_invocation": _mcp_replay_invocation("success"),
-                "failure_invocation": _mcp_replay_invocation("failure"),
-                "success_environment": _mcp_replay_environment("success"),
-                "failure_environment": _mcp_replay_environment("failure"),
-                "exit_behavior": {"success": 0, "failure": 1},
+                "success_args": [],
+                "failure_args": [],
+                "success_invocation": _mcp_replay_invocation(),
+                "failure_invocation": _mcp_replay_invocation(),
+                "success_environment": _mcp_replay_environment(),
+                "failure_environment": _mcp_replay_environment(),
+                "success_stdin": _mcp_replay_stdin("success"),
+                "failure_stdin": _mcp_replay_stdin("failure"),
+                "exit_behavior": {"success": 0, "failure": 0},
             }
         )
     return record
@@ -804,7 +806,7 @@ def _write_non_click_entrypoint_fixtures(repo_root: Path, snapshot: dict[str, ob
     assert isinstance(contract, dict)
     success = replay_mcp_entrypoint_case("success")
     failure = replay_mcp_entrypoint_case("failure")
-    if (success["exit_code"], failure["exit_code"]) != (0, 1):
+    if (success["exit_code"], failure["exit_code"]) != (0, 0):
         raise RuntimeError("unexpected replayed MCP entrypoint exit behavior")
     _write_json_fixture(repo_root, str(contract["success_fixture"]), success)
     _write_json_fixture(repo_root, str(contract["failure_fixture"]), failure)
@@ -822,54 +824,98 @@ def _write_non_click_entrypoint_fixtures(repo_root: Path, snapshot: dict[str, ob
 
 
 def replay_mcp_entrypoint_case(outcome: str) -> dict[str, object]:
-    """Replay one isolated MCP startup outcome and capture process behavior."""
+    """Replay the shipping stdio entrypoint with bounded MCP NDJSON input."""
     if outcome not in {"success", "failure"}:
         raise ValueError(f"unknown MCP replay outcome: {outcome}")
 
-    args = [_MCP_REPLAY_OPTION, outcome]
+    stdin = _mcp_replay_stdin(outcome)
     with tempfile.TemporaryDirectory(prefix="hieronymus-mcp-compat-") as data_root:
         environment = os.environ.copy()
-        environment.update(
-            {
-                "HIERONYMUS_DATA_ROOT": data_root,
-                _MCP_REPLAY_OUTCOME_ENV: outcome,
-            }
-        )
+        environment.update(_mcp_process_environment(data_root))
         process = subprocess.run(
-            [sys.executable, "-m", "tools.compatibility.inventory_cli", *args],
+            [str(_shipping_mcp_entrypoint())],
             cwd=Path(__file__).resolve().parents[2],
             env=environment,
             check=False,
             capture_output=True,
+            input=stdin,
             text=True,
+            timeout=30,
         )
 
     return {
-        "boundary": "real-in-memory-mcp-session",
-        "args": args,
-        "invocation": _mcp_replay_invocation(outcome),
-        "environment": _mcp_replay_environment(outcome),
+        "boundary": "shipping-stdio-entrypoint",
+        "entry_point": _MCP_ENTRY_POINT,
+        "args": [],
+        "invocation": _mcp_replay_invocation(),
+        "environment": _mcp_replay_environment(),
+        "stdin": stdin,
         "exit_code": process.returncode,
         "stdout": process.stdout.replace("\r\n", "\n"),
-        "stderr": process.stderr.replace("\r\n", "\n"),
+        "stderr": _normalize_mcp_stderr(process.stderr),
+        "stderr_normalization": "rich-timestamp-and-source-location-redacted",
     }
 
 
-def _mcp_replay_environment(outcome: str) -> dict[str, str]:
+def _shipping_mcp_entrypoint() -> Path:
+    entrypoint = Path(sys.executable).with_name("hieronymus-mcp")
+    if not entrypoint.is_file():
+        raise RuntimeError(f"installed hieronymus-mcp entrypoint is missing: {entrypoint}")
+    return entrypoint
+
+
+def _mcp_process_environment(data_root: str) -> dict[str, str]:
     return {
-        "HIERONYMUS_DATA_ROOT": "<PATH>",
-        _MCP_REPLAY_OUTCOME_ENV: outcome,
+        "HIERONYMUS_DATA_ROOT": data_root,
+        "COLUMNS": "500",
+        "LINES": "100",
+        "TERM": "dumb",
+        "NO_COLOR": "1",
+        "FORCE_COLOR": "0",
     }
 
 
-def _mcp_replay_invocation(outcome: str) -> list[str]:
-    return [
-        "<PYTHON>",
-        "-m",
-        "tools.compatibility.inventory_cli",
-        _MCP_REPLAY_OPTION,
-        outcome,
-    ]
+def _mcp_replay_environment() -> dict[str, str]:
+    return _mcp_process_environment("<PATH>")
+
+
+def _mcp_replay_invocation() -> list[str]:
+    return ["hieronymus-mcp"]
+
+
+def _mcp_replay_stdin(outcome: str) -> str:
+    if outcome == "failure":
+        requests = [{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}]
+    elif outcome == "success":
+        requests = [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": mcp_types.LATEST_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {"name": "compatibility-replay", "version": "1.0.0"},
+                },
+            },
+            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        ]
+    else:
+        raise ValueError(f"unknown MCP replay outcome: {outcome}")
+    return "".join(
+        json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+        for request in requests
+    )
+
+
+def _normalize_mcp_stderr(stderr: str) -> str:
+    normalized = []
+    for line in stderr.replace("\r\n", "\n").splitlines():
+        line = re.sub(r"^\[[^]]+\]\s+", "", line)
+        line = re.sub(r"\s+[A-Za-z_][A-Za-z0-9_]*\.py:\d+\s*$", "", line)
+        normalized.append(line.rstrip())
+    return "\n".join(normalized) + ("\n" if normalized else "")
 
 
 def _write_json_fixture(repo_root: Path, reference: str, payload: dict[str, object]) -> None:
@@ -879,29 +925,6 @@ def _write_json_fixture(repo_root: Path, reference: str, payload: dict[str, obje
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-
-
-def _replay_mcp_entrypoint(outcome: str) -> int:
-    configured_outcome = os.environ.get(_MCP_REPLAY_OUTCOME_ENV)
-    if configured_outcome != outcome:
-        raise RuntimeError(
-            f"MCP replay environment mismatch: expected {outcome}, got {configured_outcome}"
-        )
-
-    from tools.compatibility.inventory_mcp import _call_real_server
-
-    config = HieronymusConfig(data_root=Path(os.environ["HIERONYMUS_DATA_ROOT"]))
-    arguments: dict[str, object] = {}
-    tool_name = "hieronymus_status" if outcome == "success" else "hieronymus_series_create"
-    logging.disable(logging.CRITICAL)
-    try:
-        result = _call_real_server(config, tool_name, arguments)
-    finally:
-        logging.disable(logging.NOTSET)
-    if result.get("isError") is True:
-        sys.stderr.write("Unsupported MCP protocol version: 1900-01-01\n")
-        return 1
-    return 0
 
 
 def _write_contract_fixtures(repo_root: Path, snapshot: dict[str, object]) -> None:
@@ -1070,14 +1093,7 @@ def _owning_tests(contract_id: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true", help="write the checked-in snapshot")
-    parser.add_argument(
-        _MCP_REPLAY_OPTION,
-        choices=("success", "failure"),
-        help=argparse.SUPPRESS,
-    )
     args = parser.parse_args()
-    if args.replay_mcp_entrypoint is not None:
-        return _replay_mcp_entrypoint(args.replay_mcp_entrypoint)
     repo_root = Path(__file__).resolve().parents[2]
     snapshot = write_snapshot(repo_root) if args.write else snapshot_cli(repo_root)
     if args.write:

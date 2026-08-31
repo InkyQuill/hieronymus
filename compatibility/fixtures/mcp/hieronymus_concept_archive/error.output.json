@@ -1,6 +1,6 @@
 {
   "error": {
-    "message": "data root is not a directory: <DATA_ROOT>",
-    "type": "ValueError"
+    "message": "Error executing tool hieronymus_concept_archive: 1 validation error for hieronymus_concept_archiveArguments\nconcept_id\n  Field required [type=missing, input_value={'reason': 'Synthetic archive case.'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+    "type": "MCPToolError"
   }
 }
