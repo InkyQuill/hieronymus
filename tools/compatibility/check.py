@@ -1,10 +1,19 @@
 """Check every frozen Python compatibility artifact without updating it."""
 
+# ruff: noqa: E402 - bytecode suppression must precede compatibility imports
+
 from __future__ import annotations
+
+import sys
+
+# The aggregate gate is read-only.  This must be set before importing any
+# inventory module so imports performed during regeneration cannot create pyc
+# files.  The canonical command also uses ``python -B`` to cover this module's
+# own import, which happens before this assignment can run.
+sys.dont_write_bytecode = True
 
 import json
 import os
-import sys
 import tempfile
 from collections import Counter
 from collections.abc import Iterator, Mapping
@@ -27,6 +36,31 @@ _FAMILY_SURFACES = {
         {"config", "database", "agent-integration", "install-update", "diagnostics"}
     ),
 }
+
+_GENERATED_ROOTS = (
+    Path("compatibility/snapshots"),
+    Path("compatibility/fixtures/agent-integration"),
+    Path("compatibility/fixtures/cli"),
+    Path("compatibility/fixtures/config"),
+    Path("compatibility/fixtures/database"),
+    Path("compatibility/fixtures/diagnostics"),
+    Path("compatibility/fixtures/http"),
+    Path("compatibility/fixtures/install-update"),
+    Path("compatibility/fixtures/mcp"),
+)
+
+_ISOLATED_ENVIRONMENT_VARIABLES = (
+    "HOME",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "UV_CACHE_DIR",
+    "PYTHONPYCACHEPREFIX",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTEST_ADDOPTS",
+    "UV_NO_CACHE",
+    "UV_NO_SYNC",
+)
 
 
 @dataclass(frozen=True)
@@ -215,13 +249,46 @@ def _http_inventory(
 
 
 @contextmanager
+def _isolated_check_environment() -> Iterator[None]:
+    """Confine every nested cache/config/home write to an ephemeral root."""
+    previous = {name: os.environ.get(name) for name in _ISOLATED_ENVIRONMENT_VARIABLES}
+    with tempfile.TemporaryDirectory(prefix="hieronymus-compatibility-check-") as directory:
+        root = Path(directory)
+        values = {
+            "HOME": root / "home",
+            "XDG_CACHE_HOME": root / "xdg-cache",
+            "XDG_CONFIG_HOME": root / "xdg-config",
+            "XDG_DATA_HOME": root / "xdg-data",
+            "UV_CACHE_DIR": root / "uv-cache",
+            "PYTHONPYCACHEPREFIX": root / "pycache",
+        }
+        for path in values.values():
+            path.mkdir(parents=True)
+        os.environ.update({name: str(path) for name, path in values.items()})
+        os.environ.update(
+            {
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTEST_ADDOPTS": "-p no:cacheprovider",
+                "UV_NO_CACHE": "1",
+                "UV_NO_SYNC": "1",
+            }
+        )
+        try:
+            yield
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
+@contextmanager
 def _collection_without_repository_cache() -> Iterator[None]:
+    """Retain the Task 5 writer's no-cache collection behavior."""
     previous_addopts = os.environ.get("PYTEST_ADDOPTS")
     previous_bytecode = os.environ.get("PYTHONDONTWRITEBYTECODE")
-    addopts = previous_addopts.split() if previous_addopts else []
-    if "no:cacheprovider" not in addopts:
-        addopts.extend(["-p", "no:cacheprovider"])
-    os.environ["PYTEST_ADDOPTS"] = " ".join(addopts)
+    os.environ["PYTEST_ADDOPTS"] = "-p no:cacheprovider"
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     try:
         yield
@@ -310,7 +377,18 @@ def artifact_diffs(repo_root: Path, expected_artifacts: Mapping[str, bytes]) -> 
         else:
             kind = "fixture"
         failures.append(f"{kind} drift: {relative_path}")
-    return failures
+    expected_paths = set(expected_artifacts)
+    for generated_root in _GENERATED_ROOTS:
+        checked_root = repo_root / generated_root
+        if not checked_root.exists():
+            continue
+        for path in checked_root.rglob("*"):
+            if not (path.is_file() or path.is_symlink()):
+                continue
+            relative_path = path.relative_to(repo_root).as_posix()
+            if relative_path not in expected_paths:
+                failures.append(f"unexpected generated artifact: {relative_path}")
+    return sorted(failures)
 
 
 def manifest_failures(repo_root: Path) -> tuple[Manifest | None, list[str]]:
@@ -378,15 +456,16 @@ def emit_report(failures: list[str], summary: str | None, output: TextIO) -> Non
 def main(*, repo_root: Path = ROOT, output: TextIO = sys.stdout) -> int:
     """Run the complete read-only compatibility check."""
     resolved_root = repo_root.resolve()
-    manifest, failures = manifest_failures(resolved_root)
-    try:
-        generated = generate_inventory(resolved_root)
-    except Exception as error:  # noqa: BLE001 - command must turn generator failures into a report
-        failures.append(f"inventory generation failed: {type(error).__name__}: {error}")
-    else:
-        failures.extend(artifact_diffs(resolved_root, generated.artifacts))
-        if manifest is not None:
-            failures.extend(inventory_coverage_failures(manifest, generated.inventory_ids))
+    with _isolated_check_environment():
+        manifest, failures = manifest_failures(resolved_root)
+        try:
+            generated = generate_inventory(resolved_root)
+        except Exception as error:  # noqa: BLE001 - report generator failures without a traceback
+            failures.append(f"inventory generation failed: {type(error).__name__}: {error}")
+        else:
+            failures.extend(artifact_diffs(resolved_root, generated.artifacts))
+            if manifest is not None:
+                failures.extend(inventory_coverage_failures(manifest, generated.inventory_ids))
 
     summary = render_parity_summary(manifest) if manifest is not None else None
     emit_report(failures, summary, output)

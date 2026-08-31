@@ -835,7 +835,7 @@
       "repeat_idempotent": null,
       "source": "uninstall.sh",
       "source_sha256": "38fc9dd81bdde99127edaa5d9b9badf63a768903d348c8d2e3348c6c5a717383",
-      "stderr": "error: unknown option: --invalid\nusage: /home/inky/Development/hieronymus/.worktrees/rust-compatibility-freeze/uninstall.sh [--keep-data|--purge-data]\n",
+      "stderr": "error: unknown option: --invalid\nusage: ./uninstall.sh [--keep-data|--purge-data]\n",
       "stdout": "",
       "tool_removal_attempted": false
     },

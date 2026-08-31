@@ -11,6 +11,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import tomllib
 from collections import Counter
@@ -37,9 +38,8 @@ def collect_test_nodeids(repo_root: Path) -> list[str]:
     with tempfile.TemporaryDirectory(prefix="hieronymus-test-collection-") as temp_dir:
         environment = os.environ.copy()
         environment["HIERONYMUS_DATA_ROOT"] = str(Path(temp_dir) / "data-root")
-        environment["UV_NO_SYNC"] = "1"
         result = subprocess.run(
-            ["uv", "run", "pytest", "--collect-only", "-q"],
+            [sys.executable, "-m", "pytest", "--collect-only", "-q"],
             cwd=resolved_repo_root,
             env=environment,
             check=True,
@@ -1229,7 +1229,7 @@ fi
     if scenario == "hiero-present":
         _write_executable(fake_bin / "hiero", "#!/bin/sh\nexit 0\n")
     result = subprocess.run(
-        ["/bin/sh", str(repo_root / "install.sh")],
+        ["/bin/sh", "./install.sh"],
         cwd=repo_root,
         env=environment,
         capture_output=True,
@@ -1294,7 +1294,7 @@ def _run_uninstall_case(
         "HIERONYMUS_APP_DIR": str(app),
         "HIERONYMUS_DATA_ROOT": str(data),
     }
-    argv = ["/bin/sh", str(repo_root / "uninstall.sh")]
+    argv = ["/bin/sh", "./uninstall.sh"]
     if option is not None:
         argv.append(option)
     if interactive_input is None:
@@ -1803,7 +1803,20 @@ def _public_contract_ids(node_id: str, contracts: list[object]) -> set[str]:
     normalized = test_case.lower().replace("-", "_")
 
     if node_file == "tests/compatibility/test_check.py":
-        return {"diagnostics.compatibility.check"}
+        test_name = normalized.split("[", 1)[0]
+        public_tests = {
+            "test_manifest_failures_report_invalid_manifest_and_missing_references",
+            "test_inventory_coverage_rejects_unreviewed_items",
+            "test_parity_summary_counts_are_derived_from_manifest",
+            "test_report_sorts_failures_before_summary",
+            "test_main_exits_one_with_sorted_drift_and_parity_summary",
+            "test_canonical_check_passes_without_writing_repo_or_caller_state",
+            "test_canonical_check_reports_invalid_manifest_without_writing",
+            "test_canonical_check_sorts_real_failures_before_summary",
+        }
+        if test_name in public_tests or test_name.startswith("test_canonical_check_"):
+            return {"diagnostics.compatibility.check"}
+        return set()
 
     if node_file.startswith("tests/compatibility/"):
         return set()
@@ -1918,6 +1931,13 @@ def _public_contract_ids(node_id: str, contracts: list[object]) -> set[str]:
 
 def _internal_test_reason(node_id: str) -> str:
     node_file, test_case = node_id.split("::", 1)
+    if node_file == "tests/compatibility/test_check.py":
+        if test_case.startswith("test_artifact_diffs_"):
+            return (
+                "Validates byte comparison and closed-world scan helpers; the canonical "
+                "command behavior is owned separately."
+            )
+        raise ValueError(f"no explicit aggregate-check ownership rule for {node_id}")
     if node_id.endswith("test_collect_test_nodeids_returns_only_sorted_pytest_node_ids"):
         return "Validates the Python pytest collection parser; inventory implementation only."
     name = Path(node_file).stem

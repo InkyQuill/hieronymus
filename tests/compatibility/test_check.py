@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -21,6 +23,16 @@ from tools.compatibility.model import Contract, Manifest
 from tools.compatibility.model import TestOwnership as ManifestTestOwnership
 
 ROOT = Path(__file__).resolve().parents[2]
+CANONICAL_CHECK = (
+    "uv",
+    "run",
+    "--no-cache",
+    "--no-sync",
+    "python",
+    "-B",
+    "-m",
+    "tools.compatibility.check",
+)
 
 
 def _manifest(*, fixture: str = "fixture.json") -> Manifest:
@@ -107,6 +119,24 @@ def test_artifact_diffs_compare_exact_bytes_and_report_missing_files(tmp_path: P
     assert artifact_diffs(tmp_path, {path: b"same words\n"}) == [
         f"missing generated artifact: {path}"
     ]
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "compatibility/fixtures/mcp/orphan-tool/stale.json",
+        "compatibility/fixtures/cli/stale-fixture.txt",
+        "compatibility/snapshots/stale.json",
+    ],
+)
+def test_artifact_diffs_reject_unexpected_generated_artifacts(
+    tmp_path: Path, relative_path: str
+) -> None:
+    unexpected = tmp_path / relative_path
+    unexpected.parent.mkdir(parents=True)
+    unexpected.write_text("stale\n", encoding="utf-8")
+
+    assert artifact_diffs(tmp_path, {}) == [f"unexpected generated artifact: {relative_path}"]
 
 
 def test_manifest_failures_report_invalid_manifest_and_missing_references(tmp_path: Path) -> None:
@@ -246,37 +276,169 @@ def test_main_exits_one_with_sorted_drift_and_parity_summary(
     assert "Parity summary\nContracts: 2" in output.getvalue()
 
 
-def test_checked_in_contracts_pass_without_modifying_repository() -> None:
-    before_status = subprocess.run(
-        ["git", "status", "--short", "--untracked-files=all"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    before_hashes = _compatibility_hashes()
-    output = io.StringIO()
+def test_canonical_check_passes_without_writing_repo_or_caller_state(tmp_path: Path) -> None:
+    repo_copy = _copy_tracked_repository(tmp_path / "repo")
 
-    exit_code = main(repo_root=ROOT, output=output)
+    result = _invoke_canonical_check(repo_copy, tmp_path / "caller")
 
-    after_status = subprocess.run(
-        ["git", "status", "--short", "--untracked-files=all"],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    assert exit_code == 0, output.getvalue()
-    assert output.getvalue() == (
-        ROOT / "compatibility/fixtures/diagnostics/check-success.txt"
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == (
+        repo_copy / "compatibility/fixtures/diagnostics/check-success.txt"
     ).read_text(encoding="utf-8")
-    assert _compatibility_hashes() == before_hashes
-    assert after_status == before_status
 
 
-def _compatibility_hashes() -> dict[str, str]:
-    return {
-        str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in sorted((ROOT / "compatibility").rglob("*"))
-        if path.is_file()
-    }
+@pytest.mark.parametrize(
+    ("relative_path", "expected_diagnostic"),
+    [
+        ("compatibility/snapshots/cli.json", "snapshot drift"),
+        ("compatibility/snapshots/mcp.json", "snapshot drift"),
+        ("compatibility/snapshots/http.json", "snapshot drift"),
+        ("compatibility/snapshots/state.json", "snapshot drift"),
+        ("compatibility/fixtures/database/minimal-python.sqlite", "fixture drift"),
+    ],
+)
+def test_canonical_check_reports_each_family_drift_without_writing(
+    tmp_path: Path, relative_path: str, expected_diagnostic: str
+) -> None:
+    repo_copy = _copy_tracked_repository(tmp_path / "repo")
+    target = repo_copy / relative_path
+    target.write_bytes(target.read_bytes() + b"\nDRIFT")
+
+    result = _invoke_canonical_check(repo_copy, tmp_path / "caller")
+
+    assert result.returncode == 1
+    assert f"{expected_diagnostic}: {relative_path}\n" in result.stdout
+    assert "Parity summary\n" in result.stdout
+
+
+def test_canonical_check_reports_invalid_manifest_without_writing(tmp_path: Path) -> None:
+    repo_copy = _copy_tracked_repository(tmp_path / "repo")
+    (repo_copy / "compatibility/manifest.json").write_text("{}\n", encoding="utf-8")
+
+    result = _invoke_canonical_check(repo_copy, tmp_path / "caller")
+
+    assert result.returncode == 1
+    assert "invalid manifest: manifest missing required fields:" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "compatibility/fixtures/mcp/orphan-tool/stale.json",
+        "compatibility/fixtures/cli/stale-fixture.txt",
+        "compatibility/snapshots/stale.json",
+    ],
+)
+def test_canonical_check_rejects_orphan_generated_artifacts_without_writing(
+    tmp_path: Path, relative_path: str
+) -> None:
+    repo_copy = _copy_tracked_repository(tmp_path / "repo")
+    orphan = repo_copy / relative_path
+    orphan.parent.mkdir(parents=True, exist_ok=True)
+    orphan.write_text("stale\n", encoding="utf-8")
+
+    result = _invoke_canonical_check(repo_copy, tmp_path / "caller")
+
+    assert result.returncode == 1
+    assert f"unexpected generated artifact: {relative_path}\n" in result.stdout
+
+
+def test_canonical_check_sorts_real_failures_before_summary(tmp_path: Path) -> None:
+    repo_copy = _copy_tracked_repository(tmp_path / "repo")
+    for relative_path in (
+        "compatibility/snapshots/z-stale.json",
+        "compatibility/fixtures/cli/a-stale.txt",
+    ):
+        orphan = repo_copy / relative_path
+        orphan.parent.mkdir(parents=True, exist_ok=True)
+        orphan.write_text("stale\n", encoding="utf-8")
+
+    result = _invoke_canonical_check(repo_copy, tmp_path / "caller")
+
+    assert result.returncode == 1
+    failure_lines = result.stdout.split("Parity summary\n", 1)[0].splitlines()[1:]
+    assert failure_lines == sorted(failure_lines)
+    assert failure_lines == [
+        "unexpected generated artifact: compatibility/fixtures/cli/a-stale.txt",
+        "unexpected generated artifact: compatibility/snapshots/z-stale.json",
+    ]
+
+
+def _copy_tracked_repository(destination: Path) -> Path:
+    destination.mkdir(parents=True)
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout.split(b"\0")
+    for raw_path in tracked:
+        if not raw_path:
+            continue
+        relative_path = Path(os.fsdecode(raw_path))
+        source = ROOT / relative_path
+        target = destination / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_symlink():
+            target.symlink_to(os.readlink(source))
+        else:
+            shutil.copy2(source, target)
+    # CI performs ``uv sync --dev`` before the canonical no-sync gate.  Reuse
+    # that already-synced environment without copying or mutating it.
+    (destination / ".venv").symlink_to(ROOT / ".venv", target_is_directory=True)
+    return destination
+
+
+def _tree_hashes(root: Path) -> dict[str, str]:
+    if not root.exists():
+        return {".": "missing"}
+    hashes: dict[str, str] = {".": f"directory:{root.stat().st_mode:o}"}
+    for path in sorted(root.rglob("*")):
+        relative_path = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            hashes[relative_path] = f"symlink:{path.lstat().st_mode:o}:{os.readlink(path)}"
+        elif path.is_dir():
+            hashes[f"{relative_path}/"] = f"directory:{path.stat().st_mode:o}"
+        else:
+            hashes[relative_path] = (
+                f"file:{path.stat().st_mode:o}:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+            )
+    return hashes
+
+
+def _invoke_canonical_check(repo_copy: Path, caller_root: Path) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    # Exercise the repository's synced environment as CI does, independent of
+    # the outer pytest process's active virtualenv.
+    environment.pop("VIRTUAL_ENV", None)
+    path_entries = [
+        entry
+        for entry in environment["PATH"].split(os.pathsep)
+        if not entry.endswith("/.local/share/mise/shims")
+    ]
+    environment.update(
+        {
+            "HOME": str(caller_root / "home"),
+            "XDG_CACHE_HOME": str(caller_root / "xdg-cache"),
+            "XDG_CONFIG_HOME": str(caller_root / "xdg-config"),
+            "XDG_DATA_HOME": str(caller_root / "xdg-data"),
+            "UV_CACHE_DIR": str(caller_root / "uv-cache"),
+            "PYTHONPATH": os.pathsep.join((str(repo_copy), str(repo_copy / "src"))),
+            "PATH": os.pathsep.join((str(repo_copy / ".venv/bin"), *path_entries)),
+        }
+    )
+    before_repo = _tree_hashes(repo_copy)
+    before_caller = _tree_hashes(caller_root)
+
+    result = subprocess.run(
+        CANONICAL_CHECK,
+        cwd=repo_copy,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert _tree_hashes(repo_copy) == before_repo
+    assert _tree_hashes(caller_root) == before_caller
+    return result

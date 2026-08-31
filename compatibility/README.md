@@ -5,7 +5,7 @@ reference boundary for the Rust migration. Run the read-only aggregate gate
 before submitting a change:
 
 ```bash
-uv run python -m tools.compatibility.check
+uv run --no-cache --no-sync python -B -m tools.compatibility.check
 ```
 
 When a reviewed Python contract intentionally changes, regenerate only the

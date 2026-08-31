@@ -2169,53 +2169,126 @@
   "python_reference": "0.7.0",
   "test_ownership": [
     {
-      "contract_ids": [
-        "diagnostics.compatibility.check"
-      ],
-      "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_compare_exact_bytes_and_report_missing_files"
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_compare_exact_bytes_and_report_missing_files",
+      "reason": "Validates byte comparison and closed-world scan helpers; the canonical command behavior is owned separately."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_reject_unexpected_generated_artifacts[compatibility/fixtures/cli/stale-fixture.txt]",
+      "reason": "Validates byte comparison and closed-world scan helpers; the canonical command behavior is owned separately."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_reject_unexpected_generated_artifacts[compatibility/fixtures/mcp/orphan-tool/stale.json]",
+      "reason": "Validates byte comparison and closed-world scan helpers; the canonical command behavior is owned separately."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_reject_unexpected_generated_artifacts[compatibility/snapshots/stale.json]",
+      "reason": "Validates byte comparison and closed-world scan helpers; the canonical command behavior is owned separately."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/fixtures/database/minimal-python.sqlite-fixture drift]",
+      "reason": "Validates byte comparison and closed-world scan helpers; the canonical command behavior is owned separately."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/cli.json-snapshot drift]",
+      "reason": "Validates byte comparison and closed-world scan helpers; the canonical command behavior is owned separately."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/http.json-snapshot drift]",
+      "reason": "Validates byte comparison and closed-world scan helpers; the canonical command behavior is owned separately."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/mcp.json-snapshot drift]",
+      "reason": "Validates byte comparison and closed-world scan helpers; the canonical command behavior is owned separately."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/state.json-snapshot drift]",
+      "reason": "Validates byte comparison and closed-world scan helpers; the canonical command behavior is owned separately."
     },
     {
       "contract_ids": [
         "diagnostics.compatibility.check"
       ],
       "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/fixtures/database/minimal-python.sqlite-fixture drift]"
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_passes_without_writing_repo_or_caller_state"
     },
     {
       "contract_ids": [
         "diagnostics.compatibility.check"
       ],
       "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/cli.json-snapshot drift]"
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_rejects_orphan_generated_artifacts_without_writing[compatibility/fixtures/cli/stale-fixture.txt]"
     },
     {
       "contract_ids": [
         "diagnostics.compatibility.check"
       ],
       "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/http.json-snapshot drift]"
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_rejects_orphan_generated_artifacts_without_writing[compatibility/fixtures/mcp/orphan-tool/stale.json]"
     },
     {
       "contract_ids": [
         "diagnostics.compatibility.check"
       ],
       "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/mcp.json-snapshot drift]"
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_rejects_orphan_generated_artifacts_without_writing[compatibility/snapshots/stale.json]"
     },
     {
       "contract_ids": [
         "diagnostics.compatibility.check"
       ],
       "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/state.json-snapshot drift]"
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/fixtures/database/minimal-python.sqlite-fixture drift]"
     },
     {
       "contract_ids": [
         "diagnostics.compatibility.check"
       ],
       "disposition": "public_contract",
-      "node_id": "tests/compatibility/test_check.py::test_checked_in_contracts_pass_without_modifying_repository"
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/cli.json-snapshot drift]"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/http.json-snapshot drift]"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/mcp.json-snapshot drift]"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_each_family_drift_without_writing[compatibility/snapshots/state.json-snapshot drift]"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_invalid_manifest_without_writing"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_canonical_check_sorts_real_failures_before_summary"
     },
     {
       "contract_ids": [

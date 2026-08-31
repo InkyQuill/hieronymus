@@ -32,7 +32,9 @@ jobs:
       # Fresh runners do not restore .venv, so uv sync installs the editable project and Hatch builds the frontend.
       - run: uv sync --dev
       - name: Check frozen compatibility contracts
-        run: uv run python -m tools.compatibility.check | tee compatibility-parity-summary.txt
+        run: |
+          set -o pipefail
+          uv run --no-cache --no-sync python -B -m tools.compatibility.check | tee compatibility-parity-summary.txt
 
       - name: Upload compatibility parity summary
         if: always()
