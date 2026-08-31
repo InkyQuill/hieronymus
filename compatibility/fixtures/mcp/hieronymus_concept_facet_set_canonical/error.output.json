@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "data root is not a directory: <DATA_ROOT>",
+    "type": "ValueError"
+  }
+}

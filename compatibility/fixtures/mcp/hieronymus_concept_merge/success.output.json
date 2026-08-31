@@ -1,0 +1,26 @@
+{
+  "source": {
+    "canonical_name": "Sense",
+    "confidence": 0.8,
+    "description": "Synthetic game-system concept.",
+    "id": 1,
+    "merged_into_concept_id": 2,
+    "scope_key": "",
+    "scope_type": "global",
+    "semantic_tags": [],
+    "status": "merged"
+  },
+  "target": {
+    "canonical_name": "Ability",
+    "confidence": 0.2,
+    "description": "",
+    "id": 2,
+    "merged_into_concept_id": null,
+    "scope_key": "",
+    "scope_type": "global",
+    "semantic_tags": [
+      "ability"
+    ],
+    "status": "candidate"
+  }
+}

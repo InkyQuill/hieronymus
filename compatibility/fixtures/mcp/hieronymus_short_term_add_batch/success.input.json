@@ -1,0 +1,17 @@
+{
+  "items": [
+    {
+      "kind": "reading-conclusion",
+      "source_ref": "chapter-1",
+      "source_role": "agent",
+      "text": "The narrator distrusts the council."
+    },
+    {
+      "kind": "reading-conclusion",
+      "source_ref": "chapter-1",
+      "source_role": "agent",
+      "text": "The council controls the city."
+    }
+  ],
+  "session_id": 1
+}

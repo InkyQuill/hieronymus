@@ -1,0 +1,20 @@
+{
+  "concept_id": 1,
+  "confidence": 0.9,
+  "facet_type": "name",
+  "id": 1,
+  "is_canonical": false,
+  "kind": "name",
+  "language": "ja",
+  "language_tags": [
+    "ja"
+  ],
+  "semantic_tags": [
+    "ability"
+  ],
+  "source_crystal_id": null,
+  "story_scopes": [
+    "volume:1"
+  ],
+  "value": "センス"
+}

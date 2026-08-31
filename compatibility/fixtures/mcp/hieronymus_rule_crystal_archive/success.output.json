@@ -1,0 +1,14 @@
+{
+  "concept_ids": [],
+  "confidence": 0.9,
+  "crystal_type": "rule",
+  "id": 1,
+  "rule_intent": "",
+  "semantic_tags": [],
+  "source_credibility": "observation",
+  "status": "archived",
+  "story_scopes": [],
+  "strength": 0.8,
+  "text": "センス is translated as Sense, not Feeling.",
+  "title": "Sense rendering"
+}

@@ -1,0 +1,19 @@
+[
+  {
+    "chunk_kind": "text",
+    "display_text": "Cooking Talent appears here.",
+    "id": 1,
+    "kind": "text",
+    "language_tags": [],
+    "location": "paragraph 1",
+    "metadata": {},
+    "rank_reason": "rag project text match",
+    "score": 2.75e-06,
+    "semantic_tags": [],
+    "source": "rag",
+    "source_ref": "chapter.txt",
+    "story_scopes": [],
+    "text": "Cooking Talent appears here.",
+    "title": "chapter.txt paragraph 1"
+  }
+]

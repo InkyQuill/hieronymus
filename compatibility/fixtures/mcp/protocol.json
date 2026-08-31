@@ -1,0 +1,13 @@
+{
+  "private_python_bridge": {
+    "adr": "docs/adr/0015-mcp-protocol-and-transport.md",
+    "classification": "private_python_bridge",
+    "disposition": "remove",
+    "path": "/api/mcp/{operation}"
+  },
+  "protocol_revision": "2026-07-28",
+  "transports": [
+    "stdio",
+    "streamable-http"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "checksum": "08498e86df44f00e399b9580b7d447678b0295b900546336c5d1f0874b4f809d",
+  "chunk_count": 1,
+  "content_type": "txt",
+  "metadata": {
+    "normalized_format": "text",
+    "normalized_path": "<SYNTHETIC_ROOT>/chapter.txt",
+    "original_path": "<SYNTHETIC_ROOT>/chapter.txt"
+  },
+  "normalized_format": "text",
+  "normalized_path": "<SYNTHETIC_ROOT>/chapter.txt",
+  "series_slug": "synthetic-series",
+  "skipped": false,
+  "source_id": 1,
+  "source_ref": "chapter.txt",
+  "source_type": "text"
+}
