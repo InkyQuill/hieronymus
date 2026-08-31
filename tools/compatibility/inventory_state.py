@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import tempfile
 import tomllib
+from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -1541,6 +1542,15 @@ def _sha256(path: Path) -> str:
 def _state_contracts() -> list[dict[str, object]]:
     contracts = [
         _contract(
+            "diagnostics.compatibility.check",
+            "diagnostics",
+            "distribution-cutover",
+            "tools.compatibility.check:main",
+            ["tests/compatibility/test_check.py"],
+            "compatibility/fixtures/diagnostics/check-success.txt",
+            "crates/hiero-compatibility/tests/freeze.rs::compatibility_check",
+        ),
+        _contract(
             "config.provider.current",
             "config",
             "data-config",
@@ -1792,6 +1802,9 @@ def _public_contract_ids(node_id: str, contracts: list[object]) -> set[str]:
     node_file, test_case = node_id.split("::", 1)
     normalized = test_case.lower().replace("-", "_")
 
+    if node_file == "tests/compatibility/test_check.py":
+        return {"diagnostics.compatibility.check"}
+
     if node_file.startswith("tests/compatibility/"):
         return set()
 
@@ -1975,7 +1988,36 @@ def generate_state_artifacts(repo_root: Path, data_root: Path) -> dict[str, byte
     manifest["contracts"] = contracts
     manifest["test_ownership"] = build_test_ownership(snapshot["tests"]["node_ids"], contracts)
     artifacts["compatibility/manifest.json"] = _json_bytes(manifest)
+    artifacts["compatibility/fixtures/diagnostics/check-success.txt"] = (
+        _render_compatibility_success(manifest).encode()
+    )
     return dict(sorted(artifacts.items()))
+
+
+def _render_compatibility_success(manifest: dict[str, object]) -> str:
+    contracts = manifest["contracts"]
+    test_ownership = manifest["test_ownership"]
+    assert isinstance(contracts, list)
+    assert isinstance(test_ownership, list)
+
+    def count_lines(values: list[str]) -> list[str]:
+        return [f"  {name}: {count}" for name, count in sorted(Counter(values).items())]
+
+    lines = [
+        "Compatibility check passed",
+        "Parity summary",
+        f"Contracts: {len(contracts)}",
+        "By surface:",
+        *count_lines([str(contract["surface"]) for contract in contracts]),
+        "By disposition:",
+        *count_lines([str(contract["disposition"]) for contract in contracts]),
+        "By technical owner:",
+        *count_lines([str(contract["technical_owner"]) for contract in contracts]),
+        f"Test ownership: {len(test_ownership)}",
+        "By test-ownership disposition:",
+        *count_lines([str(ownership["disposition"]) for ownership in test_ownership]),
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def _json_bytes(value: object) -> bytes:

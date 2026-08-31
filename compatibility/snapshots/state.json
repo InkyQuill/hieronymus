@@ -7155,6 +7155,18 @@
   ],
   "tests": {
     "node_ids": [
+      "tests/compatibility/test_check.py::test_artifact_diffs_compare_exact_bytes_and_report_missing_files",
+      "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/fixtures/database/minimal-python.sqlite-fixture drift]",
+      "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/cli.json-snapshot drift]",
+      "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/http.json-snapshot drift]",
+      "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/mcp.json-snapshot drift]",
+      "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/state.json-snapshot drift]",
+      "tests/compatibility/test_check.py::test_checked_in_contracts_pass_without_modifying_repository",
+      "tests/compatibility/test_check.py::test_inventory_coverage_rejects_unreviewed_items",
+      "tests/compatibility/test_check.py::test_main_exits_one_with_sorted_drift_and_parity_summary",
+      "tests/compatibility/test_check.py::test_manifest_failures_report_invalid_manifest_and_missing_references",
+      "tests/compatibility/test_check.py::test_parity_summary_counts_are_derived_from_manifest",
+      "tests/compatibility/test_check.py::test_report_sorts_failures_before_summary",
       "tests/compatibility/test_cli_inventory.py::test_cli_snapshot_matches_shipping_commands",
       "tests/compatibility/test_cli_inventory.py::test_each_installed_click_command_path_has_its_own_contract",
       "tests/compatibility/test_cli_inventory.py::test_every_public_cli_contract_has_success_failure_fixtures_and_manifest_entry",

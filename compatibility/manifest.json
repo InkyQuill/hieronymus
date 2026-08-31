@@ -1754,6 +1754,19 @@
     {
       "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
       "disposition": "preserve",
+      "fixture": "compatibility/fixtures/diagnostics/check-success.txt",
+      "id": "diagnostics.compatibility.check",
+      "python_entry_point": "tools.compatibility.check:main",
+      "rust_test_target": "crates/hiero-compatibility/tests/freeze.rs::compatibility_check",
+      "surface": "diagnostics",
+      "technical_owner": "distribution-cutover",
+      "tests": [
+        "tests/compatibility/test_check.py"
+      ]
+    },
+    {
+      "acceptance_owner": "Pavel Obruchnikov <me@inkyquill.net>",
+      "disposition": "preserve",
       "fixture": "compatibility/fixtures/config/current/provider.json",
       "id": "config.provider.current",
       "python_entry_point": "hieronymus.provider_config",
@@ -2155,6 +2168,90 @@
   "manifest_version": 1,
   "python_reference": "0.7.0",
   "test_ownership": [
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_compare_exact_bytes_and_report_missing_files"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/fixtures/database/minimal-python.sqlite-fixture drift]"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/cli.json-snapshot drift]"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/http.json-snapshot drift]"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/mcp.json-snapshot drift]"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_artifact_diffs_report_each_inventory_family_and_binary_state_fixture[compatibility/snapshots/state.json-snapshot drift]"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_checked_in_contracts_pass_without_modifying_repository"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_inventory_coverage_rejects_unreviewed_items"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_main_exits_one_with_sorted_drift_and_parity_summary"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_manifest_failures_report_invalid_manifest_and_missing_references"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_parity_summary_counts_are_derived_from_manifest"
+    },
+    {
+      "contract_ids": [
+        "diagnostics.compatibility.check"
+      ],
+      "disposition": "public_contract",
+      "node_id": "tests/compatibility/test_check.py::test_report_sorts_failures_before_summary"
+    },
     {
       "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_cli_inventory.py::test_cli_snapshot_matches_shipping_commands",

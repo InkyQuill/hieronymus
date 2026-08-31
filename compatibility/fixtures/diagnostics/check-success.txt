@@ -1,0 +1,28 @@
+Compatibility check passed
+Parity summary
+Contracts: 152
+By surface:
+  agent-integration: 10
+  cli: 56
+  config: 14
+  database: 2
+  diagnostics: 1
+  frontend: 6
+  http: 21
+  install-update: 2
+  mcp: 39
+  websocket: 1
+By disposition:
+  intentionally-change: 22
+  preserve: 129
+  remove: 1
+By technical owner:
+  daemon-mcp-security: 77
+  data-config: 7
+  database-upgrade: 2
+  distribution-cutover: 62
+  dreaming: 4
+Test ownership: 1283
+By test-ownership disposition:
+  implementation_internal: 1025
+  public_contract: 258
