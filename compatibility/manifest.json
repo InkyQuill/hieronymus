@@ -3400,6 +3400,91 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_follows_allowed_https_redirects_without_forwarding_credentials",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_checksum_mismatch_without_promoting_partial",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_more_than_five_redirect_hops",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_unsafe_redirects_without_echoing_or_leaving_partial[http://cdn-lfs.huggingface.co/model.onnx]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_unsafe_redirects_without_echoing_or_leaving_partial[https://cdn-lfs.huggingface.co/model.onnx#secret-fragment]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_unsafe_redirects_without_echoing_or_leaving_partial[https://evil.example/model.onnx?token=redirect-secret]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_unsafe_redirects_without_echoing_or_leaving_partial[https://huggingface.co.evil.example/model.onnx]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_unsafe_redirects_without_echoing_or_leaving_partial[https://huggingface.co:8443/model.onnx]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_unsafe_redirects_without_echoing_or_leaving_partial[https://user:password@cdn-lfs.huggingface.co/model.onnx]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_removes_partial_after_transport_or_filesystem_failure[http]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_removes_partial_after_transport_or_filesystem_failure[read]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_removes_partial_after_transport_or_filesystem_failure[replace]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_cli_accepts_only_semantic_model",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_existing_unverified_destination_is_replaced_only_after_verification",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_existing_verified_destination_skips_network_and_stale_partial_is_removed",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_invalid_initial_url_is_rejected_before_transport",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_prerequisites_and_toolchain_are_exact",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_accepts_only_existing_regular_files[directory]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },

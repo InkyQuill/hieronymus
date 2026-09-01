@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "target": "x86_64-unknown-linux-gnu",
+  "rust": {
+    "version": "1.96.0",
+    "commit": "ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96"
+  },
+  "bun": {
+    "version": "1.3.14",
+    "authority": "frontend/package.json"
+  },
+  "semantic_model": {
+    "provider": "onnx-runtime",
+    "repository": "sentence-transformers/all-MiniLM-L6-v2",
+    "revision": "9a53d751e60e6dd34f2443711d44d5b09389f89a",
+    "file": "onnx/model.onnx",
+    "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/9a53d751e60e6dd34f2443711d44d5b09389f89a/onnx/model.onnx",
+    "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+    "dimensions": 384,
+    "normalization": "l2"
+  },
+  "network_policy": {
+    "allowed_only_for": [
+      "manual review of https://modelcontextprotocol.io/specification/2026-07-28",
+      "cargo fetch --locked",
+      "bun install --frozen-lockfile",
+      "python -m tools.qualification.acquire semantic-model",
+      "python -m tools.qualification.acquire onnx-runtime"
+    ],
+    "ordinary_replay": "offline"
+  }
+}
