@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import fields, replace
 from pathlib import Path
 
@@ -25,7 +26,11 @@ from tools.qualification.model import (
     Risk,
     serialize_record,
 )
-from tools.qualification.redaction import markdown_redaction_issues, redaction_issues
+from tools.qualification.redaction import (
+    RequiredCriteriaRow,
+    markdown_redaction_issues,
+    redaction_issues,
+)
 from tools.qualification.render import render_record
 from tools.qualification.validate import (
     PLANNED_REPLAY_COMMANDS,
@@ -1051,54 +1056,163 @@ def test_validate_and_render_reject_printable_entity_spelling_in_pem_marker(
         render_record(leaked)
 
 
-def test_markdown_redaction_parses_only_renderer_owned_canonical_json_cells() -> None:
-    canonical = r'{"probe":"-----BEGIN LEFT\nRIGHT PRIVATE KEY-----"}'
-    rendered_cell = canonical.replace("\\", "&#92;")
-    markdown = (
+def _criteria_markdown(*rows: str) -> str:
+    return (
+        "## Earlier Section\n\n"
         "## Required Criteria\n\n"
         "| Criterion | Status | Summary | Measurements | Not-run reason |\n"
         "| --- | --- | --- | --- | --- |\n"
-        f"| probe | pass | safe | {rendered_cell} | (none) |\n"
+        + "\n".join(rows)
+        + "\n\n## Consumed Compatibility Contracts\n"
     )
 
-    assert markdown_redaction_issues(markdown, canonical_json_cells=(canonical,)) == []
 
-    arbitrary_field = markdown.replace(
-        f"| probe | pass | safe | {rendered_cell} |",
-        f"| probe | pass | {rendered_cell} | {{}} |",
+def test_markdown_redaction_parses_only_renderer_owned_canonical_json_cells() -> None:
+    canonical = r'{"probe":"-----BEGIN LEFT\nRIGHT PRIVATE KEY-----"}'
+    expected = RequiredCriteriaRow(
+        criterion="probe",
+        status="pass",
+        summary="safe",
+        canonical_measurements=canonical,
+        not_run_reason="(none)",
+    )
+    markdown = _criteria_markdown(expected.rendered_row)
+
+    assert markdown_redaction_issues(markdown, required_criteria=(expected,)) == []
+
+    forged = RequiredCriteriaRow(
+        criterion="probe",
+        status="pass",
+        summary=canonical,
+        canonical_measurements="{}",
+        not_run_reason="(none)",
     )
     assert markdown_redaction_issues(
-        arbitrary_field,
-        canonical_json_cells=("{}",),
+        _criteria_markdown(forged.rendered_row),
+        required_criteria=(forged,),
     ) == ["record contains private-key material"]
 
 
 def test_markdown_redaction_keeps_literal_backslash_semantics_in_json_cells() -> None:
     canonical = r'{"probe":"-----BEGIN LEFT\\nRIGHT PRIVATE KEY-----"}'
-    rendered_cell = canonical.replace("\\", "&#92;")
-    markdown = (
-        "## Required Criteria\n\n"
-        "| Criterion | Status | Summary | Measurements | Not-run reason |\n"
-        "| --- | --- | --- | --- | --- |\n"
-        f"| probe | pass | safe | {rendered_cell} | (none) |\n"
+    expected = RequiredCriteriaRow(
+        criterion="probe",
+        status="pass",
+        summary="safe",
+        canonical_measurements=canonical,
+        not_run_reason="(none)",
     )
 
     assert markdown_redaction_issues(
-        markdown,
-        canonical_json_cells=(canonical,),
+        _criteria_markdown(expected.rendered_row),
+        required_criteria=(expected,),
     ) == ["record contains private-key material"]
 
 
 def test_markdown_redaction_rejects_non_measurement_json_cell_shape() -> None:
-    markdown = (
-        "## Required Criteria\n\n"
-        "| Criterion | Status | Summary | Measurements | Not-run reason |\n"
-        "| --- | --- | --- | --- | --- |\n"
-        "| probe | pass | safe | [] | (none) |\n"
+    expected = RequiredCriteriaRow(
+        criterion="probe",
+        status="pass",
+        summary="safe",
+        canonical_measurements="[]",
+        not_run_reason="(none)",
     )
 
     with pytest.raises(ValueError, match="renderer-owned JSON cell is not canonical"):
-        markdown_redaction_issues(markdown, canonical_json_cells=("[]",))
+        markdown_redaction_issues(
+            _criteria_markdown(expected.rendered_row),
+            required_criteria=(expected,),
+        )
+
+
+def test_markdown_redaction_rejects_arbitrary_rows_that_only_match_measurements() -> None:
+    canonical = r'{"probe":"-----BEGIN LEFT\nRIGHT PRIVATE KEY-----"}'
+    expected = RequiredCriteriaRow("probe", "pass", "safe", canonical, "(none)")
+    arbitrary_rows = (
+        expected.rendered_row.replace("| probe |", "| another-criterion |", 1),
+        expected.rendered_row.replace("| pass |", "| fail |", 1),
+        expected.rendered_row.replace("| safe |", "| alternate summary |", 1),
+        expected.rendered_row.replace("| &#40;none&#41; |", "| alternate reason |", 1),
+    )
+
+    for arbitrary_row in arbitrary_rows:
+        with pytest.raises(ValueError, match="Required Criteria table is malformed"):
+            markdown_redaction_issues(
+                _criteria_markdown(arbitrary_row),
+                required_criteria=(expected,),
+            )
+
+
+def test_markdown_redaction_requires_exact_row_order_and_count() -> None:
+    first = RequiredCriteriaRow("first", "pass", "safe", "{}", "(none)")
+    second = RequiredCriteriaRow("second", "not-run", "safe", "{}", "blocked")
+    expected = (first, second)
+    malformed_tables = (
+        _criteria_markdown(second.rendered_row, first.rendered_row),
+        _criteria_markdown(first.rendered_row),
+        _criteria_markdown(first.rendered_row, second.rendered_row, second.rendered_row),
+    )
+
+    for markdown in malformed_tables:
+        with pytest.raises(ValueError, match="Required Criteria table is malformed"):
+            markdown_redaction_issues(markdown, required_criteria=expected)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value.replace(
+            "| Criterion | Status | Summary | Measurements | Not-run reason |",
+            "| Status | Criterion | Summary | Measurements | Not-run reason |",
+        ),
+        lambda value: value.replace(
+            "| --- | --- | --- | --- | --- |",
+            "| :--- | --- | --- | --- | --- |",
+        ),
+        lambda value: value.replace("&#92;", "&#x5c;"),
+        lambda value: value.replace("&#124;", "&#x7c;"),
+        lambda value: value.replace("\n", "\r\n"),
+        lambda value: value.replace("## Required Criteria\n\n", "## Required Criteria\n"),
+        lambda value: value.replace(
+            "\n\n## Consumed Compatibility Contracts",
+            "\n## Consumed Compatibility Contracts",
+        ),
+        lambda value: (
+            value + "\n## Required Criteria\n\n"
+            "| Criterion | Status | Summary | Measurements | Not-run reason |\n"
+            "| --- | --- | --- | --- | --- |\n"
+        ),
+        lambda value: value.replace(
+            "## Consumed Compatibility Contracts",
+            "| Criterion | Status | Summary | Measurements | Not-run reason |\n"
+            "| --- | --- | --- | --- | --- |\n\n"
+            "## Consumed Compatibility Contracts",
+        ),
+    ],
+    ids=(
+        "alternate-header",
+        "alternate-separator",
+        "alternate-backslash-entity",
+        "alternate-pipe-entity",
+        "crlf",
+        "missing-table-leading-blank",
+        "adjacent-next-section",
+        "duplicate-heading",
+        "duplicate-table",
+    ),
+)
+def test_markdown_redaction_requires_exact_renderer_table_bytes(
+    mutate: Callable[[str], str],
+) -> None:
+    canonical = r'{"probe|field":"-----BEGIN LEFT\nRIGHT PRIVATE KEY-----"}'
+    expected = RequiredCriteriaRow("probe|criterion", "pass", "safe", canonical, "(none)")
+    markdown = _criteria_markdown(expected.rendered_row)
+
+    with pytest.raises(ValueError, match="Required Criteria table is malformed"):
+        markdown_redaction_issues(
+            mutate(markdown),
+            required_criteria=(expected,),
+        )
 
 
 @pytest.mark.parametrize(

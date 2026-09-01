@@ -279,6 +279,75 @@ _PRIVATE_KEY_SUFFIX = " PRIVATE KEY"
 _PRIVATE_KEY_TERMINATOR = "-----"
 _PRIVATE_KEY_BOUNDARIES = frozenset(" \t\r\n\\\"',.;:!?)]}|")
 
+_CRITERIA_HEADING = "## Required Criteria"
+_CRITERIA_HEADER = "| Criterion | Status | Summary | Measurements | Not-run reason |"
+_CRITERIA_SEPARATOR = "| --- | --- | --- | --- | --- |"
+_NEXT_CRITERIA_HEADING = "## Consumed Compatibility Contracts"
+
+
+def _literal_markdown(value: object) -> str:
+    """Encode one arbitrary record value as inert Markdown literal text."""
+    if type(value) is bool:
+        rendered = str(value).lower()
+    else:
+        rendered = str(value)
+    replacements = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "|": "&#124;",
+        "`": "&#96;",
+        "\\": "&#92;",
+        "!": "&#33;",
+        "[": "&#91;",
+        "]": "&#93;",
+        "(": "&#40;",
+        ")": "&#41;",
+        "\r": "&#13;",
+        "\n": "&#10;",
+    }
+    return "".join(
+        replacements.get(character, f"&#{ord(character)};")
+        if ord(character) < 32 or 127 <= ord(character) <= 159
+        else replacements.get(character, character)
+        for character in rendered
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RequiredCriteriaRow:
+    """Semantic source for one exact renderer-owned Required Criteria row."""
+
+    criterion: str
+    status: str
+    summary: str
+    canonical_measurements: str
+    not_run_reason: str
+
+    @property
+    def rendered_row(self) -> str:
+        return self._render(self.canonical_measurements)
+
+    @property
+    def masked_row(self) -> str:
+        return self._render("{}")
+
+    def _render(self, measurements: str) -> str:
+        return (
+            "| "
+            + " | ".join(
+                _literal_markdown(value)
+                for value in (
+                    self.criterion,
+                    self.status,
+                    self.summary,
+                    measurements,
+                    self.not_run_reason,
+                )
+            )
+            + " |"
+        )
+
 
 def _contains_private_key_marker(value: str) -> bool:
     """Recognize one exact printable PEM private-key BEGIN marker."""
@@ -331,7 +400,7 @@ def redaction_issues(serialized_record: str) -> list[str]:
 def markdown_redaction_issues(
     rendered_markdown: str,
     *,
-    canonical_json_cells: tuple[str, ...] = (),
+    required_criteria: tuple[RequiredCriteriaRow, ...] = (),
 ) -> list[str]:
     """Scan completed Markdown while preserving canonical-JSON cell semantics.
 
@@ -342,18 +411,19 @@ def markdown_redaction_issues(
     """
     if type(rendered_markdown) is not str:
         raise TypeError("rendered Markdown must be text")
-    if type(canonical_json_cells) is not tuple or any(
-        type(cell) is not str for cell in canonical_json_cells
+    if type(required_criteria) is not tuple or any(
+        type(row) is not RequiredCriteriaRow for row in required_criteria
     ):
-        raise TypeError("canonical JSON cells must be a tuple of text")
+        raise TypeError("required criteria must be a tuple of typed rows")
 
     semantic_issues: set[str] = set()
-    for cell in canonical_json_cells:
+    for row in required_criteria:
+        cell = row.canonical_measurements
         parsed = _parse_canonical_json_cell(cell)
         semantic_issues.update(_structured_redaction_issues(parsed))
         semantic_issues.update(_raw_redaction_issue_set(cell, pem_values=_string_nodes(parsed)))
 
-    masked = _mask_canonical_json_cells(rendered_markdown, canonical_json_cells)
+    masked = _mask_required_criteria_table(rendered_markdown, required_criteria)
     decoded_markdown = unescape_html(masked)
     markdown_issues = _raw_redaction_issue_set(
         decoded_markdown,
@@ -401,37 +471,47 @@ def _parse_canonical_json_cell(serialized: str) -> object:
     return parsed
 
 
-def _mask_canonical_json_cells(
+def _mask_required_criteria_table(
     rendered_markdown: str,
-    canonical_json_cells: tuple[str, ...],
+    required_criteria: tuple[RequiredCriteriaRow, ...],
 ) -> str:
-    remaining = list(canonical_json_cells)
-    in_required_criteria = False
-    masked_lines: list[str] = []
-    for line in rendered_markdown.splitlines(keepends=True):
-        content = line.removesuffix("\n")
-        newline = "\n" if line.endswith("\n") else ""
-        if content == "## Required Criteria":
-            in_required_criteria = True
-        elif content.startswith("## "):
-            in_required_criteria = False
+    lines = rendered_markdown.split("\n")
+    heading_positions = [index for index, line in enumerate(lines) if line == _CRITERIA_HEADING]
+    header_positions = [index for index, line in enumerate(lines) if line == _CRITERIA_HEADER]
+    if not required_criteria:
+        if heading_positions or header_positions:
+            raise ValueError("Required Criteria table is malformed")
+        return rendered_markdown
+    if len(heading_positions) != 1 or len(header_positions) != 1:
+        raise ValueError("Required Criteria table is malformed")
 
-        if (
-            in_required_criteria
-            and remaining
-            and content.startswith("| ")
-            and content.endswith(" |")
-        ):
-            fields = content[2:-2].split(" | ")
-            if len(fields) == 5 and unescape_html(fields[3]) == remaining[0]:
-                fields[3] = "{}"
-                remaining.pop(0)
-                content = "| " + " | ".join(fields) + " |"
-        masked_lines.append(content + newline)
+    start = heading_positions[0]
+    rows_start = start + 4
+    after_rows = rows_start + len(required_criteria)
+    if (
+        start == 0
+        or lines[start - 1] != ""
+        or lines[start : start + 4]
+        != [
+            _CRITERIA_HEADING,
+            "",
+            _CRITERIA_HEADER,
+            _CRITERIA_SEPARATOR,
+        ]
+        or after_rows + 1 >= len(lines)
+        or lines[after_rows] != ""
+        or lines[after_rows + 1] != _NEXT_CRITERIA_HEADING
+    ):
+        raise ValueError("Required Criteria table is malformed")
 
-    if remaining:
-        raise ValueError("renderer-owned JSON cells do not match completed Markdown")
-    return "".join(masked_lines)
+    actual_rows = lines[rows_start:after_rows]
+    expected_rows = [row.rendered_row for row in required_criteria]
+    if actual_rows != expected_rows:
+        raise ValueError("Required Criteria table is malformed")
+
+    masked_lines = list(lines)
+    masked_lines[rows_start:after_rows] = [row.masked_row for row in required_criteria]
+    return "\n".join(masked_lines)
 
 
 def _structured_redaction_issues(parsed: object) -> set[str]:

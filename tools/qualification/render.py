@@ -9,7 +9,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from tools.qualification.model import QualificationRecord, load_record, serialize_record
-from tools.qualification.redaction import markdown_redaction_issues, redaction_issues
+from tools.qualification.redaction import (
+    RequiredCriteriaRow,
+    _literal_markdown,
+    markdown_redaction_issues,
+    redaction_issues,
+)
 from tools.qualification.validate import replay_commands_are_safe, validate_record
 
 _TITLES = {
@@ -120,7 +125,7 @@ def render_record(record: QualificationRecord) -> str:
             "| --- | --- | --- | --- | --- |",
         ]
     )
-    measurement_json_cells: list[str] = []
+    required_criteria_rows: list[RequiredCriteriaRow] = []
     for evidence in record.evidence:
         measurements = json.dumps(
             dict(evidence.measurements),
@@ -128,21 +133,15 @@ def render_record(record: QualificationRecord) -> str:
             sort_keys=True,
             separators=(",", ":"),
         )
-        measurement_json_cells.append(measurements)
-        lines.append(
-            "| "
-            + " | ".join(
-                _cell(value)
-                for value in (
-                    evidence.criterion,
-                    evidence.status,
-                    evidence.summary,
-                    measurements,
-                    evidence.not_run_reason or "(none)",
-                )
-            )
-            + " |"
+        row = RequiredCriteriaRow(
+            criterion=evidence.criterion,
+            status=evidence.status,
+            summary=evidence.summary,
+            canonical_measurements=measurements,
+            not_run_reason=evidence.not_run_reason or "(none)",
         )
+        required_criteria_rows.append(row)
+        lines.append(row.rendered_row)
     lines.append("")
 
     lines.extend(["## Consumed Compatibility Contracts", ""])
@@ -195,7 +194,7 @@ def render_record(record: QualificationRecord) -> str:
     rendered = "\n".join(lines)
     markdown_issues = markdown_redaction_issues(
         rendered,
-        canonical_json_cells=tuple(measurement_json_cells),
+        required_criteria=tuple(required_criteria_rows),
     )
     if markdown_issues:
         raise ValueError("; ".join(markdown_issues))
@@ -216,35 +215,6 @@ def _bullet_values(values: Sequence[str]) -> list[str]:
     lines = [f"- {_cell(value)}" for value in values]
     lines.append("")
     return lines
-
-
-def _literal_markdown(value: object) -> str:
-    """Encode one arbitrary record value as inert Markdown literal text."""
-    if type(value) is bool:
-        rendered = str(value).lower()
-    else:
-        rendered = str(value)
-    replacements = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        "|": "&#124;",
-        "`": "&#96;",
-        "\\": "&#92;",
-        "!": "&#33;",
-        "[": "&#91;",
-        "]": "&#93;",
-        "(": "&#40;",
-        ")": "&#41;",
-        "\r": "&#13;",
-        "\n": "&#10;",
-    }
-    return "".join(
-        replacements.get(character, f"&#{ord(character)};")
-        if ord(character) < 32 or 127 <= ord(character) <= 159
-        else replacements.get(character, character)
-        for character in rendered
-    )
 
 
 def _cell(value: object) -> str:
