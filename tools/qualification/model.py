@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from decimal import Decimal
 from math import isfinite
 from pathlib import Path
 from typing import Literal, cast
+
+from jsonschema import Draft202012Validator, validators
+from jsonschema.protocols import Validator
 
 Risk = Literal[
     "mcp-transport",
@@ -165,6 +169,26 @@ _FAILING_DECISIONS: dict[Risk, Decision] = {
 }
 _OWNER = "Pavel Obruchnikov <me@inkyquill.net>"
 _TARGET = "x86_64-unknown-linux-gnu"
+_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "qualification/schemas/record.schema.json"
+
+
+def _is_finite_json_number(checker: object, instance: object) -> bool:
+    del checker
+    return Draft202012Validator.TYPE_CHECKER.is_type(instance, "number") and not (
+        type(instance) is float and not isfinite(instance)
+    )
+
+
+# JSON Schema models JSON data, where NaN and infinity cannot occur. Python's
+# jsonschema number checker accepts those float values, so a standards-valid
+# checked-in schema needs this explicit host-language boundary for Python inputs.
+_StrictDraft202012Validator = validators.extend(
+    Draft202012Validator,
+    type_checker=Draft202012Validator.TYPE_CHECKER.redefine(
+        "number",
+        _is_finite_json_number,
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -239,6 +263,9 @@ class QualificationRecord:
     cleanup: CleanupEvidence
     review: Review
 
+    def __post_init__(self) -> None:
+        _validate_record_invariants(self)
+
 
 def status_for(evidence: tuple[Evidence, ...]) -> Literal["pass", "fail"]:
     """Derive a status from one complete, ordered criterion set."""
@@ -260,6 +287,98 @@ def expected_consequence(risk: Risk, status: Literal["pass", "fail"]) -> str:
     if status == "fail":
         return FAILURE_CONSEQUENCES[risk]
     raise ValueError(f"unknown qualification status: {status!r}")
+
+
+def record_schema_validator() -> Validator:
+    """Return the single strict Draft 2020-12 validator for record payloads."""
+    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    return _StrictDraft202012Validator(schema)
+
+
+def serialize_record(record: QualificationRecord) -> str:
+    """Serialize one revalidated record as deterministic strict JSON."""
+    if not isinstance(record, QualificationRecord):
+        raise ValueError("record must be a QualificationRecord")
+    _validate_record_invariants(record)
+    serialized = json.dumps(
+        asdict(record),
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    payload = json.loads(
+        serialized,
+        parse_float=_finite_json_float,
+        parse_constant=lambda value: _invalid_json_constant(value),
+    )
+    record_schema_validator().validate(payload)
+    return serialized
+
+
+def _validate_record_invariants(record: QualificationRecord) -> None:
+    """Enforce loader and schema invariants at every typed construction boundary."""
+    schema_version = _integer(record.schema_version, "schema_version")
+    if schema_version != 1:
+        raise ValueError("schema_version must be 1")
+
+    risk = _risk(record.risk)
+    target = _string(record.target, "target")
+    if target != _TARGET:
+        raise ValueError(f"target must be {_TARGET}")
+    if not isinstance(record.environment, Environment):
+        raise ValueError("environment must be an Environment record")
+    environment_target = _string(record.environment.target, "environment target")
+    if environment_target != _TARGET:
+        raise ValueError(f"environment target must be {_TARGET}")
+
+    _validate_evidence(record.evidence, risk=risk)
+    derived_status: Literal["pass", "fail"] = (
+        "pass" if all(item.status == "pass" for item in record.evidence) else "fail"
+    )
+    status = _enum(record.status, "status", ("pass", "fail"))
+    if status != derived_status:
+        raise ValueError(f"status must be derived from criterion evidence: {derived_status}")
+
+    derived_decision = (
+        _PASSING_DECISIONS[risk] if derived_status == "pass" else _FAILING_DECISIONS[risk]
+    )
+    decision = _enum(
+        record.decision,
+        "decision",
+        ("qualified", "blocked", "semantic-enabled", "fts-only"),
+    )
+    if decision != derived_decision:
+        raise ValueError(
+            f"decision must be {derived_decision} for {risk} {derived_status} evidence"
+        )
+
+    consequence = _string(record.consequence, "consequence")
+    required_consequence = expected_consequence(risk, derived_status)
+    if consequence != required_consequence:
+        raise ValueError(
+            f"consequence must match the immutable {risk} {derived_status} consequence"
+        )
+
+    acceptance_owner = _string(record.acceptance_owner, "acceptance_owner")
+    if acceptance_owner != _OWNER:
+        raise ValueError(f"acceptance_owner must be {_OWNER}")
+    _input_digest(record.input_digest)
+
+    if not isinstance(record.review, Review):
+        raise ValueError("review must be a Review record")
+    review_owner = _string(record.review.owner, "review owner")
+    if review_owner != _OWNER:
+        raise ValueError(f"review owner must be {_OWNER}")
+    _enum(record.review.status, "review status", ("pending", "accepted", "rejected"))
+    _boolean(
+        record.review.objective_evidence_reviewed,
+        "review objective_evidence_reviewed",
+    )
+    _boolean(
+        record.review.normative_constraints_preserved,
+        "review normative_constraints_preserved",
+    )
 
 
 def load_record(path: Path) -> QualificationRecord:
@@ -523,6 +642,8 @@ def _is_json_scalar(value: object) -> bool:
 
 
 _MAX_FINITE_MEASUREMENT = float.fromhex("0x1.fffffffffffffp+1023")
+_MAX_FINITE_MEASUREMENT_DECIMAL = Decimal.from_float(_MAX_FINITE_MEASUREMENT)
+_MAX_FINITE_MEASUREMENT_INTEGER = int(_MAX_FINITE_MEASUREMENT)
 
 
 def _measurement_value(value: object, name: str) -> MeasurementValue:
@@ -539,16 +660,21 @@ def _json_scalar(value: object, name: str) -> JsonScalar:
     if type(value) is float:
         if not isfinite(value):
             raise ValueError(f"{name} must be finite")
-    elif type(value) is int and not (-_MAX_FINITE_MEASUREMENT <= value <= _MAX_FINITE_MEASUREMENT):
+    elif type(value) is int and not (
+        -_MAX_FINITE_MEASUREMENT_INTEGER <= value <= _MAX_FINITE_MEASUREMENT_INTEGER
+    ):
         raise ValueError(f"{name} must be within the finite IEEE-754 range")
     return cast(JsonScalar, value)
 
 
 def _finite_json_float(value: str) -> float:
-    number = float(value)
-    if not isfinite(number):
-        raise ValueError(f"JSON number must be finite: {value}")
-    return number
+    exact_number = Decimal(value)
+    if not (
+        exact_number.is_finite()
+        and -_MAX_FINITE_MEASUREMENT_DECIMAL <= exact_number <= _MAX_FINITE_MEASUREMENT_DECIMAL
+    ):
+        raise ValueError(f"JSON number must be within the finite IEEE-754 range: {value}")
+    return float(exact_number)
 
 
 def _object(value: object, name: str, fields: set[str]) -> dict[str, object]:

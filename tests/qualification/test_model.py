@@ -6,7 +6,8 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import FrozenInstanceError, asdict, replace
+from dataclasses import FrozenInstanceError, asdict, fields, replace
+from math import copysign
 from pathlib import Path
 
 import pytest
@@ -16,10 +17,13 @@ from jsonschema import Draft202012Validator
 from tools.qualification.model import (
     FAILURE_CONSEQUENCES,
     REQUIRED_CRITERIA,
+    QualificationRecord,
     Risk,
     decision_for,
     expected_consequence,
     load_record,
+    record_schema_validator,
+    serialize_record,
     status_for,
 )
 
@@ -38,8 +42,7 @@ def _payload_for(risk: Risk = "mcp-transport") -> dict[str, object]:
 
 
 def _schema_errors(payload: object) -> list[object]:
-    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-    return list(Draft202012Validator(schema).iter_errors(payload))
+    return list(record_schema_validator().iter_errors(payload))
 
 
 def test_semantic_failure_is_complete_and_selects_fts_only() -> None:
@@ -190,6 +193,67 @@ def test_evidence_construction_detaches_from_mutable_measurement_input() -> None
     assert evidence.measurements["samples"] == (1, 2)
 
 
+def _construct_record(
+    record: QualificationRecord,
+    **updates: object,
+) -> QualificationRecord:
+    values = {field.name: getattr(record, field.name) for field in fields(record)}
+    values.update(updates)
+    return QualificationRecord(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("construction", [_construct_record, replace])
+def test_record_construction_rejects_fixed_and_cross_field_mutations(
+    construction: object,
+) -> None:
+    record = make_record(ROOT, "mcp-transport")
+    alternate_target = "aarch64-unknown-linux-gnu"
+    alternate_environment = replace(record.environment, target=alternate_target)
+    mismatched_evidence = make_record(ROOT, "frontend-embedding").evidence
+    mutations = (
+        {"target": alternate_target},
+        {"environment": alternate_environment},
+        {"target": alternate_target, "environment": alternate_environment},
+        {"schema_version": 2},
+        {"acceptance_owner": "Another Owner <owner@example.com>"},
+        {"review": replace(record.review, owner="Another Owner <owner@example.com>")},
+        {"input_digest": "not-a-sha256"},
+        {"evidence": mismatched_evidence},
+        {"status": "fail"},
+        {"decision": "blocked"},
+        {"consequence": FAILURE_CONSEQUENCES["mcp-transport"]},
+    )
+
+    for mutation in mutations:
+        with pytest.raises(ValueError):
+            construction(record, **mutation)  # type: ignore[operator]
+
+
+@pytest.mark.parametrize(
+    ("status", "objective_reviewed", "constraints_preserved"),
+    [
+        ("pending", False, False),
+        ("accepted", True, True),
+        ("rejected", False, False),
+    ],
+)
+def test_record_construction_preserves_task_20_review_states(
+    status: str,
+    objective_reviewed: bool,
+    constraints_preserved: bool,
+) -> None:
+    record = make_record(ROOT, "mcp-transport")
+    review = replace(
+        record.review,
+        status=status,  # type: ignore[arg-type]
+        objective_evidence_reviewed=objective_reviewed,
+        normative_constraints_preserved=constraints_preserved,
+    )
+
+    assert replace(record, review=review).review == review
+    assert _construct_record(record, review=review).review == review
+
+
 @pytest.mark.parametrize("mutation", ["missing", "duplicate", "unknown", "out-of-order"])
 def test_loader_and_schema_reject_the_same_invalid_criterion_sets(
     tmp_path: Path,
@@ -327,35 +391,139 @@ def test_evidence_construction_rejects_non_finite_measurements(
         replace(evidence, measurements={"probe": measurement})  # type: ignore[dict-item]
 
 
-def test_loader_and_schema_reject_overflowed_json_number_token(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "measurements",
+    [
+        pytest.param({"probe": float("nan")}, id="scalar-nan"),
+        pytest.param({"probe": float("inf")}, id="scalar-positive-infinity"),
+        pytest.param({"probe": float("-inf")}, id="scalar-negative-infinity"),
+        pytest.param({"probe": [1, float("nan")]}, id="nested-nan"),
+        pytest.param({"probe": [float("inf"), 1]}, id="nested-infinity"),
+    ],
+)
+def test_strict_record_schema_validator_rejects_python_non_finite_numbers(
+    measurements: dict[str, object],
+) -> None:
     payload = _payload_for()
-    serialized = json.dumps(payload).replace(
+    evidence = payload["evidence"]
+    assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+    evidence[0]["measurements"] = measurements
+
+    assert _schema_errors(payload)
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+def test_raw_json_loader_rejects_non_finite_constants(tmp_path: Path, token: str) -> None:
+    serialized = json.dumps(_payload_for()).replace(
         '"measurements": {}',
-        '"measurements": {"overflow": 1e999}',
+        f'"measurements": {{"non_finite": {token}}}',
         1,
     )
-    path = tmp_path / "overflow.json"
+    path = tmp_path / "non-finite.json"
     path.write_text(serialized, encoding="utf-8")
 
-    with pytest.raises(ValueError, match="finite"):
+    with pytest.raises(ValueError, match="invalid JSON constant"):
         load_record(path)
-    assert _schema_errors(json.loads(serialized))
+
+
+@pytest.mark.parametrize(
+    "measurement",
+    [
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="positive-infinity"),
+        pytest.param((1, float("-inf")), id="nested-negative-infinity"),
+    ],
+)
+def test_record_serializer_revalidates_non_finite_measurements(measurement: object) -> None:
+    record = make_record(ROOT, "mcp-transport")
+    object.__setattr__(
+        record.evidence[0].measurements,
+        "_items",
+        (("probe", measurement),),
+    )
+
+    with pytest.raises(ValueError, match="finite"):
+        serialize_record(record)
+
+
+def test_loader_rejects_exact_out_of_range_tokens_at_any_measurement_depth(
+    tmp_path: Path,
+) -> None:
+    measurement_objects = (
+        '{"outside": 1.7976931348623158e308}',
+        '{"outside": -1.7976931348623158e308}',
+        '{"outside": [1, 1.7976931348623158e308]}',
+        '{"outside": [-1.7976931348623158e308, 1]}',
+    )
+    for index, measurements in enumerate(measurement_objects):
+        serialized = json.dumps(_payload_for()).replace(
+            '"measurements": {}',
+            f'"measurements": {measurements}',
+            1,
+        )
+        path = tmp_path / f"outside-{index}.json"
+        path.write_text(serialized, encoding="utf-8")
+
+        with pytest.raises(ValueError, match="finite IEEE-754 range"):
+            load_record(path)
+
+
+def test_loader_and_serializer_round_trip_exact_numeric_endpoints(
+    tmp_path: Path,
+) -> None:
+    serialized = json.dumps(_payload_for()).replace(
+        '"measurements": {}',
+        (
+            '"measurements": {'
+            '"maximum": 1.7976931348623157e308,'
+            '"minimum": -1.7976931348623157e308,'
+            '"negative_zero": -0.0,'
+            '"ordinary": [1.25e-3, -2e2]'
+            "}"
+        ),
+        1,
+    )
+    path = tmp_path / "numeric-endpoints.json"
+    path.write_text(serialized, encoding="utf-8")
+
+    loaded = load_record(path)
+    measurements = loaded.evidence[0].measurements
+    assert measurements["maximum"] == sys.float_info.max
+    assert measurements["minimum"] == -sys.float_info.max
+    assert copysign(1.0, measurements["negative_zero"]) == -1.0  # type: ignore[arg-type]
+    assert measurements["ordinary"] == (0.00125, -200.0)
+
+    strict_json = serialize_record(loaded)
+    assert '"negative_zero":-0.0' in strict_json
+    strict_payload = json.loads(strict_json)
+    serialized_measurements = strict_payload["evidence"][0]["measurements"]
+    assert type(serialized_measurements["maximum"]) is float
+    assert serialized_measurements["maximum"] == sys.float_info.max
+    assert _schema_errors(strict_payload) == []
+    round_trip = tmp_path / "numeric-round-trip.json"
+    round_trip.write_text(strict_json, encoding="utf-8")
+    assert load_record(round_trip) == loaded
 
 
 def test_loader_and_schema_enforce_finite_binary64_measurement_range(tmp_path: Path) -> None:
+    maximum_integer = int(sys.float_info.max)
     valid = _payload_for()
     valid_evidence = valid["evidence"]
     assert isinstance(valid_evidence, list) and isinstance(valid_evidence[0], dict)
     valid_evidence[0]["measurements"] = {
-        "minimum": -sys.float_info.max,
-        "ordinary": 12.5,
-        "maximum": sys.float_info.max,
+        "integer_bounds": [-maximum_integer, maximum_integer],
     }
     loaded = load_record(_write_payload(tmp_path, valid))
+    assert loaded.evidence[0].measurements["integer_bounds"] == (
+        -maximum_integer,
+        maximum_integer,
+    )
     assert _schema_errors(valid) == []
-    json.dumps(asdict(loaded), allow_nan=False)
+    assert json.loads(serialize_record(loaded))["evidence"][0]["measurements"] == {
+        "integer_bounds": [-maximum_integer, maximum_integer]
+    }
 
-    for outside_range in (10**309, -(10**309)):
+    for outside_range in (maximum_integer + 1, -maximum_integer - 1, 10**999, -(10**999)):
         invalid = _payload_for()
         invalid_evidence = invalid["evidence"]
         assert isinstance(invalid_evidence, list) and isinstance(invalid_evidence[0], dict)
@@ -363,6 +531,27 @@ def test_loader_and_schema_enforce_finite_binary64_measurement_range(tmp_path: P
         with pytest.raises(ValueError, match="finite IEEE-754 range"):
             load_record(_write_payload(tmp_path, invalid))
         assert _schema_errors(invalid)
+
+
+def test_loader_and_schema_reject_overflowed_json_number_token(tmp_path: Path) -> None:
+    measurement_objects = (
+        '{"overflow": 1e999}',
+        '{"overflow": -1e999}',
+        '{"overflow": [1, 1e999]}',
+        '{"overflow": [-1e999, 1]}',
+    )
+    for index, measurements in enumerate(measurement_objects):
+        serialized = json.dumps(_payload_for()).replace(
+            '"measurements": {}',
+            f'"measurements": {measurements}',
+            1,
+        )
+        path = tmp_path / f"overflow-{index}.json"
+        path.write_text(serialized, encoding="utf-8")
+
+        with pytest.raises(ValueError, match="finite IEEE-754 range"):
+            load_record(path)
+        assert _schema_errors(json.loads(serialized))
 
 
 def test_schema_is_draft_2020_12_and_accepts_every_factory_record() -> None:

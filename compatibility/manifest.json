@@ -3560,12 +3560,77 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_serializer_round_trip_exact_numeric_endpoints",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_rejects_exact_out_of_range_tokens_at_any_measurement_depth",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_model.py::test_measurements_allow_only_named_scalars_or_scalar_arrays",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_model.py::test_not_run_is_a_failure_and_requires_a_nonblank_reason",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_raw_json_loader_rejects_non_finite_constants[-Infinity]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_raw_json_loader_rejects_non_finite_constants[Infinity]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_raw_json_loader_rejects_non_finite_constants[NaN]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_construction_preserves_task_20_review_states[accepted-True-True]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_construction_preserves_task_20_review_states[pending-False-False]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_construction_preserves_task_20_review_states[rejected-False-False]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_construction_rejects_fixed_and_cross_field_mutations[_construct_record]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_construction_rejects_fixed_and_cross_field_mutations[replace]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_serializer_revalidates_non_finite_measurements[nan]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_serializer_revalidates_non_finite_measurements[nested-negative-infinity]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_serializer_revalidates_non_finite_measurements[positive-infinity]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3586,6 +3651,31 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_model.py::test_status_rejects_invalid_evidence_value_types",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_strict_record_schema_validator_rejects_python_non_finite_numbers[nested-infinity]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_strict_record_schema_validator_rejects_python_non_finite_numbers[nested-nan]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_strict_record_schema_validator_rejects_python_non_finite_numbers[scalar-nan]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_strict_record_schema_validator_rejects_python_non_finite_numbers[scalar-negative-infinity]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_strict_record_schema_validator_rejects_python_non_finite_numbers[scalar-positive-infinity]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
