@@ -4,7 +4,7 @@
 
 **Goal:** Produce reproducible, reviewed qualification evidence for MCP transport, semantic native dependencies, frontend embedding, and legacy database import before any production Rust workspace or dependent implementation plan is started.
 
-**Architecture:** First correct and re-review the frozen MCP 2026-07-28 authority against a byte-exact, commit-pinned copy of the official Draft 2020-12 schema, then commit that offline-validated oracle before any candidate is qualified. Four standalone Rust harness crates live under `qualification/harnesses/` and exercise only synthetic or frozen compatibility inputs in disposable work directories; native executions are explicit opt-in qualification jobs, while ordinary Python tests use fakes and the record gate is network-free. Python tooling validates a common evidence schema, renders canonical JSON into Markdown, fingerprints every input, and computes one aggregate gate without rerunning heavy probes.
+**Architecture:** First correct and re-review the frozen MCP 2026-07-28 authority against a byte-exact, commit-pinned copy of the official Draft 2020-12 schema, then commit that offline-validated oracle before any candidate is qualified. Four standalone Rust harness crates live under `qualification/harnesses/` and exercise only synthetic or frozen compatibility inputs in disposable work directories; native executions are explicit opt-in qualification jobs, while ordinary Python tests use fakes and the record gate is network-free. Python tooling validates a common evidence schema, renders canonical JSON into Markdown, fingerprints immutable risk-specific compatibility projections rather than mutable global ownership inventories, and computes one aggregate gate without rerunning heavy probes.
 
 **Tech Stack:** Python 3.12 standard library, jsonschema 4.26.0 Draft 2020-12 validation, pytest, Ruff, Rust 1.96.0 on `x86_64-unknown-linux-gnu`, Cargo lockfiles, Bun 1.3.14, rmcp 3.1.4 candidate, LanceDB 0.37.1 candidate, ort 2.0.0-rc.13 candidate, rust-embed 8.12.0 candidate, rusqlite 0.40.2 candidate, SQLite FTS5.
 
@@ -37,14 +37,16 @@
 - Every bounded background operation is resumable, auditable, or safely repeatable.
 - Rust does not write source code into translation workspaces.
 - Qualification inputs are checked-in synthetic fixtures or deterministic generated corpora. Harnesses must never enumerate `$HOME`, read the developer's real data root, dump the environment, or access `/home/inky/Yandex.Disk/Translation`; Rust/Cargo/Bun toolchain and package caches are the only permitted home-scoped reads and their absolute paths are normalized out of evidence.
-- Canonical records contain no secrets, source-row text, hostnames, usernames, absolute home paths, bearer headers, cookies, launch grants, provider keys, or raw process logs.
+- Canonical records contain no secrets, source-row text, hostnames, usernames, raw or percent-encoded absolute home paths, bearer or other authorization headers, cookies, launch grants, provider keys, passwords, private keys, or raw process logs. Structured redaction covers exact snake_case and camelCase password/private-key/auth/cookie field variants in both canonical JSON and completed Markdown.
 - Network access is permitted only for Task 1's named official-spec review and one-time retrieval of its commit-pinned schema bytes, plus the explicit dependency-fetch, Bun-install, and checksum-verified model/runtime-acquisition steps. Ordinary compatibility tests, record validation, and every replay after acquisition run offline and make no network request.
+- Recorded replay commands use one closed grammar of exact offline qualification/checker entry points and bounded Cargo/Bun forms. Shell expansion, substitution, globbing, redirection, control/metacharacters, URLs, and network-capable acquisition commands are invalid even when a shell could parse them.
 - Ordinary `uv run pytest` tests inject bounded fake executables and never require Cargo, Rust artifacts, Bun packages, ONNX Runtime, a model, or a native-library cache. Live Rust/native qualification is explicit through `HIERONYMUS_QUALIFICATION_LIVE=1` commands and its dedicated workflow only.
 - Every live run writes beneath `qualification/.artifacts/`, hashes frozen inputs before and after use, removes transient work/log/install directories on success or failure, and leaves only ignored caches plus reviewed records.
 - Every Cargo build/test/Clippy command sets a risk-specific `CARGO_TARGET_DIR` beneath `qualification/.artifacts/cargo-target/`; crash probes disable core dumps and run in an owned process group that the runner terminates and reaps in `finally`.
 - Tool discovery occurs against the original environment before HOME/XDG sanitization. It preserves the lexical cargo/rustup invocation paths separately from their resolved executable targets; every live runner invokes the preserved cargo shim, passes the resulting `ToolRoots` and bounded target to `safe_subprocess_env`, and uses that one safe environment for all Cargo/Bun/native children without serializing absolute tool paths.
 - Each harness has its own `Cargo.toml` and committed `Cargo.lock`; direct risk dependencies are exact pins and all resolved versions/features are copied from `cargo metadata --locked` and `cargo tree -e features --locked` into the record.
-- Each record's input digest covers `qualification/prerequisites.json`, `qualification/rust-toolchain.toml`, every common qualification module (`model.py`, `fingerprint.py`, `redaction.py`, `validate.py`, `render.py`, `acquire.py`, `process.py`, and `clean.py`), its own Python runner, Cargo manifest/lockfile/source/tests, every consumed compatibility manifest/snapshot/fixture including every actual HTTP route case, and risk-specific frontend/corpus inputs; the MCP record additionally covers the official schema bytes and its pin metadata. Changing any covered input makes the record stale.
+- Each record's input digest covers `qualification/prerequisites.json`, `qualification/rust-toolchain.toml`, every common qualification module (`model.py`, `fingerprint.py`, `projections.py`, `redaction.py`, `validate.py`, `render.py`, `acquire.py`, `process.py`, and `clean.py`), its own Python runner, Cargo manifest/lockfile/source/tests, every directly consumed immutable compatibility snapshot/fixture including every actual HTTP route case, and risk-specific frontend/corpus inputs. The MCP record additionally covers the official schema bytes and pin metadata plus `qualification/compatibility/mcp-transport.json`; the database record covers `qualification/compatibility/legacy-database-import.json`. Neither record fingerprints mutable whole `compatibility/manifest.json` or `compatibility/snapshots/state.json`.
+- Task 3 owns the two checked-in risk projections and derives them without semantic normalization from the current global manifest/state. Ordinary validation is offline and read-only: a selected source-field change or checked-in projection drift blocks the appropriate risk, while unrelated contract surfaces and generated test-node inventory changes are ignored. Later ledger-required regeneration of the global ownership files therefore does not stale an already measured record; changing a relevant projection changes its fingerprint and requires rerunning only that risk's live measurement.
 - Pavel Obruchnikov `<me@inkyquill.net>` is the acceptance owner for all four records and the aggregate gate unless a compatibility-manifest entry explicitly delegates another named owner.
 
 ## Normative Inputs
@@ -60,7 +62,7 @@
 - `docs/superpowers/specs/2026-08-31-rust-database-upgrade-design.md`
 - `docs/superpowers/specs/2026-08-31-rust-distribution-cutover-design.md`
 - `docs/superpowers/specs/2026-08-31-rust-compatibility-contracts-design.md`
-- `compatibility/README.md`, `compatibility/manifest.json`, and the frozen fixtures named by each task.
+- `compatibility/README.md`, mutable ownership source `compatibility/manifest.json`, mutable state source `compatibility/snapshots/state.json`, and the frozen fixtures named by each task. The two mutable sources are used only to validate Task 3's risk projections and are never record fingerprint inputs.
 
 ## Outcome Rules
 
@@ -76,7 +78,7 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 ## Execution And File Ownership Order
 
 - Execute Tasks 1–21 in numeric order. Task 1's corrected compatibility oracle must be accepted as its own commit before Task 6 starts.
-- Tasks 2–5 establish, in separate commits, the record model, validation/rendering/fingerprints, verified acquisitions, and sanitized process/cleanup boundary. Task 9 is the only later task allowed to extend `qualification/prerequisites.json`, `tools/qualification/acquire.py`, or `tests/qualification/test_acquire.py`.
+- Tasks 2–5 establish, in separate commits, the record model, validation/rendering/fingerprints and immutable compatibility projections, verified acquisitions, and sanitized process/cleanup boundary. Task 3 alone owns projection generation; Tasks 8 and 18 consume the appropriate checked-in projection, Task 19 validates both against their mutable sources, and later inventory regeneration must not rewrite projections for unrelated changes. Task 9 is the only later task allowed to extend `qualification/prerequisites.json`, `tools/qualification/acquire.py`, or `tests/qualification/test_acquire.py`.
 - MCP Tasks 6–8, semantic Tasks 9–12, frontend Tasks 13–15, and database Tasks 16–18 each use manifest/build, behavior/recovery, then runner/evidence commits. Within a risk, later tasks modify only files explicitly handed off by the prior task.
 - Task 19 owns dispatcher/checker/gate computation, Task 20 owns acceptance transitions and generated artifact refresh, and Task 21 alone owns contributor commands and CI workflows. Common-file ownership is sequential; do not implement tasks concurrently when they name the same file, and never fold an earlier review boundary into a later commit.
 
@@ -88,6 +90,8 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 - `qualification/schemas/record.schema.json`: machine-readable contract for one risk record.
 - `qualification/schemas/gate.schema.json`: machine-readable aggregate-gate contract.
 - `qualification/fixtures/semantic-corpus.json`: deterministic 10,000-chunk/50-query corpus recipe.
+- `qualification/compatibility/mcp-transport.json`: immutable canonical projection of only the MCP-relevant compatibility manifest contracts.
+- `qualification/compatibility/legacy-database-import.json`: immutable canonical projection of only the database-relevant compatibility contracts and consumed database state.
 - `qualification/harnesses/mcp-transport/`: standalone rmcp transport probe and lockfile.
 - `qualification/harnesses/semantic-native/`: standalone ONNX/LanceDB/FTS probe and lockfile.
 - `qualification/harnesses/frontend-embedding/`: standalone rust-embed probe and lockfile.
@@ -101,6 +105,7 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 - `docs/qualification/rust/*.md`: generated human-readable records; never hand-edited independently of JSON.
 - `tools/qualification/model.py`: typed records, required-criterion sets, and consequence constants.
 - `tools/qualification/fingerprint.py`: deterministic relative-path input hashing and stale-record detection.
+- `tools/qualification/projections.py`: deterministic risk-projection builder plus offline, read-only drift validation against the current manifest/state sources.
 - `tools/qualification/redaction.py`: canonical-record forbidden-data scan.
 - `tools/qualification/validate.py`: network-free record/schema/invariant validation CLI.
 - `tools/qualification/render.py`: deterministic Markdown renderer and drift checker.
@@ -584,7 +589,7 @@ git add pyproject.toml uv.lock compatibility/authorities/mcp/2026-07-28/schema.j
 git commit -m "fix: align MCP compatibility oracle with 2026-07-28"
 ```
 
-Stop if this commit is not accepted. Tasks 6–8 consume the corrected commit, and Task 8 fingerprints the authority bytes, pin metadata, manifest, schema-validated protocol/route fixtures, and internal snapshot used for semantic comparison; candidate work must never fetch a schema, preserve `input_schema` on the wire, normalize the authority bytes, or replay the obsolete target fixture.
+Stop if this commit is not accepted. Tasks 6–8 consume the corrected commit, and Task 3 derives the immutable MCP compatibility projection from the accepted manifest entries before Task 8 fingerprints that projection, the authority bytes, pin metadata, schema-validated protocol/route fixtures, and internal snapshot used for semantic comparison. Task 8 never fingerprints the whole mutable manifest; candidate work must never fetch a schema, preserve `input_schema` on the wire, normalize the authority bytes, or replay the obsolete target fixture.
 
 ### Task 2: Common Qualification Record Schema And Decision Model
 
@@ -843,26 +848,36 @@ git commit -m "test: define Rust qualification record model"
 
 ### Task 3: Record Validation, Redaction, Fingerprints, And Rendering
 
-**Complexity:** Medium, 2–3 hours.
+**Complexity:** High, 3–4 hours.
 
 **Files:**
 - Create: `tools/qualification/fingerprint.py`
+- Create: `tools/qualification/projections.py`
 - Create: `tools/qualification/redaction.py`
 - Create: `tools/qualification/validate.py`
 - Create: `tools/qualification/render.py`
+- Create: `qualification/compatibility/mcp-transport.json`
+- Create: `qualification/compatibility/legacy-database-import.json`
 - Modify: `tests/qualification/factories.py`
 - Create: `tests/qualification/test_fingerprint.py`
+- Create: `tests/qualification/test_projections.py`
 - Create: `tests/qualification/test_redaction.py`
 - Create: `tests/qualification/test_render.py`
+- Regenerate for Task 3 test-node ownership only: `compatibility/snapshots/state.json`
+- Regenerate for Task 3 test-node ownership only: `compatibility/manifest.json`
+- Regenerate for Task 3 test-node ownership only: `compatibility/fixtures/diagnostics/check-success.txt`
 
 **Interfaces:**
 - Consumes: Task 2 `QualificationRecord`, exact checked-in paths rooted at `repo_root`, and no implicit environment/user data.
 - Produces: `fingerprint_inputs(repo_root: Path, paths: tuple[str, ...]) -> str`, SHA-256 over sorted relative paths plus bytes.
+- Produces: `ProjectionRisk = Literal["mcp-transport", "legacy-database-import"]`, `build_projection(repo_root: Path, risk: ProjectionRisk) -> dict[str, object]`, `canonical_projection_bytes(projection: Mapping[str, object]) -> bytes`, and `projection_issues(repo_root: Path) -> dict[ProjectionRisk, tuple[str, ...]]` in `tools.qualification.projections`.
+- Produces checked-in canonical projections `qualification/compatibility/mcp-transport.json` and `qualification/compatibility/legacy-database-import.json`; the former contains only the 42 relevant manifest contract entries, and the latter contains only the three relevant manifest contract entries plus the exact consumed database state fields.
+- Produces deterministic CLI `python -m tools.qualification.projections --check`; it is offline and read-only. `--write` exists only for the explicit Task 3 generation step and atomically writes the two owned projection paths.
 - Produces: `redaction_issues(serialized_record: str) -> list[str]` and `validate_record(record: QualificationRecord, repo_root: Path) -> list[str]`.
 - Produces: `render_record(record: QualificationRecord) -> str` with stable headings/table order.
 - Produces deterministic CLIs `python -m tools.qualification.validate <record.json>` and `python -m tools.qualification.render --check <record.json> <record.md>`.
 
-- [ ] **Step 1: Write failing fingerprint, redaction, and render tests**
+- [ ] **Step 1: Write failing projection, fingerprint, redaction, replay, and render tests**
 
 ```python
 import json
@@ -871,6 +886,7 @@ from pathlib import Path
 
 from tests.qualification.factories import make_record
 from tools.qualification.fingerprint import COMMON_FINGERPRINT_INPUTS, fingerprint_inputs
+from tools.qualification.projections import projection_issues
 from tools.qualification.redaction import redaction_issues
 from tools.qualification.render import render_record
 from tools.qualification.validate import validate_record
@@ -910,15 +926,116 @@ def test_render_is_deterministic(tmp_path: Path) -> None:
     record = make_record(tmp_path, "legacy-database-import")
     assert render_record(record) == render_record(record)
     assert "Legacy Database Import Qualification Record" in render_record(record)
+
+
+def test_unrelated_inventory_changes_do_not_stale_projections(tmp_path: Path) -> None:
+    seed_projection_sources_and_checked_in_files(tmp_path)
+    manifest = read_json(tmp_path / "compatibility/manifest.json")
+    manifest["test_ownership"].append(
+        {
+            "disposition": "implementation_internal",
+            "node_id": "tests/qualification/test_later.py::test_unrelated",
+            "reason": "later qualification inventory",
+        }
+    )
+    write_json(tmp_path / "compatibility/manifest.json", manifest)
+    state = read_json(tmp_path / "compatibility/snapshots/state.json")
+    state["tests"]["node_ids"].append(
+        "tests/qualification/test_later.py::test_unrelated"
+    )
+    write_json(tmp_path / "compatibility/snapshots/state.json", state)
+    assert projection_issues(tmp_path) == {
+        "mcp-transport": (),
+        "legacy-database-import": (),
+    }
+
+
+def test_relevant_source_or_checked_in_projection_drift_is_blocking(
+    tmp_path: Path,
+) -> None:
+    seed_projection_sources_and_checked_in_files(tmp_path)
+    manifest = read_json(tmp_path / "compatibility/manifest.json")
+    selected = next(
+        item for item in manifest["contracts"] if item["id"] == "http.route.post.mcp"
+    )
+    selected["disposition"] = "remove"
+    write_json(tmp_path / "compatibility/manifest.json", manifest)
+    assert projection_issues(tmp_path)["mcp-transport"]
 ```
+
+Define the private test helpers in `test_projections.py`: `read_json`/`write_json` use strict UTF-8 and canonical JSON bytes; `seed_projection_sources_and_checked_in_files` writes a minimal closed manifest with the exact 42 MCP and three database contracts, a state object with all 12 database fields plus unrelated `tests`/`config`, then writes both outputs from `build_projection`. The helper must call the production builder rather than maintain a second projection algorithm.
+
+Add focused RED cases that mutate each selected MCP/database contract field, add/remove one `mcp.tool.*` id, mutate each projected database state field, reorder a source array, or corrupt/add a field to a checked-in projection; each must report deterministic drift for only the affected risk. Mutating an unrelated contract, `frontend_test_ownership`, `test_ownership`, `state["tests"]`, `state["config"]`, an unlisted `state["database"]` field, or another unrelated state surface must report no projection issue. Assert the projection checker performs no write, subprocess, socket, URL, or SQLite operation.
+
+Add the exact remaining review regressions: a root spelled `alias/../chosen`; forced `os.dup` failure whose exception contains an absolute private path; a same-size in-place file rewrite during a multi-chunk read; structured `password`, `passWord`, `private_key`, `privateKey`, `auth`, `auth_header`, `authHeader`, `authorizationHeader`, `proxyAuthorization`, `cookieHeader`, `set_cookie`, and `setCookie`; `%2Fhome%2Falice%2Fprivate`, `%2FUsers%2Falice%2Fprivate`, `%2Froot%2Fprivate`, and `C%3A%5CUsers%5CAlice%5Cprivate`; `$OLDPWD/script`, `${PWD}/script`, `${INPUT:-/etc/passwd}`, globbing, substitution, redirection, every shell control/metacharacter, `curl`, `wget`, `cargo fetch`, `bun install`, `uv sync`, a URL token, and an unlisted executable; and Markdown `[label](target)` plus `![alt](target)` in every arbitrary rendered field. Diagnostics must never echo the matched value or underlying absolute path.
 
 - [ ] **Step 2: Run tests and verify RED**
 
-Run: `uv run pytest tests/qualification/test_fingerprint.py tests/qualification/test_redaction.py tests/qualification/test_render.py -v`
+Run: `uv run pytest tests/qualification/test_fingerprint.py tests/qualification/test_projections.py tests/qualification/test_redaction.py tests/qualification/test_render.py -v`
 
-Expected: FAIL importing the four Task 3 modules.
+Expected: FAIL importing the five Task 3 modules and both checked-in projections; after the pre-review implementation exists, the added regressions fail specifically on mutable-global staleness, noncanonical root handling, unnormalized `os.dup` failure, same-size mutation, residual structured/encoded secret forms, shell expansion/network commands, and active Markdown links/images.
 
-- [ ] **Step 3: Implement deterministic validation and rendering**
+- [ ] **Step 3: Build closed, source-derived compatibility projections**
+
+`build_projection` reads the current `compatibility/manifest.json` and, only for the database projection, `compatibility/snapshots/state.json`. It requires unique string contract ids and copies the selected contract objects losslessly: no case folding, path rewriting, default insertion, list sorting, value coercion, or omission of a present contract field is allowed. Canonicalization sorts JSON object keys and the selected contract objects by exact `id`, but preserves every source array in its original order so an order change in a relevant field remains a semantic change. Serialize with UTF-8 `json.dumps(..., ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")) + "\n"`.
+
+The MCP projection has exactly these top-level keys and selection rule:
+
+```python
+{
+    "projection_version": 1,
+    "risk": "mcp-transport",
+    "contracts": sorted(
+        full_source_contracts(
+            exact_ids={
+                "cli.script.hieronymus-mcp",
+                "http.route.post.mcp",
+                "http.route.post.api.mcp.operation",
+            },
+            id_prefix="mcp.tool.",
+        ),
+        key=lambda item: item["id"],
+    ),
+}
+```
+
+Require exactly 42 unique entries: the three exact ids and all 39 current `mcp.tool.*` entries. Each entry is the complete selected manifest contract object, including `adr` wherever present and the exact ordered `tests` file list; neither `frontend_test_ownership` nor `test_ownership` is copied. `full_source_contracts` is a private helper that indexes `manifest["contracts"]` by exact id, rejects duplicate/non-string ids or malformed entries, selects the three exact ids plus every prefix match for MCP (or the three exact database ids), deep-copies the complete selected objects, and rejects missing/unexpected selected ids before sorting.
+
+The database projection has exactly these top-level keys and exact state-field allowlist:
+
+```python
+DATABASE_CONTRACT_IDS = (
+    "database.schema.current",
+    "database.migrations.current",
+    "database.upgrade.preflight",
+)
+DATABASE_STATE_FIELDS = (
+    "application_migration_ledgers",
+    "columns",
+    "fixture",
+    "foreign_keys",
+    "indexes",
+    "migration_sources",
+    "object_contracts",
+    "representative_rows",
+    "row_counts",
+    "tables",
+    "triggers",
+    "variants",
+)
+{
+    "projection_version": 1,
+    "risk": "legacy-database-import",
+    "contracts": sorted(full_source_contracts(DATABASE_CONTRACT_IDS), key=id_key),
+    "database": {name: state["database"][name] for name in DATABASE_STATE_FIELDS},
+}
+```
+
+Require the database source object to contain all 12 consumed fields with their source values unchanged. The checked-in projection's `database` object has exactly those 12 keys, but additional unlisted fields in source `state["database"]` are irrelevant and ignored. Task 17 must consume every projected field, including `object_contracts` ownership mapping, fixture identity, inventories, row counts/representative rows, migration sources/ledger, and variants. Do not copy `data_root`, `owned_paths`, `state["tests"]`, configuration, distribution, integrations, or any other state surface.
+
+`projection_issues(repo_root)` rebuilds both expected projections in memory, validates the checked-in documents' exact closed shapes and canonical bytes, and returns a dict in MCP/database order. A relevant source field change or checked-in byte drift yields a fixed risk-prefixed issue; unrelated source changes yield no issue. All parse, type, missing-file, duplicate-id, and I/O failures become deterministic messages without source values or absolute paths. It never writes. The `--write` branch is separate, Task 3-only generation using atomic replacements after both documents validate.
+
+- [ ] **Step 4: Implement exact risk policies and descriptor-stable fingerprints**
 
 Use this exact common fingerprint set in `fingerprint.py`:
 
@@ -928,6 +1045,7 @@ COMMON_FINGERPRINT_INPUTS = (
     "qualification/rust-toolchain.toml",
     "tools/qualification/model.py",
     "tools/qualification/fingerprint.py",
+    "tools/qualification/projections.py",
     "tools/qualification/redaction.py",
     "tools/qualification/validate.py",
     "tools/qualification/render.py",
@@ -937,26 +1055,52 @@ COMMON_FINGERPRINT_INPUTS = (
 )
 ```
 
-Validation requires every Task 2 criterion exactly once, exact decision/consequence, `COMMON_FINGERPRINT_INPUTS`, a nonempty ordered relative command list, all cleanup booleans except `user_data_opened` true, and `user_data_opened` false. Task 3 updates `make_record` to compute its digest through `fingerprint_inputs`; the tests seed every future common path in a temporary root, so this task remains executable before Tasks 4–5 create those real files. Each runner appends its runner, Cargo manifest/lock/source/tests, and every concrete fixture: MCP/frontend both include the full HTTP route-cases file; MCP additionally includes `compatibility/manifest.json`, `compatibility/authorities/mcp/2026-07-28/schema.json`, `compatibility/authorities/mcp/2026-07-28/schema.source.json`, `compatibility/snapshots/mcp.json`, the corrected protocol fixture, and every tool input/wire fixture. The schema authority is fingerprinted as raw bytes; it is never reserialized. Redaction rejects secrets, headers/cookies, source text, host/user names, and absolute home paths before JSON/Markdown write.
+`required_fingerprint_inputs(risk)` returns one exact literal common-plus-suffix tuple, and validation rejects omission, addition, duplication, or reordering before recomputing the digest. The four policies are:
 
-- [ ] **Step 4: Implement deterministic rendering**
+- MCP, 180 total inputs: the 11 common files; `tools/qualification/run_mcp.py`; `qualification/harnesses/mcp-transport/Cargo.toml`, `Cargo.lock`, `src/main.rs`, `src/registry.rs`, `src/report.rs`, and `tests/transport.rs` (all abbreviated harness entries in this sentence are relative to `qualification/harnesses/mcp-transport/`); `qualification/compatibility/mcp-transport.json`; `compatibility/authorities/mcp/2026-07-28/schema.json` and `schema.source.json`; `compatibility/snapshots/mcp.json`; `compatibility/fixtures/mcp/protocol.json`; `compatibility/fixtures/http/route-cases.json`; and exactly `compatibility/fixtures/mcp/tools/<name>/error.input.json`, `success.input.json`, `wire.error.json`, and `wire.success.json` for each literal tool name whose `mcp.tool.<name>` id is in the verified 39-tool projection. The literal `_MCP_TOOL_NAMES` tuple and projected tool-id set must be equal.
+- Semantic, 28 total inputs: the 11 common files; `tools/qualification/run_semantic.py`; `qualification/harnesses/semantic-native/Cargo.toml`, `Cargo.lock`, `src/lib.rs`, `src/corpus.rs`, `src/model.rs`, `src/index.rs`, `src/main.rs`, `src/scenario.rs`, `src/fts.rs`, `tests/corpus.rs`, `tests/index.rs`, `tests/recovery.rs`, and `tests/fts.rs` (all abbreviated harness entries in this sentence are relative to `qualification/harnesses/semantic-native/`); `qualification/fixtures/semantic-corpus.json`; `compatibility/fixtures/mcp/tools/hieronymus_rag_search/success.input.json`; and `compatibility/fixtures/mcp/tools/hieronymus_recall/success.input.json`.
+- Frontend, 47 total inputs: the 11 common files; `tools/qualification/run_frontend.py`; `qualification/harnesses/frontend-embedding/Cargo.toml`, `Cargo.lock`, `build.rs`, `src/main.rs`, `src/assets.rs`, and `tests/assets.rs` (all abbreviated harness entries in this sentence are relative to `qualification/harnesses/frontend-embedding/`); `frontend/index.html`, `frontend/package.json`, `frontend/bun.lock`, `frontend/tsconfig.json`, and `frontend/vite.config.ts`; the exact 23 paths under `frontend/src/web/`: `App.svelte`, `app.css`, `app.test.ts`, `components/AdminDashboard.svelte`, `components/DreamingEditor.svelte`, `components/IngestEditor.svelte`, `components/MemoryViews.svelte`, `components/MemoryViews.test.ts`, `components/ProviderEditor.svelte`, `components/ReleaseEditor.svelte`, `components/Toast.svelte`, `components/editors.test.ts`, `fonts.css`, `fonts/geist.woff2`, `fonts/inconsolatalgc.woff2`, `fonts/literata.woff2`, `lib/admin-events.svelte.ts`, `lib/api.ts`, `lib/theme.svelte.test.ts`, `lib/theme.svelte.ts`, `lib/types.ts`, `main.ts`, and `test/setup.ts`; plus `compatibility/fixtures/http/route-cases.json`.
+- Database, 26 total inputs: the 11 common files; `tools/qualification/run_database.py`; `qualification/harnesses/legacy-database-import/Cargo.toml`, `Cargo.lock`, `src/main.rs`, `src/classify.rs`, `src/probe_import.rs`, `src/report.rs`, and `tests/fixtures.rs` (all abbreviated harness entries in this sentence are relative to `qualification/harnesses/legacy-database-import/`); `qualification/compatibility/legacy-database-import.json`; and exactly `compatibility/fixtures/database/corrupt.sqlite`, `empty.sqlite`, `legacy-python.sqlite`, `minimal-python.sqlite`, `partial-python.sqlite`, and `unknown-schema.sqlite` (all abbreviated database entries in this sentence are relative to `compatibility/fixtures/database/`).
 
-`render_record` prints title, decision, exact replay commands, environment/dependency tables, one row per required criterion, consumed compatibility ids, input digest, cleanup assertions, and the immutable consequence. It sorts mappings and dependency rows; it never includes raw stdout/stderr.
+The whole mutable `compatibility/manifest.json` and `compatibility/snapshots/state.json` are absent from every risk suffix. Projection files and `projections.py` are covered, while implementation-internal test-node inventory is not. Task 3 updates `make_record` and its seeding helper to create exact policy files and valid projection/source pairs in temporary roots; its default command becomes an exact allowed `tools.qualification.validate` replay command rather than an ad-hoc executable name.
 
-Expose the exact CLIs from the Interfaces block so individual tasks validate/render records before the aggregate checker exists.
+Before opening `/`, `_open_repository_root` requires `os.fspath(repo_root)` to be an already absolute, lexically canonical spelling: `normpath(raw) == raw`, with no `.`, `..`, repeated separator, or non-root trailing separator. It must reject `alias/../chosen` instead of applying `abspath` and silently selecting different bytes. Walk that exact spelling component-by-component with no-follow directory descriptors.
 
-- [ ] **Step 5: Run validation/rendering tests GREEN**
+Normalize every `OSError` from `os.open`, `os.dup`, `os.fstat`, `os.read`, and descriptor cleanup into the existing deterministic `ValueError` boundary; no errno text or absolute path reaches validation or either CLI. Bind each input through the root descriptor, reject hard-link aliases, and compare before/after `st_dev`, `st_ino`, regular-file mode, `st_size`, `st_mtime_ns`, and `st_ctime_ns`, plus bytes read. Any difference reports that the relative input changed while being read, so a same-size in-place multi-chunk rewrite cannot yield a mixed-state digest.
 
-Run: `uv run pytest tests/qualification/test_fingerprint.py tests/qualification/test_redaction.py tests/qualification/test_render.py -v`
+- [ ] **Step 5: Close redaction, replay grammar, and literal Markdown rendering**
 
-Run: `uv run ruff check tools/qualification/fingerprint.py tools/qualification/redaction.py tools/qualification/validate.py tools/qualification/render.py tests/qualification/test_fingerprint.py tests/qualification/test_redaction.py tests/qualification/test_render.py`
+Validation still requires every Task 2 criterion exactly once, exact decision/consequence, exact risk inputs, all cleanup booleans except `user_data_opened` true, and `user_data_opened` false. For MCP/database records it also appends only that risk's `projection_issues(repo_root)` result. Redaction scans strict canonical JSON and completed Markdown through one ordered, non-echoing rule set. Structured secret names include exact snake/camel variants `password`, `pass_word`, `passWord`, `private_key`, `privateKey`, `auth`, `auth_header`, `authHeader`, `authorization`, `authorization_header`, `authorizationHeader`, `proxy_authorization`, `proxyAuthorization`, `cookie`, `cookie_header`, `cookieHeader`, `set_cookie`, and `setCookie`, in addition to the existing provider/token/source/identity names. Scan both raw text and one case-insensitive percent-decoded view for `/home/<user>`, `/Users/<user>`, `/root`, `C:\Users\<user>`, and `C:\Documents and Settings\<user>`; decoding is for detection only and never rewrites evidence.
 
-Expected: all tests and Ruff pass; fixture-byte changes make records stale, forbidden literals fail, and rendering is byte-deterministic.
+`replay_commands_are_safe` accepts only a tuple of unique commands in this closed grammar:
 
-- [ ] **Step 6: Commit validation and rendering**
+1. Tokens are separated by exactly one ASCII space and each token uses only ASCII alphanumerics plus `_`, `-`, `.`, `/`, `:`, `+`, `,`, or `=`. Quotes, backslashes, `%`, `$`, `~`, `*`, `?`, brackets/braces/parentheses, backticks, `!`, `#`, `;`, `&`, `|`, `<`, `>`, controls, substitutions, expansions, globs, and redirections are rejected before parsing.
+2. Leading assignments may appear at most once and only in this order: `HIERONYMUS_QUALIFICATION_LIVE=1`, `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/<exact-risk>`, `CARGO_NET_OFFLINE=true`. No other name/value is valid.
+3. The command body is exactly one of: `uv run [--no-cache] [--no-sync] python [-B] -m tools.qualification.validate|render|check|run|run_mcp|run_semantic|run_frontend|run_database` with that module's documented relative-path/risk/`--write` arguments; `cargo +1.96.0 check|build|test|metadata|tree|fmt|clippy` with only documented flags, canonical relative manifest paths, the fixed target, and both Cargo assignments; or the exact network-isolated frontend form `unshare --user --map-root-user --net -- bun run --cwd frontend build -- --outDir qualification/.artifacts/frontend-dist/current --emptyOutDir`.
+4. Live runner modules require both `HIERONYMUS_QUALIFICATION_LIVE=1` and `CARGO_NET_OFFLINE=true`. URLs/URI schemes and all unlisted programs/subcommands are invalid; this explicitly excludes `curl`, `wget`, `git`, `ssh`, `nc`, `cargo fetch`, `bun install`, `uv sync`, and `tools.qualification.acquire` from recorded offline replay.
+
+`render_record` prints title, decision, exact replay-command table, environment/dependency tables, one row per required criterion, consumed compatibility ids, input digest, cleanup assertions, and immutable consequence; it never includes raw stdout/stderr. One `_literal_markdown` function handles every arbitrary value in tables and bullets. In addition to controls, DEL, ampersand, angle brackets, pipe, backslash, and backtick, it encodes `!`, `[`, `]`, `(`, and `)` as fixed numeric entities so link/image punctuation is always literal and cannot create an active destination. Dependency ordering is total, and the completed Markdown is redaction-scanned before return. `render --check` compares exact `read_bytes()` with UTF-8 rendered bytes.
+
+- [ ] **Step 6: Generate projections, run GREEN, and verify irrelevant inventory stability**
+
+Run: `uv run python -m tools.qualification.projections --write`
+
+Run: `uv run python -m tools.compatibility.inventory_state --write`
+
+Run: `uv run python -m tools.qualification.projections --check`
+
+Run: `uv run pytest tests/qualification/test_fingerprint.py tests/qualification/test_projections.py tests/qualification/test_redaction.py tests/qualification/test_render.py -v`
+
+Run: `uv run ruff check tools/qualification/fingerprint.py tools/qualification/projections.py tools/qualification/redaction.py tools/qualification/validate.py tools/qualification/render.py tests/qualification/test_fingerprint.py tests/qualification/test_projections.py tests/qualification/test_redaction.py tests/qualification/test_render.py`
+
+Expected: all tests and Ruff pass; the two generated projections are canonical/current, relevant source changes fail, unrelated inventory/state changes do not alter projection bytes or record digests, same-size concurrent writes fail, every named secret/encoded-home/shell/network/Markdown case is rejected, and rendering is byte-deterministic.
+
+Run the inventory generator a second time after the final Task 3 node set and require byte-identical global generated artifacts. Then modify only `test_ownership` and `state["tests"]` in a temporary copy, rerun projection checking and MCP/database record validation, and require both to remain current without rewriting either projection.
+
+- [ ] **Step 7: Commit validation, projections, and rendering**
 
 ```bash
-git add tools/qualification/fingerprint.py tools/qualification/redaction.py tools/qualification/validate.py tools/qualification/render.py tests/qualification/factories.py tests/qualification/test_fingerprint.py tests/qualification/test_redaction.py tests/qualification/test_render.py
+git add tools/qualification/fingerprint.py tools/qualification/projections.py tools/qualification/redaction.py tools/qualification/validate.py tools/qualification/render.py qualification/compatibility/mcp-transport.json qualification/compatibility/legacy-database-import.json tests/qualification/factories.py tests/qualification/test_fingerprint.py tests/qualification/test_projections.py tests/qualification/test_redaction.py tests/qualification/test_render.py compatibility/snapshots/state.json compatibility/manifest.json compatibility/fixtures/diagnostics/check-success.txt
 git commit -m "test: validate and render Rust qualification records"
 ```
 
@@ -1408,7 +1552,7 @@ git commit -m "test: prove stateless MCP transport behavior"
 - Create: `docs/qualification/rust/mcp-transport.md`
 
 **Interfaces:**
-- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 1, 6, and 7; `compatibility/authorities/mcp/2026-07-28/schema.json`, its `schema.source.json`, `compatibility/manifest.json`, `compatibility/snapshots/mcp.json`, the corrected protocol/route fixtures, every MCP tool input/wire fixture, and manifest ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and `mcp.tool.*`.
+- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 1, 3, 6, and 7; `qualification/compatibility/mcp-transport.json`; `compatibility/authorities/mcp/2026-07-28/schema.json` and its `schema.source.json`; `compatibility/snapshots/mcp.json`; the corrected protocol/route fixtures; every MCP tool input/wire fixture; and only the projected contract ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and every `mcp.tool.*`. The runner never consumes or fingerprints the whole mutable manifest.
 - Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1` before Cargo execution.
 - Produces private handoff: `_live_process_context(repo_root: Path, work_root: Path, original_env: Mapping[str, str]) -> tuple[ToolRoots, Path, dict[str, str]]`, returning discovered tool roots, `qualification/.artifacts/cargo-target/mcp-transport`, and the sanitized child environment in that order.
 - Produces canonical `qualified` only when all seventeen MCP criteria pass, including `official-schema-envelopes` and `header-mismatch-errors`; otherwise exact Task 2 `blocked` consequence.
@@ -1421,7 +1565,10 @@ def test_mcp_runner_consumes_corrected_oracle(tmp_path: Path) -> None:
     record = run(ROOT, tmp_path, executable=executable)
     assert "compatibility/authorities/mcp/2026-07-28/schema.json" in record.input_paths
     assert "compatibility/authorities/mcp/2026-07-28/schema.source.json" in record.input_paths
-    assert "compatibility/manifest.json" in record.input_paths
+    assert "qualification/compatibility/mcp-transport.json" in record.input_paths
+    assert "tools/qualification/projections.py" in record.input_paths
+    assert "compatibility/manifest.json" not in record.input_paths
+    assert "compatibility/snapshots/state.json" not in record.input_paths
     assert "compatibility/snapshots/mcp.json" in record.input_paths
     assert "compatibility/fixtures/mcp/protocol.json" in record.input_paths
     assert "compatibility/fixtures/http/route-cases.json" in record.input_paths
@@ -1429,6 +1576,7 @@ def test_mcp_runner_consumes_corrected_oracle(tmp_path: Path) -> None:
         REQUIRED_CRITERIA["mcp-transport"]
     )
     assert len(record.evidence) == 17
+    assert projection_issues(ROOT)["mcp-transport"] == ()
 
 
 def test_mcp_failure_preserves_adr_0015(tmp_path: Path) -> None:
@@ -1452,14 +1600,14 @@ Expected: FAIL importing `tools.qualification.run_mcp`; no Cargo command runs.
 
 - [ ] **Step 3: Implement the fake-injectable live runner**
 
-`run_mcp.run_live` copies the caller-supplied `original_env`, calls `discover_tool_roots` before any HOME/XDG rewrite, derives the exact MCP Cargo target path, and calls `safe_subprocess_env(work_root, cargo_offline=True, tool_roots=tool_roots, cargo_target_dir=cargo_target_dir)`. The module CLI supplies `dict(os.environ)` to `run_live`. `run_mcp.run` first calls Task 1's offline `authority_issues` and validates every candidate/fixture success or protocol error through `definition_issues`; it never accepts a URL or opens the network. It then uses `qualification/.artifacts/work/mcp-transport`, starts each transport with a 20-second ready/response timeout, replays every target transport case, compares tool lists by canonical JSON digest after explicitly mapping wire `inputSchema` to snapshot internal `input_schema`, compares one success and one error tool call across transports, verifies `/api/mcp/fixture` is absent, and gathers locked dependencies with:
+`run_mcp.run_live` copies the caller-supplied `original_env`, calls `discover_tool_roots` before any HOME/XDG rewrite, derives the exact MCP Cargo target path, and calls `safe_subprocess_env(work_root, cargo_offline=True, tool_roots=tool_roots, cargo_target_dir=cargo_target_dir)`. The module CLI supplies `dict(os.environ)` to `run_live`. `run_mcp.run` first requires `projection_issues(repo_root)["mcp-transport"] == ()`, loads contract ids/fields only from the verified MCP projection, calls Task 1's offline `authority_issues`, and validates every candidate/fixture success or protocol error through `definition_issues`; it never accepts a URL or opens the network. It then uses `qualification/.artifacts/work/mcp-transport`, starts each transport with a 20-second ready/response timeout, replays every target transport case, compares tool lists by canonical JSON digest after explicitly mapping wire `inputSchema` to snapshot internal `input_schema`, compares one success and one error tool call across transports, verifies `/api/mcp/fixture` is absent, and gathers locked dependencies with:
 
 ```bash
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 metadata --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --format-version 1
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 tree --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked -e features
 ```
 
-Every Cargo argv begins with `str(tool_roots.cargo_invocation)`, never the resolved rustup target or a bare `cargo`. Every Cargo and MCP harness child goes through `run_owned_process` with the same sanitized environment and risk-specific target. The runner deletes ready files/logs/target output in `finally`, verifies all compatibility inputs are byte-identical, and records the corrected oracle commit/digest. The digest includes raw schema bytes, pin metadata, manifest, MCP snapshot, protocol, route cases, and every tool fixture. It requires exact `cacheScope`, `ttlMs`, `resultType`, `inputSchema`, configured serverInfo omission, two success/eleven failure ids, all seven `-32020` bodies, the one coherent `-32022` body/data, and the exact raw-leaf mutation invariant. It compares exact route-case status/body digests and never claims generic Host/auth routing beyond the frozen `POST /mcp` cases. It records Cargo/Rust versions and basenames only; no `ToolRoots` path enters JSON, Markdown, or raw-log output.
+Every Cargo argv begins with `str(tool_roots.cargo_invocation)`, never the resolved rustup target or a bare `cargo`. Every Cargo and MCP harness child goes through `run_owned_process` with the same sanitized environment and risk-specific target. The runner deletes ready files/logs/target output in `finally`, verifies all immutable compatibility inputs are byte-identical, and records the corrected oracle commit/digest. The digest includes `projections.py`, the canonical MCP projection, raw schema bytes, pin metadata, MCP snapshot, protocol, route cases, and every tool fixture; it excludes the whole mutable manifest/state sources. It requires the projection's exact 42 contract ids/fields, exact `cacheScope`, `ttlMs`, `resultType`, `inputSchema`, configured serverInfo omission, two success/eleven failure ids, all seven `-32020` bodies, the one coherent `-32022` body/data, and the exact raw-leaf mutation invariant. It compares exact route-case status/body digests and never claims generic Host/auth routing beyond the frozen `POST /mcp` cases. It records Cargo/Rust versions and basenames only; no `ToolRoots` path enters JSON, Markdown, or raw-log output.
 
 Run: `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write`
 
@@ -1475,7 +1623,7 @@ Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO
 
 Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu -- -D warnings`
 
-Expected: tests, Ruff, rustfmt, and Clippy pass; record validation reports all seventeen criteria, no official-schema error, stale authority/input, secret, or path leak.
+Expected: tests, Ruff, rustfmt, and Clippy pass; record validation reports all seventeen criteria, current MCP projection, no official-schema error, stale authority/input, secret, or path leak. A temporary unrelated `test_ownership`/`state["tests"]` regeneration leaves the measured digest unchanged, while changing a projected MCP contract field blocks before record write.
 
 - [ ] **Step 5: Commit the MCP qualification record**
 
@@ -2303,10 +2451,10 @@ git commit -m "test: lock database import qualification candidate"
 - Create: `qualification/harnesses/legacy-database-import/tests/fixtures.rs`
 
 **Interfaces:**
-- Consumes: `compatibility/snapshots/state.json` and exactly the six frozen SQLite files under `compatibility/fixtures/database/`.
-- Produces: `classify_read_only(source: &Path, fixture_root: &Path, state_contract: &Path) -> anyhow::Result<Classification>` and `probe_import(source: &Path, target: &Path, fixture_root: &Path, work_root: &Path, expected: &DatabaseContract) -> anyhow::Result<ProbeReceipt>`.
-- Produces CLI: `legacy-database-import classify --fixture-root compatibility/fixtures/database --source-name <basename> --contract compatibility/snapshots/state.json` and `probe-import ... --work-root <risk-work-root> --target-name <basename>`; arbitrary source/target paths are not accepted.
-- Test helpers in `tests/fixtures.rs`: `expected_cases()` returns `minimal-python.sqlite/supported-python/true`, `legacy-python.sqlite/supported-legacy-python/true`, `empty.sqlite/empty/false`, `partial-python.sqlite/partial-python/false`, `corrupt.sqlite/corrupt/false`, and `unknown-schema.sqlite/unknown-schema/false`; `fixture`, `fixture_root`, and `state_contract` resolve checked-in inputs; `assert_rejected_source` and `assert_rejected_target` invoke the CLI and require exit code `2` before SQLite opens.
+- Consumes: Task 3's verified `qualification/compatibility/legacy-database-import.json` and exactly the six frozen SQLite files under `compatibility/fixtures/database/`. It never reads schema/migration expectations directly from the whole mutable state snapshot.
+- Produces: `classify_read_only(source: &Path, fixture_root: &Path, projection_contract: &Path) -> anyhow::Result<Classification>` and `probe_import(source: &Path, target: &Path, fixture_root: &Path, work_root: &Path, expected: &DatabaseContract) -> anyhow::Result<ProbeReceipt>`.
+- Produces CLI: `legacy-database-import classify --fixture-root compatibility/fixtures/database --source-name <basename> --contract qualification/compatibility/legacy-database-import.json` and `probe-import ... --work-root <risk-work-root> --target-name <basename>`; arbitrary source/target/contract paths are not accepted.
+- Test helpers in `tests/fixtures.rs`: `expected_cases()` returns `minimal-python.sqlite/supported-python/true`, `legacy-python.sqlite/supported-legacy-python/true`, `empty.sqlite/empty/false`, `partial-python.sqlite/partial-python/false`, `corrupt.sqlite/corrupt/false`, and `unknown-schema.sqlite/unknown-schema/false`; `fixture`, `fixture_root`, and `projection_contract` resolve checked-in inputs; `assert_rejected_source`, `assert_rejected_target`, and `assert_rejected_contract` invoke the CLI and require exit code `2` before SQLite opens.
 
 - [ ] **Step 1: Write failing fixture-matrix and path-boundary tests**
 
@@ -2315,7 +2463,7 @@ git commit -m "test: lock database import qualification candidate"
 fn frozen_fixture_matrix_is_read_only() -> anyhow::Result<()> {
     for (name, classification, safe) in expected_cases() {
         let before = sha256(fixture(name))?;
-        let actual = classify_read_only(&fixture(name), &fixture_root(), &state_contract())?;
+        let actual = classify_read_only(&fixture(name), &fixture_root(), &projection_contract())?;
         assert_eq!((actual.name.as_str(), actual.safe_to_convert), (classification, safe));
         assert_eq!(sha256(fixture(name))?, before);
     }
@@ -2323,9 +2471,10 @@ fn frozen_fixture_matrix_is_read_only() -> anyhow::Result<()> {
 }
 
 #[test]
-fn cli_rejects_source_or_target_outside_owned_roots() {
+fn cli_rejects_unowned_source_target_or_contract() {
     assert_rejected_source("../../user.sqlite");
     assert_rejected_target("../../sibling.sqlite");
+    assert_rejected_contract("compatibility/snapshots/state.json");
 }
 ```
 
@@ -2337,7 +2486,7 @@ Expected: FAIL because classification/import and CLI root enforcement do not exi
 
 - [ ] **Step 3: Implement bounded classification and neutral probe import**
 
-Open source fixtures with `SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX`, immediately set `PRAGMA query_only=ON`, and never issue a source transaction or write pragma. Classification uses only integrity result, exact tables/columns/features from `state.json`, application migration-ledger presence, and the frozen variant expectations. It is a qualification classifier, not the production `StateClassifier`.
+Open source fixtures with `SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX`, immediately set `PRAGMA query_only=ON`, and never issue a source transaction or write pragma. Parse the closed Task 3 database projection, require its exact three contract ids and 12-field `database` object, and use every projected field: `object_contracts` maps each expectation to its contract id; `fixture` identifies the current fixture; `tables`, `columns`, `indexes`, `triggers`, `foreign_keys`, `row_counts`, and `representative_rows` define current schema/content checks; `migration_sources` and `application_migration_ledgers` define migration checks; and `variants` defines classification/preflight expectations. No direct fallback to `compatibility/snapshots/state.json` is allowed. It is a qualification classifier, not the production `StateClassifier`.
 
 Canonicalize `fixture_root` and require it equals `repo_root/compatibility/fixtures/database`; accept `source-name` only when it is one of the six frozen basenames and its resolved path is a non-symlink direct child. Canonicalize `work_root` and require it is a non-symlink descendant of `qualification/.artifacts/work/legacy-database-import`; construct `target-name` beneath it and reject separators, `..`, existing symlinks, or any target outside that root.
 
@@ -2364,7 +2513,7 @@ Read typed integers, reals, text, blobs, booleans, JSON, and documented timestam
 
 - [ ] **Step 4: Implement objective FTS, ledger, and byte-identity checks**
 
-For `minimal-python.sqlite`, compare table/column/index/trigger/foreign-key inventories and representative-row digests with `state.json`; run `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, and one exact FTS query for strict terms, memories, concepts, crystals, and RAG chunks. For `legacy-python.sqlite`, require the legacy identity/fingerprint and full typed ledger accounting even when fewer tables are present.
+For `minimal-python.sqlite`, compare table/column/index/trigger/foreign-key inventories, row counts, and representative-row digests with the verified projection; verify its migration-source and application-ledger expectations; run `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, and one exact FTS query for strict terms, memories, concepts, crystals, and RAG chunks. For `legacy-python.sqlite`, require the projected legacy variant identity/fingerprint and full typed ledger accounting even when fewer tables are present.
 
 Before and after every classify/import attempt, hash the source fixture and require equality. Hash every file in the fixture directory to prove no journal, WAL, sibling database, backup, or target appeared next to it. Unsupported/corrupt/partial/empty cases must fail before target creation with their frozen classification. Reports include only classification, counts, schema/object digests, FTS result id digests, ledger outcome counts, error code, and source byte-identity boolean.
 
@@ -2392,7 +2541,7 @@ git commit -m "test: prove read-only database fixture import"
 - Create: `docs/qualification/rust/legacy-database-import.md`
 
 **Interfaces:**
-- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 16–17; `compatibility/snapshots/state.json`; all six frozen database fixtures; and manifest ids `database.schema.current`, `database.migrations.current`, and `database.upgrade.preflight`.
+- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 3 and 16–17; `qualification/compatibility/legacy-database-import.json`; all six frozen database fixtures; and only the projected manifest ids `database.schema.current`, `database.migrations.current`, and `database.upgrade.preflight`. It never consumes or fingerprints the whole mutable manifest/state sources.
 - Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
 - Produces private handoff: `_live_process_context(repo_root: Path, work_root: Path, original_env: Mapping[str, str]) -> tuple[ToolRoots, Path, dict[str, str]]`, returning discovered tool roots, `qualification/.artifacts/cargo-target/legacy-database-import`, and the sanitized child environment in that order.
 - Produces: `qualified` only when every database criterion passes; otherwise exact Task 2 blocking consequence.
@@ -2402,11 +2551,16 @@ git commit -m "test: prove read-only database fixture import"
 ```python
 def test_database_runner_uses_only_frozen_fixture_root(tmp_path: Path) -> None:
     record = run(ROOT, tmp_path, executable=write_fake_executable(tmp_path))
+    assert "qualification/compatibility/legacy-database-import.json" in record.input_paths
+    assert "tools/qualification/projections.py" in record.input_paths
+    assert "compatibility/manifest.json" not in record.input_paths
+    assert "compatibility/snapshots/state.json" not in record.input_paths
     assert all(
         not path.endswith(".sqlite")
         or path.startswith("compatibility/fixtures/database/")
         for path in record.input_paths
     )
+    assert projection_issues(ROOT)["legacy-database-import"] == ()
 
 
 def test_database_failure_preserves_data_disposition(tmp_path: Path) -> None:
@@ -2430,7 +2584,7 @@ Expected: FAIL importing `tools.qualification.run_database`; no Rust process run
 
 - [ ] **Step 3: Implement the bounded runner and write the live record**
 
-`run_database.run_live` copies the caller-supplied `original_env`, calls `discover_tool_roots` before any sanitization, then passes the returned object and exact database Cargo target to `safe_subprocess_env`; its module CLI supplies `dict(os.environ)`. The runner passes the exact frozen fixture root and a risk work root to Task 17's CLI, never an arbitrary source/target path. Every Cargo argv begins with `str(tool_roots.cargo_invocation)`, and every Cargo, SQLite harness, and inspection child uses `run_owned_process` with the same sanitized environment and risk-specific target. It hashes every fixture/input before and after, removes target databases/traces/Cargo target in `finally`, and records only classifications/counts/digests/error codes; no absolute tool-root or invocation path is serialized.
+`run_database.run_live` copies the caller-supplied `original_env`, calls `discover_tool_roots` before any sanitization, then passes the returned object and exact database Cargo target to `safe_subprocess_env`; its module CLI supplies `dict(os.environ)`. Before any Cargo or SQLite child, the runner requires `projection_issues(repo_root)["legacy-database-import"] == ()`, loads exact contract ids from that projection, and passes only the exact frozen fixture root, verified projection path, and risk work root to Task 17's CLI—never an arbitrary source/target/contract path. Every Cargo argv begins with `str(tool_roots.cargo_invocation)`, and every Cargo, SQLite harness, and inspection child uses `run_owned_process` with the same sanitized environment and risk-specific target. It hashes every immutable fixture/input before and after, removes target databases/traces/Cargo target in `finally`, and records only classifications/counts/digests/error codes; no absolute tool-root or invocation path is serialized. The record digest includes `projections.py`, the canonical database projection, harness/runner files, and six fixtures, and excludes the whole mutable manifest/state sources.
 
 Run: `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_database --write`
 
@@ -2444,7 +2598,7 @@ Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-imp
 
 Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings`
 
-Expected: all checks pass; record validation proves exact fixture/manifest ownership, complete criteria, accepted consequence, and source-byte identity.
+Expected: all checks pass; record validation proves the exact current database projection, fixture/contract ownership, complete criteria, accepted consequence, and source-byte identity. A temporary unrelated `test_ownership`/`state["tests"]` regeneration leaves the measured digest unchanged, while changing any selected contract or projected database field blocks before record write.
 
 - [ ] **Step 4: Commit the database qualification record**
 
@@ -2467,10 +2621,10 @@ git commit -m "test: qualify legacy database import"
 - Create: `qualification/schemas/gate.schema.json`
 
 **Interfaces:**
-- Consumes: all four canonical records, their rendered Markdown, schemas, prerequisites, harness sources/lockfiles, and frozen input fingerprints.
+- Consumes: all four canonical records, their rendered Markdown, schemas, prerequisites, harness sources/lockfiles, frozen input fingerprints, both Task 3 compatibility projections, and `projection_issues` for read-only comparison with current mutable manifest/state sources.
 - Produces: `run_one_live(risk: Risk, repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` and opt-in CLI `python -m tools.qualification.run <risk|all> --write`; the CLI snapshots `dict(os.environ)` once before dispatch and never sanitizes or serializes that mapping itself.
-- Produces: `compute_gate(records: Mapping[Risk, QualificationRecord]) -> GateRecord`.
-- Produces: `validation_and_review_issues(records: Mapping[Risk, QualificationRecord]) -> dict[Risk, tuple[str, ...]]` and `record_digests(records: Mapping[Risk, QualificationRecord]) -> dict[Risk, str]`.
+- Produces: `compute_gate(records: Mapping[Risk, QualificationRecord], repo_root: Path) -> GateRecord`.
+- Produces: `validation_and_review_issues(records: Mapping[Risk, QualificationRecord], repo_root: Path) -> dict[Risk, tuple[str, ...]]` and `record_digests(records: Mapping[Risk, QualificationRecord]) -> dict[Risk, str]`.
 - Produces: CLI `python -m tools.qualification.check [--record <risk>] [--records-only] [--require-qualified]`.
 - Produces: canonical aggregate JSON and generated `docs/qualification/rust/gate.md`.
 
@@ -2478,14 +2632,14 @@ git commit -m "test: qualify legacy database import"
 
 ```python
 def test_all_pass_enables_semantic() -> None:
-    gate = compute_gate(accepted_records(ROOT, semantic="semantic-enabled"))
+    gate = compute_gate(accepted_records(ROOT, semantic="semantic-enabled"), ROOT)
     assert gate.status == "qualified"
     assert gate.release_mode == "semantic-enabled"
     assert gate.blocked_plans == ()
 
 
 def test_semantic_failure_selects_fts_only_and_still_qualifies() -> None:
-    gate = compute_gate(accepted_records(ROOT, semantic="fts-only"))
+    gate = compute_gate(accepted_records(ROOT, semantic="fts-only"), ROOT)
     assert gate.status == "qualified"
     assert gate.release_mode == "fts-only"
     assert gate.blocked_plans == ()
@@ -2504,7 +2658,7 @@ def test_non_semantic_failure_blocks_without_changing_specs(
 ) -> None:
     records = accepted_records(ROOT, semantic="semantic-enabled")
     records[risk] = accepted_failure(ROOT, risk)
-    gate = compute_gate(records)
+    gate = compute_gate(records, ROOT)
     assert gate.status == "blocked"
     assert "rust-workspace-and-contract-harness" in gate.blocked_plans
     assert blocked_plan in gate.blocked_plans
@@ -2513,7 +2667,7 @@ def test_non_semantic_failure_blocks_without_changing_specs(
 def test_pending_review_is_blocking() -> None:
     pending = accepted_records(ROOT, semantic="fts-only")
     pending["mcp-transport"] = pending_review(pending["mcp-transport"])
-    assert compute_gate(pending).status == "blocked"
+    assert compute_gate(pending, ROOT).status == "blocked"
 
 
 def test_stale_input_is_blocking() -> None:
@@ -2521,7 +2675,7 @@ def test_stale_input_is_blocking() -> None:
     stale["frontend-embedding"] = replace(
         stale["frontend-embedding"], input_digest="0" * 64
     )
-    assert compute_gate(stale).status == "blocked"
+    assert compute_gate(stale, ROOT).status == "blocked"
 
 
 def test_records_only_check_never_invokes_live_runners(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2529,7 +2683,23 @@ def test_records_only_check_never_invokes_live_runners(monkeypatch: pytest.Monke
     monkeypatch.setattr("subprocess.run", fail_if_called)
     result = invoke_check("--records-only")
     assert result.exit_code == 0
+
+
+def test_unrelated_global_inventory_regeneration_keeps_measured_records_current(
+    temp_repository: Path,
+) -> None:
+    seed_accepted_records_and_projections(temp_repository)
+    append_unrelated_test_ownership(temp_repository)
+    append_unrelated_state_test_node(temp_repository)
+    before = load_record_digests(temp_repository)
+    result = invoke_check("--records-only", cwd=temp_repository)
+    assert result.exit_code == 0
+    assert load_record_digests(temp_repository) == before
 ```
+
+Define these private `test_gate.py` helpers over the existing temporary-repository/factory support: `seed_accepted_records_and_projections` writes the production-built canonical projections and four accepted records/Markdown/aggregate; the two append helpers modify only their named unrelated arrays with canonical JSON; and `load_record_digests` loads the four records and returns only their stored `input_digest` values. They must reuse Task 3 and Task 19 production serializers rather than duplicate them.
+
+Add the paired failure test: mutate one selected MCP contract and one projected database state field in separate cases; `--records-only` must report the appropriate projection drift and block without rewriting the projection, risk record, Markdown, or aggregate.
 
 Add `test_dispatcher_passes_original_environment_to_runner`: install one fake `LiveRunner`, call `run_one_live` with a sentinel mapping containing the live flag, and assert the fake receives the identical mapping as keyword-only `original_env` and a risk-specific work root. This test invokes neither discovery nor sanitization.
 
@@ -2616,8 +2786,11 @@ class GateRecord:
     acceptance_owner: str
 
 
-def compute_gate(records: Mapping[Risk, QualificationRecord]) -> GateRecord:
-    risk_issues = validation_and_review_issues(records)
+def compute_gate(
+    records: Mapping[Risk, QualificationRecord],
+    repo_root: Path,
+) -> GateRecord:
+    risk_issues = validation_and_review_issues(records, repo_root)
     issues = tuple(
         sorted(
             f"{risk}: {issue}"
@@ -2655,11 +2828,11 @@ def compute_gate(records: Mapping[Risk, QualificationRecord]) -> GateRecord:
     )
 ```
 
-`validation_and_review_issues` treats missing/extra risk, schema error, stale input digest, Markdown drift, redaction failure, incomplete evidence, consequence mismatch, `review.status != "accepted"`, or false review assertions as blocking. A reviewed semantic `fts-only` record is not an issue.
+`validation_and_review_issues` first calls `projection_issues(repo_root)` once and attaches MCP/database projection findings only to their matching risks. It treats relevant projection drift, missing/extra risk, schema error, stale immutable input digest, Markdown drift, redaction failure, incomplete evidence, consequence mismatch, `review.status != "accepted"`, or false review assertions as blocking. Unrelated global manifest/state fields are outside the projections and are not staleness. A reviewed semantic `fts-only` record is not an issue.
 
 - [ ] **Step 5: Implement network-free drift validation and initial aggregate rendering**
 
-`check` loads schemas and records, recomputes every input fingerprint, validates redaction/review/consequence rules, regenerates four Markdown strings in memory, computes the gate, and compares canonical JSON/Markdown bytes. It imports no runner module in `--records-only` mode and opens no subprocess, socket, SQLite connection, Cargo cache, model, or frontend bundle; SQLite fixture files are read only as bytes for SHA-256.
+`check` loads schemas and records, rebuilds both compatibility projections in memory from only their selected source subtrees, compares them with checked-in canonical bytes, recomputes every immutable input fingerprint, validates redaction/review/consequence rules, regenerates four Markdown strings in memory, computes the gate, and compares canonical JSON/Markdown bytes. It imports no runner module in `--records-only` mode, performs no writes, and opens no subprocess, socket, SQLite connection, Cargo cache, model, or frontend bundle; SQLite fixture files are read only as bytes for SHA-256. Global ownership files may have later unrelated inventory bytes, but selected projection equality and record digests remain current.
 
 `--record semantic-native` validates one risk but does not claim aggregate qualification. `--records-only` exits `0` for an internally consistent blocked gate. `--require-qualified` exits `1` and prints sorted issue/blocked-plan ids unless the gate is exactly `qualified`; when qualified, it prints exactly one of:
 
@@ -2676,7 +2849,7 @@ Run: `uv run pytest tests/qualification/test_run.py tests/qualification/test_gat
 
 Run: `uv run ruff check tools/qualification/run.py tools/qualification/check.py tests/qualification/test_run.py tests/qualification/test_gate.py`
 
-Expected: PASS; `--records-only` cannot invoke a live runner or network/subprocess primitive, and the aggregate truth table distinguishes reviewed `fts-only` from missing/unreviewed semantic evidence.
+Expected: PASS; `--records-only` cannot invoke a live runner or network/subprocess primitive, verifies both projections current, ignores unrelated generated ownership inventory changes, blocks relevant projection changes, and distinguishes reviewed `fts-only` from missing/unreviewed semantic evidence.
 
 ```bash
 git add tools/qualification/run.py tools/qualification/check.py tests/qualification/test_run.py tests/qualification/test_gate.py qualification/schemas/gate.schema.json qualification/records/aggregate.json docs/qualification/rust/gate.md
@@ -2702,13 +2875,13 @@ git commit -m "test: compute Rust qualification gate"
 - Regenerate: `docs/qualification/rust/gate.md`
 
 **Interfaces:**
-- Consumes: Task 19's checker/gate plus the four immutable measured records from Tasks 8, 12, 15, and 18.
+- Consumes: Task 19's checker/gate, Task 3's read-only projection validation, and the four immutable measured records from Tasks 8, 12, 15, and 18. Later unrelated regeneration of global manifest/state ownership sources is permitted and does not require rerunning a live measurement.
 - Produces: `review_record(record: QualificationRecord, *, owner: str, status: Literal["accepted", "rejected"], objective_evidence_reviewed: bool, normative_constraints_preserved: bool) -> QualificationRecord`; this function may change only `review`.
 - Produces CLI: `python -m tools.qualification.review <risk> --status <accepted|rejected> --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed <true|false> --normative-constraints-preserved <true|false>`; it rewrites one review block and regenerates that Markdown plus the aggregate JSON/Markdown with atomic per-file replacement.
 
 - [ ] **Step 1: Write failing review-transition and regeneration tests**
 
-Test that acceptance is rejected unless the owner is exact and both assertions are true; rejection preserves whichever assertion is false. Snapshot every non-review JSON path before and after `review_record` and require equality. Exercise the CLI in a temporary repository, require atomic per-file replacement of exactly one risk JSON/Markdown plus aggregate JSON/Markdown, and prove a rejected or partially reviewed record leaves the aggregate blocked.
+Test that acceptance is rejected unless the owner is exact and both assertions are true; rejection preserves whichever assertion is false. Snapshot every non-review JSON path before and after `review_record` and require equality. Exercise the CLI in a temporary repository, require atomic per-file replacement of exactly one risk JSON/Markdown plus aggregate JSON/Markdown, and prove a rejected or partially reviewed record leaves the aggregate blocked. After seeding valid measured records/projections, mutate only unrelated manifest `test_ownership` and state `tests` inventory and prove MCP/database review still succeeds without changing their input digests. In paired cases, mutate a selected MCP contract or projected database field and prove review refuses before any replacement.
 
 Run: `uv run pytest tests/qualification/test_review.py -v`
 
@@ -2742,7 +2915,7 @@ If either assertion is false, select `status="rejected"` and keep the false asse
 
 - [ ] **Step 3: Implement the review-only transition and atomic regeneration**
 
-`review_record` first validates the measured record and exact owner, then copies only the `Review` dataclass. It accepts only with both assertions true; it rejects when either is false. The CLI refuses `pending`, refuses any stale/malformed record, stages the reviewed risk JSON/Markdown plus aggregate JSON/Markdown in their own directories, validates all four replacement files in memory, and calls `os.replace` for each file only after every byte is valid. A crash between replacements leaves detectable drift and rerunning the same command converges to the same bytes. It never imports a live runner or changes evidence, decisions, consequences, commands, fingerprints, or measurements.
+`review_record` first validates the immutable measured record and exact owner, then copies only the `Review` dataclass. The CLI also requires the appropriate projection current through Task 19's single validation path. It accepts only with both assertions true; it rejects when either is false. It refuses `pending`, malformed records, stale immutable input digests, and relevant projection drift, but does not treat unrelated later global inventory bytes as staleness. It stages the reviewed risk JSON/Markdown plus aggregate JSON/Markdown in their own directories, validates all four replacement files in memory, and calls `os.replace` for each file only after every byte is valid. A crash between replacements leaves detectable drift and rerunning the same command converges to the same bytes. It never imports a live runner or changes evidence, decisions, consequences, commands, fingerprints, or measurements. If a relevant source contract/state field changes, Task 3 must regenerate its projection and the owning Task 8 or 18 live harness must create a new measured record before review; Task 20 cannot refresh that digest.
 
 For each rejected record, use its exact risk-specific command below after implementation; both assertions remain conservatively false and no claim of partial acceptance is made:
 
@@ -2772,7 +2945,7 @@ Run: `uv run python -m tools.qualification.check --records-only`
 
 Run: `uv run ruff check tools/qualification/review.py tests/qualification/test_review.py`
 
-Expected: review tests pass; record validation exits `0` for either a consistent qualified or consistent blocked gate; non-review record paths are byte-equivalent to the Task 19 inputs.
+Expected: review tests pass; record validation exits `0` for either a consistent qualified or consistent blocked gate; unrelated global ownership regeneration is accepted; relevant projection drift is rejected; and every non-review record path is byte-equivalent to its immutable measured Task 8, 12, 15, or 18 input.
 
 ```bash
 git add tools/qualification/review.py tests/qualification/test_review.py qualification/records docs/qualification/rust
@@ -2835,6 +3008,7 @@ uv run python -m tools.qualification.review frontend-embedding --status accepted
 uv run python -m tools.qualification.review legacy-database-import --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
 
 # Ordinary network-free validation
+uv run --no-cache --no-sync python -B -m tools.qualification.projections --check
 uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only
 
 # Required before any dependent Rust implementation plan
@@ -2854,6 +3028,7 @@ Append this step to the existing Python PR job in `.github/workflows/pr.yml` wit
     HIERONYMUS_QUALIFICATION_LIVE: "0"
   run: |
     uv run --no-cache --no-sync pytest tests/qualification
+    uv run --no-cache --no-sync python -B -m tools.qualification.projections --check
     uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only
 ```
 
@@ -2923,7 +3098,7 @@ Expected: exit `0`; the frozen compatibility boundary has not drifted.
 
 Run: `uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only`
 
-Expected: exit `0`; records, fingerprints, redaction, reviews, Markdown, and checked-in aggregate gate are internally consistent without network access.
+Expected: exit `0`; both compatibility projections are current, and records, immutable fingerprints, redaction, reviews, Markdown, and checked-in aggregate gate are internally consistent without network access. Unrelated later global ownership inventory bytes do not require live remeasurement.
 
 Run: `uv run --no-cache --no-sync python -B -m tools.qualification.check --require-qualified`
 
@@ -2960,13 +3135,14 @@ git commit -m "ci: verify Rust qualification records"
 
 ## Self-Review Record
 
-- Spec coverage: Task 1 pins the byte-exact official Draft 2020-12 schema, corrects and separately commits valid stateless tools/list/tools/call envelopes, explicitly configures serverInfo omission, and distinguishes seven HeaderMismatch cases from one coherent unsupported-version case while preserving method-aware name applicability. Tasks 2–5 establish the record, validation, acquisition, cargo-shim-preserving discovery, and bounded-process foundations. Tasks 6–8 qualify all seventeen MCP criteria: exact metadata/headers/required list fields/wire key/transports/registry/error parity, configured response metadata, schema-pinned offline validation, and private-bridge absence. Tasks 9–12 own actual ANN creation, checked pre-filter plan/cardinality proof, SQLite-durable recovery/no-write-transaction-native-I/O proof, strengthened FTS, and FTS-only selection. Tasks 13–15 own manifest-correct Svelte embedding and traced runtime independence without claiming HTTP security ownership. Tasks 16–18 own frozen-root database classification/import, typed accounting, FTS/ledger proof, fail-closed behavior, and source immutability. Tasks 19–21 own the aggregate gate, named-owner review/regeneration, reproducibility commands, and pinned CI.
+- Spec coverage: Task 1 pins the byte-exact official Draft 2020-12 schema, corrects and separately commits valid stateless tools/list/tools/call envelopes, explicitly configures serverInfo omission, and distinguishes seven HeaderMismatch cases from one coherent unsupported-version case while preserving method-aware name applicability. Tasks 2–5 establish the record, immutable risk-specific compatibility projections, validation, acquisition, cargo-shim-preserving discovery, and bounded-process foundations. Tasks 6–8 qualify all seventeen MCP criteria against the current verified 42-contract projection: exact metadata/headers/required list fields/wire key/transports/registry/error parity, configured response metadata, schema-pinned offline validation, and private-bridge absence. Tasks 9–12 own actual ANN creation, checked pre-filter plan/cardinality proof, SQLite-durable recovery/no-write-transaction-native-I/O proof, strengthened FTS, and FTS-only selection. Tasks 13–15 own manifest-correct Svelte embedding and traced runtime independence without claiming HTTP security ownership. Tasks 16–18 consume the verified three-contract/12-state-field database projection and own frozen-root classification/import, typed accounting, FTS/ledger proof, fail-closed behavior, and source immutability. Tasks 19–21 own projection-current validation, the aggregate gate, named-owner review/regeneration, reproducibility commands, and pinned CI.
 - Normative consequence coverage: semantic failure has exactly one accepted non-blocking result, `fts-only`; MCP/frontend/database failure blocks named dependent plans and never edits fixtures or specifications to turn a failure into a pass.
 - Network coverage: Task 1 alone retrieves the commit-pinned official schema once and verifies exact raw bytes; its tests, compatibility gate, Task 8 runner, and qualification gate use only the checked-in authority. Other acquisition commands are named and checksum/frozen-lock constrained; Hugging Face redirects include the observed exact CDN host under hop validation; Bun replay uses an isolated network namespace rather than a nonexistent offline-install flag; ordinary pytest uses only bounded fake child executables, while record checks use no subprocess, socket, Rust/native cache, or network. The one real Cargo environment smoke is explicitly live-gated.
-- Sensitive-data coverage: inputs are synthetic/frozen, work roots are bounded, reports contain only digests/counts/basenames, source database bytes are verified unchanged, and canonical records reject secrets, user paths, row text, raw headers, and logs.
+- Sensitive-data coverage: inputs are synthetic/frozen, work roots are bounded, reports contain only digests/counts/basenames, source database bytes are verified unchanged, and canonical JSON plus completed Markdown reject snake/camel password/private-key/auth/cookie fields, provider/token/source identities, raw and percent-encoded home paths, row text, raw headers, and logs without echoing values.
 - Cleanup coverage: all transient output and every Cargo target are under one ignored exact root; core dumps are disabled; owned process groups are reaped; cleanup targets are enumerated/tested; model/runtime removal needs a separate flag; and no recursive operation can target the repository, home, translation workspace, or user data.
-- Ownership coverage: Task 1 owns the schema authority/module plus two implementation-internal test nodes and regenerates their state-snapshot/manifest/diagnostic ownership without adding public contract ids. Tasks 2–5 split common model, validation/rendering, acquisition, and process/cleanup ownership; Task 9 alone extends acquisition inputs; every risk is split into separately committed manifest/build, behavior/recovery, and runner/evidence reviews; Tasks 19–21 separately own gate computation, review regeneration, and workflows.
-- Type/signature consistency: Task 1's four allowed schema-definition names match every Task 7/8 validation call, internal `input_schema` is mapped only at the explicit target-wire boundary, and the MCP record has exactly seventeen named criteria. Fake-injected `run(..., executable: Path)` and guarded `run_live(..., original_env: Mapping[str, str])` are distinct for all four runners; every live context returns Task 5's exact `ToolRoots`, target, and safe environment; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 19 passes one unsanitized environment snapshot only to `run_live` and its records-only path imports no runner; Task 20 can replace only `Review`.
+- Ownership coverage: Task 1 owns the schema authority/module plus two implementation-internal test nodes and regenerates their state-snapshot/manifest/diagnostic ownership without adding public contract ids. Task 3 alone owns `projections.py` and both checked-in projections; ledger-required later global inventory regeneration may not rewrite them for unrelated changes. Tasks 2–5 otherwise split common model, validation/rendering, acquisition, and process/cleanup ownership; Task 9 alone extends acquisition inputs; every risk is split into separately committed manifest/build, behavior/recovery, and runner/evidence reviews; Tasks 19–21 separately own gate computation, review regeneration, and workflows.
+- Projection/staleness coverage: MCP and database records fingerprint their immutable projections and builder/validation code, never whole mutable ownership sources. Tasks 8/18 validate the appropriate projection before measurement, Task 19 validates both on every gate check, and Task 20 may review unchanged measured records after unrelated global inventory regeneration. A relevant selected source change blocks, requires projection regeneration, changes that risk's digest, and therefore requires a new owning live measurement.
+- Type/signature consistency: Task 1's four allowed schema-definition names match every Task 7/8 validation call, internal `input_schema` is mapped only at the explicit target-wire boundary, and the MCP record has exactly seventeen named criteria. `projection_issues(repo_root)` returns exact MCP/database keys consumed consistently by validation and Tasks 8, 18, 19, and 20. Fake-injected `run(..., executable: Path)` and guarded `run_live(..., original_env: Mapping[str, str])` are distinct for all four runners; every live context returns Task 5's exact `ToolRoots`, target, and safe environment; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 19 passes one unsanitized environment snapshot only to `run_live` and its records-only path imports no runner; Task 20 can replace only `Review`.
 - Production-scope check: the file map contains no production Rust workspace or crate path, and no task changes Python runtime behavior or starts a dependent implementation plan.
 
 Before accepting this plan, run:
@@ -2995,18 +3171,51 @@ for required in (
     '"configured": "omit"',
     "assert len(failures) == 11",
     "assert len(record.evidence) == 17",
+    "qualification/compatibility/mcp-transport.json",
+    "qualification/compatibility/legacy-database-import.json",
+    "tools/qualification/projections.py",
+    "projection_issues(repo_root",
+    '"application_migration_ledgers"',
+    '"variants"',
+    "st_mtime_ns",
+    "st_ctime_ns",
+    "authorizationHeader",
+    "privateKey",
+    "%2Fhome%2Falice%2Fprivate",
+    "${INPUT:-/etc/passwd}",
+    "![alt](target)",
 ):
     assert required in text, required
 assert 'tool["input_schema"]\n        for tool in target' not in text
+assert not re.search(
+    r'^\s*assert "compatibility/manifest\.json" in record\.input_paths\s*$',
+    text,
+    re.MULTILINE,
+)
+assert not re.search(
+    r'^\s*assert "compatibility/snapshots/state\.json" in record\.input_paths\s*$',
+    text,
+    re.MULTILINE,
+)
+for line_number, line in enumerate(text.splitlines(), start=1):
+    if not re.search(
+        r"compatibility/(?:manifest\.json|snapshots/state\.json)", line
+    ) or not re.search(r"fingerprint|input_paths|digest includes", line, re.I):
+        continue
+    assert re.search(
+        r"never|neither|not in|absent|exclude|mutable|source|projection",
+        line,
+        re.I,
+    ), (line_number, line)
 PY
 git diff --check -- docs/superpowers/plans/2026-09-01-rust-qualification.md
 git diff -- docs/superpowers/plans/2026-09-01-rust-qualification.md
-test "$(git diff --name-only -- docs/superpowers/plans/2026-09-01-rust-qualification.md)" = "docs/superpowers/plans/2026-09-01-rust-qualification.md"
+test "$(git diff --name-only)" = "docs/superpowers/plans/2026-09-01-rust-qualification.md"
 git status --short
 ```
 
-Expected: the red-flag scan prints nothing; tasks remain exactly 1–21; task references, fences, action pins, official schema pin, exact list fields/wire key, error codes/case counts, configured serverInfo omission, and seventeen-criterion handoff pass; diff check passes; the changed-files audit contains only this plan. If a pre-existing unrelated change exists, use the path-scoped diff/status audit instead and leave it unstaged and untouched.
+Expected: the red-flag scan prints nothing; tasks remain exactly 1–21; task references, fences, action pins, official schema pin, exact list fields/wire key, error codes/case counts, configured serverInfo omission, projection paths/API/state fields, residual review regressions, and seventeen-criterion handoff pass; no positive whole-manifest/state fingerprint statement remains; diff check passes; and the changed-files audit contains only this plan. If a pre-existing unrelated change exists, use the path-scoped diff/status audit instead and leave it unstaged and untouched.
 
 ## Execution Handoff
 
-Execute Tasks 1–21 only through the required sub-skill named in the header. Task 1's corrected compatibility commit—including the exact schema pin, valid response wire objects, configured serverInfo omission, and corrected HeaderMismatch/unsupported-version split—is a hard prerequisite and must pass independent review before candidate qualification. Tasks 7–8 consume but never rewrite that authority. After Task 21, a qualified aggregate permits the separate Rust workspace/contract-harness plan; a blocked aggregate is the durable stage result and requires a new candidate qualification run or an ADR-backed specification change before dependent planning.
+Execute Tasks 1–21 only through the required sub-skill named in the header. Task 1's corrected compatibility commit—including the exact schema pin, valid response wire objects, configured serverInfo omission, and corrected HeaderMismatch/unsupported-version split—is a hard prerequisite and must pass independent review before candidate qualification. Task 3 then creates the two immutable risk projections; Tasks 7–8 consume but never rewrite the MCP authority, Tasks 8/18 validate and fingerprint only their appropriate projection, and Tasks 19–20 enforce projection currency without treating unrelated global inventory regeneration as measured-record staleness. After Task 21, a qualified aggregate permits the separate Rust workspace/contract-harness plan; a blocked aggregate is the durable stage result and requires a new candidate qualification run or an ADR-backed specification change before dependent planning.
