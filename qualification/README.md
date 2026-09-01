@@ -11,10 +11,21 @@ Cargo environment smoke is opt-in with `HIERONYMUS_QUALIFICATION_LIVE=1` and use
 installed Rust 1.96.0 toolchain in offline, no-auto-install mode.
 
 All transient work, logs, installation roots, Cargo targets, and frontend bundles live under
-the ignored `qualification/.artifacts/` root. `python -m tools.qualification.clean` is a dry run.
-Pass `--apply` to remove only the bounded transient allowlist. Acquired models are retained
-unless `--include-model` is also explicit. Cleanup refuses symlinks, mount crossings, special
-files, repository/home roots, and the translation workspace.
+the ignored `qualification/.artifacts/` root. Live work roots must already exist as private,
+current-user directories strictly below that canonical root; tests may instead use an equivalent
+private root below the canonical system temporary directory. The environment builder never creates
+or changes the caller's work root and creates only descriptor-relative, no-follow descendants.
+
+`python -m tools.qualification.clean` is a dry run. Pass `--apply` to remove only the bounded
+transient allowlist. Acquired models are retained unless `--include-model` is also explicit. Dry
+run and apply perform the same complete descriptor-relative validation, including filesystem device
+and Linux mount identities. Cleanup refuses symlinks, bind mounts, hard links, special files,
+identity swaps, repository/home roots, and the translation workspace.
+
+The process runner serializes the Linux subreaper boundary with a separately bounded coordination
+wait. Execution clocks begin only after that wait. It tracks owned descendants by PID and procfs
+start time while they run, signals both the original process group and tracked descendants that
+escape it, and never reaps an untracked child.
 
 Machine-readable records contain digests, counts, tool basenames, and versions only. Raw output,
 environment values, absolute tool/cache paths, and user data are never serialized. Generated

@@ -11,6 +11,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Mapping
@@ -19,8 +20,24 @@ from pathlib import Path
 
 _EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 _PROCESS_LOCK = threading.Lock()
+_PROCESS_LOCK_TIMEOUT_SECONDS = 5.0
 _PR_SET_CHILD_SUBREAPER = 36
 _PR_GET_CHILD_SUBREAPER = 37
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ARTIFACT_ROOT = _REPO_ROOT / "qualification/.artifacts"
+
+
+class ProcessCoordinationTimeout(RuntimeError):
+    """Raised before spawn when the process runner cannot be acquired safely."""
+
+
+def _reset_process_lock() -> None:
+    global _PROCESS_LOCK
+    _PROCESS_LOCK = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_process_lock)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,29 +135,82 @@ def discover_tool_roots(original_env: Mapping[str, str]) -> ToolRoots:
     )
 
 
-def _reject_symlink_components(path: Path) -> None:
-    current = Path(path.anchor)
-    for part in path.parts[1:]:
-        current /= part
-        if current.is_symlink():
-            raise ValueError(f"work root contains a symlink: {current.name}")
-        if not current.exists():
-            break
-
-
-def _private_directory(path: Path) -> None:
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    _reject_symlink_components(path)
-    if path.is_symlink() or not path.is_dir():
-        raise ValueError("private subprocess directory is not a real directory")
+def _directory_flags() -> int:
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
-    descriptor = os.open(path, flags)
+    return flags
+
+
+def _open_existing_directory(path: Path, *, label: str) -> int:
+    """Open an absolute directory one component at a time without following links."""
+    if not path.is_absolute():
+        raise ValueError(f"{label} must be absolute")
+    descriptor = os.open(path.anchor, _directory_flags())
     try:
-        os.fchmod(descriptor, 0o700)
-    finally:
+        for part in path.parts[1:]:
+            child = os.open(part, _directory_flags(), dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except OSError as exc:
         os.close(descriptor)
+        raise ValueError(f"{label} must be an existing nonsymlink directory") from exc
+
+
+def _require_private_owned(fd: int, *, label: str) -> None:
+    info = os.fstat(fd)
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError(f"{label} must be a current-uid private 0700 directory")
+
+
+def _create_private_descendant(anchor: Path, target: Path, *, label: str) -> Path:
+    """Create only target's missing descendants through an already safe anchor fd."""
+    _preflight_private_descendant(anchor, target, label=label)
+    anchor_fd = _open_existing_directory(anchor, label=f"{label} root")
+    descriptor = anchor_fd
+    try:
+        for part in target.relative_to(anchor).parts:
+            try:
+                os.mkdir(part, mode=0o700, dir_fd=descriptor)
+            except FileExistsError:
+                pass
+            child = os.open(part, _directory_flags(), dir_fd=descriptor)
+            _require_private_owned(child, label=label)
+            if descriptor != anchor_fd:
+                os.close(descriptor)
+            descriptor = child
+        return Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+    except OSError as exc:
+        raise ValueError(f"{label} contains an unsafe path component") from exc
+    finally:
+        if descriptor != anchor_fd:
+            os.close(descriptor)
+        os.close(anchor_fd)
+
+
+def _preflight_private_descendant(anchor: Path, target: Path, *, label: str) -> None:
+    """Validate every existing component before any directory is created."""
+    if target == anchor or not target.is_relative_to(anchor):
+        raise ValueError(f"{label} must be a strict descendant of its safe root")
+    anchor_fd = _open_existing_directory(anchor, label=f"{label} root")
+    descriptor = anchor_fd
+    try:
+        for part in target.relative_to(anchor).parts:
+            try:
+                child = os.open(part, _directory_flags(), dir_fd=descriptor)
+            except FileNotFoundError:
+                return
+            _require_private_owned(child, label=label)
+            if descriptor != anchor_fd:
+                os.close(descriptor)
+            descriptor = child
+    except OSError as exc:
+        raise ValueError(f"{label} contains an unsafe path component") from exc
+    finally:
+        if descriptor != anchor_fd:
+            os.close(descriptor)
+        os.close(anchor_fd)
 
 
 def _validate_tool_roots(tool_roots: ToolRoots) -> None:
@@ -160,27 +230,42 @@ def _validate_tool_roots(tool_roots: ToolRoots) -> None:
             raise ValueError(f"{label} resolved target is not canonical")
 
 
-def _artifact_cargo_root(work_root: Path) -> Path | None:
-    parts = work_root.parts
-    for index in range(len(parts) - 1):
-        if parts[index : index + 2] == ("qualification", ".artifacts"):
-            return Path(*parts[: index + 2]) / "cargo-target"
-    return None
+def _validated_work_root(work_root: Path) -> tuple[Path, bool]:
+    lexical = work_root.absolute()
+    forbidden = {
+        Path("/"),
+        _REPO_ROOT,
+        _ARTIFACT_ROOT,
+        Path.home().resolve(strict=True),
+    }
+    translation = Path.home().resolve(strict=True) / "Yandex.Disk/Translation"
+    if lexical in forbidden or lexical.is_relative_to(translation):
+        raise ValueError("work root is an unsafe root")
+    live = lexical.is_relative_to(_ARTIFACT_ROOT) and lexical != _ARTIFACT_ROOT
+    temporary = Path(tempfile.gettempdir()).resolve(strict=True)
+    if not live and (lexical == temporary or not lexical.is_relative_to(temporary)):
+        raise ValueError("test work root must be beneath the canonical system temporary root")
+    fd = _open_existing_directory(lexical, label="work root")
+    try:
+        _require_private_owned(fd, label="work root")
+        canonical = Path(os.readlink(f"/proc/self/fd/{fd}"))
+    finally:
+        os.close(fd)
+    if canonical != lexical:
+        raise ValueError("work root must be canonical")
+    return canonical, live
 
 
-def _bounded_target(work_root: Path, cargo_target_dir: Path) -> Path:
+def _target_boundary(work_root: Path, cargo_target_dir: Path, *, live: bool) -> tuple[Path, Path]:
     target = cargo_target_dir.absolute()
-    _reject_symlink_components(target)
-    artifact_cargo_root = _artifact_cargo_root(work_root)
-    if artifact_cargo_root is not None:
-        if not target.is_relative_to(artifact_cargo_root):
+    if live:
+        cargo_root = _ARTIFACT_ROOT / "cargo-target"
+        if target == cargo_root or not target.is_relative_to(cargo_root):
             raise ValueError("cargo target must be beneath qualification/.artifacts/cargo-target")
-    elif not target.is_relative_to(work_root):
+        return cargo_root, target
+    if target == work_root or not target.is_relative_to(work_root):
         raise ValueError("cargo target must be beneath the supplied test work root")
-    if target == work_root:
-        raise ValueError("cargo target cannot equal the work root")
-    _private_directory(target)
-    return target.resolve(strict=True)
+    return work_root, target
 
 
 def safe_subprocess_env(
@@ -191,12 +276,9 @@ def safe_subprocess_env(
     cargo_target_dir: Path,
 ) -> dict[str, str]:
     """Create a private, credential-free environment for qualification subprocesses."""
-    lexical_work = work_root.absolute()
-    _reject_symlink_components(lexical_work)
-    _private_directory(lexical_work)
-    canonical_work = lexical_work.resolve(strict=True)
+    canonical_work, live = _validated_work_root(work_root)
     _validate_tool_roots(tool_roots)
-    target = _bounded_target(canonical_work, cargo_target_dir)
+    target_anchor, target_path = _target_boundary(canonical_work, cargo_target_dir, live=live)
 
     private = {
         "HOME": canonical_work / "home",
@@ -205,8 +287,22 @@ def safe_subprocess_env(
         "XDG_CONFIG_HOME": canonical_work / "xdg/config",
         "XDG_DATA_HOME": canonical_work / "xdg/data",
     }
+    if live:
+        _preflight_private_descendant(_ARTIFACT_ROOT, target_anchor, label="cargo target root")
+        if target_anchor.exists():
+            _preflight_private_descendant(target_anchor, target_path, label="cargo target")
+    else:
+        _preflight_private_descendant(target_anchor, target_path, label="cargo target")
     for directory in private.values():
-        _private_directory(directory)
+        _preflight_private_descendant(
+            canonical_work, directory, label="private subprocess directory"
+        )
+
+    if live:
+        _create_private_descendant(_ARTIFACT_ROOT, target_anchor, label="cargo target root")
+    target = _create_private_descendant(target_anchor, target_path, label="cargo target")
+    for directory in private.values():
+        _create_private_descendant(canonical_work, directory, label="private subprocess directory")
 
     path_parts: list[str] = []
     for path in (
@@ -257,6 +353,87 @@ def _restore_subreaper(previous: int | None) -> None:
     ctypes.CDLL(None, use_errno=True).prctl(_PR_SET_CHILD_SUBREAPER, previous, 0, 0, 0)
 
 
+@dataclass(frozen=True, slots=True)
+class _ProcessIdentity:
+    pid: int
+    start_time: int
+
+
+def _proc_state(pid: int) -> tuple[_ProcessIdentity, int] | None:
+    """Return a PID-reuse-safe identity and parent PID from Linux procfs."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        return None
+    end = raw.rfind(")")
+    if end < 0:
+        return None
+    fields = raw[end + 2 :].split()
+    try:
+        return _ProcessIdentity(pid=pid, start_time=int(fields[19])), int(fields[1])
+    except (IndexError, ValueError):  # pragma: no cover - malformed procfs is not actionable
+        return None
+
+
+def _process_identity(pid: int) -> _ProcessIdentity | None:
+    state = _proc_state(pid)
+    return None if state is None else state[0]
+
+
+def _collect_descendants(tracked: dict[int, _ProcessIdentity]) -> None:
+    """Extend tracked with every currently observable descendant of known identities."""
+    if not sys.platform.startswith("linux"):
+        return
+    states: dict[int, tuple[_ProcessIdentity, int]] = {}
+    try:
+        entries = os.scandir("/proc")
+    except OSError:  # pragma: no cover
+        return
+    with entries:
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            state = _proc_state(int(entry.name))
+            if state is not None:
+                states[state[0].pid] = state
+    parents = {pid for pid, identity in tracked.items() if _process_identity(pid) == identity}
+    changed = True
+    while changed:
+        changed = False
+        for identity, parent in states.values():
+            if identity.pid not in tracked and parent in parents:
+                tracked[identity.pid] = identity
+                parents.add(identity.pid)
+                changed = True
+
+
+def _identity_alive(identity: _ProcessIdentity) -> bool:
+    return _process_identity(identity.pid) == identity
+
+
+def _signal_identity(identity: _ProcessIdentity, sig: signal.Signals) -> bool:
+    """Signal only when PID and procfs start time still match the owned identity."""
+    if not _identity_alive(identity):
+        return False
+    pidfd: int | None = None
+    try:
+        if hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"):
+            pidfd = os.pidfd_open(identity.pid)
+            if not _identity_alive(identity):
+                return False
+            signal.pidfd_send_signal(pidfd, sig)
+        else:  # pragma: no cover - Linux target provides pidfds
+            os.kill(identity.pid, sig)
+    except ProcessLookupError:
+        return False
+    finally:
+        if pidfd is not None:
+            os.close(pidfd)
+    return True
+
+
 def _signal_group(process_group: int, sig: signal.Signals) -> None:
     try:
         os.killpg(process_group, sig)
@@ -274,36 +451,51 @@ def _group_exists(process_group: int) -> bool:
     return True
 
 
-def _terminate_group(process: subprocess.Popen[bytes], process_group: int) -> None:
+def _reap_tracked(tracked: Mapping[int, _ProcessIdentity], *, root_pid: int) -> None:
+    for identity in tuple(tracked.values()):
+        if identity.pid == root_pid:
+            continue
+        try:
+            os.waitpid(identity.pid, os.WNOHANG)
+        except (ChildProcessError, ProcessLookupError):
+            pass
+
+
+def _terminate_owned_tree(
+    process: subprocess.Popen[bytes],
+    process_group: int,
+    tracked: dict[int, _ProcessIdentity],
+) -> bool:
+    """Terminate the group plus tracked setsid descendants, then reap only owned PIDs."""
+    _collect_descendants(tracked)
     _signal_group(process_group, signal.SIGTERM)
+    for identity in tuple(tracked.values()):
+        _signal_identity(identity, signal.SIGTERM)
     deadline = time.monotonic() + 0.25
-    while _group_exists(process_group) and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        _collect_descendants(tracked)
+        _reap_tracked(tracked, root_pid=process.pid)
+        if not any(_identity_alive(identity) for identity in tracked.values()):
+            break
         time.sleep(0.01)
-    if _group_exists(process_group):
-        _signal_group(process_group, signal.SIGKILL)
+    _signal_group(process_group, signal.SIGKILL)
+    for identity in tuple(tracked.values()):
+        _signal_identity(identity, signal.SIGKILL)
     try:
         process.wait(timeout=1)
     except subprocess.TimeoutExpired:  # pragma: no cover
-        _signal_group(process_group, signal.SIGKILL)
+        root = tracked.get(process.pid)
+        if root is not None:
+            _signal_identity(root, signal.SIGKILL)
         process.wait(timeout=1)
-
-
-def _reap_adopted_group(process_group: int) -> None:
     deadline = time.monotonic() + 1
     while time.monotonic() < deadline:
-        reaped = False
-        while True:
-            try:
-                pid, _ = os.waitpid(-process_group, os.WNOHANG)
-            except ChildProcessError:
-                return
-            if pid == 0:
-                break
-            reaped = True
-        if not _group_exists(process_group):
-            return
-        if not reaped:
-            time.sleep(0.01)
+        _collect_descendants(tracked)
+        _reap_tracked(tracked, root_pid=process.pid)
+        if not any(_identity_alive(identity) for identity in tracked.values()):
+            return True
+        time.sleep(0.01)
+    return not any(_identity_alive(identity) for identity in tracked.values())
 
 
 def run_owned_process(
@@ -315,10 +507,12 @@ def run_owned_process(
     no_progress_seconds: int,
 ) -> ProcessReceipt:
     """Run one owned process group with bounded output, time, cleanup, and receipts."""
-    if not argv or any(not isinstance(arg, str) or "\x00" in arg for arg in argv):
+    if not argv or any(type(arg) is not str or not arg or "\x00" in arg for arg in argv):
         raise ValueError("argv must contain nonempty safe strings")
     if timeout_seconds <= 0 or no_progress_seconds <= 0:
         raise ValueError("process timeouts must be positive")
+    if not _PROCESS_LOCK.acquire(timeout=_PROCESS_LOCK_TIMEOUT_SECONDS):
+        raise ProcessCoordinationTimeout("qualification process runner is busy")
     started = time.monotonic()
     stdout_hash = hashlib.sha256()
     stderr_hash = hashlib.sha256()
@@ -326,8 +520,10 @@ def run_owned_process(
     exit_code: int | None = None
     process_group_reaped = True
 
-    with _PROCESS_LOCK:
+    try:
         previous_subreaper = _subreaper_state(True)
+        if previous_subreaper is None:
+            raise RuntimeError("Linux child-subreaper support is required")
         process: subprocess.Popen[bytes] | None = None
         selector = selectors.DefaultSelector()
         try:
@@ -351,10 +547,14 @@ def run_owned_process(
                     stderr_sha256=_EMPTY_SHA256,
                     duration_ms=max(0, int((time.monotonic() - started) * 1000)),
                     process_group_reaped=True,
-                    core_dumps_disabled=True,
+                    core_dumps_disabled=False,
                 )
 
             process_group = process.pid
+            root_identity = _process_identity(process.pid)
+            if root_identity is None:  # pragma: no cover - Linux procfs is required by target
+                raise RuntimeError("owned process identity is unavailable")
+            tracked = {process.pid: root_identity}
             assert process.stdout is not None and process.stderr is not None
             for pipe, digest in ((process.stdout, stdout_hash), (process.stderr, stderr_hash)):
                 os.set_blocking(pipe.fileno(), False)
@@ -363,16 +563,17 @@ def run_owned_process(
             terminated = False
             termination_started: float | None = None
             while selector.get_map() or process.poll() is None:
+                _collect_descendants(tracked)
                 now = time.monotonic()
                 if not terminated and (
                     now - started >= timeout_seconds or now - last_progress >= no_progress_seconds
                 ):
                     timed_out = True
-                    _terminate_group(process, process_group)
+                    process_group_reaped = _terminate_owned_tree(process, process_group, tracked)
                     terminated = True
                     termination_started = time.monotonic()
                 elif process.poll() is not None and not terminated:
-                    _terminate_group(process, process_group)
+                    process_group_reaped = _terminate_owned_tree(process, process_group, tracked)
                     terminated = True
                     termination_started = time.monotonic()
 
@@ -394,14 +595,17 @@ def run_owned_process(
                     break
 
             if process.poll() is None:
-                _terminate_group(process, process_group)
+                process_group_reaped = _terminate_owned_tree(process, process_group, tracked)
             exit_code = process.wait(timeout=1)
-            _reap_adopted_group(process_group)
-            process_group_reaped = not _group_exists(process_group)
+            _collect_descendants(tracked)
+            if any(_identity_alive(identity) for identity in tracked.values()):
+                process_group_reaped = _terminate_owned_tree(process, process_group, tracked)
+            process_group_reaped = process_group_reaped and not _group_exists(process_group)
         except BaseException:
             if process is not None:
-                _terminate_group(process, process.pid)
-                _reap_adopted_group(process.pid)
+                identity = _process_identity(process.pid)
+                tracked = {} if identity is None else {process.pid: identity}
+                _terminate_owned_tree(process, process.pid, tracked)
             raise
         finally:
             selector.close()
@@ -410,6 +614,8 @@ def run_owned_process(
                     if pipe is not None and not pipe.closed:
                         pipe.close()
             _restore_subreaper(previous_subreaper)
+    finally:
+        _PROCESS_LOCK.release()
 
     return ProcessReceipt(
         exit_code=exit_code,

@@ -3950,6 +3950,21 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_clean.py::test_cleanup_dry_run_deeply_rejects_every_apply_hazard[fifo]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_clean.py::test_cleanup_dry_run_deeply_rejects_every_apply_hazard[hardlink]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_clean.py::test_cleanup_dry_run_deeply_rejects_every_apply_hazard[symlink]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_clean.py::test_cleanup_model_requires_explicit_include",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3960,7 +3975,17 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_clean.py::test_cleanup_rejects_same_device_bind_mount_id_before_mutation",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_clean.py::test_cleanup_rejects_symlink_targets",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_clean.py::test_cleanup_revalidates_identity_before_deletion",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -4450,12 +4475,42 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_execution_clock_starts_after_runner_coordination",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_owned_process_disables_core_and_reaps_group",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_never_signals_unrelated_child",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_owned_process_no_progress_timeout_and_spawn_failure_are_bounded",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_reaps_descendant_that_escapes_group_with_setsid",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_rejects_nonempty_exact_string_argv[bad0]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_rejects_nonempty_exact_string_argv[bad1]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_rejects_nonempty_exact_string_argv[bad2]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -4470,12 +4525,52 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_validates_identity_before_individual_signal",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_pid_reuse_seam_never_signals_replacement",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_runner_lock_has_distinct_bounded_failure",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_runner_lock_is_reset_in_fork_child",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_runner_refuses_to_spawn_without_linux_subreaper",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_safe_environment_is_private_offline_and_scrubbed",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_safe_environment_live_root_and_cargo_target_are_strictly_bounded",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_safe_environment_rejects_unbounded_or_symlinked_paths",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_safe_environment_rejects_unsafe_roots_without_mutating_them",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_safe_environment_requires_existing_private_current_uid_test_root",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
