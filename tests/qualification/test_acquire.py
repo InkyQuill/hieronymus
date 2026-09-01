@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import multiprocessing
 import os
@@ -38,6 +39,7 @@ class _Response:
         body: bytes = b"",
         read_error: OSError | None = None,
         before_read: Callable[[], None] | None = None,
+        close_error: OSError | None = None,
     ) -> None:
         self.status = status
         self.headers = dict(headers or {})
@@ -45,6 +47,11 @@ class _Response:
         self._offset = 0
         self._read_error = read_error
         self._before_read = before_read
+        self._close_error = close_error
+        self.read_timeouts: list[float] = []
+
+    def settimeout(self, timeout: float) -> None:
+        self.read_timeouts.append(timeout)
 
     def read(self, size: int = -1) -> bytes:
         if self._before_read is not None:
@@ -61,6 +68,8 @@ class _Response:
         return chunk
 
     def close(self) -> None:
+        if self._close_error is not None:
+            raise self._close_error
         return None
 
 
@@ -82,6 +91,11 @@ def _request_headers(request: object) -> dict[str, str]:
         key.lower(): value
         for key, value in request.header_items()  # type: ignore[attr-defined]
     }
+
+
+def _write_private(path: Path, body: bytes) -> None:
+    path.write_bytes(body)
+    path.chmod(0o600)
 
 
 def test_prerequisites_and_toolchain_are_exact() -> None:
@@ -213,7 +227,7 @@ def test_acquisition_rejects_unsafe_redirects_without_echoing_or_leaving_partial
     repo_root = _repo(tmp_path, body=b"model")
     part = repo_root / _DESTINATION.with_name("model.onnx.part")
     part.parent.mkdir(parents=True)
-    part.write_bytes(b"stale partial")
+    _write_private(part, b"stale partial")
     monkeypatch.setattr(
         acquire,
         "_open_no_redirect",
@@ -334,9 +348,9 @@ def test_existing_verified_destination_skips_network_and_stale_partial_is_remove
     repo_root = _repo(tmp_path, body=body)
     destination = repo_root / _DESTINATION
     destination.parent.mkdir(parents=True)
-    destination.write_bytes(body)
+    _write_private(destination, body)
     part = destination.with_name("model.onnx.part")
-    part.write_bytes(b"stale")
+    _write_private(part, b"stale")
     monkeypatch.setattr(
         acquire,
         "_open_no_redirect",
@@ -356,7 +370,7 @@ def test_existing_unverified_destination_is_replaced_only_after_verification(
     repo_root = _repo(tmp_path, body=body)
     destination = repo_root / _DESTINATION
     destination.parent.mkdir(parents=True)
-    destination.write_bytes(b"old invalid model")
+    _write_private(destination, b"old invalid model")
     observed_existing: list[bytes] = []
 
     def fake_open(_request: object) -> _Response:
@@ -836,6 +850,17 @@ def test_acquisition_rejects_lock_file_not_owned_by_current_identity(
     lock_path.write_bytes(b"")
     lock_path.chmod(0o600)
     current_uid = os.geteuid()
+    monkeypatch.setattr(
+        acquire,
+        "_require_trusted_directory",
+        lambda metadata: (
+            None
+            if stat.S_ISDIR(metadata.st_mode)
+            and metadata.st_uid == current_uid
+            and not stat.S_IMODE(metadata.st_mode) & 0o022
+            else pytest.fail("test directory unexpectedly became untrusted")
+        ),
+    )
     monkeypatch.setattr(acquire.os, "geteuid", lambda: current_uid + 1)
     monkeypatch.setattr(
         acquire,
@@ -897,7 +922,7 @@ def test_final_validation_rejects_leaf_swap_at_every_in_operation_hook(
     destination = repo_root / _DESTINATION
     if existing:
         destination.parent.mkdir(parents=True)
-        destination.write_bytes(body)
+        _write_private(destination, body)
     monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: _Response(200, body=body))
     swapped = False
 
@@ -945,7 +970,7 @@ def test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook(
     destination = repo_root / _DESTINATION
     destination.parent.mkdir(parents=True)
     if existing:
-        destination.write_bytes(body)
+        _write_private(destination, body)
     monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: _Response(200, body=body))
     ancestor_path = {
         "qualification": repo_root / "qualification",
@@ -983,7 +1008,7 @@ def test_final_validation_rejects_in_place_mutation_after_hash(
     repo_root = _repo(tmp_path, body=body)
     destination = repo_root / _DESTINATION
     destination.parent.mkdir(parents=True)
-    destination.write_bytes(body)
+    _write_private(destination, body)
     monkeypatch.setattr(
         acquire,
         "_open_no_redirect",
@@ -1042,7 +1067,7 @@ def test_existing_destination_is_rejected_when_it_exceeds_the_byte_limit(
     repo_root = _repo(tmp_path, body=body)
     destination = repo_root / _DESTINATION
     destination.parent.mkdir(parents=True)
-    destination.write_bytes(body)
+    _write_private(destination, body)
     monkeypatch.setattr(acquire, "_MAX_MODEL_BYTES", 8)
     monkeypatch.setattr(
         acquire,
@@ -1085,3 +1110,288 @@ def test_each_new_directory_entry_is_fsynced_in_its_parent(
 
     assert created_parent_inodes
     assert all(inode in synced_inodes for inode in created_parent_inodes)
+
+
+@pytest.mark.parametrize("leaf", ["model.onnx", "model.onnx.part", "model.onnx.lock"])
+def test_acquisition_rejects_external_hardlinked_artifact_leaf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    leaf: str,
+) -> None:
+    """Dropping the nlink check must let an external inode enter acquisition state."""
+    body = b"model"
+    repo_root = _repo(tmp_path / "repo", body=body)
+    model_dir = (repo_root / _DESTINATION).parent
+    model_dir.mkdir(parents=True)
+    external = tmp_path / f"external-{leaf}"
+    external.write_bytes(body if leaf == "model.onnx" else b"")
+    external.chmod(0o600)
+    os.link(external, model_dir / leaf)
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: pytest.fail("hardlinked state must fail before transport"),
+    )
+
+    with pytest.raises(acquire.AcquisitionError, match="private regular file"):
+        acquire.acquire_semantic_model(repo_root)
+
+    assert external.read_bytes() == (body if leaf == "model.onnx" else b"")
+    assert external.stat().st_nlink == 2
+
+
+@pytest.mark.parametrize("leaf", ["model.onnx", "model.onnx.part", "model.onnx.lock"])
+def test_acquisition_rejects_permissive_artifact_leaf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    leaf: str,
+) -> None:
+    body = b"model"
+    repo_root = _repo(tmp_path, body=body)
+    model_dir = (repo_root / _DESTINATION).parent
+    model_dir.mkdir(parents=True)
+    artifact = model_dir / leaf
+    artifact.write_bytes(body if leaf == "model.onnx" else b"")
+    artifact.chmod(0o640)
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: pytest.fail("permissive state must fail before transport"),
+    )
+
+    with pytest.raises(acquire.AcquisitionError, match="private regular file"):
+        acquire.acquire_semantic_model(repo_root)
+
+
+@pytest.mark.parametrize(
+    "ancestor",
+    ["qualification", ".artifacts", "models", "all-MiniLM-L6-v2"],
+)
+def test_acquisition_rejects_group_writable_artifact_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ancestor: str,
+) -> None:
+    body = b"model"
+    repo_root = _repo(tmp_path / "repo", body=body)
+    model_dir = (repo_root / _DESTINATION).parent
+    model_dir.mkdir(parents=True)
+    selected = {
+        "qualification": repo_root / "qualification",
+        ".artifacts": repo_root / "qualification/.artifacts",
+        "models": repo_root / "qualification/.artifacts/models",
+        "all-MiniLM-L6-v2": model_dir,
+    }[ancestor]
+    selected.chmod(0o770)
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: pytest.fail("untrusted directory must fail before transport"),
+    )
+
+    with pytest.raises(acquire.AcquisitionError, match="trusted directory"):
+        acquire.acquire_semantic_model(repo_root)
+
+
+def test_acquisition_rejects_artifact_directory_not_owned_by_current_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = _repo(tmp_path, body=b"model")
+    current_uid = os.geteuid()
+    monkeypatch.setattr(acquire.os, "geteuid", lambda: current_uid + 1)
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: pytest.fail("foreign directory must fail before transport"),
+    )
+
+    with pytest.raises(acquire.AcquisitionError, match="trusted directory"):
+        acquire.acquire_semantic_model(repo_root)
+
+
+def test_acquisition_creates_private_artifact_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"model"
+    repo_root = _repo(tmp_path, body=body)
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: _Response(200, body=body))
+
+    destination = acquire.acquire_semantic_model(repo_root)
+
+    for directory in (
+        repo_root / "qualification/.artifacts",
+        repo_root / "qualification/.artifacts/models",
+        destination.parent,
+    ):
+        assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+        assert directory.stat().st_uid == os.geteuid()
+    for leaf in (destination, destination.with_name("model.onnx.lock")):
+        metadata = leaf.stat()
+        assert stat.S_IMODE(metadata.st_mode) == 0o600
+        assert metadata.st_uid == os.geteuid()
+        assert metadata.st_nlink == 1
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["promoted", "existing"])
+def test_final_validation_rejects_combined_hardlink_and_ancestor_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing: bool,
+) -> None:
+    """The returned lexical path must never resolve through a swapped ancestor."""
+    body = b"final verified bytes"
+    repo_root = _repo(tmp_path / "repo", body=body)
+    destination = repo_root / _DESTINATION
+    destination.parent.mkdir(parents=True)
+    if existing:
+        destination.write_bytes(body)
+        destination.chmod(0o600)
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: _Response(200, body=body))
+    outside = tmp_path / f"outside-{existing}"
+    outside.mkdir()
+    swapped = False
+
+    def hook(stage: str) -> None:
+        nonlocal swapped
+        if stage != "after-named-destination-check" or swapped:
+            return
+        os.link(destination, outside / "model.onnx")
+        displaced = destination.parent.with_name("all-MiniLM-L6-v2.displaced")
+        destination.parent.rename(displaced)
+        destination.parent.symlink_to(outside, target_is_directory=True)
+        swapped = True
+
+    monkeypatch.setattr(acquire, "_final_validation_hook", hook)
+
+    with pytest.raises(acquire.AcquisitionError):
+        acquire.acquire_semantic_model(repo_root)
+
+    assert swapped
+    assert destination.resolve(strict=True) == outside / "model.onnx"
+
+
+@pytest.mark.parametrize("status,body", [(503, b""), (200, b"downloaded bytes")])
+def test_response_close_failure_is_redacted_and_cleans_owned_partial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    body: bytes,
+) -> None:
+    expected = body or b"expected"
+    repo_root = _repo(tmp_path, body=expected)
+    response = _Response(
+        status,
+        body=body,
+        close_error=OSError("signed-query-close-secret"),
+    )
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: response)
+    before_fds = len(os.listdir("/proc/self/fd"))
+
+    with pytest.raises(acquire.AcquisitionError) as caught:
+        acquire.acquire_semantic_model(repo_root)
+
+    assert "signed-query-close-secret" not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert not (repo_root / _DESTINATION.with_name("model.onnx.part")).exists()
+    assert len(os.listdir("/proc/self/fd")) == before_fds
+
+
+def test_model_directory_context_does_not_reclassify_body_oserror(tmp_path: Path) -> None:
+    repo_root = _repo(tmp_path, body=b"model")
+    token = acquire._CURRENT_DEADLINE.set(acquire._Deadline.after(5))
+    try:
+        with pytest.raises(OSError, match="body marker"):
+            with acquire._open_model_directory(repo_root):
+                raise OSError("body marker")
+    finally:
+        acquire._CURRENT_DEADLINE.reset(token)
+
+
+def test_each_response_read_rearms_socket_to_remaining_total_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"abcd"
+    repo_root = _repo(tmp_path, body=body)
+    now = 100.0
+
+    class _TimedResponse(_Response):
+        def read(self, size: int = -1) -> bytes:
+            nonlocal now
+            result = super().read(size)
+            now += 1.0
+            return result
+
+    response = _TimedResponse(200, body=body)
+    monkeypatch.setattr(acquire, "_monotonic", lambda: now)
+    monkeypatch.setattr(acquire, "_ACQUISITION_TIMEOUT_SECONDS", 10.0)
+    monkeypatch.setattr(acquire, "_CHUNK_SIZE", 2)
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: response)
+
+    acquire.acquire_semantic_model(repo_root)
+
+    assert response.read_timeouts == [10.0, 9.0, 8.0]
+
+
+def test_response_without_rearmable_socket_fails_closed_and_cleans_partial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"model"
+    repo_root = _repo(tmp_path, body=body)
+
+    class _UnadaptableResponse:
+        status = 200
+        headers: dict[str, str] = {}
+
+        def read(self, _size: int = -1) -> bytes:
+            return body
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: _UnadaptableResponse())
+
+    with pytest.raises(acquire.AcquisitionError, match="timeout"):
+        acquire.acquire_semantic_model(repo_root)
+
+    assert not (repo_root / _DESTINATION.with_name("model.onnx.part")).exists()
+
+
+def test_response_timeout_adapter_supports_urllib_response_socket_shape() -> None:
+    observed: list[float] = []
+
+    class _Socket:
+        def settimeout(self, timeout: float) -> None:
+            observed.append(timeout)
+
+    class _Raw:
+        _sock = _Socket()
+
+    class _Buffered:
+        raw = _Raw()
+
+    class _UrllibResponse:
+        fp = _Buffered()
+
+    acquire._set_response_read_timeout(_UrllibResponse(), 3.25)
+
+    assert observed == [3.25]
+
+
+def test_response_timeout_adapter_rearms_real_http_response_socket() -> None:
+    client, server = acquire.socket.socketpair()
+    try:
+        server.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        response = http.client.HTTPResponse(client)
+        response.begin()
+
+        acquire._set_response_read_timeout(response, 2.5)
+
+        assert client.gettimeout() == 2.5
+        response.close()
+    finally:
+        client.close()
+        server.close()

@@ -18,7 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterator, Sequence
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO, Final
 
@@ -106,6 +106,25 @@ class AcquisitionError(RuntimeError):
     """A non-sensitive deterministic acquisition failure."""
 
 
+def _require_private_regular(metadata: os.stat_result, subject: str) -> None:
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+    ):
+        raise AcquisitionError(f"{subject} must be a private regular file")
+
+
+def _require_trusted_directory(metadata: os.stat_result) -> None:
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise AcquisitionError("artifact directory is not a trusted directory")
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(  # type: ignore[override]
         self,
@@ -190,8 +209,7 @@ def _remove_stale_partial(model_dir_fd: int) -> None:
         return
     except OSError:
         raise AcquisitionError("could not inspect the semantic model partial file") from None
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise AcquisitionError("semantic model partial must be a regular file")
+    _require_private_regular(metadata, "semantic model partial")
     try:
         os.unlink(_PARTIAL_NAME, dir_fd=model_dir_fd)
         os.fsync(model_dir_fd)
@@ -235,8 +253,7 @@ def _existing_destination_is_verified(
         raise AcquisitionError("could not inspect the semantic model destination") from None
     try:
         metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise AcquisitionError("semantic model destination must be a regular file")
+        _require_private_regular(metadata, "semantic model destination")
         try:
             return _sha256_fd(fd, deadline) == expected_sha256
         except OSError:
@@ -279,13 +296,27 @@ def _open_model_directory(repo_root: Path) -> Iterator[tuple[Path, tuple[int, ..
             except OSError:
                 raise AcquisitionError("artifact directory is not a trusted directory") from None
             opened.append(child_fd)
+            if created:
+                try:
+                    os.fchmod(child_fd, 0o700)
+                    os.fsync(child_fd)
+                except OSError:
+                    raise AcquisitionError(
+                        "could not secure the semantic model directory"
+                    ) from None
+            _require_trusted_directory(os.fstat(child_fd))
             current_fd = child_fd
             _current_deadline().check()
-        yield canonical_root, tuple(opened)
     except AcquisitionError:
+        for fd in reversed(opened):
+            os.close(fd)
         raise
     except OSError:
+        for fd in reversed(opened):
+            os.close(fd)
         raise AcquisitionError("could not prepare the semantic model directory") from None
+    try:
+        yield canonical_root, tuple(opened)
     finally:
         for fd in reversed(opened):
             os.close(fd)
@@ -315,6 +346,8 @@ def _validate_directory_chain(
         try:
             current = os.fstat(current_fd)
             expected = os.fstat(expected_fd)
+            _require_trusted_directory(current)
+            _require_trusted_directory(expected)
             if (current.st_dev, current.st_ino) != (expected.st_dev, expected.st_ino):
                 raise AcquisitionError("artifact directory identity changed")
         finally:
@@ -374,13 +407,9 @@ def _validate_lock_file(model_dir_fd: int, lock_fd: int) -> None:
     except OSError:
         raise AcquisitionError("semantic model acquisition lock identity changed") from None
     identity_matches = (held.st_dev, held.st_ino) == (named.st_dev, named.st_ino)
-    if (
-        not stat.S_ISREG(held.st_mode)
-        or held.st_uid != os.geteuid()
-        or stat.S_IMODE(held.st_mode) != 0o600
-        or held.st_nlink != 1
-        or not identity_matches
-    ):
+    _require_private_regular(held, "semantic model acquisition lock")
+    _require_private_regular(named, "semantic model acquisition lock")
+    if not identity_matches:
         raise AcquisitionError("semantic model acquisition lock must be a private regular file")
 
 
@@ -478,6 +507,30 @@ def _content_length(response: object) -> int | None:
     return length
 
 
+def _set_response_read_timeout(response: object, timeout: float) -> None:
+    """Rearm a fake or urllib HTTPS response's underlying socket for one read."""
+    candidates = [response]
+    seen: set[int] = set()
+    while candidates and len(seen) < 12:
+        candidate = candidates.pop(0)
+        identity = id(candidate)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        setter = getattr(candidate, "settimeout", None)
+        if callable(setter):
+            try:
+                setter(timeout)
+            except Exception:
+                raise AcquisitionError("could not set semantic model response timeout") from None
+            return
+        for attribute in ("fp", "raw", "_sock"):
+            nested = getattr(candidate, attribute, None)
+            if nested is not None:
+                candidates.append(nested)
+    raise AcquisitionError("could not set semantic model response timeout")
+
+
 def _stream_model(
     initial_url: str,
     model_dir_fd: int,
@@ -494,15 +547,10 @@ def _stream_model(
             if isinstance(error, AcquisitionError):
                 raise
             raise AcquisitionError("semantic model request failed") from None
+        partial_fd: int | None = None
+        completed = False
         try:
             deadline.check()
-        except AcquisitionError:
-            try:
-                response.close()
-            except Exception:
-                pass
-            raise
-        with closing(response):
             status = _response_status(response)
             if status in _REDIRECT_STATUSES:
                 if redirects >= _MAX_REDIRECTS:
@@ -529,63 +577,78 @@ def _stream_model(
                 )
             except OSError:
                 raise AcquisitionError("could not create the semantic model partial file") from None
+            _require_private_regular(
+                os.fstat(partial_fd),
+                "semantic model partial",
+            )
             try:
                 os.fsync(model_dir_fd)
             except OSError:
-                _remove_owned_partial(model_dir_fd, partial_fd)
-                os.close(partial_fd)
                 raise AcquisitionError(
                     "could not persist the semantic model partial entry"
                 ) from None
             try:
                 destination = os.fdopen(os.dup(partial_fd), "wb")
             except OSError:
-                _remove_owned_partial(model_dir_fd, partial_fd)
-                os.close(partial_fd)
                 raise AcquisitionError("could not open the semantic model partial file") from None
-            try:
-                with destination:
-                    while True:
-                        deadline.check()
+            with destination:
+                while True:
+                    timeout = min(_TRANSPORT_TIMEOUT_SECONDS, deadline.remaining())
+                    _set_response_read_timeout(response, timeout)
+                    deadline.check()
+                    try:
                         chunk = response.read(_CHUNK_SIZE)
-                        deadline.check()
-                        if not chunk:
-                            break
-                        if not isinstance(chunk, bytes):
-                            raise AcquisitionError("semantic model response was not binary")
-                        total += len(chunk)
-                        if total > _MAX_MODEL_BYTES:
-                            raise AcquisitionError("semantic model response exceeds the byte limit")
-                        destination.write(chunk)
-                        digest.update(chunk)
-                    destination.flush()
-                os.fsync(partial_fd)
-                if declared_length is not None and total != declared_length:
-                    raise AcquisitionError(
-                        "semantic model response length did not match its declaration"
-                    )
-                if digest.hexdigest() != expected_sha256:
-                    raise AcquisitionError("semantic model checksum mismatch")
-            except Exception:
+                    except Exception as error:
+                        if isinstance(error, AcquisitionError):
+                            raise
+                        raise AcquisitionError("semantic model response read failed") from None
+                    deadline.check()
+                    if not chunk:
+                        break
+                    if not isinstance(chunk, bytes):
+                        raise AcquisitionError("semantic model response was not binary")
+                    total += len(chunk)
+                    if total > _MAX_MODEL_BYTES:
+                        raise AcquisitionError("semantic model response exceeds the byte limit")
+                    destination.write(chunk)
+                    digest.update(chunk)
+                destination.flush()
+            os.fsync(partial_fd)
+            if declared_length is not None and total != declared_length:
+                raise AcquisitionError(
+                    "semantic model response length did not match its declaration"
+                )
+            if digest.hexdigest() != expected_sha256:
+                raise AcquisitionError("semantic model checksum mismatch")
+            completed = True
+        except Exception:
+            if partial_fd is not None:
                 _remove_owned_partial(model_dir_fd, partial_fd)
                 os.close(partial_fd)
-                raise
+                partial_fd = None
+            raise
+        finally:
+            try:
+                response.close()
+            except Exception:
+                if partial_fd is not None:
+                    _remove_owned_partial(model_dir_fd, partial_fd)
+                    os.close(partial_fd)
+                    partial_fd = None
+                raise AcquisitionError("could not close semantic model response") from None
+        if completed and partial_fd is not None:
             return partial_fd
 
 
 def _promote_open_partial(model_dir_fd: int, partial_fd: int) -> None:
     written = os.fstat(partial_fd)
-    if not stat.S_ISREG(written.st_mode) or written.st_nlink != 1:
-        raise AcquisitionError("semantic model partial identity is invalid")
+    _require_private_regular(written, "semantic model partial")
     try:
         named = os.stat(_PARTIAL_NAME, dir_fd=model_dir_fd, follow_symlinks=False)
     except OSError:
         raise AcquisitionError("semantic model partial identity changed before promotion") from None
-    if (
-        not stat.S_ISREG(named.st_mode)
-        or named.st_dev != written.st_dev
-        or named.st_ino != written.st_ino
-    ):
+    _require_private_regular(named, "semantic model partial")
+    if named.st_dev != written.st_dev or named.st_ino != written.st_ino:
         raise AcquisitionError("semantic model partial identity changed before promotion")
     try:
         os.replace(
@@ -636,6 +699,63 @@ def _same_file_version(left: os.stat_result, right: os.stat_result) -> bool:
     )
 
 
+def _validate_lexical_destination(
+    canonical_root: Path,
+    directory_fds: tuple[int, ...],
+    expected: os.stat_result,
+) -> Path:
+    """Resolve and lstat the complete lexical path at the success boundary."""
+    destination = canonical_root / _MODEL_DESTINATION
+    try:
+        resolved = destination.resolve(strict=True)
+        resolved.relative_to(canonical_root)
+    except (OSError, RuntimeError, ValueError):
+        raise AcquisitionError("semantic model destination escaped the repository") from None
+    if resolved != destination:
+        raise AcquisitionError("semantic model destination escaped the repository")
+
+    current = canonical_root
+    try:
+        root_metadata = os.lstat(current)
+        held_root = os.fstat(directory_fds[0])
+    except OSError:
+        raise AcquisitionError("artifact directory identity changed") from None
+    if stat.S_ISLNK(root_metadata.st_mode) or (
+        root_metadata.st_dev,
+        root_metadata.st_ino,
+    ) != (held_root.st_dev, held_root.st_ino):
+        raise AcquisitionError("artifact directory identity changed")
+
+    for component, held_fd in zip(
+        _MODEL_DIRECTORY_COMPONENTS,
+        directory_fds[1:],
+        strict=True,
+    ):
+        current /= component
+        try:
+            lexical = os.lstat(current)
+            held = os.fstat(held_fd)
+        except OSError:
+            raise AcquisitionError("artifact directory identity changed") from None
+        if stat.S_ISLNK(lexical.st_mode):
+            raise AcquisitionError("artifact directory identity changed")
+        _require_trusted_directory(lexical)
+        _require_trusted_directory(held)
+        if (lexical.st_dev, lexical.st_ino) != (held.st_dev, held.st_ino):
+            raise AcquisitionError("artifact directory identity changed")
+
+    try:
+        lexical_destination = os.lstat(destination)
+    except OSError:
+        raise AcquisitionError("semantic model destination identity changed") from None
+    if stat.S_ISLNK(lexical_destination.st_mode):
+        raise AcquisitionError("semantic model destination identity changed")
+    _require_private_regular(lexical_destination, "semantic model destination")
+    if not _same_file_version(expected, lexical_destination):
+        raise AcquisitionError("semantic model destination identity changed")
+    return destination
+
+
 def _verified_return_path(
     canonical_root: Path,
     directory_fds: tuple[int, ...],
@@ -663,8 +783,7 @@ def _verified_return_path(
         raise AcquisitionError("could not inspect the semantic model destination") from None
     try:
         held = os.fstat(destination_fd)
-        if not stat.S_ISREG(held.st_mode):
-            raise AcquisitionError("semantic model destination must be a regular file")
+        _require_private_regular(held, "semantic model destination")
         if held.st_size > _MAX_MODEL_BYTES:
             raise AcquisitionError("semantic model destination exceeds the byte limit")
         _final_validation_hook("after-destination-open")
@@ -682,18 +801,18 @@ def _verified_return_path(
             named = os.stat(_DESTINATION_NAME, dir_fd=model_dir_fd, follow_symlinks=False)
         except OSError:
             raise AcquisitionError("semantic model destination identity changed") from None
-        if not stat.S_ISREG(named.st_mode) or not _same_file_version(current, named):
+        _require_private_regular(named, "semantic model destination")
+        if not _same_file_version(current, named):
             raise AcquisitionError("semantic model destination identity changed")
         _final_validation_hook("after-named-destination-check")
-        _validate_directory_chain(canonical_root, directory_fds)
-        destination = canonical_root / _MODEL_DESTINATION
-        try:
-            lexical = os.stat(destination, follow_symlinks=False)
-        except OSError:
-            raise AcquisitionError("semantic model destination identity changed") from None
-        if not stat.S_ISREG(lexical.st_mode) or not _same_file_version(current, lexical):
-            raise AcquisitionError("semantic model destination identity changed")
         deadline.check()
+        _validate_directory_chain(canonical_root, directory_fds)
+        _validate_lock_file(model_dir_fd, lock_fd)
+        destination = _validate_lexical_destination(
+            canonical_root,
+            directory_fds,
+            current,
+        )
         return destination
     finally:
         os.close(destination_fd)
