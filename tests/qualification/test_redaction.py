@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import fields, replace
 from pathlib import Path
@@ -24,7 +25,11 @@ from tools.qualification.model import (
     serialize_record,
 )
 from tools.qualification.redaction import redaction_issues
-from tools.qualification.validate import validate_record
+from tools.qualification.validate import (
+    PLANNED_REPLAY_COMMANDS,
+    replay_commands_are_safe,
+    validate_record,
+)
 
 
 def _unchecked_record(
@@ -316,6 +321,165 @@ def test_redaction_rejects_every_structured_secret_name_variant(
 
 
 @pytest.mark.parametrize(
+    ("name", "issue"),
+    [
+        *(
+            (name, "record contains authorization material")
+            for name in (
+                "auth",
+                "auth_header",
+                "authHeader",
+                "authorization",
+                "authorization_header",
+                "authorizationHeader",
+                "proxy_authorization",
+                "proxyAuthorization",
+            )
+        ),
+        *(
+            (name, "record contains cookie material")
+            for name in (
+                "cookie",
+                "cookie_header",
+                "cookieHeader",
+                "set_cookie",
+                "setCookie",
+            )
+        ),
+        *(
+            (name, "record contains a provider key")
+            for name in (
+                "provider_key",
+                "providerKey",
+                "openai_api_key",
+                "openaiApiKey",
+                "anthropic_api_key",
+                "anthropicApiKey",
+                "gemini_api_key",
+                "geminiApiKey",
+            )
+        ),
+        *(
+            (name, "record contains a token or secret value")
+            for name in (
+                "password",
+                "pass_word",
+                "passWord",
+                "private_key",
+                "privateKey",
+                "access_token",
+                "accessToken",
+                "refresh_token",
+                "refreshToken",
+                "client_secret",
+                "clientSecret",
+                "api_key",
+                "apiKey",
+                "secret",
+                "token",
+                "launch_grant",
+                "launchGrant",
+            )
+        ),
+        *(
+            (name, "record contains source-row text")
+            for name in (
+                "memory_text",
+                "memoryText",
+                "source_text",
+                "sourceText",
+                "source_row",
+                "sourceRow",
+                "row_text",
+                "rowText",
+                "chunk_text",
+                "chunkText",
+                "translation_text",
+                "translationText",
+                "note_text",
+                "noteText",
+            )
+        ),
+        *(
+            (name, "record contains raw process output")
+            for name in (
+                "raw_log",
+                "rawLog",
+                "raw_logs",
+                "rawLogs",
+                "stdout",
+                "stderr",
+            )
+        ),
+        *(
+            (name, "record contains a hostname")
+            for name in (
+                "hostname",
+                "host_name",
+                "hostName",
+                "machine_name",
+                "machineName",
+                "host",
+            )
+        ),
+        *(
+            (name, "record contains a username")
+            for name in (
+                "username",
+                "user_name",
+                "userName",
+                "login_user",
+                "loginUser",
+            )
+        ),
+    ],
+)
+@pytest.mark.parametrize("value", [8675309, True, None, ["private", 7, False, None]])
+@pytest.mark.parametrize("nested", [False, True])
+def test_redaction_recursively_rejects_structured_values_of_every_json_type(
+    name: str,
+    issue: str,
+    value: object,
+    nested: bool,
+) -> None:
+    payload: object = {name: value}
+    if nested:
+        payload = {"outer": [{"inner": payload}]}
+
+    issues = redaction_issues(json.dumps(payload, separators=(",", ":")))
+
+    assert issue in issues
+    assert all(str(value) not in diagnostic for diagnostic in issues)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "-----BEGIN PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----BEGIN EC PRIVATE KEY-----",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+    ],
+)
+def test_redaction_rejects_private_key_pem_without_echo(marker: str) -> None:
+    assert redaction_issues(marker + "\nprivate payload") == [
+        "record contains private-key material"
+    ]
+
+
+@pytest.mark.parametrize(
+    "safe",
+    [
+        "stderr: none;",
+        "raw log: <absent>.",
+        "| authorizationHeader | <redacted> |",
+    ],
+)
+def test_redaction_allows_punctuated_safe_sentinels(safe: str) -> None:
+    assert redaction_issues(safe) == []
+
+
+@pytest.mark.parametrize(
     "encoded_home",
     [
         "%2Fhome%2Falice%2Fprivate",
@@ -390,8 +554,8 @@ def test_risk_input_policy_covers_every_planned_runner_harness_and_fixture() -> 
     )
     assert RISK_FINGERPRINT_SUFFIXES["semantic-native"][-3:] == (
         "qualification/fixtures/semantic-corpus.json",
-        "compatibility/fixtures/mcp/tools/hieronymus_rag_search/success.input.json",
-        "compatibility/fixtures/mcp/tools/hieronymus_recall/success.input.json",
+        "compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json",
+        "compatibility/fixtures/mcp/hieronymus_recall/success.input.json",
     )
     assert "frontend/index.html" in RISK_FINGERPRINT_SUFFIXES["frontend-embedding"]
     assert "frontend/src/web/main.ts" in RISK_FINGERPRINT_SUFFIXES["frontend-embedding"]
@@ -462,7 +626,6 @@ def test_validation_reports_every_cleanup_and_command_issue_deterministically(
     assert issues == validate_record(invalid, tmp_path)
     assert issues == [
         "record commands must be safe relative replay commands",
-        "record commands must not contain duplicates",
         "record cleanup work_dir_removed must be true",
         "record cleanup raw_logs_removed must be true",
         "record cleanup source_inputs_unchanged must be true",
@@ -571,21 +734,25 @@ def test_validation_rejects_unsafe_replay_command_tokens(
 
 def test_validation_allows_exact_planned_relative_replay_commands(tmp_path: Path) -> None:
     seed_fingerprint_inputs(tmp_path, "mcp-transport")
-    commands = (
-        "uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only",
-        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport "
-        "CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path "
-        "qualification/harnesses/mcp-transport/Cargo.toml --locked "
-        "--target x86_64-unknown-linux-gnu",
-        "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true "
-        "uv run python -m tools.qualification.run all --write",
-        "uv run python -m tools.qualification.validate qualification/records/mcp-transport.json",
-        "uv run python -m tools.qualification.render --check "
-        "qualification/records/mcp-transport.json "
-        "docs/qualification/rust/mcp-transport.md",
-        "unshare --user --map-root-user --net -- bun run --cwd frontend build -- "
-        "--outDir qualification/.artifacts/frontend-dist/current --emptyOutDir",
-    )
+    commands = PLANNED_REPLAY_COMMANDS
     record = replace(make_record(tmp_path, "mcp-transport"), commands=commands)
 
     assert validate_record(record, tmp_path) == []
+
+
+def test_replay_safety_owns_nonempty_uniqueness_and_future_command_matrix() -> None:
+    assert PLANNED_REPLAY_COMMANDS
+    assert len(PLANNED_REPLAY_COMMANDS) == len(set(PLANNED_REPLAY_COMMANDS))
+    assert replay_commands_are_safe(PLANNED_REPLAY_COMMANDS)
+    assert replay_commands_are_safe(()) is False
+    assert replay_commands_are_safe((PLANNED_REPLAY_COMMANDS[0],) * 2) is False
+    assert "uv run python -m tools.qualification.projections --check" in PLANNED_REPLAY_COMMANDS
+    assert (
+        "uv run python -m tools.qualification.clean --apply --include-model"
+        in PLANNED_REPLAY_COMMANDS
+    )
+    assert any(
+        '--owner "Pavel Obruchnikov <me@inkyquill.net>"' in command
+        for command in PLANNED_REPLAY_COMMANDS
+    )
+    assert replay_commands_are_safe((["not hashable"],)) is False

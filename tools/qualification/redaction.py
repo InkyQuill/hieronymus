@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from urllib.parse import unquote
@@ -17,12 +18,12 @@ def _structured_patterns(*names: str) -> tuple[re.Pattern[str], ...]:
     alternatives = "|".join(re.escape(name) for name in names)
     return (
         re.compile(
-            rf'"(?:{alternatives})"\s*:\s*"(?!\s*(?:<absent>|none|null)\s*")[^"\r\n]+"',
+            rf'"(?:{alternatives})"\s*:\s*"(?!\s*(?:<absent>|<redacted>|none)\s*")[^"\r\n]+"',
             re.IGNORECASE,
         ),
         re.compile(
             rf"^\s*\|\s*(?:{alternatives})\s*\|\s*"
-            rf"(?!\s*(?:<absent>|\(none\)|none|null)\s*\|)[^|\r\n]+\|",
+            rf"(?!\s*(?:<absent>|<redacted>|\(none\)|none)\s*\|)[^|\r\n]+\|",
             re.IGNORECASE | re.MULTILINE,
         ),
     )
@@ -38,6 +39,58 @@ def _assignment_pattern(*names: str) -> re.Pattern[str]:
 
 
 _WINDOWS_SEPARATOR = r"(?:\\\\|[\\/])"
+_SAFE_SENTINELS = frozenset({"none", "<absent>", "<redacted>"})
+_STRUCTURED_ISSUES = {
+    "authorization": frozenset(
+        {"auth", "authheader", "authorization", "authorizationheader", "proxyauthorization"}
+    ),
+    "cookie": frozenset({"cookie", "cookieheader", "setcookie"}),
+    "provider": frozenset(
+        {
+            "providerkey",
+            "openaiapikey",
+            "anthropicapikey",
+            "geminiapikey",
+        }
+    ),
+    "secret": frozenset(
+        {
+            "password",
+            "privatekey",
+            "accesstoken",
+            "refreshtoken",
+            "clientsecret",
+            "apikey",
+            "secret",
+            "token",
+            "launchgrant",
+        }
+    ),
+    "source": frozenset(
+        {
+            "memorytext",
+            "sourcetext",
+            "sourcerow",
+            "rowtext",
+            "chunktext",
+            "translationtext",
+            "notetext",
+        }
+    ),
+    "host": frozenset({"hostname", "machinename", "host"}),
+    "user": frozenset({"username", "loginuser"}),
+    "raw": frozenset({"rawlog", "rawlogs", "stdout", "stderr"}),
+}
+_STRUCTURED_CLASS_ISSUES = {
+    "authorization": "record contains authorization material",
+    "cookie": "record contains cookie material",
+    "provider": "record contains a provider key",
+    "secret": "record contains a token or secret value",
+    "source": "record contains source-row text",
+    "host": "record contains a hostname",
+    "user": "record contains a username",
+    "raw": "record contains raw process output",
+}
 _RULES = (
     _Rule(
         "record contains forbidden literal: compat-secret-do-not-log",
@@ -62,7 +115,7 @@ _RULES = (
             ),
             re.compile(
                 r"\b(?:proxy-)?authorization\s*:\s*"
-                r"(?!\s*(?:<absent>|\(none\)|none|null)\s*(?:$|\|))"
+                r"(?!\s*(?:<absent>|<redacted>|\(none\)|none)\s*[.,;:!?)]?\s*(?:$|\|))"
                 r"[A-Za-z][A-Za-z0-9._~+/=-]*(?:\s+[^\s|,;]+)?",
                 re.IGNORECASE,
             ),
@@ -187,7 +240,7 @@ _RULES = (
             *_structured_patterns("stdout", "stderr", "raw_log", "raw_logs"),
             re.compile(
                 r"\b(?:stdout|stderr|raw[-_ ]logs?)\s*:\s*"
-                r"(?!\s*(?:<absent>|\(none\)|none|null)\s*(?:$|\|))\S+",
+                r"(?!\s*(?:<absent>|<redacted>|\(none\)|none)\s*[.,;:!?)]?\s*(?:$|\|))\S+",
                 re.IGNORECASE,
             ),
         ),
@@ -211,6 +264,10 @@ _RULES = (
             ),
         ),
     ),
+    _Rule(
+        "record contains private-key material",
+        (re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----", re.IGNORECASE),),
+    ),
 )
 
 
@@ -218,10 +275,54 @@ def redaction_issues(serialized_record: str) -> list[str]:
     """Return each sensitive-data class found, once, in fixed rule order."""
     if type(serialized_record) is not str:
         raise TypeError("serialized record must be text")
+    structured = _structured_redaction_issues(serialized_record)
     decoded_view = unquote(serialized_record)
     views = (serialized_record, decoded_view)
-    return [
+    raw = [
         rule.issue
         for rule in _RULES
         if any(pattern.search(view) for view in views for pattern in rule.patterns)
     ]
+    issue_order = tuple(rule.issue for rule in _RULES)
+    return [issue for issue in issue_order if issue in structured or issue in raw]
+
+
+def _structured_redaction_issues(value: str) -> set[str]:
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return set()
+    issues: set[str] = set()
+
+    def visit(node: object) -> None:
+        if isinstance(node, dict):
+            for key, child in node.items():
+                normalized = _normalize_key(key)
+                for issue_class, names in _STRUCTURED_ISSUES.items():
+                    if normalized in names and not _safe_structured_value(child):
+                        issues.add(_STRUCTURED_CLASS_ISSUES[issue_class])
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(parsed)
+    return issues
+
+
+def _normalize_key(value: object) -> str:
+    if type(value) is not str:
+        return ""
+    return "".join(
+        character.lower() if "A" <= character <= "Z" else character
+        for character in value
+        if character != "_"
+    )
+
+
+def _safe_structured_value(value: object) -> bool:
+    if type(value) is str:
+        return value.strip().lower() in _SAFE_SENTINELS
+    if type(value) is list and value:
+        return all(type(item) is str and item.strip().lower() in _SAFE_SENTINELS for item in value)
+    return False

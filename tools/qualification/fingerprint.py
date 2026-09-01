@@ -73,7 +73,7 @@ _MCP_TOOL_FIXTURE_LEAVES = (
     "wire.success.json",
 )
 MCP_TOOL_INPUT_WIRE_INPUTS = tuple(
-    f"compatibility/fixtures/mcp/tools/{tool}/{leaf}"
+    f"compatibility/fixtures/mcp/{tool}/{leaf}"
     for tool in _MCP_TOOL_NAMES
     for leaf in _MCP_TOOL_FIXTURE_LEAVES
 )
@@ -138,8 +138,8 @@ RISK_FINGERPRINT_SUFFIXES: Mapping[Risk, tuple[str, ...]] = MappingProxyType(
             "qualification/harnesses/semantic-native/tests/recovery.rs",
             "qualification/harnesses/semantic-native/tests/fts.rs",
             "qualification/fixtures/semantic-corpus.json",
-            "compatibility/fixtures/mcp/tools/hieronymus_rag_search/success.input.json",
-            "compatibility/fixtures/mcp/tools/hieronymus_recall/success.input.json",
+            "compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json",
+            "compatibility/fixtures/mcp/hieronymus_recall/success.input.json",
         ),
         "frontend-embedding": (
             "tools/qualification/run_frontend.py",

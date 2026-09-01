@@ -1,9 +1,12 @@
 """Deterministic validation gate for one qualification record."""
 
+# ruff: noqa: E501 -- canonical replay commands are deliberately byte-exact literals.
+
 from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import sys
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
@@ -33,6 +36,63 @@ _LIVE_MODULES = {
     "tools.qualification.run_frontend",
     "tools.qualification.run_database",
 }
+
+
+def _planned_replay_commands() -> tuple[str, ...]:
+    risks = tuple(REQUIRED_CRITERIA)
+    commands = [
+        "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write",
+        "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_semantic --write",
+        "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_frontend --write",
+        "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_database --write",
+        "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run all --write",
+        "uv run python -m tools.qualification.projections --check",
+        "uv run --no-cache --no-sync python -B -m tools.qualification.projections --check",
+        "uv run python -m tools.qualification.check --records-only",
+        "uv run python -m tools.qualification.check --require-qualified",
+        "uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only",
+        "uv run --no-cache --no-sync python -B -m tools.qualification.check --require-qualified",
+        "uv run python -m tools.qualification.clean",
+        "uv run python -m tools.qualification.clean --apply",
+        "uv run python -m tools.qualification.clean --apply --include-model",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 metadata --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --format-version 1",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 tree --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked -e features",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --check",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu -- -D warnings",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/semantic-native/Cargo.toml --check",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --all-targets --features semantic-native --target x86_64-unknown-linux-gnu -- -D warnings",
+        "unshare --user --map-root-user --net -- bun run --cwd frontend build -- --outDir ../qualification/.artifacts/frontend-dist/current --emptyOutDir",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 build --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --check",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --check",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings",
+    ]
+    for risk in risks:
+        commands.extend(
+            (
+                f"uv run python -m tools.qualification.validate qualification/records/{risk}.json",
+                f"uv run python -m tools.qualification.render --check qualification/records/{risk}.json docs/qualification/rust/{risk}.md",
+                f"uv run python -m tools.qualification.check --record {risk}",
+            )
+        )
+        for status, objective, normative in (
+            ("accepted", "true", "true"),
+            ("rejected", "false", "false"),
+            ("rejected", "true", "false"),
+            ("rejected", "false", "true"),
+        ):
+            commands.append(
+                f"uv run python -m tools.qualification.review {risk} --status {status} "
+                '--owner "Pavel Obruchnikov <me@inkyquill.net>" '
+                f"--objective-evidence-reviewed {objective} "
+                f"--normative-constraints-preserved {normative}"
+            )
+    return tuple(commands)
+
+
+PLANNED_REPLAY_COMMANDS = _planned_replay_commands()
+_PLANNED_REPLAY_COMMAND_SET = frozenset(PLANNED_REPLAY_COMMANDS)
 
 
 def validate_record(record: QualificationRecord, repo_root: Path) -> list[str]:
@@ -107,9 +167,6 @@ def validate_record(record: QualificationRecord, repo_root: Path) -> list[str]:
     commands = getattr(record, "commands", None)
     if not replay_commands_are_safe(commands):
         issues.append("record commands must be safe relative replay commands")
-    if type(commands) is tuple and len(commands) != len(set(commands)):
-        issues.append("record commands must not contain duplicates")
-
     cleanup = getattr(record, "cleanup", None)
     cleanup_expectations = (
         ("work_dir_removed", True),
@@ -128,12 +185,28 @@ def validate_record(record: QualificationRecord, repo_root: Path) -> list[str]:
 
 def replay_commands_are_safe(value: object) -> bool:
     """Return whether commands belong to the closed offline replay grammar."""
-    if type(value) is not tuple or not value:
+    if type(value) is not tuple or not value or any(type(command) is not str for command in value):
+        return False
+    if len(value) != len(set(value)):
         return False
     return all(_replay_command_is_safe(command) for command in value)
 
 
 def _replay_command_is_safe(command: object) -> bool:
+    if type(command) is str and command in _PLANNED_REPLAY_COMMAND_SET:
+        owner_segment = '--owner "Pavel Obruchnikov <me@inkyquill.net>"'
+        if owner_segment not in command:
+            return True
+        try:
+            tokens = shlex.split(command, posix=True)
+        except ValueError:
+            return False
+        owner_index = tokens.index("--owner")
+        return tokens[owner_index + 1] == "Pavel Obruchnikov <me@inkyquill.net>"
+    return False
+
+
+def _legacy_replay_command_is_safe(command: object) -> bool:
     if type(command) is not str or not command or command.strip() != command:
         return False
     if "  " in command:

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -12,7 +13,44 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from tools.qualification.fingerprint import fingerprint_inputs  # noqa: E402
+from tools.qualification.fingerprint import (  # noqa: E402
+    _MCP_TOOL_FIXTURE_LEAVES,
+    _MCP_TOOL_NAMES,
+    MCP_TOOL_INPUT_WIRE_INPUTS,
+    fingerprint_inputs,
+    required_fingerprint_inputs,
+)
+
+
+def test_mcp_literal_policy_matches_manifest_fixture_refs_and_real_inventory() -> None:
+    manifest = json.loads((_ROOT / "compatibility/manifest.json").read_text(encoding="utf-8"))
+    tool_contracts = tuple(
+        item for item in manifest["contracts"] if item["id"].startswith("mcp.tool.")
+    )
+    assert len(tool_contracts) == 39
+    tool_names = tuple(sorted(item["id"].removeprefix("mcp.tool.") for item in tool_contracts))
+    assert tool_names == tuple(sorted(_MCP_TOOL_NAMES))
+    for item in tool_contracts:
+        name = item["id"].removeprefix("mcp.tool.")
+        assert item["fixture"] == f"compatibility/fixtures/mcp/{name}/success.input.json"
+
+    expected = {
+        f"compatibility/fixtures/mcp/{name}/{leaf}"
+        for name in tool_names
+        for leaf in _MCP_TOOL_FIXTURE_LEAVES
+    }
+    actual = {
+        path.relative_to(_ROOT).as_posix()
+        for directory in (_ROOT / "compatibility/fixtures/mcp").iterdir()
+        if directory.is_dir() and directory.name in tool_names
+        for path in directory.iterdir()
+        if path.name in _MCP_TOOL_FIXTURE_LEAVES
+    }
+    assert len(expected) == len(actual) == 156
+    assert set(MCP_TOOL_INPUT_WIRE_INPUTS) == expected == actual
+    assert len(required_fingerprint_inputs("mcp-transport")) == 180
+    assert len(required_fingerprint_inputs("semantic-native")) == 28
+    assert all(PurePosixPath(path).parts[3] != "tools" for path in MCP_TOOL_INPUT_WIRE_INPUTS)
 
 
 def test_input_fingerprint_changes_with_fixture_bytes(tmp_path: Path) -> None:

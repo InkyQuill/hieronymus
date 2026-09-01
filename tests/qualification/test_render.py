@@ -159,6 +159,12 @@ def test_cell_canonically_escapes_table_and_markdown_hazards() -> None:
     assert not any(raw in escaped for raw in ("\r", "\n", "`", "\\", "|", "<script>", "![", "]("))
 
 
+def test_literal_markdown_encodes_every_c1_control() -> None:
+    controls = "".join(chr(value) for value in range(0x80, 0xA0))
+
+    assert _literal_markdown(controls) == "".join(f"&#{value};" for value in range(0x80, 0xA0))
+
+
 def test_render_canonically_escapes_arbitrary_record_strings(tmp_path: Path) -> None:
     _seed_common_inputs(tmp_path)
     record = make_record(tmp_path, "frontend-embedding")

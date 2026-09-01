@@ -236,7 +236,7 @@ def _literal_markdown(value: object) -> str:
     }
     return "".join(
         replacements.get(character, f"&#{ord(character)};")
-        if ord(character) < 32 or ord(character) == 127
+        if ord(character) < 32 or 127 <= ord(character) <= 159
         else replacements.get(character, character)
         for character in rendered
     )
