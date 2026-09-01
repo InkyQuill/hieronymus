@@ -2905,6 +2905,21 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_cli_inventory.py::test_owned_process_group_drains_after_read_timeout",
+      "reason": "Compatibility schema and artifact generator validation: test_owned_process_group_drains_after_read_timeout."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_cli_inventory.py::test_owned_process_group_kills_stubborn_descendant_after_leader_exit",
+      "reason": "Compatibility schema and artifact generator validation: test_owned_process_group_kills_stubborn_descendant_after_leader_exit."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_cli_inventory.py::test_owned_process_group_preserves_original_error_when_cleanup_reports_failure",
+      "reason": "Compatibility schema and artifact generator validation: test_owned_process_group_preserves_original_error_when_cleanup_reports_failure."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_cli_inventory.py::test_shipping_mcp_replay_waits_for_complete_responses_before_closing_stdin",
       "reason": "Compatibility schema and artifact generator validation: test_shipping_mcp_replay_waits_for_complete_responses_before_closing_stdin."
     },

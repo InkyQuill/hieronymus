@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 from tools.compatibility import inventory_cli
 from tools.compatibility.inventory_cli import (
@@ -195,7 +199,6 @@ def test_mcp_entrypoint_fixtures_replay_shipping_stdio_success_and_protocol_fail
     ]
     assert replay_mcp_entrypoint_case("success") == success
     assert replay_mcp_entrypoint_case("failure") == failure
-    assert not _compatibility_replay_processes()
 
 
 def test_mcp_entrypoint_normalizes_only_volatile_server_package_version() -> None:
@@ -232,19 +235,127 @@ def test_shipping_mcp_replay_waits_for_complete_responses_before_closing_stdin()
 
         assert [response["id"] for response in responses] == [1, 2]
         assert len(responses[1]["result"]["tools"]) == 39
-    assert not _compatibility_replay_processes()
 
 
-def _compatibility_replay_processes() -> list[str]:
-    processes = []
-    for cmdline_path in Path("/proc").glob("[0-9]*/cmdline"):
-        try:
-            command = cmdline_path.read_bytes().replace(b"\0", b" ").decode(errors="replace")
-        except (FileNotFoundError, PermissionError, ProcessLookupError):
-            continue
-        if "hieronymus-mcp-compat-" in command:
-            processes.append(command)
-    return processes
+def test_owned_process_group_kills_stubborn_descendant_after_leader_exit(
+    tmp_path: Path,
+) -> None:
+    command, child_pid_path, term_marker_path = _stubborn_descendant_command(tmp_path, "mismatch")
+
+    with pytest.raises(RuntimeError, match="returned 1 responses; expected 2"):
+        inventory_cli._run_owned_stdio_process(
+            command,
+            "",
+            {},
+            expected_responses=2,
+            response_timeout=0.5,
+            terminate_timeout=0.2,
+            kill_timeout=1.0,
+        )
+
+    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+    assert term_marker_path.read_text(encoding="utf-8") == "TERM"
+    assert not Path(f"/proc/{child_pid}").exists()
+
+
+def test_owned_process_group_drains_after_read_timeout(tmp_path: Path) -> None:
+    command, child_pid_path, term_marker_path = _stubborn_descendant_command(tmp_path, "timeout")
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        inventory_cli._run_owned_stdio_process(
+            command,
+            "",
+            {},
+            expected_responses=1,
+            response_timeout=0.1,
+            terminate_timeout=0.2,
+            kill_timeout=1.0,
+        )
+
+    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+    assert term_marker_path.read_text(encoding="utf-8") == "TERM"
+    assert not Path(f"/proc/{child_pid}").exists()
+
+
+def test_owned_process_group_preserves_original_error_when_cleanup_reports_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command, child_pid_path, _term_marker_path = _stubborn_descendant_command(tmp_path, "mismatch")
+    drain = inventory_cli._drain_owned_process_group
+
+    def drain_then_report_failure(*args, **kwargs) -> None:
+        drain(*args, **kwargs)
+        raise RuntimeError("synthetic cleanup audit failure")
+
+    monkeypatch.setattr(inventory_cli, "_drain_owned_process_group", drain_then_report_failure)
+
+    with pytest.raises(RuntimeError, match="returned 1 responses; expected 2") as caught:
+        inventory_cli._run_owned_stdio_process(
+            command,
+            "",
+            {},
+            expected_responses=2,
+            response_timeout=0.5,
+            terminate_timeout=0.2,
+            kill_timeout=1.0,
+        )
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert str(caught.value.__cause__) == "synthetic cleanup audit failure"
+    assert caught.value.__notes__ == [
+        "owned process-group cleanup also failed: RuntimeError: synthetic cleanup audit failure"
+    ]
+    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+    assert not Path(f"/proc/{child_pid}").exists()
+
+
+def _stubborn_descendant_command(tmp_path: Path, mode: str) -> tuple[list[str], Path, Path]:
+    script = tmp_path / "owned_process_group.py"
+    child_pid_path = tmp_path / "child.pid"
+    term_marker_path = tmp_path / "term.marker"
+    script.write_text(
+        """
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+mode, child_pid_path, term_marker_path = sys.argv[1:]
+ready_read, ready_write = os.pipe()
+child_pid = os.fork()
+if child_pid == 0:
+    os.close(ready_read)
+
+    def record_term(_signum, _frame):
+        Path(term_marker_path).write_text("TERM", encoding="utf-8")
+
+    signal.signal(signal.SIGTERM, record_term)
+    Path(child_pid_path).write_text(str(os.getpid()), encoding="utf-8")
+    os.write(ready_write, b"1")
+    os.close(ready_write)
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    while True:
+        time.sleep(0.05)
+
+os.close(ready_write)
+os.read(ready_read, 1)
+os.close(ready_read)
+if mode == "mismatch":
+    print('{"jsonrpc":"2.0","id":1,"result":{}}', flush=True)
+    raise SystemExit(0)
+time.sleep(60)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return (
+        [sys.executable, str(script), mode, str(child_pid_path), str(term_marker_path)],
+        child_pid_path,
+        term_marker_path,
+    )
 
 
 def _contract_records(snapshot: dict[str, object]) -> list[dict[str, object]]:

@@ -15,8 +15,9 @@ import tempfile
 import time
 import tomllib
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace, TracebackType
 from typing import Any
 
 import click
@@ -42,6 +43,24 @@ _ENTRY_POINT_GROUPS: dict[str, click.Group] = {
     "hieronymus.cli:main": cli_main,
 }
 _MCP_ENTRY_POINT = "hieronymus.mcp_server:main"
+_MCP_RESPONSE_TIMEOUT_SECONDS = 30.0
+_PROCESS_GROUP_TERMINATE_TIMEOUT_SECONDS = 1.0
+_PROCESS_GROUP_KILL_TIMEOUT_SECONDS = 2.0
+
+
+@dataclass(frozen=True)
+class _LinuxProcessState:
+    pid: int
+    state: str
+    process_group: int
+    session: int
+
+
+@dataclass(frozen=True)
+class _OwnedProcessGroup:
+    process: subprocess.Popen[bytes]
+    process_group: int
+    session: int
 
 
 def snapshot_cli(repo_root: Path) -> dict[str, object]:
@@ -864,71 +883,239 @@ def _run_shipping_mcp_process(
     expected_responses: int,
 ) -> tuple[int, str, str]:
     """Read the bounded response set before closing the shipping server's stdin."""
-    process = subprocess.Popen(
+    return _run_owned_stdio_process(
         [str(_shipping_mcp_entrypoint())],
+        stdin,
+        environment,
+        expected_responses=expected_responses,
         cwd=Path(__file__).resolve().parents[2],
+    )
+
+
+def _run_owned_stdio_process(
+    command: list[str],
+    stdin: str,
+    environment: dict[str, str],
+    *,
+    expected_responses: int,
+    cwd: Path | None = None,
+    response_timeout: float = _MCP_RESPONSE_TIMEOUT_SECONDS,
+    terminate_timeout: float = _PROCESS_GROUP_TERMINATE_TIMEOUT_SECONDS,
+    kill_timeout: float = _PROCESS_GROUP_KILL_TIMEOUT_SECONDS,
+) -> tuple[int, str, str]:
+    """Exchange bounded NDJSON and always drain the process group we created."""
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
         env=environment,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    # start_new_session runs setsid() before exec, so this unreaped child PID is
+    # both the PGID and SID and remains reserved until the drain's final wait().
+    owned_group = _OwnedProcessGroup(process, process.pid, process.pid)
+    failure: tuple[BaseException, TracebackType | None] | None = None
+    result: tuple[bytes, bytes] | None = None
+    try:
+        _assert_owned_leader_anchor(owned_group)
+        stdout, stderr = _exchange_owned_process_streams(
+            process,
+            stdin,
+            expected_responses=expected_responses,
+            timeout=response_timeout,
+        )
+        response_count = stdout.count(b"\n")
+        if response_count != expected_responses:
+            raise RuntimeError(
+                "shipping hieronymus-mcp returned "
+                f"{response_count} responses; expected {expected_responses}"
+            )
+        result = stdout, stderr
+    except BaseException as error:
+        failure = error, error.__traceback__
+
+    try:
+        _drain_owned_process_group(
+            owned_group,
+            terminate_timeout=terminate_timeout,
+            kill_timeout=kill_timeout,
+        )
+    except BaseException as cleanup_error:
+        if failure is not None:
+            original, traceback = failure
+            original.add_note(
+                "owned process-group cleanup also failed: "
+                f"{type(cleanup_error).__name__}: {cleanup_error}"
+            )
+            raise original.with_traceback(traceback) from cleanup_error
+        raise
+
+    if failure is not None:
+        original, traceback = failure
+        raise original.with_traceback(traceback)
+    assert result is not None
+    assert process.returncode is not None
+    stdout, stderr = result
+    return process.returncode, stdout.decode(), stderr.decode()
+
+
+def _exchange_owned_process_streams(
+    process: subprocess.Popen[bytes],
+    stdin: str,
+    *,
+    expected_responses: int,
+    timeout: float,
+) -> tuple[bytes, bytes]:
+    """Read both pipes without wait/poll, retaining the unreaped leader anchor."""
     assert process.stdin is not None
     assert process.stdout is not None
-    deadline = time.monotonic() + 30
-    output = bytearray()
+    assert process.stderr is not None
+    stdout = bytearray()
+    stderr = bytearray()
     selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
+    selector.register(process.stdout, selectors.EVENT_READ, stdout)
+    selector.register(process.stderr, selectors.EVENT_READ, stderr)
+    deadline = time.monotonic() + timeout
+    stdin_open = True
     try:
         process.stdin.write(stdin.encode())
         process.stdin.flush()
-        while output.count(b"\n") < expected_responses:
+        while selector.get_map():
+            if stdin_open and stdout.count(b"\n") >= expected_responses:
+                process.stdin.close()
+                process.stdin = None
+                stdin_open = False
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise subprocess.TimeoutExpired("hieronymus-mcp", 30)
-            if not selector.select(remaining):
-                raise subprocess.TimeoutExpired("hieronymus-mcp", 30)
-            chunk = os.read(process.stdout.fileno(), 65536)
-            if not chunk:
-                break
-            output.extend(chunk)
-        process.stdin.close()
-        process.stdin = None
-        remaining = max(deadline - time.monotonic(), 0.1)
-        trailing_stdout, stderr = process.communicate(timeout=remaining)
-        output.extend(trailing_stdout)
-    except BaseException:
-        _terminate_process_group(process)
-        raise
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            events = selector.select(remaining)
+            if not events:
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            for key, _events in events:
+                target = key.data
+                chunk = os.read(key.fd, 65536)
+                if chunk:
+                    target.extend(chunk)
+                else:
+                    selector.unregister(key.fileobj)
+                    if key.fileobj is process.stdout and stdin_open:
+                        process.stdin.close()
+                        process.stdin = None
+                        stdin_open = False
+        if stdin_open:
+            process.stdin.close()
+            process.stdin = None
+        return bytes(stdout), bytes(stderr)
     finally:
         selector.close()
 
-    if output.count(b"\n") != expected_responses:
-        raise RuntimeError(
-            "shipping hieronymus-mcp returned "
-            f"{output.count(b'\n')} responses; expected {expected_responses}"
-        )
-    _assert_process_group_drained(process.pid)
-    return process.returncode, output.decode(), stderr.decode()
 
+def _drain_owned_process_group(
+    owned_group: _OwnedProcessGroup,
+    *,
+    terminate_timeout: float,
+    kill_timeout: float,
+) -> None:
+    """TERM then KILL an owned group while its unreaped leader prevents PGID reuse.
 
-def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is None:
-        os.killpg(process.pid, signal.SIGTERM)
+    The start_new_session leader stays unreaped until it is the sole, exited group
+    member. The kernel therefore cannot reuse its PID/PGID while killpg is used.
+    After that condition is observed, wait() atomically reaps the last owned member;
+    probing the numeric PGID afterward would be unsafe and is intentionally avoided.
+    """
+    process = owned_group.process
+    if process.stdin is not None:
+        try:
+            process.stdin.close()
+        except OSError:
+            pass
+        process.stdin = None
+
     try:
-        process.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.communicate(timeout=5)
+        _signal_owned_process_group(owned_group, signal.SIGTERM)
+        _wait_for_exited_leader_only(owned_group, terminate_timeout)
+        # The unreaped zombie anchor necessarily remains after TERM. Sending KILL
+        # before the final scan closes the only /proc enumeration race: no member
+        # present at this point can execute a subsequent fork before it dies.
+        _signal_owned_process_group(owned_group, signal.SIGKILL)
+        if not _wait_for_exited_leader_only(owned_group, kill_timeout):
+            members = _owned_process_group_members(owned_group)
+            raise RuntimeError(
+                "owned process group survived SIGKILL: "
+                + ", ".join(f"{member.pid}:{member.state}" for member in members)
+            )
+        process.wait(timeout=0.1)
+    finally:
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
 
 
-def _assert_process_group_drained(process_group: int) -> None:
+def _signal_owned_process_group(owned_group: _OwnedProcessGroup, signum: int) -> None:
+    _assert_owned_leader_anchor(owned_group)
     try:
-        os.killpg(process_group, 0)
+        os.killpg(owned_group.process_group, signum)
     except ProcessLookupError:
-        return
-    os.killpg(process_group, signal.SIGTERM)
-    raise RuntimeError("shipping hieronymus-mcp left a descendant process running")
+        # Linux reports ESRCH when the retained group contains only zombies.
+        pass
+
+
+def _wait_for_exited_leader_only(owned_group: _OwnedProcessGroup, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        members = _owned_process_group_members(owned_group)
+        leader = next((member for member in members if member.pid == owned_group.process.pid), None)
+        if leader is None:
+            raise RuntimeError("owned process-group leader anchor disappeared before reap")
+        if len(members) == 1 and leader.state in {"Z", "X"}:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.01, remaining))
+
+
+def _assert_owned_leader_anchor(owned_group: _OwnedProcessGroup) -> None:
+    state = _read_linux_process_state(owned_group.process.pid)
+    if state is None:
+        raise RuntimeError("owned process-group leader anchor is missing")
+    if state.process_group != owned_group.process_group or state.session != owned_group.session:
+        raise RuntimeError("owned process-group identity changed before signal")
+
+
+def _owned_process_group_members(
+    owned_group: _OwnedProcessGroup,
+) -> list[_LinuxProcessState]:
+    members = []
+    for stat_path in Path("/proc").glob("[0-9]*/stat"):
+        state = _read_linux_process_state(int(stat_path.parent.name))
+        if state is None:
+            continue
+        if (
+            state.process_group == owned_group.process_group
+            and state.session == owned_group.session
+        ):
+            members.append(state)
+    return sorted(members, key=lambda member: member.pid)
+
+
+def _read_linux_process_state(pid: int) -> _LinuxProcessState | None:
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        return None
+    closing_parenthesis = raw.rfind(")")
+    fields = raw[closing_parenthesis + 1 :].split()
+    if closing_parenthesis < 0 or len(fields) < 4:
+        raise RuntimeError(f"invalid /proc process state for pid {pid}")
+    return _LinuxProcessState(
+        pid=pid,
+        state=fields[0],
+        process_group=int(fields[2]),
+        session=int(fields[3]),
+    )
 
 
 def _shipping_mcp_entrypoint() -> Path:
