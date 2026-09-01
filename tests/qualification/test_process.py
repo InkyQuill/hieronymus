@@ -335,8 +335,96 @@ def test_owned_process_reaps_descendant_that_escapes_group_with_setsid(tmp_path:
         os.kill(escaped_pid, 0)
 
 
+def test_owned_process_reaps_immediate_double_fork_orphan(tmp_path: Path) -> None:
+    """Catch loss of ancestry before the runner's first procfs scan."""
+    pid_file = tmp_path / "double-fork.pid"
+    script = tmp_path / "double-fork.py"
+    script.write_text(
+        "import os,pathlib,time\n"
+        "if os.fork(): os._exit(0)\n"
+        "os.setsid()\n"
+        "if os.fork(): os._exit(0)\n"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+        "os.close(1); os.close(2); time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    orphan_pid: int | None = None
+    try:
+        receipt = run_owned_process(
+            (sys.executable, str(script)),
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin"},
+            timeout_seconds=2,
+            no_progress_seconds=1,
+        )
+        orphan_pid = int(pid_file.read_text(encoding="utf-8"))
+        assert receipt.process_group_reaped
+        with pytest.raises(ProcessLookupError):
+            os.kill(orphan_pid, 0)
+    finally:
+        if orphan_pid is not None:
+            try:
+                os.kill(orphan_pid, 9)
+            except ProcessLookupError:
+                pass
+
+
+def test_owned_process_keeps_tracking_descendant_after_marker_close(tmp_path: Path) -> None:
+    pid_file = tmp_path / "closed-marker.pid"
+    script = tmp_path / "close-marker.py"
+    script.write_text(
+        "import os,pathlib,time\n"
+        "pid=os.fork()\n"
+        "if pid:\n"
+        " time.sleep(60)\n"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+        "time.sleep(.4)\n"
+        "for fd in range(3, 256):\n"
+        " try: os.close(fd)\n"
+        " except OSError: pass\n"
+        "os.setsid(); time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    receipt = run_owned_process(
+        (sys.executable, str(script)),
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_seconds=2,
+        no_progress_seconds=1,
+    )
+    descendant_pid = int(pid_file.read_text(encoding="utf-8"))
+    assert receipt.process_group_reaped
+    with pytest.raises(ProcessLookupError):
+        os.kill(descendant_pid, 0)
+
+
+def test_owned_process_reaps_large_marker_bearing_tree(tmp_path: Path) -> None:
+    script = tmp_path / "large-tree.py"
+    script.write_text(
+        "import os,time\n"
+        "for _ in range(32):\n"
+        " if os.fork() == 0:\n"
+        "  os.setsid(); time.sleep(60); os._exit(0)\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    receipt = run_owned_process(
+        (sys.executable, str(script)),
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_seconds=2,
+        no_progress_seconds=1,
+    )
+    assert receipt.timed_out and receipt.process_group_reaped
+
+
 def test_owned_process_never_signals_unrelated_child(tmp_path: Path) -> None:
-    unrelated = subprocess.Popen((sys.executable, "-c", "import time; time.sleep(60)"))
+    unrelated_marker, unrelated_parent = os.pipe()
+    unrelated = subprocess.Popen(
+        (sys.executable, "-c", "import time; time.sleep(60)"),
+        pass_fds=(unrelated_marker,),
+    )
+    os.close(unrelated_marker)
     try:
         receipt = run_owned_process(
             (sys.executable, "-c", "import time; time.sleep(60)"),
@@ -348,6 +436,7 @@ def test_owned_process_never_signals_unrelated_child(tmp_path: Path) -> None:
         assert receipt.process_group_reaped
         assert unrelated.poll() is None
     finally:
+        os.close(unrelated_parent)
         unrelated.terminate()
         unrelated.wait(timeout=5)
 
@@ -459,6 +548,129 @@ def test_runner_refuses_to_spawn_without_linux_subreaper(
             timeout_seconds=1,
             no_progress_seconds=1,
         )
+
+
+def test_subreaper_restore_failure_is_fixed_and_checked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tools.qualification.process as process_module
+
+    class FailedPrctl:
+        def prctl(self, *_args: object) -> int:
+            return -1
+
+    monkeypatch.setattr(process_module.ctypes, "CDLL", lambda *_args, **_kwargs: FailedPrctl())
+    with pytest.raises(RuntimeError, match="failed to restore Linux child-subreaper state"):
+        process_module._restore_subreaper(0)
+
+
+def test_subreaper_restore_failure_does_not_hide_operation_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tools.qualification.process as process_module
+
+    created: list[int] = []
+    real_create = process_module._create_owned_marker
+
+    def capture_marker() -> tuple[object, ...]:
+        marker = real_create()
+        created.extend(marker[:2])
+        return marker
+
+    monkeypatch.setattr(process_module, "_create_owned_marker", capture_marker)
+    monkeypatch.setattr(
+        process_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("operation failed")),
+    )
+    monkeypatch.setattr(
+        process_module,
+        "_restore_subreaper",
+        lambda _previous: (_ for _ in ()).throw(
+            RuntimeError("failed to restore Linux child-subreaper state")
+        ),
+    )
+    with pytest.raises(ValueError, match="operation failed") as raised:
+        run_owned_process(
+            (sys.executable, "-c", "print('never')"),
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin"},
+            timeout_seconds=1,
+            no_progress_seconds=1,
+        )
+    assert raised.value.__notes__ == ["failed to restore Linux child-subreaper state"]
+    for descriptor in created:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+def test_owned_marker_parent_descriptors_close_after_completion_and_spawn_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tools.qualification.process as process_module
+
+    created: list[int] = []
+    real_create = process_module._create_owned_marker
+
+    def capture_marker() -> tuple[object, ...]:
+        marker = real_create()
+        created.extend(marker[:2])
+        return marker
+
+    monkeypatch.setattr(process_module, "_create_owned_marker", capture_marker)
+    assert (
+        run_owned_process(
+            (sys.executable, "-c", "print('done')"),
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin"},
+            timeout_seconds=2,
+            no_progress_seconds=1,
+        ).exit_code
+        == 0
+    )
+    assert (
+        run_owned_process(
+            (str(tmp_path / "missing"),),
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin"},
+            timeout_seconds=1,
+            no_progress_seconds=1,
+        ).exit_code
+        is None
+    )
+    for descriptor in created:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork")
+def test_owned_marker_parent_copy_closes_in_fork_child() -> None:
+    import tools.qualification.process as process_module
+
+    marker_read, marker_write, _marker = process_module._create_owned_marker()
+    process_module._PARENT_MARKER_FDS.add(marker_write)
+    result_read, result_write = os.pipe()
+    try:
+        pid = os.fork()
+        if pid == 0:
+            os.close(result_read)
+            try:
+                os.fstat(marker_write)
+            except OSError:
+                os.write(result_write, b"closed")
+            else:
+                os.write(result_write, b"open")
+            os._exit(0)
+        os.close(result_write)
+        assert os.read(result_read, 16) == b"closed"
+        os.waitpid(pid, 0)
+    finally:
+        process_module._PARENT_MARKER_FDS.discard(marker_write)
+        for descriptor in (marker_read, marker_write, result_read):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork")

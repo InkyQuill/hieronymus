@@ -25,19 +25,26 @@ _PR_SET_CHILD_SUBREAPER = 36
 _PR_GET_CHILD_SUBREAPER = 37
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ARTIFACT_ROOT = _REPO_ROOT / "qualification/.artifacts"
+_PARENT_MARKER_FDS: set[int] = set()
 
 
 class ProcessCoordinationTimeout(RuntimeError):
     """Raised before spawn when the process runner cannot be acquired safely."""
 
 
-def _reset_process_lock() -> None:
+def _reset_after_fork() -> None:
     global _PROCESS_LOCK
     _PROCESS_LOCK = threading.Lock()
+    for descriptor in tuple(_PARENT_MARKER_FDS):
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    _PARENT_MARKER_FDS.clear()
 
 
 if hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child=_reset_process_lock)
+    os.register_at_fork(after_in_child=_reset_after_fork)
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,13 +357,43 @@ def _subreaper_state(enable: bool) -> int | None:
 def _restore_subreaper(previous: int | None) -> None:
     if previous is None or not sys.platform.startswith("linux"):
         return
-    ctypes.CDLL(None, use_errno=True).prctl(_PR_SET_CHILD_SUBREAPER, previous, 0, 0, 0)
+    if ctypes.CDLL(None, use_errno=True).prctl(_PR_SET_CHILD_SUBREAPER, previous, 0, 0, 0) != 0:
+        raise RuntimeError("failed to restore Linux child-subreaper state")
 
 
 @dataclass(frozen=True, slots=True)
 class _ProcessIdentity:
     pid: int
     start_time: int
+
+
+@dataclass(frozen=True, slots=True)
+class _OwnedMarker:
+    """In-memory identity of the pipe inherited by cooperative descendants."""
+
+    device: int
+    inode: int
+
+
+def _create_owned_marker() -> tuple[int, int, _OwnedMarker]:
+    flags = getattr(os, "O_CLOEXEC", 0)
+    if hasattr(os, "pipe2"):
+        read_fd, write_fd = os.pipe2(flags)
+    else:  # pragma: no cover - Linux qualification hosts provide pipe2
+        read_fd, write_fd = os.pipe()
+        os.set_inheritable(read_fd, False)
+        os.set_inheritable(write_fd, False)
+    info = os.fstat(read_fd)
+    return read_fd, write_fd, _OwnedMarker(info.st_dev, info.st_ino)
+
+
+def _close_fd(descriptor: int | None) -> None:
+    if descriptor is None:
+        return
+    try:
+        os.close(descriptor)
+    except OSError:
+        pass
 
 
 def _proc_state(pid: int) -> tuple[_ProcessIdentity, int] | None:
@@ -382,8 +419,37 @@ def _process_identity(pid: int) -> _ProcessIdentity | None:
     return None if state is None else state[0]
 
 
-def _collect_descendants(tracked: dict[int, _ProcessIdentity]) -> None:
-    """Extend tracked with every currently observable descendant of known identities."""
+def _has_owned_marker(pid: int, marker: _OwnedMarker) -> bool:
+    try:
+        descriptors = os.scandir(f"/proc/{pid}/fd")
+    except OSError:
+        return False
+    with descriptors:
+        for descriptor in descriptors:
+            try:
+                if os.readlink(descriptor.path) != f"pipe:[{marker.inode}]":
+                    continue
+                info = os.stat(descriptor.path)
+            except OSError:
+                continue
+            if (
+                stat.S_ISFIFO(info.st_mode)
+                and info.st_dev == marker.device
+                and info.st_ino == marker.inode
+            ):
+                return True
+    return False
+
+
+def _collect_descendants(
+    tracked: dict[int, _ProcessIdentity], marker: _OwnedMarker | None = None
+) -> None:
+    """Extend tracked by inherited marker or established PID-safe ancestry.
+
+    The marker is a cooperative containment boundary. A descendant that closes it
+    before first observation cannot safely be distinguished from an unrelated process.
+    Once observed, the PID/start-time identity remains tracked after marker close.
+    """
     if not sys.platform.startswith("linux"):
         return
     states: dict[int, tuple[_ProcessIdentity, int]] = {}
@@ -398,6 +464,10 @@ def _collect_descendants(tracked: dict[int, _ProcessIdentity]) -> None:
             state = _proc_state(int(entry.name))
             if state is not None:
                 states[state[0].pid] = state
+    if marker is not None:
+        for identity, _parent in states.values():
+            if identity.pid != os.getpid() and _has_owned_marker(identity.pid, marker):
+                tracked.setdefault(identity.pid, identity)
     parents = {pid for pid, identity in tracked.items() if _process_identity(pid) == identity}
     changed = True
     while changed:
@@ -465,15 +535,16 @@ def _terminate_owned_tree(
     process: subprocess.Popen[bytes],
     process_group: int,
     tracked: dict[int, _ProcessIdentity],
+    marker: _OwnedMarker,
 ) -> bool:
     """Terminate the group plus tracked setsid descendants, then reap only owned PIDs."""
-    _collect_descendants(tracked)
+    _collect_descendants(tracked, marker)
     _signal_group(process_group, signal.SIGTERM)
     for identity in tuple(tracked.values()):
         _signal_identity(identity, signal.SIGTERM)
     deadline = time.monotonic() + 0.25
     while time.monotonic() < deadline:
-        _collect_descendants(tracked)
+        _collect_descendants(tracked, marker)
         _reap_tracked(tracked, root_pid=process.pid)
         if not any(_identity_alive(identity) for identity in tracked.values()):
             break
@@ -490,7 +561,7 @@ def _terminate_owned_tree(
         process.wait(timeout=1)
     deadline = time.monotonic() + 1
     while time.monotonic() < deadline:
-        _collect_descendants(tracked)
+        _collect_descendants(tracked, marker)
         _reap_tracked(tracked, root_pid=process.pid)
         if not any(_identity_alive(identity) for identity in tracked.values()):
             return True
@@ -519,6 +590,9 @@ def run_owned_process(
     timed_out = False
     exit_code: int | None = None
     process_group_reaped = True
+    marker_read: int | None = None
+    marker_write: int | None = None
+    operation_error: BaseException | None = None
 
     try:
         previous_subreaper = _subreaper_state(True)
@@ -527,18 +601,25 @@ def run_owned_process(
         process: subprocess.Popen[bytes] | None = None
         selector = selectors.DefaultSelector()
         try:
+            marker_read, marker_write, marker = _create_owned_marker()
+            _PARENT_MARKER_FDS.add(marker_write)
             try:
-                process = subprocess.Popen(
-                    argv,
-                    cwd=cwd,
-                    env=dict(env),
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    start_new_session=True,
-                    preexec_fn=_disable_core_dumps,
-                    close_fds=True,
-                )
+                try:
+                    process = subprocess.Popen(
+                        argv,
+                        cwd=cwd,
+                        env=dict(env),
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        start_new_session=True,
+                        preexec_fn=_disable_core_dumps,
+                        close_fds=True,
+                        pass_fds=(marker_read,),
+                    )
+                finally:
+                    _close_fd(marker_read)
+                    marker_read = None
             except OSError:
                 return ProcessReceipt(
                     exit_code=None,
@@ -563,17 +644,21 @@ def run_owned_process(
             terminated = False
             termination_started: float | None = None
             while selector.get_map() or process.poll() is None:
-                _collect_descendants(tracked)
+                _collect_descendants(tracked, marker)
                 now = time.monotonic()
                 if not terminated and (
                     now - started >= timeout_seconds or now - last_progress >= no_progress_seconds
                 ):
                     timed_out = True
-                    process_group_reaped = _terminate_owned_tree(process, process_group, tracked)
+                    process_group_reaped = _terminate_owned_tree(
+                        process, process_group, tracked, marker
+                    )
                     terminated = True
                     termination_started = time.monotonic()
                 elif process.poll() is not None and not terminated:
-                    process_group_reaped = _terminate_owned_tree(process, process_group, tracked)
+                    process_group_reaped = _terminate_owned_tree(
+                        process, process_group, tracked, marker
+                    )
                     terminated = True
                     termination_started = time.monotonic()
 
@@ -595,17 +680,25 @@ def run_owned_process(
                     break
 
             if process.poll() is None:
-                process_group_reaped = _terminate_owned_tree(process, process_group, tracked)
+                process_group_reaped = _terminate_owned_tree(
+                    process, process_group, tracked, marker
+                )
             exit_code = process.wait(timeout=1)
-            _collect_descendants(tracked)
+            _collect_descendants(tracked, marker)
             if any(_identity_alive(identity) for identity in tracked.values()):
-                process_group_reaped = _terminate_owned_tree(process, process_group, tracked)
+                process_group_reaped = _terminate_owned_tree(
+                    process, process_group, tracked, marker
+                )
             process_group_reaped = process_group_reaped and not _group_exists(process_group)
-        except BaseException:
+        except BaseException as error:
+            operation_error = error
             if process is not None:
                 identity = _process_identity(process.pid)
                 tracked = {} if identity is None else {process.pid: identity}
-                _terminate_owned_tree(process, process.pid, tracked)
+                try:
+                    _terminate_owned_tree(process, process.pid, tracked, marker)
+                except BaseException:
+                    error.add_note("failed to terminate the owned process tree")
             raise
         finally:
             selector.close()
@@ -613,7 +706,16 @@ def run_owned_process(
                 for pipe in (process.stdout, process.stderr):
                     if pipe is not None and not pipe.closed:
                         pipe.close()
-            _restore_subreaper(previous_subreaper)
+            _close_fd(marker_read)
+            if marker_write is not None:
+                _PARENT_MARKER_FDS.discard(marker_write)
+                _close_fd(marker_write)
+            try:
+                _restore_subreaper(previous_subreaper)
+            except RuntimeError as restore_error:
+                if operation_error is None:
+                    raise
+                operation_error.add_note(str(restore_error))
     finally:
         _PROCESS_LOCK.release()
 

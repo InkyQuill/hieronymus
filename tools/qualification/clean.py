@@ -19,17 +19,37 @@ def _reject_symlink(path: Path, *, label: str) -> None:
 
 
 def _artifact_root(repo_root: Path) -> Path:
-    lexical_repo = repo_root.absolute()
-    _reject_symlink(lexical_repo, label="repository root")
-    if not lexical_repo.is_dir():
-        raise ValueError("repository root must be a directory")
-    if lexical_repo != lexical_repo.resolve(strict=True):
-        raise ValueError("repository root must be canonical")
+    lexical_repo = _validated_repo_root(repo_root)
     qualification = lexical_repo / "qualification"
     _reject_symlink(qualification, label="qualification root")
     artifacts = qualification / ".artifacts"
     _reject_symlink(artifacts, label="artifact root")
     return artifacts
+
+
+def _validated_repo_root(repo_root: Path) -> Path:
+    raw = os.fspath(repo_root)
+    if not os.path.isabs(raw) or os.path.normpath(raw) != raw:
+        raise ValueError("repository root must be an absolute canonical spelling")
+    lexical_repo = Path(raw)
+    _reject_symlink(lexical_repo, label="repository root")
+    if not lexical_repo.is_dir():
+        raise ValueError("repository root must be a directory")
+    if lexical_repo != lexical_repo.resolve(strict=True):
+        raise ValueError("repository root must be canonical")
+    home = Path.home().resolve(strict=True)
+    translation = home / "Yandex.Disk/Translation"
+    is_artifact_root = (
+        lexical_repo.name == ".artifacts" and lexical_repo.parent.name == "qualification"
+    )
+    if (
+        lexical_repo in (Path("/"), home)
+        or lexical_repo == translation
+        or lexical_repo.is_relative_to(translation)
+        or is_artifact_root
+    ):
+        raise ValueError("repository root is unsafe for cleanup")
+    return lexical_repo
 
 
 def cleanup_targets(repo_root: Path, include_model: bool = False) -> tuple[Path, ...]:
@@ -156,16 +176,37 @@ def _remove_validated_tree(
 
 
 def _open_artifacts(repo_root: Path) -> int | None:
-    artifacts = _artifact_root(repo_root)
+    canonical_repo = _validated_repo_root(repo_root)
+    artifacts = _artifact_root(canonical_repo)
     if not artifacts.exists():
         return None
-    root_fd = os.open(repo_root.absolute(), _open_flags())
+    root_fd = os.open(canonical_repo, _open_flags())
+    root_device = os.fstat(root_fd).st_dev
+    root_mount = _mount_id(root_fd)
     try:
-        qualification_fd = _open_directory("qualification", root_fd)
+        try:
+            qualification_fd = _open_directory("qualification", root_fd)
+        except FileNotFoundError:
+            return None
+        if (
+            os.fstat(qualification_fd).st_dev != root_device
+            or _mount_id(qualification_fd) != root_mount
+        ):
+            os.close(qualification_fd)
+            raise ValueError("cleanup refuses mounted qualification root")
     finally:
         os.close(root_fd)
     try:
-        return _open_directory(".artifacts", qualification_fd)
+        try:
+            artifacts_fd = _open_directory(".artifacts", qualification_fd)
+        except FileNotFoundError:
+            return None
+        if os.fstat(artifacts_fd).st_dev != os.fstat(qualification_fd).st_dev or _mount_id(
+            artifacts_fd
+        ) != _mount_id(qualification_fd):
+            os.close(artifacts_fd)
+            raise ValueError("cleanup refuses mounted artifact root")
+        return artifacts_fd
     finally:
         os.close(qualification_fd)
 

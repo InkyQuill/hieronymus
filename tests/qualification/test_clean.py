@@ -45,6 +45,28 @@ def test_cleanup_rejects_symlink_targets(tmp_path: Path) -> None:
         cleanup_targets(root)
 
 
+def test_cleanup_rejects_unsafe_repository_roots_before_deriving_targets(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    artifacts = root / "qualification/.artifacts"
+    artifacts.mkdir(parents=True)
+    symlink = tmp_path / "repo-link"
+    symlink.symlink_to(root, target_is_directory=True)
+    noncanonical = root / "qualification/.."
+    unsafe = (
+        Path("/"),
+        Path.home().resolve(),
+        Path.home().resolve() / "Yandex.Disk/Translation",
+        artifacts,
+        symlink,
+        noncanonical,
+    )
+    for candidate in unsafe:
+        with pytest.raises(ValueError):
+            cleanup_targets(candidate)
+
+
 def test_cleanup_cli_is_dry_run_by_default_and_apply_is_idempotent(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     artifacts = root / "qualification/.artifacts"
@@ -124,6 +146,32 @@ def test_cleanup_rejects_same_device_bind_mount_id_before_mutation(
     with pytest.raises(ValueError, match="mounted"):
         clean_module.main(["--repo-root", str(root), "--apply"])
     assert (nested / "file").read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.parametrize("transition", ["qualification", ".artifacts"])
+@pytest.mark.parametrize("apply", [False, True])
+def test_cleanup_rejects_mount_at_every_root_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    transition: str,
+    apply: bool,
+) -> None:
+    root = tmp_path / "repo"
+    victim = root / "qualification/.artifacts/work/file"
+    victim.parent.mkdir(parents=True)
+    victim.write_text("keep", encoding="utf-8")
+    real_mount_id = clean_module._mount_id
+
+    def injected(fd: int) -> int:
+        path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        value = real_mount_id(fd)
+        return value + 1 if path.name == transition else value
+
+    monkeypatch.setattr(clean_module, "_mount_id", injected)
+    argv = ["--repo-root", str(root), *(("--apply",) if apply else ())]
+    with pytest.raises(ValueError, match="mounted"):
+        clean_module.main(argv)
+    assert victim.read_text(encoding="utf-8") == "keep"
 
 
 def test_cleanup_revalidates_identity_before_deletion(

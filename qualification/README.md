@@ -27,6 +27,11 @@ wait. Execution clocks begin only after that wait. It tracks owned descendants b
 start time while they run, signals both the original process group and tracked descendants that
 escape it, and never reaps an untracked child.
 
+Descendant discovery combines ancestry with a unique inherited anonymous-pipe marker. This is a
+cooperative boundary: a descendant that deliberately closes the marker before its first
+observation cannot safely be distinguished from an unrelated process. Once observed, its
+PID/start-time identity remains tracked even if it later closes the marker.
+
 Machine-readable records contain digests, counts, tool basenames, and versions only. Raw output,
 environment values, absolute tool/cache paths, and user data are never serialized. Generated
 Markdown is a deterministic rendering of those redacted records and is reviewed separately.
