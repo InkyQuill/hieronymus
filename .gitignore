@@ -50,3 +50,7 @@ temp/
 
 # Temporary brainstorming companion state
 .superpowers/
+
+# Rust qualification artifacts
+qualification/.artifacts/
+qualification/harnesses/*/target/
