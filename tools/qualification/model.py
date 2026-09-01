@@ -32,13 +32,15 @@ class Measurements(Mapping[str, MeasurementValue]):
 
     __slots__ = ("_items",)
 
-    def __init__(self, values: Mapping[str, MeasurementValue] | None = None) -> None:
+    def __init__(self, values: Mapping[str, object] | None = None) -> None:
+        if type(self) is not Measurements:
+            raise ValueError("measurements must use the exact Measurements shape")
         source = {} if values is None else values
         if not isinstance(source, Mapping):
             raise ValueError("evidence measurements must be an object with named measurements")
         items: list[tuple[str, MeasurementValue]] = []
         for key, value in source.items():
-            if not isinstance(key, str) or not key.strip():
+            if type(key) is not str or not key.strip():
                 raise ValueError("evidence measurement names must be nonblank strings")
             items.append((key, _measurement_value(value, key)))
         object.__setattr__(self, "_items", tuple(sorted(items)))
@@ -200,7 +202,9 @@ class Evidence:
     not_run_reason: str | None = None
 
     def __post_init__(self) -> None:
+        _require_exact_shape(self, Evidence, "evidence")
         object.__setattr__(self, "measurements", Measurements(self.measurements))
+        _validate_evidence_record(self)
 
 
 @dataclass(frozen=True)
@@ -214,6 +218,15 @@ class Environment:
     bun: str | None
     native_libraries: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        _require_exact_shape(self, Environment, "environment")
+        object.__setattr__(
+            self,
+            "native_libraries",
+            _string_sequence(self.native_libraries, "environment native_libraries"),
+        )
+        _validate_environment(self)
+
 
 @dataclass(frozen=True)
 class LockedDependency:
@@ -222,6 +235,15 @@ class LockedDependency:
     source: str
     checksum: str | None
     features: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_exact_shape(self, LockedDependency, "locked dependency")
+        object.__setattr__(
+            self,
+            "features",
+            _string_sequence(self.features, "locked dependency features"),
+        )
+        _validate_locked_dependency(self)
 
 
 @dataclass(frozen=True)
@@ -234,6 +256,10 @@ class CleanupEvidence:
     core_dumps_disabled: bool
     owned_process_groups_reaped: bool
 
+    def __post_init__(self) -> None:
+        _require_exact_shape(self, CleanupEvidence, "cleanup")
+        _validate_cleanup(self)
+
 
 @dataclass(frozen=True)
 class Review:
@@ -241,6 +267,10 @@ class Review:
     status: ReviewStatus
     objective_evidence_reviewed: bool
     normative_constraints_preserved: bool
+
+    def __post_init__(self) -> None:
+        _require_exact_shape(self, Review, "review")
+        _validate_review(self)
 
 
 @dataclass(frozen=True)
@@ -264,6 +294,27 @@ class QualificationRecord:
     review: Review
 
     def __post_init__(self) -> None:
+        _require_exact_shape(self, QualificationRecord, "record")
+        for field_name in ("specs", "contract_ids", "input_paths", "commands"):
+            object.__setattr__(
+                self,
+                field_name,
+                _string_sequence(getattr(self, field_name), field_name),
+            )
+        object.__setattr__(
+            self,
+            "dependencies",
+            _record_sequence(
+                self.dependencies,
+                "dependencies",
+                LockedDependency,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "evidence",
+            _record_sequence(self.evidence, "criterion evidence", Evidence),
+        )
         _validate_record_invariants(self)
 
 
@@ -298,8 +349,7 @@ def record_schema_validator() -> Validator:
 
 def serialize_record(record: QualificationRecord) -> str:
     """Serialize one revalidated record as deterministic strict JSON."""
-    if not isinstance(record, QualificationRecord):
-        raise ValueError("record must be a QualificationRecord")
+    _require_exact_shape(record, QualificationRecord, "record")
     _validate_record_invariants(record)
     serialized = json.dumps(
         asdict(record),
@@ -316,8 +366,118 @@ def serialize_record(record: QualificationRecord) -> str:
     return serialized
 
 
+def _require_exact_shape(value: object, expected: type[object], name: str) -> object:
+    if type(value) is not expected:
+        raise ValueError(f"{name} must use the exact {expected.__name__} shape")
+    return value
+
+
+def _sequence_items(value: object, name: str) -> tuple[object, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{name} must be a list or tuple")
+    return tuple(value)
+
+
+def _string_sequence(value: object, name: str) -> tuple[str, ...]:
+    return tuple(_string(item, f"{name} item") for item in _sequence_items(value, name))
+
+
+def _record_sequence(
+    value: object,
+    name: str,
+    expected: type[object],
+) -> tuple[object, ...]:
+    items = _sequence_items(value, name)
+    for item in items:
+        _require_exact_shape(item, expected, f"{name} item")
+    return items
+
+
+def _validate_string_tuple(value: object, name: str) -> None:
+    if type(value) is not tuple:
+        raise ValueError(f"{name} must be a tuple")
+    for item in value:
+        _string(item, f"{name} item")
+
+
+def _validate_record_tuple(
+    value: object,
+    name: str,
+    expected: type[object],
+) -> None:
+    if type(value) is not tuple:
+        raise ValueError(f"{name} must be a tuple")
+    for item in value:
+        _require_exact_shape(item, expected, f"{name} item")
+
+
+def _validate_evidence_record(evidence: Evidence) -> None:
+    _require_exact_shape(evidence, Evidence, "evidence")
+    _string(evidence.criterion, "evidence criterion")
+    _enum(evidence.status, "evidence status", ("pass", "fail", "not-run"))
+    _string(evidence.summary, "evidence summary")
+    _validate_measurements(evidence.measurements)
+    if evidence.not_run_reason is not None:
+        _string(evidence.not_run_reason, "not-run reason")
+    if evidence.status == "not-run" and not (
+        evidence.not_run_reason and evidence.not_run_reason.strip()
+    ):
+        raise ValueError("not-run evidence requires a reason")
+
+
+def _validate_environment(environment: Environment) -> None:
+    _require_exact_shape(environment, Environment, "environment")
+    for field_name in ("rustc", "cargo", "target", "os", "kernel", "architecture"):
+        _string(getattr(environment, field_name), f"environment {field_name}")
+    if environment.target != _TARGET:
+        raise ValueError(f"environment target must be {_TARGET}")
+    if environment.bun is not None:
+        _string(environment.bun, "environment bun")
+    _validate_string_tuple(environment.native_libraries, "environment native_libraries")
+
+
+def _validate_locked_dependency(dependency: LockedDependency) -> None:
+    _require_exact_shape(dependency, LockedDependency, "locked dependency")
+    for field_name in ("name", "version", "source"):
+        _string(getattr(dependency, field_name), f"locked dependency {field_name}")
+    if dependency.checksum is not None:
+        _string(dependency.checksum, "locked dependency checksum")
+    _validate_string_tuple(dependency.features, "locked dependency features")
+
+
+def _validate_cleanup(cleanup: CleanupEvidence) -> None:
+    _require_exact_shape(cleanup, CleanupEvidence, "cleanup")
+    for field_name in (
+        "work_dir_removed",
+        "raw_logs_removed",
+        "install_dir_removed",
+        "source_inputs_unchanged",
+        "user_data_opened",
+        "core_dumps_disabled",
+        "owned_process_groups_reaped",
+    ):
+        _boolean(getattr(cleanup, field_name), f"cleanup {field_name}")
+
+
+def _validate_review(review: Review) -> None:
+    _require_exact_shape(review, Review, "review")
+    owner = _string(review.owner, "review owner")
+    if owner != _OWNER:
+        raise ValueError(f"review owner must be {_OWNER}")
+    _enum(review.status, "review status", ("pending", "accepted", "rejected"))
+    _boolean(
+        review.objective_evidence_reviewed,
+        "review objective_evidence_reviewed",
+    )
+    _boolean(
+        review.normative_constraints_preserved,
+        "review normative_constraints_preserved",
+    )
+
+
 def _validate_record_invariants(record: QualificationRecord) -> None:
     """Enforce loader and schema invariants at every typed construction boundary."""
+    _require_exact_shape(record, QualificationRecord, "record")
     schema_version = _integer(record.schema_version, "schema_version")
     if schema_version != 1:
         raise ValueError("schema_version must be 1")
@@ -326,11 +486,20 @@ def _validate_record_invariants(record: QualificationRecord) -> None:
     target = _string(record.target, "target")
     if target != _TARGET:
         raise ValueError(f"target must be {_TARGET}")
-    if not isinstance(record.environment, Environment):
-        raise ValueError("environment must be an Environment record")
-    environment_target = _string(record.environment.target, "environment target")
+    environment = cast(
+        Environment,
+        _require_exact_shape(record.environment, Environment, "environment"),
+    )
+    _validate_environment(environment)
+    environment_target = _string(environment.target, "environment target")
     if environment_target != _TARGET:
         raise ValueError(f"environment target must be {_TARGET}")
+
+    for field_name in ("specs", "contract_ids", "input_paths", "commands"):
+        _validate_string_tuple(getattr(record, field_name), field_name)
+    _validate_record_tuple(record.dependencies, "dependencies", LockedDependency)
+    for dependency in record.dependencies:
+        _validate_locked_dependency(dependency)
 
     _validate_evidence(record.evidence, risk=risk)
     derived_status: Literal["pass", "fail"] = (
@@ -365,20 +534,8 @@ def _validate_record_invariants(record: QualificationRecord) -> None:
         raise ValueError(f"acceptance_owner must be {_OWNER}")
     _input_digest(record.input_digest)
 
-    if not isinstance(record.review, Review):
-        raise ValueError("review must be a Review record")
-    review_owner = _string(record.review.owner, "review owner")
-    if review_owner != _OWNER:
-        raise ValueError(f"review owner must be {_OWNER}")
-    _enum(record.review.status, "review status", ("pending", "accepted", "rejected"))
-    _boolean(
-        record.review.objective_evidence_reviewed,
-        "review objective_evidence_reviewed",
-    )
-    _boolean(
-        record.review.normative_constraints_preserved,
-        "review normative_constraints_preserved",
-    )
+    _validate_cleanup(record.cleanup)
+    _validate_review(record.review)
 
 
 def load_record(path: Path) -> QualificationRecord:
@@ -466,19 +623,11 @@ def load_record(path: Path) -> QualificationRecord:
 
 
 def _validate_evidence(evidence: tuple[Evidence, ...], *, risk: Risk | None = None) -> None:
-    if not isinstance(evidence, tuple):
+    if type(evidence) is not tuple:
         raise ValueError("criterion evidence must be a tuple")
     for item in evidence:
-        if not isinstance(item, Evidence):
-            raise ValueError("criterion evidence must contain Evidence records")
-        _string(item.criterion, "evidence criterion")
-        _enum(item.status, "evidence status", ("pass", "fail", "not-run"))
-        _string(item.summary, "evidence summary")
-        _validate_measurements(item.measurements)
-        if item.not_run_reason is not None:
-            _string(item.not_run_reason, "not-run reason")
-        if item.status == "not-run" and not (item.not_run_reason and item.not_run_reason.strip()):
-            raise ValueError("not-run evidence requires a reason")
+        _require_exact_shape(item, Evidence, "criterion evidence item")
+        _validate_evidence_record(item)
 
     criteria = tuple(item.criterion for item in evidence)
     allowed = (REQUIRED_CRITERIA[risk],) if risk is not None else tuple(REQUIRED_CRITERIA.values())
@@ -631,10 +780,11 @@ def _measurements(value: object, name: str) -> Measurements:
 
 
 def _validate_measurements(measurements: Measurements) -> None:
-    if not isinstance(measurements, Measurements):
-        raise ValueError("evidence measurements must be an object with named measurements")
+    _require_exact_shape(measurements, Measurements, "evidence measurements")
     for key, value in measurements.items():
-        _measurement_value(value, key)
+        if type(key) is not str or not key.strip():
+            raise ValueError("evidence measurement names must be nonblank strings")
+        _validate_measurement_value(value, key)
 
 
 def _is_json_scalar(value: object) -> bool:
@@ -649,10 +799,21 @@ _MAX_FINITE_MEASUREMENT_INTEGER = int(_MAX_FINITE_MEASUREMENT)
 def _measurement_value(value: object, name: str) -> MeasurementValue:
     if _is_json_scalar(value):
         return _json_scalar(value, f"evidence measurement {name!r}")
-    if isinstance(value, tuple):
+    if isinstance(value, (list, tuple)):
         if not all(_is_json_scalar(item) for item in value):
             raise ValueError(f"evidence measurement {name!r} must be a scalar or scalar tuple")
         return tuple(_json_scalar(item, f"evidence measurement {name!r}") for item in value)
+    raise ValueError(f"evidence measurement {name!r} must be a scalar or scalar tuple")
+
+
+def _validate_measurement_value(value: object, name: str) -> None:
+    if _is_json_scalar(value):
+        _json_scalar(value, f"evidence measurement {name!r}")
+        return
+    if type(value) is tuple and all(_is_json_scalar(item) for item in value):
+        for item in value:
+            _json_scalar(item, f"evidence measurement {name!r}")
+        return
     raise ValueError(f"evidence measurement {name!r} must be a scalar or scalar tuple")
 
 
@@ -700,7 +861,7 @@ def _strings(value: object, name: str) -> tuple[str, ...]:
 
 
 def _string(value: object, name: str) -> str:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValueError(f"{name} must be a string")
     return value
 

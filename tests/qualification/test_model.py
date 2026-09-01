@@ -6,7 +6,8 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import FrozenInstanceError, asdict, fields, replace
+from dataclasses import FrozenInstanceError, asdict, dataclass, fields, replace
+from decimal import Decimal
 from math import copysign
 from pathlib import Path
 
@@ -17,7 +18,13 @@ from jsonschema import Draft202012Validator
 from tools.qualification.model import (
     FAILURE_CONSEQUENCES,
     REQUIRED_CRITERIA,
+    CleanupEvidence,
+    Environment,
+    Evidence,
+    LockedDependency,
+    Measurements,
     QualificationRecord,
+    Review,
     Risk,
     decision_for,
     expected_consequence,
@@ -29,6 +36,36 @@ from tools.qualification.model import (
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = ROOT / "qualification/schemas/record.schema.json"
+
+
+@dataclass(frozen=True)
+class _ExtendedEvidence(Evidence):
+    extra: str = "unexpected"
+
+
+@dataclass(frozen=True)
+class _ExtendedEnvironment(Environment):
+    extra: str = "unexpected"
+
+
+@dataclass(frozen=True)
+class _ExtendedLockedDependency(LockedDependency):
+    extra: str = "unexpected"
+
+
+@dataclass(frozen=True)
+class _ExtendedCleanupEvidence(CleanupEvidence):
+    extra: str = "unexpected"
+
+
+@dataclass(frozen=True)
+class _ExtendedReview(Review):
+    extra: str = "unexpected"
+
+
+@dataclass(frozen=True)
+class _ExtendedQualificationRecord(QualificationRecord):
+    extra: str = "unexpected"
 
 
 def _write_payload(tmp_path: Path, payload: dict[str, object]) -> Path:
@@ -124,9 +161,8 @@ def test_not_run_is_a_failure_and_requires_a_nonblank_reason() -> None:
     assert decision_for(record.risk, evidence) == "fts-only"
 
     for reason in (None, "", "   "):
-        invalid = (replace(not_run, not_run_reason=reason), *record.evidence[1:])
         with pytest.raises(ValueError, match="not-run evidence requires a reason"):
-            status_for(invalid)
+            replace(not_run, not_run_reason=reason)
 
 
 def test_load_record_round_trips_to_frozen_typed_records(tmp_path: Path) -> None:
@@ -202,13 +238,218 @@ def _construct_record(
     return QualificationRecord(**values)  # type: ignore[arg-type]
 
 
+def _construct_dataclass(value: object, **updates: object) -> object:
+    values = {field.name: getattr(value, field.name) for field in fields(value)}
+    values.update(updates)
+    return type(value)(**values)
+
+
+def _unchecked_subclass_copy(value: object, subclass: type[object]) -> object:
+    copied = object.__new__(subclass)
+    for field in fields(value):
+        object.__setattr__(copied, field.name, getattr(value, field.name))
+    object.__setattr__(copied, "extra", "unexpected")
+    return copied
+
+
+def _locked_dependency() -> LockedDependency:
+    return LockedDependency(
+        name="example",
+        version="1.0.0",
+        source="registry+https://example.invalid/index",
+        checksum=None,
+        features=("default",),
+    )
+
+
+@pytest.mark.parametrize("construction", [_construct_record, replace])
+def test_record_sequence_construction_detaches_and_normalizes_lists(
+    construction: object,
+) -> None:
+    record = make_record(ROOT, "mcp-transport")
+    scalar_sequences = {
+        "specs": ["docs/qualification/example.md"],
+        "contract_ids": ["qualification.example"],
+        "input_paths": ["tools/qualification/model.py"],
+        "commands": ["qualification example"],
+    }
+    for field_name, source in scalar_sequences.items():
+        constructed = construction(record, **{field_name: source})  # type: ignore[operator]
+        source.append("caller mutation")
+        assert getattr(constructed, field_name) == tuple(source[:-1])
+        assert type(getattr(constructed, field_name)) is tuple
+
+    dependency_source = [_locked_dependency()]
+    dependency_record = construction(  # type: ignore[operator]
+        record,
+        dependencies=dependency_source,
+    )
+    dependency_source.clear()
+    assert dependency_record.dependencies == (_locked_dependency(),)
+    assert type(dependency_record.dependencies) is tuple
+
+    evidence_source = list(record.evidence)
+    evidence_record = construction(record, evidence=evidence_source)  # type: ignore[operator]
+    evidence_source.clear()
+    assert evidence_record.evidence == record.evidence
+    assert type(evidence_record.evidence) is tuple
+
+
+@pytest.mark.parametrize("construction", [_construct_dataclass, replace])
+def test_nested_sequence_construction_detaches_and_normalizes_lists(
+    construction: object,
+) -> None:
+    record = make_record(ROOT, "mcp-transport")
+
+    libraries = ["libsqlite3.so"]
+    environment = construction(  # type: ignore[operator]
+        record.environment,
+        native_libraries=libraries,
+    )
+    libraries.append("caller mutation")
+    assert environment.native_libraries == ("libsqlite3.so",)
+    assert type(environment.native_libraries) is tuple
+
+    features = ["default"]
+    dependency = construction(_locked_dependency(), features=features)  # type: ignore[operator]
+    features.append("caller mutation")
+    assert dependency.features == ("default",)
+    assert type(dependency.features) is tuple
+
+    samples = [1, 2.5, None, True]
+    measurement_source = {"samples": samples}
+    evidence = construction(  # type: ignore[operator]
+        record.evidence[0],
+        measurements=measurement_source,
+    )
+    samples.append("caller mutation")
+    measurement_source["new"] = 1
+    assert evidence.measurements == {"samples": (1, 2.5, None, True)}
+    assert type(evidence.measurements) is Measurements
+    assert type(evidence.measurements["samples"]) is tuple
+
+
+@pytest.mark.parametrize("construction", [_construct_dataclass, replace])
+def test_nested_record_construction_rejects_wrong_scalar_shapes(
+    construction: object,
+) -> None:
+    record = make_record(ROOT, "mcp-transport")
+    invalid_mutations = (
+        (record.evidence[0], {"criterion": 1}),
+        (record.evidence[0], {"status": "unknown"}),
+        (record.evidence[0], {"summary": 1}),
+        (record.evidence[0], {"measurements": {"nested": [[1]]}}),
+        (record.evidence[0], {"not_run_reason": 1}),
+        (record.environment, {"rustc": 1}),
+        (record.environment, {"cargo": 1}),
+        (record.environment, {"target": "aarch64-unknown-linux-gnu"}),
+        (record.environment, {"os": 1}),
+        (record.environment, {"kernel": 1}),
+        (record.environment, {"architecture": 1}),
+        (record.environment, {"bun": 1}),
+        (record.environment, {"native_libraries": ["valid", 1]}),
+        (_locked_dependency(), {"name": 1}),
+        (_locked_dependency(), {"version": 1}),
+        (_locked_dependency(), {"source": 1}),
+        (_locked_dependency(), {"checksum": 1}),
+        (_locked_dependency(), {"features": ["valid", 1]}),
+        (record.cleanup, {"work_dir_removed": 1}),
+        (record.cleanup, {"raw_logs_removed": 1}),
+        (record.cleanup, {"install_dir_removed": 1}),
+        (record.cleanup, {"source_inputs_unchanged": 1}),
+        (record.cleanup, {"user_data_opened": 0}),
+        (record.cleanup, {"core_dumps_disabled": 1}),
+        (record.cleanup, {"owned_process_groups_reaped": 1}),
+        (record.review, {"owner": "Another Owner <owner@example.com>"}),
+        (record.review, {"status": "unknown"}),
+        (record.review, {"objective_evidence_reviewed": 1}),
+        (record.review, {"normative_constraints_preserved": 1}),
+    )
+
+    for nested_record, mutation in invalid_mutations:
+        with pytest.raises(ValueError):
+            construction(nested_record, **mutation)  # type: ignore[operator]
+
+
+@pytest.mark.parametrize("construction", [_construct_record, replace])
+def test_record_construction_rejects_wrong_sequence_and_nested_record_shapes(
+    construction: object,
+) -> None:
+    record = make_record(ROOT, "mcp-transport")
+    dependency = _locked_dependency()
+    invalid_mutations = (
+        {"specs": ["valid", 1]},
+        {"contract_ids": ["valid", 1]},
+        {"input_paths": ["valid", 1]},
+        {"commands": ["valid", 1]},
+        {"environment": asdict(record.environment)},
+        {"dependencies": [asdict(dependency)]},
+        {"evidence": [asdict(item) for item in record.evidence]},
+        {"cleanup": asdict(record.cleanup)},
+        {"review": asdict(record.review)},
+    )
+
+    for mutation in invalid_mutations:
+        with pytest.raises(ValueError):
+            construction(record, **mutation)  # type: ignore[operator]
+
+
+def test_closed_dataclass_shapes_reject_subclasses_directly_and_when_nested() -> None:
+    record = make_record(ROOT, "mcp-transport")
+    dependency = _locked_dependency()
+    subclass_pairs = (
+        (record.evidence[0], _ExtendedEvidence),
+        (record.environment, _ExtendedEnvironment),
+        (dependency, _ExtendedLockedDependency),
+        (record.cleanup, _ExtendedCleanupEvidence),
+        (record.review, _ExtendedReview),
+        (record, _ExtendedQualificationRecord),
+    )
+
+    for value, subclass in subclass_pairs:
+        values = {field.name: getattr(value, field.name) for field in fields(value)}
+        with pytest.raises(ValueError, match="exact"):
+            subclass(**values)
+
+    invalid_evidence = _unchecked_subclass_copy(record.evidence[0], _ExtendedEvidence)
+    invalid_environment = _unchecked_subclass_copy(record.environment, _ExtendedEnvironment)
+    invalid_dependency = _unchecked_subclass_copy(dependency, _ExtendedLockedDependency)
+    invalid_cleanup = _unchecked_subclass_copy(record.cleanup, _ExtendedCleanupEvidence)
+    invalid_review = _unchecked_subclass_copy(record.review, _ExtendedReview)
+    mutations = (
+        {"evidence": (invalid_evidence, *record.evidence[1:])},
+        {"environment": invalid_environment},
+        {"dependencies": (invalid_dependency,)},
+        {"cleanup": invalid_cleanup},
+        {"review": invalid_review},
+    )
+    for mutation in mutations:
+        with pytest.raises(ValueError, match="exact"):
+            replace(record, **mutation)
+
+
 @pytest.mark.parametrize("construction", [_construct_record, replace])
 def test_record_construction_rejects_fixed_and_cross_field_mutations(
     construction: object,
 ) -> None:
     record = make_record(ROOT, "mcp-transport")
     alternate_target = "aarch64-unknown-linux-gnu"
-    alternate_environment = replace(record.environment, target=alternate_target)
+    alternate_environment = object.__new__(Environment)
+    for field in fields(record.environment):
+        object.__setattr__(
+            alternate_environment,
+            field.name,
+            alternate_target if field.name == "target" else getattr(record.environment, field.name),
+        )
+    alternate_review = object.__new__(Review)
+    for field in fields(record.review):
+        object.__setattr__(
+            alternate_review,
+            field.name,
+            "Another Owner <owner@example.com>"
+            if field.name == "owner"
+            else getattr(record.review, field.name),
+        )
     mismatched_evidence = make_record(ROOT, "frontend-embedding").evidence
     mutations = (
         {"target": alternate_target},
@@ -216,7 +457,7 @@ def test_record_construction_rejects_fixed_and_cross_field_mutations(
         {"target": alternate_target, "environment": alternate_environment},
         {"schema_version": 2},
         {"acceptance_owner": "Another Owner <owner@example.com>"},
-        {"review": replace(record.review, owner="Another Owner <owner@example.com>")},
+        {"review": alternate_review},
         {"input_digest": "not-a-sha256"},
         {"evidence": mismatched_evidence},
         {"status": "fail"},
@@ -507,6 +748,20 @@ def test_loader_and_serializer_round_trip_exact_numeric_endpoints(
 
 def test_loader_and_schema_enforce_finite_binary64_measurement_range(tmp_path: Path) -> None:
     maximum_integer = int(sys.float_info.max)
+    base = make_record(ROOT, "mcp-transport")
+    bounded_evidence = replace(
+        base.evidence[0],
+        measurements={"integer_bounds": [-maximum_integer, maximum_integer]},
+    )
+    constructed = replace(base, evidence=(bounded_evidence, *base.evidence[1:]))
+    assert constructed.evidence[0].measurements["integer_bounds"] == (
+        -maximum_integer,
+        maximum_integer,
+    )
+    assert json.loads(serialize_record(constructed))["evidence"][0]["measurements"] == {
+        "integer_bounds": [-maximum_integer, maximum_integer]
+    }
+
     valid = _payload_for()
     valid_evidence = valid["evidence"]
     assert isinstance(valid_evidence, list) and isinstance(valid_evidence[0], dict)
@@ -524,6 +779,11 @@ def test_loader_and_schema_enforce_finite_binary64_measurement_range(tmp_path: P
     }
 
     for outside_range in (maximum_integer + 1, -maximum_integer - 1, 10**999, -(10**999)):
+        with pytest.raises(ValueError, match="finite IEEE-754 range"):
+            replace(
+                base.evidence[0],
+                measurements={"outside_binary64": outside_range},
+            )
         invalid = _payload_for()
         invalid_evidence = invalid["evidence"]
         assert isinstance(invalid_evidence, list) and isinstance(invalid_evidence[0], dict)
@@ -531,6 +791,14 @@ def test_loader_and_schema_enforce_finite_binary64_measurement_range(tmp_path: P
         with pytest.raises(ValueError, match="finite IEEE-754 range"):
             load_record(_write_payload(tmp_path, invalid))
         assert _schema_errors(invalid)
+
+    object.__setattr__(
+        base.evidence[0].measurements,
+        "_items",
+        (("outside_binary64", maximum_integer + 1),),
+    )
+    with pytest.raises(ValueError, match="finite IEEE-754 range"):
+        serialize_record(base)
 
 
 def test_loader_and_schema_reject_overflowed_json_number_token(tmp_path: Path) -> None:
@@ -561,6 +829,42 @@ def test_schema_is_draft_2020_12_and_accepts_every_factory_record() -> None:
         assert _schema_errors(_payload_for(risk)) == []
 
 
+def test_schema_encodes_the_exact_binary64_integer_bound_portably() -> None:
+    maximum = int(sys.float_info.max)
+    schema_text = SCHEMA_PATH.read_text(encoding="utf-8")
+    ordinary_schema = json.loads(schema_text)
+    decimal_preserving_schema = json.loads(schema_text, parse_float=Decimal)
+    ordinary_bounds = ordinary_schema["$defs"]["jsonScalar"]
+    precise_bounds = decimal_preserving_schema["$defs"]["jsonScalar"]
+
+    assert ordinary_bounds["maximum"] == maximum
+    assert ordinary_bounds["minimum"] == -maximum
+    assert type(ordinary_bounds["maximum"]) is int
+    assert type(ordinary_bounds["minimum"]) is int
+    assert Decimal(precise_bounds["maximum"]) == Decimal(maximum)
+    assert Decimal(precise_bounds["minimum"]) == Decimal(-maximum)
+    Draft202012Validator.check_schema(decimal_preserving_schema)
+
+    endpoints = _payload_for()
+    endpoint_evidence = endpoints["evidence"]
+    assert isinstance(endpoint_evidence, list) and isinstance(endpoint_evidence[0], dict)
+    endpoint_evidence[0]["measurements"] = {"bounds": [-maximum, maximum]}
+    just_outside = (
+        {"too_large": maximum + 1},
+        {"too_small": -maximum - 1},
+    )
+
+    for schema in (ordinary_schema, decimal_preserving_schema):
+        validator = Draft202012Validator(schema)
+        assert list(validator.iter_errors(endpoints)) == []
+        for measurements in just_outside:
+            payload = _payload_for()
+            evidence = payload["evidence"]
+            assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+            evidence[0]["measurements"] = measurements
+            assert list(validator.iter_errors(payload))
+
+
 def test_factory_rejects_unknown_failed_criterion() -> None:
     with pytest.raises(ValueError, match="unknown failed criteria"):
         make_record(ROOT, "mcp-transport", failed=("not-a-criterion",))  # type: ignore[arg-type]
@@ -574,9 +878,8 @@ def test_status_rejects_invalid_evidence_value_types() -> None:
             measurements={"payload": ({"not": "a scalar"},)},  # type: ignore[dict-item]
         )
 
-    invalid_status = replace(record.evidence[0], status="unknown")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="evidence status"):
-        status_for((invalid_status, *record.evidence[1:]))
+        replace(record.evidence[0], status="unknown")  # type: ignore[arg-type]
 
 
 def test_record_set_factories_express_acceptance_and_semantic_fallback() -> None:

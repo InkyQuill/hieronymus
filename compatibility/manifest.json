@@ -3410,6 +3410,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_closed_dataclass_shapes_reject_subclasses_directly_and_when_nested",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_model.py::test_decision_and_consequence_are_fixed_by_risk_and_complete_evidence[frontend-embedding-qualified-blocked]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3575,6 +3580,26 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_nested_record_construction_rejects_wrong_scalar_shapes[_construct_dataclass]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_nested_record_construction_rejects_wrong_scalar_shapes[replace]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_nested_sequence_construction_detaches_and_normalizes_lists[_construct_dataclass]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_nested_sequence_construction_detaches_and_normalizes_lists[replace]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_model.py::test_not_run_is_a_failure_and_requires_a_nonblank_reason",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3620,6 +3645,26 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_construction_rejects_wrong_sequence_and_nested_record_shapes[_construct_record]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_construction_rejects_wrong_sequence_and_nested_record_shapes[replace]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_sequence_construction_detaches_and_normalizes_lists[_construct_record]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_sequence_construction_detaches_and_normalizes_lists[replace]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_model.py::test_record_serializer_revalidates_non_finite_measurements[nan]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3636,6 +3681,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_model.py::test_record_set_factories_express_acceptance_and_semantic_fallback",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_schema_encodes_the_exact_binary64_integer_bound_portably",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
