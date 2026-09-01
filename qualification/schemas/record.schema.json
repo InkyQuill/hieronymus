@@ -1,0 +1,732 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hieronymus.local/schemas/rust-qualification-record.schema.json",
+  "title": "Rust Qualification Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "risk",
+    "target",
+    "status",
+    "decision",
+    "acceptance_owner",
+    "specs",
+    "contract_ids",
+    "input_paths",
+    "input_digest",
+    "commands",
+    "environment",
+    "dependencies",
+    "evidence",
+    "consequence",
+    "cleanup",
+    "review"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "risk": {
+      "enum": [
+        "mcp-transport",
+        "semantic-native",
+        "frontend-embedding",
+        "legacy-database-import"
+      ]
+    },
+    "target": { "const": "x86_64-unknown-linux-gnu" },
+    "status": { "enum": ["pass", "fail"] },
+    "decision": {
+      "enum": ["qualified", "blocked", "semantic-enabled", "fts-only"]
+    },
+    "acceptance_owner": {
+      "const": "Pavel Obruchnikov <me@inkyquill.net>"
+    },
+    "specs": { "$ref": "#/$defs/stringArray" },
+    "contract_ids": { "$ref": "#/$defs/stringArray" },
+    "input_paths": { "$ref": "#/$defs/stringArray" },
+    "input_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "commands": { "$ref": "#/$defs/stringArray" },
+    "environment": { "$ref": "#/$defs/environment" },
+    "dependencies": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/lockedDependency" }
+    },
+    "evidence": { "type": "array" },
+    "consequence": { "type": "string" },
+    "cleanup": { "$ref": "#/$defs/cleanup" },
+    "review": { "$ref": "#/$defs/review" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "risk": { "const": "mcp-transport" } }
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "type": "array",
+            "prefixItems": [
+              { "$ref": "#/$defs/evidence-locked-native-build" },
+              { "$ref": "#/$defs/evidence-protocol-2026-07-28" },
+              { "$ref": "#/$defs/evidence-no-handshake-or-session" },
+              { "$ref": "#/$defs/evidence-per-request-required-metadata" },
+              { "$ref": "#/$defs/evidence-unsupported-version-rejected" },
+              { "$ref": "#/$defs/evidence-stdio-newline-jsonrpc" },
+              { "$ref": "#/$defs/evidence-streamable-http-json" },
+              { "$ref": "#/$defs/evidence-streamable-http-sse" },
+              { "$ref": "#/$defs/evidence-http-method-name-headers" },
+              { "$ref": "#/$defs/evidence-http-host-auth-version-cases" },
+              { "$ref": "#/$defs/evidence-official-schema-envelopes" },
+              { "$ref": "#/$defs/evidence-header-mismatch-errors" },
+              { "$ref": "#/$defs/evidence-registry-identity" },
+              { "$ref": "#/$defs/evidence-result-error-identity" },
+              { "$ref": "#/$defs/evidence-result-type-required" },
+              { "$ref": "#/$defs/evidence-required-auth-metadata" },
+              { "$ref": "#/$defs/evidence-private-bridge-absent" }
+            ],
+            "items": false,
+            "minItems": 17
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "const": "pass" } } },
+            "then": {
+              "properties": {
+                "decision": { "const": "qualified" },
+                "consequence": { "const": "" },
+                "evidence": {
+                  "items": {
+                    "properties": { "status": { "const": "pass" } }
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "decision": { "const": "blocked" },
+                "consequence": {
+                  "const": "Block rust-workspace-and-contract-harness and rust-daemon-mcp-security; preserve MCP revision 2026-07-28, stdio, POST /mcp JSON/SSE, and removal of /api/mcp/{operation}."
+                },
+                "evidence": {
+                  "contains": {
+                    "properties": { "status": { "enum": ["fail", "not-run"] } }
+                  },
+                  "minContains": 1
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": { "risk": { "const": "semantic-native" } }
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "type": "array",
+            "prefixItems": [
+              { "$ref": "#/$defs/evidence-locked-native-build" },
+              { "$ref": "#/$defs/evidence-binary-size-recorded" },
+              { "$ref": "#/$defs/evidence-install-uninstall" },
+              { "$ref": "#/$defs/evidence-model-checksum-load" },
+              { "$ref": "#/$defs/evidence-ten-thousand-chunk-build" },
+              { "$ref": "#/$defs/evidence-ann-index-created" },
+              { "$ref": "#/$defs/evidence-series-prefilter-before-ann" },
+              { "$ref": "#/$defs/evidence-zero-cross-series-hits" },
+              { "$ref": "#/$defs/evidence-insert-search-delete" },
+              { "$ref": "#/$defs/evidence-generation-isolation" },
+              { "$ref": "#/$defs/evidence-durable-sqlite-job-state" },
+              { "$ref": "#/$defs/evidence-no-sqlite-write-across-native-io" },
+              { "$ref": "#/$defs/evidence-crash-recovery" },
+              { "$ref": "#/$defs/evidence-cancel-recovery" },
+              { "$ref": "#/$defs/evidence-fts-fallback" },
+              { "$ref": "#/$defs/evidence-fifty-query-run" }
+            ],
+            "items": false,
+            "minItems": 16
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "const": "pass" } } },
+            "then": {
+              "properties": {
+                "decision": { "const": "semantic-enabled" },
+                "consequence": { "const": "" },
+                "evidence": {
+                  "items": {
+                    "properties": { "status": { "const": "pass" } }
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "decision": { "const": "fts-only" },
+                "consequence": {
+                  "const": "Select FTS5-only for the initial x86_64-unknown-linux-gnu release; do not block rust-workspace-and-contract-harness or the Linux release."
+                },
+                "evidence": {
+                  "contains": {
+                    "properties": { "status": { "enum": ["fail", "not-run"] } }
+                  },
+                  "minContains": 1
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": { "risk": { "const": "frontend-embedding" } }
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "type": "array",
+            "prefixItems": [
+              { "$ref": "#/$defs/evidence-bun-version-and-frozen-build" },
+              { "$ref": "#/$defs/evidence-missing-bundle-rejected" },
+              { "$ref": "#/$defs/evidence-release-assets-embedded" },
+              { "$ref": "#/$defs/evidence-index-and-spa-fallback" },
+              { "$ref": "#/$defs/evidence-hashed-asset-and-mime" },
+              { "$ref": "#/$defs/evidence-missing-asset-404" },
+              { "$ref": "#/$defs/evidence-runtime-asset-root-inaccessible" },
+              { "$ref": "#/$defs/evidence-no-runtime-bun-node-python" },
+              { "$ref": "#/$defs/evidence-no-source-map-secret" },
+              { "$ref": "#/$defs/evidence-binary-size-recorded" }
+            ],
+            "items": false,
+            "minItems": 10
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "const": "pass" } } },
+            "then": {
+              "properties": {
+                "decision": { "const": "qualified" },
+                "consequence": { "const": "" },
+                "evidence": {
+                  "items": {
+                    "properties": { "status": { "const": "pass" } }
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "decision": { "const": "blocked" },
+                "consequence": {
+                  "const": "Block rust-workspace-and-contract-harness, rust-frontend, and rust-distribution-cutover; preserve embedded Svelte assets and no Bun, Node, or Python runtime dependency."
+                },
+                "evidence": {
+                  "contains": {
+                    "properties": { "status": { "enum": ["fail", "not-run"] } }
+                  },
+                  "minContains": 1
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": { "risk": { "const": "legacy-database-import" } }
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "type": "array",
+            "prefixItems": [
+              { "$ref": "#/$defs/evidence-bundled-sqlite-fts5" },
+              { "$ref": "#/$defs/evidence-fixture-classification" },
+              { "$ref": "#/$defs/evidence-supported-current-read" },
+              { "$ref": "#/$defs/evidence-supported-legacy-read" },
+              { "$ref": "#/$defs/evidence-typed-row-accounting" },
+              { "$ref": "#/$defs/evidence-fts-query-equivalence" },
+              { "$ref": "#/$defs/evidence-ledger-preserved" },
+              { "$ref": "#/$defs/evidence-unsupported-fail-closed" },
+              { "$ref": "#/$defs/evidence-source-byte-identity" },
+              { "$ref": "#/$defs/evidence-no-sensitive-row-output" }
+            ],
+            "items": false,
+            "minItems": 10
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "const": "pass" } } },
+            "then": {
+              "properties": {
+                "decision": { "const": "qualified" },
+                "consequence": { "const": "" },
+                "evidence": {
+                  "items": {
+                    "properties": { "status": { "const": "pass" } }
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "decision": { "const": "blocked" },
+                "consequence": {
+                  "const": "Block rust-workspace-and-contract-harness, rust-database-upgrade, and rust-distribution-cutover; preserve every supported source schema and never create a fresh sibling database beside legacy data."
+                },
+                "evidence": {
+                  "contains": {
+                    "properties": { "status": { "enum": ["fail", "not-run"] } }
+                  },
+                  "minContains": 1
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "jsonScalar": {
+      "type": ["string", "integer", "number", "boolean", "null"]
+    },
+    "measurementValue": {
+      "oneOf": [
+        { "$ref": "#/$defs/jsonScalar" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/jsonScalar" }
+        }
+      ]
+    },
+    "measurements": {
+      "type": "object",
+      "propertyNames": { "pattern": "\\S" },
+      "additionalProperties": { "$ref": "#/$defs/measurementValue" }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion",
+        "status",
+        "summary",
+        "measurements",
+        "not_run_reason"
+      ],
+      "properties": {
+        "criterion": { "type": "string" },
+        "status": { "enum": ["pass", "fail", "not-run"] },
+        "summary": { "type": "string" },
+        "measurements": { "$ref": "#/$defs/measurements" },
+        "not_run_reason": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "not-run" } } },
+          "then": {
+            "properties": {
+              "not_run_reason": { "type": "string", "pattern": "\\S" }
+            }
+          }
+        }
+      ]
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rustc",
+        "cargo",
+        "target",
+        "os",
+        "kernel",
+        "architecture",
+        "bun",
+        "native_libraries"
+      ],
+      "properties": {
+        "rustc": { "type": "string" },
+        "cargo": { "type": "string" },
+        "target": { "type": "string" },
+        "os": { "type": "string" },
+        "kernel": { "type": "string" },
+        "architecture": { "type": "string" },
+        "bun": { "type": ["string", "null"] },
+        "native_libraries": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "lockedDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "source", "checksum", "features"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "source": { "type": "string" },
+        "checksum": { "type": ["string", "null"] },
+        "features": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "work_dir_removed",
+        "raw_logs_removed",
+        "install_dir_removed",
+        "source_inputs_unchanged",
+        "user_data_opened",
+        "core_dumps_disabled",
+        "owned_process_groups_reaped"
+      ],
+      "properties": {
+        "work_dir_removed": { "type": "boolean" },
+        "raw_logs_removed": { "type": "boolean" },
+        "install_dir_removed": { "type": "boolean" },
+        "source_inputs_unchanged": { "type": "boolean" },
+        "user_data_opened": { "type": "boolean" },
+        "core_dumps_disabled": { "type": "boolean" },
+        "owned_process_groups_reaped": { "type": "boolean" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "status",
+        "objective_evidence_reviewed",
+        "normative_constraints_preserved"
+      ],
+      "properties": {
+        "owner": { "const": "Pavel Obruchnikov <me@inkyquill.net>" },
+        "status": { "enum": ["pending", "accepted", "rejected"] },
+        "objective_evidence_reviewed": { "type": "boolean" },
+        "normative_constraints_preserved": { "type": "boolean" }
+      }
+    },
+    "evidence-locked-native-build": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "locked-native-build" } } }
+      ]
+    },
+    "evidence-protocol-2026-07-28": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "protocol-2026-07-28" } } }
+      ]
+    },
+    "evidence-no-handshake-or-session": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "no-handshake-or-session" } } }
+      ]
+    },
+    "evidence-per-request-required-metadata": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "per-request-required-metadata" } } }
+      ]
+    },
+    "evidence-unsupported-version-rejected": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "unsupported-version-rejected" } } }
+      ]
+    },
+    "evidence-stdio-newline-jsonrpc": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "stdio-newline-jsonrpc" } } }
+      ]
+    },
+    "evidence-streamable-http-json": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "streamable-http-json" } } }
+      ]
+    },
+    "evidence-streamable-http-sse": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "streamable-http-sse" } } }
+      ]
+    },
+    "evidence-http-method-name-headers": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "http-method-name-headers" } } }
+      ]
+    },
+    "evidence-http-host-auth-version-cases": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "http-host-auth-version-cases" } } }
+      ]
+    },
+    "evidence-official-schema-envelopes": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "official-schema-envelopes" } } }
+      ]
+    },
+    "evidence-header-mismatch-errors": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "header-mismatch-errors" } } }
+      ]
+    },
+    "evidence-registry-identity": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "registry-identity" } } }
+      ]
+    },
+    "evidence-result-error-identity": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "result-error-identity" } } }
+      ]
+    },
+    "evidence-result-type-required": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "result-type-required" } } }
+      ]
+    },
+    "evidence-required-auth-metadata": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "required-auth-metadata" } } }
+      ]
+    },
+    "evidence-private-bridge-absent": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "private-bridge-absent" } } }
+      ]
+    },
+    "evidence-binary-size-recorded": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "binary-size-recorded" } } }
+      ]
+    },
+    "evidence-install-uninstall": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "install-uninstall" } } }
+      ]
+    },
+    "evidence-model-checksum-load": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "model-checksum-load" } } }
+      ]
+    },
+    "evidence-ten-thousand-chunk-build": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "ten-thousand-chunk-build" } } }
+      ]
+    },
+    "evidence-ann-index-created": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "ann-index-created" } } }
+      ]
+    },
+    "evidence-series-prefilter-before-ann": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "series-prefilter-before-ann" } } }
+      ]
+    },
+    "evidence-zero-cross-series-hits": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "zero-cross-series-hits" } } }
+      ]
+    },
+    "evidence-insert-search-delete": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "insert-search-delete" } } }
+      ]
+    },
+    "evidence-generation-isolation": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "generation-isolation" } } }
+      ]
+    },
+    "evidence-durable-sqlite-job-state": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "durable-sqlite-job-state" } } }
+      ]
+    },
+    "evidence-no-sqlite-write-across-native-io": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "no-sqlite-write-across-native-io" } } }
+      ]
+    },
+    "evidence-crash-recovery": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "crash-recovery" } } }
+      ]
+    },
+    "evidence-cancel-recovery": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "cancel-recovery" } } }
+      ]
+    },
+    "evidence-fts-fallback": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "fts-fallback" } } }
+      ]
+    },
+    "evidence-fifty-query-run": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "fifty-query-run" } } }
+      ]
+    },
+    "evidence-bun-version-and-frozen-build": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "bun-version-and-frozen-build" } } }
+      ]
+    },
+    "evidence-missing-bundle-rejected": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "missing-bundle-rejected" } } }
+      ]
+    },
+    "evidence-release-assets-embedded": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "release-assets-embedded" } } }
+      ]
+    },
+    "evidence-index-and-spa-fallback": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "index-and-spa-fallback" } } }
+      ]
+    },
+    "evidence-hashed-asset-and-mime": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "hashed-asset-and-mime" } } }
+      ]
+    },
+    "evidence-missing-asset-404": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "missing-asset-404" } } }
+      ]
+    },
+    "evidence-runtime-asset-root-inaccessible": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "runtime-asset-root-inaccessible" } } }
+      ]
+    },
+    "evidence-no-runtime-bun-node-python": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "no-runtime-bun-node-python" } } }
+      ]
+    },
+    "evidence-no-source-map-secret": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "no-source-map-secret" } } }
+      ]
+    },
+    "evidence-bundled-sqlite-fts5": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "bundled-sqlite-fts5" } } }
+      ]
+    },
+    "evidence-fixture-classification": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "fixture-classification" } } }
+      ]
+    },
+    "evidence-supported-current-read": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "supported-current-read" } } }
+      ]
+    },
+    "evidence-supported-legacy-read": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "supported-legacy-read" } } }
+      ]
+    },
+    "evidence-typed-row-accounting": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "typed-row-accounting" } } }
+      ]
+    },
+    "evidence-fts-query-equivalence": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "fts-query-equivalence" } } }
+      ]
+    },
+    "evidence-ledger-preserved": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "ledger-preserved" } } }
+      ]
+    },
+    "evidence-unsupported-fail-closed": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "unsupported-fail-closed" } } }
+      ]
+    },
+    "evidence-source-byte-identity": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "source-byte-identity" } } }
+      ]
+    },
+    "evidence-no-sensitive-row-output": {
+      "allOf": [
+        { "$ref": "#/$defs/evidence" },
+        { "properties": { "criterion": { "const": "no-sensitive-row-output" } } }
+      ]
+    }
+  }
+}

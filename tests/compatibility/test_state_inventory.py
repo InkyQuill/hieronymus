@@ -242,6 +242,29 @@ def test_node_ownership_does_not_inherit_every_contract_from_its_file() -> None:
         )
 
 
+def test_qualification_nodes_are_internal_without_opening_unknown_namespaces() -> None:
+    manifest = load_manifest(ROOT / "compatibility/manifest.json")
+    node_id = "tests/qualification/test_model.py::test_record_model_rule"
+
+    ownership = build_test_ownership([node_id], manifest.contracts)
+
+    assert ownership == [
+        {
+            "node_id": node_id,
+            "disposition": "implementation_internal",
+            "reason": (
+                "Validates the Rust qualification program and its evidence gates; "
+                "not a supported Python public contract."
+            ),
+        }
+    ]
+    with pytest.raises(ValueError, match="no explicit ownership classification rule"):
+        build_test_ownership(
+            ["tests/unknown-namespace/test_model.py::test_record_model_rule"],
+            manifest.contracts,
+        )
+
+
 def test_http_and_agent_behavior_nodes_have_explicit_public_contract_ownership() -> None:
     manifest = load_manifest(ROOT / "compatibility/manifest.json")
     ownership = {item.node_id: item for item in manifest.test_ownership}

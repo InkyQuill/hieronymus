@@ -3380,6 +3380,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_state_inventory.py::test_qualification_nodes_are_internal_without_opening_unknown_namespaces",
+      "reason": "Compatibility schema and artifact generator validation: test_qualification_nodes_are_internal_without_opening_unknown_namespaces."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_state_inventory.py::test_sqlite_contract_is_stable_for_dynamic_object_names",
       "reason": "Compatibility schema and artifact generator validation: test_sqlite_contract_is_stable_for_dynamic_object_names."
     },
@@ -3392,6 +3397,146 @@
       "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_state_inventory.py::test_state_snapshot_uses_only_explicit_synthetic_root",
       "reason": "Compatibility schema and artifact generator validation: test_state_snapshot_uses_only_explicit_synthetic_root."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_blocking_failure_cannot_change_the_contract",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_child_and_grandchild_factory_returns_a_real_python_command",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_decision_and_consequence_are_fixed_by_risk_and_complete_evidence[frontend-embedding-qualified-blocked]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_decision_and_consequence_are_fixed_by_risk_and_complete_evidence[legacy-database-import-qualified-blocked]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_decision_and_consequence_are_fixed_by_risk_and_complete_evidence[mcp-transport-qualified-blocked]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_decision_and_consequence_are_fixed_by_risk_and_complete_evidence[semantic-native-semantic-enabled-fts-only]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_every_risk_has_exactly_one_ordered_criterion_set",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_factory_rejects_unknown_failed_criterion",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_fake_executable_reports_only_the_requested_failed_criteria",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_incomplete_or_ambiguous_criterion_evidence_is_rejected[duplicate]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_incomplete_or_ambiguous_criterion_evidence_is_rejected[missing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_incomplete_or_ambiguous_criterion_evidence_is_rejected[out-of-order]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_incomplete_or_ambiguous_criterion_evidence_is_rejected[unknown]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_load_record_round_trips_to_frozen_typed_records",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_derive_status_from_evidence_even_if_rules_change_together",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_reject_record_rule_mismatches",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_reject_the_same_invalid_criterion_sets[duplicate]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_reject_the_same_invalid_criterion_sets[missing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_reject_the_same_invalid_criterion_sets[out-of-order]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_reject_the_same_invalid_criterion_sets[unknown]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_reject_unknown_or_missing_fixed_fields",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_require_a_canonical_sha256_input_digest",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_measurements_allow_only_named_scalars_or_scalar_arrays",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_not_run_is_a_failure_and_requires_a_nonblank_reason",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_record_set_factories_express_acceptance_and_semantic_fallback",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_schema_is_draft_2020_12_and_accepts_every_factory_record",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_semantic_failure_is_complete_and_selects_fts_only",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_status_rejects_invalid_evidence_value_types",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",

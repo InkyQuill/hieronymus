@@ -2528,6 +2528,11 @@ def _public_contract_ids(node_id: str, contracts: list[object]) -> set[str]:
 
 def _internal_test_reason(node_id: str) -> str:
     node_file, test_case = node_id.split("::", 1)
+    if node_file.startswith("tests/qualification/"):
+        return (
+            "Validates the Rust qualification program and its evidence gates; "
+            "not a supported Python public contract."
+        )
     if node_file == "tests/compatibility/test_check.py":
         if test_case.startswith("test_artifact_diffs_"):
             return (
