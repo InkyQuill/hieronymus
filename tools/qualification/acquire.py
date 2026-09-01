@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import contextvars
+import errno
 import fcntl
 import hashlib
 import json
 import os
+import socket
 import stat
 import sys
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -34,13 +39,67 @@ _MAX_REDIRECTS: Final = 5
 _CHUNK_SIZE: Final = 1024 * 1024
 _MAX_MODEL_BYTES: Final = 256 * 1024 * 1024
 _TRANSPORT_TIMEOUT_SECONDS: Final = 120
+_ACQUISITION_TIMEOUT_SECONDS: Final = 300
+_LOCK_RETRY_SECONDS: Final = 0.01
 _MODEL_DESTINATION: Final = Path("qualification/.artifacts/models/all-MiniLM-L6-v2/model.onnx")
 _MODEL_DIRECTORY_COMPONENTS: Final = ("qualification", ".artifacts", "models", "all-MiniLM-L6-v2")
 _DESTINATION_NAME: Final = "model.onnx"
 _PARTIAL_NAME: Final = "model.onnx.part"
-# This inode is deliberately persistent: unlinking it would permit split flock domains.
+# Persistent advisory evidence; the abstract socket remains the unlink-proof mutex.
 _LOCK_NAME: Final = "model.onnx.lock"
 _DIRECTORY_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_monotonic = time.monotonic
+_sleep = time.sleep
+
+
+class _Deadline:
+    """One monotonic budget shared by every acquisition phase."""
+
+    def __init__(self, expires_at: float) -> None:
+        self._expires_at = expires_at
+
+    @classmethod
+    def after(cls, seconds: float) -> _Deadline:
+        return cls(_monotonic() + seconds)
+
+    def remaining(self) -> float:
+        remaining = self._expires_at - _monotonic()
+        if remaining <= 0:
+            raise AcquisitionError("semantic model acquisition deadline exceeded")
+        return remaining
+
+    def check(self) -> None:
+        self.remaining()
+
+
+_CURRENT_DEADLINE: contextvars.ContextVar[_Deadline | None] = contextvars.ContextVar(
+    "qualification_acquisition_deadline",
+    default=None,
+)
+_MUTEX_TRACKING_LOCK = threading.Lock()
+_ACTIVE_MUTEX_SOCKETS: set[socket.socket] = set()
+
+
+def _before_fork() -> None:
+    _MUTEX_TRACKING_LOCK.acquire()
+
+
+def _after_fork_parent() -> None:
+    _MUTEX_TRACKING_LOCK.release()
+
+
+def _after_fork_child() -> None:
+    for mutex_socket in _ACTIVE_MUTEX_SOCKETS:
+        mutex_socket.close()
+    _ACTIVE_MUTEX_SOCKETS.clear()
+    _MUTEX_TRACKING_LOCK.release()
+
+
+os.register_at_fork(
+    before=_before_fork,
+    after_in_parent=_after_fork_parent,
+    after_in_child=_after_fork_child,
+)
 
 
 class AcquisitionError(RuntimeError):
@@ -68,7 +127,8 @@ def _open_no_redirect(request: urllib.request.Request) -> BinaryIO:
         urllib.request.HTTPSHandler(),
     )
     try:
-        return opener.open(request, timeout=_TRANSPORT_TIMEOUT_SECONDS)
+        timeout = getattr(request, "_hieronymus_timeout", _TRANSPORT_TIMEOUT_SECONDS)
+        return opener.open(request, timeout=timeout)
     except urllib.error.HTTPError as error:
         return error
 
@@ -134,19 +194,35 @@ def _remove_stale_partial(model_dir_fd: int) -> None:
         raise AcquisitionError("semantic model partial must be a regular file")
     try:
         os.unlink(_PARTIAL_NAME, dir_fd=model_dir_fd)
+        os.fsync(model_dir_fd)
     except OSError:
         raise AcquisitionError("could not remove the semantic model partial file") from None
 
 
-def _sha256_fd(fd: int) -> str:
+def _sha256_fd(fd: int, deadline: _Deadline) -> str:
+    metadata = os.fstat(fd)
+    if metadata.st_size > _MAX_MODEL_BYTES:
+        raise AcquisitionError("semantic model destination exceeds the byte limit")
     digest = hashlib.sha256()
-    with os.fdopen(os.dup(fd), "rb") as source:
-        for chunk in iter(lambda: source.read(_CHUNK_SIZE), b""):
-            digest.update(chunk)
+    offset = 0
+    while True:
+        deadline.check()
+        chunk = os.pread(fd, min(_CHUNK_SIZE, _MAX_MODEL_BYTES - offset + 1), offset)
+        deadline.check()
+        if not chunk:
+            break
+        offset += len(chunk)
+        if offset > _MAX_MODEL_BYTES:
+            raise AcquisitionError("semantic model destination exceeds the byte limit")
+        digest.update(chunk)
     return digest.hexdigest()
 
 
-def _existing_destination_is_verified(model_dir_fd: int, expected_sha256: str) -> bool:
+def _existing_destination_is_verified(
+    model_dir_fd: int,
+    expected_sha256: str,
+    deadline: _Deadline,
+) -> bool:
     try:
         fd = os.open(
             _DESTINATION_NAME,
@@ -162,7 +238,7 @@ def _existing_destination_is_verified(model_dir_fd: int, expected_sha256: str) -
         if not stat.S_ISREG(metadata.st_mode):
             raise AcquisitionError("semantic model destination must be a regular file")
         try:
-            return _sha256_fd(fd) == expected_sha256
+            return _sha256_fd(fd, deadline) == expected_sha256
         except OSError:
             raise AcquisitionError("could not verify the existing semantic model") from None
     finally:
@@ -189,16 +265,22 @@ def _open_model_directory(repo_root: Path) -> Iterator[tuple[Path, tuple[int, ..
         current_fd = os.open(canonical_root, _DIRECTORY_FLAGS)
         opened.append(current_fd)
         for component in _MODEL_DIRECTORY_COMPONENTS:
+            _current_deadline().check()
+            created = False
             try:
                 os.mkdir(component, mode=0o700, dir_fd=current_fd)
+                created = True
             except FileExistsError:
                 pass
+            if created:
+                os.fsync(current_fd)
             try:
                 child_fd = os.open(component, _DIRECTORY_FLAGS, dir_fd=current_fd)
             except OSError:
                 raise AcquisitionError("artifact directory is not a trusted directory") from None
             opened.append(child_fd)
             current_fd = child_fd
+            _current_deadline().check()
         yield canonical_root, tuple(opened)
     except AcquisitionError:
         raise
@@ -209,7 +291,17 @@ def _open_model_directory(repo_root: Path) -> Iterator[tuple[Path, tuple[int, ..
             os.close(fd)
 
 
-def _validate_directory_chain(directory_fds: tuple[int, ...]) -> None:
+def _validate_directory_chain(
+    canonical_root: Path,
+    directory_fds: tuple[int, ...],
+) -> None:
+    try:
+        lexical_root = os.stat(canonical_root, follow_symlinks=False)
+        held_root = os.fstat(directory_fds[0])
+    except OSError:
+        raise AcquisitionError("artifact directory identity changed") from None
+    if (lexical_root.st_dev, lexical_root.st_ino) != (held_root.st_dev, held_root.st_ino):
+        raise AcquisitionError("artifact directory identity changed")
     for parent_fd, expected_fd, component in zip(
         directory_fds[:-1],
         directory_fds[1:],
@@ -229,26 +321,106 @@ def _validate_directory_chain(directory_fds: tuple[int, ...]) -> None:
             os.close(current_fd)
 
 
+def _current_deadline() -> _Deadline:
+    deadline = _CURRENT_DEADLINE.get()
+    if deadline is None:
+        raise AcquisitionError("semantic model acquisition deadline is unavailable")
+    return deadline
+
+
+def _mutex_address(canonical_root: Path) -> bytes:
+    identity = os.fsencode(canonical_root) + b"\0" + os.fsencode(_MODEL_DESTINATION)
+    digest = hashlib.sha256(identity).hexdigest().encode("ascii")
+    return b"\0hieronymus-acquire-" + digest
+
+
 @contextmanager
-def _acquisition_lock(model_dir_fd: int) -> Iterator[None]:
+def _kernel_mutex(canonical_root: Path, deadline: _Deadline) -> Iterator[None]:
+    """Hold an unlink-proof Linux kernel mutex for this repository/model pair."""
+    address = _mutex_address(canonical_root)
+    held: socket.socket | None = None
+    while held is None:
+        deadline.check()
+        candidate = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC)
+        try:
+            with _MUTEX_TRACKING_LOCK:
+                try:
+                    candidate.bind(address)
+                except OSError as error:
+                    if error.errno != errno.EADDRINUSE:
+                        raise AcquisitionError(
+                            "could not lock semantic model acquisition"
+                        ) from None
+                else:
+                    _ACTIVE_MUTEX_SOCKETS.add(candidate)
+                    held = candidate
+        finally:
+            if held is not candidate:
+                candidate.close()
+        if held is None:
+            _sleep(min(_LOCK_RETRY_SECONDS, deadline.remaining()))
     try:
-        lock_fd = os.open(
-            _LOCK_NAME,
-            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600,
-            dir_fd=model_dir_fd,
-        )
+        yield
+    finally:
+        with _MUTEX_TRACKING_LOCK:
+            _ACTIVE_MUTEX_SOCKETS.discard(held)
+            held.close()
+
+
+def _validate_lock_file(model_dir_fd: int, lock_fd: int) -> None:
+    try:
+        held = os.fstat(lock_fd)
+        named = os.stat(_LOCK_NAME, dir_fd=model_dir_fd, follow_symlinks=False)
+    except OSError:
+        raise AcquisitionError("semantic model acquisition lock identity changed") from None
+    identity_matches = (held.st_dev, held.st_ino) == (named.st_dev, named.st_ino)
+    if (
+        not stat.S_ISREG(held.st_mode)
+        or held.st_uid != os.geteuid()
+        or stat.S_IMODE(held.st_mode) != 0o600
+        or held.st_nlink != 1
+        or not identity_matches
+    ):
+        raise AcquisitionError("semantic model acquisition lock must be a private regular file")
+
+
+@contextmanager
+def _acquisition_lock(model_dir_fd: int) -> Iterator[int]:
+    deadline = _current_deadline()
+    created = False
+    try:
+        try:
+            lock_fd = os.open(
+                _LOCK_NAME,
+                os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+                dir_fd=model_dir_fd,
+            )
+            created = True
+        except FileExistsError:
+            lock_fd = os.open(
+                _LOCK_NAME,
+                os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=model_dir_fd,
+            )
     except OSError:
         raise AcquisitionError("could not open the semantic model acquisition lock") from None
     try:
-        metadata = os.fstat(lock_fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-            raise AcquisitionError("semantic model acquisition lock must be a private regular file")
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        except OSError:
-            raise AcquisitionError("could not lock semantic model acquisition") from None
-        yield
+        if created:
+            os.fsync(model_dir_fd)
+        _validate_lock_file(model_dir_fd, lock_fd)
+        while True:
+            deadline.check()
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                _sleep(min(_LOCK_RETRY_SECONDS, deadline.remaining()))
+            except OSError:
+                raise AcquisitionError("could not lock semantic model acquisition") from None
+        _validate_lock_file(model_dir_fd, lock_fd)
+        yield lock_fd
+        _validate_lock_file(model_dir_fd, lock_fd)
     finally:
         os.close(lock_fd)
 
@@ -271,7 +443,7 @@ def _redirect_location(response: object) -> str:
     return location
 
 
-def _request(url: str) -> urllib.request.Request:
+def _request(url: str, deadline: _Deadline | None = None) -> urllib.request.Request:
     request = urllib.request.Request(
         url,
         headers={
@@ -284,6 +456,11 @@ def _request(url: str) -> urllib.request.Request:
     forbidden = {"authorization", "proxy-authorization", "cookie"}
     if forbidden & {key.lower() for key, _value in request.header_items()}:
         raise AcquisitionError("credential-bearing acquisition request rejected")
+    if deadline is not None:
+        request._hieronymus_timeout = min(  # type: ignore[attr-defined]
+            _TRANSPORT_TIMEOUT_SECONDS,
+            deadline.remaining(),
+        )
     return request
 
 
@@ -305,16 +482,26 @@ def _stream_model(
     initial_url: str,
     model_dir_fd: int,
     expected_sha256: str,
+    deadline: _Deadline,
 ) -> int:
     current_url = initial_url
     redirects = 0
     while True:
+        deadline.check()
         try:
-            response = _open_no_redirect(_request(current_url))
+            response = _open_no_redirect(_request(current_url, deadline))
         except Exception as error:
             if isinstance(error, AcquisitionError):
                 raise
             raise AcquisitionError("semantic model request failed") from None
+        try:
+            deadline.check()
+        except AcquisitionError:
+            try:
+                response.close()
+            except Exception:
+                pass
+            raise
         with closing(response):
             status = _response_status(response)
             if status in _REDIRECT_STATUSES:
@@ -343,14 +530,25 @@ def _stream_model(
             except OSError:
                 raise AcquisitionError("could not create the semantic model partial file") from None
             try:
+                os.fsync(model_dir_fd)
+            except OSError:
+                _remove_owned_partial(model_dir_fd, partial_fd)
+                os.close(partial_fd)
+                raise AcquisitionError(
+                    "could not persist the semantic model partial entry"
+                ) from None
+            try:
                 destination = os.fdopen(os.dup(partial_fd), "wb")
             except OSError:
+                _remove_owned_partial(model_dir_fd, partial_fd)
                 os.close(partial_fd)
                 raise AcquisitionError("could not open the semantic model partial file") from None
             try:
                 with destination:
                     while True:
+                        deadline.check()
                         chunk = response.read(_CHUNK_SIZE)
+                        deadline.check()
                         if not chunk:
                             break
                         if not isinstance(chunk, bytes):
@@ -413,35 +611,141 @@ def _remove_owned_partial(model_dir_fd: int, partial_fd: int) -> None:
     ):
         try:
             os.unlink(_PARTIAL_NAME, dir_fd=model_dir_fd)
+            os.fsync(model_dir_fd)
         except OSError:
             return
 
 
+def _final_validation_hook(_stage: str) -> None:
+    """A deterministic race-injection seam; production calls leave state unchanged."""
+
+
+def _same_file_version(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev,
+        left.st_ino,
+        left.st_size,
+        left.st_mtime_ns,
+        left.st_ctime_ns,
+    ) == (
+        right.st_dev,
+        right.st_ino,
+        right.st_size,
+        right.st_mtime_ns,
+        right.st_ctime_ns,
+    )
+
+
+def _verified_return_path(
+    canonical_root: Path,
+    directory_fds: tuple[int, ...],
+    lock_fd: int,
+    expected_sha256: str,
+    deadline: _Deadline,
+) -> Path:
+    """Validate the named model at the final in-operation linearization point.
+
+    The final lexical-path identity check is the success linearization point. A
+    same-user mutation after this function returns is outside the guarantee of a
+    Path-returning API; every mutation before that check is rejected.
+    """
+    _validate_directory_chain(canonical_root, directory_fds)
+    _validate_lock_file(directory_fds[-1], lock_fd)
+    _final_validation_hook("after-directory-check")
+    model_dir_fd = directory_fds[-1]
+    try:
+        destination_fd = os.open(
+            _DESTINATION_NAME,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=model_dir_fd,
+        )
+    except OSError:
+        raise AcquisitionError("could not inspect the semantic model destination") from None
+    try:
+        held = os.fstat(destination_fd)
+        if not stat.S_ISREG(held.st_mode):
+            raise AcquisitionError("semantic model destination must be a regular file")
+        if held.st_size > _MAX_MODEL_BYTES:
+            raise AcquisitionError("semantic model destination exceeds the byte limit")
+        _final_validation_hook("after-destination-open")
+        try:
+            digest = _sha256_fd(destination_fd, deadline)
+        except OSError:
+            raise AcquisitionError("could not verify the semantic model destination") from None
+        if digest != expected_sha256:
+            raise AcquisitionError("semantic model destination checksum mismatch")
+        _final_validation_hook("after-destination-hash")
+        current = os.fstat(destination_fd)
+        if not _same_file_version(held, current):
+            raise AcquisitionError("semantic model destination identity changed")
+        try:
+            named = os.stat(_DESTINATION_NAME, dir_fd=model_dir_fd, follow_symlinks=False)
+        except OSError:
+            raise AcquisitionError("semantic model destination identity changed") from None
+        if not stat.S_ISREG(named.st_mode) or not _same_file_version(current, named):
+            raise AcquisitionError("semantic model destination identity changed")
+        _final_validation_hook("after-named-destination-check")
+        _validate_directory_chain(canonical_root, directory_fds)
+        destination = canonical_root / _MODEL_DESTINATION
+        try:
+            lexical = os.stat(destination, follow_symlinks=False)
+        except OSError:
+            raise AcquisitionError("semantic model destination identity changed") from None
+        if not stat.S_ISREG(lexical.st_mode) or not _same_file_version(current, lexical):
+            raise AcquisitionError("semantic model destination identity changed")
+        deadline.check()
+        return destination
+    finally:
+        os.close(destination_fd)
+
+
 def acquire_semantic_model(repo_root: Path) -> Path:
-    """Acquire and atomically promote the exact approved semantic model."""
+    """Acquire and atomically promote the exact approved semantic model.
+
+    The returned path was verified at the final lexical identity check while the
+    unlink-proof mutex was held. Mutations after return are the caller's boundary.
+    """
+    deadline = _Deadline.after(_ACQUISITION_TIMEOUT_SECONDS)
+    token = _CURRENT_DEADLINE.set(deadline)
     try:
         with _open_model_directory(repo_root) as (canonical_root, directory_fds):
             model_dir_fd = directory_fds[-1]
             initial_url, expected_sha256 = _load_model_spec(canonical_root)
-            with _acquisition_lock(model_dir_fd):
-                _remove_stale_partial(model_dir_fd)
-                if _existing_destination_is_verified(model_dir_fd, expected_sha256):
-                    _validate_directory_chain(directory_fds)
-                    return canonical_root / _MODEL_DESTINATION
-                partial_fd = _stream_model(initial_url, model_dir_fd, expected_sha256)
-                try:
-                    _validate_directory_chain(directory_fds)
-                    _promote_open_partial(model_dir_fd, partial_fd)
-                except Exception:
-                    _remove_owned_partial(model_dir_fd, partial_fd)
-                    os.close(partial_fd)
-                    raise
-                os.close(partial_fd)
-                return canonical_root / _MODEL_DESTINATION
+            with _kernel_mutex(canonical_root, deadline):
+                with _acquisition_lock(model_dir_fd) as lock_fd:
+                    _remove_stale_partial(model_dir_fd)
+                    if not _existing_destination_is_verified(
+                        model_dir_fd,
+                        expected_sha256,
+                        deadline,
+                    ):
+                        partial_fd = _stream_model(
+                            initial_url,
+                            model_dir_fd,
+                            expected_sha256,
+                            deadline,
+                        )
+                        try:
+                            _validate_directory_chain(canonical_root, directory_fds)
+                            _promote_open_partial(model_dir_fd, partial_fd)
+                        except Exception:
+                            _remove_owned_partial(model_dir_fd, partial_fd)
+                            os.close(partial_fd)
+                            raise
+                        os.close(partial_fd)
+                    return _verified_return_path(
+                        canonical_root,
+                        directory_fds,
+                        lock_fd,
+                        expected_sha256,
+                        deadline,
+                    )
     except AcquisitionError:
         raise
     except Exception:
         raise AcquisitionError("semantic model acquisition failed") from None
+    finally:
+        _CURRENT_DEADLINE.reset(token)
 
 
 def main(argv: Sequence[str] | None = None, *, repo_root: Path | None = None) -> int:

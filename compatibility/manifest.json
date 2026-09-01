@@ -3440,7 +3440,17 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_lock_file_not_owned_by_current_identity",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_more_than_five_redirect_hops",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_permissive_lock_file",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3525,6 +3535,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_removes_partial_when_partial_stream_cannot_be_opened",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_cli_accepts_only_semantic_model",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3540,12 +3555,232 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_each_new_directory_entry_is_fsynced_in_its_parent",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_existing_destination_is_rejected_when_it_exceeds_the_byte_limit",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_existing_unverified_destination_is_replaced_only_after_verification",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_existing_verified_destination_skips_network_and_stale_partial_is_removed",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[.artifacts-after-destination-hash-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[.artifacts-after-destination-hash-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[.artifacts-after-destination-open-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[.artifacts-after-destination-open-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[.artifacts-after-directory-check-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[.artifacts-after-directory-check-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[.artifacts-after-named-destination-check-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[.artifacts-after-named-destination-check-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[all-MiniLM-L6-v2-after-destination-hash-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[all-MiniLM-L6-v2-after-destination-hash-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[all-MiniLM-L6-v2-after-destination-open-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[all-MiniLM-L6-v2-after-destination-open-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[all-MiniLM-L6-v2-after-directory-check-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[all-MiniLM-L6-v2-after-directory-check-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[all-MiniLM-L6-v2-after-named-destination-check-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[all-MiniLM-L6-v2-after-named-destination-check-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[models-after-destination-hash-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[models-after-destination-hash-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[models-after-destination-open-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[models-after-destination-open-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[models-after-directory-check-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[models-after-directory-check-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[models-after-named-destination-check-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[models-after-named-destination-check-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[qualification-after-destination-hash-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[qualification-after-destination-hash-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[qualification-after-destination-open-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[qualification-after-destination-open-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[qualification-after-directory-check-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[qualification-after-directory-check-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[qualification-after-named-destination-check-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_ancestor_swap_at_every_in_operation_hook[qualification-after-named-destination-check-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_in_place_mutation_after_hash",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_leaf_swap_at_every_in_operation_hook[after-destination-hash-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_leaf_swap_at_every_in_operation_hook[after-destination-hash-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_leaf_swap_at_every_in_operation_hook[after-destination-open-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_leaf_swap_at_every_in_operation_hook[after-destination-open-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_leaf_swap_at_every_in_operation_hook[after-directory-check-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_leaf_swap_at_every_in_operation_hook[after-directory-check-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_leaf_swap_at_every_in_operation_hook[after-named-destination-check-existing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_final_validation_rejects_leaf_swap_at_every_in_operation_hook[after-named-destination-check-promoted]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_forked_child_drops_inherited_kernel_mutex_before_acquiring",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3560,12 +3795,22 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_acquire.py::test_processes_contend_on_one_persistent_lock_inode",
+      "node_id": "tests/qualification/test_acquire.py::test_processes_contend_on_one_unlink_proof_kernel_mutex",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_total_deadline_bounds_redirect_sequence",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_transport_open_uses_the_bounded_acquisition_timeout",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_unlinked_lock_file_cannot_split_the_thread_mutex_domain",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
