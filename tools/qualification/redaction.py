@@ -278,9 +278,6 @@ _PRIVATE_KEY_BEGIN = "-----BEGIN "
 _PRIVATE_KEY_SUFFIX = " PRIVATE KEY"
 _PRIVATE_KEY_TERMINATOR = "-----"
 _PRIVATE_KEY_BOUNDARIES = frozenset(" \t\r\n\\\"',.;:!?)]}|")
-_JSON_CONTROL_ESCAPE = re.compile(
-    r"(?<!\\)\\u(00(?:0[0-9A-Fa-f]|1[0-9A-Fa-f]|7[fF]|8[0-9A-Fa-f]|9[0-9A-Fa-f]))"
-)
 
 
 def _contains_private_key_marker(value: str) -> bool:
@@ -315,15 +312,6 @@ def _contains_private_key_marker(value: str) -> bool:
             terminator_start += 1
 
 
-def _decoded_markdown_text(value: str) -> str:
-    """Undo one renderer layer without decoding literal double-backslash text."""
-    html_decoded = unescape_html(value)
-    return _JSON_CONTROL_ESCAPE.sub(
-        lambda match: chr(int(match.group(1), 16)),
-        html_decoded,
-    )
-
-
 def redaction_issues(serialized_record: str) -> list[str]:
     """Return each sensitive-data class found, once, in fixed rule order."""
     if type(serialized_record) is not str:
@@ -335,22 +323,115 @@ def redaction_issues(serialized_record: str) -> list[str]:
         parsed = None
         is_json = False
     structured = _structured_redaction_issues(parsed) if is_json else set()
-    decoded_view = unquote(serialized_record)
-    raw = {
-        rule.issue
-        for rule in _RULES
-        if any(pattern.search(serialized_record) for pattern in rule.patterns)
+    pem_values = _string_nodes(parsed) if is_json else (unescape_html(serialized_record),)
+    raw = _raw_redaction_issue_set(serialized_record, pem_values=pem_values)
+    return _ordered_issues(structured | raw)
+
+
+def markdown_redaction_issues(
+    rendered_markdown: str,
+    *,
+    canonical_json_cells: tuple[str, ...] = (),
+) -> list[str]:
+    """Scan completed Markdown while preserving canonical-JSON cell semantics.
+
+    The renderer owns the fourth column of each Required Criteria row.  Those
+    cells are parsed from their exact canonical JSON source instead of guessing
+    whether a printable backslash escape in Markdown represents a control.
+    Every other Markdown field is scanned after exactly one HTML-entity decode.
+    """
+    if type(rendered_markdown) is not str:
+        raise TypeError("rendered Markdown must be text")
+    if type(canonical_json_cells) is not tuple or any(
+        type(cell) is not str for cell in canonical_json_cells
+    ):
+        raise TypeError("canonical JSON cells must be a tuple of text")
+
+    semantic_issues: set[str] = set()
+    for cell in canonical_json_cells:
+        parsed = _parse_canonical_json_cell(cell)
+        semantic_issues.update(_structured_redaction_issues(parsed))
+        semantic_issues.update(_raw_redaction_issue_set(cell, pem_values=_string_nodes(parsed)))
+
+    masked = _mask_canonical_json_cells(rendered_markdown, canonical_json_cells)
+    decoded_markdown = unescape_html(masked)
+    markdown_issues = _raw_redaction_issue_set(
+        decoded_markdown,
+        pem_values=(decoded_markdown,),
+    )
+    return _ordered_issues(semantic_issues | markdown_issues)
+
+
+def _raw_redaction_issue_set(
+    value: str,
+    *,
+    pem_values: tuple[str, ...],
+) -> set[str]:
+    decoded_view = unquote(value)
+    issues = {
+        rule.issue for rule in _RULES if any(pattern.search(value) for pattern in rule.patterns)
     }
     home_rule = next(
         rule for rule in _RULES if rule.issue == "record contains an absolute home path"
     )
     if any(pattern.search(decoded_view) for pattern in home_rule.patterns):
-        raw.add(home_rule.issue)
-    pem_values = _string_nodes(parsed) if is_json else (_decoded_markdown_text(serialized_record),)
+        issues.add(home_rule.issue)
     if any(_contains_private_key_marker(value) for value in pem_values):
-        raw.add("record contains private-key material")
-    issue_order = tuple(rule.issue for rule in _RULES)
-    return [issue for issue in issue_order if issue in structured or issue in raw]
+        issues.add("record contains private-key material")
+    return issues
+
+
+def _ordered_issues(issues: set[str]) -> list[str]:
+    return [rule.issue for rule in _RULES if rule.issue in issues]
+
+
+def _parse_canonical_json_cell(serialized: str) -> object:
+    try:
+        parsed = json.loads(serialized)
+        canonical = json.dumps(
+            parsed,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (json.JSONDecodeError, TypeError, ValueError) as error:
+        raise ValueError("renderer-owned JSON cell is not canonical") from error
+    if type(parsed) is not dict or canonical != serialized:
+        raise ValueError("renderer-owned JSON cell is not canonical")
+    return parsed
+
+
+def _mask_canonical_json_cells(
+    rendered_markdown: str,
+    canonical_json_cells: tuple[str, ...],
+) -> str:
+    remaining = list(canonical_json_cells)
+    in_required_criteria = False
+    masked_lines: list[str] = []
+    for line in rendered_markdown.splitlines(keepends=True):
+        content = line.removesuffix("\n")
+        newline = "\n" if line.endswith("\n") else ""
+        if content == "## Required Criteria":
+            in_required_criteria = True
+        elif content.startswith("## "):
+            in_required_criteria = False
+
+        if (
+            in_required_criteria
+            and remaining
+            and content.startswith("| ")
+            and content.endswith(" |")
+        ):
+            fields = content[2:-2].split(" | ")
+            if len(fields) == 5 and unescape_html(fields[3]) == remaining[0]:
+                fields[3] = "{}"
+                remaining.pop(0)
+                content = "| " + " | ".join(fields) + " |"
+        masked_lines.append(content + newline)
+
+    if remaining:
+        raise ValueError("renderer-owned JSON cells do not match completed Markdown")
+    return "".join(masked_lines)
 
 
 def _structured_redaction_issues(parsed: object) -> set[str]:

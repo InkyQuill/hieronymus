@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from tools.qualification.model import QualificationRecord, load_record, serialize_record
-from tools.qualification.redaction import redaction_issues
+from tools.qualification.redaction import markdown_redaction_issues, redaction_issues
 from tools.qualification.validate import replay_commands_are_safe, validate_record
 
 _TITLES = {
@@ -120,6 +120,7 @@ def render_record(record: QualificationRecord) -> str:
             "| --- | --- | --- | --- | --- |",
         ]
     )
+    measurement_json_cells: list[str] = []
     for evidence in record.evidence:
         measurements = json.dumps(
             dict(evidence.measurements),
@@ -127,6 +128,7 @@ def render_record(record: QualificationRecord) -> str:
             sort_keys=True,
             separators=(",", ":"),
         )
+        measurement_json_cells.append(measurements)
         lines.append(
             "| "
             + " | ".join(
@@ -191,7 +193,10 @@ def render_record(record: QualificationRecord) -> str:
         ]
     )
     rendered = "\n".join(lines)
-    markdown_issues = redaction_issues(rendered)
+    markdown_issues = markdown_redaction_issues(
+        rendered,
+        canonical_json_cells=tuple(measurement_json_cells),
+    )
     if markdown_issues:
         raise ValueError("; ".join(markdown_issues))
     return rendered

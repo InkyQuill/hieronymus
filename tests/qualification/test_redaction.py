@@ -25,7 +25,7 @@ from tools.qualification.model import (
     Risk,
     serialize_record,
 )
-from tools.qualification.redaction import redaction_issues
+from tools.qualification.redaction import markdown_redaction_issues, redaction_issues
 from tools.qualification.render import render_record
 from tools.qualification.validate import (
     PLANNED_REPLAY_COMMANDS,
@@ -912,6 +912,215 @@ def test_validate_and_render_accept_control_bearing_pem_key_near_miss(
     rendered = render_record(safe)
     assert marker not in rendered
     assert "&#92;u001f" in rendered
+
+
+@pytest.mark.parametrize(
+    "character",
+    ["\b", "\t", "\n", "\f", "\r", "\u00a0", "é", "\u2028", "🙂"],
+    ids=(
+        "backspace",
+        "tab",
+        "newline",
+        "form-feed",
+        "carriage-return",
+        "no-break-space",
+        "bmp-letter",
+        "line-separator",
+        "non-bmp-surrogate-pair",
+    ),
+)
+@pytest.mark.parametrize("placement", ["key", "value", "array-value"])
+def test_validate_and_render_agree_for_json_escape_pem_near_misses(
+    tmp_path: Path,
+    character: str,
+    placement: str,
+) -> None:
+    """A semantic non-ASCII/control label must not become printable after rendering."""
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
+    record = make_record(tmp_path, "frontend-embedding")
+    marker = f"-----BEGIN LEFT{character}RIGHT PRIVATE KEY-----"
+    if placement == "key":
+        measurements = Measurements({marker: "synthetic measurement"})
+    elif placement == "value":
+        measurements = Measurements({"probe": marker})
+    else:
+        measurements = Measurements({"probe": (marker,)})
+    evidence = replace(record.evidence[0], measurements=measurements)
+    safe = replace(record, evidence=(evidence, *record.evidence[1:]))
+
+    assert validate_record(safe, tmp_path) == []
+    rendered = render_record(safe)
+    assert marker not in rendered
+
+
+@pytest.mark.parametrize("codepoint", (*range(0x20), 0x7F, *range(0x80, 0xA0)))
+@pytest.mark.parametrize("placement", ["key", "value"])
+def test_validate_and_render_agree_for_every_control_pem_near_miss(
+    tmp_path: Path,
+    codepoint: int,
+    placement: str,
+) -> None:
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
+    record = make_record(tmp_path, "frontend-embedding")
+    marker = f"-----BEGIN LEFT{chr(codepoint)}RIGHT PRIVATE KEY-----"
+    measurements = (
+        Measurements({marker: "synthetic measurement"})
+        if placement == "key"
+        else Measurements({"probe": marker})
+    )
+    evidence = replace(record.evidence[0], measurements=measurements)
+    safe = replace(record, evidence=(evidence, *record.evidence[1:]))
+
+    assert validate_record(safe, tmp_path) == []
+    render_record(safe)
+
+
+@pytest.mark.parametrize(
+    "escape",
+    [r"\"", r"\\", r"\/", r"\b", r"\t", r"\n", r"\f", r"\r", r"\u00e9"],
+)
+@pytest.mark.parametrize("placement", ["key", "value"])
+def test_validate_and_render_reject_literal_backslash_pem_markers(
+    tmp_path: Path,
+    escape: str,
+    placement: str,
+) -> None:
+    """Literal escape spellings stay printable; they are never decoded as controls."""
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
+    record = make_record(tmp_path, "frontend-embedding")
+    marker = f"-----BEGIN LEFT{escape}RIGHT PRIVATE KEY-----"
+    measurements = (
+        Measurements({marker: "synthetic measurement"})
+        if placement == "key"
+        else Measurements({"probe": marker})
+    )
+    evidence = replace(record.evidence[0], measurements=measurements)
+    leaked = replace(record, evidence=(evidence, *record.evidence[1:]))
+
+    assert validate_record(leaked, tmp_path) == ["record contains private-key material"]
+    with pytest.raises(ValueError, match="^record contains private-key material$"):
+        render_record(leaked)
+
+
+@pytest.mark.parametrize("character", ['"', "\\", "/"])
+@pytest.mark.parametrize("placement", ["key", "value"])
+def test_validate_and_render_reject_printable_json_short_escape_characters(
+    tmp_path: Path,
+    character: str,
+    placement: str,
+) -> None:
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
+    record = make_record(tmp_path, "frontend-embedding")
+    marker = f"-----BEGIN LEFT{character}RIGHT PRIVATE KEY-----"
+    measurements = (
+        Measurements({marker: "synthetic measurement"})
+        if placement == "key"
+        else Measurements({"probe": marker})
+    )
+    evidence = replace(record.evidence[0], measurements=measurements)
+    leaked = replace(record, evidence=(evidence, *record.evidence[1:]))
+
+    expected = ["record contains private-key material"]
+    assert validate_record(leaked, tmp_path) == expected
+    with pytest.raises(ValueError) as caught:
+        render_record(leaked)
+    assert str(caught.value) == expected[0]
+    assert marker not in str(caught.value)
+
+
+@pytest.mark.parametrize("entity", ["&#10;", "&#x0a;", "&NewLine;", "&amp;#10;"])
+@pytest.mark.parametrize("placement", ["key", "value"])
+def test_validate_and_render_reject_printable_entity_spelling_in_pem_marker(
+    tmp_path: Path,
+    entity: str,
+    placement: str,
+) -> None:
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
+    record = make_record(tmp_path, "frontend-embedding")
+    marker = f"-----BEGIN LEFT{entity}RIGHT PRIVATE KEY-----"
+    measurements = (
+        Measurements({marker: "synthetic measurement"})
+        if placement == "key"
+        else Measurements({"probe": marker})
+    )
+    evidence = replace(record.evidence[0], measurements=measurements)
+    leaked = replace(record, evidence=(evidence, *record.evidence[1:]))
+
+    assert validate_record(leaked, tmp_path) == ["record contains private-key material"]
+    with pytest.raises(ValueError, match="^record contains private-key material$"):
+        render_record(leaked)
+
+
+def test_markdown_redaction_parses_only_renderer_owned_canonical_json_cells() -> None:
+    canonical = r'{"probe":"-----BEGIN LEFT\nRIGHT PRIVATE KEY-----"}'
+    rendered_cell = canonical.replace("\\", "&#92;")
+    markdown = (
+        "## Required Criteria\n\n"
+        "| Criterion | Status | Summary | Measurements | Not-run reason |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        f"| probe | pass | safe | {rendered_cell} | (none) |\n"
+    )
+
+    assert markdown_redaction_issues(markdown, canonical_json_cells=(canonical,)) == []
+
+    arbitrary_field = markdown.replace(
+        f"| probe | pass | safe | {rendered_cell} |",
+        f"| probe | pass | {rendered_cell} | {{}} |",
+    )
+    assert markdown_redaction_issues(
+        arbitrary_field,
+        canonical_json_cells=("{}",),
+    ) == ["record contains private-key material"]
+
+
+def test_markdown_redaction_keeps_literal_backslash_semantics_in_json_cells() -> None:
+    canonical = r'{"probe":"-----BEGIN LEFT\\nRIGHT PRIVATE KEY-----"}'
+    rendered_cell = canonical.replace("\\", "&#92;")
+    markdown = (
+        "## Required Criteria\n\n"
+        "| Criterion | Status | Summary | Measurements | Not-run reason |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        f"| probe | pass | safe | {rendered_cell} | (none) |\n"
+    )
+
+    assert markdown_redaction_issues(
+        markdown,
+        canonical_json_cells=(canonical,),
+    ) == ["record contains private-key material"]
+
+
+def test_markdown_redaction_rejects_non_measurement_json_cell_shape() -> None:
+    markdown = (
+        "## Required Criteria\n\n"
+        "| Criterion | Status | Summary | Measurements | Not-run reason |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| probe | pass | safe | [] | (none) |\n"
+    )
+
+    with pytest.raises(ValueError, match="renderer-owned JSON cell is not canonical"):
+        markdown_redaction_issues(markdown, canonical_json_cells=("[]",))
+
+
+@pytest.mark.parametrize(
+    ("leak", "issue"),
+    [
+        (
+            "compat-secret-do-not-log",
+            "record contains forbidden literal: compat-secret-do-not-log",
+        ),
+        ("/home/private-user/evidence", "record contains an absolute home path"),
+        ("-----BEGIN PRIVATE KEY-----", "record contains private-key material"),
+    ],
+)
+def test_markdown_redaction_scans_arbitrary_non_json_fields_without_echo(
+    leak: str,
+    issue: str,
+) -> None:
+    issues = markdown_redaction_issues(f"## Arbitrary field\n\n{leak}\n")
+
+    assert issues == [issue]
+    if leak != "compat-secret-do-not-log":
+        assert leak not in issues[0]
 
 
 def test_percent_decoding_is_not_used_for_pem_detection() -> None:
