@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import re
+import shlex
 import sys
 from collections.abc import Sequence
 from pathlib import Path, PureWindowsPath
 
-from tools.qualification.fingerprint import COMMON_FINGERPRINT_INPUTS, fingerprint_inputs
+from tools.qualification.fingerprint import fingerprint_inputs, required_fingerprint_inputs
 from tools.qualification.model import (
     REQUIRED_CRITERIA,
     QualificationRecord,
@@ -71,8 +73,9 @@ def validate_record(record: QualificationRecord, repo_root: Path) -> list[str]:
     input_paths = getattr(record, "input_paths", None)
     fingerprint = None
     if type(input_paths) is tuple and all(type(path) is str for path in input_paths):
-        if input_paths[: len(COMMON_FINGERPRINT_INPUTS)] != COMMON_FINGERPRINT_INPUTS:
-            issues.append("record input_paths must start with the exact common fingerprint inputs")
+        expected_inputs = required_fingerprint_inputs(risk) if risk in REQUIRED_CRITERIA else None
+        if expected_inputs is not None and input_paths != expected_inputs:
+            issues.append(f"record input_paths must exactly match the {risk} fingerprint policy")
         try:
             fingerprint = fingerprint_inputs(repo_root, input_paths)
         except ValueError:
@@ -83,8 +86,8 @@ def validate_record(record: QualificationRecord, repo_root: Path) -> list[str]:
         issues.append("record input digest is stale")
 
     commands = getattr(record, "commands", None)
-    if not _valid_commands(commands):
-        issues.append("record commands must be nonempty single-line relative commands")
+    if not replay_commands_are_safe(commands):
+        issues.append("record commands must be safe relative replay commands")
     if type(commands) is tuple and len(commands) != len(set(commands)):
         issues.append("record commands must not contain duplicates")
 
@@ -104,18 +107,46 @@ def validate_record(record: QualificationRecord, repo_root: Path) -> list[str]:
     return issues
 
 
-def _valid_commands(value: object) -> bool:
+def replay_commands_are_safe(value: object) -> bool:
+    """Return whether commands are unambiguous relative offline replay commands."""
     if type(value) is not tuple or not value:
         return False
     for command in value:
-        if type(command) is not str or not command.strip() or "\n" in command or "\r" in command:
+        if type(command) is not str or not command.strip():
             return False
-        first = command.lstrip().split(maxsplit=1)[0]
-        if first.startswith(("/", "~")):
+        if any(ord(character) < 32 or ord(character) == 127 for character in command):
             return False
-        windows = PureWindowsPath(first)
-        if windows.is_absolute() or windows.drive or windows.root:
+        if re.search(r"[`;&|<>]|\$\(", command):
             return False
+        if re.search(r"(?:^|[=/\\\s])\.\.(?:$|[/\\\s])", command):
+            return False
+        if re.search(
+            r"\$(?:HOME|USERPROFILE)\b|\$\{(?:HOME|USERPROFILE)\}"
+            r"|%(?:USERPROFILE|HOMEDRIVE|HOMEPATH)%",
+            command,
+            re.IGNORECASE,
+        ):
+            return False
+        if re.search(r"(?:^|[\s=])[\"']?\\+(?=[^\\\s])", command):
+            return False
+        try:
+            tokens = shlex.split(command, posix=True)
+        except ValueError:
+            return False
+        if not tokens:
+            return False
+        for token in tokens:
+            candidates = (token, token.split("=", 1)[1]) if "=" in token else (token,)
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                if candidate.startswith(("/", "~")):
+                    return False
+                windows = PureWindowsPath(candidate)
+                if windows.is_absolute() or windows.drive or windows.root:
+                    return False
+                if ".." in candidate.replace("\\", "/").split("/"):
+                    return False
     return True
 
 

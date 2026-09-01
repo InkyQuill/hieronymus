@@ -3420,6 +3420,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_closes_descriptors_on_repeated_failures",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_frames_names_and_raw_bytes_unambiguously",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3436,6 +3441,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_rejects_duplicate_paths",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_rejects_hard_link_aliases",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3466,6 +3476,51 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_rejects_noncanonical_or_absolute_paths[nested/../fixture-canonical]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_rejects_repository_root_reached_through_parent_symlink",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_rejects_repository_root_symlink",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_rejects_symlinked_input_ancestor",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_reports_read_error_without_host_path",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_reports_safe_deterministic_filesystem_errors[missing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_reports_safe_deterministic_filesystem_errors[non-directory]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_reports_safe_deterministic_filesystem_errors[special]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_reports_unreadable_input_without_host_path",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_fingerprint.py::test_input_fingerprint_uses_open_directory_after_ancestor_path_swap",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3805,6 +3860,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"apiKey\":\"private-api-value\"-| apiKey | private-api-value |-record contains a token or secret value]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"authorization\":\"Bearer abc.def.ghi\"-| Authorization | Bearer abc.def.ghi |-record contains authorization material]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3815,7 +3875,17 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"command\":\"HOST=translator-workstation\"-HOST=translator-workstation-record contains a hostname]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"command\":\"HOSTNAME=translator-workstation\"-HOSTNAME=translator-workstation-record contains a hostname]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"command\":\"LOGNAME=alice\"-LOGNAME=alice-record contains a username]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3840,6 +3910,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"launch_grant\":\"private-grant\"-| launch_grant | private-grant |-record contains a token or secret value]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"path\":\"/Users/alice/private/record.json\"-/Users/alice/private/record.json-record contains an absolute home path]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3851,6 +3926,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"path\":\"/root\"-/root-record contains an absolute home path]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"path\":\"C:\\\\\\\\Documents and Settings\\\\\\\\Alice\\\\\\\\private\"-C:\\\\Documents and Settings\\\\Alice\\\\private-record contains an absolute home path]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3870,7 +3950,32 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"sourceText\":\"A private source row\"-| sourceText | A private source row |-record contains source-row text]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"source_text\":\"A private source row\"-| source_text | A private source row |-record contains source-row text]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"summary\":\"AKIAIOSFODNN7EXAMPLE\"-AKIAIOSFODNN7EXAMPLE-record contains a provider key]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"summary\":\"Authorization: Basic dXNlcjpwYXNz\"-Authorization: Basic dXNlcjpwYXNz-record contains authorization material]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"summary\":\"Authorization: Digest opaque-credential\"-Authorization: Digest opaque-credential-record contains authorization material]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"summary\":\"sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG\"-sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG-record contains a provider key]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3890,7 +3995,42 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_sanitized_status_prose[Authorization: none]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_sanitized_status_prose[Cookie: enabled for the synthetic route fixture]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_sanitized_status_prose[HOST support is checked without recording its value]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_sanitized_status_prose[The apiKey field is documented but never serialized]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_sanitized_status_prose[stderr: none]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_sanitized_status_prose[stdout: <absent>]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_redaction_avoids_hash_and_ordinary_prose_false_positives",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_diagnostics_never_echo_matched_values",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3900,7 +4040,47 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_sentinels_do_not_mask_following_sensitive_values[Authorization: none private-credential]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_sentinels_do_not_mask_following_sensitive_values[stderr: none raw child output]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_risk_input_policy_covers_every_planned_runner_harness_and_fixture",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_validation_accepts_exact_common_prefix_and_ordered_risk_suffix",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_accepts_only_exact_ordered_risk_input_policy[frontend-embedding]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_accepts_only_exact_ordered_risk_input_policy[legacy-database-import]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_accepts_only_exact_ordered_risk_input_policy[mcp-transport]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_accepts_only_exact_ordered_risk_input_policy[semantic-native]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_allows_exact_planned_relative_replay_commands",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3915,6 +4095,91 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[../probe]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[```]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe $HOME/private]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe %USERPROFILE%\\\\private]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe --input=/etc/passwd]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe /etc/passwd]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe <script>alert(1)</script>]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe C:\\\\Users\\\\Alice\\\\private]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe \\\\Users\\\\Alice\\\\private]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe \\\\\\\\server\\\\share\\\\private]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe nested/../fixture]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe nested\\\\..\\\\fixture]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe | # injected]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe ~/private]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe\\n# injected]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe\\r| forged | row |]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_validation_rejects_unsafe_replay_command_tokens[uv run probe\\x00hidden]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_validation_reports_cross_field_issues_without_trusting_forged_records",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3925,12 +4190,47 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_cell_canonically_escapes_table_and_markdown_hazards",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_canonically_escapes_arbitrary_record_strings",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_render.py::test_render_check_cli_is_read_only_and_rejects_invalid_records_before_output",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_check_rejects_every_nonexact_byte_encoding_without_writing[<lambda>0]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_check_rejects_every_nonexact_byte_encoding_without_writing[<lambda>1]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_check_rejects_every_nonexact_byte_encoding_without_writing[<lambda>2]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_check_rejects_every_nonexact_byte_encoding_without_writing[<lambda>3]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_render.py::test_render_contains_every_required_section_and_record_value",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_dependency_sort_is_total_across_checksum_and_features",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3955,7 +4255,32 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_rejects_ambiguous_replay_commands[```]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_rejects_ambiguous_replay_commands[uv run probe <script>]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_rejects_ambiguous_replay_commands[uv run probe | forged]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_rejects_ambiguous_replay_commands[uv run probe\\n# injected]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_render.py::test_render_rejects_raw_logs_and_secrets_before_producing_markdown",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_render_scans_the_final_markdown_before_return",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {

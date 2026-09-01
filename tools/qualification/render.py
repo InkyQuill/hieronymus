@@ -10,7 +10,7 @@ from pathlib import Path
 
 from tools.qualification.model import QualificationRecord, load_record, serialize_record
 from tools.qualification.redaction import redaction_issues
-from tools.qualification.validate import validate_record
+from tools.qualification.validate import replay_commands_are_safe, validate_record
 
 _TITLES = {
     "mcp-transport": "MCP Transport",
@@ -26,6 +26,8 @@ def render_record(record: QualificationRecord) -> str:
     issues = redaction_issues(serialized)
     if issues:
         raise ValueError("; ".join(issues))
+    if not replay_commands_are_safe(record.commands):
+        raise ValueError("record commands must be safe relative replay commands")
 
     lines = [f"# {_TITLES[record.risk]} Qualification Record", ""]
     lines.extend(
@@ -42,9 +44,18 @@ def render_record(record: QualificationRecord) -> str:
     )
     lines.extend(["## Normative Specifications", ""])
     lines.extend(_bullet_values(sorted(record.specs)))
-    lines.extend(["## Replay Commands", ""])
-    for command in record.commands:
-        lines.extend(["```text", command, "```", ""])
+    lines.extend(
+        [
+            "## Replay Commands",
+            "",
+            "| Order | Command |",
+            "| --- | --- |",
+        ]
+    )
+    lines.extend(
+        f"| {index} | {_cell(command)} |" for index, command in enumerate(record.commands, start=1)
+    )
+    lines.append("")
     lines.extend(
         _key_value_section(
             "Environment",
@@ -74,7 +85,14 @@ def render_record(record: QualificationRecord) -> str:
     if record.dependencies:
         for dependency in sorted(
             record.dependencies,
-            key=lambda item: (item.name, item.version, item.source),
+            key=lambda item: (
+                item.name,
+                item.version,
+                item.source,
+                item.checksum is not None,
+                item.checksum or "",
+                tuple(sorted(item.features)),
+            ),
         ):
             lines.append(
                 "| "
@@ -168,11 +186,15 @@ def render_record(record: QualificationRecord) -> str:
         [
             "## Immutable Consequence",
             "",
-            record.consequence or "(none)",
+            _cell(record.consequence or "(none)"),
             "",
         ]
     )
-    return "\n".join(lines)
+    rendered = "\n".join(lines)
+    markdown_issues = redaction_issues(rendered)
+    if markdown_issues:
+        raise ValueError("; ".join(markdown_issues))
+    return rendered
 
 
 def _key_value_section(
@@ -186,7 +208,7 @@ def _key_value_section(
 
 
 def _bullet_values(values: Sequence[str]) -> list[str]:
-    lines = [f"- `{value}`" for value in values]
+    lines = [f"- {_cell(value)}" for value in values]
     lines.append("")
     return lines
 
@@ -196,7 +218,22 @@ def _cell(value: object) -> str:
         rendered = str(value).lower()
     else:
         rendered = str(value)
-    return rendered.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
+    replacements = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "|": "&#124;",
+        "`": "&#96;",
+        "\\": "&#92;",
+        "\r": "&#13;",
+        "\n": "&#10;",
+    }
+    return "".join(
+        replacements.get(character, f"&#{ord(character)};")
+        if ord(character) < 32 or ord(character) == 127
+        else replacements.get(character, character)
+        for character in rendered
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -219,11 +256,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     try:
         expected = render_record(record)
-        actual = arguments.markdown.read_text(encoding="utf-8")
+        actual = arguments.markdown.read_bytes()
     except (OSError, TypeError, ValueError):
         print("qualification Markdown could not be checked", file=sys.stderr)
         return 2
-    if actual != expected:
+    if actual != expected.encode("utf-8"):
         print("qualification Markdown is stale", file=sys.stderr)
         return 1
     print("qualification Markdown is current")

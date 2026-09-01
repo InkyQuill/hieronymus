@@ -7,19 +7,18 @@ from dataclasses import fields, replace
 from pathlib import Path
 
 import pytest
-from factories import make_record
+from factories import make_record, seed_fingerprint_inputs
 
-from tools.qualification.fingerprint import COMMON_FINGERPRINT_INPUTS, fingerprint_inputs
-from tools.qualification.model import QualificationRecord, serialize_record
+from tools.qualification.fingerprint import (
+    COMMON_FINGERPRINT_INPUTS,
+    MCP_TOOL_INPUT_WIRE_INPUTS,
+    RISK_FINGERPRINT_SUFFIXES,
+    fingerprint_inputs,
+    required_fingerprint_inputs,
+)
+from tools.qualification.model import REQUIRED_CRITERIA, QualificationRecord, Risk, serialize_record
 from tools.qualification.redaction import redaction_issues
 from tools.qualification.validate import validate_record
-
-
-def _seed_common_inputs(root: Path) -> None:
-    for relative in COMMON_FINGERPRINT_INPUTS:
-        path = root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"qualification fixture: {relative}\n", encoding="utf-8")
 
 
 def _unchecked_record(
@@ -37,7 +36,7 @@ def _unchecked_record(
 
 
 def test_record_rejects_secret_and_home_path(tmp_path: Path) -> None:
-    _seed_common_inputs(tmp_path)
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
     record = make_record(tmp_path, "frontend-embedding")
     leaked = replace(
         record,
@@ -49,7 +48,10 @@ def test_record_rejects_secret_and_home_path(tmp_path: Path) -> None:
         "record contains forbidden literal: compat-secret-do-not-log",
         "record contains an absolute home path",
     ]
-    assert validate_record(leaked, tmp_path) == redaction_issues(serialized)
+    assert validate_record(leaked, tmp_path) == [
+        *redaction_issues(serialized),
+        "record commands must be safe relative replay commands",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -136,9 +138,59 @@ def test_record_rejects_secret_and_home_path(tmp_path: Path) -> None:
             "record contains an absolute home path",
         ),
         (
+            '"path":"C:\\\\Documents and Settings\\\\Alice\\\\private"',
+            "C:\\Documents and Settings\\Alice\\private",
+            "record contains an absolute home path",
+        ),
+        (
             '"summary":"stderr: raw child output"',
             "stderr: raw child output",
             "record contains raw process output",
+        ),
+        (
+            '"summary":"sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"',
+            "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+            "record contains a provider key",
+        ),
+        (
+            '"summary":"AKIAIOSFODNN7EXAMPLE"',
+            "AKIAIOSFODNN7EXAMPLE",
+            "record contains a provider key",
+        ),
+        (
+            '"summary":"Authorization: Basic dXNlcjpwYXNz"',
+            "Authorization: Basic dXNlcjpwYXNz",
+            "record contains authorization material",
+        ),
+        (
+            '"summary":"Authorization: Digest opaque-credential"',
+            "Authorization: Digest opaque-credential",
+            "record contains authorization material",
+        ),
+        (
+            '"apiKey":"private-api-value"',
+            "| apiKey | private-api-value |",
+            "record contains a token or secret value",
+        ),
+        (
+            '"sourceText":"A private source row"',
+            "| sourceText | A private source row |",
+            "record contains source-row text",
+        ),
+        (
+            '"launch_grant":"private-grant"',
+            "| launch_grant | private-grant |",
+            "record contains a token or secret value",
+        ),
+        (
+            '"command":"HOST=translator-workstation"',
+            "HOST=translator-workstation",
+            "record contains a hostname",
+        ),
+        (
+            '"command":"LOGNAME=alice"',
+            "LOGNAME=alice",
+            "record contains a username",
         ),
     ],
 )
@@ -161,9 +213,47 @@ def test_redaction_avoids_hash_and_ordinary_prose_false_positives() -> None:
     assert redaction_issues(ordinary) == []
 
 
+@pytest.mark.parametrize(
+    "safe",
+    [
+        "Cookie: enabled for the synthetic route fixture",
+        "stderr: none",
+        "stdout: <absent>",
+        "Authorization: none",
+        "HOST support is checked without recording its value",
+        "The apiKey field is documented but never serialized",
+    ],
+)
+def test_redaction_allows_sanitized_status_prose(safe: str) -> None:
+    assert redaction_issues(safe) == []
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "Authorization: none private-credential",
+        "stderr: none raw child output",
+    ],
+)
+def test_redaction_sentinels_do_not_mask_following_sensitive_values(leak: str) -> None:
+    assert redaction_issues(leak)
+
+
+def test_redaction_diagnostics_never_echo_matched_values() -> None:
+    secrets = (
+        "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "AKIAIOSFODNN7EXAMPLE",
+        "dXNlcjpwYXNz",
+    )
+    issues = redaction_issues(f"{secrets[0]} {secrets[1]} Authorization: Basic {secrets[2]}")
+
+    assert issues
+    assert all(secret not in issue for issue in issues for secret in secrets)
+
+
 def test_redaction_reports_all_matches_once_in_rule_order() -> None:
     serialized = (
-        '"username":"alice" Cookie: private '
+        '"username":"alice" Cookie: session=private '
         "compat-secret-do-not-log Authorization: Bearer abc.def.ghi "
         '"username":"alice" /home/alice/private'
     )
@@ -177,36 +267,87 @@ def test_redaction_reports_all_matches_once_in_rule_order() -> None:
     ]
 
 
+@pytest.mark.parametrize("risk", tuple(REQUIRED_CRITERIA))
+def test_validation_accepts_only_exact_ordered_risk_input_policy(
+    tmp_path: Path,
+    risk: Risk,
+) -> None:
+    input_paths = seed_fingerprint_inputs(tmp_path, risk)
+    record = make_record(tmp_path, risk)
+    assert record.input_paths == input_paths
+    assert validate_record(record, tmp_path) == []
+
+    variants = (
+        input_paths[:-1],
+        (*input_paths, "unrelated.txt"),
+        (*input_paths, input_paths[-1]),
+        (*input_paths[:-2], input_paths[-1], input_paths[-2]),
+    )
+    (tmp_path / "unrelated.txt").write_text("unrelated", encoding="utf-8")
+    for variant in variants:
+        issues = validate_record(
+            replace(
+                record,
+                input_paths=variant,
+                input_digest=(
+                    fingerprint_inputs(tmp_path, variant)
+                    if len(variant) == len(set(variant))
+                    else record.input_digest
+                ),
+            ),
+            tmp_path,
+        )
+        assert issues[0] == f"record input_paths must exactly match the {risk} fingerprint policy"
+
+
 def test_validation_accepts_exact_common_prefix_and_ordered_risk_suffix(
     tmp_path: Path,
 ) -> None:
-    _seed_common_inputs(tmp_path)
-    suffix = (
-        "qualification/fixtures/frontend-manifest.json",
-        "tools/qualification/run_frontend.py",
-    )
-    for relative in suffix:
-        path = tmp_path / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(relative, encoding="utf-8")
-    input_paths = (*COMMON_FINGERPRINT_INPUTS, *suffix)
-    record = replace(
-        make_record(tmp_path, "frontend-embedding"),
-        input_paths=input_paths,
-        input_digest=fingerprint_inputs(tmp_path, input_paths),
-    )
+    """Preserve the original Task 3 acceptance node against the stricter policy."""
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
 
-    assert validate_record(record, tmp_path) == []
+    assert validate_record(make_record(tmp_path, "frontend-embedding"), tmp_path) == []
 
-    reordered = (COMMON_FINGERPRINT_INPUTS[1], COMMON_FINGERPRINT_INPUTS[0], *input_paths[2:])
-    assert validate_record(
-        replace(record, input_paths=reordered),
-        tmp_path,
-    ) == ["record input_paths must start with the exact common fingerprint inputs"]
+
+def test_risk_input_policy_covers_every_planned_runner_harness_and_fixture() -> None:
+    assert len(MCP_TOOL_INPUT_WIRE_INPUTS) == 156
+    assert len(set(MCP_TOOL_INPUT_WIRE_INPUTS)) == 156
+    assert RISK_FINGERPRINT_SUFFIXES["mcp-transport"][:7] == (
+        "tools/qualification/run_mcp.py",
+        "qualification/harnesses/mcp-transport/Cargo.toml",
+        "qualification/harnesses/mcp-transport/Cargo.lock",
+        "qualification/harnesses/mcp-transport/src/main.rs",
+        "qualification/harnesses/mcp-transport/src/registry.rs",
+        "qualification/harnesses/mcp-transport/src/report.rs",
+        "qualification/harnesses/mcp-transport/tests/transport.rs",
+    )
+    assert RISK_FINGERPRINT_SUFFIXES["semantic-native"][-3:] == (
+        "qualification/fixtures/semantic-corpus.json",
+        "compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json",
+        "compatibility/fixtures/mcp/hieronymus_recall/success.input.json",
+    )
+    assert "frontend/index.html" in RISK_FINGERPRINT_SUFFIXES["frontend-embedding"]
+    assert "frontend/src/web/main.ts" in RISK_FINGERPRINT_SUFFIXES["frontend-embedding"]
+    assert RISK_FINGERPRINT_SUFFIXES["frontend-embedding"][-1] == (
+        "compatibility/fixtures/http/route-cases.json"
+    )
+    assert RISK_FINGERPRINT_SUFFIXES["legacy-database-import"][-6:] == (
+        "compatibility/fixtures/database/corrupt.sqlite",
+        "compatibility/fixtures/database/empty.sqlite",
+        "compatibility/fixtures/database/legacy-python.sqlite",
+        "compatibility/fixtures/database/minimal-python.sqlite",
+        "compatibility/fixtures/database/partial-python.sqlite",
+        "compatibility/fixtures/database/unknown-schema.sqlite",
+    )
+    for risk in REQUIRED_CRITERIA:
+        assert required_fingerprint_inputs(risk) == (
+            *COMMON_FINGERPRINT_INPUTS,
+            *RISK_FINGERPRINT_SUFFIXES[risk],
+        )
 
 
 def test_validation_rejects_stale_digest_after_input_change(tmp_path: Path) -> None:
-    _seed_common_inputs(tmp_path)
+    seed_fingerprint_inputs(tmp_path, "semantic-native")
     record = make_record(tmp_path, "semantic-native")
     (tmp_path / COMMON_FINGERPRINT_INPUTS[0]).write_text("changed", encoding="utf-8")
 
@@ -216,7 +357,7 @@ def test_validation_rejects_stale_digest_after_input_change(tmp_path: Path) -> N
 def test_validation_reports_every_cleanup_and_command_issue_deterministically(
     tmp_path: Path,
 ) -> None:
-    _seed_common_inputs(tmp_path)
+    seed_fingerprint_inputs(tmp_path, "legacy-database-import")
     record = make_record(tmp_path, "legacy-database-import")
     invalid = replace(
         record,
@@ -233,7 +374,7 @@ def test_validation_reports_every_cleanup_and_command_issue_deterministically(
     issues = validate_record(invalid, tmp_path)
     assert issues == validate_record(invalid, tmp_path)
     assert issues == [
-        "record commands must be nonempty single-line relative commands",
+        "record commands must be safe relative replay commands",
         "record commands must not contain duplicates",
         "record cleanup work_dir_removed must be true",
         "record cleanup raw_logs_removed must be true",
@@ -245,7 +386,7 @@ def test_validation_reports_every_cleanup_and_command_issue_deterministically(
 def test_validation_reports_cross_field_issues_without_trusting_forged_records(
     tmp_path: Path,
 ) -> None:
-    _seed_common_inputs(tmp_path)
+    seed_fingerprint_inputs(tmp_path, "mcp-transport")
     record = make_record(tmp_path, "mcp-transport")
     evidence = (record.evidence[1], record.evidence[0], *record.evidence[2:])
     forged = _unchecked_record(
@@ -270,7 +411,7 @@ def test_validation_never_probes_home_or_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _seed_common_inputs(tmp_path)
+    seed_fingerprint_inputs(tmp_path, "mcp-transport")
     record = make_record(tmp_path, "mcp-transport")
     monkeypatch.setenv("HOME", "/home/compat-secret-do-not-log")
     monkeypatch.setenv("USER", "private-user")
@@ -282,3 +423,54 @@ def test_validation_never_probes_home_or_environment(
 
     assert validate_record(record, tmp_path) == []
     assert os.environ["HOME"] == "/home/compat-secret-do-not-log"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "../probe",
+        "uv run probe nested/../fixture",
+        r"uv run probe nested\..\fixture",
+        "uv run probe /etc/passwd",
+        "uv run probe --input=/etc/passwd",
+        r"uv run probe C:\Users\Alice\private",
+        r"uv run probe \Users\Alice\private",
+        r"uv run probe \\server\share\private",
+        "uv run probe ~/private",
+        "uv run probe $HOME/private",
+        r"uv run probe %USERPROFILE%\private",
+        "```",
+        "uv run probe | # injected",
+        "uv run probe <script>alert(1)</script>",
+        "uv run probe\n# injected",
+        "uv run probe\r| forged | row |",
+        "uv run probe\x00hidden",
+    ],
+)
+def test_validation_rejects_unsafe_replay_command_tokens(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    seed_fingerprint_inputs(tmp_path, "mcp-transport")
+    record = replace(make_record(tmp_path, "mcp-transport"), commands=(command,))
+
+    assert "record commands must be safe relative replay commands" in validate_record(
+        record,
+        tmp_path,
+    )
+
+
+def test_validation_allows_exact_planned_relative_replay_commands(tmp_path: Path) -> None:
+    seed_fingerprint_inputs(tmp_path, "mcp-transport")
+    commands = (
+        "uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only",
+        "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport "
+        "CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path "
+        "qualification/harnesses/mcp-transport/Cargo.toml --locked "
+        "--target x86_64-unknown-linux-gnu",
+        "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true "
+        "uv run python -m tools.qualification.run all --write",
+    )
+    record = replace(make_record(tmp_path, "mcp-transport"), commands=commands)
+
+    assert validate_record(record, tmp_path) == []

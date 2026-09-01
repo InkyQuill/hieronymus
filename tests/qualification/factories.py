@@ -15,6 +15,7 @@ if str(_ROOT) not in sys.path:
 from tools.qualification.fingerprint import (  # noqa: E402
     COMMON_FINGERPRINT_INPUTS,
     fingerprint_inputs,
+    required_fingerprint_inputs,
 )
 from tools.qualification.model import (  # noqa: E402
     REQUIRED_CRITERIA,
@@ -33,6 +34,16 @@ from tools.qualification.model import (  # noqa: E402
 
 _OWNER = "Pavel Obruchnikov <me@inkyquill.net>"
 _TARGET = "x86_64-unknown-linux-gnu"
+
+
+def seed_fingerprint_inputs(repo_root: Path, risk: Risk) -> tuple[str, ...]:
+    """Seed the complete future input contract for one risk in a test repository."""
+    input_paths = required_fingerprint_inputs(risk)
+    for relative in input_paths:
+        path = repo_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"qualification fixture: {relative}\n", encoding="utf-8")
+    return input_paths
 
 
 def make_record(
@@ -58,11 +69,20 @@ def make_record(
     )
     status = status_for(evidence)
     reviewed = review_status == "accepted"
-    input_paths = tuple(
-        relative
-        for relative in COMMON_FINGERPRINT_INPUTS
-        if (repo_root / relative).is_file() and not (repo_root / relative).is_symlink()
-    )
+    required_inputs = required_fingerprint_inputs(risk)
+    if all(
+        (repo_root / relative).is_file() and not (repo_root / relative).is_symlink()
+        for relative in required_inputs
+    ):
+        input_paths = required_inputs
+    else:
+        # Task 2 model tests remain executable before future runner/harness files
+        # exist. Task 3 validation never accepts this deliberately partial shape.
+        input_paths = tuple(
+            relative
+            for relative in COMMON_FINGERPRINT_INPUTS
+            if (repo_root / relative).is_file() and not (repo_root / relative).is_symlink()
+        )
     return QualificationRecord(
         schema_version=1,
         risk=risk,

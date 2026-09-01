@@ -5,15 +5,16 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from factories import make_record
+from factories import make_record, seed_fingerprint_inputs
 
 from tools.qualification.fingerprint import COMMON_FINGERPRINT_INPUTS
-from tools.qualification.model import LockedDependency, Risk, serialize_record
-from tools.qualification.render import render_record
+from tools.qualification.model import LockedDependency, Measurements, Risk, serialize_record
+from tools.qualification.render import _cell, render_record
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -32,7 +33,7 @@ def _cli_env() -> dict[str, str]:
 
 
 def _write_record(root: Path, risk: Risk = "mcp-transport") -> tuple[Path, object]:
-    _seed_common_inputs(root)
+    seed_fingerprint_inputs(root, risk)
     record = make_record(root, risk)
     path = root / "record.json"
     path.write_text(serialize_record(record) + "\n", encoding="utf-8")
@@ -121,6 +122,95 @@ def test_render_sorts_dependency_rows_without_mutating_record_order(tmp_path: Pa
     assert rendered.index("| alpha |") < rendered.index("| zeta |")
     assert record.dependencies == (zeta, alpha)
     assert "feature-a, feature-z" in rendered
+
+
+def test_render_dependency_sort_is_total_across_checksum_and_features(tmp_path: Path) -> None:
+    _seed_common_inputs(tmp_path)
+    record = make_record(tmp_path, "semantic-native")
+    one = LockedDependency(
+        name="same",
+        version="1.0.0",
+        source="registry",
+        checksum=None,
+        features=("z",),
+    )
+    two = LockedDependency(
+        name="same",
+        version="1.0.0",
+        source="registry",
+        checksum="a" * 64,
+        features=("a",),
+    )
+
+    first = render_record(replace(record, dependencies=(one, two)))
+    second = render_record(replace(record, dependencies=(two, one)))
+
+    assert first == second
+
+
+def test_cell_canonically_escapes_table_and_markdown_hazards() -> None:
+    escaped = _cell("line\r\n`code`\\pipe|<script>&")
+
+    assert escaped == ("line&#13;&#10;&#96;code&#96;&#92;pipe&#124;&lt;script&gt;&amp;")
+    assert not any(raw in escaped for raw in ("\r", "\n", "`", "\\", "|", "<script>"))
+
+
+def test_render_canonically_escapes_arbitrary_record_strings(tmp_path: Path) -> None:
+    _seed_common_inputs(tmp_path)
+    record = make_record(tmp_path, "frontend-embedding")
+    hazardous = replace(
+        record.evidence[0],
+        summary="line one\n# Injected\r| forged | `code` <b>raw</b> " + "\\",
+        measurements=Measurements({"probe": "line one\n| row | <script> `tick` " + "\\"}),
+    )
+    record = replace(
+        record,
+        specs=("docs/spec.md\n# Injected <script> `tick` | \\",),
+        evidence=(hazardous, *record.evidence[1:]),
+    )
+
+    rendered = render_record(record)
+
+    assert "\n# Injected" not in rendered
+    assert "<script>" not in rendered
+    assert "| forged |" not in rendered
+    assert "&#10;# Injected" in rendered
+    assert "&lt;script&gt;" in rendered
+    assert "&#96;tick&#96;" in rendered
+    assert "&#92;" in rendered
+
+
+def test_render_scans_the_final_markdown_before_return(tmp_path: Path) -> None:
+    _seed_common_inputs(tmp_path)
+    record = make_record(tmp_path, "semantic-native")
+    markdown_only_leak = LockedDependency(
+        name="username",
+        version="alice",
+        source="registry",
+        checksum=None,
+        features=(),
+    )
+    record = replace(record, dependencies=(markdown_only_leak,))
+
+    with pytest.raises(ValueError, match="record contains a username"):
+        render_record(record)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "```",
+        "uv run probe\n# injected",
+        "uv run probe | forged",
+        "uv run probe <script>",
+    ],
+)
+def test_render_rejects_ambiguous_replay_commands(tmp_path: Path, command: str) -> None:
+    _seed_common_inputs(tmp_path)
+    record = replace(make_record(tmp_path, "mcp-transport"), commands=(command,))
+
+    with pytest.raises(ValueError, match="safe relative replay commands"):
+        render_record(record)
 
 
 def test_render_rejects_raw_logs_and_secrets_before_producing_markdown(
@@ -263,3 +353,48 @@ def test_render_check_cli_is_read_only_and_rejects_invalid_records_before_output
         "qualification record is invalid\nrecord contains authorization material\n",
     )
     assert markdown_path.read_text(encoding="utf-8") == "stale\n"
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        lambda value: value.replace(b"\n", b"\r\n"),
+        lambda value: value.replace(b"\n", b"\r"),
+        lambda value: b"\xef\xbb\xbf" + value,
+        lambda value: value + b"\xff",
+    ],
+)
+def test_render_check_rejects_every_nonexact_byte_encoding_without_writing(
+    tmp_path: Path,
+    transform: Callable[[bytes], bytes],
+) -> None:
+    record_path, record = _write_record(tmp_path, "legacy-database-import")
+    markdown_path = tmp_path / "record.md"
+    drifted = transform(render_record(record).encode("utf-8"))
+    markdown_path.write_bytes(drifted)
+    mode = markdown_path.stat().st_mode
+    command = (
+        sys.executable,
+        "-m",
+        "tools.qualification.render",
+        "--check",
+        str(record_path),
+        str(markdown_path),
+    )
+
+    result = subprocess.run(
+        command,
+        cwd=tmp_path,
+        env=_cli_env(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert (result.returncode, result.stdout, result.stderr) == (
+        1,
+        "",
+        "qualification Markdown is stale\n",
+    )
+    assert markdown_path.read_bytes() == drifted
+    assert markdown_path.stat().st_mode == mode

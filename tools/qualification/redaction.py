@@ -54,7 +54,12 @@ _RULES = (
                 "authorization_header",
                 "proxy_authorization",
             ),
-            re.compile(r"\bauthorization\s*:\s*bearer\s+\S+", re.IGNORECASE),
+            re.compile(
+                r"\b(?:proxy-)?authorization\s*:\s*"
+                r"(?!\s*(?:<absent>|\(none\)|none|null)\s*(?:$|\|))"
+                r"[A-Za-z][A-Za-z0-9._~+/=-]*(?:\s+[^\s|,;]+)?",
+                re.IGNORECASE,
+            ),
             re.compile(r"\bbearer\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE),
         ),
     ),
@@ -62,7 +67,11 @@ _RULES = (
         "record contains cookie material",
         (
             *_structured_patterns("cookie", "set_cookie", "cookie_header"),
-            re.compile(r"\b(?:set-cookie|cookie)\s*:\s*\S+", re.IGNORECASE),
+            re.compile(
+                r"\b(?:set-cookie|cookie)\s*:\s*"
+                r"[^\s|,;=]+=[^\s|,;]+(?:\s*;\s*[^\s|,;=]+=[^\s|,;]+)*",
+                re.IGNORECASE,
+            ),
         ),
     ),
     _Rule(
@@ -70,16 +79,24 @@ _RULES = (
         _structured_patterns(
             "provider_key",
             "openai_api_key",
+            "openaiApiKey",
             "anthropic_api_key",
+            "anthropicApiKey",
             "gemini_api_key",
+            "geminiApiKey",
         )
         + (
             _assignment_pattern(
                 "provider_key",
                 "openai_api_key",
+                "openaiApiKey",
                 "anthropic_api_key",
+                "anthropicApiKey",
                 "gemini_api_key",
+                "geminiApiKey",
             ),
+            re.compile(r"(?<![A-Za-z0-9_-])sk-proj-[A-Za-z0-9_-]{16,}", re.IGNORECASE),
+            re.compile(r"(?<![A-Z0-9])AKIA[A-Z0-9]{16}(?![A-Z0-9])"),
         ),
     ),
     _Rule(
@@ -90,8 +107,11 @@ _RULES = (
                 "refresh_token",
                 "client_secret",
                 "api_key",
+                "apiKey",
                 "secret",
                 "token",
+                "launch_grant",
+                "launchGrant",
             ),
             re.compile(r"\b(?:ghp|gho|github_pat)_[A-Za-z0-9_]{16,}\b"),
             re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
@@ -100,8 +120,11 @@ _RULES = (
                 "refresh_token",
                 "client_secret",
                 "api_key",
+                "apiKey",
                 "secret",
                 "token",
+                "launch_grant",
+                "launchGrant",
                 "password",
                 "private_key",
             ),
@@ -111,6 +134,7 @@ _RULES = (
         "record contains source-row text",
         _structured_patterns(
             "source_text",
+            "sourceText",
             "source_row",
             "row_text",
             "memory_text",
@@ -121,19 +145,31 @@ _RULES = (
     ),
     _Rule(
         "record contains a hostname",
-        _structured_patterns("hostname", "host_name", "machine_name")
-        + (_assignment_pattern("hostname", "host_name", "machine_name"),),
+        _structured_patterns("hostname", "host_name", "machine_name", "host")
+        + (_assignment_pattern("hostname", "host_name", "machine_name", "host"),),
     ),
     _Rule(
         "record contains a username",
         _structured_patterns("username", "user_name", "login_user")
-        + (_assignment_pattern("username", "user_name", "login_user", "user"),),
+        + (
+            _assignment_pattern(
+                "username",
+                "user_name",
+                "login_user",
+                "user",
+                "logname",
+            ),
+        ),
     ),
     _Rule(
         "record contains raw process output",
         (
             *_structured_patterns("stdout", "stderr", "raw_log", "raw_logs"),
-            re.compile(r"\b(?:stdout|stderr|raw[-_ ]logs?)\s*:", re.IGNORECASE),
+            re.compile(
+                r"\b(?:stdout|stderr|raw[-_ ]logs?)\s*:\s*"
+                r"(?!\s*(?:<absent>|\(none\)|none|null)\s*(?:$|\|))\S+",
+                re.IGNORECASE,
+            ),
         ),
     ),
     _Rule(
@@ -144,6 +180,12 @@ _RULES = (
             re.compile(
                 rf"\b[A-Za-z]:{_WINDOWS_SEPARATOR}Users{_WINDOWS_SEPARATOR}"
                 rf"[^\\/\s\"'|<>]+"
+                rf"(?={_WINDOWS_SEPARATOR}|$|[\s\"'|<>])",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                rf"\b[A-Za-z]:{_WINDOWS_SEPARATOR}Documents and Settings"
+                rf"{_WINDOWS_SEPARATOR}[^\\/\s\"'|<>]+"
                 rf"(?={_WINDOWS_SEPARATOR}|$|[\s\"'|<>])",
                 re.IGNORECASE,
             ),
