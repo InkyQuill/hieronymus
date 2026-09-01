@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "protocol_revision": "2026-07-28",
+  "draft": "https://json-schema.org/draft/2020-12/schema",
+  "upstream_commit": "271ecc9accafdd9b83a3c869fa67c22953b2af80",
+  "upstream_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/271ecc9accafdd9b83a3c869fa67c22953b2af80/schema/2026-07-28/schema.json",
+  "sha256": "ef70b61f99b6d2e5e3b46863822eab08dff6a45bedc7a08914e0e5b133f40203"
+}

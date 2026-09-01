@@ -4,7 +4,9 @@ import hashlib
 import io
 import os
 import shutil
+import socket
 import subprocess
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -207,6 +209,46 @@ def test_inventory_coverage_rejects_unreviewed_items() -> None:
         "unreviewed inventory item: cli: cli.command.hiero.unreviewed",
         "unreviewed inventory item: mcp: mcp.tool.hieronymus_status",
     ]
+
+
+def test_compatibility_gate_validates_official_mcp_schema_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    node_id = (
+        "tests/compatibility/test_check.py::"
+        "test_compatibility_gate_validates_official_mcp_schema_offline"
+    )
+    assert compatibility_check.inventory_state._internal_test_reason(node_id) == (
+        "Validates the offline MCP schema authority and compatibility-gate integration; "
+        "implementation-internal self-test, not a public contract."
+    )
+
+    def reject_network(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("compatibility validation attempted network access")
+
+    monkeypatch.setattr(socket, "create_connection", reject_network)
+    monkeypatch.setattr(urllib.request, "urlopen", reject_network)
+    protocol_fixture = compatibility_check.inventory_mcp._protocol_fixture
+
+    def invalid_protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]:
+        fixture = protocol_fixture(snapshot)
+        del fixture["target"]["tools_list"]["response"]["result"]["ttlMs"]
+        return fixture
+
+    monkeypatch.setattr(
+        compatibility_check.inventory_mcp,
+        "_protocol_fixture",
+        invalid_protocol_fixture,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"invalid official MCP ListToolsResultResponse: "
+            r"result: 'ttlMs' is a required property"
+        ),
+    ):
+        compatibility_check._mcp_inventory()
 
 
 def test_parity_summary_counts_are_derived_from_manifest() -> None:

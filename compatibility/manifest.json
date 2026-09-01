@@ -2829,6 +2829,11 @@
       "node_id": "tests/compatibility/test_check.py::test_canonical_check_reports_one_sorted_composite_failure_without_writing"
     },
     {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_check.py::test_compatibility_gate_validates_official_mcp_schema_offline",
+      "reason": "Validates the offline MCP schema authority and compatibility-gate integration; implementation-internal self-test, not a public contract."
+    },
+    {
       "contract_ids": [
         "diagnostics.compatibility.check"
       ],
@@ -3252,6 +3257,11 @@
       "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_mcp_inventory.py::test_mcp_snapshot_matches_fastmcp_registry",
       "reason": "Compatibility schema and artifact generator validation: test_mcp_snapshot_matches_fastmcp_registry."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_mcp_inventory.py::test_official_mcp_schema_pin_and_target_envelopes",
+      "reason": "Compatibility schema and artifact generator validation: test_official_mcp_schema_pin_and_target_envelopes."
     },
     {
       "disposition": "implementation_internal",

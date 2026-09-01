@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 
 from hieronymus import mcp_server
 from hieronymus.config import HieronymusConfig
-from tools.compatibility.inventory_mcp import _call_real_server, _replace_root, snapshot_mcp
+from tools.compatibility.inventory_mcp import (
+    RESPONSE_METADATA_RULES,
+    _call_real_server,
+    _replace_root,
+    snapshot_mcp,
+)
+from tools.compatibility.mcp_schema import (
+    OFFICIAL_SCHEMA_SHA256,
+    OFFICIAL_SCHEMA_SOURCE,
+    authority_issues,
+    definition_issues,
+)
 from tools.compatibility.model import load_manifest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -113,6 +125,65 @@ def test_every_registered_tool_has_manifest_contract_and_complete_fixtures(
         }
 
 
+def test_official_mcp_schema_pin_and_target_envelopes() -> None:
+    protocol = json.loads(
+        (ROOT / "compatibility/fixtures/mcp/protocol.json").read_text(encoding="utf-8")
+    )
+    route_cases = json.loads(
+        (ROOT / "compatibility/fixtures/http/route-cases.json").read_text(encoding="utf-8")
+    )
+    route_target = next(
+        route["target"]
+        for route in route_cases["routes"]
+        if route["contract_id"] == "http.route.post.mcp"
+    )
+    source = json.loads(
+        (ROOT / "compatibility/authorities/mcp/2026-07-28/schema.source.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    schema_bytes = (ROOT / "compatibility/authorities/mcp/2026-07-28/schema.json").read_bytes()
+    assert source == OFFICIAL_SCHEMA_SOURCE
+    assert hashlib.sha256(schema_bytes).hexdigest() == OFFICIAL_SCHEMA_SHA256
+    assert json.loads(schema_bytes)["$schema"] == ("https://json-schema.org/draft/2020-12/schema")
+    assert authority_issues(ROOT) == ()
+
+    protocol_envelopes = _successful_result_envelopes(protocol["target"])
+    route_envelopes = tuple(item["response"]["body"] for item in route_target["successes"])
+    assert len(protocol_envelopes) == 6
+    assert len(route_envelopes) == 2
+    for envelope in (*protocol_envelopes, *route_envelopes):
+        definition = "ListToolsResultResponse" if envelope["id"] == 1 else "CallToolResultResponse"
+        assert definition_issues(ROOT, definition, envelope) == ()
+        assert envelope["result"]["resultType"] == "complete"
+        assert "_meta" not in envelope["result"]
+
+    list_results = [
+        envelope["result"]
+        for envelope in (*protocol_envelopes, *route_envelopes)
+        if envelope["id"] == 1
+    ]
+    assert len(list_results) == 4
+    assert all(
+        set(result) == {"cacheScope", "resultType", "tools", "ttlMs"} for result in list_results
+    )
+    assert all(result["cacheScope"] == "private" for result in list_results)
+    assert all(result["ttlMs"] == 0 for result in list_results)
+    assert all(
+        set(tool) == {"description", "inputSchema", "name"} and "input_schema" not in tool
+        for tool in protocol["target"]["tools_list"]["response"]["result"]["tools"]
+    )
+
+    snapshot_registry = {tool["name"]: tool["input_schema"] for tool in snapshot_mcp()["tools"]}
+    target_registry = {
+        tool["name"]: tool["inputSchema"]
+        for tool in protocol["target"]["tools_list"]["response"]["result"]["tools"]
+    }
+    assert target_registry == snapshot_registry
+    assert protocol["target"]["response_metadata_rules"] == RESPONSE_METADATA_RULES
+    assert route_target["response_metadata_rules"] == RESPONSE_METADATA_RULES
+
+
 def test_protocol_fixture_is_stateless_2026_07_28() -> None:
     snapshot = snapshot_mcp()
     protocol = json.loads(
@@ -169,10 +240,6 @@ def test_protocol_fixture_is_stateless_2026_07_28() -> None:
         "required": ["MCP-Protocol-Version", "Mcp-Method"],
         "mcp_name_required_for": ["tools/call", "resources/read", "prompts/get"],
     }
-    successes = _successful_result_envelopes(target)
-    assert len(successes) == 6
-    assert all(envelope["result"]["resultType"] == "complete" for envelope in successes)
-
     from tools.compatibility.check import _request_metadata_issues
 
     without_client_info = json.loads(json.dumps(target["requests"][0]))
@@ -211,7 +278,7 @@ def test_protocol_fixture_is_stateless_2026_07_28() -> None:
         for tool in protocol["current"]["tools_list"]["response"]["result"]["tools"]
     }
     target_registry = {
-        tool["name"]: tool["input_schema"]
+        tool["name"]: tool["inputSchema"]
         for tool in target["tools_list"]["response"]["result"]["tools"]
     }
     assert current_registry == target_registry == snapshot_registry

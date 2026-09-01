@@ -2250,12 +2250,18 @@
         }
       }
     ],
+    "response_metadata_rules": {
+      "io.modelcontextprotocol/serverInfo": {
+        "configured": "omit",
+        "rationale": "The compatibility oracle is implementation-neutral; freezing self-reported package identity would create a volatile version contract unrelated to protocol behavior."
+      }
+    },
     "stdio": {
       "diagnostics_stream": "stderr",
       "exchanges": [
         {
           "request_line": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/clientCapabilities\":{},\"io.modelcontextprotocol/clientInfo\":{\"name\":\"compatibility-replay\",\"version\":\"1.0.0\"},\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}\n",
-          "response_line": "{\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"resultType\":\"complete\",\"tools\":[{\"description\":\"Archive a concept so recall and strict rule logic stop using it.\",\"input_schema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"reason\":{\"default\":\"\",\"title\":\"Reason\",\"type\":\"string\"}},\"required\":[\"concept_id\"],\"title\":\"hieronymus_concept_archiveArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_archive\"},{\"description\":\"Create a concept primitive.\",\"input_schema\":{\"properties\":{\"canonical_name\":{\"title\":\"Canonical Name\",\"type\":\"string\"},\"confidence\":{\"default\":0.2,\"title\":\"Confidence\",\"type\":\"number\"},\"description\":{\"default\":\"\",\"title\":\"Description\",\"type\":\"string\"},\"scope_key\":{\"default\":\"\",\"title\":\"Scope Key\",\"type\":\"string\"},\"scope_type\":{\"default\":\"global\",\"title\":\"Scope Type\",\"type\":\"string\"},\"semantic_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tags\"},\"series_slug\":{\"default\":\"\",\"title\":\"Series Slug\",\"type\":\"string\"},\"status\":{\"default\":\"candidate\",\"title\":\"Status\",\"type\":\"string\"}},\"required\":[\"canonical_name\"],\"title\":\"hieronymus_concept_createArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_create\"},{\"description\":\"Add a multilingual concept facet.\",\"input_schema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"confidence\":{\"default\":0.2,\"title\":\"Confidence\",\"type\":\"number\"},\"facet_type\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Facet Type\"},\"is_canonical\":{\"default\":false,\"title\":\"Is Canonical\",\"type\":\"boolean\"},\"kind\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":\"name\",\"title\":\"Kind\"},\"language\":{\"default\":\"\",\"title\":\"Language\",\"type\":\"string\"},\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"semantic_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tags\"},\"source_crystal_id\":{\"anyOf\":[{\"type\":\"integer\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Crystal Id\"},\"story_scopes\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Story Scopes\"},\"value\":{\"title\":\"Value\",\"type\":\"string\"}},\"required\":[\"concept_id\",\"value\"],\"title\":\"hieronymus_concept_facet_addArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_facet_add\"},{\"description\":\"List active facets for a concept.\",\"input_schema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"}},\"required\":[\"concept_id\"],\"title\":\"hieronymus_concept_facet_listArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_facet_list\"},{\"description\":\"Set one concept facet as canonical for its concept.\",\"input_schema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"facet_id\":{\"title\":\"Facet Id\",\"type\":\"integer\"}},\"required\":[\"concept_id\",\"facet_id\"],\"title\":\"hieronymus_concept_facet_set_canonicalArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_facet_set_canonical\"},{\"description\":\"Update a concept facet primitive.\",\"input_schema\":{\"properties\":{\"confidence\":{\"anyOf\":[{\"type\":\"number\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Confidence\"},\"facet_id\":{\"title\":\"Facet Id\",\"type\":\"integer\"},\"facet_type\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Facet Type\"},\"is_canonical\":{\"anyOf\":[{\"type\":\"boolean\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Is Canonical\"},\"kind\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Kind\"},\"language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language\"},\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"semantic_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tags\"},\"source_crystal_id\":{\"anyOf\":[{\"type\":\"integer\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Crystal Id\"},\"story_scopes\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Story Scopes\"},\"value\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Value\"}},\"required\":[\"facet_id\"],\"title\":\"hieronymus_concept_facet_updateArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_facet_update\"},{\"description\":\"Get one concept by id.\",\"input_schema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"}},\"required\":[\"concept_id\"],\"title\":\"hieronymus_concept_getArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_get\"},{\"description\":\"List concepts with optional status, tag, and series-scope filters.\",\"input_schema\":{\"properties\":{\"include_global\":{\"default\":true,\"title\":\"Include Global\",\"type\":\"boolean\"},\"semantic_tag\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tag\"},\"series_slug\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Series Slug\"},\"status\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Status\"}},\"title\":\"hieronymus_concept_listArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_list\"},{\"description\":\"Merge one concept into another active concept.\",\"input_schema\":{\"properties\":{\"reason\":{\"default\":\"\",\"title\":\"Reason\",\"type\":\"string\"},\"source_concept_id\":{\"title\":\"Source Concept Id\",\"type\":\"integer\"},\"target_concept_id\":{\"title\":\"Target Concept Id\",\"type\":\"integer\"}},\"required\":[\"source_concept_id\",\"target_concept_id\"],\"title\":\"hieronymus_concept_mergeArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_merge\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"input_schema\":{\"properties\":{},\"title\":\"hieronymus_concept_proposals_listArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_proposals_list\"},{\"description\":\"Rename a concept while retaining the old name as a former-label facet.\",\"input_schema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"new_label\":{\"title\":\"New Label\",\"type\":\"string\"},\"source_crystal_id\":{\"anyOf\":[{\"type\":\"integer\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Crystal Id\"}},\"required\":[\"concept_id\",\"new_label\"],\"title\":\"hieronymus_concept_renameArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_rename\"},{\"description\":\"Replace semantic tags for a concept.\",\"input_schema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"semantic_tags\":{\"items\":{\"type\":\"string\"},\"title\":\"Semantic Tags\",\"type\":\"array\"}},\"required\":[\"concept_id\",\"semantic_tags\"],\"title\":\"hieronymus_concept_semantic_tags_setArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_semantic_tags_set\"},{\"description\":\"Update concept mutable metadata.\",\"input_schema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"confidence\":{\"anyOf\":[{\"type\":\"number\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Confidence\"},\"description\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Description\"},\"status\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Status\"}},\"required\":[\"concept_id\"],\"title\":\"hieronymus_concept_updateArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_update\"},{\"description\":\"Link a long-term crystal to a concept.\",\"input_schema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"confidence\":{\"default\":0.2,\"title\":\"Confidence\",\"type\":\"number\"},\"crystal_id\":{\"title\":\"Crystal Id\",\"type\":\"integer\"},\"link_type\":{\"default\":\"mentions\",\"title\":\"Link Type\",\"type\":\"string\"}},\"required\":[\"crystal_id\",\"concept_id\"],\"title\":\"hieronymus_crystal_link_conceptArguments\",\"type\":\"object\"},\"name\":\"hieronymus_crystal_link_concept\"},{\"description\":\"Replace semantic tags for a crystal.\",\"input_schema\":{\"properties\":{\"confidence\":{\"default\":0.2,\"title\":\"Confidence\",\"type\":\"number\"},\"crystal_id\":{\"title\":\"Crystal Id\",\"type\":\"integer\"},\"semantic_tags\":{\"items\":{\"type\":\"string\"},\"title\":\"Semantic Tags\",\"type\":\"array\"}},\"required\":[\"crystal_id\",\"semantic_tags\"],\"title\":\"hieronymus_crystal_semantic_tags_setArguments\",\"type\":\"object\"},\"name\":\"hieronymus_crystal_semantic_tags_set\"},{\"description\":\"Replace story scopes for a crystal.\",\"input_schema\":{\"properties\":{\"confidence\":{\"default\":0.2,\"title\":\"Confidence\",\"type\":\"number\"},\"crystal_id\":{\"title\":\"Crystal Id\",\"type\":\"integer\"},\"story_scopes\":{\"items\":{\"type\":\"string\"},\"title\":\"Story Scopes\",\"type\":\"array\"}},\"required\":[\"crystal_id\",\"story_scopes\"],\"title\":\"hieronymus_crystal_story_scopes_setArguments\",\"type\":\"object\"},\"name\":\"hieronymus_crystal_story_scopes_set\"},{\"description\":\"Run dreaming over all pending completed-session memories.\",\"input_schema\":{\"properties\":{\"provider\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Provider\"},\"wait\":{\"default\":false,\"title\":\"Wait\",\"type\":\"boolean\"}},\"title\":\"hieronymus_dreamArguments\",\"type\":\"object\"},\"name\":\"hieronymus_dream\"},{\"description\":\"Record user correction feedback as short-term memory.\",\"input_schema\":{\"properties\":{\"correction_text\":{\"title\":\"Correction Text\",\"type\":\"string\"},\"session_id\":{\"title\":\"Session Id\",\"type\":\"integer\"}},\"required\":[\"session_id\",\"correction_text\"],\"title\":\"hieronymus_feedbackArguments\",\"type\":\"object\"},\"name\":\"hieronymus_feedback\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"input_schema\":{\"properties\":{\"importance\":{\"default\":3,\"title\":\"Importance\",\"type\":\"integer\"},\"kind\":{\"title\":\"Kind\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"source_ref\":{\"default\":\"\",\"title\":\"Source Ref\",\"type\":\"string\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"text\":{\"title\":\"Text\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"kind\",\"text\"],\"title\":\"hieronymus_memory_addArguments\",\"type\":\"object\"},\"name\":\"hieronymus_memory_add\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"input_schema\":{\"properties\":{\"limit\":{\"default\":5,\"title\":\"Limit\",\"type\":\"integer\"},\"query\":{\"title\":\"Query\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"}},\"required\":[\"series_slug\",\"query\"],\"title\":\"hieronymus_memory_searchArguments\",\"type\":\"object\"},\"name\":\"hieronymus_memory_search\"},{\"description\":\"Import a text, markdown, or glossary file into the project RAG store.\",\"input_schema\":{\"properties\":{\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"path\":{\"title\":\"Path\",\"type\":\"string\"},\"semantic_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tags\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_ref\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Ref\"},\"source_type\":{\"default\":\"auto\",\"title\":\"Source Type\",\"type\":\"string\"},\"story_scopes\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Story Scopes\"}},\"required\":[\"series_slug\",\"path\"],\"title\":\"hieronymus_rag_importArguments\",\"type\":\"object\"},\"name\":\"hieronymus_rag_import\"},{\"description\":\"Search project RAG chunks for a series.\",\"input_schema\":{\"properties\":{\"limit\":{\"default\":10,\"title\":\"Limit\",\"type\":\"integer\"},\"query\":{\"title\":\"Query\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"query\"],\"title\":\"hieronymus_rag_searchArguments\",\"type\":\"object\"},\"name\":\"hieronymus_rag_search\"},{\"description\":\"Recall long-term crystals and active short-term memories for a stored session.\",\"input_schema\":{\"properties\":{\"chapter\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Chapter\"},\"limit\":{\"default\":10,\"title\":\"Limit\",\"type\":\"integer\"},\"query\":{\"title\":\"Query\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"session_id\":{\"title\":\"Session Id\",\"type\":\"integer\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"task_type\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Task Type\"},\"volume\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Volume\"}},\"required\":[\"session_id\",\"series_slug\",\"query\"],\"title\":\"hieronymus_recallArguments\",\"type\":\"object\"},\"name\":\"hieronymus_recall\"},{\"description\":\"Archive a rule crystal.\",\"input_schema\":{\"properties\":{\"crystal_id\":{\"title\":\"Crystal Id\",\"type\":\"integer\"}},\"required\":[\"crystal_id\"],\"title\":\"hieronymus_rule_crystal_archiveArguments\",\"type\":\"object\"},\"name\":\"hieronymus_rule_crystal_archive\"},{\"description\":\"Validate rule-crystal shape and deterministic enforceability.\",\"input_schema\":{\"properties\":{\"crystal_id\":{\"title\":\"Crystal Id\",\"type\":\"integer\"}},\"required\":[\"crystal_id\"],\"title\":\"hieronymus_rule_crystal_validateArguments\",\"type\":\"object\"},\"name\":\"hieronymus_rule_crystal_validate\"},{\"description\":\"List rule crystals for review.\",\"input_schema\":{\"properties\":{\"limit\":{\"default\":50,\"title\":\"Limit\",\"type\":\"integer\"},\"series_slug\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Series Slug\"},\"status\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Status\"}},\"title\":\"hieronymus_rule_crystals_listArguments\",\"type\":\"object\"},\"name\":\"hieronymus_rule_crystals_list\"},{\"description\":\"Create or update a language-neutral series.\",\"input_schema\":{\"properties\":{\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"slug\":{\"title\":\"Slug\",\"type\":\"string\"},\"source_language\":{\"default\":\"\",\"title\":\"Source Language\",\"type\":\"string\"},\"target_language\":{\"default\":\"\",\"title\":\"Target Language\",\"type\":\"string\"},\"title\":{\"title\":\"Title\",\"type\":\"string\"}},\"required\":[\"slug\",\"title\"],\"title\":\"hieronymus_series_createArguments\",\"type\":\"object\"},\"name\":\"hieronymus_series_create\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"input_schema\":{\"properties\":{\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"slug\":{\"title\":\"Slug\",\"type\":\"string\"},\"source_language\":{\"default\":\"\",\"title\":\"Source Language\",\"type\":\"string\"},\"target_language\":{\"default\":\"\",\"title\":\"Target Language\",\"type\":\"string\"},\"title\":{\"title\":\"Title\",\"type\":\"string\"}},\"required\":[\"slug\",\"title\"],\"title\":\"hieronymus_series_initArguments\",\"type\":\"object\"},\"name\":\"hieronymus_series_init\"},{\"description\":\"List registered series with language tags.\",\"input_schema\":{\"properties\":{},\"title\":\"hieronymus_series_listArguments\",\"type\":\"object\"},\"name\":\"hieronymus_series_list\"},{\"description\":\"Replace language tags for a series without changing compatibility fields.\",\"input_schema\":{\"properties\":{\"language_tags\":{\"items\":{\"type\":\"string\"},\"title\":\"Language Tags\",\"type\":\"array\"},\"series_id\":{\"title\":\"Series Id\",\"type\":\"integer\"}},\"required\":[\"series_id\",\"language_tags\"],\"title\":\"hieronymus_series_set_language_tagsArguments\",\"type\":\"object\"},\"name\":\"hieronymus_series_set_language_tags\"},{\"description\":\"Complete an agent workflow session so it can be dreamed.\",\"input_schema\":{\"properties\":{\"session_id\":{\"title\":\"Session Id\",\"type\":\"integer\"}},\"required\":[\"session_id\"],\"title\":\"hieronymus_session_completeArguments\",\"type\":\"object\"},\"name\":\"hieronymus_session_complete\"},{\"description\":\"Start an agent workflow session for a translation context.\",\"input_schema\":{\"properties\":{\"chapter\":{\"default\":\"\",\"title\":\"Chapter\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"task_type\":{\"default\":\"translation\",\"title\":\"Task Type\",\"type\":\"string\"},\"volume\":{\"default\":\"\",\"title\":\"Volume\",\"type\":\"string\"}},\"required\":[\"series_slug\"],\"title\":\"hieronymus_session_startArguments\",\"type\":\"object\"},\"name\":\"hieronymus_session_start\"},{\"description\":\"Add a short-term memory to an active session.\\n\\n    source_role is an optional freeform provenance label. It does not control dreaming's\\n    crystal type or confidence; use source_credibility and rule_intent for those signals.\\n    \",\"input_schema\":{\"properties\":{\"kind\":{\"title\":\"Kind\",\"type\":\"string\"},\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"metadata\":{\"anyOf\":[{\"additionalProperties\":true,\"type\":\"object\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Metadata\"},\"rule_intent\":{\"default\":\"\",\"title\":\"Rule Intent\",\"type\":\"string\"},\"semantic_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tags\"},\"session_id\":{\"title\":\"Session Id\",\"type\":\"integer\"},\"soft_origin\":{\"default\":\"\",\"title\":\"Soft Origin\",\"type\":\"string\"},\"source_credibility\":{\"default\":\"observation\",\"title\":\"Source Credibility\",\"type\":\"string\"},\"source_ref\":{\"default\":\"\",\"title\":\"Source Ref\",\"type\":\"string\"},\"source_role\":{\"default\":\"agent\",\"title\":\"Source Role\",\"type\":\"string\"},\"story_scopes\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Story Scopes\"},\"text\":{\"title\":\"Text\",\"type\":\"string\"}},\"required\":[\"session_id\",\"kind\",\"text\"],\"title\":\"hieronymus_short_term_addArguments\",\"type\":\"object\"},\"name\":\"hieronymus_short_term_add\"},{\"description\":\"Atomically add up to 500 short-term memories to one active session.\\n\\n    Each item requires kind and text. source_role is optional freeform provenance metadata and\\n    defaults to agent; it does not control dreaming's categorization or confidence.\\n    \",\"input_schema\":{\"properties\":{\"items\":{\"items\":{\"additionalProperties\":true,\"type\":\"object\"},\"title\":\"Items\",\"type\":\"array\"},\"session_id\":{\"title\":\"Session Id\",\"type\":\"integer\"}},\"required\":[\"session_id\",\"items\"],\"title\":\"hieronymus_short_term_add_batchArguments\",\"type\":\"object\"},\"name\":\"hieronymus_short_term_add_batch\"},{\"description\":\"Report MCP adapter mode and discovered local service status.\",\"input_schema\":{\"properties\":{},\"title\":\"hieronymus_statusArguments\",\"type\":\"object\"},\"name\":\"hieronymus_status\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"input_schema\":{\"properties\":{\"chapter\":{\"default\":\"\",\"title\":\"Chapter\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"term_id\":{\"title\":\"Term Id\",\"type\":\"integer\"},\"volume\":{\"default\":\"\",\"title\":\"Volume\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"term_id\"],\"title\":\"hieronymus_termbase_approveArguments\",\"type\":\"object\"},\"name\":\"hieronymus_termbase_approve\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"input_schema\":{\"properties\":{\"chapter\":{\"default\":\"\",\"title\":\"Chapter\",\"type\":\"string\"},\"raw_text\":{\"title\":\"Raw Text\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"volume\":{\"default\":\"\",\"title\":\"Volume\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"raw_text\"],\"title\":\"hieronymus_termbase_contractArguments\",\"type\":\"object\"},\"name\":\"hieronymus_termbase_contract\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"input_schema\":{\"properties\":{\"canonical_translation\":{\"title\":\"Canonical Translation\",\"type\":\"string\"},\"category\":{\"title\":\"Category\",\"type\":\"string\"},\"chapter\":{\"default\":\"\",\"title\":\"Chapter\",\"type\":\"string\"},\"notes\":{\"default\":\"\",\"title\":\"Notes\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"source_text\":{\"title\":\"Source Text\",\"type\":\"string\"},\"tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Tags\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"volume\":{\"default\":\"\",\"title\":\"Volume\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"category\",\"source_text\",\"canonical_translation\"],\"title\":\"hieronymus_termbase_proposeArguments\",\"type\":\"object\"},\"name\":\"hieronymus_termbase_propose\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"input_schema\":{\"properties\":{\"chapter\":{\"default\":\"\",\"title\":\"Chapter\",\"type\":\"string\"},\"raw_text\":{\"title\":\"Raw Text\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"translated_text\":{\"title\":\"Translated Text\",\"type\":\"string\"},\"volume\":{\"default\":\"\",\"title\":\"Volume\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"raw_text\",\"translated_text\"],\"title\":\"hieronymus_termbase_validateArguments\",\"type\":\"object\"},\"name\":\"hieronymus_termbase_validate\"}]}}\n"
+          "response_line": "{\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"cacheScope\":\"private\",\"resultType\":\"complete\",\"tools\":[{\"description\":\"Archive a concept so recall and strict rule logic stop using it.\",\"inputSchema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"reason\":{\"default\":\"\",\"title\":\"Reason\",\"type\":\"string\"}},\"required\":[\"concept_id\"],\"title\":\"hieronymus_concept_archiveArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_archive\"},{\"description\":\"Create a concept primitive.\",\"inputSchema\":{\"properties\":{\"canonical_name\":{\"title\":\"Canonical Name\",\"type\":\"string\"},\"confidence\":{\"default\":0.2,\"title\":\"Confidence\",\"type\":\"number\"},\"description\":{\"default\":\"\",\"title\":\"Description\",\"type\":\"string\"},\"scope_key\":{\"default\":\"\",\"title\":\"Scope Key\",\"type\":\"string\"},\"scope_type\":{\"default\":\"global\",\"title\":\"Scope Type\",\"type\":\"string\"},\"semantic_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tags\"},\"series_slug\":{\"default\":\"\",\"title\":\"Series Slug\",\"type\":\"string\"},\"status\":{\"default\":\"candidate\",\"title\":\"Status\",\"type\":\"string\"}},\"required\":[\"canonical_name\"],\"title\":\"hieronymus_concept_createArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_create\"},{\"description\":\"Add a multilingual concept facet.\",\"inputSchema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"confidence\":{\"default\":0.2,\"title\":\"Confidence\",\"type\":\"number\"},\"facet_type\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Facet Type\"},\"is_canonical\":{\"default\":false,\"title\":\"Is Canonical\",\"type\":\"boolean\"},\"kind\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":\"name\",\"title\":\"Kind\"},\"language\":{\"default\":\"\",\"title\":\"Language\",\"type\":\"string\"},\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"semantic_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tags\"},\"source_crystal_id\":{\"anyOf\":[{\"type\":\"integer\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Crystal Id\"},\"story_scopes\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Story Scopes\"},\"value\":{\"title\":\"Value\",\"type\":\"string\"}},\"required\":[\"concept_id\",\"value\"],\"title\":\"hieronymus_concept_facet_addArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_facet_add\"},{\"description\":\"List active facets for a concept.\",\"inputSchema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"}},\"required\":[\"concept_id\"],\"title\":\"hieronymus_concept_facet_listArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_facet_list\"},{\"description\":\"Set one concept facet as canonical for its concept.\",\"inputSchema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"facet_id\":{\"title\":\"Facet Id\",\"type\":\"integer\"}},\"required\":[\"concept_id\",\"facet_id\"],\"title\":\"hieronymus_concept_facet_set_canonicalArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_facet_set_canonical\"},{\"description\":\"Update a concept facet primitive.\",\"inputSchema\":{\"properties\":{\"confidence\":{\"anyOf\":[{\"type\":\"number\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Confidence\"},\"facet_id\":{\"title\":\"Facet Id\",\"type\":\"integer\"},\"facet_type\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Facet Type\"},\"is_canonical\":{\"anyOf\":[{\"type\":\"boolean\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Is Canonical\"},\"kind\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Kind\"},\"language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language\"},\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"semantic_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tags\"},\"source_crystal_id\":{\"anyOf\":[{\"type\":\"integer\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Crystal Id\"},\"story_scopes\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Story Scopes\"},\"value\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Value\"}},\"required\":[\"facet_id\"],\"title\":\"hieronymus_concept_facet_updateArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_facet_update\"},{\"description\":\"Get one concept by id.\",\"inputSchema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"}},\"required\":[\"concept_id\"],\"title\":\"hieronymus_concept_getArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_get\"},{\"description\":\"List concepts with optional status, tag, and series-scope filters.\",\"inputSchema\":{\"properties\":{\"include_global\":{\"default\":true,\"title\":\"Include Global\",\"type\":\"boolean\"},\"semantic_tag\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tag\"},\"series_slug\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Series Slug\"},\"status\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Status\"}},\"title\":\"hieronymus_concept_listArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_list\"},{\"description\":\"Merge one concept into another active concept.\",\"inputSchema\":{\"properties\":{\"reason\":{\"default\":\"\",\"title\":\"Reason\",\"type\":\"string\"},\"source_concept_id\":{\"title\":\"Source Concept Id\",\"type\":\"integer\"},\"target_concept_id\":{\"title\":\"Target Concept Id\",\"type\":\"integer\"}},\"required\":[\"source_concept_id\",\"target_concept_id\"],\"title\":\"hieronymus_concept_mergeArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_merge\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"inputSchema\":{\"properties\":{},\"title\":\"hieronymus_concept_proposals_listArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_proposals_list\"},{\"description\":\"Rename a concept while retaining the old name as a former-label facet.\",\"inputSchema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"new_label\":{\"title\":\"New Label\",\"type\":\"string\"},\"source_crystal_id\":{\"anyOf\":[{\"type\":\"integer\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Crystal Id\"}},\"required\":[\"concept_id\",\"new_label\"],\"title\":\"hieronymus_concept_renameArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_rename\"},{\"description\":\"Replace semantic tags for a concept.\",\"inputSchema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"semantic_tags\":{\"items\":{\"type\":\"string\"},\"title\":\"Semantic Tags\",\"type\":\"array\"}},\"required\":[\"concept_id\",\"semantic_tags\"],\"title\":\"hieronymus_concept_semantic_tags_setArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_semantic_tags_set\"},{\"description\":\"Update concept mutable metadata.\",\"inputSchema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"confidence\":{\"anyOf\":[{\"type\":\"number\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Confidence\"},\"description\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Description\"},\"status\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Status\"}},\"required\":[\"concept_id\"],\"title\":\"hieronymus_concept_updateArguments\",\"type\":\"object\"},\"name\":\"hieronymus_concept_update\"},{\"description\":\"Link a long-term crystal to a concept.\",\"inputSchema\":{\"properties\":{\"concept_id\":{\"title\":\"Concept Id\",\"type\":\"integer\"},\"confidence\":{\"default\":0.2,\"title\":\"Confidence\",\"type\":\"number\"},\"crystal_id\":{\"title\":\"Crystal Id\",\"type\":\"integer\"},\"link_type\":{\"default\":\"mentions\",\"title\":\"Link Type\",\"type\":\"string\"}},\"required\":[\"crystal_id\",\"concept_id\"],\"title\":\"hieronymus_crystal_link_conceptArguments\",\"type\":\"object\"},\"name\":\"hieronymus_crystal_link_concept\"},{\"description\":\"Replace semantic tags for a crystal.\",\"inputSchema\":{\"properties\":{\"confidence\":{\"default\":0.2,\"title\":\"Confidence\",\"type\":\"number\"},\"crystal_id\":{\"title\":\"Crystal Id\",\"type\":\"integer\"},\"semantic_tags\":{\"items\":{\"type\":\"string\"},\"title\":\"Semantic Tags\",\"type\":\"array\"}},\"required\":[\"crystal_id\",\"semantic_tags\"],\"title\":\"hieronymus_crystal_semantic_tags_setArguments\",\"type\":\"object\"},\"name\":\"hieronymus_crystal_semantic_tags_set\"},{\"description\":\"Replace story scopes for a crystal.\",\"inputSchema\":{\"properties\":{\"confidence\":{\"default\":0.2,\"title\":\"Confidence\",\"type\":\"number\"},\"crystal_id\":{\"title\":\"Crystal Id\",\"type\":\"integer\"},\"story_scopes\":{\"items\":{\"type\":\"string\"},\"title\":\"Story Scopes\",\"type\":\"array\"}},\"required\":[\"crystal_id\",\"story_scopes\"],\"title\":\"hieronymus_crystal_story_scopes_setArguments\",\"type\":\"object\"},\"name\":\"hieronymus_crystal_story_scopes_set\"},{\"description\":\"Run dreaming over all pending completed-session memories.\",\"inputSchema\":{\"properties\":{\"provider\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Provider\"},\"wait\":{\"default\":false,\"title\":\"Wait\",\"type\":\"boolean\"}},\"title\":\"hieronymus_dreamArguments\",\"type\":\"object\"},\"name\":\"hieronymus_dream\"},{\"description\":\"Record user correction feedback as short-term memory.\",\"inputSchema\":{\"properties\":{\"correction_text\":{\"title\":\"Correction Text\",\"type\":\"string\"},\"session_id\":{\"title\":\"Session Id\",\"type\":\"integer\"}},\"required\":[\"session_id\",\"correction_text\"],\"title\":\"hieronymus_feedbackArguments\",\"type\":\"object\"},\"name\":\"hieronymus_feedback\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"inputSchema\":{\"properties\":{\"importance\":{\"default\":3,\"title\":\"Importance\",\"type\":\"integer\"},\"kind\":{\"title\":\"Kind\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"source_ref\":{\"default\":\"\",\"title\":\"Source Ref\",\"type\":\"string\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"text\":{\"title\":\"Text\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"kind\",\"text\"],\"title\":\"hieronymus_memory_addArguments\",\"type\":\"object\"},\"name\":\"hieronymus_memory_add\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"inputSchema\":{\"properties\":{\"limit\":{\"default\":5,\"title\":\"Limit\",\"type\":\"integer\"},\"query\":{\"title\":\"Query\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"}},\"required\":[\"series_slug\",\"query\"],\"title\":\"hieronymus_memory_searchArguments\",\"type\":\"object\"},\"name\":\"hieronymus_memory_search\"},{\"description\":\"Import a text, markdown, or glossary file into the project RAG store.\",\"inputSchema\":{\"properties\":{\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"path\":{\"title\":\"Path\",\"type\":\"string\"},\"semantic_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tags\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_ref\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Ref\"},\"source_type\":{\"default\":\"auto\",\"title\":\"Source Type\",\"type\":\"string\"},\"story_scopes\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Story Scopes\"}},\"required\":[\"series_slug\",\"path\"],\"title\":\"hieronymus_rag_importArguments\",\"type\":\"object\"},\"name\":\"hieronymus_rag_import\"},{\"description\":\"Search project RAG chunks for a series.\",\"inputSchema\":{\"properties\":{\"limit\":{\"default\":10,\"title\":\"Limit\",\"type\":\"integer\"},\"query\":{\"title\":\"Query\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"query\"],\"title\":\"hieronymus_rag_searchArguments\",\"type\":\"object\"},\"name\":\"hieronymus_rag_search\"},{\"description\":\"Recall long-term crystals and active short-term memories for a stored session.\",\"inputSchema\":{\"properties\":{\"chapter\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Chapter\"},\"limit\":{\"default\":10,\"title\":\"Limit\",\"type\":\"integer\"},\"query\":{\"title\":\"Query\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"session_id\":{\"title\":\"Session Id\",\"type\":\"integer\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"task_type\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Task Type\"},\"volume\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Volume\"}},\"required\":[\"session_id\",\"series_slug\",\"query\"],\"title\":\"hieronymus_recallArguments\",\"type\":\"object\"},\"name\":\"hieronymus_recall\"},{\"description\":\"Archive a rule crystal.\",\"inputSchema\":{\"properties\":{\"crystal_id\":{\"title\":\"Crystal Id\",\"type\":\"integer\"}},\"required\":[\"crystal_id\"],\"title\":\"hieronymus_rule_crystal_archiveArguments\",\"type\":\"object\"},\"name\":\"hieronymus_rule_crystal_archive\"},{\"description\":\"Validate rule-crystal shape and deterministic enforceability.\",\"inputSchema\":{\"properties\":{\"crystal_id\":{\"title\":\"Crystal Id\",\"type\":\"integer\"}},\"required\":[\"crystal_id\"],\"title\":\"hieronymus_rule_crystal_validateArguments\",\"type\":\"object\"},\"name\":\"hieronymus_rule_crystal_validate\"},{\"description\":\"List rule crystals for review.\",\"inputSchema\":{\"properties\":{\"limit\":{\"default\":50,\"title\":\"Limit\",\"type\":\"integer\"},\"series_slug\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Series Slug\"},\"status\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Status\"}},\"title\":\"hieronymus_rule_crystals_listArguments\",\"type\":\"object\"},\"name\":\"hieronymus_rule_crystals_list\"},{\"description\":\"Create or update a language-neutral series.\",\"inputSchema\":{\"properties\":{\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"slug\":{\"title\":\"Slug\",\"type\":\"string\"},\"source_language\":{\"default\":\"\",\"title\":\"Source Language\",\"type\":\"string\"},\"target_language\":{\"default\":\"\",\"title\":\"Target Language\",\"type\":\"string\"},\"title\":{\"title\":\"Title\",\"type\":\"string\"}},\"required\":[\"slug\",\"title\"],\"title\":\"hieronymus_series_createArguments\",\"type\":\"object\"},\"name\":\"hieronymus_series_create\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"inputSchema\":{\"properties\":{\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"slug\":{\"title\":\"Slug\",\"type\":\"string\"},\"source_language\":{\"default\":\"\",\"title\":\"Source Language\",\"type\":\"string\"},\"target_language\":{\"default\":\"\",\"title\":\"Target Language\",\"type\":\"string\"},\"title\":{\"title\":\"Title\",\"type\":\"string\"}},\"required\":[\"slug\",\"title\"],\"title\":\"hieronymus_series_initArguments\",\"type\":\"object\"},\"name\":\"hieronymus_series_init\"},{\"description\":\"List registered series with language tags.\",\"inputSchema\":{\"properties\":{},\"title\":\"hieronymus_series_listArguments\",\"type\":\"object\"},\"name\":\"hieronymus_series_list\"},{\"description\":\"Replace language tags for a series without changing compatibility fields.\",\"inputSchema\":{\"properties\":{\"language_tags\":{\"items\":{\"type\":\"string\"},\"title\":\"Language Tags\",\"type\":\"array\"},\"series_id\":{\"title\":\"Series Id\",\"type\":\"integer\"}},\"required\":[\"series_id\",\"language_tags\"],\"title\":\"hieronymus_series_set_language_tagsArguments\",\"type\":\"object\"},\"name\":\"hieronymus_series_set_language_tags\"},{\"description\":\"Complete an agent workflow session so it can be dreamed.\",\"inputSchema\":{\"properties\":{\"session_id\":{\"title\":\"Session Id\",\"type\":\"integer\"}},\"required\":[\"session_id\"],\"title\":\"hieronymus_session_completeArguments\",\"type\":\"object\"},\"name\":\"hieronymus_session_complete\"},{\"description\":\"Start an agent workflow session for a translation context.\",\"inputSchema\":{\"properties\":{\"chapter\":{\"default\":\"\",\"title\":\"Chapter\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"task_type\":{\"default\":\"translation\",\"title\":\"Task Type\",\"type\":\"string\"},\"volume\":{\"default\":\"\",\"title\":\"Volume\",\"type\":\"string\"}},\"required\":[\"series_slug\"],\"title\":\"hieronymus_session_startArguments\",\"type\":\"object\"},\"name\":\"hieronymus_session_start\"},{\"description\":\"Add a short-term memory to an active session.\\n\\n    source_role is an optional freeform provenance label. It does not control dreaming's\\n    crystal type or confidence; use source_credibility and rule_intent for those signals.\\n    \",\"inputSchema\":{\"properties\":{\"kind\":{\"title\":\"Kind\",\"type\":\"string\"},\"language_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Language Tags\"},\"metadata\":{\"anyOf\":[{\"additionalProperties\":true,\"type\":\"object\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Metadata\"},\"rule_intent\":{\"default\":\"\",\"title\":\"Rule Intent\",\"type\":\"string\"},\"semantic_tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Semantic Tags\"},\"session_id\":{\"title\":\"Session Id\",\"type\":\"integer\"},\"soft_origin\":{\"default\":\"\",\"title\":\"Soft Origin\",\"type\":\"string\"},\"source_credibility\":{\"default\":\"observation\",\"title\":\"Source Credibility\",\"type\":\"string\"},\"source_ref\":{\"default\":\"\",\"title\":\"Source Ref\",\"type\":\"string\"},\"source_role\":{\"default\":\"agent\",\"title\":\"Source Role\",\"type\":\"string\"},\"story_scopes\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Story Scopes\"},\"text\":{\"title\":\"Text\",\"type\":\"string\"}},\"required\":[\"session_id\",\"kind\",\"text\"],\"title\":\"hieronymus_short_term_addArguments\",\"type\":\"object\"},\"name\":\"hieronymus_short_term_add\"},{\"description\":\"Atomically add up to 500 short-term memories to one active session.\\n\\n    Each item requires kind and text. source_role is optional freeform provenance metadata and\\n    defaults to agent; it does not control dreaming's categorization or confidence.\\n    \",\"inputSchema\":{\"properties\":{\"items\":{\"items\":{\"additionalProperties\":true,\"type\":\"object\"},\"title\":\"Items\",\"type\":\"array\"},\"session_id\":{\"title\":\"Session Id\",\"type\":\"integer\"}},\"required\":[\"session_id\",\"items\"],\"title\":\"hieronymus_short_term_add_batchArguments\",\"type\":\"object\"},\"name\":\"hieronymus_short_term_add_batch\"},{\"description\":\"Report MCP adapter mode and discovered local service status.\",\"inputSchema\":{\"properties\":{},\"title\":\"hieronymus_statusArguments\",\"type\":\"object\"},\"name\":\"hieronymus_status\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"inputSchema\":{\"properties\":{\"chapter\":{\"default\":\"\",\"title\":\"Chapter\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"term_id\":{\"title\":\"Term Id\",\"type\":\"integer\"},\"volume\":{\"default\":\"\",\"title\":\"Volume\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"term_id\"],\"title\":\"hieronymus_termbase_approveArguments\",\"type\":\"object\"},\"name\":\"hieronymus_termbase_approve\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"inputSchema\":{\"properties\":{\"chapter\":{\"default\":\"\",\"title\":\"Chapter\",\"type\":\"string\"},\"raw_text\":{\"title\":\"Raw Text\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"volume\":{\"default\":\"\",\"title\":\"Volume\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"raw_text\"],\"title\":\"hieronymus_termbase_contractArguments\",\"type\":\"object\"},\"name\":\"hieronymus_termbase_contract\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"inputSchema\":{\"properties\":{\"canonical_translation\":{\"title\":\"Canonical Translation\",\"type\":\"string\"},\"category\":{\"title\":\"Category\",\"type\":\"string\"},\"chapter\":{\"default\":\"\",\"title\":\"Chapter\",\"type\":\"string\"},\"notes\":{\"default\":\"\",\"title\":\"Notes\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"source_text\":{\"title\":\"Source Text\",\"type\":\"string\"},\"tags\":{\"anyOf\":[{\"items\":{\"type\":\"string\"},\"type\":\"array\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Tags\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"volume\":{\"default\":\"\",\"title\":\"Volume\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"category\",\"source_text\",\"canonical_translation\"],\"title\":\"hieronymus_termbase_proposeArguments\",\"type\":\"object\"},\"name\":\"hieronymus_termbase_propose\"},{\"description\":\"Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.\",\"inputSchema\":{\"properties\":{\"chapter\":{\"default\":\"\",\"title\":\"Chapter\",\"type\":\"string\"},\"raw_text\":{\"title\":\"Raw Text\",\"type\":\"string\"},\"series_slug\":{\"title\":\"Series Slug\",\"type\":\"string\"},\"source_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Source Language\"},\"target_language\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"default\":null,\"title\":\"Target Language\"},\"translated_text\":{\"title\":\"Translated Text\",\"type\":\"string\"},\"volume\":{\"default\":\"\",\"title\":\"Volume\",\"type\":\"string\"}},\"required\":[\"series_slug\",\"raw_text\",\"translated_text\"],\"title\":\"hieronymus_termbase_validateArguments\",\"type\":\"object\"},\"name\":\"hieronymus_termbase_validate\"}],\"ttlMs\":0}}\n"
         },
         {
           "request_line": "{\"id\":2,\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/clientCapabilities\":{},\"io.modelcontextprotocol/clientInfo\":{\"name\":\"compatibility-replay\",\"version\":\"1.0.0\"},\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"},\"arguments\":{},\"name\":\"hieronymus_status\"}}\n",
@@ -2300,11 +2306,12 @@
                 "id": 1,
                 "jsonrpc": "2.0",
                 "result": {
+                  "cacheScope": "private",
                   "resultType": "complete",
                   "tools": [
                     {
                       "description": "Archive a concept so recall and strict rule logic stop using it.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "concept_id": {
                             "title": "Concept Id",
@@ -2326,7 +2333,7 @@
                     },
                     {
                       "description": "Create a concept primitive.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "canonical_name": {
                             "title": "Canonical Name",
@@ -2388,7 +2395,7 @@
                     },
                     {
                       "description": "Add a multilingual concept facet.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "concept_id": {
                             "title": "Concept Id",
@@ -2506,7 +2513,7 @@
                     },
                     {
                       "description": "List active facets for a concept.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "concept_id": {
                             "title": "Concept Id",
@@ -2523,7 +2530,7 @@
                     },
                     {
                       "description": "Set one concept facet as canonical for its concept.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "concept_id": {
                             "title": "Concept Id",
@@ -2545,7 +2552,7 @@
                     },
                     {
                       "description": "Update a concept facet primitive.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "confidence": {
                             "anyOf": [
@@ -2691,7 +2698,7 @@
                     },
                     {
                       "description": "Get one concept by id.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "concept_id": {
                             "title": "Concept Id",
@@ -2708,7 +2715,7 @@
                     },
                     {
                       "description": "List concepts with optional status, tag, and series-scope filters.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "include_global": {
                             "default": true,
@@ -2759,7 +2766,7 @@
                     },
                     {
                       "description": "Merge one concept into another active concept.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "reason": {
                             "default": "",
@@ -2786,7 +2793,7 @@
                     },
                     {
                       "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {},
                         "title": "hieronymus_concept_proposals_listArguments",
                         "type": "object"
@@ -2795,7 +2802,7 @@
                     },
                     {
                       "description": "Rename a concept while retaining the old name as a former-label facet.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "concept_id": {
                             "title": "Concept Id",
@@ -2829,7 +2836,7 @@
                     },
                     {
                       "description": "Replace semantic tags for a concept.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "concept_id": {
                             "title": "Concept Id",
@@ -2854,7 +2861,7 @@
                     },
                     {
                       "description": "Update concept mutable metadata.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "concept_id": {
                             "title": "Concept Id",
@@ -2907,7 +2914,7 @@
                     },
                     {
                       "description": "Link a long-term crystal to a concept.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "concept_id": {
                             "title": "Concept Id",
@@ -2939,7 +2946,7 @@
                     },
                     {
                       "description": "Replace semantic tags for a crystal.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "confidence": {
                             "default": 0.2,
@@ -2969,7 +2976,7 @@
                     },
                     {
                       "description": "Replace story scopes for a crystal.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "confidence": {
                             "default": 0.2,
@@ -2999,7 +3006,7 @@
                     },
                     {
                       "description": "Run dreaming over all pending completed-session memories.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "provider": {
                             "anyOf": [
@@ -3026,7 +3033,7 @@
                     },
                     {
                       "description": "Record user correction feedback as short-term memory.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "correction_text": {
                             "title": "Correction Text",
@@ -3048,7 +3055,7 @@
                     },
                     {
                       "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "importance": {
                             "default": 3,
@@ -3109,7 +3116,7 @@
                     },
                     {
                       "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "limit": {
                             "default": 5,
@@ -3160,7 +3167,7 @@
                     },
                     {
                       "description": "Import a text, markdown, or glossary file into the project RAG store.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "language_tags": {
                             "anyOf": [
@@ -3244,7 +3251,7 @@
                     },
                     {
                       "description": "Search project RAG chunks for a series.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "limit": {
                             "default": 10,
@@ -3271,7 +3278,7 @@
                     },
                     {
                       "description": "Recall long-term crystals and active short-term memories for a stored session.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "chapter": {
                             "anyOf": [
@@ -3363,7 +3370,7 @@
                     },
                     {
                       "description": "Archive a rule crystal.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "crystal_id": {
                             "title": "Crystal Id",
@@ -3380,7 +3387,7 @@
                     },
                     {
                       "description": "Validate rule-crystal shape and deterministic enforceability.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "crystal_id": {
                             "title": "Crystal Id",
@@ -3397,7 +3404,7 @@
                     },
                     {
                       "description": "List rule crystals for review.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "limit": {
                             "default": 50,
@@ -3436,7 +3443,7 @@
                     },
                     {
                       "description": "Create or update a language-neutral series.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "language_tags": {
                             "anyOf": [
@@ -3483,7 +3490,7 @@
                     },
                     {
                       "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "language_tags": {
                             "anyOf": [
@@ -3530,7 +3537,7 @@
                     },
                     {
                       "description": "List registered series with language tags.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {},
                         "title": "hieronymus_series_listArguments",
                         "type": "object"
@@ -3539,7 +3546,7 @@
                     },
                     {
                       "description": "Replace language tags for a series without changing compatibility fields.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "language_tags": {
                             "items": {
@@ -3564,7 +3571,7 @@
                     },
                     {
                       "description": "Complete an agent workflow session so it can be dreamed.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "session_id": {
                             "title": "Session Id",
@@ -3581,7 +3588,7 @@
                     },
                     {
                       "description": "Start an agent workflow session for a translation context.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "chapter": {
                             "default": "",
@@ -3637,7 +3644,7 @@
                     },
                     {
                       "description": "Add a short-term memory to an active session.\n\n    source_role is an optional freeform provenance label. It does not control dreaming's\n    crystal type or confidence; use source_credibility and rule_intent for those signals.\n    ",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "kind": {
                             "title": "Kind",
@@ -3747,7 +3754,7 @@
                     },
                     {
                       "description": "Atomically add up to 500 short-term memories to one active session.\n\n    Each item requires kind and text. source_role is optional freeform provenance metadata and\n    defaults to agent; it does not control dreaming's categorization or confidence.\n    ",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "items": {
                             "items": {
@@ -3773,7 +3780,7 @@
                     },
                     {
                       "description": "Report MCP adapter mode and discovered local service status.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {},
                         "title": "hieronymus_statusArguments",
                         "type": "object"
@@ -3782,7 +3789,7 @@
                     },
                     {
                       "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "chapter": {
                             "default": "",
@@ -3838,7 +3845,7 @@
                     },
                     {
                       "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "chapter": {
                             "default": "",
@@ -3894,7 +3901,7 @@
                     },
                     {
                       "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "canonical_translation": {
                             "title": "Canonical Translation",
@@ -3980,7 +3987,7 @@
                     },
                     {
                       "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                      "input_schema": {
+                      "inputSchema": {
                         "properties": {
                           "chapter": {
                             "default": "",
@@ -4039,7 +4046,8 @@
                       },
                       "name": "hieronymus_termbase_validate"
                     }
-                  ]
+                  ],
+                  "ttlMs": 0
                 }
               },
               "content_type": "application/json"
@@ -4052,11 +4060,12 @@
                     "id": 1,
                     "jsonrpc": "2.0",
                     "result": {
+                      "cacheScope": "private",
                       "resultType": "complete",
                       "tools": [
                         {
                           "description": "Archive a concept so recall and strict rule logic stop using it.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "concept_id": {
                                 "title": "Concept Id",
@@ -4078,7 +4087,7 @@
                         },
                         {
                           "description": "Create a concept primitive.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "canonical_name": {
                                 "title": "Canonical Name",
@@ -4140,7 +4149,7 @@
                         },
                         {
                           "description": "Add a multilingual concept facet.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "concept_id": {
                                 "title": "Concept Id",
@@ -4258,7 +4267,7 @@
                         },
                         {
                           "description": "List active facets for a concept.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "concept_id": {
                                 "title": "Concept Id",
@@ -4275,7 +4284,7 @@
                         },
                         {
                           "description": "Set one concept facet as canonical for its concept.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "concept_id": {
                                 "title": "Concept Id",
@@ -4297,7 +4306,7 @@
                         },
                         {
                           "description": "Update a concept facet primitive.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "confidence": {
                                 "anyOf": [
@@ -4443,7 +4452,7 @@
                         },
                         {
                           "description": "Get one concept by id.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "concept_id": {
                                 "title": "Concept Id",
@@ -4460,7 +4469,7 @@
                         },
                         {
                           "description": "List concepts with optional status, tag, and series-scope filters.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "include_global": {
                                 "default": true,
@@ -4511,7 +4520,7 @@
                         },
                         {
                           "description": "Merge one concept into another active concept.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "reason": {
                                 "default": "",
@@ -4538,7 +4547,7 @@
                         },
                         {
                           "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {},
                             "title": "hieronymus_concept_proposals_listArguments",
                             "type": "object"
@@ -4547,7 +4556,7 @@
                         },
                         {
                           "description": "Rename a concept while retaining the old name as a former-label facet.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "concept_id": {
                                 "title": "Concept Id",
@@ -4581,7 +4590,7 @@
                         },
                         {
                           "description": "Replace semantic tags for a concept.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "concept_id": {
                                 "title": "Concept Id",
@@ -4606,7 +4615,7 @@
                         },
                         {
                           "description": "Update concept mutable metadata.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "concept_id": {
                                 "title": "Concept Id",
@@ -4659,7 +4668,7 @@
                         },
                         {
                           "description": "Link a long-term crystal to a concept.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "concept_id": {
                                 "title": "Concept Id",
@@ -4691,7 +4700,7 @@
                         },
                         {
                           "description": "Replace semantic tags for a crystal.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "confidence": {
                                 "default": 0.2,
@@ -4721,7 +4730,7 @@
                         },
                         {
                           "description": "Replace story scopes for a crystal.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "confidence": {
                                 "default": 0.2,
@@ -4751,7 +4760,7 @@
                         },
                         {
                           "description": "Run dreaming over all pending completed-session memories.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "provider": {
                                 "anyOf": [
@@ -4778,7 +4787,7 @@
                         },
                         {
                           "description": "Record user correction feedback as short-term memory.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "correction_text": {
                                 "title": "Correction Text",
@@ -4800,7 +4809,7 @@
                         },
                         {
                           "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "importance": {
                                 "default": 3,
@@ -4861,7 +4870,7 @@
                         },
                         {
                           "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "limit": {
                                 "default": 5,
@@ -4912,7 +4921,7 @@
                         },
                         {
                           "description": "Import a text, markdown, or glossary file into the project RAG store.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "language_tags": {
                                 "anyOf": [
@@ -4996,7 +5005,7 @@
                         },
                         {
                           "description": "Search project RAG chunks for a series.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "limit": {
                                 "default": 10,
@@ -5023,7 +5032,7 @@
                         },
                         {
                           "description": "Recall long-term crystals and active short-term memories for a stored session.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "chapter": {
                                 "anyOf": [
@@ -5115,7 +5124,7 @@
                         },
                         {
                           "description": "Archive a rule crystal.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "crystal_id": {
                                 "title": "Crystal Id",
@@ -5132,7 +5141,7 @@
                         },
                         {
                           "description": "Validate rule-crystal shape and deterministic enforceability.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "crystal_id": {
                                 "title": "Crystal Id",
@@ -5149,7 +5158,7 @@
                         },
                         {
                           "description": "List rule crystals for review.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "limit": {
                                 "default": 50,
@@ -5188,7 +5197,7 @@
                         },
                         {
                           "description": "Create or update a language-neutral series.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "language_tags": {
                                 "anyOf": [
@@ -5235,7 +5244,7 @@
                         },
                         {
                           "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "language_tags": {
                                 "anyOf": [
@@ -5282,7 +5291,7 @@
                         },
                         {
                           "description": "List registered series with language tags.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {},
                             "title": "hieronymus_series_listArguments",
                             "type": "object"
@@ -5291,7 +5300,7 @@
                         },
                         {
                           "description": "Replace language tags for a series without changing compatibility fields.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "language_tags": {
                                 "items": {
@@ -5316,7 +5325,7 @@
                         },
                         {
                           "description": "Complete an agent workflow session so it can be dreamed.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "session_id": {
                                 "title": "Session Id",
@@ -5333,7 +5342,7 @@
                         },
                         {
                           "description": "Start an agent workflow session for a translation context.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "chapter": {
                                 "default": "",
@@ -5389,7 +5398,7 @@
                         },
                         {
                           "description": "Add a short-term memory to an active session.\n\n    source_role is an optional freeform provenance label. It does not control dreaming's\n    crystal type or confidence; use source_credibility and rule_intent for those signals.\n    ",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "kind": {
                                 "title": "Kind",
@@ -5499,7 +5508,7 @@
                         },
                         {
                           "description": "Atomically add up to 500 short-term memories to one active session.\n\n    Each item requires kind and text. source_role is optional freeform provenance metadata and\n    defaults to agent; it does not control dreaming's categorization or confidence.\n    ",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "items": {
                                 "items": {
@@ -5525,7 +5534,7 @@
                         },
                         {
                           "description": "Report MCP adapter mode and discovered local service status.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {},
                             "title": "hieronymus_statusArguments",
                             "type": "object"
@@ -5534,7 +5543,7 @@
                         },
                         {
                           "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "chapter": {
                                 "default": "",
@@ -5590,7 +5599,7 @@
                         },
                         {
                           "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "chapter": {
                                 "default": "",
@@ -5646,7 +5655,7 @@
                         },
                         {
                           "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "canonical_translation": {
                                 "title": "Canonical Translation",
@@ -5732,7 +5741,7 @@
                         },
                         {
                           "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-                          "input_schema": {
+                          "inputSchema": {
                             "properties": {
                               "chapter": {
                                 "default": "",
@@ -5791,7 +5800,8 @@
                           },
                           "name": "hieronymus_termbase_validate"
                         }
-                      ]
+                      ],
+                      "ttlMs": 0
                     }
                   },
                   "event": "message"
@@ -5957,11 +5967,12 @@
         "id": 1,
         "jsonrpc": "2.0",
         "result": {
+          "cacheScope": "private",
           "resultType": "complete",
           "tools": [
             {
               "description": "Archive a concept so recall and strict rule logic stop using it.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "concept_id": {
                     "title": "Concept Id",
@@ -5983,7 +5994,7 @@
             },
             {
               "description": "Create a concept primitive.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "canonical_name": {
                     "title": "Canonical Name",
@@ -6045,7 +6056,7 @@
             },
             {
               "description": "Add a multilingual concept facet.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "concept_id": {
                     "title": "Concept Id",
@@ -6163,7 +6174,7 @@
             },
             {
               "description": "List active facets for a concept.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "concept_id": {
                     "title": "Concept Id",
@@ -6180,7 +6191,7 @@
             },
             {
               "description": "Set one concept facet as canonical for its concept.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "concept_id": {
                     "title": "Concept Id",
@@ -6202,7 +6213,7 @@
             },
             {
               "description": "Update a concept facet primitive.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "confidence": {
                     "anyOf": [
@@ -6348,7 +6359,7 @@
             },
             {
               "description": "Get one concept by id.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "concept_id": {
                     "title": "Concept Id",
@@ -6365,7 +6376,7 @@
             },
             {
               "description": "List concepts with optional status, tag, and series-scope filters.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "include_global": {
                     "default": true,
@@ -6416,7 +6427,7 @@
             },
             {
               "description": "Merge one concept into another active concept.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "reason": {
                     "default": "",
@@ -6443,7 +6454,7 @@
             },
             {
               "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {},
                 "title": "hieronymus_concept_proposals_listArguments",
                 "type": "object"
@@ -6452,7 +6463,7 @@
             },
             {
               "description": "Rename a concept while retaining the old name as a former-label facet.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "concept_id": {
                     "title": "Concept Id",
@@ -6486,7 +6497,7 @@
             },
             {
               "description": "Replace semantic tags for a concept.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "concept_id": {
                     "title": "Concept Id",
@@ -6511,7 +6522,7 @@
             },
             {
               "description": "Update concept mutable metadata.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "concept_id": {
                     "title": "Concept Id",
@@ -6564,7 +6575,7 @@
             },
             {
               "description": "Link a long-term crystal to a concept.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "concept_id": {
                     "title": "Concept Id",
@@ -6596,7 +6607,7 @@
             },
             {
               "description": "Replace semantic tags for a crystal.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "confidence": {
                     "default": 0.2,
@@ -6626,7 +6637,7 @@
             },
             {
               "description": "Replace story scopes for a crystal.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "confidence": {
                     "default": 0.2,
@@ -6656,7 +6667,7 @@
             },
             {
               "description": "Run dreaming over all pending completed-session memories.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "provider": {
                     "anyOf": [
@@ -6683,7 +6694,7 @@
             },
             {
               "description": "Record user correction feedback as short-term memory.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "correction_text": {
                     "title": "Correction Text",
@@ -6705,7 +6716,7 @@
             },
             {
               "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "importance": {
                     "default": 3,
@@ -6766,7 +6777,7 @@
             },
             {
               "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "limit": {
                     "default": 5,
@@ -6817,7 +6828,7 @@
             },
             {
               "description": "Import a text, markdown, or glossary file into the project RAG store.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "language_tags": {
                     "anyOf": [
@@ -6901,7 +6912,7 @@
             },
             {
               "description": "Search project RAG chunks for a series.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "limit": {
                     "default": 10,
@@ -6928,7 +6939,7 @@
             },
             {
               "description": "Recall long-term crystals and active short-term memories for a stored session.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "chapter": {
                     "anyOf": [
@@ -7020,7 +7031,7 @@
             },
             {
               "description": "Archive a rule crystal.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "crystal_id": {
                     "title": "Crystal Id",
@@ -7037,7 +7048,7 @@
             },
             {
               "description": "Validate rule-crystal shape and deterministic enforceability.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "crystal_id": {
                     "title": "Crystal Id",
@@ -7054,7 +7065,7 @@
             },
             {
               "description": "List rule crystals for review.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "limit": {
                     "default": 50,
@@ -7093,7 +7104,7 @@
             },
             {
               "description": "Create or update a language-neutral series.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "language_tags": {
                     "anyOf": [
@@ -7140,7 +7151,7 @@
             },
             {
               "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "language_tags": {
                     "anyOf": [
@@ -7187,7 +7198,7 @@
             },
             {
               "description": "List registered series with language tags.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {},
                 "title": "hieronymus_series_listArguments",
                 "type": "object"
@@ -7196,7 +7207,7 @@
             },
             {
               "description": "Replace language tags for a series without changing compatibility fields.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "language_tags": {
                     "items": {
@@ -7221,7 +7232,7 @@
             },
             {
               "description": "Complete an agent workflow session so it can be dreamed.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "session_id": {
                     "title": "Session Id",
@@ -7238,7 +7249,7 @@
             },
             {
               "description": "Start an agent workflow session for a translation context.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "chapter": {
                     "default": "",
@@ -7294,7 +7305,7 @@
             },
             {
               "description": "Add a short-term memory to an active session.\n\n    source_role is an optional freeform provenance label. It does not control dreaming's\n    crystal type or confidence; use source_credibility and rule_intent for those signals.\n    ",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "kind": {
                     "title": "Kind",
@@ -7404,7 +7415,7 @@
             },
             {
               "description": "Atomically add up to 500 short-term memories to one active session.\n\n    Each item requires kind and text. source_role is optional freeform provenance metadata and\n    defaults to agent; it does not control dreaming's categorization or confidence.\n    ",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "items": {
                     "items": {
@@ -7430,7 +7441,7 @@
             },
             {
               "description": "Report MCP adapter mode and discovered local service status.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {},
                 "title": "hieronymus_statusArguments",
                 "type": "object"
@@ -7439,7 +7450,7 @@
             },
             {
               "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "chapter": {
                     "default": "",
@@ -7495,7 +7506,7 @@
             },
             {
               "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "chapter": {
                     "default": "",
@@ -7551,7 +7562,7 @@
             },
             {
               "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "canonical_translation": {
                     "title": "Canonical Translation",
@@ -7637,7 +7648,7 @@
             },
             {
               "description": "Compatibility wrapper. New workflows should use concept, facet, short-term memory, and rule-crystal primitives.",
-              "input_schema": {
+              "inputSchema": {
                 "properties": {
                   "chapter": {
                     "default": "",
@@ -7696,7 +7707,8 @@
               },
               "name": "hieronymus_termbase_validate"
             }
-          ]
+          ],
+          "ttlMs": 0
         }
       }
     }

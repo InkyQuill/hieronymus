@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from tools.compatibility.inventory_http import runtime_reference_bodies, snapshot_http
+from tools.compatibility.inventory_http import (
+    HEADER_MISMATCH_MESSAGES,
+    runtime_reference_bodies,
+    snapshot_http,
+)
+from tools.compatibility.mcp_schema import definition_issues
 from tools.compatibility.model import load_manifest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +45,28 @@ def _route_cases_by_id() -> dict[str, dict[str, object]]:
 
 def _routes_by_id() -> dict[str, dict[str, object]]:
     return {route["contract_id"]: route for route in snapshot_http(ROOT)["routes"]}
+
+
+def _changed_request_leaf_paths(
+    reference: dict[str, object], candidate: dict[str, object]
+) -> set[tuple[str, ...]]:
+    def leaves(value: object, path: tuple[str, ...] = ()) -> dict[tuple[str, ...], object]:
+        if isinstance(value, dict):
+            return {
+                leaf_path: leaf_value
+                for key, child in value.items()
+                for leaf_path, leaf_value in leaves(child, (*path, key)).items()
+            }
+        return {path: value}
+
+    reference_leaves = leaves(reference)
+    candidate_leaves = leaves(candidate)
+    missing = object()
+    return {
+        path
+        for path in reference_leaves.keys() | candidate_leaves.keys()
+        if reference_leaves.get(path, missing) != candidate_leaves.get(path, missing)
+    }
 
 
 def test_http_snapshot_matches_router_and_frontend_sources() -> None:
@@ -246,11 +273,14 @@ def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
         "name": "compatibility-replay",
         "version": "1.0.0",
     }
-    assert {failure["id"] for failure in case["failures"]} == {
+    failures = {failure["id"]: failure for failure in case["failures"]}
+    assert len(failures) == 11
+    assert set(failures) == {
         "invalid-host",
         "missing-bearer",
         "invalid-bearer",
         "missing-version",
+        "protocol-version-header-mismatch",
         "unsupported-version",
         "missing-mcp-method",
         "wrong-mcp-method",
@@ -258,6 +288,69 @@ def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
         "missing-mcp-name-tools-call",
         "wrong-mcp-name-tools-call",
     }
+    header_mismatch_ids = {
+        "missing-version",
+        "protocol-version-header-mismatch",
+        "missing-mcp-method",
+        "wrong-mcp-method",
+        "unexpected-mcp-name-tools-list",
+        "missing-mcp-name-tools-call",
+        "wrong-mcp-name-tools-call",
+    }
+    for failure_id in header_mismatch_ids:
+        failure = failures[failure_id]
+        assert failure["response"]["status"] == 400
+        assert failure["response"]["body"] == {
+            "jsonrpc": "2.0",
+            "id": failure["request"]["body"]["id"],
+            "error": {
+                "code": -32020,
+                "message": HEADER_MISMATCH_MESSAGES[failure_id],
+            },
+        }
+        assert definition_issues(ROOT, "HeaderMismatchError", failure["response"]["body"]) == ()
+
+    mismatch = failures["protocol-version-header-mismatch"]
+    assert mismatch["request"]["headers"]["MCP-Protocol-Version"] == "2025-06-18"
+    assert (
+        mismatch["request"]["body"]["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"]
+        == "2026-07-28"
+    )
+    unsupported = failures["unsupported-version"]
+    assert unsupported["request"]["headers"]["MCP-Protocol-Version"] == "2025-06-18"
+    assert (
+        unsupported["request"]["body"]["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"]
+        == "2025-06-18"
+    )
+    assert unsupported["response"] == {
+        "status": 400,
+        "headers": {"Content-Type": "application/json; charset=utf-8"},
+        "body": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32022,
+                "message": "Unsupported protocol version: 2025-06-18",
+                "data": {
+                    "requested": "2025-06-18",
+                    "supported": ["2026-07-28"],
+                },
+            },
+        },
+    }
+    assert (
+        definition_issues(ROOT, "UnsupportedProtocolVersionError", unsupported["response"]["body"])
+        == ()
+    )
+    assert _changed_request_leaf_paths(tools_list, unsupported["request"]) == {
+        ("body", "params", "_meta", "io.modelcontextprotocol/protocolVersion"),
+        ("headers", "MCP-Protocol-Version"),
+    }
+    for failure_id, failure in failures.items():
+        if failure_id == "unsupported-version":
+            continue
+        base = tools_call if failure_id.endswith("tools-call") else tools_list
+        assert len(_changed_request_leaf_paths(base, failure["request"])) == 1
 
 
 def test_runtime_response_fixtures_keep_complete_status_and_dashboard_shapes() -> None:

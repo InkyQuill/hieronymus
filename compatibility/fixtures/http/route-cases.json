@@ -8317,7 +8317,12 @@
             },
             "response": {
               "body": {
-                "error": "missing_mcp_protocol_version"
+                "error": {
+                  "code": -32020,
+                  "message": "Header mismatch: required MCP-Protocol-Version header is missing"
+                },
+                "id": 1,
+                "jsonrpc": "2.0"
               },
               "headers": {
                 "Content-Type": "application/json; charset=utf-8"
@@ -8326,7 +8331,7 @@
             }
           },
           {
-            "id": "unsupported-version",
+            "id": "protocol-version-header-mismatch",
             "normalized_log_fields": {
               "credential": "<redacted>",
               "method": "POST",
@@ -8363,7 +8368,69 @@
             },
             "response": {
               "body": {
-                "error": "unsupported_mcp_protocol_version"
+                "error": {
+                  "code": -32020,
+                  "message": "Header mismatch: MCP-Protocol-Version header value '2025-06-18' does not match body value '2026-07-28'"
+                },
+                "id": 1,
+                "jsonrpc": "2.0"
+              },
+              "headers": {
+                "Content-Type": "application/json; charset=utf-8"
+              },
+              "status": 400
+            }
+          },
+          {
+            "id": "unsupported-version",
+            "normalized_log_fields": {
+              "credential": "<redacted>",
+              "method": "POST",
+              "path_template": "/mcp",
+              "status": 400
+            },
+            "request": {
+              "body": {
+                "id": 1,
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2025-06-18"
+                  }
+                }
+              },
+              "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
+                "Host": "127.0.0.1:<PORT>",
+                "MCP-Protocol-Version": "2025-06-18",
+                "Mcp-Method": "tools/list"
+              },
+              "method": "POST",
+              "path": "/mcp",
+              "query": {}
+            },
+            "response": {
+              "body": {
+                "error": {
+                  "code": -32022,
+                  "data": {
+                    "requested": "2025-06-18",
+                    "supported": [
+                      "2026-07-28"
+                    ]
+                  },
+                  "message": "Unsupported protocol version: 2025-06-18"
+                },
+                "id": 1,
+                "jsonrpc": "2.0"
               },
               "headers": {
                 "Content-Type": "application/json; charset=utf-8"
@@ -8408,7 +8475,12 @@
             },
             "response": {
               "body": {
-                "error": "missing_mcp_method"
+                "error": {
+                  "code": -32020,
+                  "message": "Header mismatch: required Mcp-Method header is missing"
+                },
+                "id": 1,
+                "jsonrpc": "2.0"
               },
               "headers": {
                 "Content-Type": "application/json; charset=utf-8"
@@ -8454,7 +8526,12 @@
             },
             "response": {
               "body": {
-                "error": "mcp_method_mismatch"
+                "error": {
+                  "code": -32020,
+                  "message": "Header mismatch: Mcp-Method header value 'tools/call' does not match body value 'tools/list'"
+                },
+                "id": 1,
+                "jsonrpc": "2.0"
               },
               "headers": {
                 "Content-Type": "application/json; charset=utf-8"
@@ -8501,7 +8578,12 @@
             },
             "response": {
               "body": {
-                "error": "unexpected_mcp_name"
+                "error": {
+                  "code": -32020,
+                  "message": "Header mismatch: Mcp-Name header must be omitted for tools/list"
+                },
+                "id": 1,
+                "jsonrpc": "2.0"
               },
               "headers": {
                 "Content-Type": "application/json; charset=utf-8"
@@ -8549,7 +8631,12 @@
             },
             "response": {
               "body": {
-                "error": "missing_mcp_name"
+                "error": {
+                  "code": -32020,
+                  "message": "Header mismatch: required Mcp-Name header is missing for tools/call"
+                },
+                "id": 2,
+                "jsonrpc": "2.0"
               },
               "headers": {
                 "Content-Type": "application/json; charset=utf-8"
@@ -8598,7 +8685,12 @@
             },
             "response": {
               "body": {
-                "error": "mcp_name_mismatch"
+                "error": {
+                  "code": -32020,
+                  "message": "Header mismatch: Mcp-Name header value 'hieronymus_recall' does not match body value 'hieronymus_status'"
+                },
+                "id": 2,
+                "jsonrpc": "2.0"
               },
               "headers": {
                 "Content-Type": "application/json; charset=utf-8"
@@ -8607,6 +8699,12 @@
             }
           }
         ],
+        "response_metadata_rules": {
+          "io.modelcontextprotocol/serverInfo": {
+            "configured": "omit",
+            "rationale": "The compatibility oracle is implementation-neutral; freezing self-reported package identity would create a volatile version contract unrelated to protocol behavior."
+          }
+        },
         "successes": [
           {
             "id": "tools-list",
@@ -8649,8 +8747,10 @@
                 "id": 1,
                 "jsonrpc": "2.0",
                 "result": {
+                  "cacheScope": "private",
                   "resultType": "complete",
-                  "tools": []
+                  "tools": [],
+                  "ttlMs": 0
                 }
               },
               "headers": {

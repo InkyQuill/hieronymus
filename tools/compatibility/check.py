@@ -22,7 +22,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from tools.compatibility import inventory_cli, inventory_http, inventory_mcp, inventory_state
+from tools.compatibility import (
+    inventory_cli,
+    inventory_http,
+    inventory_mcp,
+    inventory_state,
+    mcp_schema,
+)
 from tools.compatibility.model import Manifest, load_manifest, validate_manifest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -237,7 +243,38 @@ def _cli_inventory(
     )
 
 
-def _mcp_inventory() -> tuple[dict[str, bytes], set[str], list[dict[str, object]]]:
+def _require_official_mcp_definition(
+    repo_root: Path,
+    definition: mcp_schema.SchemaDefinition,
+    instance: object,
+) -> None:
+    issues = mcp_schema.definition_issues(repo_root, definition, instance)
+    if issues:
+        raise ValueError(f"invalid official MCP {definition}: {'; '.join(issues)}")
+
+
+def _protocol_success_envelopes(target: dict[str, object]) -> tuple[dict[str, object], ...]:
+    stdio = target["stdio"]
+    streamable_http = target["streamable_http"]
+    assert isinstance(stdio, dict)
+    assert isinstance(streamable_http, dict)
+    stdio_exchanges = stdio["exchanges"]
+    http_exchanges = streamable_http["exchanges"]
+    assert isinstance(stdio_exchanges, list)
+    assert isinstance(http_exchanges, list)
+    return (
+        *(json.loads(exchange["response_line"]) for exchange in stdio_exchanges),
+        *(exchange["responses"][0]["body"] for exchange in http_exchanges),
+        *(exchange["responses"][1]["events"][-1]["data"] for exchange in http_exchanges),
+    )
+
+
+def _mcp_inventory(
+    repo_root: Path = ROOT,
+) -> tuple[dict[str, bytes], set[str], list[dict[str, object]]]:
+    authority_problems = mcp_schema.authority_issues(repo_root)
+    if authority_problems:
+        raise ValueError("invalid official MCP schema authority: " + "; ".join(authority_problems))
     snapshot = inventory_mcp.snapshot_mcp()
     artifacts = {"compatibility/snapshots/mcp.json": _json_bytes(snapshot)}
     protocol = inventory_mcp._protocol_fixture(snapshot)
@@ -250,6 +287,11 @@ def _mcp_inventory() -> tuple[dict[str, bytes], set[str], list[dict[str, object]
         issues = _request_metadata_issues(request)
         if issues:
             raise ValueError("invalid MCP target request metadata: " + "; ".join(issues))
+    for envelope in _protocol_success_envelopes(target):
+        definition: mcp_schema.SchemaDefinition = (
+            "ListToolsResultResponse" if envelope["id"] == 1 else "CallToolResultResponse"
+        )
+        _require_official_mcp_definition(repo_root, definition, envelope)
     artifacts["compatibility/fixtures/mcp/protocol.json"] = _json_bytes(protocol)
 
     tools = snapshot["tools"]
@@ -285,18 +327,38 @@ def _http_inventory(
     repo_root: Path,
 ) -> tuple[dict[str, bytes], set[str], list[dict[str, object]]]:
     snapshot = inventory_http.snapshot_http(repo_root)
+    route_cases = inventory_http._route_cases(snapshot)
+    routes = route_cases["routes"]
+    assert isinstance(routes, list)
+    mcp_target = next(
+        route["target"] for route in routes if route["contract_id"] == "http.route.post.mcp"
+    )
+    for success in mcp_target["successes"]:
+        envelope = success["response"]["body"]
+        definition = "ListToolsResultResponse" if envelope["id"] == 1 else "CallToolResultResponse"
+        _require_official_mcp_definition(repo_root, definition, envelope)
+    failures = {failure["id"]: failure for failure in mcp_target["failures"]}
+    for failure_id in sorted(inventory_http.HEADER_MISMATCH_MESSAGES):
+        _require_official_mcp_definition(
+            repo_root,
+            "HeaderMismatchError",
+            failures[failure_id]["response"]["body"],
+        )
+    _require_official_mcp_definition(
+        repo_root,
+        "UnsupportedProtocolVersionError",
+        failures["unsupported-version"]["response"]["body"],
+    )
     artifacts = {
         "compatibility/snapshots/http.json": _json_bytes(snapshot),
-        "compatibility/fixtures/http/route-cases.json": _json_bytes(
-            inventory_http._route_cases(snapshot)
-        ),
+        "compatibility/fixtures/http/route-cases.json": _json_bytes(route_cases),
     }
-    routes = snapshot["routes"]
-    assert isinstance(routes, list)
+    snapshot_routes = snapshot["routes"]
+    assert isinstance(snapshot_routes, list)
     return (
         artifacts,
-        {str(route["contract_id"]) for route in routes},
-        [inventory_http._manifest_contract(route) for route in routes],
+        {str(route["contract_id"]) for route in snapshot_routes},
+        [inventory_http._manifest_contract(route) for route in snapshot_routes],
     )
 
 
@@ -370,13 +432,16 @@ def _state_inventory(
 
 def generate_inventory(repo_root: Path) -> GeneratedInventory:
     """Regenerate every checked artifact in memory or in isolated state roots."""
+    authority_problems = mcp_schema.authority_issues(repo_root)
+    if authority_problems:
+        raise ValueError("invalid official MCP schema authority: " + "; ".join(authority_problems))
     artifacts: dict[str, bytes] = {}
     inventory_ids: dict[str, set[str]] = {}
     transport_contracts: list[dict[str, object]] = []
     state_contracts: list[dict[str, object]] = []
     generators = (
         ("cli", lambda: _cli_inventory(repo_root)),
-        ("mcp", _mcp_inventory),
+        ("mcp", lambda: _mcp_inventory(repo_root)),
         ("http/frontend", lambda: _http_inventory(repo_root)),
         ("state", lambda: _state_inventory(repo_root)),
     )

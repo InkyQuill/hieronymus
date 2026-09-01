@@ -2534,6 +2534,11 @@ def _internal_test_reason(node_id: str) -> str:
                 "Validates byte comparison and closed-world scan helpers; the canonical "
                 "command behavior is owned separately."
             )
+        if test_case == "test_compatibility_gate_validates_official_mcp_schema_offline":
+            return (
+                "Validates the offline MCP schema authority and compatibility-gate integration; "
+                "implementation-internal self-test, not a public contract."
+            )
         raise ValueError(f"no explicit aggregate-check ownership rule for {node_id}")
     if node_id.endswith("test_collect_test_nodeids_returns_only_sorted_pytest_node_ids"):
         return "Validates the Python pytest collection parser; inventory implementation only."

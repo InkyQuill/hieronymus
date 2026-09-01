@@ -12,13 +12,35 @@ from dataclasses import asdict, dataclass
 from functools import cache
 from pathlib import Path
 
-from tools.compatibility.inventory_mcp import REQUEST_META
+from tools.compatibility.inventory_mcp import REQUEST_META, RESPONSE_METADATA_RULES
 
 _ADR_0012 = "docs/adr/0012-mcp-transport-authentication-and-discovery.md"
 _ADR_0014 = "docs/adr/0014-web-console-replaces-terminal-ui.md"
 _ADR_0015 = "docs/adr/0015-mcp-protocol-and-transport.md"
 _MCP_PROTOCOL_REVISION = "2026-07-28"
 _UNSUPPORTED_MCP_PROTOCOL_REVISION = "2025-06-18"
+HEADER_MISMATCH_MESSAGES = {
+    "missing-version": "Header mismatch: required MCP-Protocol-Version header is missing",
+    "protocol-version-header-mismatch": (
+        "Header mismatch: MCP-Protocol-Version header value '2025-06-18' "
+        "does not match body value '2026-07-28'"
+    ),
+    "missing-mcp-method": "Header mismatch: required Mcp-Method header is missing",
+    "wrong-mcp-method": (
+        "Header mismatch: Mcp-Method header value 'tools/call' "
+        "does not match body value 'tools/list'"
+    ),
+    "unexpected-mcp-name-tools-list": (
+        "Header mismatch: Mcp-Name header must be omitted for tools/list"
+    ),
+    "missing-mcp-name-tools-call": (
+        "Header mismatch: required Mcp-Name header is missing for tools/call"
+    ),
+    "wrong-mcp-name-tools-call": (
+        "Header mismatch: Mcp-Name header value 'hieronymus_recall' "
+        "does not match body value 'hieronymus_status'"
+    ),
+}
 _ISO_8601_TIMESTAMP = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
@@ -859,6 +881,7 @@ def _route_case(route: dict[str, object], runtime_bodies: dict[str, object]) -> 
             case["target"] = {
                 "basis": "adr-backed-target",
                 "adr": route["adr"],
+                "response_metadata_rules": RESPONSE_METADATA_RULES,
                 "successes": successes,
                 "failures": _target_mcp_failure_outcomes(successes),
             }
@@ -1062,7 +1085,12 @@ def _target_mcp_success_outcomes(
     tools_list["response"]["body"] = {
         "jsonrpc": "2.0",
         "id": 1,
-        "result": {"resultType": "complete", "tools": []},
+        "result": {
+            "cacheScope": "private",
+            "ttlMs": 0,
+            "resultType": "complete",
+            "tools": [],
+        },
     }
 
     tools_call = copy.deepcopy(tools_list)
@@ -1101,6 +1129,7 @@ def _target_mcp_failure_outcomes(
         (tools_list, "missing-bearer"),
         (tools_list, "invalid-bearer"),
         (tools_list, "missing-version"),
+        (tools_list, "protocol-version-header-mismatch"),
         (tools_list, "unsupported-version"),
         (tools_list, "missing-mcp-method"),
         (tools_list, "wrong-mcp-method"),
@@ -1150,6 +1179,7 @@ def _target_failure(success: dict[str, object], failure_id: str) -> dict[str, ob
     outcome = copy.deepcopy(success)
     outcome["id"] = failure_id
     headers = outcome["request"]["headers"]
+    response_body: object
     if failure_id == "invalid-host":
         headers["Host"] = "attacker.invalid"
         status, error = 400, "invalid_host"
@@ -1179,10 +1209,16 @@ def _target_failure(success: dict[str, object], failure_id: str) -> dict[str, ob
         status, error = 401, "unauthorized"
     elif failure_id == "missing-version":
         headers.pop("MCP-Protocol-Version", None)
-        status, error = 400, "missing_mcp_protocol_version"
+        status, error = 400, None
+    elif failure_id == "protocol-version-header-mismatch":
+        headers["MCP-Protocol-Version"] = _UNSUPPORTED_MCP_PROTOCOL_REVISION
+        status, error = 400, None
     elif failure_id == "unsupported-version":
         headers["MCP-Protocol-Version"] = _UNSUPPORTED_MCP_PROTOCOL_REVISION
-        status, error = 400, "unsupported_mcp_protocol_version"
+        outcome["request"]["body"]["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = (
+            _UNSUPPORTED_MCP_PROTOCOL_REVISION
+        )
+        status, error = 400, None
     elif failure_id == "missing-mcp-method":
         headers.pop("Mcp-Method", None)
         status, error = 400, "missing_mcp_method"
@@ -1200,10 +1236,34 @@ def _target_failure(success: dict[str, object], failure_id: str) -> dict[str, ob
         status, error = 400, "mcp_name_mismatch"
     else:
         raise ValueError(f"unknown target failure fixture: {failure_id}")
+    if failure_id in HEADER_MISMATCH_MESSAGES:
+        response_body = {
+            "jsonrpc": "2.0",
+            "id": outcome["request"]["body"]["id"],
+            "error": {
+                "code": -32020,
+                "message": HEADER_MISMATCH_MESSAGES[failure_id],
+            },
+        }
+    elif failure_id == "unsupported-version":
+        response_body = {
+            "jsonrpc": "2.0",
+            "id": outcome["request"]["body"]["id"],
+            "error": {
+                "code": -32022,
+                "message": (f"Unsupported protocol version: {_UNSUPPORTED_MCP_PROTOCOL_REVISION}"),
+                "data": {
+                    "requested": _UNSUPPORTED_MCP_PROTOCOL_REVISION,
+                    "supported": [_MCP_PROTOCOL_REVISION],
+                },
+            },
+        }
+    else:
+        response_body = {"error": error}
     outcome["response"] = {
         "status": status,
         "headers": {"Content-Type": "application/json; charset=utf-8"},
-        "body": {"error": error},
+        "body": response_body,
     }
     outcome["normalized_log_fields"]["status"] = status
     return outcome

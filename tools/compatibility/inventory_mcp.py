@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import logging
 import tempfile
@@ -39,6 +40,16 @@ REQUEST_META = {
         "name": "compatibility-replay",
         "version": "1.0.0",
     },
+}
+RESPONSE_METADATA_RULES = {
+    "io.modelcontextprotocol/serverInfo": {
+        "configured": "omit",
+        "rationale": (
+            "The compatibility oracle is implementation-neutral; freezing self-reported "
+            "package identity would create a volatile version contract unrelated to "
+            "protocol behavior."
+        ),
+    }
 }
 
 
@@ -613,6 +624,14 @@ def _json_line(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
 
 
+def _wire_tool(tool: dict[str, object]) -> dict[str, object]:
+    return {
+        "name": tool["name"],
+        "description": tool["description"],
+        "inputSchema": copy.deepcopy(tool["input_schema"]),
+    }
+
+
 def _protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]:
     tools = snapshot["tools"]
     assert isinstance(tools, list)
@@ -637,7 +656,12 @@ def _protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]:
     tools_list_result = {
         "jsonrpc": "2.0",
         "id": 1,
-        "result": {"resultType": "complete", "tools": tools},
+        "result": {
+            "cacheScope": "private",
+            "ttlMs": 0,
+            "resultType": "complete",
+            "tools": [_wire_tool(tool) for tool in tools],
+        },
     }
     tool_call_result = {
         "jsonrpc": "2.0",
@@ -732,6 +756,7 @@ def _protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]:
                 ],
                 "should": ["io.modelcontextprotocol/clientInfo"],
             },
+            "response_metadata_rules": RESPONSE_METADATA_RULES,
             "tools_list": {"request": tools_list_request, "response": tools_list_result},
             "tools_call": {"request": tool_call_request, "response": tool_call_result},
             "stdio": {
