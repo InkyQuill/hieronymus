@@ -13,6 +13,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from tools.qualification.fingerprint import (  # noqa: E402
+    _MCP_TOOL_NAMES,
     COMMON_FINGERPRINT_INPUTS,
     fingerprint_inputs,
     required_fingerprint_inputs,
@@ -31,6 +32,13 @@ from tools.qualification.model import (  # noqa: E402
     expected_consequence,
     status_for,
 )
+from tools.qualification.projections import (  # noqa: E402
+    DATABASE_CONTRACT_IDS,
+    DATABASE_STATE_FIELDS,
+    MCP_EXACT_CONTRACT_IDS,
+    build_projection,
+    canonical_projection_bytes,
+)
 
 _OWNER = "Pavel Obruchnikov <me@inkyquill.net>"
 _TARGET = "x86_64-unknown-linux-gnu"
@@ -43,7 +51,64 @@ def seed_fingerprint_inputs(repo_root: Path, risk: Risk) -> tuple[str, ...]:
         path = repo_root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"qualification fixture: {relative}\n", encoding="utf-8")
+    if risk in ("mcp-transport", "legacy-database-import"):
+        _seed_projection_sources(repo_root)
     return input_paths
+
+
+def _seed_projection_sources(repo_root: Path) -> None:
+    contract_ids = (
+        *MCP_EXACT_CONTRACT_IDS,
+        *(f"mcp.tool.{name}" for name in _MCP_TOOL_NAMES),
+        *DATABASE_CONTRACT_IDS,
+        "unrelated.contract",
+    )
+    contracts = [
+        {
+            "disposition": "preserve",
+            "id": contract_id,
+            "tests": ["tests/fixture.py"],
+        }
+        for contract_id in contract_ids
+    ]
+    _write_canonical_json(
+        repo_root / "compatibility/manifest.json",
+        {
+            "contracts": contracts,
+            "frontend_test_ownership": [],
+            "manifest_version": 1,
+            "test_ownership": [],
+        },
+    )
+    _write_canonical_json(
+        repo_root / "compatibility/snapshots/state.json",
+        {
+            "config": {"unrelated": True},
+            "database": {
+                field: [field, {"ordered": ["first", "second"]}] for field in DATABASE_STATE_FIELDS
+            },
+            "tests": {"node_ids": []},
+        },
+    )
+    for projection_risk in ("mcp-transport", "legacy-database-import"):
+        path = repo_root / f"qualification/compatibility/{projection_risk}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(canonical_projection_bytes(build_projection(repo_root, projection_risk)))
+
+
+def _write_canonical_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def make_record(
@@ -94,7 +159,9 @@ def make_record(
         contract_ids=(f"qualification.{risk}",),
         input_paths=input_paths,
         input_digest=fingerprint_inputs(repo_root, input_paths),
-        commands=(f"qualification {risk}",),
+        commands=(
+            f"uv run python -m tools.qualification.validate qualification/records/{risk}.json",
+        ),
         environment=Environment(
             rustc="rustc 1.96.0",
             cargo="cargo 1.96.0",

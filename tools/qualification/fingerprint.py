@@ -16,6 +16,7 @@ COMMON_FINGERPRINT_INPUTS = (
     "qualification/rust-toolchain.toml",
     "tools/qualification/model.py",
     "tools/qualification/fingerprint.py",
+    "tools/qualification/projections.py",
     "tools/qualification/redaction.py",
     "tools/qualification/validate.py",
     "tools/qualification/render.py",
@@ -72,7 +73,7 @@ _MCP_TOOL_FIXTURE_LEAVES = (
     "wire.success.json",
 )
 MCP_TOOL_INPUT_WIRE_INPUTS = tuple(
-    f"compatibility/fixtures/mcp/{tool}/{leaf}"
+    f"compatibility/fixtures/mcp/tools/{tool}/{leaf}"
     for tool in _MCP_TOOL_NAMES
     for leaf in _MCP_TOOL_FIXTURE_LEAVES
 )
@@ -113,7 +114,7 @@ RISK_FINGERPRINT_SUFFIXES: Mapping[Risk, tuple[str, ...]] = MappingProxyType(
             "qualification/harnesses/mcp-transport/src/registry.rs",
             "qualification/harnesses/mcp-transport/src/report.rs",
             "qualification/harnesses/mcp-transport/tests/transport.rs",
-            "compatibility/manifest.json",
+            "qualification/compatibility/mcp-transport.json",
             "compatibility/authorities/mcp/2026-07-28/schema.json",
             "compatibility/authorities/mcp/2026-07-28/schema.source.json",
             "compatibility/snapshots/mcp.json",
@@ -137,8 +138,8 @@ RISK_FINGERPRINT_SUFFIXES: Mapping[Risk, tuple[str, ...]] = MappingProxyType(
             "qualification/harnesses/semantic-native/tests/recovery.rs",
             "qualification/harnesses/semantic-native/tests/fts.rs",
             "qualification/fixtures/semantic-corpus.json",
-            "compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json",
-            "compatibility/fixtures/mcp/hieronymus_recall/success.input.json",
+            "compatibility/fixtures/mcp/tools/hieronymus_rag_search/success.input.json",
+            "compatibility/fixtures/mcp/tools/hieronymus_recall/success.input.json",
         ),
         "frontend-embedding": (
             "tools/qualification/run_frontend.py",
@@ -165,8 +166,7 @@ RISK_FINGERPRINT_SUFFIXES: Mapping[Risk, tuple[str, ...]] = MappingProxyType(
             "qualification/harnesses/legacy-database-import/src/probe_import.rs",
             "qualification/harnesses/legacy-database-import/src/report.rs",
             "qualification/harnesses/legacy-database-import/tests/fixtures.rs",
-            "compatibility/manifest.json",
-            "compatibility/snapshots/state.json",
+            "qualification/compatibility/legacy-database-import.json",
             "compatibility/fixtures/database/corrupt.sqlite",
             "compatibility/fixtures/database/empty.sqlite",
             "compatibility/fixtures/database/legacy-python.sqlite",
@@ -208,6 +208,7 @@ def fingerprint_inputs(repo_root: Path, paths: tuple[str, ...]) -> str:
     root_descriptor = _open_repository_root(repo_root)
     seen_inodes: set[tuple[int, int]] = set()
     digest = hashlib.sha256(_DOMAIN)
+    failed = False
     try:
         for relative in sorted(canonical):
             content, inode = _read_regular_file(root_descriptor, relative)
@@ -221,8 +222,15 @@ def fingerprint_inputs(repo_root: Path, paths: tuple[str, ...]) -> str:
             digest.update(name)
             digest.update(len(content).to_bytes(16, "big"))
             digest.update(content)
+    except BaseException:
+        failed = True
+        raise
     finally:
-        os.close(root_descriptor)
+        try:
+            os.close(root_descriptor)
+        except OSError as error:
+            if not failed:
+                raise ValueError("fingerprint repository root is invalid") from error
     return digest.hexdigest()
 
 
@@ -248,60 +256,75 @@ def _canonical_relative_path(value: object) -> str:
 def _open_repository_root(repo_root: Path) -> int:
     """Open every lexical root component without following a symlink alias."""
     try:
-        absolute = os.path.abspath(os.fspath(repo_root))
+        raw = os.fspath(repo_root)
+        if type(raw) is not str or not os.path.isabs(raw):
+            raise ValueError
+        if (
+            os.path.normpath(raw) != raw
+            or (raw != os.sep and raw.endswith(os.sep))
+            or os.sep * 2 in raw
+        ):
+            raise ValueError
     except (TypeError, ValueError, OSError) as error:
         raise ValueError("fingerprint repository root is invalid") from error
-    descriptor: int | None = None
+    descriptors: list[int] = []
     try:
-        descriptor = os.open(os.sep, _DIRECTORY_FLAGS)
-        for part in Path(absolute).parts[1:]:
-            next_descriptor = os.open(part, _DIRECTORY_FLAGS, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = next_descriptor
+        descriptors.append(os.open(os.sep, _DIRECTORY_FLAGS))
+        for part in Path(raw).parts[1:]:
+            descriptors.append(os.open(part, _DIRECTORY_FLAGS, dir_fd=descriptors[-1]))
+        descriptor = descriptors[-1]
         if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
             raise OSError("not a directory")
+        close_error: OSError | None = None
+        for ancestor_descriptor in reversed(descriptors[:-1]):
+            try:
+                os.close(ancestor_descriptor)
+            except OSError as error:
+                close_error = close_error or error
+        if close_error is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            raise close_error
         return descriptor
     except (OSError, ValueError) as error:
-        if descriptor is not None:
-            os.close(descriptor)
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         raise ValueError("fingerprint repository root is invalid") from error
 
 
 def _read_regular_file(root_descriptor: int, relative: str) -> tuple[bytes, tuple[int, int]]:
     """Open and read one input through descriptor-relative no-follow operations."""
-    directory_descriptor = os.dup(root_descriptor)
+    directory_descriptors: list[int] = []
     file_descriptor: int | None = None
+    failed = False
     try:
+        directory_descriptors.append(os.dup(root_descriptor))
         parts = PurePosixPath(relative).parts
         for part in parts[:-1]:
-            try:
-                next_descriptor = os.open(
+            directory_descriptors.append(
+                os.open(
                     part,
                     _DIRECTORY_FLAGS,
-                    dir_fd=directory_descriptor,
+                    dir_fd=directory_descriptors[-1],
                 )
-            except OSError as error:
-                raise _input_error(relative) from error
-            os.close(directory_descriptor)
-            directory_descriptor = next_descriptor
-        try:
-            file_descriptor = os.open(
-                parts[-1],
-                _FILE_FLAGS,
-                dir_fd=directory_descriptor,
             )
-        except OSError as error:
-            raise _input_error(relative) from error
+        file_descriptor = os.open(
+            parts[-1],
+            _FILE_FLAGS,
+            dir_fd=directory_descriptors[-1],
+        )
 
         before = os.fstat(file_descriptor)
         if not stat.S_ISREG(before.st_mode):
             raise _input_error(relative)
         chunks: list[bytes] = []
         while True:
-            try:
-                chunk = os.read(file_descriptor, 1024 * 1024)
-            except OSError as error:
-                raise _input_error(relative) from error
+            chunk = os.read(file_descriptor, 1024 * 1024)
             if not chunk:
                 break
             chunks.append(chunk)
@@ -309,19 +332,33 @@ def _read_regular_file(root_descriptor: int, relative: str) -> tuple[bytes, tupl
         if (
             (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
             or not stat.S_ISREG(after.st_mode)
+            or before.st_mode != after.st_mode
             or before.st_size != after.st_size
+            or before.st_mtime_ns != after.st_mtime_ns
+            or before.st_ctime_ns != after.st_ctime_ns
             or sum(map(len, chunks)) != after.st_size
         ):
             raise ValueError(f"fingerprint input {relative!r} changed while being read")
         return b"".join(chunks), (after.st_dev, after.st_ino)
     except ValueError:
+        failed = True
         raise
     except OSError as error:
+        failed = True
         raise _input_error(relative) from error
     finally:
-        if file_descriptor is not None:
-            os.close(file_descriptor)
-        os.close(directory_descriptor)
+        close_error: OSError | None = None
+        descriptors = (
+            *((file_descriptor,) if file_descriptor is not None else ()),
+            *reversed(directory_descriptors),
+        )
+        for descriptor in descriptors:
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                close_error = close_error or error
+        if close_error is not None and not failed:
+            raise _input_error(relative) from close_error
 
 
 def _input_error(relative: str) -> ValueError:

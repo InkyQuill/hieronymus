@@ -213,7 +213,8 @@ def _bullet_values(values: Sequence[str]) -> list[str]:
     return lines
 
 
-def _cell(value: object) -> str:
+def _literal_markdown(value: object) -> str:
+    """Encode one arbitrary record value as inert Markdown literal text."""
     if type(value) is bool:
         rendered = str(value).lower()
     else:
@@ -225,6 +226,11 @@ def _cell(value: object) -> str:
         "|": "&#124;",
         "`": "&#96;",
         "\\": "&#92;",
+        "!": "&#33;",
+        "[": "&#91;",
+        "]": "&#93;",
+        "(": "&#40;",
+        ")": "&#41;",
         "\r": "&#13;",
         "\n": "&#10;",
     }
@@ -234,6 +240,11 @@ def _cell(value: object) -> str:
         else replacements.get(character, character)
         for character in rendered
     )
+
+
+def _cell(value: object) -> str:
+    """Backward-compatible private alias for the one literal encoder."""
+    return _literal_markdown(value)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -248,7 +259,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("qualification record could not be loaded", file=sys.stderr)
         return 2
 
-    issues = validate_record(record, Path.cwd())
+    try:
+        issues = validate_record(record, Path.cwd())
+    except (OSError, TypeError, ValueError):
+        print("qualification record could not be validated", file=sys.stderr)
+        return 2
     if issues:
         print("qualification record is invalid", file=sys.stderr)
         for issue in issues:

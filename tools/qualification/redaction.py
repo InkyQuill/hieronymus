@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from urllib.parse import unquote
 
 
 @dataclass(frozen=True)
@@ -50,9 +51,14 @@ _RULES = (
         "record contains authorization material",
         (
             *_structured_patterns(
+                "auth",
+                "auth_header",
+                "authHeader",
                 "authorization",
                 "authorization_header",
+                "authorizationHeader",
                 "proxy_authorization",
+                "proxyAuthorization",
             ),
             re.compile(
                 r"\b(?:proxy-)?authorization\s*:\s*"
@@ -66,7 +72,13 @@ _RULES = (
     _Rule(
         "record contains cookie material",
         (
-            *_structured_patterns("cookie", "set_cookie", "cookie_header"),
+            *_structured_patterns(
+                "cookie",
+                "cookie_header",
+                "cookieHeader",
+                "set_cookie",
+                "setCookie",
+            ),
             re.compile(
                 r"\b(?:set-cookie|cookie)\s*:\s*"
                 r"[^\s|,;=]+=[^\s|,;]+(?:\s*;\s*[^\s|,;=]+=[^\s|,;]+)*",
@@ -112,6 +124,11 @@ _RULES = (
                 "token",
                 "launch_grant",
                 "launchGrant",
+                "password",
+                "pass_word",
+                "passWord",
+                "private_key",
+                "privateKey",
             ),
             re.compile(r"\b(?:ghp|gho|github_pat)_[A-Za-z0-9_]{16,}\b"),
             re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
@@ -126,7 +143,10 @@ _RULES = (
                 "launch_grant",
                 "launchGrant",
                 "password",
+                "pass_word",
+                "passWord",
                 "private_key",
+                "privateKey",
             ),
         ),
     ),
@@ -198,8 +218,10 @@ def redaction_issues(serialized_record: str) -> list[str]:
     """Return each sensitive-data class found, once, in fixed rule order."""
     if type(serialized_record) is not str:
         raise TypeError("serialized record must be text")
+    decoded_view = unquote(serialized_record)
+    views = (serialized_record, decoded_view)
     return [
         rule.issue
         for rule in _RULES
-        if any(pattern.search(serialized_record) for pattern in rule.patterns)
+        if any(pattern.search(view) for view in views for pattern in rule.patterns)
     ]

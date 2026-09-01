@@ -129,6 +129,24 @@ def test_input_fingerprint_rejects_repository_root_symlink(tmp_path: Path) -> No
         fingerprint_inputs(alias, ("fixture",))
 
 
+def test_input_fingerprint_rejects_noncanonical_repository_root_spelling(
+    tmp_path: Path,
+) -> None:
+    chosen = tmp_path / "chosen"
+    chosen.mkdir()
+    (chosen / "fixture").write_text("chosen", encoding="utf-8")
+    other = tmp_path / "other"
+    other.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(other, target_is_directory=True)
+    noncanonical = Path(f"{alias}/../chosen")
+
+    with pytest.raises(ValueError, match="repository root") as caught:
+        fingerprint_inputs(noncanonical, ("fixture",))
+
+    assert str(tmp_path) not in str(caught.value)
+
+
 def test_input_fingerprint_rejects_symlinked_input_ancestor(tmp_path: Path) -> None:
     target = tmp_path / "target"
     target.mkdir()
@@ -200,6 +218,51 @@ def test_input_fingerprint_reports_read_error_without_host_path(
         fingerprint_inputs(tmp_path, ("fixture",))
 
     assert str(caught.value) == "fingerprint input 'fixture' must be an existing regular file"
+    assert str(tmp_path) not in str(caught.value)
+
+
+def test_input_fingerprint_reports_dup_error_without_host_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "fixture").write_text("fixture", encoding="utf-8")
+
+    def failed_dup(descriptor: int) -> int:
+        del descriptor
+        raise OSError(24, str(tmp_path / "private-dup-error"))
+
+    monkeypatch.setattr(os, "dup", failed_dup)
+
+    with pytest.raises(ValueError) as caught:
+        fingerprint_inputs(tmp_path, ("fixture",))
+
+    assert str(caught.value) == "fingerprint input 'fixture' must be an existing regular file"
+    assert str(tmp_path) not in str(caught.value)
+
+
+def test_input_fingerprint_rejects_same_size_in_place_change_during_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.write_bytes(b"a" * (2 * 1024 * 1024))
+    original_read = os.read
+    changed = False
+
+    def changing_read(descriptor: int, size: int) -> bytes:
+        nonlocal changed
+        chunk = original_read(descriptor, size)
+        if chunk and not changed:
+            changed = True
+            fixture.write_bytes(b"b" * (2 * 1024 * 1024))
+        return chunk
+
+    monkeypatch.setattr(os, "read", changing_read)
+
+    with pytest.raises(ValueError, match="changed while being read") as caught:
+        fingerprint_inputs(tmp_path, ("fixture",))
+
+    assert changed
     assert str(tmp_path) not in str(caught.value)
 
 

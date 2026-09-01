@@ -14,7 +14,7 @@ from factories import make_record, seed_fingerprint_inputs
 
 from tools.qualification.fingerprint import COMMON_FINGERPRINT_INPUTS
 from tools.qualification.model import LockedDependency, Measurements, Risk, serialize_record
-from tools.qualification.render import _cell, render_record
+from tools.qualification.render import _cell, _literal_markdown, render_record
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -149,10 +149,14 @@ def test_render_dependency_sort_is_total_across_checksum_and_features(tmp_path: 
 
 
 def test_cell_canonically_escapes_table_and_markdown_hazards() -> None:
-    escaped = _cell("line\r\n`code`\\pipe|<script>&")
+    escaped = _cell("line\r\n`code`\\pipe|<script>&![label](target)")
 
-    assert escaped == ("line&#13;&#10;&#96;code&#96;&#92;pipe&#124;&lt;script&gt;&amp;")
-    assert not any(raw in escaped for raw in ("\r", "\n", "`", "\\", "|", "<script>"))
+    assert escaped == (
+        "line&#13;&#10;&#96;code&#96;&#92;pipe&#124;&lt;script&gt;&amp;"
+        "&#33;&#91;label&#93;&#40;target&#41;"
+    )
+    assert escaped == _literal_markdown("line\r\n`code`\\pipe|<script>&![label](target)")
+    assert not any(raw in escaped for raw in ("\r", "\n", "`", "\\", "|", "<script>", "![", "]("))
 
 
 def test_render_canonically_escapes_arbitrary_record_strings(tmp_path: Path) -> None:
@@ -178,6 +182,55 @@ def test_render_canonically_escapes_arbitrary_record_strings(tmp_path: Path) -> 
     assert "&lt;script&gt;" in rendered
     assert "&#96;tick&#96;" in rendered
     assert "&#92;" in rendered
+
+
+@pytest.mark.parametrize("hazard", ["[label](target)", "![alt](target)"])
+def test_render_encodes_link_and_image_punctuation_in_every_arbitrary_surface(
+    tmp_path: Path,
+    hazard: str,
+) -> None:
+    _seed_common_inputs(tmp_path)
+    record = make_record(tmp_path, "frontend-embedding")
+    dependency = LockedDependency(
+        name=hazard,
+        version=hazard,
+        source=hazard,
+        checksum=None,
+        features=(hazard,),
+    )
+    evidence = replace(
+        record.evidence[0],
+        summary=hazard,
+        measurements=Measurements({hazard: hazard}),
+    )
+    environment = replace(
+        record.environment,
+        rustc=hazard,
+        cargo=hazard,
+        os=hazard,
+        kernel=hazard,
+        architecture=hazard,
+        bun=hazard,
+        native_libraries=(hazard,),
+    )
+    hazardous = replace(
+        record,
+        specs=(hazard,),
+        contract_ids=(hazard,),
+        environment=environment,
+        dependencies=(dependency,),
+        evidence=(evidence, *record.evidence[1:]),
+    )
+
+    rendered = render_record(hazardous)
+
+    assert hazard not in rendered
+    assert "&#91;" in rendered
+    assert "&#93;" in rendered
+    assert "&#40;" in rendered
+    assert "&#41;" in rendered
+    if hazard.startswith("!"):
+        assert "&#33;" in rendered
 
 
 def test_render_scans_the_final_markdown_before_return(tmp_path: Path) -> None:
@@ -270,7 +323,8 @@ def test_validate_cli_has_stable_success_validation_and_load_exit_codes(
         1,
         "",
         "qualification record is invalid\n"
-        "record contains forbidden literal: compat-secret-do-not-log\n",
+        "record contains forbidden literal: compat-secret-do-not-log\n"
+        "record commands must be safe relative replay commands\n",
     )
 
     record_path.write_text('{"schema_version":1,"secret":"do-not-echo"}\n', encoding="utf-8")
@@ -350,7 +404,9 @@ def test_render_check_cli_is_read_only_and_rejects_invalid_records_before_output
     assert (rejected.returncode, rejected.stdout, rejected.stderr) == (
         2,
         "",
-        "qualification record is invalid\nrecord contains authorization material\n",
+        "qualification record is invalid\n"
+        "record contains authorization material\n"
+        "record commands must be safe relative replay commands\n",
     )
     assert markdown_path.read_text(encoding="utf-8") == "stale\n"
 

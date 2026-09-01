@@ -16,7 +16,13 @@ from tools.qualification.fingerprint import (
     fingerprint_inputs,
     required_fingerprint_inputs,
 )
-from tools.qualification.model import REQUIRED_CRITERIA, QualificationRecord, Risk, serialize_record
+from tools.qualification.model import (
+    REQUIRED_CRITERIA,
+    Measurements,
+    QualificationRecord,
+    Risk,
+    serialize_record,
+)
 from tools.qualification.redaction import redaction_issues
 from tools.qualification.validate import validate_record
 
@@ -267,6 +273,67 @@ def test_redaction_reports_all_matches_once_in_rule_order() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("name", "issue"),
+    [
+        ("password", "record contains a token or secret value"),
+        ("pass_word", "record contains a token or secret value"),
+        ("passWord", "record contains a token or secret value"),
+        ("private_key", "record contains a token or secret value"),
+        ("privateKey", "record contains a token or secret value"),
+        ("auth", "record contains authorization material"),
+        ("auth_header", "record contains authorization material"),
+        ("authHeader", "record contains authorization material"),
+        ("authorization", "record contains authorization material"),
+        ("authorization_header", "record contains authorization material"),
+        ("authorizationHeader", "record contains authorization material"),
+        ("proxy_authorization", "record contains authorization material"),
+        ("proxyAuthorization", "record contains authorization material"),
+        ("cookie", "record contains cookie material"),
+        ("cookie_header", "record contains cookie material"),
+        ("cookieHeader", "record contains cookie material"),
+        ("set_cookie", "record contains cookie material"),
+        ("setCookie", "record contains cookie material"),
+    ],
+)
+def test_redaction_rejects_every_structured_secret_name_variant(
+    tmp_path: Path,
+    name: str,
+    issue: str,
+) -> None:
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
+    record = make_record(tmp_path, "frontend-embedding")
+    evidence = replace(
+        record.evidence[0],
+        measurements=Measurements({name: "private-value"}),
+    )
+    leaked = replace(record, evidence=(evidence, *record.evidence[1:]))
+
+    issues = validate_record(leaked, tmp_path)
+
+    assert issue in issues
+    assert all("private-value" not in diagnostic for diagnostic in issues)
+
+
+@pytest.mark.parametrize(
+    "encoded_home",
+    [
+        "%2Fhome%2Falice%2Fprivate",
+        "%2FUsers%2Falice%2Fprivate",
+        "%2Froot%2Fprivate",
+        "C%3A%5CUsers%5CAlice%5Cprivate",
+        "c%3a%5cdocuments%20and%20settings%5calice%5cprivate",
+    ],
+)
+def test_redaction_rejects_one_case_insensitive_percent_decoded_home_view(
+    encoded_home: str,
+) -> None:
+    issues = redaction_issues(f'{{"artifact":"{encoded_home}"}}')
+
+    assert issues == ["record contains an absolute home path"]
+    assert encoded_home not in issues[0]
+
+
 @pytest.mark.parametrize("risk", tuple(REQUIRED_CRITERIA))
 def test_validation_accepts_only_exact_ordered_risk_input_policy(
     tmp_path: Path,
@@ -323,8 +390,8 @@ def test_risk_input_policy_covers_every_planned_runner_harness_and_fixture() -> 
     )
     assert RISK_FINGERPRINT_SUFFIXES["semantic-native"][-3:] == (
         "qualification/fixtures/semantic-corpus.json",
-        "compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json",
-        "compatibility/fixtures/mcp/hieronymus_recall/success.input.json",
+        "compatibility/fixtures/mcp/tools/hieronymus_rag_search/success.input.json",
+        "compatibility/fixtures/mcp/tools/hieronymus_recall/success.input.json",
     )
     assert "frontend/index.html" in RISK_FINGERPRINT_SUFFIXES["frontend-embedding"]
     assert "frontend/src/web/main.ts" in RISK_FINGERPRINT_SUFFIXES["frontend-embedding"]
@@ -339,6 +406,26 @@ def test_risk_input_policy_covers_every_planned_runner_harness_and_fixture() -> 
         "compatibility/fixtures/database/partial-python.sqlite",
         "compatibility/fixtures/database/unknown-schema.sqlite",
     )
+    assert tuple(len(required_fingerprint_inputs(risk)) for risk in REQUIRED_CRITERIA) == (
+        180,
+        28,
+        47,
+        26,
+    )
+    assert "tools/qualification/projections.py" in COMMON_FINGERPRINT_INPUTS
+    assert (
+        "qualification/compatibility/mcp-transport.json"
+        in RISK_FINGERPRINT_SUFFIXES["mcp-transport"]
+    )
+    assert (
+        "qualification/compatibility/legacy-database-import.json"
+        in RISK_FINGERPRINT_SUFFIXES["legacy-database-import"]
+    )
+    for excluded in (
+        "compatibility/manifest.json",
+        "compatibility/snapshots/state.json",
+    ):
+        assert all(excluded not in suffix for suffix in RISK_FINGERPRINT_SUFFIXES.values())
     for risk in REQUIRED_CRITERIA:
         assert required_fingerprint_inputs(risk) == (
             *COMMON_FINGERPRINT_INPUTS,
@@ -445,6 +532,28 @@ def test_validation_never_probes_home_or_environment(
         "uv run probe\n# injected",
         "uv run probe\r| forged | row |",
         "uv run probe\x00hidden",
+        "uv run probe $OLDPWD/script",
+        "uv run probe ${PWD}/script",
+        "uv run probe ${INPUT:-/etc/passwd}",
+        "uv run probe *.json",
+        "uv run probe fixture?.json",
+        "uv run probe fixture[0].json",
+        "uv run probe {first,second}",
+        "uv run probe $(id)",
+        "uv run probe >artifact",
+        "uv run probe 2>artifact",
+        "uv run probe (nested)",
+        "uv run probe 'quoted'",
+        'uv run probe "quoted"',
+        "uv run probe !history",
+        "uv run probe #comment",
+        "curl https://example.invalid",
+        "wget example.invalid/file",
+        "cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml",
+        "bun install --cwd frontend",
+        "uv sync",
+        "uv run python -m tools.qualification.validate https://example.invalid/record.json",
+        "qualification mcp-transport",
     ],
 )
 def test_validation_rejects_unsafe_replay_command_tokens(
@@ -470,6 +579,12 @@ def test_validation_allows_exact_planned_relative_replay_commands(tmp_path: Path
         "--target x86_64-unknown-linux-gnu",
         "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true "
         "uv run python -m tools.qualification.run all --write",
+        "uv run python -m tools.qualification.validate qualification/records/mcp-transport.json",
+        "uv run python -m tools.qualification.render --check "
+        "qualification/records/mcp-transport.json "
+        "docs/qualification/rust/mcp-transport.md",
+        "unshare --user --map-root-user --net -- bun run --cwd frontend build -- "
+        "--outDir qualification/.artifacts/frontend-dist/current --emptyOutDir",
     )
     record = replace(make_record(tmp_path, "mcp-transport"), commands=commands)
 
