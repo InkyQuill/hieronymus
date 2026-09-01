@@ -4,9 +4,9 @@
 
 **Goal:** Produce reproducible, reviewed qualification evidence for MCP transport, semantic native dependencies, frontend embedding, and legacy database import before any production Rust workspace or dependent implementation plan is started.
 
-**Architecture:** First correct and re-review the frozen MCP 2026-07-28 authority against the official stateless request model, then commit that oracle before any candidate is qualified. Four standalone Rust harness crates live under `qualification/harnesses/` and exercise only synthetic or frozen compatibility inputs in disposable work directories; native executions are explicit opt-in qualification jobs, while ordinary Python tests use fakes and the record gate is network-free. Python tooling validates a common evidence schema, renders canonical JSON into Markdown, fingerprints every input, and computes one aggregate gate without rerunning heavy probes.
+**Architecture:** First correct and re-review the frozen MCP 2026-07-28 authority against a byte-exact, commit-pinned copy of the official Draft 2020-12 schema, then commit that offline-validated oracle before any candidate is qualified. Four standalone Rust harness crates live under `qualification/harnesses/` and exercise only synthetic or frozen compatibility inputs in disposable work directories; native executions are explicit opt-in qualification jobs, while ordinary Python tests use fakes and the record gate is network-free. Python tooling validates a common evidence schema, renders canonical JSON into Markdown, fingerprints every input, and computes one aggregate gate without rerunning heavy probes.
 
-**Tech Stack:** Python 3.12 standard library, pytest, Ruff, Rust 1.96.0 on `x86_64-unknown-linux-gnu`, Cargo lockfiles, Bun 1.3.14, rmcp 3.1.4 candidate, LanceDB 0.37.1 candidate, ort 2.0.0-rc.13 candidate, rust-embed 8.12.0 candidate, rusqlite 0.40.2 candidate, SQLite FTS5.
+**Tech Stack:** Python 3.12 standard library, jsonschema 4.26.0 Draft 2020-12 validation, pytest, Ruff, Rust 1.96.0 on `x86_64-unknown-linux-gnu`, Cargo lockfiles, Bun 1.3.14, rmcp 3.1.4 candidate, LanceDB 0.37.1 candidate, ort 2.0.0-rc.13 candidate, rust-embed 8.12.0 candidate, rusqlite 0.40.2 candidate, SQLite FTS5.
 
 **Spec:** `docs/superpowers/specs/2026-08-31-rust-migration-program-design.md`
 
@@ -19,7 +19,10 @@
 - macOS and Windows are not supported by the initial cutover.
 - FTS5-only operation is the required baseline for the initial Linux cutover.
 - The MCP protocol revision is exactly `2026-07-28`; stdio is newline-delimited JSON-RPC, Streamable HTTP is `POST /mcp` with JSON or request-scoped SSE, and `/api/mcp/{operation}` remains an intentionally removed private Python bridge.
-- MCP 2026-07-28 is stateless: there is no `initialize`, `notifications/initialized`, or transport session; every request carries exact reserved `params._meta["io.modelcontextprotocol/protocolVersion"]` and `params._meta["io.modelcontextprotocol/clientCapabilities"]`, canonical requests include SHOULD-level `params._meta["io.modelcontextprotocol/clientInfo"]` but its absence is accepted, and applicable HTTP requests carry `MCP-Protocol-Version` plus matching `Mcp-Method`. `Mcp-Name` is required only for named methods (`tools/call`, `resources/read`, and `prompts/get`): tools/list omits it, while tools/call carries `Mcp-Name: hieronymus_status`. Every successful tools/list or tools/call result over stdio, HTTP JSON, or HTTP SSE has recognized `resultType: "complete"`.
+- MCP 2026-07-28 is stateless: there is no `initialize`, `notifications/initialized`, or transport session; every request carries exact reserved `params._meta["io.modelcontextprotocol/protocolVersion"]` and `params._meta["io.modelcontextprotocol/clientCapabilities"]`, canonical requests include SHOULD-level `params._meta["io.modelcontextprotocol/clientInfo"]` but its absence is accepted, and applicable HTTP requests carry `MCP-Protocol-Version` plus matching `Mcp-Method`. `Mcp-Name` is required only for named methods (`tools/call`, `resources/read`, and `prompts/get`): tools/list omits it, while tools/call carries `Mcp-Name: hieronymus_status`.
+- The checked-in MCP authority is the byte-exact official 2026-07-28 Draft 2020-12 schema from upstream commit `271ecc9accafdd9b83a3c869fa67c22953b2af80`, SHA-256 `ef70b61f99b6d2e5e3b46863822eab08dff6a45bedc7a08914e0e5b133f40203`. Ordinary tests and both compatibility/qualification gates read only that fixture and never fetch or silently reformat it.
+- Every canonical tools/list wire response contains exactly the required `cacheScope: "private"`, `ttlMs: 0`, `resultType: "complete"`, and `tools`; every tool uses wire key `inputSchema`, while semantic parity explicitly maps it to the current internal snapshot key `input_schema` without ever emitting `input_schema`. Every successful tools/call result also has `resultType: "complete"`. The compatibility authority is specifically configured to omit SHOULD-level `_meta["io.modelcontextprotocol/serverInfo"]` on every success because it is implementation-neutral and a self-reported package version would create a volatile contract unrelated to protocol behavior; the fixtures record and tests enforce that configured omission.
+- A missing, unexpected, or body-mismatched `MCP-Protocol-Version`, `Mcp-Method`, or applicable `Mcp-Name` returns HTTP 400 with a JSON-RPC `HeaderMismatch` error (`-32020`). A coherent unsupported-version request carries the same unsupported value in the protocol header and body `_meta`, then returns HTTP 400 `UnsupportedProtocolVersionError` (`-32022`) with exact `requested` and `supported` data; header/body disagreement is never classified as unsupported version.
 - SQLite remains authoritative for RAG sources, chunks, metadata, and semantic job state; embeddings and LanceDB tables are disposable derived artifacts.
 - The semantic qualification must record exact crate versions/features, binary size, checksum-verified model load, a 10,000-chunk actual ANN index, checked series pre-filter-before-ANN plan/cardinality proof, zero cross-series hits, insert/search/delete, generation isolation, SQLite-durable lease/counter/cancellation recovery, zero SQLite-write-transaction spans across ONNX/LanceDB I/O, a complete 50-query run, and nonempty/isolation/rebuild-equivalent FTS fallback.
 - Any failed semantic criterion selects `fts-only` for the initial Linux release; it never blocks the Rust workspace plan or the `x86_64-unknown-linux-gnu` release by itself.
@@ -35,18 +38,19 @@
 - Rust does not write source code into translation workspaces.
 - Qualification inputs are checked-in synthetic fixtures or deterministic generated corpora. Harnesses must never enumerate `$HOME`, read the developer's real data root, dump the environment, or access `/home/inky/Yandex.Disk/Translation`; Rust/Cargo/Bun toolchain and package caches are the only permitted home-scoped reads and their absolute paths are normalized out of evidence.
 - Canonical records contain no secrets, source-row text, hostnames, usernames, absolute home paths, bearer headers, cookies, launch grants, provider keys, or raw process logs.
-- Network access is permitted only for Task 1's named official-spec authority review and the explicit dependency-fetch, Bun-install, and checksum-verified model/runtime-acquisition steps. Ordinary record validation and every replay after acquisition run offline and make no network request.
+- Network access is permitted only for Task 1's named official-spec review and one-time retrieval of its commit-pinned schema bytes, plus the explicit dependency-fetch, Bun-install, and checksum-verified model/runtime-acquisition steps. Ordinary compatibility tests, record validation, and every replay after acquisition run offline and make no network request.
 - Ordinary `uv run pytest` tests inject bounded fake executables and never require Cargo, Rust artifacts, Bun packages, ONNX Runtime, a model, or a native-library cache. Live Rust/native qualification is explicit through `HIERONYMUS_QUALIFICATION_LIVE=1` commands and its dedicated workflow only.
 - Every live run writes beneath `qualification/.artifacts/`, hashes frozen inputs before and after use, removes transient work/log/install directories on success or failure, and leaves only ignored caches plus reviewed records.
 - Every Cargo build/test/Clippy command sets a risk-specific `CARGO_TARGET_DIR` beneath `qualification/.artifacts/cargo-target/`; crash probes disable core dumps and run in an owned process group that the runner terminates and reaps in `finally`.
 - Tool discovery occurs against the original environment before HOME/XDG sanitization. It preserves the lexical cargo/rustup invocation paths separately from their resolved executable targets; every live runner invokes the preserved cargo shim, passes the resulting `ToolRoots` and bounded target to `safe_subprocess_env`, and uses that one safe environment for all Cargo/Bun/native children without serializing absolute tool paths.
 - Each harness has its own `Cargo.toml` and committed `Cargo.lock`; direct risk dependencies are exact pins and all resolved versions/features are copied from `cargo metadata --locked` and `cargo tree -e features --locked` into the record.
-- Each record's input digest covers `qualification/prerequisites.json`, `qualification/rust-toolchain.toml`, every common qualification module (`model.py`, `fingerprint.py`, `redaction.py`, `validate.py`, `render.py`, `acquire.py`, `process.py`, and `clean.py`), its own Python runner, Cargo manifest/lockfile/source/tests, every consumed compatibility manifest/snapshot/fixture including every actual HTTP route case, and risk-specific frontend/corpus inputs; changing any of them makes the record stale.
+- Each record's input digest covers `qualification/prerequisites.json`, `qualification/rust-toolchain.toml`, every common qualification module (`model.py`, `fingerprint.py`, `redaction.py`, `validate.py`, `render.py`, `acquire.py`, `process.py`, and `clean.py`), its own Python runner, Cargo manifest/lockfile/source/tests, every consumed compatibility manifest/snapshot/fixture including every actual HTTP route case, and risk-specific frontend/corpus inputs; the MCP record additionally covers the official schema bytes and its pin metadata. Changing any covered input makes the record stale.
 - Pavel Obruchnikov `<me@inkyquill.net>` is the acceptance owner for all four records and the aggregate gate unless a compatibility-manifest entry explicitly delegates another named owner.
 
 ## Normative Inputs
 
-- `https://modelcontextprotocol.io/specification/2026-07-28` (used only for Task 1 authority correction/review; ordinary replay consumes the corrected checked-in oracle)
+- `https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2026-07-28/schema.json` (official MCP schema reviewed and pinned by Task 1; ordinary replay uses the checked-in exact bytes)
+- `https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/basic/transports/streamable-http.mdx` (official Streamable HTTP rules reviewed only by Task 1)
 - `docs/adr/0013-semantic-index-and-platform-support.md`
 - `docs/adr/0015-mcp-protocol-and-transport.md`
 - `docs/adr/0010-data-locations-schema-ownership-and-upgrade.md`
@@ -90,6 +94,9 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 - `qualification/harnesses/legacy-database-import/`: standalone read-only SQLite import probe and lockfile.
 - `tools/compatibility/inventory_mcp.py`: generator for the corrected official MCP 2026-07-28 protocol oracle.
 - `tools/compatibility/inventory_http.py`: generator for MCP Host/auth/version/method/name HTTP route cases.
+- `compatibility/authorities/mcp/2026-07-28/schema.json`: byte-exact, commit-pinned official Draft 2020-12 schema used offline.
+- `compatibility/authorities/mcp/2026-07-28/schema.source.json`: immutable upstream URL/commit/SHA-256 metadata for the schema bytes.
+- `tools/compatibility/mcp_schema.py`: offline pin verification and named official-schema definition validation.
 - `qualification/records/*.json`: canonical machine evidence for four risks plus the aggregate gate.
 - `docs/qualification/rust/*.md`: generated human-readable records; never hand-edited independently of JSON.
 - `tools/qualification/model.py`: typed records, required-criterion sets, and consequence constants.
@@ -118,29 +125,146 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 
 ### Task 1: Correct And Re-Review The Official MCP 2026-07-28 Authority
 
-**Complexity:** Medium, 2–3 hours.
+**Complexity:** High, 3–4 hours.
 
 **Files:**
+- Modify: `pyproject.toml`
+- Modify: `uv.lock`
+- Create: `compatibility/authorities/mcp/2026-07-28/schema.json`
+- Create: `compatibility/authorities/mcp/2026-07-28/schema.source.json`
+- Create: `tools/compatibility/mcp_schema.py`
 - Modify: `tools/compatibility/inventory_mcp.py`
 - Modify: `tools/compatibility/inventory_http.py`
 - Modify: `tools/compatibility/check.py`
 - Modify: `tests/compatibility/test_mcp_inventory.py`
 - Modify: `tests/compatibility/test_http_inventory.py`
+- Modify: `tests/compatibility/test_check.py`
 - Modify: `compatibility/fixtures/mcp/protocol.json`
 - Modify: `compatibility/fixtures/http/route-cases.json`
-- Modify if its MCP transport metadata changes: `compatibility/manifest.json`
+- Modify: `compatibility/snapshots/state.json`
+- Modify: `compatibility/manifest.json`
+- Modify: `compatibility/fixtures/diagnostics/check-success.txt`
 
 **Interfaces:**
-- Consumes: official MCP 2026-07-28 request/response and Streamable HTTP rules plus ADR 0015's transport/auth/Host requirements.
-- Produces: `_protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]` whose target requests carry exact reserved `params._meta` keys, whose every successful envelope has `resultType: "complete"`, and whose stdio/HTTP JSON/SSE variants contain no initialize/session fields.
+- Consumes: the official MCP 2026-07-28 schema at upstream commit `271ecc9accafdd9b83a3c869fa67c22953b2af80`, the official Streamable HTTP rules, and ADR 0015's transport/auth/Host requirements.
+- Produces immutable authority constants `OFFICIAL_SCHEMA_SOURCE: dict[str, object]` and `OFFICIAL_SCHEMA_SHA256: str`: upstream URL `https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/271ecc9accafdd9b83a3c869fa67c22953b2af80/schema/2026-07-28/schema.json`, SHA-256 `ef70b61f99b6d2e5e3b46863822eab08dff6a45bedc7a08914e0e5b133f40203`, and Draft 2020-12 dialect. Schema bytes are copied exactly once and are never generated, normalized, or fetched by tests/checks.
+- Produces offline helpers in `tools.compatibility.mcp_schema`: `authority_issues(repo_root: Path) -> tuple[str, ...]` and `definition_issues(repo_root: Path, definition: Literal["ListToolsResultResponse", "CallToolResultResponse", "HeaderMismatchError", "UnsupportedProtocolVersionError"], instance: object) -> tuple[str, ...]`. Both verify the pin first; definition validation uses `jsonschema.Draft202012Validator` and deterministic sorted diagnostics.
+- Produces: `_wire_tool(tool: dict[str, object]) -> dict[str, object]`, which maps current internal `input_schema` to wire `inputSchema` and emits only `name`, `description`, and `inputSchema` for the current snapshot shape.
+- Produces constant: `RESPONSE_METADATA_RULES: dict[str, object]`, the exact configured serverInfo omission copied into both target fixtures.
+- Produces: `_protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]` whose target requests carry exact reserved `params._meta` keys, whose tools/list response has exact required `cacheScope: "private"`, `ttlMs: 0`, `resultType: "complete"`, and `tools`, whose every successful envelope has `resultType: "complete"`, and whose stdio/HTTP JSON/SSE variants contain no initialize/session fields or internal `input_schema` wire keys.
 - Test helper: `_successful_result_envelopes(target: dict[str, object]) -> tuple[dict[str, object], ...]` returns tools/list and tools/call success envelopes from stdio, HTTP JSON, and HTTP SSE fixture branches.
 - Produces validator: `_request_metadata_issues(request: dict[str, object]) -> tuple[str, ...]`, accepting absence of only clientInfo while rejecting missing/wrong required reserved keys and every direct legacy metadata field.
-- Produces: the `http.route.post.mcp` target cases in `_route_cases(snapshot: dict[str, object])`, covering valid tools/list without `Mcp-Name`, valid tools/call with its matching name, invalid Host, missing/invalid bearer, missing/wrong protocol metadata, missing/wrong `Mcp-Method`, unexpected tools/list name, and missing/wrong tools/call name.
+- Produces configured response metadata policy in both target fixtures: `io.modelcontextprotocol/serverInfo` has `configured: "omit"` and the exact implementation-neutral/volatile-version rationale below; every success omits `_meta` and tests prove this is the configured exception to the SHOULD.
+- Produces: the `http.route.post.mcp` target cases in `_route_cases(snapshot: dict[str, object])`, with two successes and exactly eleven failures. Seven header failures return HTTP 400 `HeaderMismatch` (`-32020`); `protocol-version-header-mismatch` changes only the raw header and is classified as header mismatch. The distinct `unsupported-version` changes one semantic protocol-version field represented in both mirrored wire locations, keeps those values equal, and returns HTTP 400 `UnsupportedProtocolVersionError` (`-32022`) with exact requested/supported data. Every other failure mutates or omits one applicable raw request field.
+- Produces constant: `HEADER_MISMATCH_MESSAGES: dict[str, str]`, the exact seven-case message mapping used by the generator and whole-body tests.
+- Test helper: `_changed_request_leaf_paths(reference: dict[str, object], candidate: dict[str, object]) -> set[tuple[str, ...]]` reports exact changed/omitted request leaves for the one-raw-field invariant.
+- Ownership: the two new pytest node ids are implementation-internal authority/gate checks, so `inventory_state --write` refreshes `compatibility/snapshots/state.json`, `compatibility/manifest.json`, and the diagnostic summary; no new public contract id is added.
 - Produces: a separately reviewed compatibility commit that is an immutable prerequisite of Tasks 6–8; candidate qualification must not edit or normalize this oracle.
 
-- [ ] **Step 1: Replace obsolete fixture assertions with failing official-wire assertions**
+- [ ] **Step 1: Pin the exact official schema and its explicit validator dependency**
+
+Add exact dev dependency `jsonschema==4.26.0` to `pyproject.toml`; it is already present transitively in the current lock, but Task 1 makes the compatibility validator's ownership direct. Refresh only dependency metadata offline:
+
+```bash
+uv lock --offline
+```
+
+Retrieve the schema only in this named authority step and preserve the response bytes exactly:
+
+```bash
+curl --fail --silent --show-error --location \
+  https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/271ecc9accafdd9b83a3c869fa67c22953b2af80/schema/2026-07-28/schema.json \
+  --output compatibility/authorities/mcp/2026-07-28/schema.json
+sha256sum compatibility/authorities/mcp/2026-07-28/schema.json
+```
+
+Expected SHA-256: `ef70b61f99b6d2e5e3b46863822eab08dff6a45bedc7a08914e0e5b133f40203`. Create `schema.source.json` exactly as:
+
+```json
+{
+  "schema_version": 1,
+  "protocol_revision": "2026-07-28",
+  "draft": "https://json-schema.org/draft/2020-12/schema",
+  "upstream_commit": "271ecc9accafdd9b83a3c869fa67c22953b2af80",
+  "upstream_url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/271ecc9accafdd9b83a3c869fa67c22953b2af80/schema/2026-07-28/schema.json",
+  "sha256": "ef70b61f99b6d2e5e3b46863822eab08dff6a45bedc7a08914e0e5b133f40203"
+}
+```
+
+Never run a JSON formatter over `schema.json`; byte identity, not semantic reserialization, is the pin.
+
+- [ ] **Step 2: Replace shallow fixture assertions with failing official-schema and exact-wire assertions**
 
 ```python
+def test_official_mcp_schema_pin_and_target_envelopes() -> None:
+    protocol = json.loads(
+        (ROOT / "compatibility/fixtures/mcp/protocol.json").read_text(encoding="utf-8")
+    )
+    route_cases = json.loads(
+        (ROOT / "compatibility/fixtures/http/route-cases.json").read_text(encoding="utf-8")
+    )
+    route_target = next(
+        route["target"]
+        for route in route_cases["routes"]
+        if route["contract_id"] == "http.route.post.mcp"
+    )
+    source = json.loads(
+        (ROOT / "compatibility/authorities/mcp/2026-07-28/schema.source.json")
+        .read_text(encoding="utf-8")
+    )
+    schema_bytes = (
+        ROOT / "compatibility/authorities/mcp/2026-07-28/schema.json"
+    ).read_bytes()
+    assert source == OFFICIAL_SCHEMA_SOURCE
+    assert hashlib.sha256(schema_bytes).hexdigest() == OFFICIAL_SCHEMA_SHA256
+    assert json.loads(schema_bytes)["$schema"] == (
+        "https://json-schema.org/draft/2020-12/schema"
+    )
+    assert authority_issues(ROOT) == ()
+
+    protocol_envelopes = _successful_result_envelopes(protocol["target"])
+    route_envelopes = tuple(
+        item["response"]["body"] for item in route_target["successes"]
+    )
+    assert len(protocol_envelopes) == 6
+    assert len(route_envelopes) == 2
+    for envelope in (*protocol_envelopes, *route_envelopes):
+        definition = (
+            "ListToolsResultResponse"
+            if envelope["id"] == 1
+            else "CallToolResultResponse"
+        )
+        assert definition_issues(ROOT, definition, envelope) == ()
+        assert envelope["result"]["resultType"] == "complete"
+        assert "_meta" not in envelope["result"]
+
+    list_results = [
+        envelope["result"]
+        for envelope in (*protocol_envelopes, *route_envelopes)
+        if envelope["id"] == 1
+    ]
+    assert len(list_results) == 4
+    assert all(set(result) == {"cacheScope", "resultType", "tools", "ttlMs"} for result in list_results)
+    assert all(result["cacheScope"] == "private" for result in list_results)
+    assert all(result["ttlMs"] == 0 for result in list_results)
+    assert all(
+        set(tool) == {"description", "inputSchema", "name"}
+        and "input_schema" not in tool
+        for tool in protocol["target"]["tools_list"]["response"]["result"]["tools"]
+    )
+
+    snapshot_registry = {
+        tool["name"]: tool["input_schema"] for tool in snapshot_mcp()["tools"]
+    }
+    target_registry = {
+        tool["name"]: tool["inputSchema"]
+        for tool in protocol["target"]["tools_list"]["response"]["result"]["tools"]
+    }
+    assert target_registry == snapshot_registry
+    assert protocol["target"]["response_metadata_rules"] == RESPONSE_METADATA_RULES
+    assert route_target["response_metadata_rules"] == RESPONSE_METADATA_RULES
+
+
 def test_protocol_fixture_is_stateless_2026_07_28() -> None:
     protocol = json.loads(
         (ROOT / "compatibility/fixtures/mcp/protocol.json").read_text(encoding="utf-8")
@@ -184,12 +308,6 @@ def test_protocol_fixture_is_stateless_2026_07_28() -> None:
         "Mcp-Session-Id" not in exchange["request"]["headers"]
         for exchange in http_exchanges.values()
     )
-    successes = _successful_result_envelopes(target)
-    assert len(successes) == 6
-    assert all(
-        envelope["result"]["resultType"] == "complete"
-        for envelope in successes
-    )
     without_client_info = json.loads(json.dumps(target["requests"][0]))
     del without_client_info["params"]["_meta"][
         "io.modelcontextprotocol/clientInfo"
@@ -224,11 +342,14 @@ def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
         "name": "compatibility-replay",
         "version": "1.0.0",
     }
-    assert {failure["id"] for failure in case["failures"]} == {
+    failures = {failure["id"]: failure for failure in case["failures"]}
+    assert len(failures) == 11
+    assert set(failures) == {
         "invalid-host",
         "missing-bearer",
         "invalid-bearer",
         "missing-version",
+        "protocol-version-header-mismatch",
         "unsupported-version",
         "missing-mcp-method",
         "wrong-mcp-method",
@@ -236,15 +357,81 @@ def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
         "missing-mcp-name-tools-call",
         "wrong-mcp-name-tools-call",
     }
+    header_mismatch_ids = {
+        "missing-version",
+        "protocol-version-header-mismatch",
+        "missing-mcp-method",
+        "wrong-mcp-method",
+        "unexpected-mcp-name-tools-list",
+        "missing-mcp-name-tools-call",
+        "wrong-mcp-name-tools-call",
+    }
+    for failure_id in header_mismatch_ids:
+        failure = failures[failure_id]
+        assert failure["response"]["status"] == 400
+        assert failure["response"]["body"] == {
+            "jsonrpc": "2.0",
+            "id": failure["request"]["body"]["id"],
+            "error": {
+                "code": -32020,
+                "message": HEADER_MISMATCH_MESSAGES[failure_id],
+            },
+        }
+        assert definition_issues(
+            ROOT, "HeaderMismatchError", failure["response"]["body"]
+        ) == ()
+
+    mismatch = failures["protocol-version-header-mismatch"]
+    assert mismatch["request"]["headers"]["MCP-Protocol-Version"] == "2025-06-18"
+    assert mismatch["request"]["body"]["params"]["_meta"][
+        "io.modelcontextprotocol/protocolVersion"
+    ] == "2026-07-28"
+    unsupported = failures["unsupported-version"]
+    assert unsupported["request"]["headers"]["MCP-Protocol-Version"] == "2025-06-18"
+    assert unsupported["request"]["body"]["params"]["_meta"][
+        "io.modelcontextprotocol/protocolVersion"
+    ] == "2025-06-18"
+    assert unsupported["response"] == {
+        "status": 400,
+        "headers": {"Content-Type": "application/json; charset=utf-8"},
+        "body": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32022,
+                "message": "Unsupported protocol version: 2025-06-18",
+                "data": {
+                    "requested": "2025-06-18",
+                    "supported": ["2026-07-28"],
+                },
+            },
+        },
+    }
+    assert definition_issues(
+        ROOT, "UnsupportedProtocolVersionError", unsupported["response"]["body"]
+    ) == ()
+    assert _changed_request_leaf_paths(tools_list, unsupported["request"]) == {
+        ("body", "params", "_meta", "io.modelcontextprotocol/protocolVersion"),
+        ("headers", "MCP-Protocol-Version"),
+    }
+    for failure_id, failure in failures.items():
+        if failure_id == "unsupported-version":
+            continue
+        base = tools_call if failure_id.endswith("tools-call") else tools_list
+        assert len(_changed_request_leaf_paths(base, failure["request"])) == 1
 ```
 
-- [ ] **Step 2: Run the focused tests and verify RED against the obsolete fixture**
+- [ ] **Step 3: Run the focused tests and verify RED against the invalid response/error oracle**
 
-Run: `uv run pytest tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_is_stateless_2026_07_28 tests/compatibility/test_http_inventory.py::test_http_mcp_cases_cover_official_metadata_and_local_security -v`
+Run: `uv run pytest tests/compatibility/test_mcp_inventory.py::test_official_mcp_schema_pin_and_target_envelopes tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_is_stateless_2026_07_28 tests/compatibility/test_http_inventory.py::test_http_mcp_cases_cover_official_metadata_and_local_security -v`
 
-Expected: FAIL because the current target fixture still contains `initialize`, uses direct legacy params, lacks required `_meta` capabilities and `resultType: "complete"` coverage, and does not prove that tools/list omits `Mcp-Name` while tools/call requires its matching name.
+Expected: FAIL because all four frozen tools/list envelopes omit `cacheScope`/`ttlMs`, the 39 protocol tools emit internal `input_schema` instead of wire `inputSchema`, header failures are local non-JSON-RPC objects, the current `unsupported-version` is really a one-header mismatch, there is no distinct coherent unsupported-version case, and response-side serverInfo omission is not configured or tested.
 
-- [ ] **Step 3: Implement the corrected generators and frozen target shapes**
+- [ ] **Step 4: Implement offline Draft 2020-12 validation and corrected success wire objects**
+
+`tools.compatibility.mcp_schema` reads only the two checked-in authority files. `authority_issues` requires the exact metadata object from Step 1, hashes raw `schema.json` bytes, parses them only after the hash matches, requires the exact `$schema` dialect, and runs `Draft202012Validator.check_schema`. `definition_issues` builds a validator schema by copying the full official schema and adding top-level `$ref: "#/$defs/<definition>"`; it sorts errors by absolute instance path, schema path, and message. Unknown definition names are rejected before validation. No helper imports an HTTP client or accepts a URL/path override.
+
+The compatibility gate calls `authority_issues` before inventory generation and validates the generated in-memory protocol and route envelopes, not only checked-in fixture bytes: all four tools/list and four tools/call canonical envelopes use their named response definitions, the seven header error bodies use `HeaderMismatchError`, and the coherent unsupported body uses `UnsupportedProtocolVersionError`. Add `test_compatibility_gate_validates_official_mcp_schema_offline`; monkeypatch socket/URL open primitives to fail, wrap `_protocol_fixture` so one generated in-memory canonical list response loses `ttlMs`, run the MCP inventory validation, and require a deterministic official-schema failure rather than a fetch.
 
 Define target request metadata exactly as:
 
@@ -276,32 +463,128 @@ tool_call_request = {
 }
 ```
 
-Store those requests in list/call order and freeze `metadata_rules.required` to protocolVersion/clientCapabilities while `metadata_rules.should` contains clientInfo. Implement `_request_metadata_issues` from those exact rules. Canonical requests include clientInfo, but a request omitting only `io.modelcontextprotocol/clientInfo` remains valid; missing either required key or placing any metadata directly in `params` is invalid. Add `resultType: "complete"` inside every successful `result` for tools/list and tools/call. Store both operations as newline-delimited stdio exchanges and as Streamable HTTP JSON/SSE exchanges; `_successful_result_envelopes(target)` enumerates all six successful envelopes and tests each exact value. Both HTTP requests include Host, bearer, `MCP-Protocol-Version`, and a matching `Mcp-Method`. The tools/list exchange omits `Mcp-Name`; the tools/call exchange includes `Mcp-Name: hieronymus_status`. `_route_cases` stores those as `successes` ids `tools-list` and `tools-call`; failures change/omit exactly one applicable field and include an unexpected-name tools/list case plus missing/wrong-name tools/call cases. The general header rule requires `Mcp-Name` only for `tools/call`, `resources/read`, and `prompts/get`. Delete handshake/session shapes from the entire protocol fixture. Qualification consumes only target.
+Store those requests in list/call order and freeze `metadata_rules.required` to protocolVersion/clientCapabilities while `metadata_rules.should` contains clientInfo. Implement `_request_metadata_issues` from those exact rules. Canonical requests include clientInfo, but a request omitting only `io.modelcontextprotocol/clientInfo` remains valid; missing either required key or placing any metadata directly in `params` is invalid.
 
-- [ ] **Step 4: Regenerate and prove the authority is complete and deterministic**
+Map, do not rename in place, the internal registry:
+
+```python
+def _wire_tool(tool: dict[str, object]) -> dict[str, object]:
+    return {
+        "name": tool["name"],
+        "description": tool["description"],
+        "inputSchema": copy.deepcopy(tool["input_schema"]),
+    }
+
+
+tools_list_result = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+        "cacheScope": "private",
+        "ttlMs": 0,
+        "resultType": "complete",
+        "tools": [_wire_tool(tool) for tool in tools],
+    },
+}
+```
+
+The current Python response remains byte-faithful under `protocol["current"]`; only the target wire projection changes. Semantic parity compares current `inputSchema`, target `inputSchema`, and snapshot-internal `input_schema` by explicit comprehensions. Assert `input_schema` is absent from every target tool. Use `cacheScope: "private"` because the endpoint is bearer-scoped and `ttlMs: 0` so the compatibility oracle creates no stale-registry guarantee.
+
+Record this exact configured omission in both target fixtures and require every success to omit `_meta`:
+
+```python
+RESPONSE_METADATA_RULES = {
+    "io.modelcontextprotocol/serverInfo": {
+        "configured": "omit",
+        "rationale": (
+            "The compatibility oracle is implementation-neutral; freezing self-reported "
+            "package identity would create a volatile version contract unrelated to "
+            "protocol behavior."
+        ),
+    }
+}
+```
+
+Store both operations as newline-delimited stdio exchanges and as Streamable HTTP JSON/SSE exchanges; `_successful_result_envelopes(target)` enumerates all six successful envelopes. Both HTTP requests include Host, bearer, `MCP-Protocol-Version`, and matching `Mcp-Method`. The tools/list exchange omits `Mcp-Name`; tools/call includes `Mcp-Name: hieronymus_status`. The route-level tools/list success independently freezes the same four required fields, with an empty `tools` array, and tools/call remains a valid `CallToolResultResponse`. Delete handshake/session shapes from the entire protocol fixture. Qualification consumes only target.
+
+- [ ] **Step 5: Implement exact HeaderMismatch and coherent unsupported-version route cases**
+
+Keep Host and bearer failures under their existing local security contracts. Replace only the seven protocol-header failures with whole JSON-RPC bodies shaped as:
+
+```python
+{
+    "jsonrpc": "2.0",
+    "id": request_body["id"],
+    "error": {"code": -32020, "message": HEADER_MISMATCH_MESSAGES[failure_id]},
+}
+```
+
+Freeze these exact deterministic messages:
+
+```python
+HEADER_MISMATCH_MESSAGES = {
+    "missing-version": "Header mismatch: required MCP-Protocol-Version header is missing",
+    "protocol-version-header-mismatch": (
+        "Header mismatch: MCP-Protocol-Version header value '2025-06-18' "
+        "does not match body value '2026-07-28'"
+    ),
+    "missing-mcp-method": "Header mismatch: required Mcp-Method header is missing",
+    "wrong-mcp-method": (
+        "Header mismatch: Mcp-Method header value 'tools/call' "
+        "does not match body value 'tools/list'"
+    ),
+    "unexpected-mcp-name-tools-list": (
+        "Header mismatch: Mcp-Name header must be omitted for tools/list"
+    ),
+    "missing-mcp-name-tools-call": (
+        "Header mismatch: required Mcp-Name header is missing for tools/call"
+    ),
+    "wrong-mcp-name-tools-call": (
+        "Header mismatch: Mcp-Name header value 'hieronymus_recall' "
+        "does not match body value 'hieronymus_status'"
+    ),
+}
+```
+
+Rename the old one-header `unsupported-version` mutation to `protocol-version-header-mismatch`; it changes only `headers["MCP-Protocol-Version"]` to `2025-06-18` and returns `-32020`. Add a new `unsupported-version` derived from tools/list whose header and `params._meta["io.modelcontextprotocol/protocolVersion"]` both equal `2025-06-18`. Its exact response is the object in Step 2: HTTP 400, JSON-RPC id `1`, code `-32022`, message `Unsupported protocol version: 2025-06-18`, and data `{"requested": "2025-06-18", "supported": ["2026-07-28"]}`.
+
+Validation order is normative for Task 7: first compare required mirrored headers/body and emit `HeaderMismatch`; only after those values agree check server support and emit `UnsupportedProtocolVersionError`. The coherent unsupported case is the sole raw two-location exception because the two locations represent one semantic field. `_changed_request_leaf_paths` proves its exact pair and proves each of the other ten failures changes/omits exactly one applicable raw leaf relative to its tools/list or tools/call success.
+
+- [ ] **Step 6: Regenerate ownership and prove the authority is complete and deterministic**
 
 Run: `uv run python -m tools.compatibility.inventory_mcp --write`
 
 Run: `uv run python -m tools.compatibility.inventory_http --write`
 
+Run: `uv run python -m tools.compatibility.inventory_state --write`
+
 Run: `uv run pytest tests/compatibility/test_mcp_inventory.py tests/compatibility/test_http_inventory.py tests/compatibility/test_check.py -v`
 
-Expected: PASS; target requests use only exact reserved `_meta` keys, clientInfo absence is accepted, required metadata absence is rejected, HTTP cases prove tools/list omits name and tools/call requires its matching name while covering Host/auth/version/method failures, and all tools/list/tools/call stdio/JSON/SSE successes equal `resultType: "complete"`.
+Expected: PASS without network; the authority pin/dialect/hash match, every generated and checked-in canonical envelope validates under its exact official definition, target requests use only exact reserved `_meta` keys, semantic registry parity maps internal `input_schema` to wire `inputSchema`, all four list results carry the exact four required fields, configured serverInfo omission is explicit on all eight successes, and the eleven HTTP failures have exact ids, mutations, status, bodies, and error classifications.
 
-- [ ] **Step 5: Run the compatibility gate before any candidate work**
+`inventory_state --write` adds exactly these two new implementation-internal ownership nodes and refreshes only the derived state snapshot/manifest/diagnostic bytes beyond the MCP/HTTP fixtures:
+
+```text
+tests/compatibility/test_mcp_inventory.py::test_official_mcp_schema_pin_and_target_envelopes
+tests/compatibility/test_check.py::test_compatibility_gate_validates_official_mcp_schema_offline
+```
+
+The public contract count and contract ids remain unchanged; the schema authority itself is not a product surface contract.
+
+- [ ] **Step 7: Run the offline compatibility gate before any candidate work**
 
 Run: `uv run --no-cache --no-sync python -B -m tools.compatibility.check`
 
-Expected: exit `0` with no snapshot, fixture, manifest, ownership, or route-case drift.
+Expected: exit `0` with no network and no authority, official-schema, snapshot, fixture, manifest, ownership, or route-case drift. Corrupting the authority bytes, their metadata, a generated `inputSchema`, a required list field, a HeaderMismatch body, or unsupported-version data makes the gate fail deterministically.
 
-- [ ] **Step 6: Commit the corrected oracle as the candidate-qualification prerequisite**
+- [ ] **Step 8: Commit the corrected oracle as the candidate-qualification prerequisite**
 
 ```bash
-git add tools/compatibility/inventory_mcp.py tools/compatibility/inventory_http.py tools/compatibility/check.py tests/compatibility/test_mcp_inventory.py tests/compatibility/test_http_inventory.py compatibility/fixtures/mcp/protocol.json compatibility/fixtures/http/route-cases.json compatibility/manifest.json
+git add pyproject.toml uv.lock compatibility/authorities/mcp/2026-07-28/schema.json compatibility/authorities/mcp/2026-07-28/schema.source.json tools/compatibility/mcp_schema.py tools/compatibility/inventory_mcp.py tools/compatibility/inventory_http.py tools/compatibility/check.py tests/compatibility/test_mcp_inventory.py tests/compatibility/test_http_inventory.py tests/compatibility/test_check.py compatibility/fixtures/mcp/protocol.json compatibility/fixtures/http/route-cases.json compatibility/snapshots/state.json compatibility/manifest.json compatibility/fixtures/diagnostics/check-success.txt
 git commit -m "fix: align MCP compatibility oracle with 2026-07-28"
 ```
 
-Stop if this commit is not accepted. Tasks 6–8 fingerprint and consume this corrected commit; they must never preserve or replay the obsolete target fixture.
+Stop if this commit is not accepted. Tasks 6–8 consume the corrected commit, and Task 8 fingerprints the authority bytes, pin metadata, manifest, schema-validated protocol/route fixtures, and internal snapshot used for semantic comparison; candidate work must never fetch a schema, preserve `input_schema` on the wire, normalize the authority bytes, or replay the obsolete target fixture.
 
 ### Task 2: Common Qualification Record Schema And Decision Model
 
@@ -352,6 +635,7 @@ def test_every_risk_has_exactly_one_ordered_criterion_set() -> None:
         "frontend-embedding",
         "legacy-database-import",
     )
+    assert len(REQUIRED_CRITERIA["mcp-transport"]) == 17
     assert all(len(criteria) == len(set(criteria)) for criteria in REQUIRED_CRITERIA.values())
 ```
 
@@ -396,6 +680,8 @@ REQUIRED_CRITERIA: dict[Risk, tuple[str, ...]] = {
         "streamable-http-sse",
         "http-method-name-headers",
         "http-host-auth-version-cases",
+        "official-schema-envelopes",
+        "header-mismatch-errors",
         "registry-identity",
         "result-error-identity",
         "result-type-required",
@@ -651,7 +937,7 @@ COMMON_FINGERPRINT_INPUTS = (
 )
 ```
 
-Validation requires every Task 2 criterion exactly once, exact decision/consequence, `COMMON_FINGERPRINT_INPUTS`, a nonempty ordered relative command list, all cleanup booleans except `user_data_opened` true, and `user_data_opened` false. Task 3 updates `make_record` to compute its digest through `fingerprint_inputs`; the tests seed every future common path in a temporary root, so this task remains executable before Tasks 4–5 create those real files. Each runner appends its runner, Cargo manifest/lock/source/tests, and every concrete fixture: MCP/frontend both include the full HTTP route-cases file; MCP also includes every tool input/wire and corrected protocol fixture. Redaction rejects secrets, headers/cookies, source text, host/user names, and absolute home paths before JSON/Markdown write.
+Validation requires every Task 2 criterion exactly once, exact decision/consequence, `COMMON_FINGERPRINT_INPUTS`, a nonempty ordered relative command list, all cleanup booleans except `user_data_opened` true, and `user_data_opened` false. Task 3 updates `make_record` to compute its digest through `fingerprint_inputs`; the tests seed every future common path in a temporary root, so this task remains executable before Tasks 4–5 create those real files. Each runner appends its runner, Cargo manifest/lock/source/tests, and every concrete fixture: MCP/frontend both include the full HTTP route-cases file; MCP additionally includes `compatibility/manifest.json`, `compatibility/authorities/mcp/2026-07-28/schema.json`, `compatibility/authorities/mcp/2026-07-28/schema.source.json`, `compatibility/snapshots/mcp.json`, the corrected protocol fixture, and every tool input/wire fixture. The schema authority is fingerprinted as raw bytes; it is never reserialized. Redaction rejects secrets, headers/cookies, source text, host/user names, and absolute home paths before JSON/Markdown write.
 
 - [ ] **Step 4: Implement deterministic rendering**
 
@@ -977,7 +1263,7 @@ git commit -m "test: bound Rust qualification processes"
 - Create: `qualification/harnesses/mcp-transport/src/main.rs` containing only `fn main() {}` until Task 7.
 
 **Interfaces:**
-- Consumes: accepted Task 1 oracle commit and Rust 1.96.0 qualification toolchain.
+- Consumes: accepted Task 1 oracle commit, including the offline official-schema pin and corrected eleven-case HTTP authority, plus the Rust 1.96.0 qualification toolchain.
 - Produces: standalone exact candidate manifest and committed lockfile; no transport behavior or record.
 - Build invariant: every command sets `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport` and never creates a repository-local `target/`.
 
@@ -1059,14 +1345,16 @@ git commit -m "test: lock MCP qualification candidate"
 - Create: `qualification/harnesses/mcp-transport/tests/transport.rs`
 
 **Interfaces:**
-- Consumes: Task 1's corrected `compatibility/fixtures/mcp/protocol.json`, `compatibility/fixtures/http/route-cases.json`, `compatibility/snapshots/mcp.json`, and Task 6 lockfile.
+- Consumes: Task 1's accepted, official-schema-validated `compatibility/fixtures/mcp/protocol.json`, `compatibility/fixtures/http/route-cases.json`, `compatibility/snapshots/mcp.json`, and Task 6 lockfile. The immutable schema authority remains a Task 1/Task 8 validation and fingerprint input; the Rust candidate does not fetch or reinterpret it.
 - Produces Rust CLI: `mcp-transport stdio --registry <path> --protocol <path>`.
 - Produces Rust CLI: `mcp-transport http --registry <path> --protocol <path> --route-cases <path> --bind 127.0.0.1:0 --ready-file <path>`.
 - Produces bounded JSON evidence for every MCP criterion; it never performs or accepts initialize/session behavior.
 
 - [ ] **Step 1: Write failing stateless stdio/HTTP behavior tests**
 
-In `tests/transport.rs`, load only `protocol["target"]`; assert tools/list and tools/call work without handshake, require `_meta` protocolVersion/clientCapabilities, accept canonical clientInfo and a clone omitting only clientInfo, reject direct `params.protocolVersion`/`params.clientCapabilities`/`params.clientInfo`, reject missing/wrong required reserved keys, and reject handshake/session headers. Assert every successful tools/list/tools/call response has exactly `resultType: "complete"` over stdio, HTTP JSON, and HTTP SSE. For HTTP, require tools/list with `Mcp-Method: tools/list` and no `Mcp-Name` to pass; require tools/call with `Mcp-Method: tools/call` and `Mcp-Name: hieronymus_status` to pass; reject a tools/list request with bogus `Mcp-Name`, and reject tools/call with missing/wrong name. Replay every Task 1 MCP route case including method applicability, Host, bearer, and HTTP version failures.
+In `tests/transport.rs`, load only `protocol["target"]`; assert tools/list and tools/call work without handshake, require `_meta` protocolVersion/clientCapabilities, accept canonical clientInfo and a clone omitting only clientInfo, reject direct `params.protocolVersion`/`params.clientCapabilities`/`params.clientInfo`, reject missing/wrong required reserved keys, and reject handshake/session headers. Assert every successful tools/list/tools/call response has exactly `resultType: "complete"` over stdio, HTTP JSON, and HTTP SSE and omits `_meta` under the exact configured serverInfo policy. For every tools/list transport, require `cacheScope: "private"`, `ttlMs: 0`, and tools using `inputSchema` with no `input_schema`; compare registry semantics by explicitly mapping target `inputSchema` to snapshot internal `input_schema`.
+
+For HTTP, require tools/list with `Mcp-Method: tools/list` and no `Mcp-Name` to pass; require tools/call with `Mcp-Method: tools/call` and `Mcp-Name: hieronymus_status` to pass. Replay the exact two successes and eleven failures from Task 1. Assert the seven header validation cases are HTTP 400 JSON-RPC `HeaderMismatch` (`-32020`) envelopes with exact ids/messages; assert `protocol-version-header-mismatch` changes only the raw protocol header and leaves body `_meta` at `2026-07-28`. Assert the distinct coherent `unsupported-version` request carries `2025-06-18` in both mirrored locations and returns HTTP 400 code `-32022` with exact requested/supported data. Prove that coherent unsupported version is the sole two-raw-leaf exception and each other failure mutates/omits one applicable raw field.
 
 - [ ] **Step 2: Run behavior tests and verify RED**
 
@@ -1076,7 +1364,7 @@ Expected: FAIL because the empty binary exposes no transport.
 
 - [ ] **Step 3: Implement the frozen registry and stateless transports**
 
-`registry.rs` loads immutable `ToolDefinition` values and canned success/error fixture results only. It has no domain store or SQLite access. If rmcp cannot represent the official shape, report failure; do not introduce handshake state or alter fixtures.
+`registry.rs` loads immutable `ToolDefinition` values and canned success/error fixture results only. It has no domain store or SQLite access. Its deserializer accepts the official target wire key `inputSchema`; any adapter to a Rust-internal snake_case field is private and serialization must return `inputSchema`. If rmcp cannot represent the exact official shape, report failure; do not introduce handshake state, emit `input_schema`, or alter fixtures.
 
 ```rust
 pub const PROTOCOL_REVISION: &str = "2026-07-28";
@@ -1088,7 +1376,9 @@ pub trait RegistryProbe: Sized {
 }
 ```
 
-Every request validates `params._meta["io.modelcontextprotocol/protocolVersion"]` and required `params._meta["io.modelcontextprotocol/clientCapabilities"]`; `io.modelcontextprotocol/clientInfo` is validated when present but absence is accepted. Direct legacy metadata fields are rejected. HTTP validates `MCP-Protocol-Version` and exact `Mcp-Method` before dispatch. Its method-aware name validator requires a nonempty `Mcp-Name` only for `tools/call`, `resources/read`, and `prompts/get`; for the qualified tools/call fixture it additionally matches the header to `params.name`. It accepts tools/list only without `Mcp-Name` and rejects unexpected or mismatched names. Every successful tools/list or tools/call result sets `resultType` exactly to `complete` before stdio/JSON/SSE serialization. Stdio emits one response JSON object plus `\n`; HTTP binds only loopback and serves only `POST /mcp` as JSON or request-scoped SSE.
+Every request validates `params._meta["io.modelcontextprotocol/protocolVersion"]` and required `params._meta["io.modelcontextprotocol/clientCapabilities"]`; `io.modelcontextprotocol/clientInfo` is validated when present but absence is accepted. Direct legacy metadata fields are rejected. HTTP first validates required mirrored headers against the body: any missing, unexpected, or mismatched protocol, method, or applicable name returns the frozen HTTP 400 `HeaderMismatch` JSON-RPC body. Only after the protocol header and body value agree does it test support and return the frozen HTTP 400 `UnsupportedProtocolVersionError` body. Its method-aware name validator requires a nonempty `Mcp-Name` only for `tools/call`, `resources/read`, and `prompts/get`; for the qualified tools/call fixture it additionally matches the header to `params.name`. It accepts tools/list only without `Mcp-Name` and rejects unexpected or mismatched names.
+
+Every successful tools/list result sets `cacheScope` exactly to `private`, `ttlMs` to `0`, `resultType` to `complete`, and returns official `Tool` objects with `inputSchema`; every successful tools/call result sets `resultType` to `complete`. Every success deliberately omits result `_meta` under Task 1's exact configured serverInfo omission and rationale; candidate version/package data must not appear. Stdio emits one response JSON object plus `\n`; HTTP binds only loopback and serves only `POST /mcp` as JSON or request-scoped SSE.
 
 - [ ] **Step 4: Implement bounded reports and pass the offline behavior suite**
 
@@ -1098,7 +1388,7 @@ Every request validates `params._meta["io.modelcontextprotocol/protocolVersion"]
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu
 ```
 
-Expected: the test command completes without network access and proves both exact-match and mismatch-reporting paths. Candidate protocol/transport support is decided only by the live fixture replay and becomes an honest qualified or blocking record.
+Expected: the test command completes without network access and proves exact official success objects, internal-to-wire schema mapping, configured serverInfo omission, HeaderMismatch versus unsupported-version classification, exact-match, and mismatch-reporting paths. Candidate protocol/transport support is decided only by the live fixture replay and becomes an honest qualified or blocking record.
 
 - [ ] **Step 5: Commit transport behavior without records**
 
@@ -1118,10 +1408,10 @@ git commit -m "test: prove stateless MCP transport behavior"
 - Create: `docs/qualification/rust/mcp-transport.md`
 
 **Interfaces:**
-- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 1, 6, and 7; every MCP tool input/wire fixture; and manifest ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and `mcp.tool.*`.
+- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 1, 6, and 7; `compatibility/authorities/mcp/2026-07-28/schema.json`, its `schema.source.json`, `compatibility/manifest.json`, `compatibility/snapshots/mcp.json`, the corrected protocol/route fixtures, every MCP tool input/wire fixture, and manifest ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and `mcp.tool.*`.
 - Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1` before Cargo execution.
 - Produces private handoff: `_live_process_context(repo_root: Path, work_root: Path, original_env: Mapping[str, str]) -> tuple[ToolRoots, Path, dict[str, str]]`, returning discovered tool roots, `qualification/.artifacts/cargo-target/mcp-transport`, and the sanitized child environment in that order.
-- Produces canonical `qualified` only when every MCP criterion passes; otherwise exact Task 2 `blocked` consequence.
+- Produces canonical `qualified` only when all seventeen MCP criteria pass, including `official-schema-envelopes` and `header-mismatch-errors`; otherwise exact Task 2 `blocked` consequence.
 
 - [ ] **Step 1: Write failing fake-only runner tests**
 
@@ -1129,15 +1419,22 @@ git commit -m "test: prove stateless MCP transport behavior"
 def test_mcp_runner_consumes_corrected_oracle(tmp_path: Path) -> None:
     executable = write_fake_executable(tmp_path)
     record = run(ROOT, tmp_path, executable=executable)
+    assert "compatibility/authorities/mcp/2026-07-28/schema.json" in record.input_paths
+    assert "compatibility/authorities/mcp/2026-07-28/schema.source.json" in record.input_paths
+    assert "compatibility/manifest.json" in record.input_paths
+    assert "compatibility/snapshots/mcp.json" in record.input_paths
     assert "compatibility/fixtures/mcp/protocol.json" in record.input_paths
     assert "compatibility/fixtures/http/route-cases.json" in record.input_paths
     assert {item.criterion for item in record.evidence} == set(
         REQUIRED_CRITERIA["mcp-transport"]
     )
+    assert len(record.evidence) == 17
 
 
 def test_mcp_failure_preserves_adr_0015(tmp_path: Path) -> None:
-    executable = write_fake_executable(tmp_path, failed_criteria=("result-type-required",))
+    executable = write_fake_executable(
+        tmp_path, failed_criteria=("official-schema-envelopes",)
+    )
     record = run(ROOT, tmp_path, executable=executable)
     assert record.decision == "blocked"
     assert record.consequence == FAILURE_CONSEQUENCES["mcp-transport"]
@@ -1155,14 +1452,14 @@ Expected: FAIL importing `tools.qualification.run_mcp`; no Cargo command runs.
 
 - [ ] **Step 3: Implement the fake-injectable live runner**
 
-`run_mcp.run_live` copies the caller-supplied `original_env`, calls `discover_tool_roots` before any HOME/XDG rewrite, derives the exact MCP Cargo target path, and calls `safe_subprocess_env(work_root, cargo_offline=True, tool_roots=tool_roots, cargo_target_dir=cargo_target_dir)`. The module CLI supplies `dict(os.environ)` to `run_live`. `run_mcp.run` then uses `qualification/.artifacts/work/mcp-transport`, starts each transport with a 20-second ready/response timeout, replays every target transport case, compares tool lists by canonical JSON digest, compares one success and one error tool call across transports, verifies `/api/mcp/fixture` is absent, and gathers locked dependencies with:
+`run_mcp.run_live` copies the caller-supplied `original_env`, calls `discover_tool_roots` before any HOME/XDG rewrite, derives the exact MCP Cargo target path, and calls `safe_subprocess_env(work_root, cargo_offline=True, tool_roots=tool_roots, cargo_target_dir=cargo_target_dir)`. The module CLI supplies `dict(os.environ)` to `run_live`. `run_mcp.run` first calls Task 1's offline `authority_issues` and validates every candidate/fixture success or protocol error through `definition_issues`; it never accepts a URL or opens the network. It then uses `qualification/.artifacts/work/mcp-transport`, starts each transport with a 20-second ready/response timeout, replays every target transport case, compares tool lists by canonical JSON digest after explicitly mapping wire `inputSchema` to snapshot internal `input_schema`, compares one success and one error tool call across transports, verifies `/api/mcp/fixture` is absent, and gathers locked dependencies with:
 
 ```bash
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 metadata --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --format-version 1
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 tree --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked -e features
 ```
 
-Every Cargo argv begins with `str(tool_roots.cargo_invocation)`, never the resolved rustup target or a bare `cargo`. Every Cargo and MCP harness child goes through `run_owned_process` with the same sanitized environment and risk-specific target. The runner deletes ready files/logs/target output in `finally`, verifies all compatibility inputs are byte-identical, and records the corrected oracle commit/digest. It compares exact route-case status/body digests and never claims generic Host/auth routing beyond the frozen `POST /mcp` cases. It records Cargo/Rust versions and basenames only; no `ToolRoots` path enters JSON, Markdown, or raw-log output.
+Every Cargo argv begins with `str(tool_roots.cargo_invocation)`, never the resolved rustup target or a bare `cargo`. Every Cargo and MCP harness child goes through `run_owned_process` with the same sanitized environment and risk-specific target. The runner deletes ready files/logs/target output in `finally`, verifies all compatibility inputs are byte-identical, and records the corrected oracle commit/digest. The digest includes raw schema bytes, pin metadata, manifest, MCP snapshot, protocol, route cases, and every tool fixture. It requires exact `cacheScope`, `ttlMs`, `resultType`, `inputSchema`, configured serverInfo omission, two success/eleven failure ids, all seven `-32020` bodies, the one coherent `-32022` body/data, and the exact raw-leaf mutation invariant. It compares exact route-case status/body digests and never claims generic Host/auth routing beyond the frozen `POST /mcp` cases. It records Cargo/Rust versions and basenames only; no `ToolRoots` path enters JSON, Markdown, or raw-log output.
 
 Run: `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write`
 
@@ -1178,7 +1475,7 @@ Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO
 
 Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu -- -D warnings`
 
-Expected: tests, Ruff, rustfmt, and Clippy pass; record validation reports no missing criterion, stale input, secret, or path leak.
+Expected: tests, Ruff, rustfmt, and Clippy pass; record validation reports all seventeen criteria, no official-schema error, stale authority/input, secret, or path leak.
 
 - [ ] **Step 5: Commit the MCP qualification record**
 
@@ -2663,13 +2960,13 @@ git commit -m "ci: verify Rust qualification records"
 
 ## Self-Review Record
 
-- Spec coverage: Task 1 corrects and separately commits the official stateless MCP oracle, including method-aware HTTP name applicability; Tasks 2–5 establish the record, validation, acquisition, cargo-shim-preserving discovery, and bounded-process foundations. Tasks 6–8 qualify exact MCP metadata/headers/result type/transports/registry/error parity and private-bridge absence. Tasks 9–12 own actual ANN creation, checked pre-filter plan/cardinality proof, SQLite-durable recovery/no-write-transaction-native-I/O proof, strengthened FTS, and FTS-only selection. Tasks 13–15 own manifest-correct Svelte embedding and traced runtime independence without claiming HTTP security ownership. Tasks 16–18 own frozen-root database classification/import, typed accounting, FTS/ledger proof, fail-closed behavior, and source immutability. Tasks 19–21 own the aggregate gate, named-owner review/regeneration, reproducibility commands, and pinned CI.
+- Spec coverage: Task 1 pins the byte-exact official Draft 2020-12 schema, corrects and separately commits valid stateless tools/list/tools/call envelopes, explicitly configures serverInfo omission, and distinguishes seven HeaderMismatch cases from one coherent unsupported-version case while preserving method-aware name applicability. Tasks 2–5 establish the record, validation, acquisition, cargo-shim-preserving discovery, and bounded-process foundations. Tasks 6–8 qualify all seventeen MCP criteria: exact metadata/headers/required list fields/wire key/transports/registry/error parity, configured response metadata, schema-pinned offline validation, and private-bridge absence. Tasks 9–12 own actual ANN creation, checked pre-filter plan/cardinality proof, SQLite-durable recovery/no-write-transaction-native-I/O proof, strengthened FTS, and FTS-only selection. Tasks 13–15 own manifest-correct Svelte embedding and traced runtime independence without claiming HTTP security ownership. Tasks 16–18 own frozen-root database classification/import, typed accounting, FTS/ledger proof, fail-closed behavior, and source immutability. Tasks 19–21 own the aggregate gate, named-owner review/regeneration, reproducibility commands, and pinned CI.
 - Normative consequence coverage: semantic failure has exactly one accepted non-blocking result, `fts-only`; MCP/frontend/database failure blocks named dependent plans and never edits fixtures or specifications to turn a failure into a pass.
-- Network coverage: acquisition commands are named and checksum/frozen-lock constrained; Hugging Face redirects include the observed exact CDN host under hop validation; Bun replay uses an isolated network namespace rather than a nonexistent offline-install flag; ordinary pytest uses only bounded fake child executables, while record checks use no subprocess, socket, Rust/native cache, or network. The one real Cargo environment smoke is explicitly live-gated.
+- Network coverage: Task 1 alone retrieves the commit-pinned official schema once and verifies exact raw bytes; its tests, compatibility gate, Task 8 runner, and qualification gate use only the checked-in authority. Other acquisition commands are named and checksum/frozen-lock constrained; Hugging Face redirects include the observed exact CDN host under hop validation; Bun replay uses an isolated network namespace rather than a nonexistent offline-install flag; ordinary pytest uses only bounded fake child executables, while record checks use no subprocess, socket, Rust/native cache, or network. The one real Cargo environment smoke is explicitly live-gated.
 - Sensitive-data coverage: inputs are synthetic/frozen, work roots are bounded, reports contain only digests/counts/basenames, source database bytes are verified unchanged, and canonical records reject secrets, user paths, row text, raw headers, and logs.
 - Cleanup coverage: all transient output and every Cargo target are under one ignored exact root; core dumps are disabled; owned process groups are reaped; cleanup targets are enumerated/tested; model/runtime removal needs a separate flag; and no recursive operation can target the repository, home, translation workspace, or user data.
-- Ownership coverage: Tasks 2–5 split common model, validation/rendering, acquisition, and process/cleanup ownership; Task 9 alone extends acquisition inputs; every risk is split into separately committed manifest/build, behavior/recovery, and runner/evidence reviews; Tasks 19–21 separately own gate computation, review regeneration, and workflows.
-- Type/signature consistency: fake-injected `run(..., executable: Path)` and guarded `run_live(..., original_env: Mapping[str, str])` are distinct for all four runners; every live context returns Task 5's exact `ToolRoots`, target, and safe environment; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 19 passes one unsanitized environment snapshot only to `run_live` and its records-only path imports no runner; Task 20 can replace only `Review`.
+- Ownership coverage: Task 1 owns the schema authority/module plus two implementation-internal test nodes and regenerates their state-snapshot/manifest/diagnostic ownership without adding public contract ids. Tasks 2–5 split common model, validation/rendering, acquisition, and process/cleanup ownership; Task 9 alone extends acquisition inputs; every risk is split into separately committed manifest/build, behavior/recovery, and runner/evidence reviews; Tasks 19–21 separately own gate computation, review regeneration, and workflows.
+- Type/signature consistency: Task 1's four allowed schema-definition names match every Task 7/8 validation call, internal `input_schema` is mapped only at the explicit target-wire boundary, and the MCP record has exactly seventeen named criteria. Fake-injected `run(..., executable: Path)` and guarded `run_live(..., original_env: Mapping[str, str])` are distinct for all four runners; every live context returns Task 5's exact `ToolRoots`, target, and safe environment; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 19 passes one unsanitized environment snapshot only to `run_live` and its records-only path imports no runner; Task 20 can replace only `Review`.
 - Production-scope check: the file map contains no production Rust workspace or crate path, and no task changes Python runtime behavior or starts a dependent implementation plan.
 
 Before accepting this plan, run:
@@ -2687,14 +2984,29 @@ assert sum(line.startswith("```") for line in text.splitlines()) % 2 == 0
 assert all(1 <= int(value) <= 21 for value in re.findall(r"\bTasks? (\d+)", text))
 action_refs = re.findall(r"^\s+- uses: [^@\s]+@([^\s]+)$", text, re.MULTILINE)
 assert action_refs and all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs)
+for required in (
+    "ef70b61f99b6d2e5e3b46863822eab08dff6a45bedc7a08914e0e5b133f40203",
+    '"cacheScope": "private"',
+    '"ttlMs": 0',
+    '"inputSchema"',
+    '"protocol-version-header-mismatch"',
+    '"code": -32020',
+    '"code": -32022',
+    '"configured": "omit"',
+    "assert len(failures) == 11",
+    "assert len(record.evidence) == 17",
+):
+    assert required in text, required
+assert 'tool["input_schema"]\n        for tool in target' not in text
 PY
 git diff --check -- docs/superpowers/plans/2026-09-01-rust-qualification.md
 git diff -- docs/superpowers/plans/2026-09-01-rust-qualification.md
+test "$(git diff --name-only -- docs/superpowers/plans/2026-09-01-rust-qualification.md)" = "docs/superpowers/plans/2026-09-01-rust-qualification.md"
 git status --short
 ```
 
-Expected: the red-flag scan prints nothing; task references, fences, and action pins pass; diff check passes; the diff contains only this plan; any pre-existing unrelated `uv.lock` modification remains unstaged and untouched.
+Expected: the red-flag scan prints nothing; tasks remain exactly 1–21; task references, fences, action pins, official schema pin, exact list fields/wire key, error codes/case counts, configured serverInfo omission, and seventeen-criterion handoff pass; diff check passes; the changed-files audit contains only this plan. If a pre-existing unrelated change exists, use the path-scoped diff/status audit instead and leave it unstaged and untouched.
 
 ## Execution Handoff
 
-Execute Tasks 1–21 only through the required sub-skill named in the header. Task 1's corrected compatibility commit is a hard prerequisite and must be accepted before candidate qualification. After Task 21, a qualified aggregate permits the separate Rust workspace/contract-harness plan; a blocked aggregate is the durable stage result and requires a new candidate qualification run or an ADR-backed specification change before dependent planning.
+Execute Tasks 1–21 only through the required sub-skill named in the header. Task 1's corrected compatibility commit—including the exact schema pin, valid response wire objects, configured serverInfo omission, and corrected HeaderMismatch/unsupported-version split—is a hard prerequisite and must pass independent review before candidate qualification. Tasks 7–8 consume but never rewrite that authority. After Task 21, a qualified aggregate permits the separate Rust workspace/contract-harness plan; a blocked aggregate is the durable stage result and requires a new candidate qualification run or an ADR-backed specification change before dependent planning.
