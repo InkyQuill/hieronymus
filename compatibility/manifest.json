@@ -4505,6 +4505,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_core_limit_is_zero_before_supervisor_spawns_target",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_discovery_preserves_shim_paths_without_resolving_them",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -4520,7 +4525,27 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_namespace_shutdown_catches_descendants_forked_during_termination",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_namespace_supervisor_crash_kills_setsid_double_fork_descendant",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_owned_process_disables_core_and_reaps_group",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_fails_before_target_spawn_when_unshare_is_unavailable",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_fails_before_target_spawn_when_unshare_is_unsupported",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -4570,12 +4595,57 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_rejects_public_values_before_json_coercion[argv-bad0]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_rejects_public_values_before_json_coercion[env-bad1]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_rejects_public_values_before_json_coercion[env-bad2]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_rejects_public_values_before_json_coercion[no_progress_seconds-1.0]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_rejects_public_values_before_json_coercion[no_progress_seconds-False]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_rejects_public_values_before_json_coercion[timeout_seconds-1.0]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_rejects_public_values_before_json_coercion[timeout_seconds-True]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_requires_absolute_canonical_directory_cwd",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_owned_process_streams_digests_without_retaining_output",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_owned_process_times_out_when_child_closes_pipes_but_keeps_running",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_parent_death_kills_namespace_wrapper_and_target",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -4626,6 +4696,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_supervisor_failure_is_bounded_redacted_and_closes_parent_fds[invalid]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_wrapper_crash_kills_namespace_target_without_signalling_others",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {

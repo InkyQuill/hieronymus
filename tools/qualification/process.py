@@ -19,10 +19,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+_PR_SET_PDEATHSIG = 1
 _PR_SET_CHILD_SUBREAPER = 36
 _PR_GET_CHILD_SUBREAPER = 37
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ARTIFACT_ROOT = _REPO_ROOT / "qualification/.artifacts"
+_UNSHARE_PATH = Path("/usr/bin/unshare")
 _MAX_SUPERVISOR_MESSAGE = 4 * 1024 * 1024
 _SUPERVISOR_GRACE_SECONDS = 3.0
 
@@ -322,6 +324,40 @@ def _disable_core_dumps() -> None:
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
+def _validated_unshare_path(path: Path) -> Path:
+    """Return a canonical namespace executable or a redacted failure."""
+    try:
+        resolved = path.resolve(strict=True)
+        mode = resolved.stat().st_mode
+    except OSError as exc:
+        raise RuntimeError("Linux PID namespace isolation is unavailable") from exc
+    if (
+        not path.is_absolute()
+        or resolved != path
+        or not stat.S_ISREG(mode)
+        or not os.access(resolved, os.X_OK)
+    ):
+        raise RuntimeError("Linux PID namespace isolation is unavailable")
+    return resolved
+
+
+def _validated_unshare() -> Path:
+    """Validate the installed fixed namespace executable."""
+    return _validated_unshare_path(_UNSHARE_PATH)
+
+
+def _arm_namespace_launcher() -> bool:
+    """Disable cores and make parent death kill the unshare wrapper after exec."""
+    _disable_core_dumps()
+    parent_pid = os.getppid()
+    if parent_pid <= 1:
+        return False
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(_PR_SET_PDEATHSIG, int(signal.SIGKILL), 0, 0, 0) != 0:
+        return False
+    return os.getppid() == parent_pid
+
+
 def _subreaper_state(enable: bool) -> int | None:
     if not sys.platform.startswith("linux"):
         return None
@@ -513,6 +549,8 @@ def _empty_spawn_receipt(started: float) -> ProcessReceipt:
 
 def _supervise_target(config: Mapping[str, object]) -> ProcessReceipt:
     """Run one target inside the single-purpose, single-threaded supervisor."""
+    if resource.getrlimit(resource.RLIMIT_CORE) != (0, 0):
+        raise RuntimeError("qualification supervisor core-dump suppression is unavailable")
     argv_value = config.get("argv")
     cwd_value = config.get("cwd")
     env_value = config.get("env")
@@ -557,7 +595,6 @@ def _supervise_target(config: Mapping[str, object]) -> ProcessReceipt:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
-                preexec_fn=_disable_core_dumps,
                 close_fds=True,
             )
         except OSError:
@@ -736,6 +773,23 @@ def _supervisor_command(config_fd: int, result_fd: int) -> tuple[str, ...]:
     )
 
 
+def _namespace_launcher_command(
+    unshare: Path,
+    config_fd: int,
+    result_fd: int,
+    supervisor_command: tuple[str, ...],
+) -> tuple[str, ...]:
+    return (
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--namespace-launcher",
+        str(unshare),
+        str(config_fd),
+        str(result_fd),
+        *supervisor_command,
+    )
+
+
 def _pipe() -> tuple[int, int]:
     if hasattr(os, "pipe2"):
         return os.pipe2(os.O_CLOEXEC)
@@ -749,23 +803,61 @@ def _terminate_supervisor(process: subprocess.Popen[bytes]) -> None:
     identity = _process_identity(process.pid)
     if identity is None:
         return
-    # Freeze the only process capable of creating more owned descendants, then
-    # take the final ancestry snapshot. This closes the fork-vs-cleanup race.
-    _signal_identity(identity, signal.SIGSTOP)
-    tracked: dict[int, _ProcessIdentity] = {}
-    _collect_descendants(tracked, owner_pid=process.pid)
-    for child in tuple(tracked.values()):
-        _signal_identity(child, signal.SIGKILL)
+    # The tracked process is the unshare wrapper. Its --kill-child contract and
+    # the kernel's PID-namespace-init semantics terminate every namespace task.
     _signal_identity(identity, signal.SIGKILL)
-    process.wait(timeout=1)
-    deadline = time.monotonic() + 1
-    while time.monotonic() < deadline:
-        alive = [child for child in tracked.values() if _identity_alive(child)]
-        if not alive:
-            return
-        for child in alive:
-            _signal_identity(child, signal.SIGKILL)
-        time.sleep(0.01)
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        _signal_identity(identity, signal.SIGKILL)
+        process.wait(timeout=1)
+
+
+def _validated_public_process_config(
+    argv: tuple[str, ...],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    timeout_seconds: int,
+    no_progress_seconds: int,
+) -> tuple[tuple[str, ...], Path, dict[str, str]]:
+    if (
+        type(argv) is not tuple
+        or not argv
+        or any(type(arg) is not str or not arg or "\x00" in arg for arg in argv)
+    ):
+        raise ValueError("argv must be a tuple of nonempty exact strings")
+    if not isinstance(cwd, Path) or not cwd.is_absolute():
+        raise ValueError("cwd must be an absolute canonical directory Path")
+    try:
+        canonical_cwd = cwd.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("cwd must be an absolute canonical directory Path") from exc
+    if canonical_cwd != cwd or not canonical_cwd.is_dir():
+        raise ValueError("cwd must be an absolute canonical directory Path")
+    if not isinstance(env, Mapping):
+        raise TypeError("env must be a Mapping with exact string keys and values")
+    try:
+        env_items = tuple(env.items())
+    except (AttributeError, RuntimeError) as exc:
+        raise TypeError("env must be a Mapping with exact string keys and values") from exc
+    if any(
+        type(key) is not str
+        or type(value) is not str
+        or not key
+        or "\x00" in key
+        or "\x00" in value
+        for key, value in env_items
+    ):
+        raise ValueError("env must have exact string keys and values")
+    if (
+        type(timeout_seconds) is not int
+        or timeout_seconds <= 0
+        or type(no_progress_seconds) is not int
+        or no_progress_seconds <= 0
+    ):
+        raise ValueError("process timeouts must be positive exact integers")
+    return argv, canonical_cwd, dict(env_items)
 
 
 def run_owned_process(
@@ -776,17 +868,26 @@ def run_owned_process(
     timeout_seconds: int,
     no_progress_seconds: int,
 ) -> ProcessReceipt:
-    """Delegate one run to an isolated subreaper supervisor over inherited pipes."""
-    if not argv or any(type(arg) is not str or not arg or "\x00" in arg for arg in argv):
-        raise ValueError("argv must contain nonempty safe strings")
-    if timeout_seconds <= 0 or no_progress_seconds <= 0:
-        raise ValueError("process timeouts must be positive")
+    """Run inside a kernel PID lifetime boundary using inherited anonymous pipes."""
+    argv, cwd, env_snapshot = _validated_public_process_config(
+        argv,
+        cwd=cwd,
+        env=env,
+        timeout_seconds=timeout_seconds,
+        no_progress_seconds=no_progress_seconds,
+    )
+    unshare = _validated_unshare()
     config_read, config_write = _pipe()
     result_read, result_write = _pipe()
     supervisor: subprocess.Popen[bytes] | None = None
     try:
         supervisor = subprocess.Popen(
-            _supervisor_command(config_read, result_write),
+            _namespace_launcher_command(
+                unshare,
+                config_read,
+                result_write,
+                _supervisor_command(config_read, result_write),
+            ),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -802,7 +903,7 @@ def run_owned_process(
             {
                 "argv": list(argv),
                 "cwd": os.fspath(cwd),
-                "env": dict(env),
+                "env": env_snapshot,
                 "no_progress_seconds": no_progress_seconds,
                 "timeout_seconds": timeout_seconds,
             },
@@ -854,7 +955,34 @@ def _supervisor_entry(config_fd: int, result_fd: int) -> int:
         _close_fd(result_fd)
 
 
+def _namespace_launcher_entry(unshare: Path, supervisor_command: tuple[str, ...]) -> int:
+    """Become the fixed unshare wrapper before any configuration is read."""
+    try:
+        unshare = _validated_unshare_path(unshare)
+        if not _arm_namespace_launcher():
+            return 1
+        os.execv(
+            str(unshare),
+            (
+                str(unshare),
+                "--user",
+                "--map-root-user",
+                "--pid",
+                "--fork",
+                "--mount-proc",
+                "--kill-child=SIGKILL",
+                "--",
+                *supervisor_command,
+            ),
+        )
+    except BaseException:
+        return 1
+    return 1
+
+
 if __name__ == "__main__":  # pragma: no cover - exercised through run_owned_process
     if len(sys.argv) == 4 and sys.argv[1] == "--supervisor":
         raise SystemExit(_supervisor_entry(int(sys.argv[2]), int(sys.argv[3])))
+    if len(sys.argv) >= 6 and sys.argv[1] == "--namespace-launcher":
+        raise SystemExit(_namespace_launcher_entry(Path(sys.argv[2]), tuple(sys.argv[5:])))
     raise SystemExit(2)

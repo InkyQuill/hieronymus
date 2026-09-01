@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 
@@ -52,6 +53,48 @@ def _fake_tool_roots(tmp_path: Path) -> ToolRoots:
         rustup_invocation=rustup_invocation.absolute(),
         rustup_resolved_target=resolved_target,
     )
+
+
+def _processes_with_token(token: str) -> tuple[int, ...]:
+    needle = token.encode("utf-8")
+    matches: list[int] = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        if needle in argv:
+            matches.append(int(entry.name))
+    return tuple(matches)
+
+
+def _wait_for_no_token(token: str, *, timeout: float = 3.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _processes_with_token(token):
+            return
+        time.sleep(0.02)
+    assert _processes_with_token(token) == ()
+
+
+def _direct_namespace_wrappers() -> tuple[int, ...]:
+    matches: list[int] = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            status = (entry / "status").read_text(encoding="ascii")
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        parent_line = next((line for line in status.splitlines() if line.startswith("PPid:")), "")
+        if parent_line.split() == ["PPid:", str(os.getpid())] and (
+            b"--namespace-launcher" in argv or b"--kill-child=SIGKILL" in argv
+        ):
+            matches.append(int(entry.name))
+    return tuple(matches)
 
 
 def test_discovery_preserves_shim_paths_without_resolving_them(tmp_path: Path) -> None:
@@ -309,16 +352,297 @@ def test_owned_process_rejects_nonempty_exact_string_argv(
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "bad"),
+    [
+        ("argv", [sys.executable]),
+        ("env", {"PATH": 1}),
+        ("env", {1: "/usr/bin:/bin"}),
+        ("timeout_seconds", True),
+        ("timeout_seconds", 1.0),
+        ("no_progress_seconds", False),
+        ("no_progress_seconds", 1.0),
+    ],
+)
+def test_owned_process_rejects_public_values_before_json_coercion(
+    tmp_path: Path, field: str, bad: object
+) -> None:
+    arguments: dict[str, object] = {
+        "argv": (sys.executable, "-c", "pass"),
+        "cwd": tmp_path.resolve(),
+        "env": {"PATH": "/usr/bin:/bin"},
+        "timeout_seconds": 1,
+        "no_progress_seconds": 1,
+    }
+    arguments[field] = bad
+    with pytest.raises((TypeError, ValueError)):
+        run_owned_process(**arguments)  # type: ignore[arg-type]
+
+
+def test_owned_process_requires_absolute_canonical_directory_cwd(tmp_path: Path) -> None:
+    canonical = tmp_path.resolve()
+    linked = tmp_path.parent / f"qualification-cwd-link-{uuid.uuid4().hex}"
+    linked.symlink_to(canonical, target_is_directory=True)
+    try:
+        for bad in (Path("."), linked, canonical / "missing"):
+            with pytest.raises((TypeError, ValueError), match="cwd"):
+                run_owned_process(
+                    (sys.executable, "-c", "pass"),
+                    cwd=bad,
+                    env={"PATH": "/usr/bin:/bin"},
+                    timeout_seconds=1,
+                    no_progress_seconds=1,
+                )
+    finally:
+        linked.unlink()
+
+
+def test_owned_process_fails_before_target_spawn_when_unshare_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tools.qualification.process as process_module
+
+    marker = tmp_path / "target-spawned"
+    monkeypatch.setattr(process_module, "_UNSHARE_PATH", tmp_path / "missing-unshare")
+    with pytest.raises(RuntimeError) as raised:
+        run_owned_process(
+            (sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"),
+            cwd=tmp_path.resolve(),
+            env={"PATH": "/usr/bin:/bin"},
+            timeout_seconds=1,
+            no_progress_seconds=1,
+        )
+    assert str(raised.value) == "Linux PID namespace isolation is unavailable"
+    assert str(tmp_path) not in str(raised.value)
+    assert not marker.exists()
+
+
+def test_owned_process_fails_before_target_spawn_when_unshare_is_unsupported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tools.qualification.process as process_module
+
+    marker = tmp_path / "unsupported-target-spawned"
+    fake_unshare = tmp_path / "unshare"
+    fake_unshare.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    fake_unshare.chmod(0o700)
+    monkeypatch.setattr(process_module, "_UNSHARE_PATH", fake_unshare)
+    with pytest.raises(RuntimeError) as raised:
+        run_owned_process(
+            (sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"),
+            cwd=tmp_path.resolve(),
+            env={"PATH": "/usr/bin:/bin"},
+            timeout_seconds=1,
+            no_progress_seconds=1,
+        )
+    assert str(raised.value) == "qualification supervisor failed"
+    assert str(tmp_path) not in str(raised.value)
+    assert not marker.exists()
+
+
+def test_namespace_supervisor_crash_kills_setsid_double_fork_descendant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tools.qualification.process as process_module
+
+    token = f"qualification-crash-{uuid.uuid4().hex}"
+    ready = tmp_path / "crash-ready"
+    script = tmp_path / "crashing-supervisor.py"
+    write_limit = (
+        f"pathlib.Path({str(ready)!r}).write_text(str(resource.getrlimit(resource.RLIMIT_CORE)))"
+    )
+    exec_sleeper = (
+        "os.execv(sys.executable, "
+        f"[sys.executable, '-c', 'import time; time.sleep(60)', {token!r}])"
+    )
+    script.write_text(
+        "import os,pathlib,resource,sys,time\n"
+        "if os.fork() == 0:\n"
+        " os.setsid()\n"
+        " if os.fork() == 0:\n"
+        f"  {write_limit}\n"
+        f"  {exec_sleeper}\n"
+        " os._exit(0)\n"
+        "deadline = time.monotonic() + 2\n"
+        f"ready = pathlib.Path({str(ready)!r})\n"
+        "while not ready.exists() and time.monotonic() < deadline:\n"
+        " time.sleep(0.01)\n"
+        "os._exit(17)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        process_module,
+        "_supervisor_command",
+        lambda config_fd, result_fd: (
+            sys.executable,
+            str(script),
+            str(config_fd),
+            str(result_fd),
+        ),
+    )
+    with pytest.raises(RuntimeError, match="qualification supervisor failed"):
+        run_owned_process(
+            (sys.executable, "-c", "pass"),
+            cwd=tmp_path.resolve(),
+            env={"PATH": "/usr/bin:/bin"},
+            timeout_seconds=1,
+            no_progress_seconds=1,
+        )
+    assert ready.read_text(encoding="utf-8") == "(0, 0)"
+    _wait_for_no_token(token)
+
+
+def test_namespace_shutdown_catches_descendants_forked_during_termination(
+    tmp_path: Path,
+) -> None:
+    token = f"qualification-fork-race-{uuid.uuid4().hex}"
+    script = tmp_path / "fork-during-shutdown.py"
+    exec_sleeper = (
+        "os.execv(sys.executable, "
+        f"[sys.executable, '-c', 'import time; time.sleep(60)', {token!r}])"
+    )
+    script.write_text(
+        "import os,signal,sys,time\n"
+        "signal.signal(signal.SIGTERM, lambda *_: None)\n"
+        "while True:\n"
+        " pid = os.fork()\n"
+        " if pid == 0:\n"
+        f"  {exec_sleeper}\n"
+        " time.sleep(0.02)\n",
+        encoding="utf-8",
+    )
+    receipt = run_owned_process(
+        (sys.executable, str(script)),
+        cwd=tmp_path.resolve(),
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_seconds=1,
+        no_progress_seconds=1,
+    )
+    assert receipt.timed_out and receipt.process_group_reaped
+    _wait_for_no_token(token)
+
+
+def test_parent_death_kills_namespace_wrapper_and_target(tmp_path: Path) -> None:
+    token = f"qualification-parent-death-{uuid.uuid4().hex}"
+    ready = tmp_path / "parent-death-ready"
+    worker = tmp_path / "parent-worker.py"
+    target_code = (
+        f"import pathlib,time; pathlib.Path({str(ready)!r}).write_text('ready'); time.sleep(60)"
+    )
+    worker.write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(ROOT)!r})\n"
+        "from pathlib import Path\n"
+        "from tools.qualification.process import run_owned_process\n"
+        "run_owned_process(\n"
+        f" (sys.executable, '-c', {target_code!r}, {token!r}),\n"
+        f" cwd=Path({str(tmp_path)!r}),\n"
+        " env={'PATH':'/usr/bin:/bin'},\n"
+        " timeout_seconds=60,\n"
+        " no_progress_seconds=60,\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    parent = subprocess.Popen((sys.executable, str(worker)))
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists()
+        assert _processes_with_token(token)
+        parent.kill()
+        parent.wait(timeout=3)
+        _wait_for_no_token(token)
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=3)
+        for pid in _processes_with_token(token):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_wrapper_crash_kills_namespace_target_without_signalling_others(tmp_path: Path) -> None:
+    token = f"qualification-wrapper-crash-{uuid.uuid4().hex}"
+    ready = tmp_path / "wrapper-crash-ready"
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            run_owned_process(
+                (
+                    sys.executable,
+                    "-c",
+                    (
+                        f"import pathlib,time; pathlib.Path({str(ready)!r})"
+                        ".write_text('ready'); time.sleep(60)"
+                    ),
+                    token,
+                ),
+                cwd=tmp_path.resolve(),
+                env={"PATH": "/usr/bin:/bin"},
+                timeout_seconds=60,
+                no_progress_seconds=60,
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5
+        launchers: tuple[int, ...] = ()
+        while time.monotonic() < deadline:
+            launchers = _direct_namespace_wrappers()
+            if ready.exists() and len(launchers) == 1:
+                break
+            time.sleep(0.02)
+        assert ready.exists() and len(launchers) == 1
+        assert _processes_with_token(token)
+        os.kill(launchers[0], signal.SIGKILL)
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert len(errors) == 1 and isinstance(errors[0], RuntimeError)
+        _wait_for_no_token(token)
+    finally:
+        for pid in _processes_with_token(token):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_core_limit_is_zero_before_supervisor_spawns_target(tmp_path: Path) -> None:
+    expected = b"(0, 0)\n"
+    receipt = run_owned_process(
+        (
+            sys.executable,
+            "-c",
+            "import resource; print(resource.getrlimit(resource.RLIMIT_CORE))",
+        ),
+        cwd=tmp_path.resolve(),
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_seconds=2,
+        no_progress_seconds=1,
+    )
+    assert receipt.exit_code == 0
+    assert receipt.stdout_sha256 == hashlib.sha256(expected).hexdigest()
+    assert receipt.core_dumps_disabled
+
+
 def test_owned_process_reaps_descendant_that_escapes_group_with_setsid(tmp_path: Path) -> None:
-    pid_file = tmp_path / "escaped.pid"
+    token = f"qualification-setsid-{uuid.uuid4().hex}"
+    marker = tmp_path / "escaped.started"
     child_code = (
         "import os,pathlib,time; os.setsid(); "
-        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid())); time.sleep(60)"
+        f"pathlib.Path({str(marker)!r}).write_text('started'); time.sleep(60)"
     )
     parent = tmp_path / "setsid-parent.py"
     parent.write_text(
         "import subprocess,sys,time\n"
-        f"subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+        f"subprocess.Popen([sys.executable, '-c', {child_code!r}, {token!r}])\n"
         "time.sleep(60)\n",
         encoding="utf-8",
     )
@@ -330,50 +654,39 @@ def test_owned_process_reaps_descendant_that_escapes_group_with_setsid(tmp_path:
         no_progress_seconds=1,
     )
     assert receipt.timed_out and receipt.process_group_reaped
-    escaped_pid = int(pid_file.read_text(encoding="utf-8"))
-    with pytest.raises(ProcessLookupError):
-        os.kill(escaped_pid, 0)
+    assert marker.exists()
+    _wait_for_no_token(token)
 
 
 def test_owned_process_reaps_immediate_double_fork_orphan(tmp_path: Path) -> None:
     """Catch loss of ancestry before the runner's first procfs scan."""
-    pid_file = tmp_path / "double-fork.pid"
+    marker = tmp_path / "double-fork.started"
     script = tmp_path / "double-fork.py"
     script.write_text(
         "import os,pathlib,time\n"
         "if os.fork(): os._exit(0)\n"
         "os.setsid()\n"
         "if os.fork(): os._exit(0)\n"
-        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+        f"pathlib.Path({str(marker)!r}).write_text('started')\n"
         "os.close(1); os.close(2); time.sleep(60)\n",
         encoding="utf-8",
     )
-    orphan_pid: int | None = None
-    try:
-        receipt = run_owned_process(
-            (sys.executable, str(script)),
-            cwd=tmp_path,
-            env={"PATH": "/usr/bin:/bin"},
-            timeout_seconds=2,
-            no_progress_seconds=1,
-        )
-        orphan_pid = int(pid_file.read_text(encoding="utf-8"))
-        assert receipt.process_group_reaped
-        with pytest.raises(ProcessLookupError):
-            os.kill(orphan_pid, 0)
-    finally:
-        if orphan_pid is not None:
-            try:
-                os.kill(orphan_pid, 9)
-            except ProcessLookupError:
-                pass
+    receipt = run_owned_process(
+        (sys.executable, str(script)),
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_seconds=2,
+        no_progress_seconds=1,
+    )
+    assert marker.exists() and receipt.process_group_reaped
+    _wait_for_no_token(str(script))
 
 
 def test_owned_process_reaps_nondumpable_immediate_double_fork_orphan(
     tmp_path: Path,
 ) -> None:
     """Catch ownership schemes that depend on reading descendant file descriptors."""
-    pid_file = tmp_path / "nondumpable-double-fork.pid"
+    marker = tmp_path / "nondumpable-double-fork.started"
     script = tmp_path / "nondumpable-double-fork.py"
     script.write_text(
         "import ctypes,os,pathlib,time\n"
@@ -384,29 +697,19 @@ def test_owned_process_reaps_nondumpable_immediate_double_fork_orphan(
         "for fd in range(3, 256):\n"
         " try: os.close(fd)\n"
         " except OSError: pass\n"
-        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+        f"pathlib.Path({str(marker)!r}).write_text('started')\n"
         "time.sleep(60)\n",
         encoding="utf-8",
     )
-    orphan_pid: int | None = None
-    try:
-        receipt = run_owned_process(
-            (sys.executable, str(script)),
-            cwd=tmp_path,
-            env={"PATH": "/usr/bin:/bin"},
-            timeout_seconds=2,
-            no_progress_seconds=1,
-        )
-        orphan_pid = int(pid_file.read_text(encoding="utf-8"))
-        assert receipt.process_group_reaped
-        with pytest.raises(ProcessLookupError):
-            os.kill(orphan_pid, 0)
-    finally:
-        if orphan_pid is not None:
-            try:
-                os.kill(orphan_pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+    receipt = run_owned_process(
+        (sys.executable, str(script)),
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin"},
+        timeout_seconds=2,
+        no_progress_seconds=1,
+    )
+    assert marker.exists() and receipt.process_group_reaped
+    _wait_for_no_token(str(script))
 
 
 def test_owned_process_never_signals_unrelated_child_forked_during_spawn(

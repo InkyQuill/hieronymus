@@ -22,18 +22,25 @@ run and apply perform the same complete descriptor-relative validation, includin
 and Linux mount identities. Cleanup refuses symlinks, bind mounts, hard links, special files,
 identity swaps, repository/home roots, and the translation workspace.
 
-Every process run gets a fresh, single-purpose Python supervisor. The caller passes the already
-sanitized argv, working directory, environment, and time bounds only through inherited anonymous
-pipes; none of those values appear in command lines, files, logs, errors, or receipts. The
-supervisor is single-threaded, enables Linux subreaper mode before it spawns the target, and never
-spawns unrelated children. Consequently every direct or adopted child is owned by that run,
-including an immediate double-fork that closes descriptors or becomes non-dumpable.
+Every process run gets a fresh kernel PID lifetime boundary. The fixed canonical
+`/usr/bin/unshare` executable creates a user namespace plus a PID namespace with a private procfs;
+its fixed options map the caller to namespace root, fork a namespace init, and use
+`--kill-child=SIGKILL`. The namespace init is a single-purpose Python supervisor. Linux kills every
+remaining member of a PID namespace when its init exits, so a supervisor crash, malformed reply,
+hang, timeout, `setsid`, double fork, non-dumpable child, or fork concurrent with shutdown cannot
+leave a qualification process behind. The parent-death signal on the unshare wrapper closes the
+same boundary if the Python caller is killed. Linux hosts without this exact boundary fail before
+the target is spawned; there is no process-group or procfs-snapshot fallback.
 
-The supervisor tracks each owned process by PID plus procfs start time, prefers pidfds, and signals
-individual identities only. It does not use raw process-group signals. The parent independently
-bounds the supervisor, validates its fixed receipt, closes all pipe descriptors, and terminates the
-supervisor-owned ancestry if the supervisor crashes, hangs, or returns malformed data. Separate
-supervisors allow concurrent calls without exposing unrelated parent forks to ownership discovery.
+A tiny launcher sets `RLIMIT_CORE=(0,0)` before it can read configuration, arms the parent-death
+signal, and then replaces itself with unshare. The wrapper, namespace supervisor, target, and every
+descendant inherit the zero core limit. The caller passes the already sanitized argv, canonical
+working directory, exact-string environment, and exact positive integer time bounds only through
+inherited anonymous pipes; none of those values appear in command lines, files, logs, errors, or
+receipts. The supervisor still tracks and reaps normal children by PID plus procfs start time and
+pidfd, while the kernel boundary is authoritative for abnormal termination and the final fork race.
+The parent validates the fixed receipt and closes every pipe descriptor before returning. Separate
+namespaces allow concurrent calls without exposing or signalling unrelated parent processes.
 
 Machine-readable records contain digests, counts, tool basenames, and versions only. Raw output,
 environment values, absolute tool/cache paths, and user data are never serialized. Generated
