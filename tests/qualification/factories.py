@@ -17,6 +17,7 @@ from tools.qualification.model import (  # noqa: E402
     CleanupEvidence,
     Environment,
     Evidence,
+    Measurements,
     QualificationRecord,
     Review,
     ReviewStatus,
@@ -48,7 +49,7 @@ def make_record(
             criterion=criterion,
             status="fail" if criterion in failed else "pass",
             summary=f"{criterion} {'failed' if criterion in failed else 'passed'}",
-            measurements={},
+            measurements=Measurements(),
         )
         for criterion in REQUIRED_CRITERIA[risk]
     )

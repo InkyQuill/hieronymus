@@ -3435,6 +3435,41 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_evidence_construction_detaches_from_mutable_measurement_input",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_evidence_construction_rejects_non_finite_measurements[nan]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_evidence_construction_rejects_non_finite_measurements[negative-infinity]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_evidence_construction_rejects_non_finite_measurements[nested-nan]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_evidence_construction_rejects_non_finite_measurements[nested-positive-infinity]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_evidence_construction_rejects_non_finite_measurements[positive-infinity]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_factory_loaded_and_review_copy_measurements_are_deeply_immutable",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_model.py::test_factory_rejects_unknown_failed_criterion",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3470,7 +3505,22 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_couple_environment_to_the_fixed_target",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_model.py::test_loader_and_schema_derive_status_from_evidence_even_if_rules_change_together",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_enforce_finite_binary64_measurement_range",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_model.py::test_loader_and_schema_reject_overflowed_json_number_token",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {

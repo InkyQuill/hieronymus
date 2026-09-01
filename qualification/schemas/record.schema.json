@@ -304,7 +304,9 @@
       "items": { "type": "string" }
     },
     "jsonScalar": {
-      "type": ["string", "integer", "number", "boolean", "null"]
+      "type": ["string", "integer", "number", "boolean", "null"],
+      "minimum": -1.7976931348623157e308,
+      "maximum": 1.7976931348623157e308
     },
     "measurementValue": {
       "oneOf": [
@@ -364,7 +366,7 @@
       "properties": {
         "rustc": { "type": "string" },
         "cargo": { "type": "string" },
-        "target": { "type": "string" },
+        "target": { "const": "x86_64-unknown-linux-gnu" },
         "os": { "type": "string" },
         "kernel": { "type": "string" },
         "architecture": { "type": "string" },

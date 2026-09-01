@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Literal, cast
 
@@ -19,6 +21,49 @@ Decision = Literal["qualified", "blocked", "semantic-enabled", "fts-only"]
 ReviewStatus = Literal["pending", "accepted", "rejected"]
 JsonScalar = str | int | float | bool | None
 MeasurementValue = JsonScalar | tuple[JsonScalar, ...]
+
+
+class Measurements(Mapping[str, MeasurementValue]):
+    """Immutable named scalar measurements with JSON-friendly dataclass copies."""
+
+    __slots__ = ("_items",)
+
+    def __init__(self, values: Mapping[str, MeasurementValue] | None = None) -> None:
+        source = {} if values is None else values
+        if not isinstance(source, Mapping):
+            raise ValueError("evidence measurements must be an object with named measurements")
+        items: list[tuple[str, MeasurementValue]] = []
+        for key, value in source.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("evidence measurement names must be nonblank strings")
+            items.append((key, _measurement_value(value, key)))
+        object.__setattr__(self, "_items", tuple(sorted(items)))
+
+    def __getitem__(self, key: str) -> MeasurementValue:
+        for item_key, value in self._items:
+            if item_key == key:
+                return value
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return (key for key, _ in self._items)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        del name, value
+        raise AttributeError("Measurements is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        del name
+        raise AttributeError("Measurements is immutable")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> dict[str, MeasurementValue]:
+        """Let dataclasses.asdict produce a plain mapping for strict JSON serialization."""
+        del memo
+        return dict(self._items)
+
 
 REQUIRED_CRITERIA: dict[Risk, tuple[str, ...]] = {
     "mcp-transport": (
@@ -127,8 +172,11 @@ class Evidence:
     criterion: str
     status: EvidenceStatus
     summary: str
-    measurements: dict[str, MeasurementValue]
+    measurements: Measurements
     not_run_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "measurements", Measurements(self.measurements))
 
 
 @dataclass(frozen=True)
@@ -218,6 +266,7 @@ def load_record(path: Path) -> QualificationRecord:
     """Load a strictly typed, internally consistent qualification record."""
     data = json.loads(
         path.read_text(encoding="utf-8"),
+        parse_float=_finite_json_float,
         parse_constant=lambda value: _invalid_json_constant(value),
     )
     record_data = _object(
@@ -366,10 +415,13 @@ def _load_environment(value: object) -> Environment:
     bun = data["bun"]
     if bun is not None:
         bun = _string(bun, "environment bun")
+    target = _string(data["target"], "environment target")
+    if target != _TARGET:
+        raise ValueError(f"environment target must be {_TARGET}")
     return Environment(
         rustc=_string(data["rustc"], "environment rustc"),
         cargo=_string(data["cargo"], "environment cargo"),
-        target=_string(data["target"], "environment target"),
+        target=target,
         os=_string(data["os"], "environment os"),
         kernel=_string(data["kernel"], "environment kernel"),
         architecture=_string(data["architecture"], "environment architecture"),
@@ -441,7 +493,7 @@ def _load_review(value: object) -> Review:
     )
 
 
-def _measurements(value: object, name: str) -> dict[str, MeasurementValue]:
+def _measurements(value: object, name: str) -> Measurements:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise ValueError(f"{name} must be an object with named measurements")
     converted: dict[str, MeasurementValue] = {}
@@ -449,29 +501,54 @@ def _measurements(value: object, name: str) -> dict[str, MeasurementValue]:
         if not key.strip():
             raise ValueError(f"{name} measurement names must not be blank")
         if _is_json_scalar(item):
-            converted[key] = cast(JsonScalar, item)
+            converted[key] = _json_scalar(item, f"{name} measurement {key!r}")
         elif isinstance(item, list) and all(_is_json_scalar(element) for element in item):
-            converted[key] = cast(tuple[JsonScalar, ...], tuple(item))
+            converted[key] = tuple(
+                _json_scalar(element, f"{name} measurement {key!r}") for element in item
+            )
         else:
             raise ValueError(f"{name} measurement {key!r} must be a scalar or scalar array")
-    return converted
+    return Measurements(converted)
 
 
-def _validate_measurements(measurements: dict[str, MeasurementValue]) -> None:
-    if not isinstance(measurements, dict):
+def _validate_measurements(measurements: Measurements) -> None:
+    if not isinstance(measurements, Measurements):
         raise ValueError("evidence measurements must be an object with named measurements")
     for key, value in measurements.items():
-        if not isinstance(key, str) or not key.strip():
-            raise ValueError("evidence measurement names must be nonblank strings")
-        if _is_json_scalar(value):
-            continue
-        if isinstance(value, tuple) and all(_is_json_scalar(item) for item in value):
-            continue
-        raise ValueError(f"evidence measurement {key!r} must be a scalar or scalar tuple")
+        _measurement_value(value, key)
 
 
 def _is_json_scalar(value: object) -> bool:
     return value is None or type(value) in (str, int, float, bool)
+
+
+_MAX_FINITE_MEASUREMENT = float.fromhex("0x1.fffffffffffffp+1023")
+
+
+def _measurement_value(value: object, name: str) -> MeasurementValue:
+    if _is_json_scalar(value):
+        return _json_scalar(value, f"evidence measurement {name!r}")
+    if isinstance(value, tuple):
+        if not all(_is_json_scalar(item) for item in value):
+            raise ValueError(f"evidence measurement {name!r} must be a scalar or scalar tuple")
+        return tuple(_json_scalar(item, f"evidence measurement {name!r}") for item in value)
+    raise ValueError(f"evidence measurement {name!r} must be a scalar or scalar tuple")
+
+
+def _json_scalar(value: object, name: str) -> JsonScalar:
+    if type(value) is float:
+        if not isfinite(value):
+            raise ValueError(f"{name} must be finite")
+    elif type(value) is int and not (-_MAX_FINITE_MEASUREMENT <= value <= _MAX_FINITE_MEASUREMENT):
+        raise ValueError(f"{name} must be within the finite IEEE-754 range")
+    return cast(JsonScalar, value)
+
+
+def _finite_json_float(value: str) -> float:
+    number = float(value)
+    if not isfinite(number):
+        raise ValueError(f"JSON number must be finite: {value}")
+    return number
 
 
 def _object(value: object, name: str, fields: set[str]) -> dict[str, object]:

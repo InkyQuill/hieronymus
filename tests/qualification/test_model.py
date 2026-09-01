@@ -10,7 +10,7 @@ from dataclasses import FrozenInstanceError, asdict, replace
 from pathlib import Path
 
 import pytest
-from factories import make_record
+from factories import make_record, pending_review
 from jsonschema import Draft202012Validator
 
 from tools.qualification.model import (
@@ -146,6 +146,50 @@ def test_load_record_round_trips_to_frozen_typed_records(tmp_path: Path) -> None
         loaded.status = "fail"  # type: ignore[misc]
 
 
+def test_factory_loaded_and_review_copy_measurements_are_deeply_immutable(
+    tmp_path: Path,
+) -> None:
+    base = make_record(ROOT, "semantic-native")
+    factory_record = replace(
+        base,
+        evidence=(
+            replace(
+                base.evidence[0],
+                measurements={"duration_ms": 12, "samples": (1, 2.5)},
+            ),
+            *base.evidence[1:],
+        ),
+    )
+    loaded_record = load_record(
+        _write_payload(tmp_path, json.loads(json.dumps(asdict(factory_record))))
+    )
+    review_copy = pending_review(factory_record)
+
+    for record in (factory_record, loaded_record, review_copy):
+        with pytest.raises(TypeError):
+            record.evidence[0].measurements["duration_ms"] = 13  # type: ignore[index]
+        samples = record.evidence[0].measurements["samples"]
+        assert isinstance(samples, tuple)
+        with pytest.raises(TypeError):
+            samples[0] = 99  # type: ignore[index]
+
+    serialized = json.dumps(asdict(loaded_record), allow_nan=False, sort_keys=True)
+    assert json.loads(serialized)["evidence"][0]["measurements"] == {
+        "duration_ms": 12,
+        "samples": [1, 2.5],
+    }
+
+
+def test_evidence_construction_detaches_from_mutable_measurement_input() -> None:
+    base = make_record(ROOT, "mcp-transport")
+    source = {"samples": (1, 2)}
+    evidence = replace(base.evidence[0], measurements=source)
+
+    source["samples"] = (3, 4)
+
+    assert evidence.measurements["samples"] == (1, 2)
+
+
 @pytest.mark.parametrize("mutation", ["missing", "duplicate", "unknown", "out-of-order"])
 def test_loader_and_schema_reject_the_same_invalid_criterion_sets(
     tmp_path: Path,
@@ -222,6 +266,17 @@ def test_loader_and_schema_reject_unknown_or_missing_fixed_fields(tmp_path: Path
     assert _schema_errors(payload)
 
 
+def test_loader_and_schema_couple_environment_to_the_fixed_target(tmp_path: Path) -> None:
+    payload = _payload_for()
+    environment = payload["environment"]
+    assert isinstance(environment, dict)
+    environment["target"] = "aarch64-unknown-linux-gnu"
+
+    with pytest.raises(ValueError, match="environment target"):
+        load_record(_write_payload(tmp_path, payload))
+    assert _schema_errors(payload)
+
+
 def test_measurements_allow_only_named_scalars_or_scalar_arrays(tmp_path: Path) -> None:
     valid = _payload_for()
     evidence = valid["evidence"]
@@ -253,6 +308,63 @@ def test_measurements_allow_only_named_scalars_or_scalar_arrays(tmp_path: Path) 
         assert _schema_errors(invalid)
 
 
+@pytest.mark.parametrize(
+    "measurement",
+    [
+        pytest.param(float("inf"), id="positive-infinity"),
+        pytest.param(float("-inf"), id="negative-infinity"),
+        pytest.param(float("nan"), id="nan"),
+        pytest.param((1, float("inf")), id="nested-positive-infinity"),
+        pytest.param((float("nan"), 1), id="nested-nan"),
+    ],
+)
+def test_evidence_construction_rejects_non_finite_measurements(
+    measurement: object,
+) -> None:
+    evidence = make_record(ROOT, "mcp-transport").evidence[0]
+
+    with pytest.raises(ValueError, match="finite"):
+        replace(evidence, measurements={"probe": measurement})  # type: ignore[dict-item]
+
+
+def test_loader_and_schema_reject_overflowed_json_number_token(tmp_path: Path) -> None:
+    payload = _payload_for()
+    serialized = json.dumps(payload).replace(
+        '"measurements": {}',
+        '"measurements": {"overflow": 1e999}',
+        1,
+    )
+    path = tmp_path / "overflow.json"
+    path.write_text(serialized, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="finite"):
+        load_record(path)
+    assert _schema_errors(json.loads(serialized))
+
+
+def test_loader_and_schema_enforce_finite_binary64_measurement_range(tmp_path: Path) -> None:
+    valid = _payload_for()
+    valid_evidence = valid["evidence"]
+    assert isinstance(valid_evidence, list) and isinstance(valid_evidence[0], dict)
+    valid_evidence[0]["measurements"] = {
+        "minimum": -sys.float_info.max,
+        "ordinary": 12.5,
+        "maximum": sys.float_info.max,
+    }
+    loaded = load_record(_write_payload(tmp_path, valid))
+    assert _schema_errors(valid) == []
+    json.dumps(asdict(loaded), allow_nan=False)
+
+    for outside_range in (10**309, -(10**309)):
+        invalid = _payload_for()
+        invalid_evidence = invalid["evidence"]
+        assert isinstance(invalid_evidence, list) and isinstance(invalid_evidence[0], dict)
+        invalid_evidence[0]["measurements"] = {"outside_binary64": outside_range}
+        with pytest.raises(ValueError, match="finite IEEE-754 range"):
+            load_record(_write_payload(tmp_path, invalid))
+        assert _schema_errors(invalid)
+
+
 def test_schema_is_draft_2020_12_and_accepts_every_factory_record() -> None:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
@@ -267,12 +379,11 @@ def test_factory_rejects_unknown_failed_criterion() -> None:
 
 def test_status_rejects_invalid_evidence_value_types() -> None:
     record = make_record(ROOT, "mcp-transport")
-    invalid = replace(
-        record.evidence[0],
-        measurements={"payload": ({"not": "a scalar"},)},  # type: ignore[dict-item]
-    )
     with pytest.raises(ValueError, match="measurement"):
-        status_for((invalid, *record.evidence[1:]))
+        replace(
+            record.evidence[0],
+            measurements={"payload": ({"not": "a scalar"},)},  # type: ignore[dict-item]
+        )
 
     invalid_status = replace(record.evidence[0], status="unknown")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="evidence status"):
