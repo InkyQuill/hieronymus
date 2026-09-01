@@ -19,7 +19,7 @@
 - macOS and Windows are not supported by the initial cutover.
 - FTS5-only operation is the required baseline for the initial Linux cutover.
 - The MCP protocol revision is exactly `2026-07-28`; stdio is newline-delimited JSON-RPC, Streamable HTTP is `POST /mcp` with JSON or request-scoped SSE, and `/api/mcp/{operation}` remains an intentionally removed private Python bridge.
-- MCP 2026-07-28 is stateless: there is no `initialize`, `notifications/initialized`, or transport session; every request carries protocol revision and client identity metadata, every HTTP request also carries `Mcp-Method` and `Mcp-Name`, and every successful tool result contains required `resultType`.
+- MCP 2026-07-28 is stateless: there is no `initialize`, `notifications/initialized`, or transport session; every request carries exact reserved `params._meta["io.modelcontextprotocol/protocolVersion"]` and `params._meta["io.modelcontextprotocol/clientCapabilities"]`, canonical requests include SHOULD-level `params._meta["io.modelcontextprotocol/clientInfo"]` but its absence is accepted, applicable HTTP requests also carry `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`, and every successful tools/list or tools/call result over stdio, HTTP JSON, or HTTP SSE has recognized `resultType: "complete"`.
 - SQLite remains authoritative for RAG sources, chunks, metadata, and semantic job state; embeddings and LanceDB tables are disposable derived artifacts.
 - The semantic qualification must record exact crate versions/features, binary size, checksum-verified model load, a 10,000-chunk actual ANN index, checked series pre-filter-before-ANN plan/cardinality proof, zero cross-series hits, insert/search/delete, generation isolation, SQLite-durable lease/counter/cancellation recovery, zero SQLite-write-transaction spans across ONNX/LanceDB I/O, a complete 50-query run, and nonempty/isolation/rebuild-equivalent FTS fallback.
 - Any failed semantic criterion selects `fts-only` for the initial Linux release; it never blocks the Rust workspace plan or the `x86_64-unknown-linux-gnu` release by itself.
@@ -40,7 +40,7 @@
 - Every live run writes beneath `qualification/.artifacts/`, hashes frozen inputs before and after use, removes transient work/log/install directories on success or failure, and leaves only ignored caches plus reviewed records.
 - Every Cargo build/test/Clippy command sets a risk-specific `CARGO_TARGET_DIR` beneath `qualification/.artifacts/cargo-target/`; crash probes disable core dumps and run in an owned process group that the runner terminates and reaps in `finally`.
 - Each harness has its own `Cargo.toml` and committed `Cargo.lock`; direct risk dependencies are exact pins and all resolved versions/features are copied from `cargo metadata --locked` and `cargo tree -e features --locked` into the record.
-- Each record's input digest covers `qualification/prerequisites.json`, `qualification/rust-toolchain.toml`, `tools/qualification/model.py`, `tools/qualification/render.py`, `tools/qualification/acquire.py`, its own Python runner, Cargo manifest/lockfile/source/tests, every consumed compatibility manifest/snapshot/fixture including every actual HTTP route case, and risk-specific frontend/corpus inputs; changing any of them makes the record stale.
+- Each record's input digest covers `qualification/prerequisites.json`, `qualification/rust-toolchain.toml`, every common qualification module (`model.py`, `fingerprint.py`, `redaction.py`, `validate.py`, `render.py`, `acquire.py`, `process.py`, and `clean.py`), its own Python runner, Cargo manifest/lockfile/source/tests, every consumed compatibility manifest/snapshot/fixture including every actual HTTP route case, and risk-specific frontend/corpus inputs; changing any of them makes the record stale.
 - Pavel Obruchnikov `<me@inkyquill.net>` is the acceptance owner for all four records and the aggregate gate unless a compatibility-manifest entry explicitly delegates another named owner.
 
 ## Normative Inputs
@@ -70,10 +70,10 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 
 ## Execution And File Ownership Order
 
-- Execute Tasks 1–16 in numeric order. Task 1's corrected compatibility oracle must be accepted as its own commit before Task 3 starts.
-- Task 2 exclusively establishes common schemas/model/render/process/cleanup files. Task 6 is the only risk task allowed to extend the common acquisition/prerequisite files, and it starts only after Task 2 is accepted.
-- MCP Tasks 3–5, semantic Tasks 6–9, frontend Tasks 10–12, and database Tasks 13–15 each use manifest/build, behavior/recovery, then runner/evidence commits. Within a risk, later tasks modify only files explicitly handed off by the prior task.
-- Task 16 is the only task that revisits accepted records, gate schema, common README, dispatcher/checker, or CI. Do not implement risk tasks concurrently when they name the same file; never fold an earlier review boundary into a later commit.
+- Execute Tasks 1–21 in numeric order. Task 1's corrected compatibility oracle must be accepted as its own commit before Task 6 starts.
+- Tasks 2–5 establish, in separate commits, the record model, validation/rendering/fingerprints, verified acquisitions, and sanitized process/cleanup boundary. Task 9 is the only later task allowed to extend `qualification/prerequisites.json`, `tools/qualification/acquire.py`, or `tests/qualification/test_acquire.py`.
+- MCP Tasks 6–8, semantic Tasks 9–12, frontend Tasks 13–15, and database Tasks 16–18 each use manifest/build, behavior/recovery, then runner/evidence commits. Within a risk, later tasks modify only files explicitly handed off by the prior task.
+- Task 19 owns dispatcher/checker/gate computation, Task 20 owns acceptance transitions and generated artifact refresh, and Task 21 alone owns contributor commands and CI workflows. Common-file ownership is sequential; do not implement tasks concurrently when they name the same file, and never fold an earlier review boundary into a later commit.
 
 ## File Map
 
@@ -91,20 +91,26 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 - `tools/compatibility/inventory_http.py`: generator for MCP Host/auth/version/method/name HTTP route cases.
 - `qualification/records/*.json`: canonical machine evidence for four risks plus the aggregate gate.
 - `docs/qualification/rust/*.md`: generated human-readable records; never hand-edited independently of JSON.
-- `tools/qualification/model.py`: typed records, required-criterion sets, consequence constants, input fingerprints, and redaction validation.
+- `tools/qualification/model.py`: typed records, required-criterion sets, and consequence constants.
+- `tools/qualification/fingerprint.py`: deterministic relative-path input hashing and stale-record detection.
+- `tools/qualification/redaction.py`: canonical-record forbidden-data scan.
+- `tools/qualification/validate.py`: network-free record/schema/invariant validation CLI.
 - `tools/qualification/render.py`: deterministic Markdown renderer and drift checker.
-- `tools/qualification/acquire.py`: explicit atomic semantic-model acquisition with checksum verification.
+- `tools/qualification/acquire.py`: explicit atomic semantic-model and ONNX-runtime acquisition with checksum and archive-policy verification.
 - `tools/qualification/clean.py`: bounded cleanup for ignored qualification artifacts only.
 - `tools/qualification/process.py`: owned process-group execution, core-dump suppression, timeouts, and bounded termination/reaping.
+- `tests/qualification/fixtures/process-smoke/`: dependency-free locked Cargo project proving the sanitized Rust environment works offline.
 - `tools/qualification/run_mcp.py`: MCP harness orchestration and record production.
 - `tools/qualification/run_semantic.py`: semantic build/recovery/fallback orchestration and record production.
 - `tools/qualification/run_frontend.py`: Bun build/rust-embed orchestration and record production.
 - `tools/qualification/run_database.py`: read-only fixture import orchestration and record production.
 - `tools/qualification/run.py`: one CLI dispatcher for individual or all live qualifications.
 - `tools/qualification/check.py`: network-free schema, fingerprint, Markdown, redaction, and aggregate-gate validation.
+- `tools/qualification/review.py`: review-only state transition and deterministic record/aggregate regeneration.
 - `tests/qualification/factories.py`: deterministic valid/failed/stale/review-state record factories and bounded fake executable writer used only by tests.
 - `tests/qualification/`: Python tests for record invariants, runners, cleanup safety, and gate truth table.
 - `.github/workflows/pr.yml`: ordinary network-free qualification-record drift gate.
+- `.github/workflows/rust-qualification-live.yml`: manually dispatched, pinned-action live evidence workflow; it never commits records.
 - `.gitignore`: ignores model, work, install, log, and Cargo target artifacts under `qualification/.artifacts/`.
 
 ---
@@ -125,9 +131,11 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 
 **Interfaces:**
 - Consumes: official MCP 2026-07-28 request/response and Streamable HTTP rules plus ADR 0015's transport/auth/Host requirements.
-- Produces: `_protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]` whose `target` contains stateless `tools/list` and `tools/call` requests, per-request `protocolVersion` and `clientInfo`, required `resultType`, stdio framing, and HTTP JSON/SSE variants without initialize/session fields.
+- Produces: `_protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]` whose target requests carry exact reserved `params._meta` keys, whose every successful envelope has `resultType: "complete"`, and whose stdio/HTTP JSON/SSE variants contain no initialize/session fields.
+- Test helper: `_successful_result_envelopes(target: dict[str, object]) -> tuple[dict[str, object], ...]` returns tools/list and tools/call success envelopes from stdio, HTTP JSON, and HTTP SSE fixture branches.
+- Produces validator: `_request_metadata_issues(request: dict[str, object]) -> tuple[str, ...]`, accepting absence of only clientInfo while rejecting missing/wrong required reserved keys and every direct legacy metadata field.
 - Produces: the `http.route.post.mcp` target cases in `_route_cases(snapshot: dict[str, object])`, covering valid request, invalid Host, missing/invalid bearer, missing/wrong protocol metadata, missing/wrong `Mcp-Method`, and missing/wrong `Mcp-Name`.
-- Produces: a separately reviewed compatibility commit that is an immutable prerequisite of Tasks 3–5; candidate qualification must not edit or normalize this oracle.
+- Produces: a separately reviewed compatibility commit that is an immutable prerequisite of Tasks 6–8; candidate qualification must not edit or normalize this oracle.
 
 - [ ] **Step 1: Replace obsolete fixture assertions with failing official-wire assertions**
 
@@ -143,14 +151,43 @@ def test_protocol_fixture_is_stateless_2026_07_28() -> None:
     assert "Mcp-Session-Id" not in compact
     assert {"initialize", "initialized", "session"}.isdisjoint(target)
     for request in target["requests"]:
-        assert request["params"]["protocolVersion"] == "2026-07-28"
-        assert request["params"]["clientInfo"] == {
+        assert {"protocolVersion", "clientCapabilities", "clientInfo"}.isdisjoint(
+            request["params"]
+        )
+        meta = request["params"]["_meta"]
+        assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
+        assert meta["io.modelcontextprotocol/clientCapabilities"] == {}
+        assert meta["io.modelcontextprotocol/clientInfo"] == {
             "name": "compatibility-replay",
             "version": "1.0.0",
         }
+    assert target["metadata_rules"] == {
+        "required": [
+            "io.modelcontextprotocol/protocolVersion",
+            "io.modelcontextprotocol/clientCapabilities",
+        ],
+        "should": ["io.modelcontextprotocol/clientInfo"],
+    }
     assert "Mcp-Session-Id" not in target["streamable_http"]["request"]["headers"]
-    result_type = target["tool_call"]["response"]["result"]["resultType"]
-    assert isinstance(result_type, str) and result_type
+    successes = _successful_result_envelopes(target)
+    assert len(successes) == 6
+    assert all(
+        envelope["result"]["resultType"] == "complete"
+        for envelope in successes
+    )
+    without_client_info = json.loads(json.dumps(target["requests"][0]))
+    del without_client_info["params"]["_meta"][
+        "io.modelcontextprotocol/clientInfo"
+    ]
+    assert _request_metadata_issues(without_client_info) == ()
+    missing_capabilities = json.loads(json.dumps(without_client_info))
+    del missing_capabilities["params"]["_meta"][
+        "io.modelcontextprotocol/clientCapabilities"
+    ]
+    assert _request_metadata_issues(missing_capabilities)
+    direct_legacy = json.loads(json.dumps(without_client_info))
+    direct_legacy["params"]["protocolVersion"] = "2026-07-28"
+    assert _request_metadata_issues(direct_legacy)
 
 
 def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
@@ -158,7 +195,13 @@ def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
     success = case["success"]["request"]
     assert success["headers"]["Mcp-Method"] == "tools/call"
     assert success["headers"]["Mcp-Name"] == "hieronymus_status"
-    assert success["body"]["params"]["protocolVersion"] == "2026-07-28"
+    meta = success["body"]["params"]["_meta"]
+    assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
+    assert meta["io.modelcontextprotocol/clientCapabilities"] == {}
+    assert meta["io.modelcontextprotocol/clientInfo"] == {
+        "name": "compatibility-replay",
+        "version": "1.0.0",
+    }
     assert {failure["id"] for failure in case["failures"]} == {
         "invalid-host",
         "missing-bearer",
@@ -176,37 +219,41 @@ def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
 
 Run: `uv run pytest tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_is_stateless_2026_07_28 tests/compatibility/test_http_inventory.py::test_http_mcp_cases_cover_official_metadata_and_local_security -v`
 
-Expected: FAIL because the current target fixture still contains `initialize`, lacks per-request metadata and `resultType`, and omits the method/name HTTP failures.
+Expected: FAIL because the current target fixture still contains `initialize`, uses direct legacy params, lacks required `_meta` capabilities and `resultType: "complete"` coverage, and omits method/name HTTP failures.
 
 - [ ] **Step 3: Implement the corrected generators and frozen target shapes**
 
-Define target request params exactly as:
+Define target request metadata exactly as:
 
 ```python
-REQUEST_METADATA = {
-    "protocolVersion": "2026-07-28",
-    "clientInfo": {"name": "compatibility-replay", "version": "1.0.0"},
+REQUEST_META = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientCapabilities": {},
+    "io.modelcontextprotocol/clientInfo": {
+        "name": "compatibility-replay",
+        "version": "1.0.0",
+    },
 }
 
 tools_list_request = {
     "jsonrpc": "2.0",
     "id": 1,
     "method": "tools/list",
-    "params": REQUEST_METADATA,
+    "params": {"_meta": REQUEST_META},
 }
 tool_call_request = {
     "jsonrpc": "2.0",
     "id": 2,
     "method": "tools/call",
     "params": {
-        **REQUEST_METADATA,
+        "_meta": REQUEST_META,
         "name": "hieronymus_status",
         "arguments": {},
     },
 }
 ```
 
-Store those two objects in `target["requests"]` in list/call order and store the call request/response pair at `target["tool_call"]`. The target response for `tools/call` keeps the frozen content/error envelope and includes the official nonempty `resultType` field inside `result`; the focused test rejects absence or an empty value. Stdio stores one request/response JSON line per operation. HTTP success includes `Host: 127.0.0.1:<PORT>`, synthetic bearer, `MCP-Protocol-Version: 2026-07-28`, `Mcp-Method: tools/call`, and `Mcp-Name: hieronymus_status`; failure cases change or omit exactly one field and retain deterministic status/error bodies. Delete initialize, initialized-notification, `Mcp-Session-Id`, and transport-session lifecycle shapes from the entire protocol fixture, including `current`; retain only current registry/tool-response observation as explicitly non-authoritative historical evidence. Qualification consumes only `target`.
+Store those requests in list/call order and freeze `metadata_rules.required` to protocolVersion/clientCapabilities while `metadata_rules.should` contains clientInfo. Implement `_request_metadata_issues` from those exact rules. Canonical requests include clientInfo, but a request omitting only `io.modelcontextprotocol/clientInfo` remains valid; missing either required key or placing any metadata directly in `params` is invalid. Add `resultType: "complete"` inside every successful `result` for tools/list and tools/call. Store both operations as newline-delimited stdio exchanges and as Streamable HTTP JSON/SSE exchanges; `_successful_result_envelopes(target)` enumerates all six successful envelopes and tests each exact value. HTTP requests also include Host, bearer, `MCP-Protocol-Version`, matching `Mcp-Method`, and matching `Mcp-Name`; failure cases change/omit exactly one applicable field. Delete handshake/session shapes from the entire protocol fixture. Qualification consumes only target.
 
 - [ ] **Step 4: Regenerate and prove the authority is complete and deterministic**
 
@@ -216,7 +263,7 @@ Run: `uv run python -m tools.compatibility.inventory_http --write`
 
 Run: `uv run pytest tests/compatibility/test_mcp_inventory.py tests/compatibility/test_http_inventory.py tests/compatibility/test_check.py -v`
 
-Expected: PASS; regenerated target fixtures have no obsolete handshake/session shape, every target request has exact per-request metadata, HTTP cases cover Host/auth/version/method/name, and successful tool results require `resultType`.
+Expected: PASS; target requests use only exact reserved `_meta` keys, clientInfo absence is accepted, required metadata absence is rejected, HTTP cases cover Host/auth/version/method/name, and all tools/list/tools/call stdio/JSON/SSE successes equal `resultType: "complete"`.
 
 - [ ] **Step 5: Run the compatibility gate before any candidate work**
 
@@ -231,59 +278,33 @@ git add tools/compatibility/inventory_mcp.py tools/compatibility/inventory_http.
 git commit -m "fix: align MCP compatibility oracle with 2026-07-28"
 ```
 
-Stop if this commit is not accepted. Tasks 3–5 fingerprint and consume this corrected commit; they must never preserve or replay the obsolete target fixture.
+Stop if this commit is not accepted. Tasks 6–8 fingerprint and consume this corrected commit; they must never preserve or replay the obsolete target fixture.
 
-### Task 2: Qualification Record Boundary And Safe Artifact Lifecycle
+### Task 2: Common Qualification Record Schema And Decision Model
 
-**Complexity:** Medium, 3–4 hours.
+**Complexity:** Medium, 2–3 hours.
 
 **Files:**
-- Create: `qualification/README.md`
-- Create: `qualification/prerequisites.json`
-- Create: `qualification/rust-toolchain.toml`
 - Create: `qualification/schemas/record.schema.json`
-- Create: `qualification/schemas/gate.schema.json`
 - Create: `tools/qualification/__init__.py`
 - Create: `tools/qualification/model.py`
-- Create: `tools/qualification/render.py`
-- Create: `tools/qualification/acquire.py`
-- Create: `tools/qualification/clean.py`
-- Create: `tools/qualification/process.py`
 - Create: `tests/qualification/factories.py`
 - Create: `tests/qualification/test_model.py`
-- Create: `tests/qualification/test_render.py`
-- Create: `tests/qualification/test_clean.py`
-- Create: `tests/qualification/test_process.py`
-- Modify: `.gitignore`
 
 **Interfaces:**
-- Consumes: checked-in JSON/SQLite/text inputs rooted at `repo_root`; never implicit environment or user data.
+- Consumes: the four normative risk names, criterion sets, decisions, and accepted consequences in this plan.
 - Produces: `load_record(path: Path) -> QualificationRecord`.
-- Produces: `validate_record(record: QualificationRecord, repo_root: Path) -> list[str]`.
-- Produces: `fingerprint_inputs(repo_root: Path, paths: tuple[str, ...]) -> str`, SHA-256 over sorted relative paths plus bytes.
-- Produces: `render_record(record: QualificationRecord) -> str` with stable headings/table order.
-- Produces: `acquire_semantic_model(repo_root: Path) -> Path`, explicit networked atomic download only.
-- Produces: `cleanup_targets(repo_root: Path, include_model: bool = False) -> tuple[Path, ...]` and CLI `python -m tools.qualification.clean [--apply] [--include-model]`.
-- Produces: `safe_subprocess_env(work_root: Path, *, cargo_offline: bool) -> dict[str, str]`, retaining only toolchain/package-cache paths and `PATH`, setting task-local `HOME`/temporary paths, and removing every `HIERONYMUS_*`, credential, proxy, token, and provider variable.
-- Produces: `run_owned_process(argv: tuple[str, ...], *, cwd: Path, env: Mapping[str, str], timeout_seconds: int, no_progress_seconds: int) -> ProcessReceipt`; on Linux it uses a new session/process group, sets core size to zero before exec, terminates then kills the owned group on timeout/failure, reaps the leader, and returns only bounded digests/status/timings.
-- Produces: `ProcessReceipt(exit_code: int | None, timed_out: bool, stdout_sha256: str, stderr_sha256: str, duration_ms: int, process_group_reaped: bool, core_dumps_disabled: bool)`.
-- Test-only factory: `make_record(repo_root: Path, risk: Risk, *, failed: tuple[str, ...] = (), review_status: ReviewStatus = "pending") -> QualificationRecord`; it emits every required criterion and a current input digest.
+- Produces: `decision_for(risk: Risk, evidence: tuple[Evidence, ...]) -> Decision`, `status_for(evidence: tuple[Evidence, ...]) -> Literal["pass", "fail"]`, and `expected_consequence(risk: Risk, status: Literal["pass", "fail"]) -> str`.
+- Test-only factory: `make_record(repo_root: Path, risk: Risk, *, failed: tuple[str, ...] = (), review_status: ReviewStatus = "pending") -> QualificationRecord`; Task 3 supplies its current input digest.
 - Test-only factory: `accepted_records(repo_root: Path, *, semantic: Literal["semantic-enabled", "fts-only"]) -> dict[Risk, QualificationRecord]`, `accepted_failure(repo_root: Path, risk: Risk) -> QualificationRecord`, `pending_review(record: QualificationRecord) -> QualificationRecord`, `write_fake_executable(tmp_path: Path, *, failed_criteria: tuple[str, ...] = ()) -> Path`, and `fake_child_and_grandchild(tmp_path: Path) -> tuple[str, ...]`.
 
-- [ ] **Step 1: Write failing record, redaction, rendering, and cleanup tests**
+- [ ] **Step 1: Write failing record and decision tests**
 
 ```python
-from dataclasses import replace
 from pathlib import Path
 
-from tests.qualification.factories import fake_child_and_grandchild, make_record
-from tools.qualification.clean import cleanup_targets
-from tools.qualification.model import (
-    fingerprint_inputs,
-    validate_record,
-)
-from tools.qualification.render import render_record
-from tools.qualification.process import run_owned_process, safe_subprocess_env
+from tests.qualification.factories import make_record
+from tools.qualification.model import REQUIRED_CRITERIA, decision_for, status_for
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -292,122 +313,32 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_semantic_failure_is_complete_and_selects_fts_only() -> None:
     record = make_record(ROOT, "semantic-native", failed=("locked-native-build",))
     assert record.decision == "fts-only"
-    assert validate_record(record, ROOT) == []
+    assert decision_for(record.risk, record.evidence) == "fts-only"
 
 
 def test_blocking_failure_cannot_change_the_contract() -> None:
     record = make_record(ROOT, "mcp-transport", failed=("locked-native-build",))
-    changed = replace(record, consequence="downgrade the MCP revision")
-    assert validate_record(changed, ROOT) == [
-        "mcp-transport consequence does not match the accepted blocking consequence"
-    ]
+    assert status_for(record.evidence) == "fail"
+    assert record.decision == "blocked"
 
 
-def test_records_reject_secret_and_user_path_literals() -> None:
-    record = make_record(ROOT, "frontend-embedding")
-    leaked = replace(
-        record,
-        commands=(*record.commands, "compat-secret-do-not-log /home/alice/private"),
+def test_every_risk_has_exactly_one_ordered_criterion_set() -> None:
+    assert tuple(REQUIRED_CRITERIA) == (
+        "mcp-transport",
+        "semantic-native",
+        "frontend-embedding",
+        "legacy-database-import",
     )
-    assert validate_record(leaked, ROOT) == [
-        "record contains forbidden literal: compat-secret-do-not-log",
-        "record contains an absolute home path",
-    ]
-
-
-def test_render_is_deterministic() -> None:
-    record = make_record(ROOT, "legacy-database-import")
-    assert render_record(record) == render_record(record)
-    assert "Legacy Database Import Qualification Record" in render_record(record)
-
-
-def test_cleanup_never_targets_repository_or_model_by_default() -> None:
-    targets = cleanup_targets(ROOT)
-    assert ROOT not in targets
-    assert ROOT / "qualification/.artifacts/models" not in targets
-    assert all(path.is_relative_to(ROOT / "qualification/.artifacts") for path in targets)
-
-
-def test_input_fingerprint_changes_with_fixture_bytes(tmp_path: Path) -> None:
-    fixture = tmp_path / "fixture.txt"
-    fixture.write_text("before", encoding="utf-8")
-    before = fingerprint_inputs(tmp_path, ("fixture.txt",))
-    fixture.write_text("after", encoding="utf-8")
-    assert fingerprint_inputs(tmp_path, ("fixture.txt",)) != before
-
-
-def test_owned_process_disables_core_and_reaps_group(tmp_path: Path) -> None:
-    receipt = run_owned_process(
-        fake_child_and_grandchild(tmp_path),
-        cwd=tmp_path,
-        env=safe_subprocess_env(tmp_path, cargo_offline=True),
-        timeout_seconds=1,
-        no_progress_seconds=1,
-    )
-    assert receipt.timed_out
-    assert receipt.core_dumps_disabled
-    assert receipt.process_group_reaped
-    assert list(tmp_path.glob("core*")) == []
+    assert all(len(criteria) == len(set(criteria)) for criteria in REQUIRED_CRITERIA.values())
 ```
 
 - [ ] **Step 2: Run the tests and verify the missing-package failure**
 
-Run: `uv run pytest tests/qualification/test_model.py tests/qualification/test_render.py tests/qualification/test_clean.py tests/qualification/test_process.py -v`
+Run: `uv run pytest tests/qualification/test_model.py -v`
 
 Expected: FAIL during collection with `ModuleNotFoundError: No module named 'tools.qualification'`.
 
-- [ ] **Step 3: Define the exact prerequisite file and qualification-only toolchain pin**
-
-Create `qualification/rust-toolchain.toml`:
-
-```toml
-[toolchain]
-channel = "1.96.0"
-profile = "minimal"
-targets = ["x86_64-unknown-linux-gnu"]
-components = ["clippy", "rustfmt"]
-```
-
-Create `qualification/prerequisites.json`:
-
-```json
-{
-  "schema_version": 1,
-  "target": "x86_64-unknown-linux-gnu",
-  "rust": {
-    "version": "1.96.0",
-    "commit": "ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96"
-  },
-  "bun": {
-    "version": "1.3.14",
-    "authority": "frontend/package.json"
-  },
-  "semantic_model": {
-    "provider": "onnx-runtime",
-    "repository": "sentence-transformers/all-MiniLM-L6-v2",
-    "revision": "9a53d751e60e6dd34f2443711d44d5b09389f89a",
-    "file": "onnx/model.onnx",
-    "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/9a53d751e60e6dd34f2443711d44d5b09389f89a/onnx/model.onnx",
-    "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
-    "dimensions": 384,
-    "normalization": "l2"
-  },
-  "network_policy": {
-    "allowed_only_for": [
-      "manual review of https://modelcontextprotocol.io/specification/2026-07-28",
-      "cargo fetch --locked",
-      "bun install --frozen-lockfile",
-      "python -m tools.qualification.acquire semantic-model",
-      "python -m tools.qualification.acquire onnx-runtime"
-    ],
-    "ordinary_replay": "offline"
-  }
-}
-```
-
-The model file is stored at `qualification/.artifacts/models/all-MiniLM-L6-v2/model.onnx`, is never committed, and is promoted from `.part` only after the exact SHA-256 matches.
-
-- [ ] **Step 4: Implement typed records and immutable risk rules**
+- [ ] **Step 3: Implement typed records and immutable risk rules**
 
 Use these exact public types and constants in `tools/qualification/model.py`:
 
@@ -435,7 +366,7 @@ REQUIRED_CRITERIA: dict[Risk, tuple[str, ...]] = {
         "locked-native-build",
         "protocol-2026-07-28",
         "no-handshake-or-session",
-        "per-request-client-metadata",
+        "per-request-required-metadata",
         "unsupported-version-rejected",
         "stdio-newline-jsonrpc",
         "streamable-http-json",
@@ -491,17 +422,6 @@ REQUIRED_CRITERIA: dict[Risk, tuple[str, ...]] = {
         "no-sensitive-row-output",
     ),
 }
-
-
-COMMON_FINGERPRINT_INPUTS = (
-    "qualification/prerequisites.json",
-    "qualification/rust-toolchain.toml",
-    "tools/qualification/model.py",
-    "tools/qualification/render.py",
-    "tools/qualification/acquire.py",
-    "tools/qualification/process.py",
-    "tools/qualification/clean.py",
-)
 
 
 FAILURE_CONSEQUENCES: dict[Risk, str] = {
@@ -597,72 +517,397 @@ class QualificationRecord:
     review: Review
 ```
 
-Validation requires every criterion exactly once, forbids unknown criteria, requires a reason for `not-run`, derives record status from evidence, enforces the exact decision/consequence mapping, verifies every input path/digest, and requires `COMMON_FINGERPRINT_INPUTS`. Each runner appends its own runner, Cargo manifest/lock/source/tests, and every concrete consumed fixture path: MCP and frontend both include the full `compatibility/fixtures/http/route-cases.json`; MCP also includes every concrete tool input/wire file and the corrected protocol fixture. A nonempty ordered command list uses only repository-relative/artifact-relative arguments. All cleanup booleans except `user_data_opened` must be true and `user_data_opened` false. The serialized record is scanned for every forbidden data class in Global Constraints. Live runners create `Review(owner="Pavel Obruchnikov <me@inkyquill.net>", status="pending", objective_evidence_reviewed=False, normative_constraints_preserved=False)`; only Task 16 changes review fields. JSON schemas set `additionalProperties: false` on every fixed object; `measurements` permits only named scalar or scalar-array values, never nested logs or payloads.
+Task 2 derives status and decision only from complete criterion evidence, enforces exact risk/decision/consequence combinations, rejects duplicate/unknown/missing criteria, and requires a reason for every `not-run`. Live runners create `Review(owner="Pavel Obruchnikov <me@inkyquill.net>", status="pending", objective_evidence_reviewed=False, normative_constraints_preserved=False)`; only Task 20 changes review fields. `record.schema.json` sets `additionalProperties: false` on every fixed object; measurements permit only named scalars or scalar arrays, never payload/log objects.
 
-- [ ] **Step 5: Implement deterministic rendering, acquisition, and bounded cleanup**
+- [ ] **Step 4: Run the model tests GREEN**
+
+Run: `uv run pytest tests/qualification/test_model.py -v`
+
+Expected: PASS; every risk has exact criteria and deterministic pass/fail decision mapping.
+
+- [ ] **Step 5: Commit the common record model**
+
+```bash
+git add qualification/schemas/record.schema.json tools/qualification/__init__.py tools/qualification/model.py tests/qualification/factories.py tests/qualification/test_model.py
+git commit -m "test: define Rust qualification record model"
+```
+
+### Task 3: Record Validation, Redaction, Fingerprints, And Rendering
+
+**Complexity:** Medium, 2–3 hours.
+
+**Files:**
+- Create: `tools/qualification/fingerprint.py`
+- Create: `tools/qualification/redaction.py`
+- Create: `tools/qualification/validate.py`
+- Create: `tools/qualification/render.py`
+- Modify: `tests/qualification/factories.py`
+- Create: `tests/qualification/test_fingerprint.py`
+- Create: `tests/qualification/test_redaction.py`
+- Create: `tests/qualification/test_render.py`
+
+**Interfaces:**
+- Consumes: Task 2 `QualificationRecord`, exact checked-in paths rooted at `repo_root`, and no implicit environment/user data.
+- Produces: `fingerprint_inputs(repo_root: Path, paths: tuple[str, ...]) -> str`, SHA-256 over sorted relative paths plus bytes.
+- Produces: `redaction_issues(serialized_record: str) -> list[str]` and `validate_record(record: QualificationRecord, repo_root: Path) -> list[str]`.
+- Produces: `render_record(record: QualificationRecord) -> str` with stable headings/table order.
+- Produces deterministic CLIs `python -m tools.qualification.validate <record.json>` and `python -m tools.qualification.render --check <record.json> <record.md>`.
+
+- [ ] **Step 1: Write failing fingerprint, redaction, and render tests**
+
+```python
+import json
+from dataclasses import asdict, replace
+from pathlib import Path
+
+from tests.qualification.factories import make_record
+from tools.qualification.fingerprint import COMMON_FINGERPRINT_INPUTS, fingerprint_inputs
+from tools.qualification.redaction import redaction_issues
+from tools.qualification.render import render_record
+from tools.qualification.validate import validate_record
+
+def _seed_common_inputs(root: Path) -> None:
+    for relative in COMMON_FINGERPRINT_INPUTS:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"qualification fixture: {relative}\n", encoding="utf-8")
+
+
+def test_input_fingerprint_changes_with_fixture_bytes(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture.txt"
+    fixture.write_text("before", encoding="utf-8")
+    before = fingerprint_inputs(tmp_path, ("fixture.txt",))
+    fixture.write_text("after", encoding="utf-8")
+    assert fingerprint_inputs(tmp_path, ("fixture.txt",)) != before
+
+
+def test_record_rejects_secret_and_home_path(tmp_path: Path) -> None:
+    _seed_common_inputs(tmp_path)
+    record = make_record(tmp_path, "frontend-embedding")
+    leaked = replace(
+        record,
+        commands=(*record.commands, "compat-secret-do-not-log /home/alice/private"),
+    )
+    serialized = json.dumps(asdict(leaked), sort_keys=True, separators=(",", ":"))
+    assert redaction_issues(serialized) == [
+        "record contains forbidden literal: compat-secret-do-not-log",
+        "record contains an absolute home path",
+    ]
+    assert validate_record(leaked, tmp_path) == redaction_issues(serialized)
+
+
+def test_render_is_deterministic(tmp_path: Path) -> None:
+    _seed_common_inputs(tmp_path)
+    record = make_record(tmp_path, "legacy-database-import")
+    assert render_record(record) == render_record(record)
+    assert "Legacy Database Import Qualification Record" in render_record(record)
+```
+
+- [ ] **Step 2: Run tests and verify RED**
+
+Run: `uv run pytest tests/qualification/test_fingerprint.py tests/qualification/test_redaction.py tests/qualification/test_render.py -v`
+
+Expected: FAIL importing the four Task 3 modules.
+
+- [ ] **Step 3: Implement deterministic validation and rendering**
+
+Use this exact common fingerprint set in `fingerprint.py`:
+
+```python
+COMMON_FINGERPRINT_INPUTS = (
+    "qualification/prerequisites.json",
+    "qualification/rust-toolchain.toml",
+    "tools/qualification/model.py",
+    "tools/qualification/fingerprint.py",
+    "tools/qualification/redaction.py",
+    "tools/qualification/validate.py",
+    "tools/qualification/render.py",
+    "tools/qualification/acquire.py",
+    "tools/qualification/process.py",
+    "tools/qualification/clean.py",
+)
+```
+
+Validation requires every Task 2 criterion exactly once, exact decision/consequence, `COMMON_FINGERPRINT_INPUTS`, a nonempty ordered relative command list, all cleanup booleans except `user_data_opened` true, and `user_data_opened` false. Task 3 updates `make_record` to compute its digest through `fingerprint_inputs`; the tests seed every future common path in a temporary root, so this task remains executable before Tasks 4–5 create those real files. Each runner appends its runner, Cargo manifest/lock/source/tests, and every concrete fixture: MCP/frontend both include the full HTTP route-cases file; MCP also includes every tool input/wire and corrected protocol fixture. Redaction rejects secrets, headers/cookies, source text, host/user names, and absolute home paths before JSON/Markdown write.
+
+- [ ] **Step 4: Implement deterministic rendering**
 
 `render_record` prints title, decision, exact replay commands, environment/dependency tables, one row per required criterion, consumed compatibility ids, input digest, cleanup assertions, and the immutable consequence. It sorts mappings and dependency rows; it never includes raw stdout/stderr.
 
-Expose deterministic CLIs `python -m tools.qualification.model validate <record.json>` and `python -m tools.qualification.render --check <record.json> <record.md>` so individual tasks can validate a record before the aggregate checker exists.
+Expose the exact CLIs from the Interfaces block so individual tasks validate/render records before the aggregate checker exists.
 
-`acquire_semantic_model` uses `urllib.request`, writes only `model.onnx.part`, hashes while streaming, deletes a mismatched partial file, calls `os.replace` after success, and returns the verified final path. The initial URL must exactly match `prerequisites.json`; at most five redirect hops may use HTTPS with no userinfo/fragment and exact host in `huggingface.co`, `cdn-lfs.huggingface.co`, `cas-bridge.xethub.hf.co`, or the observed `us.aws.cdn.hf.co`. Redirect query strings may carry CDN signatures but are never logged or persisted; caller credentials/cookies are never forwarded. Any other hop fails before body download, and only the pinned final SHA-256 authorizes promotion.
+- [ ] **Step 5: Run validation/rendering tests GREEN**
 
-`safe_subprocess_env` allowlists `PATH`, `CARGO_HOME`, `RUSTUP_HOME`, and `BUN_INSTALL_CACHE_DIR` when present; sets `HOME`, `TMPDIR`, `XDG_CACHE_HOME`, and `XDG_CONFIG_HOME` beneath the risk work root; sets `CARGO_NET_OFFLINE=true` for replay; and removes every other inherited variable. Tests set sentinel `HIERONYMUS_DATA_ROOT`, `HOME`, `HTTP_PROXY`, `OPENAI_API_KEY`, `Authorization`, and `COOKIE` values and assert none reaches a child probe or record.
+Run: `uv run pytest tests/qualification/test_fingerprint.py tests/qualification/test_redaction.py tests/qualification/test_render.py -v`
 
-`run_owned_process` is the only live-run subprocess primitive. Tests launch a fake child and grandchild, assert the process group is gone after timeout, assert `RLIMIT_CORE` is `(0, 0)` inside the child, and assert no `core` file exists. Every Cargo invocation receives an explicit `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/<risk>` through `safe_subprocess_env`.
+Run: `uv run ruff check tools/qualification/fingerprint.py tools/qualification/redaction.py tools/qualification/validate.py tools/qualification/render.py tests/qualification/test_fingerprint.py tests/qualification/test_redaction.py tests/qualification/test_render.py`
 
-`cleanup_targets` returns only these resolved paths:
+Expected: all tests and Ruff pass; fixture-byte changes make records stale, forbidden literals fail, and rendering is byte-deterministic.
 
-```python
-ARTIFACT_TARGETS = (
-    "qualification/.artifacts/work",
-    "qualification/.artifacts/logs",
-    "qualification/.artifacts/install",
-    "qualification/.artifacts/cargo-target",
-    "qualification/.artifacts/frontend-dist",
-)
-MODEL_TARGET = "qualification/.artifacts/models"
-```
-
-Before deletion, require each target to be a non-symlink descendant of `qualification/.artifacts`, reject the artifacts root itself, and print exact paths in dry-run mode. `--include-model` adds only `MODEL_TARGET`.
-
-- [ ] **Step 6: Add ignored artifact boundaries and initial contributor instructions**
-
-Append exactly these entries to `.gitignore`:
-
-```gitignore
-# Disposable Rust qualification artifacts
-qualification/.artifacts/
-qualification/harnesses/*/target/
-```
-
-Document that acquisition is explicit, live results are checked in only after sanitization, ordinary `tools.qualification.check` never acquires dependencies/models, and Markdown records are generated from JSON.
-
-- [ ] **Step 7: Run focused verification**
-
-Run: `uv run pytest tests/qualification/test_model.py tests/qualification/test_render.py tests/qualification/test_clean.py tests/qualification/test_process.py -v`
-
-Run: `uv run ruff check tools/qualification tests/qualification`
-
-Run: `uv run ruff format --check tools/qualification tests/qualification`
-
-Expected: all focused tests pass; Ruff reports no errors or formatting drift.
-
-- [ ] **Step 8: Commit the record boundary**
+- [ ] **Step 6: Commit validation and rendering**
 
 ```bash
-git add .gitignore qualification/README.md qualification/prerequisites.json qualification/rust-toolchain.toml qualification/schemas tools/qualification tests/qualification
-git commit -m "test: define Rust qualification record contract"
+git add tools/qualification/fingerprint.py tools/qualification/redaction.py tools/qualification/validate.py tools/qualification/render.py tests/qualification/factories.py tests/qualification/test_fingerprint.py tests/qualification/test_redaction.py tests/qualification/test_render.py
+git commit -m "test: validate and render Rust qualification records"
 ```
 
-### Task 3: MCP Candidate Manifest And Locked Build
+### Task 4: Qualification Prerequisites And Verified Acquisition
+
+**Complexity:** Medium, 2–3 hours.
+
+**Files:**
+- Create: `qualification/prerequisites.json`
+- Create: `qualification/rust-toolchain.toml`
+- Create: `tools/qualification/acquire.py`
+- Create: `tests/qualification/test_acquire.py`
+
+**Interfaces:**
+- Consumes: exact Rust/Bun/model identities from Global Constraints and explicit network acquisition commands only.
+- Produces: `acquire_semantic_model(repo_root: Path) -> Path`, atomic checksum-verified network acquisition.
+- Produces CLI: `python -m tools.qualification.acquire semantic-model`; Task 9 later adds `onnx-runtime` without changing this contract.
+
+- [ ] **Step 1: Write failing model acquisition tests**
+
+Use a local fake HTTP redirector/downloader: accept the exact initial URL and allowed HTTPS host sequence, reject more than five hops, HTTP, userinfo, fragment, disallowed host, forwarded credentials/cookies, and checksum mismatch. Assert `.part` deletion on every failure and atomic promotion only on the exact model SHA-256.
+
+- [ ] **Step 2: Run acquisition tests and verify RED**
+
+Run: `uv run pytest tests/qualification/test_acquire.py -v`
+
+Expected: FAIL importing `tools.qualification.acquire`.
+
+- [ ] **Step 3: Define exact prerequisite/toolchain files**
+
+Create `qualification/rust-toolchain.toml`:
+
+```toml
+[toolchain]
+channel = "1.96.0"
+profile = "minimal"
+targets = ["x86_64-unknown-linux-gnu"]
+components = ["clippy", "rustfmt"]
+```
+
+Create `qualification/prerequisites.json` exactly as:
+
+```json
+{
+  "schema_version": 1,
+  "target": "x86_64-unknown-linux-gnu",
+  "rust": {
+    "version": "1.96.0",
+    "commit": "ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96"
+  },
+  "bun": {
+    "version": "1.3.14",
+    "authority": "frontend/package.json"
+  },
+  "semantic_model": {
+    "provider": "onnx-runtime",
+    "repository": "sentence-transformers/all-MiniLM-L6-v2",
+    "revision": "9a53d751e60e6dd34f2443711d44d5b09389f89a",
+    "file": "onnx/model.onnx",
+    "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/9a53d751e60e6dd34f2443711d44d5b09389f89a/onnx/model.onnx",
+    "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+    "dimensions": 384,
+    "normalization": "l2"
+  },
+  "network_policy": {
+    "allowed_only_for": [
+      "manual review of https://modelcontextprotocol.io/specification/2026-07-28",
+      "cargo fetch --locked",
+      "bun install --frozen-lockfile",
+      "python -m tools.qualification.acquire semantic-model",
+      "python -m tools.qualification.acquire onnx-runtime"
+    ],
+    "ordinary_replay": "offline"
+  }
+}
+```
+
+The model destination is `qualification/.artifacts/models/all-MiniLM-L6-v2/model.onnx` and is never committed.
+
+- [ ] **Step 4: Implement checksum/redirect-safe model acquisition**
+
+`acquire_semantic_model` streams to `model.onnx.part`, hashes while streaming, deletes mismatches, and calls `os.replace` only after exact SHA-256. Initial URL must equal prerequisites. At most five HTTPS hops may use exact hosts `huggingface.co`, `cdn-lfs.huggingface.co`, `cas-bridge.xethub.hf.co`, or `us.aws.cdn.hf.co`, with no userinfo/fragment. Signed query strings are never persisted/logged and credentials/cookies are never forwarded.
+
+- [ ] **Step 5: Run acquisition tests GREEN and commit**
+
+Run: `uv run pytest tests/qualification/test_acquire.py -v`
+
+Expected: PASS without contacting the public network; redirect/checksum/partial-file cases are deterministic.
+
+```bash
+git add qualification/prerequisites.json qualification/rust-toolchain.toml tools/qualification/acquire.py tests/qualification/test_acquire.py
+git commit -m "test: verify Rust qualification acquisitions"
+```
+
+### Task 5: Sanitized Process Environment And Bounded Cleanup
+
+**Complexity:** Medium, 2–3 hours.
+
+**Files:**
+- Create: `qualification/README.md`
+- Create: `tools/qualification/process.py`
+- Create: `tools/qualification/clean.py`
+- Create: `tests/qualification/test_process.py`
+- Create: `tests/qualification/test_clean.py`
+- Create: `tests/qualification/fixtures/process-smoke/Cargo.toml`
+- Create: `tests/qualification/fixtures/process-smoke/Cargo.lock`
+- Create: `tests/qualification/fixtures/process-smoke/src/lib.rs`
+- Modify: `.gitignore`
+
+**Interfaces:**
+- Consumes: Task 4 toolchain pin and the caller's original environment only during tool-root discovery.
+- Produces: `discover_tool_roots(original_env: Mapping[str, str]) -> ToolRoots`, where `ToolRoots(cargo_home: Path, rustup_home: Path, cargo: Path, rustup: Path)` contains canonical pre-sanitization paths.
+- Produces: `safe_subprocess_env(work_root: Path, *, cargo_offline: bool, tool_roots: ToolRoots, cargo_target_dir: Path) -> dict[str, str]`.
+- Produces: `run_owned_process(argv: tuple[str, ...], *, cwd: Path, env: Mapping[str, str], timeout_seconds: int, no_progress_seconds: int) -> ProcessReceipt`, where `ProcessReceipt(exit_code: int | None, timed_out: bool, stdout_sha256: str, stderr_sha256: str, duration_ms: int, process_group_reaped: bool, core_dumps_disabled: bool)` stores no paths or raw output.
+- Produces: `cleanup_targets(repo_root: Path, include_model: bool = False) -> tuple[Path, ...]` and CLI `python -m tools.qualification.clean [--apply] [--include-model]`.
+
+- [ ] **Step 1: Write failing tool-root, Cargo-smoke, process-group, and cleanup tests**
+
+```python
+import json
+import os
+import subprocess
+import sys
+from dataclasses import asdict
+from pathlib import Path
+
+import pytest
+
+from tests.qualification.factories import fake_child_and_grandchild
+from tools.qualification.clean import cleanup_targets
+from tools.qualification.process import (
+    ToolRoots,
+    discover_tool_roots,
+    run_owned_process,
+    safe_subprocess_env,
+)
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _fake_tool_roots(tmp_path: Path) -> ToolRoots:
+    cargo_home = tmp_path / "fake-cargo-home"
+    rustup_home = tmp_path / "fake-rustup-home"
+    cargo_home.mkdir()
+    rustup_home.mkdir()
+    executable = Path(sys.executable).resolve()
+    return ToolRoots(cargo_home, rustup_home, executable, executable)
+
+
+@pytest.mark.skipif(
+    os.environ.get("HIERONYMUS_QUALIFICATION_LIVE") != "1",
+    reason="requires the explicitly acquired Rust 1.96.0 toolchain",
+)
+def test_sanitized_env_keeps_discovered_rust_toolchain(tmp_path: Path) -> None:
+    roots = discover_tool_roots(dict(os.environ))
+    env = safe_subprocess_env(
+        tmp_path,
+        cargo_offline=True,
+        tool_roots=roots,
+        cargo_target_dir=tmp_path / "cargo-target",
+    )
+    assert Path(env["CARGO_HOME"]).resolve() == roots.cargo_home
+    assert Path(env["RUSTUP_HOME"]).resolve() == roots.rustup_home
+    assert Path(env["HOME"]).is_relative_to(tmp_path)
+    version = subprocess.run(
+        (str(roots.cargo), "+1.96.0", "--version"), env=env, check=True,
+        capture_output=True, text=True,
+    )
+    assert version.stdout.startswith("cargo 1.96.0")
+    assert "syncing" not in version.stderr.lower()
+    assert "downloading" not in version.stderr.lower()
+    metadata = subprocess.run(
+        (
+            str(roots.cargo), "+1.96.0", "metadata", "--offline", "--locked",
+            "--no-deps", "--format-version", "1", "--manifest-path",
+            str(ROOT / "tests/qualification/fixtures/process-smoke/Cargo.toml"),
+        ),
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(metadata.stdout)["packages"][0]["name"] == "qualification-process-smoke"
+    assert "Updating" not in metadata.stderr
+
+
+def test_owned_process_disables_core_and_reaps_group(tmp_path: Path) -> None:
+    roots = _fake_tool_roots(tmp_path)
+    receipt = run_owned_process(
+        fake_child_and_grandchild(tmp_path), cwd=tmp_path,
+        env=safe_subprocess_env(
+            tmp_path,
+            cargo_offline=True,
+            tool_roots=roots,
+            cargo_target_dir=tmp_path / "cargo-target",
+        ),
+        timeout_seconds=1, no_progress_seconds=1,
+    )
+    assert receipt.timed_out and receipt.core_dumps_disabled
+    assert receipt.process_group_reaped and list(tmp_path.glob("core*")) == []
+    serialized = json.dumps(asdict(receipt), sort_keys=True)
+    assert str(roots.cargo_home) not in serialized
+    assert str(roots.rustup_home) not in serialized
+
+
+def test_cleanup_never_targets_repository_or_model_by_default() -> None:
+    targets = cleanup_targets(ROOT)
+    assert ROOT not in targets
+    assert ROOT / "qualification/.artifacts/models" not in targets
+    assert all(path.is_relative_to(ROOT / "qualification/.artifacts") for path in targets)
+```
+
+- [ ] **Step 2: Run process/cleanup tests and verify RED**
+
+Run: `uv run pytest tests/qualification/test_process.py tests/qualification/test_clean.py -v`
+
+Expected: FAIL importing `tools.qualification.process` and `tools.qualification.clean`.
+
+Run: `HIERONYMUS_QUALIFICATION_LIVE=1 uv run pytest tests/qualification/test_process.py::test_sanitized_env_keeps_discovered_rust_toolchain -v`
+
+Expected: FAIL before implementation; this explicitly opted-in smoke is the only Python test in Task 5 that invokes the real Cargo toolchain.
+
+- [ ] **Step 3: Implement pre-sanitization tool-root discovery**
+
+Before replacing `HOME`, `discover_tool_roots` resolves explicit original `CARGO_HOME`/`RUSTUP_HOME` when present; otherwise it derives `<original HOME>/.cargo` and `<original HOME>/.rustup`. It canonicalizes both directories, resolves `cargo`/`rustup` from those roots or original `PATH`, verifies they are regular executable files, and returns `ToolRoots`. `safe_subprocess_env` then sets task-local `HOME`/TMP/XDG paths but explicitly exports the canonical discovered `CARGO_HOME`, `RUSTUP_HOME`, cargo/rustup parent directories in `PATH`, `RUSTUP_AUTO_INSTALL=0`, `CARGO_NET_OFFLINE=true`, and the caller's resolved `cargo_target_dir`, which it rejects unless it is beneath `qualification/.artifacts/cargo-target/` in live use or the supplied pytest work root in tests. It removes credentials/proxies/provider variables. Records store only versions, basenames, and digests—never these absolute roots.
+
+- [ ] **Step 4: Add actual sanitized Cargo smoke coverage**
+
+The test above runs `cargo +1.96.0 metadata --offline --locked --no-deps --format-version 1` against a tiny checked-in test-only manifest at `tests/qualification/fixtures/process-smoke/Cargo.toml`; its committed `Cargo.lock` has no dependencies and `src/lib.rs` contains `pub fn smoke() {}`. `CARGO_NET_OFFLINE=true`, the dependency-free locked graph, and the assertion that Cargo never prints `Updating` prove no sync/network path is used. Assert serialized receipts contain neither tool-root absolute path nor original home; do not persist environment values.
+
+- [ ] **Step 5: Implement bounded process/cleanup behavior**
+
+`run_owned_process` creates/reaps an owned group, applies `RLIMIT_CORE=(0,0)`, bounds output to digests/status/timings, and terminates/kills the group on timeout/failure. `cleanup_targets` permits only work/log/install/cargo-target/frontend-dist descendants under `qualification/.artifacts`; model deletion requires `--include-model`; symlinks, repository root, artifact root, home, and translation workspace are rejected.
+
+- [ ] **Step 6: Add ignores/README, run GREEN, and commit**
+
+Append `qualification/.artifacts/` and `qualification/harnesses/*/target/` to `.gitignore`. Document explicit acquisition, fake-only ordinary tests, bounded cleanup, generated Markdown, and opt-in live qualification.
+
+Run: `uv run pytest tests/qualification/test_process.py tests/qualification/test_clean.py -v`
+
+Expected: PASS with the real Cargo smoke skipped; fake-process, environment-policy, process-group, and cleanup tests need no Rust/native cache.
+
+Run: `HIERONYMUS_QUALIFICATION_LIVE=1 uv run pytest tests/qualification/test_process.py::test_sanitized_env_keeps_discovered_rust_toolchain -v`
+
+Expected: PASS; actual pinned Cargo version/metadata work under the sanitized environment without sync/network, and the serialized receipt contains no absolute tool roots.
+
+```bash
+git add .gitignore qualification/README.md tools/qualification/process.py tools/qualification/clean.py tests/qualification/test_process.py tests/qualification/test_clean.py tests/qualification/fixtures/process-smoke
+git commit -m "test: bound Rust qualification processes"
+```
+
+### Task 6: MCP Candidate Manifest And Locked Build
 
 **Complexity:** Low, 1–2 hours.
 
 **Files:**
 - Create: `qualification/harnesses/mcp-transport/Cargo.toml`
 - Create: `qualification/harnesses/mcp-transport/Cargo.lock`
-- Create: `qualification/harnesses/mcp-transport/src/main.rs` containing only `fn main() {}` until Task 4.
+- Create: `qualification/harnesses/mcp-transport/src/main.rs` containing only `fn main() {}` until Task 7.
 
 **Interfaces:**
 - Consumes: accepted Task 1 oracle commit and Rust 1.96.0 qualification toolchain.
@@ -717,8 +962,8 @@ tempfile = "3"
 Networked prerequisite:
 
 ```bash
-cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/mcp-transport/Cargo.toml
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/mcp-transport/Cargo.toml
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked
 ```
 
 Offline build:
@@ -736,7 +981,7 @@ git add qualification/harnesses/mcp-transport/Cargo.toml qualification/harnesses
 git commit -m "test: lock MCP qualification candidate"
 ```
 
-### Task 4: MCP Stateless Transport Behavior
+### Task 7: MCP Stateless Transport Behavior
 
 **Complexity:** High, 3–4 hours.
 
@@ -747,14 +992,14 @@ git commit -m "test: lock MCP qualification candidate"
 - Create: `qualification/harnesses/mcp-transport/tests/transport.rs`
 
 **Interfaces:**
-- Consumes: Task 1's corrected `compatibility/fixtures/mcp/protocol.json`, `compatibility/fixtures/http/route-cases.json`, `compatibility/snapshots/mcp.json`, and Task 3 lockfile.
+- Consumes: Task 1's corrected `compatibility/fixtures/mcp/protocol.json`, `compatibility/fixtures/http/route-cases.json`, `compatibility/snapshots/mcp.json`, and Task 6 lockfile.
 - Produces Rust CLI: `mcp-transport stdio --registry <path> --protocol <path>`.
 - Produces Rust CLI: `mcp-transport http --registry <path> --protocol <path> --route-cases <path> --bind 127.0.0.1:0 --ready-file <path>`.
 - Produces bounded JSON evidence for every MCP criterion; it never performs or accepts initialize/session behavior.
 
 - [ ] **Step 1: Write failing stateless stdio/HTTP behavior tests**
 
-In `tests/transport.rs`, load only `protocol["target"]`; assert `tools/list` and `tools/call` work without a preceding handshake, reject absent/wrong per-request protocol/client metadata, require `resultType`, and reject any `initialize`, `notifications/initialized`, or session header. Replay both HTTP response modes and every Task 1 `http.route.post.mcp` target case, including `Mcp-Method`/`Mcp-Name`, Host, bearer, and version failures.
+In `tests/transport.rs`, load only `protocol["target"]`; assert tools/list and tools/call work without handshake, require `_meta` protocolVersion/clientCapabilities, accept canonical clientInfo and a clone omitting only clientInfo, reject direct `params.protocolVersion`/`params.clientCapabilities`/`params.clientInfo`, reject missing/wrong required reserved keys, and reject handshake/session headers. Assert every successful tools/list/tools/call response has exactly `resultType: "complete"` over stdio, HTTP JSON, and HTTP SSE. Replay every Task 1 MCP route case including method/name, Host, bearer, and HTTP version failures.
 
 - [ ] **Step 2: Run behavior tests and verify RED**
 
@@ -776,7 +1021,7 @@ pub trait RegistryProbe: Sized {
 }
 ```
 
-Every request validates `protocolVersion` and `clientInfo`; HTTP additionally validates `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` before dispatch. Every successful result includes `resultType`. Stdio emits one response JSON object plus `\n`; HTTP binds only the supplied loopback address and serves only `POST /mcp` as JSON or request-scoped SSE.
+Every request validates `params._meta["io.modelcontextprotocol/protocolVersion"]` and required `params._meta["io.modelcontextprotocol/clientCapabilities"]`; `io.modelcontextprotocol/clientInfo` is validated when present but absence is accepted. Direct legacy metadata fields are rejected. HTTP additionally validates `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` before dispatch. Every successful tools/list or tools/call result sets `resultType` exactly to `complete` before stdio/JSON/SSE serialization. Stdio emits one response JSON object plus `\n`; HTTP binds only loopback and serves only `POST /mcp` as JSON or request-scoped SSE.
 
 - [ ] **Step 4: Implement bounded reports and pass the offline behavior suite**
 
@@ -795,7 +1040,7 @@ git add qualification/harnesses/mcp-transport/src qualification/harnesses/mcp-tr
 git commit -m "test: prove stateless MCP transport behavior"
 ```
 
-### Task 5: MCP Runner And Qualification Evidence
+### Task 8: MCP Runner And Qualification Evidence
 
 **Complexity:** Medium, 2–3 hours.
 
@@ -806,7 +1051,7 @@ git commit -m "test: prove stateless MCP transport behavior"
 - Create: `docs/qualification/rust/mcp-transport.md`
 
 **Interfaces:**
-- Consumes: Tasks 1, 3, and 4 plus every MCP tool input/wire fixture and manifest ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and `mcp.tool.*`.
+- Consumes: Tasks 1, 6, and 7 plus every MCP tool input/wire fixture and manifest ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and `mcp.tool.*`.
 - Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1` before Cargo execution.
 - Produces canonical `qualified` only when every MCP criterion passes; otherwise exact Task 2 `blocked` consequence.
 
@@ -841,8 +1086,8 @@ Expected: FAIL importing `tools.qualification.run_mcp`; no Cargo command runs.
 `run_mcp.run` uses `qualification/.artifacts/work/mcp-transport`, starts each transport with a 20-second ready/response timeout, replays every target transport case, compares tool lists by canonical JSON digest, compares one success and one error tool call across transports, verifies `/api/mcp/fixture` is absent, and gathers locked dependencies with:
 
 ```bash
-cargo +1.96.0 metadata --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --format-version 1
-cargo +1.96.0 tree --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked -e features
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 metadata --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --format-version 1
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 tree --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked -e features
 ```
 
 The runner uses `run_owned_process`, deletes ready files/logs/target output in `finally`, verifies all compatibility inputs are byte-identical, and records the corrected oracle commit/digest. It compares exact route-case status/body digests and never claims generic Host/auth routing beyond the frozen `POST /mcp` cases.
@@ -857,7 +1102,7 @@ Run: `uv run pytest tests/qualification/test_run_mcp.py tests/qualification/test
 
 Run: `uv run ruff check tools/qualification/run_mcp.py tests/qualification/test_run_mcp.py`
 
-Run: `cargo +1.96.0 fmt --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --check`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --check`
 
 Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu -- -D warnings`
 
@@ -870,7 +1115,7 @@ git add tools/qualification/run_mcp.py tests/qualification/test_run_mcp.py quali
 git commit -m "test: qualify MCP transport candidate"
 ```
 
-### Task 6: Semantic Acquisition, Corpus, And Locked Candidate Build
+### Task 9: Semantic Acquisition, Corpus, And Locked Candidate Build
 
 **Complexity:** High, 3–4 hours.
 
@@ -883,10 +1128,10 @@ git commit -m "test: qualify MCP transport candidate"
 - Create: `qualification/harnesses/semantic-native/tests/corpus.rs`
 - Modify: `qualification/prerequisites.json`
 - Modify: `tools/qualification/acquire.py`
-- Create: `tests/qualification/test_acquire.py`
+- Modify: `tests/qualification/test_acquire.py`
 
 **Interfaces:**
-- Consumes: corrected Task 1 MCP RAG/recall success inputs as fixed query seeds and Task 2 acquisition boundary.
+- Consumes: corrected Task 1 MCP RAG/recall success inputs as fixed query seeds and Task 4 acquisition boundary.
 - Produces: `generate_corpus(spec: &CorpusSpec) -> anyhow::Result<(Vec<Chunk>, Vec<Query>)>` with exactly 10,000 chunks across 100 series and 50 queries.
 - Produces: verified model/runtime directories plus standalone exact candidate manifest/lockfile; no semantic decision or record.
 
@@ -912,7 +1157,11 @@ fn corpus_is_exactly_ten_thousand_chunks_and_fifty_queries() -> anyhow::Result<(
 
 In `tests/qualification/test_acquire.py`, use an in-memory ONNX archive with the official top directory and relative library symlink; assert the validated chain resolves within the extraction root. Add RED cases for `../` traversal, absolute links, link cycles, links escaping the top directory, and checksum mismatch. Add one accepted signed redirect to exact host `us.aws.cdn.hf.co` and one rejected redirect to `us.aws.cdn.hf.co.attacker.invalid`.
 
-- [ ] **Step 2: Run the tests and confirm the missing manifest failure**
+- [ ] **Step 2: Run the new acquisition tests RED before implementation**
+
+Run: `uv run pytest tests/qualification/test_acquire.py -v`
+
+Expected: FAIL on missing ONNX runtime acquisition/extraction behavior; redirect, checksum, traversal, relative-symlink, cycle, and escape cases all execute without public network access.
 
 Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --no-default-features`
 
@@ -955,7 +1204,13 @@ Extend `qualification/prerequisites.json` with:
 
 Extend `tools.qualification.acquire` with `onnx-runtime`. It downloads to `qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0.tgz.part`, permits only HTTPS redirects through `github.com`, `release-assets.githubusercontent.com`, and `objects.githubusercontent.com`, and verifies SHA-256 before extraction. Require exactly one archive top directory named `onnxruntime-linux-x64-1.28.0`; strip only that component. Extract regular files/directories first, then create relative symlinks only after lexically resolving every hop, rejecting absolute targets, `..` escape, cycles, dangling links, device entries, hard links, and any final target outside the extraction root. Validate the required `lib/libonnxruntime.so` chain and atomically rename the completed directory.
 
-- [ ] **Step 5: Create the feature-separated candidate manifest**
+- [ ] **Step 5: Run the complete acquisition suite GREEN**
+
+Run: `uv run pytest tests/qualification/test_acquire.py -v`
+
+Expected: PASS; allowed/disallowed redirects, checksum mismatch, traversal, official top directory, valid relative symlink chain, cycle, dangling/absolute/escaping link, device, and hard-link cases are all proven before acquisition code is committed.
+
+- [ ] **Step 6: Create the feature-separated candidate manifest**
 
 ```toml
 [package]
@@ -994,15 +1249,15 @@ proptest = "1"
 
 `--no-default-features` compiles the FTS path without LanceDB, Arrow, ndarray, or ort references. Avoid a direct `ndarray` dependency: use the `ort` rc.13 re-export/input macros so no cross-version array values cross the public boundary. The native runtime is loaded explicitly from the verified acquisition path; no build script downloads ONNX Runtime.
 
-- [ ] **Step 6: Acquire dependencies once and prove the candidate builds offline**
+- [ ] **Step 7: Acquire dependencies once and prove the candidate builds offline**
 
 Networked acquisition prerequisites:
 
 ```bash
 uv run python -m tools.qualification.acquire semantic-model
 uv run python -m tools.qualification.acquire onnx-runtime
-cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/semantic-native/Cargo.toml
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/semantic-native/Cargo.toml
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native cargo +1.96.0 fetch --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked
 ```
 
 Offline replay:
@@ -1014,14 +1269,14 @@ CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET
 
 Expected: both feature boundaries compile without network access and acquisition tests prove the exact redirect/extraction policy.
 
-- [ ] **Step 7: Commit the acquisition and candidate boundary**
+- [ ] **Step 8: Commit the acquisition and candidate boundary**
 
 ```bash
 git add qualification/fixtures/semantic-corpus.json qualification/harnesses/semantic-native/Cargo.toml qualification/harnesses/semantic-native/Cargo.lock qualification/harnesses/semantic-native/src/lib.rs qualification/harnesses/semantic-native/src/corpus.rs qualification/harnesses/semantic-native/tests/corpus.rs qualification/prerequisites.json tools/qualification/acquire.py tests/qualification/test_acquire.py
 git commit -m "test: lock semantic native qualification candidate"
 ```
 
-### Task 7: Semantic ANN Index And Pre-Filter Proof
+### Task 10: Semantic ANN Index And Pre-Filter Proof
 
 **Complexity:** High, 3–4 hours.
 
@@ -1031,7 +1286,7 @@ git commit -m "test: lock semantic native qualification candidate"
 - Create: `qualification/harnesses/semantic-native/tests/index.rs`
 
 **Interfaces:**
-- Consumes: Task 6 model/runtime, deterministic corpus, candidate lockfile, and LanceDB candidate.
+- Consumes: Task 9 model/runtime, deterministic corpus, candidate lockfile, and LanceDB candidate.
 - Produces: `OnnxEmbeddingProvider::load(runtime: &Path, model: &Path, expected_sha256: &str) -> anyhow::Result<Self>`.
 - Produces: `async fn GenerationIndex::create(root: &Path, identity: ModelIdentity, generation: &str) -> anyhow::Result<Self>`, `create_ann_index(&mut self)`, `explain_prefiltered_search(&self, series_slug: &str, vector: &[f32], limit: usize)`, and append/search/delete/verify/activate methods.
 - Proof rule: `series-prefilter-before-ann` passes only with a created ANN index, an adversarial cardinality/top-k result, and checked explain/analyze output showing the `series_slug` predicate below ANN nearest-neighbor execution; flat scan or post-filter/over-fetch is a failure.
@@ -1082,7 +1337,7 @@ git add qualification/harnesses/semantic-native/src/model.rs qualification/harne
 git commit -m "test: prove semantic ANN prefiltering"
 ```
 
-### Task 8: Semantic Durable Recovery And FTS Fallback
+### Task 11: Semantic Durable Recovery And FTS Fallback
 
 **Complexity:** High, 3–4 hours.
 
@@ -1094,7 +1349,7 @@ git commit -m "test: prove semantic ANN prefiltering"
 - Create: `qualification/harnesses/semantic-native/tests/fts.rs`
 
 **Interfaces:**
-- Consumes: Tasks 6–7 model/runtime, corpus, lockfile, and ANN index behavior.
+- Consumes: Tasks 9–10 model/runtime, corpus, lockfile, and ANN index behavior.
 - Produces Rust CLI: `semantic-native scenario --work-dir <path> --state-db <path> --mode complete|crash|cancel --generation <id> --stop-after <count>`.
 - Produces Rust CLI: `semantic-native query --work-dir <path> --series <slug> --query-index <0..49>`.
 - Produces Rust CLI without native features: `semantic-native fts-fallback --work-dir <path> --series <slug> --query-index <0..49>`.
@@ -1203,7 +1458,7 @@ git add qualification/harnesses/semantic-native/src/main.rs qualification/harnes
 git commit -m "test: prove semantic recovery and FTS fallback"
 ```
 
-### Task 9: Semantic Runner And Measured Evidence
+### Task 12: Semantic Runner And Measured Evidence
 
 **Complexity:** Medium, 2–3 hours.
 
@@ -1214,7 +1469,7 @@ git commit -m "test: prove semantic recovery and FTS fallback"
 - Create: `docs/qualification/rust/semantic-native.md`
 
 **Interfaces:**
-- Consumes: Tasks 6–8 and frozen RAG/recall seed fixtures.
+- Consumes: Tasks 9–11 and frozen RAG/recall seed fixtures.
 - Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected pytest and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
 - Produces: `semantic-enabled` only when all sixteen semantic criteria pass; any other complete result is `fts-only` and never blocks Linux release.
 
@@ -1281,7 +1536,7 @@ Run: `uv run python -m tools.qualification.clean --apply`
 
 Expected: transient paths are absent; model/runtime acquisitions remain.
 
-Run: `uv run python -m tools.qualification.model validate qualification/records/semantic-native.json`
+Run: `uv run python -m tools.qualification.validate qualification/records/semantic-native.json`
 
 Run: `uv run python -m tools.qualification.render --check qualification/records/semantic-native.json docs/qualification/rust/semantic-native.md`
 
@@ -1293,7 +1548,7 @@ Run: `uv run pytest tests/qualification/test_run_semantic.py tests/qualification
 
 Run: `uv run ruff check tools/qualification/run_semantic.py tests/qualification/test_run_semantic.py`
 
-Run: `cargo +1.96.0 fmt --manifest-path qualification/harnesses/semantic-native/Cargo.toml --check`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/semantic-native/Cargo.toml --check`
 
 Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --all-targets --features semantic-native --target x86_64-unknown-linux-gnu -- -D warnings`
 
@@ -1306,7 +1561,7 @@ git add tools/qualification/run_semantic.py tests/qualification/test_run_semanti
 git commit -m "test: record semantic native qualification"
 ```
 
-### Task 10: Frontend Candidate Manifest And Reproducible Bundle Build
+### Task 13: Frontend Candidate Manifest And Reproducible Bundle Build
 
 **Complexity:** Medium, 2–3 hours.
 
@@ -1314,7 +1569,7 @@ git commit -m "test: record semantic native qualification"
 - Create: `qualification/harnesses/frontend-embedding/Cargo.toml`
 - Create: `qualification/harnesses/frontend-embedding/Cargo.lock`
 - Create: `qualification/harnesses/frontend-embedding/build.rs`
-- Create: `qualification/harnesses/frontend-embedding/src/main.rs` containing only `fn main() {}` until Task 11.
+- Create: `qualification/harnesses/frontend-embedding/src/main.rs` containing only `fn main() {}` until Task 14.
 
 **Interfaces:**
 - Consumes: `frontend/package.json`, `frontend/bun.lock`, `frontend/vite.config.ts`, and all `frontend/src/**`.
@@ -1363,8 +1618,8 @@ One-time networked acquisition:
 
 ```bash
 bun install --cwd frontend --frozen-lockfile
-cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked
 ```
 
 Do not invoke a nonexistent Bun offline-install flag. For replay, reuse the lock-matched hydrated `frontend/node_modules`, clear `qualification/.artifacts/frontend-dist/current`, and execute the build in a Linux network namespace:
@@ -1383,7 +1638,7 @@ git add qualification/harnesses/frontend-embedding/Cargo.toml qualification/harn
 git commit -m "test: lock frontend embedding candidate"
 ```
 
-### Task 11: Embedded Asset Resolution And Runtime Independence
+### Task 14: Embedded Asset Resolution And Runtime Independence
 
 **Complexity:** Medium, 2–3 hours.
 
@@ -1393,7 +1648,7 @@ git commit -m "test: lock frontend embedding candidate"
 - Create: `qualification/harnesses/frontend-embedding/tests/assets.rs`
 
 **Interfaces:**
-- Consumes: Task 10's canonical bundle and locked candidate.
+- Consumes: Task 13's canonical bundle and locked candidate.
 - Produces: `AssetResponse resolve_asset(request_path: &str)` and CLI `frontend-embedding manifest|get --path <request-path>`.
 - Ownership boundary: proves embedded path resolution, MIME/digests, SPA fallback, and filesystem independence only; it does not claim Host validation, bearer/session auth, CSRF, or full HTTP routing.
 
@@ -1500,7 +1755,7 @@ git add qualification/harnesses/frontend-embedding/src qualification/harnesses/f
 git commit -m "test: prove embedded frontend asset behavior"
 ```
 
-### Task 12: Frontend Runner And Qualification Evidence
+### Task 15: Frontend Runner And Qualification Evidence
 
 **Complexity:** Medium, 2–3 hours.
 
@@ -1511,7 +1766,7 @@ git commit -m "test: prove embedded frontend asset behavior"
 - Create: `docs/qualification/rust/frontend-embedding.md`
 
 **Interfaces:**
-- Consumes: Tasks 10–11, frontend source/lock/build config, and only the path/status/MIME/body shape from manifest ids `frontend.route.get.root`, `frontend.route.get.admin`, `frontend.route.get.admin.path`, `frontend.route.get.assets.path`, `frontend.route.get.config`, and `frontend.route.get.config.path` in `route-cases.json`.
+- Consumes: Tasks 13–14, frontend source/lock/build config, and only the path/status/MIME/body shape from manifest ids `frontend.route.get.root`, `frontend.route.get.admin`, `frontend.route.get.admin.path`, `frontend.route.get.assets.path`, `frontend.route.get.config`, and `frontend.route.get.config.path` in `route-cases.json`.
 - Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected pytest and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
 - Produces: `qualified` only when every frontend criterion passes; otherwise exact Task 2 blocking consequence.
 
@@ -1551,7 +1806,7 @@ Expected: FAIL importing `tools.qualification.run_frontend`; no Bun/Cargo/native
 
 - [ ] **Step 3: Implement the live embedding runner and objective criteria**
 
-`run_frontend.run` runs Task 10's network-isolated Bun build directly into the canonical artifact directory, fingerprints it, and builds release mode with:
+`run_frontend.run` runs Task 13's network-isolated Bun build directly into the canonical artifact directory, fingerprints it, and builds release mode with:
 
 ```bash
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 build --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu
@@ -1563,7 +1818,7 @@ It then:
 2. Renames the canonical asset directory away, builds in fresh bounded `qualification/.artifacts/cargo-target/frontend-embedding-missing`, requires a stable compile-time missing-bundle failure, removes that target, then restores the asset root in `finally`.
 3. Compares the embedded manifest's relative files, byte lengths, and SHA-256 values to the copied Vite output.
 4. Replays only the six routes' embedded path/status/MIME/body expectations; excludes Host/auth/CSRF/router ownership from the record.
-5. Performs Task 11's rename/permission-denial plus `strace` open proof with only the release binary present.
+5. Performs Task 14's rename/permission-denial plus `strace` open proof with only the release binary present.
 6. Requires `ldd` basenames and process tree to show no Bun, Node, or Python runtime.
 7. Rejects any `.map` file and scans embedded bytes for `compat-secret-do-not-log`, `Authorization: Bearer`, `provider_key`, `/home/`, and `Yandex.Disk`.
 8. Records release binary byte size without imposing an unapproved size threshold.
@@ -1581,7 +1836,7 @@ Run: `uv run pytest tests/qualification/test_run_frontend.py tests/qualification
 
 Run: `uv run ruff check tools/qualification/run_frontend.py tests/qualification/test_run_frontend.py`
 
-Run: `cargo +1.96.0 fmt --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --check`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --check`
 
 Expected: Python tests and rustfmt pass; the live runner's bounded Clippy step passes before cleanup; record validation reports exact path-contract ownership, complete criteria, and no sensitive data.
 
@@ -1592,14 +1847,14 @@ git add tools/qualification/run_frontend.py tests/qualification/test_run_fronten
 git commit -m "test: qualify frontend asset embedding"
 ```
 
-### Task 13: Legacy Database Candidate Manifest And Locked Build
+### Task 16: Legacy Database Candidate Manifest And Locked Build
 
 **Complexity:** Low, 1–2 hours.
 
 **Files:**
 - Create: `qualification/harnesses/legacy-database-import/Cargo.toml`
 - Create: `qualification/harnesses/legacy-database-import/Cargo.lock`
-- Create: `qualification/harnesses/legacy-database-import/src/main.rs` containing only `fn main() {}` until Task 14.
+- Create: `qualification/harnesses/legacy-database-import/src/main.rs` containing only `fn main() {}` until Task 17.
 
 **Interfaces:**
 - Consumes: Rust 1.96.0 and rusqlite 0.40.2 candidate.
@@ -1642,8 +1897,8 @@ The candidate deliberately uses bundled SQLite so the probe measures FTS5/file c
 - [ ] **Step 3: Acquire, lock, and prove offline build**
 
 ```bash
-cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 check --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --target x86_64-unknown-linux-gnu
 ```
 
@@ -1656,7 +1911,7 @@ git add qualification/harnesses/legacy-database-import/Cargo.toml qualification/
 git commit -m "test: lock database import qualification candidate"
 ```
 
-### Task 14: Read-Only Database Fixture Behavior
+### Task 17: Read-Only Database Fixture Behavior
 
 **Complexity:** High, 3–4 hours.
 
@@ -1746,7 +2001,7 @@ git add qualification/harnesses/legacy-database-import/src qualification/harness
 git commit -m "test: prove read-only database fixture import"
 ```
 
-### Task 15: Database Runner And Qualification Evidence
+### Task 18: Database Runner And Qualification Evidence
 
 **Complexity:** Medium, 2–3 hours.
 
@@ -1757,7 +2012,7 @@ git commit -m "test: prove read-only database fixture import"
 - Create: `docs/qualification/rust/legacy-database-import.md`
 
 **Interfaces:**
-- Consumes: Tasks 13–14, `compatibility/snapshots/state.json`, all six frozen database fixtures, and manifest ids `database.schema.current`, `database.migrations.current`, and `database.upgrade.preflight`.
+- Consumes: Tasks 16–17, `compatibility/snapshots/state.json`, all six frozen database fixtures, and manifest ids `database.schema.current`, `database.migrations.current`, and `database.upgrade.preflight`.
 - Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
 - Produces: `qualified` only when every database criterion passes; otherwise exact Task 2 blocking consequence.
 
@@ -1790,7 +2045,7 @@ Expected: FAIL importing `tools.qualification.run_database`; no Rust process run
 
 - [ ] **Step 3: Implement the bounded runner and write the live record**
 
-The runner passes the exact frozen fixture root and a risk work root to Task 14's CLI, never an arbitrary source/target path. It uses `run_owned_process`, hashes every fixture/input before and after, removes target databases/traces/Cargo target in `finally`, and records only classifications/counts/digests/error codes.
+The runner passes the exact frozen fixture root and a risk work root to Task 17's CLI, never an arbitrary source/target path. It uses `run_owned_process`, hashes every fixture/input before and after, removes target databases/traces/Cargo target in `finally`, and records only classifications/counts/digests/error codes.
 
 Run: `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_database --write`
 
@@ -1800,7 +2055,7 @@ Run: `uv run pytest tests/qualification/test_run_database.py tests/qualification
 
 Run: `uv run ruff check tools/qualification/run_database.py tests/qualification/test_run_database.py`
 
-Run: `cargo +1.96.0 fmt --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --check`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --check`
 
 Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings`
 
@@ -1813,9 +2068,9 @@ git add tools/qualification/run_database.py tests/qualification/test_run_databas
 git commit -m "test: qualify legacy database import"
 ```
 
-### Task 16: Reviewed Aggregate Gate And Network-Free Replay
+### Task 19: Dispatcher, Record Checker, And Aggregate Gate
 
-**Complexity:** Medium, 3–4 hours.
+**Complexity:** Medium, 2–3 hours.
 
 **Files:**
 - Create: `tools/qualification/run.py`
@@ -1824,18 +2079,7 @@ git commit -m "test: qualify legacy database import"
 - Create: `tests/qualification/test_gate.py`
 - Create: `qualification/records/aggregate.json`
 - Create: `docs/qualification/rust/gate.md`
-- Modify: `qualification/README.md`
-- Modify: `qualification/schemas/gate.schema.json`
-- Modify: `.github/workflows/pr.yml`
-- Create: `.github/workflows/rust-qualification-live.yml`
-- Modify after acceptance review: `qualification/records/mcp-transport.json`
-- Modify after acceptance review: `qualification/records/semantic-native.json`
-- Modify after acceptance review: `qualification/records/frontend-embedding.json`
-- Modify after acceptance review: `qualification/records/legacy-database-import.json`
-- Regenerate after acceptance review: `docs/qualification/rust/mcp-transport.md`
-- Regenerate after acceptance review: `docs/qualification/rust/semantic-native.md`
-- Regenerate after acceptance review: `docs/qualification/rust/frontend-embedding.md`
-- Regenerate after acceptance review: `docs/qualification/rust/legacy-database-import.md`
+- Create: `qualification/schemas/gate.schema.json`
 
 **Interfaces:**
 - Consumes: all four canonical records, their rendered Markdown, schemas, prerequisites, harness sources/lockfiles, and frozen input fingerprints.
@@ -2002,7 +2246,64 @@ def compute_gate(records: Mapping[Risk, QualificationRecord]) -> GateRecord:
 
 `validation_and_review_issues` treats missing/extra risk, schema error, stale input digest, Markdown drift, redaction failure, incomplete evidence, consequence mismatch, `review.status != "accepted"`, or false review assertions as blocking. A reviewed semantic `fts-only` record is not an issue.
 
-- [ ] **Step 5: Perform the named acceptance-owner review without altering evidence**
+- [ ] **Step 5: Implement network-free drift validation and initial aggregate rendering**
+
+`check` loads schemas and records, recomputes every input fingerprint, validates redaction/review/consequence rules, regenerates four Markdown strings in memory, computes the gate, and compares canonical JSON/Markdown bytes. It imports no runner module in `--records-only` mode and opens no subprocess, socket, SQLite connection, Cargo cache, model, or frontend bundle; SQLite fixture files are read only as bytes for SHA-256.
+
+`--record semantic-native` validates one risk but does not claim aggregate qualification. `--records-only` exits `0` for an internally consistent blocked gate. `--require-qualified` exits `1` and prints sorted issue/blocked-plan ids unless the gate is exactly `qualified`; when qualified, it prints exactly one of:
+
+```text
+Rust qualification gate: qualified (semantic-enabled)
+Rust qualification gate: qualified (fts-only)
+```
+
+Write the pending-review aggregate to `qualification/records/aggregate.json` and generate `docs/qualification/rust/gate.md` from the four as-measured records. The aggregate is expected to remain blocked until Task 20 records the named owner's review.
+
+- [ ] **Step 6: Run the focused gate tests and commit**
+
+Run: `uv run pytest tests/qualification/test_run.py tests/qualification/test_gate.py -v`
+
+Run: `uv run ruff check tools/qualification/run.py tools/qualification/check.py tests/qualification/test_run.py tests/qualification/test_gate.py`
+
+Expected: PASS; `--records-only` cannot invoke a live runner or network/subprocess primitive, and the aggregate truth table distinguishes reviewed `fts-only` from missing/unreviewed semantic evidence.
+
+```bash
+git add tools/qualification/run.py tools/qualification/check.py tests/qualification/test_run.py tests/qualification/test_gate.py qualification/schemas/gate.schema.json qualification/records/aggregate.json docs/qualification/rust/gate.md
+git commit -m "test: compute Rust qualification gate"
+```
+
+### Task 20: Acceptance Review And Artifact Regeneration
+
+**Complexity:** Small, 1–2 hours plus named-owner review.
+
+**Files:**
+- Create: `tools/qualification/review.py`
+- Create: `tests/qualification/test_review.py`
+- Modify after acceptance review: `qualification/records/mcp-transport.json`
+- Modify after acceptance review: `qualification/records/semantic-native.json`
+- Modify after acceptance review: `qualification/records/frontend-embedding.json`
+- Modify after acceptance review: `qualification/records/legacy-database-import.json`
+- Regenerate: `docs/qualification/rust/mcp-transport.md`
+- Regenerate: `docs/qualification/rust/semantic-native.md`
+- Regenerate: `docs/qualification/rust/frontend-embedding.md`
+- Regenerate: `docs/qualification/rust/legacy-database-import.md`
+- Regenerate: `qualification/records/aggregate.json`
+- Regenerate: `docs/qualification/rust/gate.md`
+
+**Interfaces:**
+- Consumes: Task 19's checker/gate plus the four immutable measured records from Tasks 8, 12, 15, and 18.
+- Produces: `review_record(record: QualificationRecord, *, owner: str, status: Literal["accepted", "rejected"], objective_evidence_reviewed: bool, normative_constraints_preserved: bool) -> QualificationRecord`; this function may change only `review`.
+- Produces CLI: `python -m tools.qualification.review <risk> --status <accepted|rejected> --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed <true|false> --normative-constraints-preserved <true|false>`; it rewrites one review block and regenerates that Markdown plus the aggregate JSON/Markdown with atomic per-file replacement.
+
+- [ ] **Step 1: Write failing review-transition and regeneration tests**
+
+Test that acceptance is rejected unless the owner is exact and both assertions are true; rejection preserves whichever assertion is false. Snapshot every non-review JSON path before and after `review_record` and require equality. Exercise the CLI in a temporary repository, require atomic per-file replacement of exactly one risk JSON/Markdown plus aggregate JSON/Markdown, and prove a rejected or partially reviewed record leaves the aggregate blocked.
+
+Run: `uv run pytest tests/qualification/test_review.py -v`
+
+Expected: FAIL importing `tools.qualification.review`.
+
+- [ ] **Step 2: Perform the named acceptance-owner review without altering evidence**
 
 Every live runner writes this exact review block initially:
 
@@ -2015,7 +2316,7 @@ Every live runner writes this exact review block initially:
 }
 ```
 
-Pavel reviews the canonical evidence, input/lockfile digests, human rendering, and consequence. If the record accurately reflects the observed pass or failure without weakening a normative requirement, change only that record's review block to:
+Pavel reviews the canonical evidence, input/lockfile digests, human rendering, and consequence. If the record accurately reflects the observed pass or failure without weakening a normative requirement, select this review value for the Step 4 CLI; do not hand-edit the record:
 
 ```json
 {
@@ -2026,22 +2327,80 @@ Pavel reviews the canonical evidence, input/lockfile digests, human rendering, a
 }
 ```
 
-If either assertion is false, set `status` to `rejected`, keep the false assertion false, regenerate Markdown, and leave the aggregate gate blocked. Never edit evidence status, measurements, input digest, or consequence during review; rerun the owning harness to change measured evidence.
+If either assertion is false, select `status="rejected"` and keep the false assertion false. Step 4 regenerates Markdown and leaves the aggregate gate blocked. Never edit evidence status, measurements, input digest, or consequence during review; rerun the owning harness to change measured evidence.
 
-- [ ] **Step 6: Implement network-free drift validation and aggregate rendering**
+- [ ] **Step 3: Implement the review-only transition and atomic regeneration**
 
-`check` loads schemas and records, recomputes every input fingerprint, validates redaction/review/consequence rules, regenerates four Markdown strings in memory, computes the gate, and compares canonical JSON/Markdown bytes. It imports no runner module in `--records-only` mode and opens no subprocess, socket, SQLite connection, Cargo cache, model, or frontend bundle; SQLite fixture files are read only as bytes for SHA-256.
+`review_record` first validates the measured record and exact owner, then copies only the `Review` dataclass. It accepts only with both assertions true; it rejects when either is false. The CLI refuses `pending`, refuses any stale/malformed record, stages the reviewed risk JSON/Markdown plus aggregate JSON/Markdown in their own directories, validates all four replacement files in memory, and calls `os.replace` for each file only after every byte is valid. A crash between replacements leaves detectable drift and rerunning the same command converges to the same bytes. It never imports a live runner or changes evidence, decisions, consequences, commands, fingerprints, or measurements.
 
-`--record semantic-native` validates one risk but does not claim aggregate qualification. `--records-only` exits `0` for an internally consistent blocked gate. `--require-qualified` exits `1` and prints sorted issue/blocked-plan ids unless the gate is exactly `qualified`; when qualified, it prints exactly one of:
+For each rejected record, use its exact risk-specific command below after implementation; both assertions remain conservatively false and no claim of partial acceptance is made:
 
-```text
-Rust qualification gate: qualified (semantic-enabled)
-Rust qualification gate: qualified (fts-only)
+```bash
+uv run python -m tools.qualification.review mcp-transport --status rejected --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed false --normative-constraints-preserved false
+uv run python -m tools.qualification.review semantic-native --status rejected --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed false --normative-constraints-preserved false
+uv run python -m tools.qualification.review frontend-embedding --status rejected --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed false --normative-constraints-preserved false
+uv run python -m tools.qualification.review legacy-database-import --status rejected --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed false --normative-constraints-preserved false
 ```
 
-Run the accepted records through the renderer, write `qualification/records/aggregate.json`, and generate `docs/qualification/rust/gate.md`.
+For each accepted record, use its exact risk-specific command:
 
-- [ ] **Step 7: Add contributor commands and the ordinary CI record gate**
+```bash
+uv run python -m tools.qualification.review mcp-transport --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+uv run python -m tools.qualification.review semantic-native --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+uv run python -m tools.qualification.review frontend-embedding --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+uv run python -m tools.qualification.review legacy-database-import --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+```
+
+- [ ] **Step 4: Record the review outcomes, regenerate, verify, and commit**
+
+Run the CLI once for each risk with the actual named-owner outcome and assertion values established in Step 2. Then run:
+
+Run: `uv run pytest tests/qualification/test_review.py tests/qualification/test_gate.py -v`
+
+Run: `uv run python -m tools.qualification.check --records-only`
+
+Run: `uv run ruff check tools/qualification/review.py tests/qualification/test_review.py`
+
+Expected: review tests pass; record validation exits `0` for either a consistent qualified or consistent blocked gate; non-review record paths are byte-equivalent to the Task 19 inputs.
+
+```bash
+git add tools/qualification/review.py tests/qualification/test_review.py qualification/records docs/qualification/rust
+git commit -m "docs: record Rust qualification review"
+```
+
+### Task 21: Qualification Contributor Commands And CI Workflows
+
+**Complexity:** Small, 1–2 hours.
+
+**Files:**
+- Modify: `qualification/README.md`
+- Modify: `.github/workflows/pr.yml`
+- Create: `.github/workflows/rust-qualification-live.yml`
+- Modify: `tests/test_pr_workflow.py`
+- Create: `tests/test_rust_qualification_workflow.py`
+
+**Interfaces:**
+- Consumes: Tasks 19–20's network-free checker/review gate and all live runner commands.
+- Produces: ordinary PR validation with no Cargo/native acquisition and a manual-only live workflow whose every `uses:` ref is a full 40-character commit SHA.
+- Security invariant: every checkout sets `persist-credentials: false`; the Rust action is commit-pinned and receives `toolchain: 1.96.0` as explicit input; symbolic channel and major-version action refs are forbidden.
+
+- [ ] **Step 1: Write failing workflow-policy tests**
+
+Extend the existing line-oriented helpers in `tests/test_pr_workflow.py`. In `tests/test_rust_qualification_workflow.py`, assert the only trigger is `workflow_dispatch`, job permissions are `contents: read`, checkout disables credential persistence, every action suffix matches `[0-9a-f]{40}`, the toolchain input is exact, acquisition precedes live execution, `CARGO_NET_OFFLINE=true` is set only after acquisition, and no step commits/pushes. Require these exact action pins:
+
+```python
+CHECKOUT_SHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
+SETUP_UV_SHA = "d0d8abe699bfb85fec6de9f7adb5ae17292296ff"
+SETUP_BUN_SHA = "0c5077e51419868618aeaa5fe8019c62421857d6"
+RUST_TOOLCHAIN_SHA = "4360b52568e2003a75bf9bc1d59f33a8e3fc893c"
+UPLOAD_ARTIFACT_SHA = "ea165f8d65b6e75b540449e92b4886f43607fa02"
+```
+
+Run: `uv run pytest tests/test_pr_workflow.py tests/test_rust_qualification_workflow.py -v`
+
+Expected: FAIL because the PR drift step and live workflow do not exist.
+
+- [ ] **Step 2: Add contributor commands and the ordinary CI record gate**
 
 Document exactly these workflows in `qualification/README.md`:
 
@@ -2050,13 +2409,19 @@ Document exactly these workflows in `qualification/README.md`:
 uv run python -m tools.qualification.acquire semantic-model
 uv run python -m tools.qualification.acquire onnx-runtime
 bun install --cwd frontend --frozen-lockfile
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native cargo +1.96.0 fetch --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
 
-# Explicit live qualification; writes reviewed inputs but starts with pending review
+# Explicit live qualification; writes measured records with pending review
 HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run all --write
+
+# Named-owner commands when all four measured records are accepted; use Task 20's rejected branch otherwise
+uv run python -m tools.qualification.review mcp-transport --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+uv run python -m tools.qualification.review semantic-native --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+uv run python -m tools.qualification.review frontend-embedding --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+uv run python -m tools.qualification.review legacy-database-import --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
 
 # Ordinary network-free validation
 uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only
@@ -2096,14 +2461,16 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          bun-version: 1.3.14
-      - uses: dtolnay/rust-toolchain@stable
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          toolchain: 1.96.0
+          bun-version: "1.3.14"
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: "1.96.0"
           targets: x86_64-unknown-linux-gnu
           components: clippy,rustfmt
       - name: Acquire locked prerequisites
@@ -2112,10 +2479,10 @@ jobs:
           uv run python -m tools.qualification.acquire semantic-model
           uv run python -m tools.qualification.acquire onnx-runtime
           bun install --cwd frontend --frozen-lockfile
-          cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked
-          cargo +1.96.0 fetch --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked
-          cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked
-          cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
+          CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked
+          CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native cargo +1.96.0 fetch --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked
+          CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked
+          CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
       - name: Run isolated live qualification
         env:
           HIERONYMUS_QUALIFICATION_LIVE: "1"
@@ -2123,7 +2490,7 @@ jobs:
         run: uv run python -m tools.qualification.run all --write
       - name: Validate sanitized records
         run: uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: rust-qualification-records
           path: |
@@ -2133,7 +2500,11 @@ jobs:
 
 The workflow never commits records. Each runner supplies its bounded risk-specific `CARGO_TARGET_DIR`; `run_owned_process` disables cores/reaps groups. A scheduled or pull-request trigger is forbidden.
 
-- [ ] **Step 8: Run complete qualification-stage verification**
+- [ ] **Step 3: Run workflow tests and complete qualification-stage verification**
+
+Run: `uv run pytest tests/test_pr_workflow.py tests/test_rust_qualification_workflow.py -v`
+
+Expected: PASS; all action refs are full SHAs, checkout credentials are disabled, and the live workflow is manual-only.
 
 Run: `uv run --no-cache --no-sync python -B -m tools.compatibility.check`
 
@@ -2157,9 +2528,9 @@ Expected: the full Python suite and required project checks pass with live quali
 
 Run: `git diff --exit-code -- uv.lock frontend/bun.lock`
 
-Expected: ordinary verification changed neither dependency lockfile. Rust/Bun/native harness and Clippy commands run only in the explicit live workflow or the live commands in Tasks 3–15, always with the risk-specific bounded Cargo target directory.
+Expected: ordinary verification changed neither dependency lockfile. Rust/Bun/native harness and Clippy commands run only in the explicit live workflow or the live commands in Tasks 5–18, always with the risk-specific bounded Cargo target directory.
 
-- [ ] **Step 9: Verify cleanup, repository scope, and final diff**
+- [ ] **Step 4: Verify cleanup, repository scope, final diff, and commit**
 
 Run: `uv run python -m tools.qualification.clean --apply`
 
@@ -2171,35 +2542,45 @@ Run: `git status --short`
 
 Expected: no whitespace errors; only files enumerated by this plan plus any pre-existing unrelated user changes appear. No production Rust path, translation workspace, runtime database, model binary, raw log, node_modules, frontend dist, or user-owned untracked file is staged.
 
-- [ ] **Step 10: Commit the accepted aggregate gate**
-
 ```bash
-git add tools/qualification/run.py tools/qualification/check.py tests/qualification/test_run.py tests/qualification/test_gate.py qualification/README.md qualification/schemas/gate.schema.json qualification/records docs/qualification/rust .github/workflows/pr.yml .github/workflows/rust-qualification-live.yml
-git commit -m "ci: gate Rust plans on qualification records"
+git add qualification/README.md .github/workflows/pr.yml .github/workflows/rust-qualification-live.yml tests/test_pr_workflow.py tests/test_rust_qualification_workflow.py
+git commit -m "ci: verify Rust qualification records"
 ```
 
 ## Self-Review Record
 
-- Spec coverage: Task 1 corrects and separately commits the official stateless MCP oracle; Tasks 3–5 qualify its exact metadata/headers/result type/transports/registry/error parity and private-bridge absence. Tasks 6–9 own actual ANN creation, checked pre-filter plan/cardinality proof, SQLite-durable recovery/no-write-transaction-native-I/O proof, strengthened FTS, and FTS-only selection. Tasks 10–12 own manifest-correct Svelte embedding and traced runtime independence without claiming HTTP security ownership. Tasks 13–15 own frozen-root database classification/import, typed accounting, FTS/ledger proof, fail-closed behavior, and source immutability. Task 16 owns review, reproducibility, accepted consequences, and the aggregate program-sequence gate.
+- Spec coverage: Task 1 corrects and separately commits the official stateless MCP oracle; Tasks 2–5 establish the record, validation, acquisition, and bounded-process foundations. Tasks 6–8 qualify exact MCP metadata/headers/result type/transports/registry/error parity and private-bridge absence. Tasks 9–12 own actual ANN creation, checked pre-filter plan/cardinality proof, SQLite-durable recovery/no-write-transaction-native-I/O proof, strengthened FTS, and FTS-only selection. Tasks 13–15 own manifest-correct Svelte embedding and traced runtime independence without claiming HTTP security ownership. Tasks 16–18 own frozen-root database classification/import, typed accounting, FTS/ledger proof, fail-closed behavior, and source immutability. Tasks 19–21 own the aggregate gate, named-owner review/regeneration, reproducibility commands, and pinned CI.
 - Normative consequence coverage: semantic failure has exactly one accepted non-blocking result, `fts-only`; MCP/frontend/database failure blocks named dependent plans and never edits fixtures or specifications to turn a failure into a pass.
-- Network coverage: acquisition commands are named and checksum/frozen-lock constrained; Hugging Face redirects include the observed exact CDN host under hop validation; Bun replay uses an isolated network namespace rather than a nonexistent offline-install flag; ordinary pytest/check/aggregate replay uses fakes, no subprocesses, and no native caches.
+- Network coverage: acquisition commands are named and checksum/frozen-lock constrained; Hugging Face redirects include the observed exact CDN host under hop validation; Bun replay uses an isolated network namespace rather than a nonexistent offline-install flag; ordinary pytest uses only bounded fake child executables, while record checks use no subprocess, socket, Rust/native cache, or network. The one real Cargo environment smoke is explicitly live-gated.
 - Sensitive-data coverage: inputs are synthetic/frozen, work roots are bounded, reports contain only digests/counts/basenames, source database bytes are verified unchanged, and canonical records reject secrets, user paths, row text, raw headers, and logs.
 - Cleanup coverage: all transient output and every Cargo target are under one ignored exact root; core dumps are disabled; owned process groups are reaped; cleanup targets are enumerated/tested; model/runtime removal needs a separate flag; and no recursive operation can target the repository, home, translation workspace, or user data.
-- Ownership coverage: Task 2 establishes common files; Task 6 alone extends acquisition inputs; every risk is split into separately committed manifest/build, behavior/recovery, and runner/evidence reviews; only Task 16 revisits common schemas/records/CI after measurements exist.
-- Type/signature consistency: fake-injected `run(..., executable: Path)` and guarded `run_live(...)` are distinct for all four runners; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 16 dispatches only `run_live` and its records-only path imports no runner.
+- Ownership coverage: Tasks 2–5 split common model, validation/rendering, acquisition, and process/cleanup ownership; Task 9 alone extends acquisition inputs; every risk is split into separately committed manifest/build, behavior/recovery, and runner/evidence reviews; Tasks 19–21 separately own gate computation, review regeneration, and workflows.
+- Type/signature consistency: fake-injected `run(..., executable: Path)` and guarded `run_live(...)` are distinct for all four runners; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 19 dispatches only `run_live` and its records-only path imports no runner; Task 20 can replace only `Review`.
 - Production-scope check: the file map contains no production Rust workspace or crate path, and no task changes Python runtime behavior or starts a dependent implementation plan.
 
 Before accepting this plan, run:
 
 ```bash
 rg -n '\b(T[B]D|T[O]DO)\b|implement la[t]er|fill in deta[i]ls|Similar to Tas[k]' docs/superpowers/plans/2026-09-01-rust-qualification.md
+python - <<'PY'
+import re
+from pathlib import Path
+
+text = Path("docs/superpowers/plans/2026-09-01-rust-qualification.md").read_text()
+tasks = [int(value) for value in re.findall(r"^### Task (\d+):", text, re.MULTILINE)]
+assert tasks == list(range(1, 22)), tasks
+assert sum(line.startswith("```") for line in text.splitlines()) % 2 == 0
+assert all(1 <= int(value) <= 21 for value in re.findall(r"\bTasks? (\d+)", text))
+action_refs = re.findall(r"^\s+- uses: [^@\s]+@([^\s]+)$", text, re.MULTILINE)
+assert action_refs and all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs)
+PY
 git diff --check -- docs/superpowers/plans/2026-09-01-rust-qualification.md
 git diff -- docs/superpowers/plans/2026-09-01-rust-qualification.md
 git status --short
 ```
 
-Expected: the red-flag scan prints nothing; diff check passes; the diff contains only this plan; the pre-existing unrelated `uv.lock` modification remains unstaged and untouched.
+Expected: the red-flag scan prints nothing; task references, fences, and action pins pass; diff check passes; the diff contains only this plan; any pre-existing unrelated `uv.lock` modification remains unstaged and untouched.
 
 ## Execution Handoff
 
-Execute Tasks 1–16 only through the required sub-skill named in the header. Task 1's corrected compatibility commit is a hard prerequisite and must be accepted before candidate qualification. After Task 16, a qualified aggregate permits the separate Rust workspace/contract-harness plan; a blocked aggregate is the durable stage result and requires a new candidate qualification run or an ADR-backed specification change before dependent planning.
+Execute Tasks 1–21 only through the required sub-skill named in the header. Task 1's corrected compatibility commit is a hard prerequisite and must be accepted before candidate qualification. After Task 21, a qualified aggregate permits the separate Rust workspace/contract-harness plan; a blocked aggregate is the durable stage result and requires a new candidate qualification run or an ADR-backed specification change before dependent planning.
