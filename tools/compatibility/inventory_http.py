@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass
 from functools import cache
 from pathlib import Path
 
+from tools.compatibility.inventory_mcp import REQUEST_META
+
 _ADR_0012 = "docs/adr/0012-mcp-transport-authentication-and-discovery.md"
 _ADR_0014 = "docs/adr/0014-web-console-replaces-terminal-ui.md"
 _ADR_0015 = "docs/adr/0015-mcp-protocol-and-transport.md"
@@ -852,12 +854,21 @@ def _route_case(route: dict[str, object], runtime_bodies: dict[str, object]) -> 
             "success": success,
             "failures": [failure],
         }
-        case["target"] = {
-            "basis": "adr-backed-target",
-            "adr": route["adr"],
-            "success": _target_success_outcome(route, runtime_bodies),
-            "failures": _target_failure_outcomes(route, runtime_bodies),
-        }
+        if contract_id == "http.route.post.mcp":
+            successes = _target_mcp_success_outcomes(route, runtime_bodies)
+            case["target"] = {
+                "basis": "adr-backed-target",
+                "adr": route["adr"],
+                "successes": successes,
+                "failures": _target_mcp_failure_outcomes(successes),
+            }
+        else:
+            case["target"] = {
+                "basis": "adr-backed-target",
+                "adr": route["adr"],
+                "success": _target_success_outcome(route, runtime_bodies),
+                "failures": _target_failure_outcomes(route, runtime_bodies),
+            }
         if contract_id == "websocket.route.get.ws.admin":
             case["target"]["websocket"] = _websocket_contract()["target"]
             case["current"]["websocket"] = _websocket_contract()["current"]
@@ -1030,6 +1041,76 @@ def _target_request_headers(*, contract_id: str, target_auth: str) -> dict[str, 
     raise ValueError(f"missing target authentication fixture: {contract_id}: {target_auth}")
 
 
+def _target_mcp_success_outcomes(
+    route: dict[str, object], runtime_bodies: dict[str, object]
+) -> list[dict[str, object]]:
+    tools_list = _target_success_outcome(route, runtime_bodies)
+    tools_list["id"] = "tools-list"
+    tools_list["request"]["headers"].update(
+        {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "Mcp-Method": "tools/list",
+        }
+    )
+    tools_list["request"]["body"] = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": {"_meta": copy.deepcopy(REQUEST_META)},
+    }
+    tools_list["response"]["body"] = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"resultType": "complete", "tools": []},
+    }
+
+    tools_call = copy.deepcopy(tools_list)
+    tools_call["id"] = "tools-call"
+    tools_call["request"]["headers"].update(
+        {"Mcp-Method": "tools/call", "Mcp-Name": "hieronymus_status"}
+    )
+    tools_call["request"]["body"] = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "_meta": copy.deepcopy(REQUEST_META),
+            "name": "hieronymus_status",
+            "arguments": {},
+        },
+    }
+    tools_call["response"]["body"] = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "resultType": "complete",
+            "content": [],
+            "isError": False,
+        },
+    }
+    return [tools_list, tools_call]
+
+
+def _target_mcp_failure_outcomes(
+    successes: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    tools_list, tools_call = successes
+    cases = (
+        (tools_list, "invalid-host"),
+        (tools_list, "missing-bearer"),
+        (tools_list, "invalid-bearer"),
+        (tools_list, "missing-version"),
+        (tools_list, "unsupported-version"),
+        (tools_list, "missing-mcp-method"),
+        (tools_list, "wrong-mcp-method"),
+        (tools_list, "unexpected-mcp-name-tools-list"),
+        (tools_call, "missing-mcp-name-tools-call"),
+        (tools_call, "wrong-mcp-name-tools-call"),
+    )
+    return [_target_failure(success, failure_id) for success, failure_id in cases]
+
+
 def _target_failure_outcomes(
     route: dict[str, object], runtime_bodies: dict[str, object]
 ) -> list[dict[str, object]]:
@@ -1092,9 +1173,31 @@ def _target_failure(success: dict[str, object], failure_id: str) -> dict[str, ob
     elif failure_id == "missing-bearer":
         headers.pop("Authorization", None)
         status, error = 401, "unauthorized"
+        outcome["normalized_log_fields"]["credential"] = "<absent>"
+    elif failure_id == "invalid-bearer":
+        headers["Authorization"] = "Bearer <INVALID_BEARER_TOKEN>"
+        status, error = 401, "unauthorized"
+    elif failure_id == "missing-version":
+        headers.pop("MCP-Protocol-Version", None)
+        status, error = 400, "missing_mcp_protocol_version"
     elif failure_id == "unsupported-version":
         headers["MCP-Protocol-Version"] = _UNSUPPORTED_MCP_PROTOCOL_REVISION
         status, error = 400, "unsupported_mcp_protocol_version"
+    elif failure_id == "missing-mcp-method":
+        headers.pop("Mcp-Method", None)
+        status, error = 400, "missing_mcp_method"
+    elif failure_id == "wrong-mcp-method":
+        headers["Mcp-Method"] = "tools/call"
+        status, error = 400, "mcp_method_mismatch"
+    elif failure_id == "unexpected-mcp-name-tools-list":
+        headers["Mcp-Name"] = "hieronymus_status"
+        status, error = 400, "unexpected_mcp_name"
+    elif failure_id == "missing-mcp-name-tools-call":
+        headers.pop("Mcp-Name", None)
+        status, error = 400, "missing_mcp_name"
+    elif failure_id == "wrong-mcp-name-tools-call":
+        headers["Mcp-Name"] = "hieronymus_recall"
+        status, error = 400, "mcp_name_mismatch"
     else:
         raise ValueError(f"unknown target failure fixture: {failure_id}")
     outcome["response"] = {

@@ -27,6 +27,11 @@ from tools.compatibility.model import Manifest, load_manifest, validate_manifest
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path("compatibility/manifest.json")
+_DIRECT_LEGACY_REQUEST_METADATA = (
+    "protocolVersion",
+    "clientCapabilities",
+    "clientInfo",
+)
 
 _FAMILY_SURFACES = {
     "cli": frozenset({"cli"}),
@@ -73,6 +78,32 @@ class GeneratedInventory:
 
 def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _request_metadata_issues(request: dict[str, object]) -> tuple[str, ...]:
+    """Return deterministic diagnostics for MCP 2026-07-28 request metadata."""
+    params = request.get("params")
+    if not isinstance(params, dict):
+        return ("params must be an object",)
+
+    issues = [
+        f"legacy metadata field is not allowed in params: {key}"
+        for key in _DIRECT_LEGACY_REQUEST_METADATA
+        if key in params
+    ]
+    meta = params.get("_meta")
+    if not isinstance(meta, dict):
+        issues.append("params._meta must be an object")
+        return tuple(issues)
+
+    for key, expected in inventory_mcp.REQUEST_META.items():
+        if key == "io.modelcontextprotocol/clientInfo" and key not in meta:
+            continue
+        if key not in meta:
+            issues.append(f"missing required params._meta field: {key}")
+        elif meta[key] != expected:
+            issues.append(f"wrong params._meta field: {key}")
+    return tuple(issues)
 
 
 def _state_json_bytes(value: object) -> bytes:
@@ -210,6 +241,15 @@ def _mcp_inventory() -> tuple[dict[str, bytes], set[str], list[dict[str, object]
     snapshot = inventory_mcp.snapshot_mcp()
     artifacts = {"compatibility/snapshots/mcp.json": _json_bytes(snapshot)}
     protocol = inventory_mcp._protocol_fixture(snapshot)
+    target = protocol["target"]
+    assert isinstance(target, dict)
+    requests = target["requests"]
+    assert isinstance(requests, list)
+    for request in requests:
+        assert isinstance(request, dict)
+        issues = _request_metadata_issues(request)
+        if issues:
+            raise ValueError("invalid MCP target request metadata: " + "; ".join(issues))
     artifacts["compatibility/fixtures/mcp/protocol.json"] = _json_bytes(protocol)
 
     tools = snapshot["tools"]

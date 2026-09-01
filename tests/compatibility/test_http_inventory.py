@@ -10,7 +10,6 @@ from tools.compatibility.model import load_manifest
 
 ROOT = Path(__file__).resolve().parents[2]
 SENTINEL = "compat-secret-do-not-log"
-MCP_REVISION = "2026-07-28"
 RUNTIME_BACKED_ROUTES = {
     "http.route.get.status": "status",
     "http.route.post.api.mcp.operation": "private_mcp_status",
@@ -198,10 +197,15 @@ def test_route_cases_cover_every_route_and_do_not_disclose_credentials() -> None
             )
             assert SENTINEL not in non_request_fields
         if route["disposition"] == "intentionally-change":
+            target_successes = (
+                case["target"]["successes"]
+                if case["contract_id"] == "http.route.post.mcp"
+                else [case["target"]["success"]]
+            )
             for outcome in [
                 case["current"]["success"],
                 *case["current"]["failures"],
-                case["target"]["success"],
+                *target_successes,
                 *case["target"]["failures"],
             ]:
                 non_request_fields = json.dumps(
@@ -223,25 +227,36 @@ def test_route_cases_cover_every_route_and_do_not_disclose_credentials() -> None
     assert credential_values == {SENTINEL}
 
 
-def test_streamable_http_fixture_authenticates_version_negotiation() -> None:
-    case = _route_cases_by_id()["http.route.post.mcp"]
-    success_headers = case["target"]["success"]["request"]["headers"]
-    unsupported = next(
-        failure for failure in case["target"]["failures"] if failure["id"] == "unsupported-version"
-    )
-    failure_headers = unsupported["request"]["headers"]
-
-    assert success_headers == {
-        "Host": "127.0.0.1:<PORT>",
-        "Authorization": f"Bearer {SENTINEL}",
-        "MCP-Protocol-Version": MCP_REVISION,
+def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
+    case = _route_cases_by_id()["http.route.post.mcp"]["target"]
+    successes = {item["id"]: item["request"] for item in case["successes"]}
+    tools_list = successes["tools-list"]
+    assert tools_list["headers"]["Mcp-Method"] == "tools/list"
+    assert "Mcp-Name" not in tools_list["headers"]
+    assert tools_list["body"]["method"] == "tools/list"
+    tools_call = successes["tools-call"]
+    assert tools_call["headers"]["Mcp-Method"] == "tools/call"
+    assert tools_call["headers"]["Mcp-Name"] == "hieronymus_status"
+    assert tools_call["body"]["method"] == "tools/call"
+    assert tools_call["body"]["params"]["name"] == "hieronymus_status"
+    meta = tools_call["body"]["params"]["_meta"]
+    assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
+    assert meta["io.modelcontextprotocol/clientCapabilities"] == {}
+    assert meta["io.modelcontextprotocol/clientInfo"] == {
+        "name": "compatibility-replay",
+        "version": "1.0.0",
     }
-    assert failure_headers["Authorization"] == f"Bearer {SENTINEL}"
-    assert failure_headers["MCP-Protocol-Version"] != MCP_REVISION
-    assert unsupported["response"] == {
-        "status": 400,
-        "headers": {"Content-Type": "application/json; charset=utf-8"},
-        "body": {"error": "unsupported_mcp_protocol_version"},
+    assert {failure["id"] for failure in case["failures"]} == {
+        "invalid-host",
+        "missing-bearer",
+        "invalid-bearer",
+        "missing-version",
+        "unsupported-version",
+        "missing-mcp-method",
+        "wrong-mcp-method",
+        "unexpected-mcp-name-tools-list",
+        "missing-mcp-name-tools-call",
+        "wrong-mcp-name-tools-call",
     }
 
 
@@ -466,7 +481,8 @@ def test_every_changed_route_has_separate_replayable_current_and_target_outcomes
         assert case["current"]["basis"] == "current-python-runtime"
         assert case["target"]["basis"] == "adr-backed-target"
         assert case["target"]["adr"] == route["adr"]
-        assert {"success", "failures"} <= set(case["target"])
+        success_field = "successes" if contract_id == "http.route.post.mcp" else "success"
+        assert {success_field, "failures"} <= set(case["target"])
         assert case["current"] is not case["target"]
 
 

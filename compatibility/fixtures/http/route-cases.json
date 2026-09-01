@@ -8156,12 +8156,24 @@
                 "id": 1,
                 "jsonrpc": "2.0",
                 "method": "tools/list",
-                "params": {}
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  }
+                }
               },
               "headers": {
+                "Accept": "application/json, text/event-stream",
                 "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
                 "Host": "attacker.invalid",
-                "MCP-Protocol-Version": "2026-07-28"
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": "tools/list"
               },
               "method": "POST",
               "path": "/mcp",
@@ -8180,7 +8192,7 @@
           {
             "id": "missing-bearer",
             "normalized_log_fields": {
-              "credential": "<redacted>",
+              "credential": "<absent>",
               "method": "POST",
               "path_template": "/mcp",
               "status": 401
@@ -8190,11 +8202,23 @@
                 "id": 1,
                 "jsonrpc": "2.0",
                 "method": "tools/list",
-                "params": {}
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  }
+                }
               },
               "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
                 "Host": "127.0.0.1:<PORT>",
-                "MCP-Protocol-Version": "2026-07-28"
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": "tools/list"
               },
               "method": "POST",
               "path": "/mcp",
@@ -8211,6 +8235,97 @@
             }
           },
           {
+            "id": "invalid-bearer",
+            "normalized_log_fields": {
+              "credential": "<redacted>",
+              "method": "POST",
+              "path_template": "/mcp",
+              "status": 401
+            },
+            "request": {
+              "body": {
+                "id": 1,
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  }
+                }
+              },
+              "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer <INVALID_BEARER_TOKEN>",
+                "Content-Type": "application/json",
+                "Host": "127.0.0.1:<PORT>",
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": "tools/list"
+              },
+              "method": "POST",
+              "path": "/mcp",
+              "query": {}
+            },
+            "response": {
+              "body": {
+                "error": "unauthorized"
+              },
+              "headers": {
+                "Content-Type": "application/json; charset=utf-8"
+              },
+              "status": 401
+            }
+          },
+          {
+            "id": "missing-version",
+            "normalized_log_fields": {
+              "credential": "<redacted>",
+              "method": "POST",
+              "path_template": "/mcp",
+              "status": 400
+            },
+            "request": {
+              "body": {
+                "id": 1,
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  }
+                }
+              },
+              "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
+                "Host": "127.0.0.1:<PORT>",
+                "Mcp-Method": "tools/list"
+              },
+              "method": "POST",
+              "path": "/mcp",
+              "query": {}
+            },
+            "response": {
+              "body": {
+                "error": "missing_mcp_protocol_version"
+              },
+              "headers": {
+                "Content-Type": "application/json; charset=utf-8"
+              },
+              "status": 400
+            }
+          },
+          {
             "id": "unsupported-version",
             "normalized_log_fields": {
               "credential": "<redacted>",
@@ -8223,12 +8338,24 @@
                 "id": 1,
                 "jsonrpc": "2.0",
                 "method": "tools/list",
-                "params": {}
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  }
+                }
               },
               "headers": {
+                "Accept": "application/json, text/event-stream",
                 "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
                 "Host": "127.0.0.1:<PORT>",
-                "MCP-Protocol-Version": "2025-06-18"
+                "MCP-Protocol-Version": "2025-06-18",
+                "Mcp-Method": "tools/list"
               },
               "method": "POST",
               "path": "/mcp",
@@ -8243,45 +8370,351 @@
               },
               "status": 400
             }
+          },
+          {
+            "id": "missing-mcp-method",
+            "normalized_log_fields": {
+              "credential": "<redacted>",
+              "method": "POST",
+              "path_template": "/mcp",
+              "status": 400
+            },
+            "request": {
+              "body": {
+                "id": 1,
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  }
+                }
+              },
+              "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
+                "Host": "127.0.0.1:<PORT>",
+                "MCP-Protocol-Version": "2026-07-28"
+              },
+              "method": "POST",
+              "path": "/mcp",
+              "query": {}
+            },
+            "response": {
+              "body": {
+                "error": "missing_mcp_method"
+              },
+              "headers": {
+                "Content-Type": "application/json; charset=utf-8"
+              },
+              "status": 400
+            }
+          },
+          {
+            "id": "wrong-mcp-method",
+            "normalized_log_fields": {
+              "credential": "<redacted>",
+              "method": "POST",
+              "path_template": "/mcp",
+              "status": 400
+            },
+            "request": {
+              "body": {
+                "id": 1,
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  }
+                }
+              },
+              "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
+                "Host": "127.0.0.1:<PORT>",
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": "tools/call"
+              },
+              "method": "POST",
+              "path": "/mcp",
+              "query": {}
+            },
+            "response": {
+              "body": {
+                "error": "mcp_method_mismatch"
+              },
+              "headers": {
+                "Content-Type": "application/json; charset=utf-8"
+              },
+              "status": 400
+            }
+          },
+          {
+            "id": "unexpected-mcp-name-tools-list",
+            "normalized_log_fields": {
+              "credential": "<redacted>",
+              "method": "POST",
+              "path_template": "/mcp",
+              "status": 400
+            },
+            "request": {
+              "body": {
+                "id": 1,
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  }
+                }
+              },
+              "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
+                "Host": "127.0.0.1:<PORT>",
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": "tools/list",
+                "Mcp-Name": "hieronymus_status"
+              },
+              "method": "POST",
+              "path": "/mcp",
+              "query": {}
+            },
+            "response": {
+              "body": {
+                "error": "unexpected_mcp_name"
+              },
+              "headers": {
+                "Content-Type": "application/json; charset=utf-8"
+              },
+              "status": 400
+            }
+          },
+          {
+            "id": "missing-mcp-name-tools-call",
+            "normalized_log_fields": {
+              "credential": "<redacted>",
+              "method": "POST",
+              "path_template": "/mcp",
+              "status": 400
+            },
+            "request": {
+              "body": {
+                "id": 2,
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  },
+                  "arguments": {},
+                  "name": "hieronymus_status"
+                }
+              },
+              "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
+                "Host": "127.0.0.1:<PORT>",
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": "tools/call"
+              },
+              "method": "POST",
+              "path": "/mcp",
+              "query": {}
+            },
+            "response": {
+              "body": {
+                "error": "missing_mcp_name"
+              },
+              "headers": {
+                "Content-Type": "application/json; charset=utf-8"
+              },
+              "status": 400
+            }
+          },
+          {
+            "id": "wrong-mcp-name-tools-call",
+            "normalized_log_fields": {
+              "credential": "<redacted>",
+              "method": "POST",
+              "path_template": "/mcp",
+              "status": 400
+            },
+            "request": {
+              "body": {
+                "id": 2,
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  },
+                  "arguments": {},
+                  "name": "hieronymus_status"
+                }
+              },
+              "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
+                "Host": "127.0.0.1:<PORT>",
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": "tools/call",
+                "Mcp-Name": "hieronymus_recall"
+              },
+              "method": "POST",
+              "path": "/mcp",
+              "query": {}
+            },
+            "response": {
+              "body": {
+                "error": "mcp_name_mismatch"
+              },
+              "headers": {
+                "Content-Type": "application/json; charset=utf-8"
+              },
+              "status": 400
+            }
           }
         ],
-        "success": {
-          "normalized_log_fields": {
-            "credential": "<redacted>",
-            "method": "POST",
-            "path_template": "/mcp",
-            "status": 200
+        "successes": [
+          {
+            "id": "tools-list",
+            "normalized_log_fields": {
+              "credential": "<redacted>",
+              "method": "POST",
+              "path_template": "/mcp",
+              "status": 200
+            },
+            "request": {
+              "body": {
+                "id": 1,
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  }
+                }
+              },
+              "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
+                "Host": "127.0.0.1:<PORT>",
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": "tools/list"
+              },
+              "method": "POST",
+              "path": "/mcp",
+              "query": {}
+            },
+            "response": {
+              "body": {
+                "id": 1,
+                "jsonrpc": "2.0",
+                "result": {
+                  "resultType": "complete",
+                  "tools": []
+                }
+              },
+              "headers": {
+                "Content-Type": "application/json; charset=utf-8"
+              },
+              "status": 200
+            }
           },
-          "request": {
-            "body": {
-              "id": 1,
-              "jsonrpc": "2.0",
-              "method": "tools/list",
-              "params": {}
+          {
+            "id": "tools-call",
+            "normalized_log_fields": {
+              "credential": "<redacted>",
+              "method": "POST",
+              "path_template": "/mcp",
+              "status": 200
             },
-            "headers": {
-              "Authorization": "Bearer compat-secret-do-not-log",
-              "Host": "127.0.0.1:<PORT>",
-              "MCP-Protocol-Version": "2026-07-28"
+            "request": {
+              "body": {
+                "id": 2,
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                  "_meta": {
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {
+                      "name": "compatibility-replay",
+                      "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                  },
+                  "arguments": {},
+                  "name": "hieronymus_status"
+                }
+              },
+              "headers": {
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer compat-secret-do-not-log",
+                "Content-Type": "application/json",
+                "Host": "127.0.0.1:<PORT>",
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": "tools/call",
+                "Mcp-Name": "hieronymus_status"
+              },
+              "method": "POST",
+              "path": "/mcp",
+              "query": {}
             },
-            "method": "POST",
-            "path": "/mcp",
-            "query": {}
-          },
-          "response": {
-            "body": {
-              "id": 1,
-              "jsonrpc": "2.0",
-              "result": {
-                "tools": []
-              }
-            },
-            "headers": {
-              "Content-Type": "application/json; charset=utf-8"
-            },
-            "status": 200
+            "response": {
+              "body": {
+                "id": 2,
+                "jsonrpc": "2.0",
+                "result": {
+                  "content": [],
+                  "isError": false,
+                  "resultType": "complete"
+                }
+              },
+              "headers": {
+                "Content-Type": "application/json; charset=utf-8"
+              },
+              "status": 200
+            }
           }
-        }
+        ]
       }
     },
     {
@@ -8428,7 +8861,7 @@
           {
             "id": "missing-bearer",
             "normalized_log_fields": {
-              "credential": "<redacted>",
+              "credential": "<absent>",
               "method": "POST",
               "path_template": "/shutdown",
               "status": 401
@@ -8781,7 +9214,7 @@
           {
             "id": "missing-bearer",
             "normalized_log_fields": {
-              "credential": "<redacted>",
+              "credential": "<absent>",
               "method": "GET",
               "path_template": "/status",
               "status": 401

@@ -12,6 +12,24 @@ from tools.compatibility.model import load_manifest
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _successful_result_envelopes(
+    target: dict[str, object],
+) -> tuple[dict[str, object], ...]:
+    stdio = target["stdio"]
+    http = target["streamable_http"]
+    assert isinstance(stdio, dict)
+    assert isinstance(http, dict)
+    stdio_exchanges = stdio["exchanges"]
+    http_exchanges = http["exchanges"]
+    assert isinstance(stdio_exchanges, list)
+    assert isinstance(http_exchanges, list)
+    return (
+        *(json.loads(exchange["response_line"]) for exchange in stdio_exchanges),
+        *(exchange["responses"][0]["body"] for exchange in http_exchanges),
+        *(exchange["responses"][1]["events"][-1]["data"] for exchange in http_exchanges),
+    )
+
+
 def test_mcp_snapshot_matches_fastmcp_registry() -> None:
     snapshot = snapshot_mcp()
     expected = json.loads((ROOT / "compatibility/snapshots/mcp.json").read_text(encoding="utf-8"))
@@ -95,42 +113,83 @@ def test_every_registered_tool_has_manifest_contract_and_complete_fixtures(
         }
 
 
-def test_protocol_fixture_records_real_and_adr_pinned_wire_boundaries() -> None:
+def test_protocol_fixture_is_stateless_2026_07_28() -> None:
     snapshot = snapshot_mcp()
     protocol = json.loads(
         (ROOT / "compatibility/fixtures/mcp/protocol.json").read_text(encoding="utf-8")
     )
     manifest = load_manifest(ROOT / "compatibility/manifest.json")
 
-    assert protocol["target"]["basis"] == "adr-backed-target"
-    assert protocol["target"]["initialize"]["request"]["params"]["protocolVersion"] == (
-        "2026-07-28"
-    )
-    assert protocol["target"]["initialize"]["result"]["protocolVersion"] == "2026-07-28"
-    assert protocol["target"]["initialize"]["result"]["capabilities"]["tools"] == {
-        "listChanged": False
+    target = protocol["target"]
+    compact = json.dumps(protocol, sort_keys=True, separators=(",", ":"))
+    assert '"initialize":' not in compact
+    assert "notifications/initialized" not in compact
+    assert "Mcp-Session-Id" not in compact
+    assert {"initialize", "initialized", "session"}.isdisjoint(target)
+    for request in target["requests"]:
+        assert {"protocolVersion", "clientCapabilities", "clientInfo"}.isdisjoint(request["params"])
+        meta = request["params"]["_meta"]
+        assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
+        assert meta["io.modelcontextprotocol/clientCapabilities"] == {}
+        assert meta["io.modelcontextprotocol/clientInfo"] == {
+            "name": "compatibility-replay",
+            "version": "1.0.0",
+        }
+    assert target["metadata_rules"] == {
+        "required": [
+            "io.modelcontextprotocol/protocolVersion",
+            "io.modelcontextprotocol/clientCapabilities",
+        ],
+        "should": ["io.modelcontextprotocol/clientInfo"],
     }
-    assert protocol["target"]["unsupported_version"]["response"]["error"]["code"] == -32602
-    stdio = protocol["target"]["stdio"]
-    assert stdio["request_line"].endswith("\n")
-    assert stdio["response_line"].endswith("\n")
-    assert "\n" not in stdio["request_line"][:-1]
-    assert "\n" not in stdio["response_line"][:-1]
-    assert stdio["diagnostics_stream"] == "stderr"
-    http = protocol["target"]["streamable_http"]
-    assert http["request"]["method"] == "POST"
-    assert http["request"]["path"] == "/mcp"
-    assert http["request"]["headers"]["MCP-Protocol-Version"] == "2026-07-28"
-    assert http["responses"][0]["content_type"] == "application/json"
-    assert http["responses"][1]["content_type"] == "text/event-stream"
+    stdio_exchanges = target["stdio"]["exchanges"]
+    assert len(stdio_exchanges) == 2
+    for exchange in stdio_exchanges:
+        assert exchange["request_line"].endswith("\n")
+        assert exchange["response_line"].endswith("\n")
+        assert "\n" not in exchange["request_line"][:-1]
+        assert "\n" not in exchange["response_line"][:-1]
+    assert target["stdio"]["diagnostics_stream"] == "stderr"
+    http_exchanges = {
+        exchange["request"]["body"]["method"]: exchange
+        for exchange in target["streamable_http"]["exchanges"]
+    }
+    assert set(http_exchanges) == {"tools/list", "tools/call"}
+    list_headers = http_exchanges["tools/list"]["request"]["headers"]
+    assert list_headers["Mcp-Method"] == "tools/list"
+    assert "Mcp-Name" not in list_headers
+    call_headers = http_exchanges["tools/call"]["request"]["headers"]
+    assert call_headers["Mcp-Method"] == "tools/call"
+    assert call_headers["Mcp-Name"] == "hieronymus_status"
+    assert all(
+        "Mcp-Session-Id" not in exchange["request"]["headers"]
+        for exchange in http_exchanges.values()
+    )
+    assert target["streamable_http"]["header_rules"] == {
+        "required": ["MCP-Protocol-Version", "Mcp-Method"],
+        "mcp_name_required_for": ["tools/call", "resources/read", "prompts/get"],
+    }
+    successes = _successful_result_envelopes(target)
+    assert len(successes) == 6
+    assert all(envelope["result"]["resultType"] == "complete" for envelope in successes)
+
+    from tools.compatibility.check import _request_metadata_issues
+
+    without_client_info = json.loads(json.dumps(target["requests"][0]))
+    del without_client_info["params"]["_meta"]["io.modelcontextprotocol/clientInfo"]
+    assert _request_metadata_issues(without_client_info) == ()
+    missing_capabilities = json.loads(json.dumps(without_client_info))
+    del missing_capabilities["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]
+    assert _request_metadata_issues(missing_capabilities)
+    direct_legacy = json.loads(json.dumps(without_client_info))
+    direct_legacy["params"]["protocolVersion"] = "2026-07-28"
+    assert _request_metadata_issues(direct_legacy)
+
     assert (
         protocol["registry_identity"]["stdio"] == protocol["registry_identity"]["streamable_http"]
     )
     assert protocol["registry_identity"]["stdio"] == [tool["name"] for tool in snapshot["tools"]]
     assert protocol["current"]["basis"] == "current-python-server"
-    assert protocol["current"]["initialize"]["result"]["capabilities"]["tools"] == {
-        "listChanged": False
-    }
     current_tools = asyncio.run(mcp_server.server.list_tools())
     exact_current_envelope = {
         "jsonrpc": "2.0",
@@ -153,7 +212,7 @@ def test_protocol_fixture_records_real_and_adr_pinned_wire_boundaries() -> None:
     }
     target_registry = {
         tool["name"]: tool["input_schema"]
-        for tool in protocol["target"]["tools_list"]["response"]["result"]["tools"]
+        for tool in target["tools_list"]["response"]["result"]["tools"]
     }
     assert current_registry == target_registry == snapshot_registry
     assert protocol["private_python_bridge"] == {

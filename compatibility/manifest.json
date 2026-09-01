@@ -2945,6 +2945,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/compatibility/test_http_inventory.py::test_http_mcp_cases_cover_official_metadata_and_local_security",
+      "reason": "Compatibility schema and artifact generator validation: test_http_mcp_cases_cover_official_metadata_and_local_security."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_http_inventory.py::test_http_snapshot_matches_router_and_frontend_sources",
       "reason": "Compatibility schema and artifact generator validation: test_http_snapshot_matches_router_and_frontend_sources."
     },
@@ -3082,11 +3087,6 @@
       "disposition": "implementation_internal",
       "node_id": "tests/compatibility/test_http_inventory.py::test_static_runtime_failures_are_json_not_success_content_types",
       "reason": "Compatibility schema and artifact generator validation: test_static_runtime_failures_are_json_not_success_content_types."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/compatibility/test_http_inventory.py::test_streamable_http_fixture_authenticates_version_negotiation",
-      "reason": "Compatibility schema and artifact generator validation: test_streamable_http_fixture_authenticates_version_negotiation."
     },
     {
       "disposition": "implementation_internal",
@@ -3255,8 +3255,8 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_records_real_and_adr_pinned_wire_boundaries",
-      "reason": "Compatibility schema and artifact generator validation: test_protocol_fixture_records_real_and_adr_pinned_wire_boundaries."
+      "node_id": "tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_is_stateless_2026_07_28",
+      "reason": "Compatibility schema and artifact generator validation: test_protocol_fixture_is_stateless_2026_07_28."
     },
     {
       "disposition": "implementation_internal",

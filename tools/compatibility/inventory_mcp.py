@@ -9,7 +9,6 @@ import logging
 import tempfile
 from pathlib import Path
 
-from mcp import types as mcp_types
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from hieronymus import mcp_server
@@ -33,6 +32,14 @@ _SERIES_ARGUMENTS = {
     "language_tags": ["ja", "en"],
 }
 _ADR = "docs/adr/0015-mcp-protocol-and-transport.md"
+REQUEST_META = {
+    "io.modelcontextprotocol/protocolVersion": _PROTOCOL_REVISION,
+    "io.modelcontextprotocol/clientCapabilities": {},
+    "io.modelcontextprotocol/clientInfo": {
+        "name": "compatibility-replay",
+        "version": "1.0.0",
+    },
+}
 
 
 def _sort_object_keys(value: object) -> object:
@@ -610,33 +617,52 @@ def _protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]:
     tools = snapshot["tools"]
     assert isinstance(tools, list)
     tool_names = [str(tool["name"]) for tool in tools if isinstance(tool, dict)]
-    current_options = mcp_server.server._mcp_server.create_initialization_options()
-    current_capabilities = current_options.capabilities.model_dump(
-        mode="json", by_alias=True, exclude_none=True
-    )
     current_tools = asyncio.run(mcp_server.server.list_tools())
-    client = {"name": "compatibility-replay", "version": "1.0.0"}
-    initialize_request = {
+    tools_list_request = {
         "jsonrpc": "2.0",
         "id": 1,
-        "method": "initialize",
+        "method": "tools/list",
+        "params": {"_meta": REQUEST_META},
+    }
+    tool_call_request = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
         "params": {
-            "protocolVersion": _PROTOCOL_REVISION,
-            "capabilities": {},
-            "clientInfo": client,
+            "_meta": REQUEST_META,
+            "name": "hieronymus_status",
+            "arguments": {},
         },
     }
-    initialize_result = {
+    tools_list_result = {
         "jsonrpc": "2.0",
         "id": 1,
+        "result": {"resultType": "complete", "tools": tools},
+    }
+    tool_call_result = {
+        "jsonrpc": "2.0",
+        "id": 2,
         "result": {
-            "protocolVersion": _PROTOCOL_REVISION,
-            "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "hieronymus", "version": "rust-cutover-target"},
+            "resultType": "complete",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        '{\n  "service": {\n    "available": true,\n'
+                        '    "mode": "local-http"\n  }\n}'
+                    ),
+                }
+            ],
+            "isError": False,
+            "structuredContent": {"service": {"available": True, "mode": "local-http"}},
         },
     }
-    list_request = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
-    list_result = {"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}}
+    current_list_request = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": {},
+    }
     current_list_result = {
         "jsonrpc": "2.0",
         "id": 2,
@@ -647,74 +673,89 @@ def _protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]:
             ]
         },
     }
+    stdio_exchanges = [
+        {
+            "request_line": _json_line(request),
+            "response_line": _json_line(response),
+        }
+        for request, response in (
+            (tools_list_request, tools_list_result),
+            (tool_call_request, tool_call_result),
+        )
+    ]
+
+    def http_exchange(
+        request: dict[str, object],
+        response: dict[str, object],
+        *,
+        name: str | None = None,
+    ) -> dict[str, object]:
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Authorization": "Bearer compat-secret-do-not-log",
+            "Content-Type": "application/json",
+            "Host": "127.0.0.1:<PORT>",
+            "MCP-Protocol-Version": _PROTOCOL_REVISION,
+            "Mcp-Method": request["method"],
+        }
+        if name is not None:
+            headers["Mcp-Name"] = name
+        return {
+            "request": {
+                "method": "POST",
+                "path": "/mcp",
+                "headers": headers,
+                "body": request,
+            },
+            "responses": [
+                {"content_type": "application/json", "body": response},
+                {
+                    "content_type": "text/event-stream",
+                    "events": [{"event": "message", "data": response}],
+                },
+            ],
+        }
+
     return {
         "current": {
             "basis": "current-python-server",
-            "initialize": {
-                "request": {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": mcp_types.LATEST_PROTOCOL_VERSION,
-                        "capabilities": {},
-                        "clientInfo": client,
-                    },
-                },
-                "result": {
-                    "protocolVersion": mcp_types.LATEST_PROTOCOL_VERSION,
-                    "capabilities": current_capabilities,
-                    "serverInfo": {
-                        "name": current_options.server_name,
-                        "version": current_options.server_version,
-                    },
-                },
-            },
-            "tools_list": {"request": list_request, "response": current_list_result},
+            "tools_list": {"request": current_list_request, "response": current_list_result},
         },
         "target": {
             "basis": "adr-backed-target",
             "adr": _ADR,
-            "initialize": {"request": initialize_request, "result": initialize_result["result"]},
-            "tools_list": {"request": list_request, "response": list_result},
+            "requests": [tools_list_request, tool_call_request],
+            "metadata_rules": {
+                "required": [
+                    "io.modelcontextprotocol/protocolVersion",
+                    "io.modelcontextprotocol/clientCapabilities",
+                ],
+                "should": ["io.modelcontextprotocol/clientInfo"],
+            },
+            "tools_list": {"request": tools_list_request, "response": tools_list_result},
+            "tools_call": {"request": tool_call_request, "response": tool_call_result},
             "stdio": {
                 "framing": "newline-delimited-json-rpc",
-                "request_line": _json_line(list_request),
-                "response_line": _json_line(list_result),
+                "exchanges": stdio_exchanges,
                 "diagnostics_stream": "stderr",
             },
             "streamable_http": {
-                "request": {
-                    "method": "POST",
-                    "path": "/mcp",
-                    "headers": {
-                        "Content-Type": "application/json",
-                        "MCP-Protocol-Version": _PROTOCOL_REVISION,
-                    },
-                    "body": list_request,
+                "header_rules": {
+                    "required": ["MCP-Protocol-Version", "Mcp-Method"],
+                    "mcp_name_required_for": [
+                        "tools/call",
+                        "resources/read",
+                        "prompts/get",
+                    ],
                 },
-                "responses": [
-                    {"content_type": "application/json", "body": list_result},
-                    {
-                        "content_type": "text/event-stream",
-                        "events": [{"event": "message", "data": list_result}],
-                    },
+                "exchanges": [
+                    http_exchange(tools_list_request, tools_list_result),
+                    http_exchange(
+                        tool_call_request,
+                        tool_call_result,
+                        name="hieronymus_status",
+                    ),
                 ],
-            },
-            "unsupported_version": {
-                "request": {
-                    **initialize_request,
-                    "params": {**initialize_request["params"], "protocolVersion": "1900-01-01"},
-                },
-                "response": {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "error": {
-                        "code": -32602,
-                        "message": "Unsupported MCP protocol version: 1900-01-01",
-                        "data": {"supported": [_PROTOCOL_REVISION]},
-                    },
-                },
             },
         },
         "registry_identity": {

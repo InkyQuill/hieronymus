@@ -6,7 +6,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from mcp import types as mcp_types
 
+from hieronymus import mcp_server
 from tools.compatibility import inventory_cli
 from tools.compatibility.inventory_cli import (
     replay_mcp_entrypoint_case,
@@ -206,12 +208,22 @@ def test_mcp_entrypoint_normalizes_only_volatile_server_package_version() -> Non
     protocol = json.loads(
         (ROOT / "compatibility/fixtures/mcp/protocol.json").read_text(encoding="utf-8")
     )
+    current_options = mcp_server.server._mcp_server.create_initialization_options()
+    capabilities = current_options.capabilities.model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
     initialize = {
         "jsonrpc": "2.0",
         "id": 1,
-        "result": json.loads(json.dumps(protocol["current"]["initialize"]["result"])),
+        "result": {
+            "protocolVersion": mcp_types.LATEST_PROTOCOL_VERSION,
+            "capabilities": capabilities,
+            "serverInfo": {
+                "name": current_options.server_name,
+                "version": "999.0.post-uv-sync",
+            },
+        },
     }
-    initialize["result"]["serverInfo"]["version"] = "999.0.post-uv-sync"
     tools_list = protocol["current"]["tools_list"]["response"]
     raw_stdout = "".join(
         json.dumps(response, separators=(",", ":"), ensure_ascii=False) + "\n"
@@ -224,6 +236,8 @@ def test_mcp_entrypoint_normalizes_only_volatile_server_package_version() -> Non
         "name": "hieronymus",
         "version": "<MCP_PACKAGE_VERSION>",
     }
+    assert responses[0]["result"]["protocolVersion"] == mcp_types.LATEST_PROTOCOL_VERSION
+    assert responses[0]["result"]["capabilities"] == capabilities
     assert responses[1] == tools_list
     assert (ROOT / "uv.lock").read_bytes() == lock_before
 
