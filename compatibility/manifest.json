@@ -3400,7 +3400,32 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_detects_artifact_ancestor_swapped_to_symlink_during_transfer[.artifacts]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_detects_artifact_ancestor_swapped_to_symlink_during_transfer[all-MiniLM-L6-v2]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_detects_artifact_ancestor_swapped_to_symlink_during_transfer[models]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_detects_artifact_ancestor_swapped_to_symlink_during_transfer[qualification]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_acquisition_follows_allowed_https_redirects_without_forwarding_credentials",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_fsyncs_the_written_inode_before_descriptor_relative_replace",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3410,7 +3435,47 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_declared_or_streamed_oversize_without_secret_echo",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_more_than_five_redirect_hops",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_symlinked_artifact_ancestor_without_external_writes[.artifacts]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_symlinked_artifact_ancestor_without_external_writes[all-MiniLM-L6-v2]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_symlinked_artifact_ancestor_without_external_writes[models]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_symlinked_artifact_ancestor_without_external_writes[qualification]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_symlinked_artifact_leaf_without_touching_target[model.onnx.lock]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_symlinked_artifact_leaf_without_touching_target[model.onnx.part]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_symlinked_artifact_leaf_without_touching_target[model.onnx]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3465,6 +3530,16 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_cli_prints_a_relative_destination_for_a_canonicalized_root_symlink",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_concurrent_acquisitions_cannot_replace_a_different_partial_inode",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_existing_unverified_destination_is_replaced_only_after_verification",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3481,6 +3556,16 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_prerequisites_and_toolchain_are_exact",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_processes_contend_on_one_persistent_lock_inode",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_transport_open_uses_the_bounded_acquisition_timeout",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {

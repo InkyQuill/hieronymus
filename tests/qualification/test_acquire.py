@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import multiprocessing
 import os
 import sys
+import threading
+import time
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -129,12 +133,23 @@ def test_acquisition_follows_allowed_https_redirects_without_forwarding_credenti
         "https://us.aws.cdn.hf.co/model.onnx?X-Amz-Signature=top-secret",
     )
     requests: list[object] = []
-    replace_calls: list[tuple[Path, Path]] = []
+    replace_calls: list[tuple[str, str]] = []
     real_replace = os.replace
 
-    def atomic_replace(source: Path, destination: Path) -> None:
+    def atomic_replace(
+        source: str,
+        destination: str,
+        *,
+        src_dir_fd: int,
+        dst_dir_fd: int,
+    ) -> None:
         replace_calls.append((source, destination))
-        real_replace(source, destination)
+        real_replace(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
 
     def fake_open(request: object) -> _Response:
         requests.append(request)
@@ -172,7 +187,7 @@ def test_acquisition_follows_allowed_https_redirects_without_forwarding_credenti
         _INITIAL_URL,
         *redirect_urls,
     ]
-    assert replace_calls == [(destination.with_name("model.onnx.part"), destination)]
+    assert replace_calls == [("model.onnx.part", "model.onnx")]
 
 
 def assert_destination_absent(repo_root: Path) -> None:
@@ -367,3 +382,351 @@ def test_cli_accepts_only_semantic_model(monkeypatch: pytest.MonkeyPatch) -> Non
     assert acquire.main(["semantic-model"], repo_root=_ROOT) == 0
     with pytest.raises(SystemExit):
         acquire.main(["onnx-runtime"], repo_root=_ROOT)
+
+
+def test_cli_prints_a_relative_destination_for_a_canonicalized_root_symlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    canonical_root = tmp_path / "canonical"
+    canonical_root.mkdir()
+    linked_root = tmp_path / "linked"
+    linked_root.symlink_to(canonical_root, target_is_directory=True)
+    destination = canonical_root / _DESTINATION
+    monkeypatch.setattr(acquire, "acquire_semantic_model", lambda _root: destination)
+
+    assert acquire.main(["semantic-model"], repo_root=linked_root) == 0
+    assert capsys.readouterr().out == f"{_DESTINATION.as_posix()}\n"
+
+
+def test_concurrent_acquisitions_cannot_replace_a_different_partial_inode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing the process lock must make one caller publish another inode."""
+    body = b"concurrent verified model"
+    repo_root = _repo(tmp_path, body=body)
+    first_read_started = threading.Event()
+    release_first_read = threading.Event()
+    open_lock = threading.Lock()
+    open_count = 0
+
+    def fake_open(_request: object) -> _Response:
+        nonlocal open_count
+        with open_lock:
+            open_count += 1
+            call = open_count
+        if call == 1:
+            return _Response(
+                200,
+                body=body,
+                before_read=lambda: (
+                    first_read_started.set(),
+                    release_first_read.wait(timeout=5),
+                ),
+            )
+        return _Response(200, body=body)
+
+    monkeypatch.setattr(acquire, "_open_no_redirect", fake_open)
+    results: list[Path] = []
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            results.append(acquire.acquire_semantic_model(repo_root))
+        except BaseException as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    first = threading.Thread(target=run)
+    second = threading.Thread(target=run)
+    first.start()
+    assert first_read_started.wait(timeout=5)
+    second.start()
+    time.sleep(0.05)
+    release_first_read.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    assert results == [repo_root / _DESTINATION, repo_root / _DESTINATION]
+    assert open_count == 1
+    assert (repo_root / _DESTINATION).read_bytes() == body
+    lock_path = (repo_root / _DESTINATION).with_name("model.onnx.lock")
+    assert lock_path.is_file()
+    assert lock_path.stat().st_nlink == 1
+
+
+def test_processes_contend_on_one_persistent_lock_inode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"cross-process verified model"
+    repo_root = _repo(tmp_path, body=body)
+    context = multiprocessing.get_context("fork")
+    first_read_started = context.Event()
+    release_first_read = context.Event()
+    second_lock_attempted = context.Event()
+    open_count = context.Value("i", 0)
+    lock_attempts = context.Value("i", 0)
+    results = context.Queue()
+    real_lock = acquire._acquisition_lock
+
+    @contextmanager
+    def observed_lock(model_dir_fd: int):  # type: ignore[no-untyped-def]
+        with lock_attempts.get_lock():
+            lock_attempts.value += 1
+            if lock_attempts.value == 2:
+                second_lock_attempted.set()
+        with real_lock(model_dir_fd):
+            yield
+
+    def fake_open(_request: object) -> _Response:
+        with open_count.get_lock():
+            open_count.value += 1
+        return _Response(
+            200,
+            body=body,
+            before_read=lambda: (
+                first_read_started.set(),
+                release_first_read.wait(timeout=10),
+            ),
+        )
+
+    def run() -> None:
+        try:
+            results.put(("ok", str(acquire.acquire_semantic_model(repo_root))))
+        except BaseException as error:  # pragma: no cover - asserted in parent
+            results.put(("error", type(error).__name__))
+
+    monkeypatch.setattr(acquire, "_acquisition_lock", observed_lock)
+    monkeypatch.setattr(acquire, "_open_no_redirect", fake_open)
+    first = context.Process(target=run)
+    second = context.Process(target=run)
+    first.start()
+    assert first_read_started.wait(timeout=5)
+    second.start()
+    assert second_lock_attempted.wait(timeout=5)
+    release_first_read.set()
+    first.join(timeout=10)
+    second.join(timeout=10)
+
+    assert first.exitcode == 0 and second.exitcode == 0
+    received = [results.get(timeout=2), results.get(timeout=2)]
+    assert received == [
+        ("ok", str(repo_root / _DESTINATION)),
+        ("ok", str(repo_root / _DESTINATION)),
+    ]
+    assert open_count.value == 1
+    lock_path = (repo_root / _DESTINATION).with_name("model.onnx.lock")
+    assert lock_path.is_file()
+    assert lock_path.stat().st_nlink == 1
+
+
+@pytest.mark.parametrize(
+    "ancestor",
+    ["qualification", ".artifacts", "models", "all-MiniLM-L6-v2"],
+)
+def test_acquisition_rejects_symlinked_artifact_ancestor_without_external_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ancestor: str,
+) -> None:
+    body = b"model"
+    repo_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    repo_root.mkdir()
+    outside.mkdir()
+    prerequisites = {
+        "semantic_model": {"url": _INITIAL_URL, "sha256": hashlib.sha256(body).hexdigest()}
+    }
+    if ancestor == "qualification":
+        (outside / "prerequisites.json").write_text(json.dumps(prerequisites), encoding="utf-8")
+        (repo_root / "qualification").symlink_to(outside, target_is_directory=True)
+    else:
+        prerequisite_path = repo_root / "qualification/prerequisites.json"
+        prerequisite_path.parent.mkdir()
+        prerequisite_path.write_text(json.dumps(prerequisites), encoding="utf-8")
+        components = [".artifacts", "models", "all-MiniLM-L6-v2"]
+        parent = repo_root / "qualification"
+        for component in components:
+            path = parent / component
+            if component == ancestor:
+                path.symlink_to(outside, target_is_directory=True)
+                break
+            path.mkdir()
+            parent = path
+    sentinel = outside / "sentinel"
+    sentinel.write_bytes(b"do not change")
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: _Response(200, body=body))
+
+    with pytest.raises(acquire.AcquisitionError):
+        acquire.acquire_semantic_model(repo_root)
+
+    assert sentinel.read_bytes() == b"do not change"
+    assert not (outside / "model.onnx").exists()
+    assert not (outside / "model.onnx.part").exists()
+    assert not (outside / "model.onnx.lock").exists()
+
+
+@pytest.mark.parametrize(
+    "ancestor",
+    ["qualification", ".artifacts", "models", "all-MiniLM-L6-v2"],
+)
+def test_acquisition_detects_artifact_ancestor_swapped_to_symlink_during_transfer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ancestor: str,
+) -> None:
+    """Removing the pre-promotion chain check must allow a swapped tree to succeed."""
+    body = b"model"
+    repo_root = _repo(tmp_path / "repo", body=body)
+    model_dir = (repo_root / _DESTINATION).parent
+    model_dir.mkdir(parents=True)
+    ancestor_path = {
+        "qualification": repo_root / "qualification",
+        ".artifacts": repo_root / "qualification/.artifacts",
+        "models": repo_root / "qualification/.artifacts/models",
+        "all-MiniLM-L6-v2": model_dir,
+    }[ancestor]
+    moved = ancestor_path.with_name(f"{ancestor_path.name}.moved")
+    outside = tmp_path / f"outside-{ancestor}"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_bytes(b"do not change")
+    swapped = False
+
+    class _SwappingResponse(_Response):
+        @property
+        def status(self) -> int:  # type: ignore[override]
+            nonlocal swapped
+            if not swapped:
+                ancestor_path.rename(moved)
+                ancestor_path.symlink_to(outside, target_is_directory=True)
+                swapped = True
+            return 200
+
+        @status.setter
+        def status(self, value: int) -> None:
+            self._status = value
+
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: _SwappingResponse(200, body=body),
+    )
+
+    with pytest.raises(acquire.AcquisitionError):
+        acquire.acquire_semantic_model(repo_root)
+
+    assert swapped
+    assert sentinel.read_bytes() == b"do not change"
+    assert not (outside / "model.onnx").exists()
+    assert not (outside / "model.onnx.part").exists()
+
+
+@pytest.mark.parametrize("leaf", ["model.onnx", "model.onnx.part", "model.onnx.lock"])
+def test_acquisition_rejects_symlinked_artifact_leaf_without_touching_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    leaf: str,
+) -> None:
+    body = b"model"
+    repo_root = _repo(tmp_path / "repo", body=body)
+    model_dir = (repo_root / _DESTINATION).parent
+    model_dir.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"do not change")
+    (model_dir / leaf).symlink_to(outside)
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: _Response(200, body=body))
+
+    with pytest.raises(acquire.AcquisitionError):
+        acquire.acquire_semantic_model(repo_root)
+
+    assert outside.read_bytes() == b"do not change"
+    assert (model_dir / leaf).is_symlink()
+
+
+def test_acquisition_rejects_declared_or_streamed_oversize_without_secret_echo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"model"
+    repo_root = _repo(tmp_path, body=body)
+    monkeypatch.setattr(acquire, "_MAX_MODEL_BYTES", 8)
+    too_large = 9
+    responses = iter(
+        (
+            _Response(200, headers={"Content-Length": str(too_large)}, body=body),
+            _Response(200, body=b"x" * too_large),
+        )
+    )
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: next(responses))
+
+    for _case in range(2):
+        with pytest.raises(acquire.AcquisitionError) as caught:
+            acquire.acquire_semantic_model(repo_root)
+        assert str(too_large) not in str(caught.value)
+        assert not (repo_root / _DESTINATION.with_name("model.onnx.part")).exists()
+
+
+def test_transport_open_uses_the_bounded_acquisition_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[float] = []
+
+    class _Opener:
+        def open(self, _request: object, *, timeout: float) -> _Response:
+            observed.append(timeout)
+            return _Response(200)
+
+    monkeypatch.setattr(acquire.urllib.request, "build_opener", lambda *_handlers: _Opener())
+
+    response = acquire._open_no_redirect(acquire._request(_INITIAL_URL))
+    response.close()
+
+    assert observed == [acquire._TRANSPORT_TIMEOUT_SECONDS]
+    assert 0 < observed[0] <= 300
+
+
+def test_acquisition_fsyncs_the_written_inode_before_descriptor_relative_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"model"
+    repo_root = _repo(tmp_path, body=body)
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: _Response(200, body=body))
+    events: list[str] = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+
+    def record_fsync(fd: int) -> None:
+        events.append("fsync")
+        real_fsync(fd)
+
+    def record_replace(
+        source: str,
+        destination: str,
+        *,
+        src_dir_fd: int,
+        dst_dir_fd: int,
+    ) -> None:
+        assert source == "model.onnx.part"
+        assert destination == "model.onnx"
+        assert src_dir_fd == dst_dir_fd
+        events.append("replace")
+        real_replace(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
+
+    monkeypatch.setattr(acquire.os, "fsync", record_fsync)
+    monkeypatch.setattr(acquire.os, "replace", record_replace)
+
+    acquire.acquire_semantic_model(repo_root)
+
+    assert "fsync" in events
+    assert events.index("fsync") < events.index("replace")
