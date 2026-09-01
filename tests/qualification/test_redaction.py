@@ -136,54 +136,188 @@ def _expected_replay_commands_from_plan(plan: str) -> set[str]:
     return expected
 
 
-def _adjacent_replay_mutation(command: str) -> str:
-    """Keep the command family while breaking its exact safety coupling."""
+def _adjacent_replay_mutation(command: str) -> tuple[str, frozenset[str]]:
+    """Keep the command family while breaking one named safety coupling."""
     risks = (
         "mcp-transport",
         "semantic-native",
         "frontend-embedding",
         "legacy-database-import",
     )
-    if command.startswith("HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR="):
+    live_risk_commands = tuple(
+        item
+        for item in PLANNED_REPLAY_COMMANDS
+        if item.startswith("HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=")
+    )
+    if command in live_risk_commands:
+        row = live_risk_commands.index(command)
+        if row == 0:
+            return (
+                command.replace("run_mcp --write", "run_semantic --write"),
+                frozenset({"risk-runner-mismatch"}),
+            )
+        if row == 1:
+            return (
+                command.replace(
+                    "HIERONYMUS_QUALIFICATION_LIVE=1 "
+                    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native "
+                    "CARGO_NET_OFFLINE=true",
+                    "CARGO_NET_OFFLINE=true "
+                    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native "
+                    "HIERONYMUS_QUALIFICATION_LIVE=1",
+                ),
+                frozenset({"environment-order"}),
+            )
         runners = ("run_mcp", "run_semantic", "run_frontend", "run_database")
         runner = next(item for item in runners if f".{item} --write" in command)
         replacement = runners[(runners.index(runner) + 1) % len(runners)]
-        return command.replace(f".{runner} --write", f".{replacement} --write")
+        return (
+            command.replace(f".{runner} --write", f".{replacement} --write"),
+            frozenset({"risk-runner-mismatch"}),
+        )
     if command.startswith("HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true"):
-        return command.replace(" CARGO_NET_OFFLINE=true", "", 1)
+        return (
+            command.replace(
+                "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true",
+                "CARGO_NET_OFFLINE=true HIERONYMUS_QUALIFICATION_LIVE=1",
+            ),
+            frozenset({"environment-order"}),
+        )
     if "tools.qualification.validate qualification/records/" in command:
-        return command.replace("qualification/records/", "qualification/records/../records/")
+        return (
+            command.replace("qualification/records/", "qualification/records/../records/"),
+            frozenset({"record-input-path"}),
+        )
     if "tools.qualification.render --check" in command:
         risk = next(item for item in risks if f"records/{item}.json" in command)
         replacement = risks[(risks.index(risk) + 1) % len(risks)]
-        return command.replace(f"rust/{risk}.md", f"rust/{replacement}.md")
+        return (
+            command.replace(f"rust/{risk}.md", f"rust/{replacement}.md"),
+            frozenset({"record-output-pair"}),
+        )
     if "tools.qualification.review" in command:
+        risk = next(item for item in risks if f"review {item} " in command)
+        risk_row = risks.index(risk)
         if "--status accepted" in command:
-            return command.replace("--status accepted", "--status rejected")
-        return command.replace("--status rejected", "--status accepted")
+            status_row = 0
+        elif command.endswith("false --normative-constraints-preserved false"):
+            status_row = 1
+        elif command.endswith("true --normative-constraints-preserved false"):
+            status_row = 2
+        else:
+            status_row = 3
+        mutation_kind = (risk_row + status_row) % 5
+        if mutation_kind == 0:
+            return (
+                command.replace(
+                    "Pavel Obruchnikov <me@inkyquill.net>",
+                    "Another Owner <owner@example.invalid>",
+                ),
+                frozenset({"review-owner-changed"}),
+            )
+        if mutation_kind == 1:
+            return (
+                command.replace(
+                    '--owner "Pavel Obruchnikov <me@inkyquill.net>"',
+                    "--owner Pavel Obruchnikov <me@inkyquill.net>",
+                ),
+                frozenset({"review-owner-unquoted"}),
+            )
+        if mutation_kind == 2:
+            changed = (
+                command.replace("--status accepted", "--status rejected")
+                if "--status accepted" in command
+                else command.replace("--status rejected", "--status accepted")
+            )
+            return (
+                changed,
+                frozenset({"review-status-mismatch"}),
+            )
+        if mutation_kind == 3:
+            if "--status accepted" in command:
+                changed = command.replace(
+                    "--objective-evidence-reviewed true",
+                    "--objective-evidence-reviewed false",
+                )
+            else:
+                changed = re.sub(
+                    r"--objective-evidence-reviewed (?:true|false) "
+                    r"--normative-constraints-preserved (?:true|false)$",
+                    "--objective-evidence-reviewed TRUE --normative-constraints-preserved TRUE",
+                    command,
+                )
+            return (
+                changed,
+                frozenset({"review-assertion-mismatch"}),
+            )
+        return (
+            re.sub(
+                r"(--objective-evidence-reviewed (?:true|false)) "
+                r"(--normative-constraints-preserved (?:true|false))$",
+                r"\2 \1",
+                command,
+            ),
+            frozenset({"review-flag-order"}),
+        )
     if "tools.qualification.check --record" in command:
-        return command + "-stale"
+        return command + "-stale", frozenset({"checker-record-risk"})
     if command.endswith("tools.qualification.projections --check"):
-        return command.removesuffix("--check") + "--write"
+        return (
+            command.removesuffix("--check") + "--write",
+            frozenset({"projection-mode"}),
+        )
     if command.endswith("tools.qualification.check --records-only"):
-        return command + " --require-qualified"
+        return command + " --require-qualified", frozenset({"checker-flags"})
     if command.endswith("tools.qualification.check --require-qualified"):
-        return command + " --records-only"
+        return command + " --records-only", frozenset({"checker-flags"})
     if command == "uv run python -m tools.qualification.clean":
-        return command + " --include-model"
+        return command + " --include-model", frozenset({"cleanup-mode"})
     if command.endswith("tools.qualification.clean --apply"):
-        return command + " --stale"
+        return command + " --stale", frozenset({"cleanup-mode"})
     if command.endswith("tools.qualification.clean --apply --include-model"):
-        return command.replace("--apply --include-model", "--include-model --apply")
+        return (
+            command.replace("--apply --include-model", "--include-model --apply"),
+            frozenset({"cleanup-flag-order"}),
+        )
     if command.startswith("unshare --user --map-root-user --net -- bun run"):
-        return command.replace("--outDir ../qualification/", "--outDir qualification/")
+        return (
+            command.replace("--outDir ../qualification/", "--outDir qualification/"),
+            frozenset({"frontend-parent-output"}),
+        )
     if " cargo +1.96.0 " in command:
         risk = next(item for item in risks if f"cargo-target/{item}" in command)
-        replacement = risks[(risks.index(risk) + 1) % len(risks)]
-        return command.replace(
-            f"qualification/harnesses/{risk}/Cargo.toml",
-            f"qualification/harnesses/{replacement}/Cargo.toml",
-        )
+        cargo_rows = tuple(item for item in PLANNED_REPLAY_COMMANDS if " cargo +1.96.0 " in item)
+        row = cargo_rows.index(command)
+        family = row % 4
+        if family == 0:
+            replacement = risks[(risks.index(risk) + 1) % len(risks)]
+            return (
+                command.replace(
+                    f"qualification/harnesses/{risk}/Cargo.toml",
+                    f"qualification/harnesses/{replacement}/Cargo.toml",
+                ),
+                frozenset({"cargo-manifest"}),
+            )
+        if family == 1:
+            if "--target x86_64-unknown-linux-gnu" in command:
+                changed = command.replace(
+                    "--target x86_64-unknown-linux-gnu",
+                    "--target aarch64-unknown-linux-gnu",
+                )
+            else:
+                changed = command + " --target aarch64-unknown-linux-gnu"
+            return changed, frozenset({"cargo-target"})
+        if family == 2:
+            return command + " --stale-extra", frozenset({"cargo-extra-flag"})
+        if "--locked --all-targets" in command:
+            changed = command.replace("--locked --all-targets", "--all-targets --locked")
+        elif "--locked --target" in command:
+            changed = command.replace("--locked --target", "--target").replace(
+                " -- -D warnings", " --locked -- -D warnings"
+            )
+        else:
+            changed = command.replace("--manifest-path", "--check --manifest-path", 1)
+        return changed, frozenset({"cargo-flag-order"})
     raise AssertionError(f"unhandled canonical replay command family: {command!r}")
 
 
@@ -665,6 +799,29 @@ def test_redaction_pem_accepts_marker_before_json_escaped_payload() -> None:
     assert redaction_issues(serialized) == ["record contains private-key material"]
 
 
+@pytest.mark.parametrize("codepoint", (*range(0x20), 0x7F, *range(0x80, 0xA0)))
+def test_json_pem_scans_decoded_string_leaves_not_escape_spelling(codepoint: int) -> None:
+    serialized = json.dumps(
+        {"artifact": f"-----BEGIN LEFT{chr(codepoint)}RIGHT PRIVATE KEY-----"},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    assert redaction_issues(serialized) == []
+
+
+def test_json_pem_detects_marker_created_by_printable_unicode_escape() -> None:
+    serialized = r'{"artifact":"-----\u0042EGIN PRIVATE KEY-----"}'
+
+    assert redaction_issues(serialized) == ["record contains private-key material"]
+
+
+def test_percent_decoding_is_not_used_for_pem_detection() -> None:
+    encoded = "%2D%2D%2D%2D%2DBEGIN%20PRIVATE%20KEY%2D%2D%2D%2D%2D"
+
+    assert redaction_issues(encoded) == []
+
+
 @pytest.mark.parametrize(
     "near_miss",
     [
@@ -1028,9 +1185,33 @@ def test_replay_matrix_mechanically_covers_commands_printed_by_owning_tasks() ->
 
 
 def test_every_replay_row_has_a_unique_rejected_adjacent_mutation() -> None:
-    mutations = tuple(_adjacent_replay_mutation(command) for command in PLANNED_REPLAY_COMMANDS)
+    paired = tuple(_adjacent_replay_mutation(command) for command in PLANNED_REPLAY_COMMANDS)
+    mutations = tuple(mutation for mutation, _tags in paired)
+    covered_families = set().union(*(tags for _mutation, tags in paired))
+    required_families = {
+        "risk-runner-mismatch",
+        "environment-order",
+        "record-input-path",
+        "record-output-pair",
+        "review-owner-changed",
+        "review-owner-unquoted",
+        "review-status-mismatch",
+        "review-assertion-mismatch",
+        "review-flag-order",
+        "checker-record-risk",
+        "projection-mode",
+        "checker-flags",
+        "cleanup-mode",
+        "cleanup-flag-order",
+        "cargo-manifest",
+        "cargo-target",
+        "cargo-extra-flag",
+        "cargo-flag-order",
+        "frontend-parent-output",
+    }
 
     assert len(PLANNED_REPLAY_COMMANDS) == 54
     assert len(mutations) == len(set(mutations)) == 54
+    assert covered_families == required_families
     assert set(mutations).isdisjoint(PLANNED_REPLAY_COMMANDS)
     assert all(not replay_commands_are_safe((mutation,)) for mutation in mutations)

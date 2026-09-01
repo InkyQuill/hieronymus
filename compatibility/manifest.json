@@ -4580,6 +4580,341 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_detects_marker_created_by_printable_unicode_escape",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[0]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[10]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[11]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[127]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[128]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[129]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[12]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[130]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[131]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[132]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[133]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[134]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[135]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[136]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[137]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[138]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[139]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[13]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[140]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[141]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[142]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[143]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[144]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[145]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[146]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[147]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[148]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[149]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[14]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[150]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[151]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[152]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[153]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[154]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[155]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[156]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[157]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[158]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[159]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[15]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[16]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[17]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[18]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[19]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[1]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[20]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[21]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[22]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[23]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[24]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[25]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[26]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[27]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[28]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[29]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[2]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[30]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[31]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[3]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[4]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[5]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[6]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[7]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[8]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_json_pem_scans_decoded_string_leaves_not_escape_spelling[9]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_percent_decoding_is_not_used_for_pem_detection",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_record_rejects_secret_and_home_path",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },

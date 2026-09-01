@@ -315,25 +315,32 @@ def redaction_issues(serialized_record: str) -> list[str]:
     """Return each sensitive-data class found, once, in fixed rule order."""
     if type(serialized_record) is not str:
         raise TypeError("serialized record must be text")
-    structured = _structured_redaction_issues(serialized_record)
+    try:
+        parsed: object | None = json.loads(serialized_record)
+        is_json = True
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        parsed = None
+        is_json = False
+    structured = _structured_redaction_issues(parsed) if is_json else set()
     decoded_view = unquote(serialized_record)
-    views = (serialized_record, decoded_view)
     raw = {
         rule.issue
         for rule in _RULES
-        if any(pattern.search(view) for view in views for pattern in rule.patterns)
+        if any(pattern.search(serialized_record) for pattern in rule.patterns)
     }
-    if any(_contains_private_key_marker(view) for view in views):
+    home_rule = next(
+        rule for rule in _RULES if rule.issue == "record contains an absolute home path"
+    )
+    if any(pattern.search(decoded_view) for pattern in home_rule.patterns):
+        raw.add(home_rule.issue)
+    pem_values = _string_leaves(parsed) if is_json else (serialized_record,)
+    if any(_contains_private_key_marker(value) for value in pem_values):
         raw.add("record contains private-key material")
     issue_order = tuple(rule.issue for rule in _RULES)
     return [issue for issue in issue_order if issue in structured or issue in raw]
 
 
-def _structured_redaction_issues(value: str) -> set[str]:
-    try:
-        parsed = json.loads(value)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return set()
+def _structured_redaction_issues(parsed: object) -> set[str]:
     issues: set[str] = set()
 
     def visit(node: object) -> None:
@@ -350,6 +357,23 @@ def _structured_redaction_issues(value: str) -> set[str]:
 
     visit(parsed)
     return issues
+
+
+def _string_leaves(value: object) -> tuple[str, ...]:
+    leaves: list[str] = []
+
+    def visit(node: object) -> None:
+        if type(node) is str:
+            leaves.append(node)
+        elif isinstance(node, dict):
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    return tuple(leaves)
 
 
 def _normalize_key(value: object) -> str:
