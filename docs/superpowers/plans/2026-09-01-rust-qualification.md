@@ -19,7 +19,7 @@
 - macOS and Windows are not supported by the initial cutover.
 - FTS5-only operation is the required baseline for the initial Linux cutover.
 - The MCP protocol revision is exactly `2026-07-28`; stdio is newline-delimited JSON-RPC, Streamable HTTP is `POST /mcp` with JSON or request-scoped SSE, and `/api/mcp/{operation}` remains an intentionally removed private Python bridge.
-- MCP 2026-07-28 is stateless: there is no `initialize`, `notifications/initialized`, or transport session; every request carries exact reserved `params._meta["io.modelcontextprotocol/protocolVersion"]` and `params._meta["io.modelcontextprotocol/clientCapabilities"]`, canonical requests include SHOULD-level `params._meta["io.modelcontextprotocol/clientInfo"]` but its absence is accepted, applicable HTTP requests also carry `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`, and every successful tools/list or tools/call result over stdio, HTTP JSON, or HTTP SSE has recognized `resultType: "complete"`.
+- MCP 2026-07-28 is stateless: there is no `initialize`, `notifications/initialized`, or transport session; every request carries exact reserved `params._meta["io.modelcontextprotocol/protocolVersion"]` and `params._meta["io.modelcontextprotocol/clientCapabilities"]`, canonical requests include SHOULD-level `params._meta["io.modelcontextprotocol/clientInfo"]` but its absence is accepted, and applicable HTTP requests carry `MCP-Protocol-Version` plus matching `Mcp-Method`. `Mcp-Name` is required only for named methods (`tools/call`, `resources/read`, and `prompts/get`): tools/list omits it, while tools/call carries `Mcp-Name: hieronymus_status`. Every successful tools/list or tools/call result over stdio, HTTP JSON, or HTTP SSE has recognized `resultType: "complete"`.
 - SQLite remains authoritative for RAG sources, chunks, metadata, and semantic job state; embeddings and LanceDB tables are disposable derived artifacts.
 - The semantic qualification must record exact crate versions/features, binary size, checksum-verified model load, a 10,000-chunk actual ANN index, checked series pre-filter-before-ANN plan/cardinality proof, zero cross-series hits, insert/search/delete, generation isolation, SQLite-durable lease/counter/cancellation recovery, zero SQLite-write-transaction spans across ONNX/LanceDB I/O, a complete 50-query run, and nonempty/isolation/rebuild-equivalent FTS fallback.
 - Any failed semantic criterion selects `fts-only` for the initial Linux release; it never blocks the Rust workspace plan or the `x86_64-unknown-linux-gnu` release by itself.
@@ -39,6 +39,7 @@
 - Ordinary `uv run pytest` tests inject bounded fake executables and never require Cargo, Rust artifacts, Bun packages, ONNX Runtime, a model, or a native-library cache. Live Rust/native qualification is explicit through `HIERONYMUS_QUALIFICATION_LIVE=1` commands and its dedicated workflow only.
 - Every live run writes beneath `qualification/.artifacts/`, hashes frozen inputs before and after use, removes transient work/log/install directories on success or failure, and leaves only ignored caches plus reviewed records.
 - Every Cargo build/test/Clippy command sets a risk-specific `CARGO_TARGET_DIR` beneath `qualification/.artifacts/cargo-target/`; crash probes disable core dumps and run in an owned process group that the runner terminates and reaps in `finally`.
+- Tool discovery occurs against the original environment before HOME/XDG sanitization. It preserves the lexical cargo/rustup invocation paths separately from their resolved executable targets; every live runner invokes the preserved cargo shim, passes the resulting `ToolRoots` and bounded target to `safe_subprocess_env`, and uses that one safe environment for all Cargo/Bun/native children without serializing absolute tool paths.
 - Each harness has its own `Cargo.toml` and committed `Cargo.lock`; direct risk dependencies are exact pins and all resolved versions/features are copied from `cargo metadata --locked` and `cargo tree -e features --locked` into the record.
 - Each record's input digest covers `qualification/prerequisites.json`, `qualification/rust-toolchain.toml`, every common qualification module (`model.py`, `fingerprint.py`, `redaction.py`, `validate.py`, `render.py`, `acquire.py`, `process.py`, and `clean.py`), its own Python runner, Cargo manifest/lockfile/source/tests, every consumed compatibility manifest/snapshot/fixture including every actual HTTP route case, and risk-specific frontend/corpus inputs; changing any of them makes the record stale.
 - Pavel Obruchnikov `<me@inkyquill.net>` is the acceptance owner for all four records and the aggregate gate unless a compatibility-manifest entry explicitly delegates another named owner.
@@ -134,7 +135,7 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 - Produces: `_protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]` whose target requests carry exact reserved `params._meta` keys, whose every successful envelope has `resultType: "complete"`, and whose stdio/HTTP JSON/SSE variants contain no initialize/session fields.
 - Test helper: `_successful_result_envelopes(target: dict[str, object]) -> tuple[dict[str, object], ...]` returns tools/list and tools/call success envelopes from stdio, HTTP JSON, and HTTP SSE fixture branches.
 - Produces validator: `_request_metadata_issues(request: dict[str, object]) -> tuple[str, ...]`, accepting absence of only clientInfo while rejecting missing/wrong required reserved keys and every direct legacy metadata field.
-- Produces: the `http.route.post.mcp` target cases in `_route_cases(snapshot: dict[str, object])`, covering valid request, invalid Host, missing/invalid bearer, missing/wrong protocol metadata, missing/wrong `Mcp-Method`, and missing/wrong `Mcp-Name`.
+- Produces: the `http.route.post.mcp` target cases in `_route_cases(snapshot: dict[str, object])`, covering valid tools/list without `Mcp-Name`, valid tools/call with its matching name, invalid Host, missing/invalid bearer, missing/wrong protocol metadata, missing/wrong `Mcp-Method`, unexpected tools/list name, and missing/wrong tools/call name.
 - Produces: a separately reviewed compatibility commit that is an immutable prerequisite of Tasks 6–8; candidate qualification must not edit or normalize this oracle.
 
 - [ ] **Step 1: Replace obsolete fixture assertions with failing official-wire assertions**
@@ -168,7 +169,21 @@ def test_protocol_fixture_is_stateless_2026_07_28() -> None:
         ],
         "should": ["io.modelcontextprotocol/clientInfo"],
     }
-    assert "Mcp-Session-Id" not in target["streamable_http"]["request"]["headers"]
+    http_exchanges = {
+        exchange["request"]["body"]["method"]: exchange
+        for exchange in target["streamable_http"]["exchanges"]
+    }
+    assert set(http_exchanges) == {"tools/list", "tools/call"}
+    list_headers = http_exchanges["tools/list"]["request"]["headers"]
+    assert list_headers["Mcp-Method"] == "tools/list"
+    assert "Mcp-Name" not in list_headers
+    call_headers = http_exchanges["tools/call"]["request"]["headers"]
+    assert call_headers["Mcp-Method"] == "tools/call"
+    assert call_headers["Mcp-Name"] == "hieronymus_status"
+    assert all(
+        "Mcp-Session-Id" not in exchange["request"]["headers"]
+        for exchange in http_exchanges.values()
+    )
     successes = _successful_result_envelopes(target)
     assert len(successes) == 6
     assert all(
@@ -192,10 +207,17 @@ def test_protocol_fixture_is_stateless_2026_07_28() -> None:
 
 def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
     case = _route_cases_by_id()["http.route.post.mcp"]["target"]
-    success = case["success"]["request"]
-    assert success["headers"]["Mcp-Method"] == "tools/call"
-    assert success["headers"]["Mcp-Name"] == "hieronymus_status"
-    meta = success["body"]["params"]["_meta"]
+    successes = {item["id"]: item["request"] for item in case["successes"]}
+    tools_list = successes["tools-list"]
+    assert tools_list["headers"]["Mcp-Method"] == "tools/list"
+    assert "Mcp-Name" not in tools_list["headers"]
+    assert tools_list["body"]["method"] == "tools/list"
+    tools_call = successes["tools-call"]
+    assert tools_call["headers"]["Mcp-Method"] == "tools/call"
+    assert tools_call["headers"]["Mcp-Name"] == "hieronymus_status"
+    assert tools_call["body"]["method"] == "tools/call"
+    assert tools_call["body"]["params"]["name"] == "hieronymus_status"
+    meta = tools_call["body"]["params"]["_meta"]
     assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
     assert meta["io.modelcontextprotocol/clientCapabilities"] == {}
     assert meta["io.modelcontextprotocol/clientInfo"] == {
@@ -210,8 +232,9 @@ def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
         "unsupported-version",
         "missing-mcp-method",
         "wrong-mcp-method",
-        "missing-mcp-name",
-        "wrong-mcp-name",
+        "unexpected-mcp-name-tools-list",
+        "missing-mcp-name-tools-call",
+        "wrong-mcp-name-tools-call",
     }
 ```
 
@@ -219,7 +242,7 @@ def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
 
 Run: `uv run pytest tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_is_stateless_2026_07_28 tests/compatibility/test_http_inventory.py::test_http_mcp_cases_cover_official_metadata_and_local_security -v`
 
-Expected: FAIL because the current target fixture still contains `initialize`, uses direct legacy params, lacks required `_meta` capabilities and `resultType: "complete"` coverage, and omits method/name HTTP failures.
+Expected: FAIL because the current target fixture still contains `initialize`, uses direct legacy params, lacks required `_meta` capabilities and `resultType: "complete"` coverage, and does not prove that tools/list omits `Mcp-Name` while tools/call requires its matching name.
 
 - [ ] **Step 3: Implement the corrected generators and frozen target shapes**
 
@@ -253,7 +276,7 @@ tool_call_request = {
 }
 ```
 
-Store those requests in list/call order and freeze `metadata_rules.required` to protocolVersion/clientCapabilities while `metadata_rules.should` contains clientInfo. Implement `_request_metadata_issues` from those exact rules. Canonical requests include clientInfo, but a request omitting only `io.modelcontextprotocol/clientInfo` remains valid; missing either required key or placing any metadata directly in `params` is invalid. Add `resultType: "complete"` inside every successful `result` for tools/list and tools/call. Store both operations as newline-delimited stdio exchanges and as Streamable HTTP JSON/SSE exchanges; `_successful_result_envelopes(target)` enumerates all six successful envelopes and tests each exact value. HTTP requests also include Host, bearer, `MCP-Protocol-Version`, matching `Mcp-Method`, and matching `Mcp-Name`; failure cases change/omit exactly one applicable field. Delete handshake/session shapes from the entire protocol fixture. Qualification consumes only target.
+Store those requests in list/call order and freeze `metadata_rules.required` to protocolVersion/clientCapabilities while `metadata_rules.should` contains clientInfo. Implement `_request_metadata_issues` from those exact rules. Canonical requests include clientInfo, but a request omitting only `io.modelcontextprotocol/clientInfo` remains valid; missing either required key or placing any metadata directly in `params` is invalid. Add `resultType: "complete"` inside every successful `result` for tools/list and tools/call. Store both operations as newline-delimited stdio exchanges and as Streamable HTTP JSON/SSE exchanges; `_successful_result_envelopes(target)` enumerates all six successful envelopes and tests each exact value. Both HTTP requests include Host, bearer, `MCP-Protocol-Version`, and a matching `Mcp-Method`. The tools/list exchange omits `Mcp-Name`; the tools/call exchange includes `Mcp-Name: hieronymus_status`. `_route_cases` stores those as `successes` ids `tools-list` and `tools-call`; failures change/omit exactly one applicable field and include an unexpected-name tools/list case plus missing/wrong-name tools/call cases. The general header rule requires `Mcp-Name` only for `tools/call`, `resources/read`, and `prompts/get`. Delete handshake/session shapes from the entire protocol fixture. Qualification consumes only target.
 
 - [ ] **Step 4: Regenerate and prove the authority is complete and deterministic**
 
@@ -263,7 +286,7 @@ Run: `uv run python -m tools.compatibility.inventory_http --write`
 
 Run: `uv run pytest tests/compatibility/test_mcp_inventory.py tests/compatibility/test_http_inventory.py tests/compatibility/test_check.py -v`
 
-Expected: PASS; target requests use only exact reserved `_meta` keys, clientInfo absence is accepted, required metadata absence is rejected, HTTP cases cover Host/auth/version/method/name, and all tools/list/tools/call stdio/JSON/SSE successes equal `resultType: "complete"`.
+Expected: PASS; target requests use only exact reserved `_meta` keys, clientInfo absence is accepted, required metadata absence is rejected, HTTP cases prove tools/list omits name and tools/call requires its matching name while covering Host/auth/version/method failures, and all tools/list/tools/call stdio/JSON/SSE successes equal `resultType: "complete"`.
 
 - [ ] **Step 5: Run the compatibility gate before any candidate work**
 
@@ -759,7 +782,7 @@ git commit -m "test: verify Rust qualification acquisitions"
 
 **Interfaces:**
 - Consumes: Task 4 toolchain pin and the caller's original environment only during tool-root discovery.
-- Produces: `discover_tool_roots(original_env: Mapping[str, str]) -> ToolRoots`, where `ToolRoots(cargo_home: Path, rustup_home: Path, cargo: Path, rustup: Path)` contains canonical pre-sanitization paths.
+- Produces: `discover_tool_roots(original_env: Mapping[str, str]) -> ToolRoots`, where `ToolRoots(cargo_home: Path, rustup_home: Path, cargo_invocation: Path, cargo_resolved_target: Path, rustup_invocation: Path, rustup_resolved_target: Path)` contains canonical cache roots, lexical invocation/shim paths, and separately resolved executable targets. Invocation paths are never replaced by their resolved rustup target.
 - Produces: `safe_subprocess_env(work_root: Path, *, cargo_offline: bool, tool_roots: ToolRoots, cargo_target_dir: Path) -> dict[str, str]`.
 - Produces: `run_owned_process(argv: tuple[str, ...], *, cwd: Path, env: Mapping[str, str], timeout_seconds: int, no_progress_seconds: int) -> ProcessReceipt`, where `ProcessReceipt(exit_code: int | None, timed_out: bool, stdout_sha256: str, stderr_sha256: str, duration_ms: int, process_group_reaped: bool, core_dumps_disabled: bool)` stores no paths or raw output.
 - Produces: `cleanup_targets(repo_root: Path, include_model: bool = False) -> tuple[Path, ...]` and CLI `python -m tools.qualification.clean [--apply] [--include-model]`.
@@ -792,10 +815,39 @@ ROOT = Path(__file__).resolve().parents[2]
 def _fake_tool_roots(tmp_path: Path) -> ToolRoots:
     cargo_home = tmp_path / "fake-cargo-home"
     rustup_home = tmp_path / "fake-rustup-home"
-    cargo_home.mkdir()
+    bin_dir = cargo_home / "bin"
+    bin_dir.mkdir(parents=True)
     rustup_home.mkdir()
-    executable = Path(sys.executable).resolve()
-    return ToolRoots(cargo_home, rustup_home, executable, executable)
+    resolved_target = Path(sys.executable).resolve()
+    cargo_invocation = bin_dir / "cargo"
+    rustup_invocation = bin_dir / "rustup"
+    cargo_invocation.symlink_to(resolved_target)
+    rustup_invocation.symlink_to(resolved_target)
+    return ToolRoots(
+        cargo_home=cargo_home,
+        rustup_home=rustup_home,
+        cargo_invocation=cargo_invocation.absolute(),
+        cargo_resolved_target=resolved_target,
+        rustup_invocation=rustup_invocation.absolute(),
+        rustup_resolved_target=resolved_target,
+    )
+
+
+def test_discovery_preserves_shim_paths_without_resolving_them(tmp_path: Path) -> None:
+    expected = _fake_tool_roots(tmp_path)
+    original_env = {
+        "HOME": str(tmp_path / "original-home"),
+        "CARGO_HOME": str(expected.cargo_home),
+        "RUSTUP_HOME": str(expected.rustup_home),
+        "PATH": str(expected.cargo_invocation.parent),
+    }
+    actual = discover_tool_roots(original_env)
+    assert actual.cargo_invocation == expected.cargo_invocation
+    assert actual.cargo_resolved_target == expected.cargo_resolved_target
+    assert actual.rustup_invocation == expected.rustup_invocation
+    assert actual.rustup_resolved_target == expected.rustup_resolved_target
+    assert actual.cargo_invocation.name == "cargo"
+    assert actual.cargo_invocation != actual.cargo_resolved_target
 
 
 @pytest.mark.skipif(
@@ -803,7 +855,11 @@ def _fake_tool_roots(tmp_path: Path) -> ToolRoots:
     reason="requires the explicitly acquired Rust 1.96.0 toolchain",
 )
 def test_sanitized_env_keeps_discovered_rust_toolchain(tmp_path: Path) -> None:
-    roots = discover_tool_roots(dict(os.environ))
+    original_env = dict(os.environ)
+    lexical_cargo_home = Path(
+        original_env.get("CARGO_HOME", str(Path(original_env["HOME"]) / ".cargo"))
+    ).absolute()
+    roots = discover_tool_roots(original_env)
     env = safe_subprocess_env(
         tmp_path,
         cargo_offline=True,
@@ -813,8 +869,20 @@ def test_sanitized_env_keeps_discovered_rust_toolchain(tmp_path: Path) -> None:
     assert Path(env["CARGO_HOME"]).resolve() == roots.cargo_home
     assert Path(env["RUSTUP_HOME"]).resolve() == roots.rustup_home
     assert Path(env["HOME"]).is_relative_to(tmp_path)
+    assert roots.cargo_invocation == lexical_cargo_home / "bin/cargo"
+    assert roots.cargo_invocation.name == "cargo"
+    assert roots.cargo_resolved_target == roots.cargo_invocation.resolve(strict=True)
+    assert roots.rustup_invocation == lexical_cargo_home / "bin/rustup"
+    assert roots.rustup_invocation.name == "rustup"
+    assert roots.rustup_resolved_target == roots.rustup_invocation.resolve(strict=True)
+    assert all(
+        target.is_file() and os.access(target, os.X_OK)
+        for target in (roots.cargo_resolved_target, roots.rustup_resolved_target)
+    )
     version = subprocess.run(
-        (str(roots.cargo), "+1.96.0", "--version"), env=env, check=True,
+        (str(roots.cargo_invocation), "+1.96.0", "--version"),
+        env=env,
+        check=True,
         capture_output=True, text=True,
     )
     assert version.stdout.startswith("cargo 1.96.0")
@@ -822,7 +890,7 @@ def test_sanitized_env_keeps_discovered_rust_toolchain(tmp_path: Path) -> None:
     assert "downloading" not in version.stderr.lower()
     metadata = subprocess.run(
         (
-            str(roots.cargo), "+1.96.0", "metadata", "--offline", "--locked",
+            str(roots.cargo_invocation), "+1.96.0", "metadata", "--offline", "--locked",
             "--no-deps", "--format-version", "1", "--manifest-path",
             str(ROOT / "tests/qualification/fixtures/process-smoke/Cargo.toml"),
         ),
@@ -850,8 +918,7 @@ def test_owned_process_disables_core_and_reaps_group(tmp_path: Path) -> None:
     assert receipt.timed_out and receipt.core_dumps_disabled
     assert receipt.process_group_reaped and list(tmp_path.glob("core*")) == []
     serialized = json.dumps(asdict(receipt), sort_keys=True)
-    assert str(roots.cargo_home) not in serialized
-    assert str(roots.rustup_home) not in serialized
+    assert all(str(path) not in serialized for path in asdict(roots).values())
 
 
 def test_cleanup_never_targets_repository_or_model_by_default() -> None:
@@ -873,11 +940,11 @@ Expected: FAIL before implementation; this explicitly opted-in smoke is the only
 
 - [ ] **Step 3: Implement pre-sanitization tool-root discovery**
 
-Before replacing `HOME`, `discover_tool_roots` resolves explicit original `CARGO_HOME`/`RUSTUP_HOME` when present; otherwise it derives `<original HOME>/.cargo` and `<original HOME>/.rustup`. It canonicalizes both directories, resolves `cargo`/`rustup` from those roots or original `PATH`, verifies they are regular executable files, and returns `ToolRoots`. `safe_subprocess_env` then sets task-local `HOME`/TMP/XDG paths but explicitly exports the canonical discovered `CARGO_HOME`, `RUSTUP_HOME`, cargo/rustup parent directories in `PATH`, `RUSTUP_AUTO_INSTALL=0`, `CARGO_NET_OFFLINE=true`, and the caller's resolved `cargo_target_dir`, which it rejects unless it is beneath `qualification/.artifacts/cargo-target/` in live use or the supplied pytest work root in tests. It removes credentials/proxies/provider variables. Records store only versions, basenames, and digests—never these absolute roots.
+Before replacing `HOME`, `discover_tool_roots` reads explicit original `CARGO_HOME`/`RUSTUP_HOME` when present; otherwise it derives `<original HOME>/.cargo` and `<original HOME>/.rustup`. It forms absolute lexical root paths first, discovers cargo and rustup at `<lexical cargo home>/bin/<name>` or through the original `PATH`, and only then canonicalizes the two cache-directory fields. For each tool it stores the absolute lexical invocation path without calling `resolve()`—so `~/.cargo/bin/cargo` remains the command path even when it is a rustup shim—and separately computes `resolve(strict=True)` into the matching resolved-target field. It requires both the invocation and resolved target to exist, the target to be a regular executable file, and rejects a missing, directory, or non-executable target. `safe_subprocess_env` then sets task-local `HOME`/TMP/XDG paths but explicitly exports the canonical discovered `CARGO_HOME`, `RUSTUP_HOME`, both invocation-parent directories at the front of `PATH`, `RUSTUP_AUTO_INSTALL=0`, `CARGO_NET_OFFLINE=true`, and the caller's resolved `cargo_target_dir`, which it rejects unless it is beneath `qualification/.artifacts/cargo-target/` in live use or the supplied pytest work root in tests. It removes credentials/proxies/provider variables. Records store only versions, invocation basenames, and digests—never the six absolute `ToolRoots` values.
 
 - [ ] **Step 4: Add actual sanitized Cargo smoke coverage**
 
-The test above runs `cargo +1.96.0 metadata --offline --locked --no-deps --format-version 1` against a tiny checked-in test-only manifest at `tests/qualification/fixtures/process-smoke/Cargo.toml`; its committed `Cargo.lock` has no dependencies and `src/lib.rs` contains `pub fn smoke() {}`. `CARGO_NET_OFFLINE=true`, the dependency-free locked graph, and the assertion that Cargo never prints `Updating` prove no sync/network path is used. Assert serialized receipts contain neither tool-root absolute path nor original home; do not persist environment values.
+The live-gated test first requires `cargo_invocation == lexical_cargo_home / "bin/cargo"` and `rustup_invocation == lexical_cargo_home / "bin/rustup"`, using the value computed from the captured mapping in the test code above. It executes that preserved cargo shim—not `cargo_resolved_target`—for both `cargo +1.96.0 --version` and `cargo +1.96.0 metadata --offline --locked --no-deps --format-version 1` against a tiny checked-in test-only manifest at `tests/qualification/fixtures/process-smoke/Cargo.toml`; its committed `Cargo.lock` has no dependencies and `src/lib.rs` contains `pub fn smoke() {}`. `CARGO_NET_OFFLINE=true`, `RUSTUP_AUTO_INSTALL=0`, the dependency-free locked graph, and the assertions that rustup reports neither syncing nor downloading prove no sync/network path is used. Assert serialized receipts contain neither tool-root absolute path nor original home; do not persist environment values.
 
 - [ ] **Step 5: Implement bounded process/cleanup behavior**
 
@@ -999,7 +1066,7 @@ git commit -m "test: lock MCP qualification candidate"
 
 - [ ] **Step 1: Write failing stateless stdio/HTTP behavior tests**
 
-In `tests/transport.rs`, load only `protocol["target"]`; assert tools/list and tools/call work without handshake, require `_meta` protocolVersion/clientCapabilities, accept canonical clientInfo and a clone omitting only clientInfo, reject direct `params.protocolVersion`/`params.clientCapabilities`/`params.clientInfo`, reject missing/wrong required reserved keys, and reject handshake/session headers. Assert every successful tools/list/tools/call response has exactly `resultType: "complete"` over stdio, HTTP JSON, and HTTP SSE. Replay every Task 1 MCP route case including method/name, Host, bearer, and HTTP version failures.
+In `tests/transport.rs`, load only `protocol["target"]`; assert tools/list and tools/call work without handshake, require `_meta` protocolVersion/clientCapabilities, accept canonical clientInfo and a clone omitting only clientInfo, reject direct `params.protocolVersion`/`params.clientCapabilities`/`params.clientInfo`, reject missing/wrong required reserved keys, and reject handshake/session headers. Assert every successful tools/list/tools/call response has exactly `resultType: "complete"` over stdio, HTTP JSON, and HTTP SSE. For HTTP, require tools/list with `Mcp-Method: tools/list` and no `Mcp-Name` to pass; require tools/call with `Mcp-Method: tools/call` and `Mcp-Name: hieronymus_status` to pass; reject a tools/list request with bogus `Mcp-Name`, and reject tools/call with missing/wrong name. Replay every Task 1 MCP route case including method applicability, Host, bearer, and HTTP version failures.
 
 - [ ] **Step 2: Run behavior tests and verify RED**
 
@@ -1021,7 +1088,7 @@ pub trait RegistryProbe: Sized {
 }
 ```
 
-Every request validates `params._meta["io.modelcontextprotocol/protocolVersion"]` and required `params._meta["io.modelcontextprotocol/clientCapabilities"]`; `io.modelcontextprotocol/clientInfo` is validated when present but absence is accepted. Direct legacy metadata fields are rejected. HTTP additionally validates `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` before dispatch. Every successful tools/list or tools/call result sets `resultType` exactly to `complete` before stdio/JSON/SSE serialization. Stdio emits one response JSON object plus `\n`; HTTP binds only loopback and serves only `POST /mcp` as JSON or request-scoped SSE.
+Every request validates `params._meta["io.modelcontextprotocol/protocolVersion"]` and required `params._meta["io.modelcontextprotocol/clientCapabilities"]`; `io.modelcontextprotocol/clientInfo` is validated when present but absence is accepted. Direct legacy metadata fields are rejected. HTTP validates `MCP-Protocol-Version` and exact `Mcp-Method` before dispatch. Its method-aware name validator requires a nonempty `Mcp-Name` only for `tools/call`, `resources/read`, and `prompts/get`; for the qualified tools/call fixture it additionally matches the header to `params.name`. It accepts tools/list only without `Mcp-Name` and rejects unexpected or mismatched names. Every successful tools/list or tools/call result sets `resultType` exactly to `complete` before stdio/JSON/SSE serialization. Stdio emits one response JSON object plus `\n`; HTTP binds only loopback and serves only `POST /mcp` as JSON or request-scoped SSE.
 
 - [ ] **Step 4: Implement bounded reports and pass the offline behavior suite**
 
@@ -1051,8 +1118,9 @@ git commit -m "test: prove stateless MCP transport behavior"
 - Create: `docs/qualification/rust/mcp-transport.md`
 
 **Interfaces:**
-- Consumes: Tasks 1, 6, and 7 plus every MCP tool input/wire fixture and manifest ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and `mcp.tool.*`.
-- Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1` before Cargo execution.
+- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 1, 6, and 7; every MCP tool input/wire fixture; and manifest ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and `mcp.tool.*`.
+- Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1` before Cargo execution.
+- Produces private handoff: `_live_process_context(repo_root: Path, work_root: Path, original_env: Mapping[str, str]) -> tuple[ToolRoots, Path, dict[str, str]]`, returning discovered tool roots, `qualification/.artifacts/cargo-target/mcp-transport`, and the sanitized child environment in that order.
 - Produces canonical `qualified` only when every MCP criterion passes; otherwise exact Task 2 `blocked` consequence.
 
 - [ ] **Step 1: Write failing fake-only runner tests**
@@ -1075,6 +1143,10 @@ def test_mcp_failure_preserves_adr_0015(tmp_path: Path) -> None:
     assert record.consequence == FAILURE_CONSEQUENCES["mcp-transport"]
 ```
 
+Add `test_mcp_live_context_discovers_before_sanitizing`: monkeypatch `run_mcp.discover_tool_roots` and `run_mcp.safe_subprocess_env`, call `_live_process_context(ROOT, tmp_path, original_env)`, and assert the call order is exactly `("discover", "sanitize")`, the identical returned `ToolRoots` is passed to sanitization, `cargo_offline` is true, and `cargo_target_dir == ROOT / "qualification/.artifacts/cargo-target/mcp-transport"`.
+
+Add `test_mcp_live_children_reuse_safe_environment`: inject a fixture-backed `run_owned_process` spy into `run_live`, return successful receipts for the bounded Cargo and transport calls, and assert every captured call receives the identical environment object returned by `safe_subprocess_env`, every Cargo argv starts with `str(tool_roots.cargo_invocation)`, and no call receives the original environment mapping.
+
 - [ ] **Step 2: Run the unit tests and verify RED without invoking Cargo**
 
 Run: `uv run pytest tests/qualification/test_run_mcp.py -v`
@@ -1083,14 +1155,14 @@ Expected: FAIL importing `tools.qualification.run_mcp`; no Cargo command runs.
 
 - [ ] **Step 3: Implement the fake-injectable live runner**
 
-`run_mcp.run` uses `qualification/.artifacts/work/mcp-transport`, starts each transport with a 20-second ready/response timeout, replays every target transport case, compares tool lists by canonical JSON digest, compares one success and one error tool call across transports, verifies `/api/mcp/fixture` is absent, and gathers locked dependencies with:
+`run_mcp.run_live` copies the caller-supplied `original_env`, calls `discover_tool_roots` before any HOME/XDG rewrite, derives the exact MCP Cargo target path, and calls `safe_subprocess_env(work_root, cargo_offline=True, tool_roots=tool_roots, cargo_target_dir=cargo_target_dir)`. The module CLI supplies `dict(os.environ)` to `run_live`. `run_mcp.run` then uses `qualification/.artifacts/work/mcp-transport`, starts each transport with a 20-second ready/response timeout, replays every target transport case, compares tool lists by canonical JSON digest, compares one success and one error tool call across transports, verifies `/api/mcp/fixture` is absent, and gathers locked dependencies with:
 
 ```bash
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 metadata --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --format-version 1
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 tree --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked -e features
 ```
 
-The runner uses `run_owned_process`, deletes ready files/logs/target output in `finally`, verifies all compatibility inputs are byte-identical, and records the corrected oracle commit/digest. It compares exact route-case status/body digests and never claims generic Host/auth routing beyond the frozen `POST /mcp` cases.
+Every Cargo argv begins with `str(tool_roots.cargo_invocation)`, never the resolved rustup target or a bare `cargo`. Every Cargo and MCP harness child goes through `run_owned_process` with the same sanitized environment and risk-specific target. The runner deletes ready files/logs/target output in `finally`, verifies all compatibility inputs are byte-identical, and records the corrected oracle commit/digest. It compares exact route-case status/body digests and never claims generic Host/auth routing beyond the frozen `POST /mcp` cases. It records Cargo/Rust versions and basenames only; no `ToolRoots` path enters JSON, Markdown, or raw-log output.
 
 Run: `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write`
 
@@ -1469,8 +1541,9 @@ git commit -m "test: prove semantic recovery and FTS fallback"
 - Create: `docs/qualification/rust/semantic-native.md`
 
 **Interfaces:**
-- Consumes: Tasks 9–11 and frozen RAG/recall seed fixtures.
-- Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected pytest and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
+- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 9–11; and frozen RAG/recall seed fixtures.
+- Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected pytest and `run_live(repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
+- Produces private handoff: `_live_process_context(repo_root: Path, work_root: Path, original_env: Mapping[str, str]) -> tuple[ToolRoots, Path, dict[str, str]]`, returning discovered tool roots, `qualification/.artifacts/cargo-target/semantic-native`, and the sanitized child environment in that order.
 - Produces: `semantic-enabled` only when all sixteen semantic criteria pass; any other complete result is `fts-only` and never blocks Linux release.
 
 - [ ] **Step 1: Write failing fake-only decision and evidence tests**
@@ -1492,6 +1565,10 @@ def test_prefilter_and_recovery_evidence_are_required(tmp_path: Path) -> None:
     assert "no-sqlite-write-across-native-io" in criteria
 ```
 
+Add `test_semantic_live_context_discovers_before_sanitizing`: monkeypatch `run_semantic.discover_tool_roots` and `run_semantic.safe_subprocess_env`, call `_live_process_context(ROOT, tmp_path, original_env)`, and assert call order `("discover", "sanitize")`, identity of the passed `ToolRoots`, `cargo_offline is True`, and target `ROOT / "qualification/.artifacts/cargo-target/semantic-native"`.
+
+Add `test_semantic_live_children_reuse_safe_environment`: inject a criterion-fixture-backed `run_owned_process` spy into `run_live`; assert every Cargo, ONNX, LanceDB, SQLite, crash, cancellation, FTS, `ldd`, and installed-binary call receives the identical environment object returned by `safe_subprocess_env`, every Cargo argv starts with `str(tool_roots.cargo_invocation)`, and no call receives the original environment mapping.
+
 - [ ] **Step 2: Run Python tests and verify RED without native prerequisites**
 
 Run: `uv run pytest tests/qualification/test_run_semantic.py -v`
@@ -1500,7 +1577,7 @@ Expected: FAIL importing `tools.qualification.run_semantic`; no Rust/native proc
 
 - [ ] **Step 3: Implement the full measured runner**
 
-`run_semantic.run` first removes only `qualification/.artifacts/cargo-target/semantic-native`, recreates it empty, and sets `CARGO_TARGET_DIR` to that exact path so `locked-native-build` is a clean build. It then executes the following exact evidence sequence against fresh disposable paths:
+`run_semantic.run_live` copies the caller-supplied `original_env`, calls `discover_tool_roots` before any sanitization, then passes the returned object and exact semantic Cargo target to `safe_subprocess_env`; its module CLI supplies `dict(os.environ)`. `run_semantic.run` first removes only `qualification/.artifacts/cargo-target/semantic-native`, recreates it empty, and uses that exact sanitized `CARGO_TARGET_DIR` so `locked-native-build` is a clean build. It then executes the following exact evidence sequence against fresh disposable paths:
 
 1. Build the semantic binary with `--release --locked --features semantic-native` and record binary/library sizes plus `ldd` basenames.
 2. Copy the binary, `libonnxruntime.so`, model, and an empty index root beneath `qualification/.artifacts/install/semantic-native`; run one query; remove the install directory; assert it no longer exists.
@@ -1514,7 +1591,7 @@ Expected: FAIL importing `tools.qualification.run_semantic`; no Rust/native proc
 10. Cancel a new generation at 3,200 through durable SQLite state and prove `generation-b` remains active.
 11. Build the FTS binary with `--release --locked --no-default-features`, omit model/index paths, and prove all 50 nonempty expected eligible-id digests, series isolation, delete/rebuild equivalence, and no download attempt.
 
-Every subprocess uses `run_owned_process`, has a 20-minute total timeout and a 2-minute no-progress timeout, has `RLIMIT_CORE=0`, and is terminated/reaped by owned process group in `finally`. A build or prerequisite failure marks itself `fail`; causally dependent criteria become `not-run` with the exact failing criterion in `not_run_reason`. The record remains complete and selects `fts-only`.
+Every Cargo argv begins with `str(tool_roots.cargo_invocation)`. Every Cargo, ONNX, LanceDB scenario, crash, cancellation, FTS, `ldd`, and installed-binary child uses `run_owned_process` with the same sanitized environment and risk-specific target, has a 20-minute total timeout and a 2-minute no-progress timeout, has `RLIMIT_CORE=0`, and is terminated/reaped by owned process group in `finally`. A build or prerequisite failure marks itself `fail`; causally dependent criteria become `not-run` with the exact failing criterion in `not_run_reason`. The record remains complete and selects `fts-only`. Environment evidence stores only versions, basenames, and digests; all six absolute `ToolRoots` fields are forbidden by redaction.
 
 - [ ] **Step 4: Run the opt-in semantic qualification and write both records**
 
@@ -1766,8 +1843,10 @@ git commit -m "test: prove embedded frontend asset behavior"
 - Create: `docs/qualification/rust/frontend-embedding.md`
 
 **Interfaces:**
-- Consumes: Tasks 13–14, frontend source/lock/build config, and only the path/status/MIME/body shape from manifest ids `frontend.route.get.root`, `frontend.route.get.admin`, `frontend.route.get.admin.path`, `frontend.route.get.assets.path`, `frontend.route.get.config`, and `frontend.route.get.config.path` in `route-cases.json`.
-- Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected pytest and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
+- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 13–14; frontend source/lock/build config; and only the path/status/MIME/body shape from manifest ids `frontend.route.get.root`, `frontend.route.get.admin`, `frontend.route.get.admin.path`, `frontend.route.get.assets.path`, `frontend.route.get.config`, and `frontend.route.get.config.path` in `route-cases.json`.
+- Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected pytest and `run_live(repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
+- Produces private handoff: `_live_process_context(repo_root: Path, work_root: Path, original_env: Mapping[str, str]) -> tuple[ToolRoots, Path, Path, dict[str, str]]`, returning discovered tool roots, lexical Bun invocation, `qualification/.artifacts/cargo-target/frontend-embedding`, and the sanitized child environment in that order.
+- Produces private lookup: `_discover_bun_invocation(original_env: Mapping[str, str]) -> Path`, preserving the absolute lexical Bun invocation from the original PATH while validating its separately resolved target as a regular executable; neither path enters evidence.
 - Produces: `qualified` only when every frontend criterion passes; otherwise exact Task 2 blocking consequence.
 
 - [ ] **Step 1: Write failing fake-only runner tests**
@@ -1798,6 +1877,10 @@ def test_frontend_failure_does_not_select_serve_dir(tmp_path: Path) -> None:
     assert "embedded Svelte assets" in record.consequence
 ```
 
+Add `test_frontend_live_context_discovers_before_sanitizing`: monkeypatch `run_frontend.discover_tool_roots`, `run_frontend._discover_bun_invocation`, and `run_frontend.safe_subprocess_env`, call `_live_process_context(ROOT, tmp_path, original_env)`, and assert call order `("discover-tools", "discover-bun", "sanitize")`, identity of the passed `ToolRoots`, preservation of the returned lexical Bun path, `cargo_offline is True`, and target `ROOT / "qualification/.artifacts/cargo-target/frontend-embedding"`.
+
+Add `test_frontend_live_children_reuse_safe_environment`: inject a fixture-backed `run_owned_process` spy into `run_live`; assert every Bun build, Cargo, embedded-binary, `strace`, `ldd`, and process-tree call receives the identical environment object returned by `safe_subprocess_env`, Bun argv starts with the lexical path returned by `_discover_bun_invocation`, every Cargo argv starts with `str(tool_roots.cargo_invocation)`, and no call receives the original environment mapping.
+
 - [ ] **Step 2: Run Python tests and verify RED without Bun or Cargo**
 
 Run: `uv run pytest tests/qualification/test_run_frontend.py -v`
@@ -1806,7 +1889,7 @@ Expected: FAIL importing `tools.qualification.run_frontend`; no Bun/Cargo/native
 
 - [ ] **Step 3: Implement the live embedding runner and objective criteria**
 
-`run_frontend.run` runs Task 13's network-isolated Bun build directly into the canonical artifact directory, fingerprints it, and builds release mode with:
+`run_frontend.run_live` copies the caller-supplied `original_env`, calls `discover_tool_roots` and `_discover_bun_invocation` before any sanitization, then passes the returned `ToolRoots` and exact frontend Cargo target to `safe_subprocess_env`; its module CLI supplies `dict(os.environ)`. `run_frontend.run` runs Task 13's network-isolated Bun build directly into the canonical artifact directory, fingerprints it, and builds release mode with:
 
 ```bash
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 build --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu
@@ -1824,7 +1907,7 @@ It then:
 8. Records release binary byte size without imposing an unapproved size threshold.
 9. Runs Clippy with `-D warnings`, the canonical asset root, Cargo offline, and the bounded target before removing the asset root.
 
-The runner uses `run_owned_process`, restores all renamed/permission-denied paths, then removes copied bundle, install directory, traces, and Cargo target in `finally`; it preserves only the canonical record and ignored Bun cache/node_modules.
+Every Cargo argv begins with `str(tool_roots.cargo_invocation)`. The Bun build, Cargo, embedded binary, `strace`, `ldd`, and process-tree probes all use `run_owned_process` with the same sanitized environment and risk-specific target; Bun is invoked by its absolute executable path discovered from the original PATH before sanitization, but that path is never serialized. The runner restores all renamed/permission-denied paths, then removes copied bundle, install directory, traces, and Cargo target in `finally`; it preserves only the canonical record and ignored Bun cache/node_modules. Evidence stores only versions, basenames, sizes, and digests—never any absolute tool root or invocation path.
 
 - [ ] **Step 4: Run opt-in qualification and focused verification**
 
@@ -2012,8 +2095,9 @@ git commit -m "test: prove read-only database fixture import"
 - Create: `docs/qualification/rust/legacy-database-import.md`
 
 **Interfaces:**
-- Consumes: Tasks 16–17, `compatibility/snapshots/state.json`, all six frozen database fixtures, and manifest ids `database.schema.current`, `database.migrations.current`, and `database.upgrade.preflight`.
-- Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
+- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 16–17; `compatibility/snapshots/state.json`; all six frozen database fixtures; and manifest ids `database.schema.current`, `database.migrations.current`, and `database.upgrade.preflight`.
+- Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
+- Produces private handoff: `_live_process_context(repo_root: Path, work_root: Path, original_env: Mapping[str, str]) -> tuple[ToolRoots, Path, dict[str, str]]`, returning discovered tool roots, `qualification/.artifacts/cargo-target/legacy-database-import`, and the sanitized child environment in that order.
 - Produces: `qualified` only when every database criterion passes; otherwise exact Task 2 blocking consequence.
 
 - [ ] **Step 1: Write failing fake-only runner tests**
@@ -2037,6 +2121,10 @@ def test_database_failure_preserves_data_disposition(tmp_path: Path) -> None:
     assert "fresh sibling database" in record.consequence
 ```
 
+Add `test_database_live_context_discovers_before_sanitizing`: monkeypatch `run_database.discover_tool_roots` and `run_database.safe_subprocess_env`, call `_live_process_context(ROOT, tmp_path, original_env)`, and assert call order `("discover", "sanitize")`, identity of the passed `ToolRoots`, `cargo_offline is True`, and target `ROOT / "qualification/.artifacts/cargo-target/legacy-database-import"`.
+
+Add `test_database_live_children_reuse_safe_environment`: inject a fixture-backed `run_owned_process` spy into `run_live`; assert every Cargo, SQLite harness, and inspection call receives the identical environment object returned by `safe_subprocess_env`, every Cargo argv starts with `str(tool_roots.cargo_invocation)`, and no call receives the original environment mapping.
+
 - [ ] **Step 2: Run Python tests and verify RED without Cargo**
 
 Run: `uv run pytest tests/qualification/test_run_database.py -v`
@@ -2045,7 +2133,7 @@ Expected: FAIL importing `tools.qualification.run_database`; no Rust process run
 
 - [ ] **Step 3: Implement the bounded runner and write the live record**
 
-The runner passes the exact frozen fixture root and a risk work root to Task 17's CLI, never an arbitrary source/target path. It uses `run_owned_process`, hashes every fixture/input before and after, removes target databases/traces/Cargo target in `finally`, and records only classifications/counts/digests/error codes.
+`run_database.run_live` copies the caller-supplied `original_env`, calls `discover_tool_roots` before any sanitization, then passes the returned object and exact database Cargo target to `safe_subprocess_env`; its module CLI supplies `dict(os.environ)`. The runner passes the exact frozen fixture root and a risk work root to Task 17's CLI, never an arbitrary source/target path. Every Cargo argv begins with `str(tool_roots.cargo_invocation)`, and every Cargo, SQLite harness, and inspection child uses `run_owned_process` with the same sanitized environment and risk-specific target. It hashes every fixture/input before and after, removes target databases/traces/Cargo target in `finally`, and records only classifications/counts/digests/error codes; no absolute tool-root or invocation path is serialized.
 
 Run: `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_database --write`
 
@@ -2083,7 +2171,7 @@ git commit -m "test: qualify legacy database import"
 
 **Interfaces:**
 - Consumes: all four canonical records, their rendered Markdown, schemas, prerequisites, harness sources/lockfiles, and frozen input fingerprints.
-- Produces: `run_one_live(risk: Risk, repo_root: Path, work_root: Path) -> QualificationRecord` and opt-in CLI `python -m tools.qualification.run <risk|all> --write`.
+- Produces: `run_one_live(risk: Risk, repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` and opt-in CLI `python -m tools.qualification.run <risk|all> --write`; the CLI snapshots `dict(os.environ)` once before dispatch and never sanitizes or serializes that mapping itself.
 - Produces: `compute_gate(records: Mapping[Risk, QualificationRecord]) -> GateRecord`.
 - Produces: `validation_and_review_issues(records: Mapping[Risk, QualificationRecord]) -> dict[Risk, tuple[str, ...]]` and `record_digests(records: Mapping[Risk, QualificationRecord]) -> dict[Risk, str]`.
 - Produces: CLI `python -m tools.qualification.check [--record <risk>] [--records-only] [--require-qualified]`.
@@ -2146,6 +2234,8 @@ def test_records_only_check_never_invokes_live_runners(monkeypatch: pytest.Monke
     assert result.exit_code == 0
 ```
 
+Add `test_dispatcher_passes_original_environment_to_runner`: install one fake `LiveRunner`, call `run_one_live` with a sentinel mapping containing the live flag, and assert the fake receives the identical mapping as keyword-only `original_env` and a risk-specific work root. This test invokes neither discovery nor sanitization.
+
 - [ ] **Step 2: Run the tests and verify the missing aggregate modules**
 
 Run: `uv run pytest tests/qualification/test_run.py tests/qualification/test_gate.py -v`
@@ -2155,7 +2245,21 @@ Expected: FAIL importing `tools.qualification.run` and `tools.qualification.chec
 - [ ] **Step 3: Implement one dispatcher and non-short-circuiting live execution**
 
 ```python
-LIVE_RUNNERS: dict[Risk, Callable[[Path, Path], QualificationRecord]] = {
+from collections.abc import Mapping
+from typing import Protocol
+
+
+class LiveRunner(Protocol):
+    def __call__(
+        self,
+        repo_root: Path,
+        work_root: Path,
+        *,
+        original_env: Mapping[str, str],
+    ) -> QualificationRecord: ...
+
+
+LIVE_RUNNERS: dict[Risk, LiveRunner] = {
     "mcp-transport": run_mcp.run_live,
     "semantic-native": run_semantic.run_live,
     "frontend-embedding": run_frontend.run_live,
@@ -2163,13 +2267,23 @@ LIVE_RUNNERS: dict[Risk, Callable[[Path, Path], QualificationRecord]] = {
 }
 
 
-def run_one_live(risk: Risk, repo_root: Path, work_root: Path) -> QualificationRecord:
-    if os.environ.get("HIERONYMUS_QUALIFICATION_LIVE") != "1":
+def run_one_live(
+    risk: Risk,
+    repo_root: Path,
+    work_root: Path,
+    *,
+    original_env: Mapping[str, str],
+) -> QualificationRecord:
+    if original_env.get("HIERONYMUS_QUALIFICATION_LIVE") != "1":
         raise RuntimeError("live qualification requires HIERONYMUS_QUALIFICATION_LIVE=1")
-    return LIVE_RUNNERS[risk](repo_root, work_root / risk)
+    return LIVE_RUNNERS[risk](
+        repo_root,
+        work_root / risk,
+        original_env=original_env,
+    )
 ```
 
-`all` executes risks in the dictionary order above, gives each a distinct work root, writes every complete result even after a failure, then recomputes/writes the blocked pending-review aggregate JSON/Markdown so the record set stays internally consistent. It returns success when all four records are complete and valid. Risk decisions are evaluated only by `check --require-qualified`; this prevents a valid blocking record from being discarded.
+The dispatcher snapshots `original_env = dict(os.environ)` once, passes it unchanged to every `run_one_live` call, and never places it in a record. Each risk runner independently performs Task 5 discovery before sanitization and uses its own target. `all` executes risks in the dictionary order above, gives each a distinct work root, writes every complete result even after a failure, then recomputes/writes the blocked pending-review aggregate JSON/Markdown so the record set stays internally consistent. It returns success when all four records are complete and valid. Risk decisions are evaluated only by `check --require-qualified`; this prevents a valid blocking record from being discarded.
 
 - [ ] **Step 4: Implement the exact aggregate decision function**
 
@@ -2549,13 +2663,13 @@ git commit -m "ci: verify Rust qualification records"
 
 ## Self-Review Record
 
-- Spec coverage: Task 1 corrects and separately commits the official stateless MCP oracle; Tasks 2–5 establish the record, validation, acquisition, and bounded-process foundations. Tasks 6–8 qualify exact MCP metadata/headers/result type/transports/registry/error parity and private-bridge absence. Tasks 9–12 own actual ANN creation, checked pre-filter plan/cardinality proof, SQLite-durable recovery/no-write-transaction-native-I/O proof, strengthened FTS, and FTS-only selection. Tasks 13–15 own manifest-correct Svelte embedding and traced runtime independence without claiming HTTP security ownership. Tasks 16–18 own frozen-root database classification/import, typed accounting, FTS/ledger proof, fail-closed behavior, and source immutability. Tasks 19–21 own the aggregate gate, named-owner review/regeneration, reproducibility commands, and pinned CI.
+- Spec coverage: Task 1 corrects and separately commits the official stateless MCP oracle, including method-aware HTTP name applicability; Tasks 2–5 establish the record, validation, acquisition, cargo-shim-preserving discovery, and bounded-process foundations. Tasks 6–8 qualify exact MCP metadata/headers/result type/transports/registry/error parity and private-bridge absence. Tasks 9–12 own actual ANN creation, checked pre-filter plan/cardinality proof, SQLite-durable recovery/no-write-transaction-native-I/O proof, strengthened FTS, and FTS-only selection. Tasks 13–15 own manifest-correct Svelte embedding and traced runtime independence without claiming HTTP security ownership. Tasks 16–18 own frozen-root database classification/import, typed accounting, FTS/ledger proof, fail-closed behavior, and source immutability. Tasks 19–21 own the aggregate gate, named-owner review/regeneration, reproducibility commands, and pinned CI.
 - Normative consequence coverage: semantic failure has exactly one accepted non-blocking result, `fts-only`; MCP/frontend/database failure blocks named dependent plans and never edits fixtures or specifications to turn a failure into a pass.
 - Network coverage: acquisition commands are named and checksum/frozen-lock constrained; Hugging Face redirects include the observed exact CDN host under hop validation; Bun replay uses an isolated network namespace rather than a nonexistent offline-install flag; ordinary pytest uses only bounded fake child executables, while record checks use no subprocess, socket, Rust/native cache, or network. The one real Cargo environment smoke is explicitly live-gated.
 - Sensitive-data coverage: inputs are synthetic/frozen, work roots are bounded, reports contain only digests/counts/basenames, source database bytes are verified unchanged, and canonical records reject secrets, user paths, row text, raw headers, and logs.
 - Cleanup coverage: all transient output and every Cargo target are under one ignored exact root; core dumps are disabled; owned process groups are reaped; cleanup targets are enumerated/tested; model/runtime removal needs a separate flag; and no recursive operation can target the repository, home, translation workspace, or user data.
 - Ownership coverage: Tasks 2–5 split common model, validation/rendering, acquisition, and process/cleanup ownership; Task 9 alone extends acquisition inputs; every risk is split into separately committed manifest/build, behavior/recovery, and runner/evidence reviews; Tasks 19–21 separately own gate computation, review regeneration, and workflows.
-- Type/signature consistency: fake-injected `run(..., executable: Path)` and guarded `run_live(...)` are distinct for all four runners; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 19 dispatches only `run_live` and its records-only path imports no runner; Task 20 can replace only `Review`.
+- Type/signature consistency: fake-injected `run(..., executable: Path)` and guarded `run_live(..., original_env: Mapping[str, str])` are distinct for all four runners; every live context returns Task 5's exact `ToolRoots`, target, and safe environment; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 19 passes one unsanitized environment snapshot only to `run_live` and its records-only path imports no runner; Task 20 can replace only `Review`.
 - Production-scope check: the file map contains no production Rust workspace or crate path, and no task changes Python runtime behavior or starts a dependent implementation plan.
 
 Before accepting this plan, run:
