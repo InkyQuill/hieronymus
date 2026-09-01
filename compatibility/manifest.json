@@ -3975,6 +3975,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_clean.py::test_cleanup_pins_repository_identity_through_parent_before_descent",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_clean.py::test_cleanup_rejects_mount_at_every_root_transition[False-.artifacts]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3991,6 +3996,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_clean.py::test_cleanup_rejects_mount_at_every_root_transition[True-qualification]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_clean.py::test_cleanup_rejects_repository_mount_transition_before_qualification_open",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -4490,6 +4500,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_concurrent_parent_calls_use_isolated_supervisors",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_discovery_preserves_shim_paths_without_resolving_them",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -4500,17 +4515,7 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_execution_clock_starts_after_runner_coordination",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_owned_marker_parent_copy_closes_in_fork_child",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_owned_marker_parent_descriptors_close_after_completion_and_spawn_failure",
+      "node_id": "tests/qualification/test_process.py::test_forked_parent_call_uses_its_own_supervisor",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -4520,12 +4525,12 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_owned_process_keeps_tracking_descendant_after_marker_close",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_never_signals_unrelated_child_forked_during_spawn",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_owned_process_never_signals_unrelated_child",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_never_uses_raw_process_group_signals",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -4545,7 +4550,7 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_owned_process_reaps_large_marker_bearing_tree",
+      "node_id": "tests/qualification/test_process.py::test_owned_process_reaps_nondumpable_immediate_double_fork_orphan",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -4575,27 +4580,7 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_owned_process_validates_identity_before_individual_signal",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_process.py::test_pid_reuse_seam_never_signals_replacement",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_runner_lock_has_distinct_bounded_failure",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_runner_lock_is_reset_in_fork_child",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_runner_refuses_to_spawn_without_linux_subreaper",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -4630,12 +4615,17 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_subreaper_restore_failure_does_not_hide_operation_error",
+      "node_id": "tests/qualification/test_process.py::test_supervisor_failure_is_bounded_redacted_and_closes_parent_fds[crash]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_process.py::test_subreaper_restore_failure_is_fixed_and_checked",
+      "node_id": "tests/qualification/test_process.py::test_supervisor_failure_is_bounded_redacted_and_closes_parent_fds[hang]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_process.py::test_supervisor_failure_is_bounded_redacted_and_closes_parent_fds[invalid]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {

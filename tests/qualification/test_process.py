@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -19,7 +20,6 @@ if str(ROOT) not in sys.path:
 
 from tests.qualification.factories import fake_child_and_grandchild  # noqa: E402
 from tools.qualification.process import (  # noqa: E402
-    ProcessCoordinationTimeout,
     ToolRoots,
     discover_tool_roots,
     run_owned_process,
@@ -369,63 +369,60 @@ def test_owned_process_reaps_immediate_double_fork_orphan(tmp_path: Path) -> Non
                 pass
 
 
-def test_owned_process_keeps_tracking_descendant_after_marker_close(tmp_path: Path) -> None:
-    pid_file = tmp_path / "closed-marker.pid"
-    script = tmp_path / "close-marker.py"
+def test_owned_process_reaps_nondumpable_immediate_double_fork_orphan(
+    tmp_path: Path,
+) -> None:
+    """Catch ownership schemes that depend on reading descendant file descriptors."""
+    pid_file = tmp_path / "nondumpable-double-fork.pid"
+    script = tmp_path / "nondumpable-double-fork.py"
     script.write_text(
-        "import os,pathlib,time\n"
-        "pid=os.fork()\n"
-        "if pid:\n"
-        " time.sleep(60)\n"
-        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
-        "time.sleep(.4)\n"
+        "import ctypes,os,pathlib,time\n"
+        "if os.fork(): os._exit(0)\n"
+        "os.setsid()\n"
+        "if os.fork(): os._exit(0)\n"
+        "ctypes.CDLL(None).prctl(4, 0, 0, 0, 0)\n"
         "for fd in range(3, 256):\n"
         " try: os.close(fd)\n"
         " except OSError: pass\n"
-        "os.setsid(); time.sleep(60)\n",
-        encoding="utf-8",
-    )
-    receipt = run_owned_process(
-        (sys.executable, str(script)),
-        cwd=tmp_path,
-        env={"PATH": "/usr/bin:/bin"},
-        timeout_seconds=2,
-        no_progress_seconds=1,
-    )
-    descendant_pid = int(pid_file.read_text(encoding="utf-8"))
-    assert receipt.process_group_reaped
-    with pytest.raises(ProcessLookupError):
-        os.kill(descendant_pid, 0)
-
-
-def test_owned_process_reaps_large_marker_bearing_tree(tmp_path: Path) -> None:
-    script = tmp_path / "large-tree.py"
-    script.write_text(
-        "import os,time\n"
-        "for _ in range(32):\n"
-        " if os.fork() == 0:\n"
-        "  os.setsid(); time.sleep(60); os._exit(0)\n"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
         "time.sleep(60)\n",
         encoding="utf-8",
     )
-    receipt = run_owned_process(
-        (sys.executable, str(script)),
-        cwd=tmp_path,
-        env={"PATH": "/usr/bin:/bin"},
-        timeout_seconds=2,
-        no_progress_seconds=1,
-    )
-    assert receipt.timed_out and receipt.process_group_reaped
-
-
-def test_owned_process_never_signals_unrelated_child(tmp_path: Path) -> None:
-    unrelated_marker, unrelated_parent = os.pipe()
-    unrelated = subprocess.Popen(
-        (sys.executable, "-c", "import time; time.sleep(60)"),
-        pass_fds=(unrelated_marker,),
-    )
-    os.close(unrelated_marker)
+    orphan_pid: int | None = None
     try:
+        receipt = run_owned_process(
+            (sys.executable, str(script)),
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin"},
+            timeout_seconds=2,
+            no_progress_seconds=1,
+        )
+        orphan_pid = int(pid_file.read_text(encoding="utf-8"))
+        assert receipt.process_group_reaped
+        with pytest.raises(ProcessLookupError):
+            os.kill(orphan_pid, 0)
+    finally:
+        if orphan_pid is not None:
+            try:
+                os.kill(orphan_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_owned_process_never_signals_unrelated_child_forked_during_spawn(
+    tmp_path: Path,
+) -> None:
+    start = threading.Event()
+    unrelated: list[subprocess.Popen[bytes]] = []
+
+    def fork_unrelated() -> None:
+        start.wait(timeout=2)
+        unrelated.append(subprocess.Popen((sys.executable, "-c", "import time; time.sleep(60)")))
+
+    thread = threading.Thread(target=fork_unrelated)
+    thread.start()
+    try:
+        start.set()
         receipt = run_owned_process(
             (sys.executable, "-c", "import time; time.sleep(60)"),
             cwd=tmp_path,
@@ -433,39 +430,14 @@ def test_owned_process_never_signals_unrelated_child(tmp_path: Path) -> None:
             timeout_seconds=1,
             no_progress_seconds=1,
         )
+        thread.join(timeout=3)
         assert receipt.process_group_reaped
-        assert unrelated.poll() is None
+        assert unrelated and unrelated[0].poll() is None
     finally:
-        os.close(unrelated_parent)
-        unrelated.terminate()
-        unrelated.wait(timeout=5)
-
-
-def test_owned_process_validates_identity_before_individual_signal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import tools.qualification.process as process_module
-
-    signaled: list[int] = []
-    original = process_module._signal_identity
-
-    def record(identity: object, sig: signal.Signals) -> bool:
-        result = original(identity, sig)
-        if result:
-            signaled.append(identity.pid)  # type: ignore[attr-defined]
-        return result
-
-    import signal
-
-    monkeypatch.setattr(process_module, "_signal_identity", record)
-    receipt = run_owned_process(
-        (sys.executable, "-c", "import time; time.sleep(60)"),
-        cwd=tmp_path,
-        env={"PATH": "/usr/bin:/bin"},
-        timeout_seconds=1,
-        no_progress_seconds=1,
-    )
-    assert receipt.process_group_reaped and signaled
+        thread.join(timeout=3)
+        for process in unrelated:
+            process.terminate()
+            process.wait(timeout=5)
 
 
 def test_pid_reuse_seam_never_signals_replacement(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -482,15 +454,29 @@ def test_pid_reuse_seam_never_signals_replacement(monkeypatch: pytest.MonkeyPatc
     assert calls == []
 
 
-def test_execution_clock_starts_after_runner_coordination(tmp_path: Path) -> None:
-    first_started = threading.Event()
-    first_done: list[object] = []
+def test_owned_process_never_uses_raw_process_group_signals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tools.qualification.process as process_module
 
-    def first() -> None:
-        first_started.set()
-        first_done.append(
+    monkeypatch.setattr(
+        os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("raw PGID signal")),
+    )
+    monkeypatch.setattr(process_module, "_collect_descendants", lambda *_args, **_kwargs: None)
+    assert process_module._terminate_owned_tree({}, owner_pid=os.getpid())
+
+
+def test_concurrent_parent_calls_use_isolated_supervisors(
+    tmp_path: Path,
+) -> None:
+    receipts: list[object] = []
+
+    def run(value: str) -> None:
+        receipts.append(
             run_owned_process(
-                (sys.executable, "-c", "import time; time.sleep(.35)"),
+                (sys.executable, "-c", f"print({value!r})"),
                 cwd=tmp_path,
                 env={"PATH": "/usr/bin:/bin"},
                 timeout_seconds=2,
@@ -498,186 +484,17 @@ def test_execution_clock_starts_after_runner_coordination(tmp_path: Path) -> Non
             )
         )
 
-    thread = threading.Thread(target=first)
-    thread.start()
-    first_started.wait(timeout=1)
-    time.sleep(0.1)
-    second = run_owned_process(
-        (sys.executable, "-c", "print('ok')"),
-        cwd=tmp_path,
-        env={"PATH": "/usr/bin:/bin"},
-        timeout_seconds=1,
-        no_progress_seconds=1,
-    )
-    thread.join(timeout=3)
-    assert first_done and second.exit_code == 0 and not second.timed_out
-    assert second.duration_ms < 800
-
-
-def test_runner_lock_has_distinct_bounded_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import tools.qualification.process as process_module
-
-    monkeypatch.setattr(process_module, "_PROCESS_LOCK_TIMEOUT_SECONDS", 0.05)
-    process_module._PROCESS_LOCK.acquire()
-    try:
-        with pytest.raises(ProcessCoordinationTimeout, match="runner is busy"):
-            run_owned_process(
-                (sys.executable, "-c", "print('never spawned')"),
-                cwd=tmp_path,
-                env={"PATH": "/usr/bin:/bin"},
-                timeout_seconds=1,
-                no_progress_seconds=1,
-            )
-    finally:
-        process_module._PROCESS_LOCK.release()
-
-
-def test_runner_refuses_to_spawn_without_linux_subreaper(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import tools.qualification.process as process_module
-
-    monkeypatch.setattr(process_module, "_subreaper_state", lambda _enable: None)
-    with pytest.raises(RuntimeError, match="subreaper"):
-        run_owned_process(
-            (sys.executable, "-c", "print('must not spawn')"),
-            cwd=tmp_path,
-            env={"PATH": "/usr/bin:/bin"},
-            timeout_seconds=1,
-            no_progress_seconds=1,
-        )
-
-
-def test_subreaper_restore_failure_is_fixed_and_checked(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import tools.qualification.process as process_module
-
-    class FailedPrctl:
-        def prctl(self, *_args: object) -> int:
-            return -1
-
-    monkeypatch.setattr(process_module.ctypes, "CDLL", lambda *_args, **_kwargs: FailedPrctl())
-    with pytest.raises(RuntimeError, match="failed to restore Linux child-subreaper state"):
-        process_module._restore_subreaper(0)
-
-
-def test_subreaper_restore_failure_does_not_hide_operation_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import tools.qualification.process as process_module
-
-    created: list[int] = []
-    real_create = process_module._create_owned_marker
-
-    def capture_marker() -> tuple[object, ...]:
-        marker = real_create()
-        created.extend(marker[:2])
-        return marker
-
-    monkeypatch.setattr(process_module, "_create_owned_marker", capture_marker)
-    monkeypatch.setattr(
-        process_module.subprocess,
-        "Popen",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("operation failed")),
-    )
-    monkeypatch.setattr(
-        process_module,
-        "_restore_subreaper",
-        lambda _previous: (_ for _ in ()).throw(
-            RuntimeError("failed to restore Linux child-subreaper state")
-        ),
-    )
-    with pytest.raises(ValueError, match="operation failed") as raised:
-        run_owned_process(
-            (sys.executable, "-c", "print('never')"),
-            cwd=tmp_path,
-            env={"PATH": "/usr/bin:/bin"},
-            timeout_seconds=1,
-            no_progress_seconds=1,
-        )
-    assert raised.value.__notes__ == ["failed to restore Linux child-subreaper state"]
-    for descriptor in created:
-        with pytest.raises(OSError):
-            os.fstat(descriptor)
-
-
-def test_owned_marker_parent_descriptors_close_after_completion_and_spawn_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import tools.qualification.process as process_module
-
-    created: list[int] = []
-    real_create = process_module._create_owned_marker
-
-    def capture_marker() -> tuple[object, ...]:
-        marker = real_create()
-        created.extend(marker[:2])
-        return marker
-
-    monkeypatch.setattr(process_module, "_create_owned_marker", capture_marker)
-    assert (
-        run_owned_process(
-            (sys.executable, "-c", "print('done')"),
-            cwd=tmp_path,
-            env={"PATH": "/usr/bin:/bin"},
-            timeout_seconds=2,
-            no_progress_seconds=1,
-        ).exit_code
-        == 0
-    )
-    assert (
-        run_owned_process(
-            (str(tmp_path / "missing"),),
-            cwd=tmp_path,
-            env={"PATH": "/usr/bin:/bin"},
-            timeout_seconds=1,
-            no_progress_seconds=1,
-        ).exit_code
-        is None
-    )
-    for descriptor in created:
-        with pytest.raises(OSError):
-            os.fstat(descriptor)
+    threads = [threading.Thread(target=run, args=(str(index),)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert len(receipts) == 8
+    assert all(receipt.exit_code == 0 for receipt in receipts)  # type: ignore[union-attr]
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork")
-def test_owned_marker_parent_copy_closes_in_fork_child() -> None:
-    import tools.qualification.process as process_module
-
-    marker_read, marker_write, _marker = process_module._create_owned_marker()
-    process_module._PARENT_MARKER_FDS.add(marker_write)
-    result_read, result_write = os.pipe()
-    try:
-        pid = os.fork()
-        if pid == 0:
-            os.close(result_read)
-            try:
-                os.fstat(marker_write)
-            except OSError:
-                os.write(result_write, b"closed")
-            else:
-                os.write(result_write, b"open")
-            os._exit(0)
-        os.close(result_write)
-        assert os.read(result_read, 16) == b"closed"
-        os.waitpid(pid, 0)
-    finally:
-        process_module._PARENT_MARKER_FDS.discard(marker_write)
-        for descriptor in (marker_read, marker_write, result_read):
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-
-
-@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork")
-def test_runner_lock_is_reset_in_fork_child(tmp_path: Path) -> None:
-    import tools.qualification.process as process_module
-
-    process_module._PROCESS_LOCK.acquire()
+def test_forked_parent_call_uses_its_own_supervisor(tmp_path: Path) -> None:
     read_fd, write_fd = os.pipe()
     try:
         pid = os.fork()
@@ -685,10 +502,10 @@ def test_runner_lock_is_reset_in_fork_child(tmp_path: Path) -> None:
             os.close(read_fd)
             try:
                 receipt = run_owned_process(
-                    (sys.executable, "-c", "print('child')"),
+                    (sys.executable, "-c", "print('forked-parent')"),
                     cwd=tmp_path,
                     env={"PATH": "/usr/bin:/bin"},
-                    timeout_seconds=1,
+                    timeout_seconds=2,
                     no_progress_seconds=1,
                 )
                 os.write(write_fd, b"ok" if receipt.exit_code == 0 else b"bad")
@@ -698,12 +515,53 @@ def test_runner_lock_is_reset_in_fork_child(tmp_path: Path) -> None:
         assert os.read(read_fd, 8) == b"ok"
         os.waitpid(pid, 0)
     finally:
-        if process_module._PROCESS_LOCK.locked():
-            process_module._PROCESS_LOCK.release()
-        try:
-            os.close(read_fd)
-        except OSError:
-            pass
+        for descriptor in (read_fd, write_fd):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+@pytest.mark.parametrize("mode", ["crash", "invalid", "hang"])
+def test_supervisor_failure_is_bounded_redacted_and_closes_parent_fds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    import tools.qualification.process as process_module
+
+    script = tmp_path / "bad-supervisor.py"
+    behavior = {
+        "crash": "raise SystemExit(3)",
+        "invalid": "import os; os.write(int(__import__('sys').argv[2]), b'not-json')",
+        "hang": "import time; time.sleep(60)",
+    }[mode]
+    script.write_text(f"{behavior}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        process_module,
+        "_supervisor_command",
+        lambda config_fd, result_fd: (
+            sys.executable,
+            str(script),
+            str(config_fd),
+            str(result_fd),
+        ),
+    )
+    before = len(os.listdir("/proc/self/fd"))
+    secret = tmp_path / "must-not-leak"
+    started = time.monotonic()
+    with pytest.raises(RuntimeError) as raised:
+        run_owned_process(
+            (sys.executable, "-c", "print('never')", str(secret)),
+            cwd=tmp_path,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "QUALIFICATION_PADDING": "x" * (200_000 if mode == "hang" else 1),
+            },
+            timeout_seconds=1,
+            no_progress_seconds=1,
+        )
+    assert time.monotonic() - started < 5
+    assert str(secret) not in str(raised.value)
+    assert len(os.listdir("/proc/self/fd")) == before
 
 
 def test_owned_process_times_out_when_child_closes_pipes_but_keeps_running(

@@ -177,10 +177,34 @@ def _remove_validated_tree(
 
 def _open_artifacts(repo_root: Path) -> int | None:
     canonical_repo = _validated_repo_root(repo_root)
-    artifacts = _artifact_root(canonical_repo)
-    if not artifacts.exists():
-        return None
-    root_fd = os.open(canonical_repo, _open_flags())
+    expected_identity = _identity(os.stat(canonical_repo, follow_symlinks=False))
+    parent_fd = os.open(canonical_repo.parent, _open_flags())
+    parent_device = os.fstat(parent_fd).st_dev
+    parent_mount = _mount_id(parent_fd)
+    root_fd: int | None = None
+    try:
+        try:
+            root_fd = _open_directory(canonical_repo.name, parent_fd)
+        except FileNotFoundError as exc:
+            raise ValueError("cleanup repository changed before it could be pinned") from exc
+        if (
+            _identity(os.fstat(root_fd)) != expected_identity
+            or _entry_identity_at(parent_fd, canonical_repo.name) != expected_identity
+        ):
+            os.close(root_fd)
+            root_fd = None
+            raise ValueError("cleanup repository changed before it could be pinned")
+        if os.fstat(root_fd).st_dev != parent_device or _mount_id(root_fd) != parent_mount:
+            os.close(root_fd)
+            root_fd = None
+            raise ValueError("cleanup refuses mounted repository root")
+    except BaseException:
+        if root_fd is not None:
+            os.close(root_fd)
+        raise
+    finally:
+        os.close(parent_fd)
+    assert root_fd is not None
     root_device = os.fstat(root_fd).st_dev
     root_mount = _mount_id(root_fd)
     try:

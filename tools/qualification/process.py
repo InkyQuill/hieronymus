@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import json
 import os
 import resource
 import selectors
@@ -12,39 +13,18 @@ import stat
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 _EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
-_PROCESS_LOCK = threading.Lock()
-_PROCESS_LOCK_TIMEOUT_SECONDS = 5.0
 _PR_SET_CHILD_SUBREAPER = 36
 _PR_GET_CHILD_SUBREAPER = 37
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ARTIFACT_ROOT = _REPO_ROOT / "qualification/.artifacts"
-_PARENT_MARKER_FDS: set[int] = set()
-
-
-class ProcessCoordinationTimeout(RuntimeError):
-    """Raised before spawn when the process runner cannot be acquired safely."""
-
-
-def _reset_after_fork() -> None:
-    global _PROCESS_LOCK
-    _PROCESS_LOCK = threading.Lock()
-    for descriptor in tuple(_PARENT_MARKER_FDS):
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
-    _PARENT_MARKER_FDS.clear()
-
-
-if hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child=_reset_after_fork)
+_MAX_SUPERVISOR_MESSAGE = 4 * 1024 * 1024
+_SUPERVISOR_GRACE_SECONDS = 3.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,37 +334,10 @@ def _subreaper_state(enable: bool) -> int | None:
     return previous.value
 
 
-def _restore_subreaper(previous: int | None) -> None:
-    if previous is None or not sys.platform.startswith("linux"):
-        return
-    if ctypes.CDLL(None, use_errno=True).prctl(_PR_SET_CHILD_SUBREAPER, previous, 0, 0, 0) != 0:
-        raise RuntimeError("failed to restore Linux child-subreaper state")
-
-
 @dataclass(frozen=True, slots=True)
 class _ProcessIdentity:
     pid: int
     start_time: int
-
-
-@dataclass(frozen=True, slots=True)
-class _OwnedMarker:
-    """In-memory identity of the pipe inherited by cooperative descendants."""
-
-    device: int
-    inode: int
-
-
-def _create_owned_marker() -> tuple[int, int, _OwnedMarker]:
-    flags = getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "pipe2"):
-        read_fd, write_fd = os.pipe2(flags)
-    else:  # pragma: no cover - Linux qualification hosts provide pipe2
-        read_fd, write_fd = os.pipe()
-        os.set_inheritable(read_fd, False)
-        os.set_inheritable(write_fd, False)
-    info = os.fstat(read_fd)
-    return read_fd, write_fd, _OwnedMarker(info.st_dev, info.st_ino)
 
 
 def _close_fd(descriptor: int | None) -> None:
@@ -419,44 +372,14 @@ def _process_identity(pid: int) -> _ProcessIdentity | None:
     return None if state is None else state[0]
 
 
-def _has_owned_marker(pid: int, marker: _OwnedMarker) -> bool:
-    try:
-        descriptors = os.scandir(f"/proc/{pid}/fd")
-    except OSError:
-        return False
-    with descriptors:
-        for descriptor in descriptors:
-            try:
-                if os.readlink(descriptor.path) != f"pipe:[{marker.inode}]":
-                    continue
-                info = os.stat(descriptor.path)
-            except OSError:
-                continue
-            if (
-                stat.S_ISFIFO(info.st_mode)
-                and info.st_dev == marker.device
-                and info.st_ino == marker.inode
-            ):
-                return True
-    return False
-
-
-def _collect_descendants(
-    tracked: dict[int, _ProcessIdentity], marker: _OwnedMarker | None = None
-) -> None:
-    """Extend tracked by inherited marker or established PID-safe ancestry.
-
-    The marker is a cooperative containment boundary. A descendant that closes it
-    before first observation cannot safely be distinguished from an unrelated process.
-    Once observed, the PID/start-time identity remains tracked after marker close.
-    """
+def _proc_snapshot() -> dict[int, tuple[_ProcessIdentity, int]]:
     if not sys.platform.startswith("linux"):
-        return
+        return {}
     states: dict[int, tuple[_ProcessIdentity, int]] = {}
     try:
         entries = os.scandir("/proc")
     except OSError:  # pragma: no cover
-        return
+        return {}
     with entries:
         for entry in entries:
             if not entry.name.isdigit():
@@ -464,11 +387,14 @@ def _collect_descendants(
             state = _proc_state(int(entry.name))
             if state is not None:
                 states[state[0].pid] = state
-    if marker is not None:
-        for identity, _parent in states.values():
-            if identity.pid != os.getpid() and _has_owned_marker(identity.pid, marker):
-                tracked.setdefault(identity.pid, identity)
-    parents = {pid for pid, identity in tracked.items() if _process_identity(pid) == identity}
+    return states
+
+
+def _collect_descendants(tracked: dict[int, _ProcessIdentity], *, owner_pid: int) -> None:
+    """Collect only descendants of a dedicated process that spawns no unrelated child."""
+    states = _proc_snapshot()
+    parents = {owner_pid}
+    parents.update(pid for pid, identity in tracked.items() if _process_identity(pid) == identity)
     changed = True
     while changed:
         changed = False
@@ -504,26 +430,19 @@ def _signal_identity(identity: _ProcessIdentity, sig: signal.Signals) -> bool:
     return True
 
 
-def _signal_group(process_group: int, sig: signal.Signals) -> None:
-    try:
-        os.killpg(process_group, sig)
-    except ProcessLookupError:
-        pass
+def _reap_children() -> None:
+    while True:
+        try:
+            pid, _status = os.waitpid(-1, os.WNOHANG)
+        except (ChildProcessError, ProcessLookupError):
+            return
+        if pid == 0:
+            return
 
 
-def _group_exists(process_group: int) -> bool:
-    try:
-        os.killpg(process_group, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:  # pragma: no cover - an owned group remains signalable
-        return True
-    return True
-
-
-def _reap_tracked(tracked: Mapping[int, _ProcessIdentity], *, root_pid: int) -> None:
+def _reap_tracked(tracked: Mapping[int, _ProcessIdentity], *, exclude_pid: int | None) -> None:
     for identity in tuple(tracked.values()):
-        if identity.pid == root_pid:
+        if identity.pid == exclude_pid:
             continue
         try:
             os.waitpid(identity.pid, os.WNOHANG)
@@ -532,41 +451,321 @@ def _reap_tracked(tracked: Mapping[int, _ProcessIdentity], *, root_pid: int) -> 
 
 
 def _terminate_owned_tree(
-    process: subprocess.Popen[bytes],
-    process_group: int,
     tracked: dict[int, _ProcessIdentity],
-    marker: _OwnedMarker,
+    *,
+    owner_pid: int,
+    root_process: subprocess.Popen[bytes] | None = None,
 ) -> bool:
-    """Terminate the group plus tracked setsid descendants, then reap only owned PIDs."""
-    _collect_descendants(tracked, marker)
-    _signal_group(process_group, signal.SIGTERM)
+    """Terminate PID/starttime identities; raw process-group signals are never used."""
+    _collect_descendants(tracked, owner_pid=owner_pid)
     for identity in tuple(tracked.values()):
         _signal_identity(identity, signal.SIGTERM)
     deadline = time.monotonic() + 0.25
     while time.monotonic() < deadline:
-        _collect_descendants(tracked, marker)
-        _reap_tracked(tracked, root_pid=process.pid)
+        _collect_descendants(tracked, owner_pid=owner_pid)
+        for identity in tuple(tracked.values()):
+            _signal_identity(identity, signal.SIGTERM)
+        if owner_pid == os.getpid():
+            _reap_tracked(
+                tracked,
+                exclude_pid=None if root_process is None else root_process.pid,
+            )
         if not any(_identity_alive(identity) for identity in tracked.values()):
             break
         time.sleep(0.01)
-    _signal_group(process_group, signal.SIGKILL)
     for identity in tuple(tracked.values()):
         _signal_identity(identity, signal.SIGKILL)
-    try:
-        process.wait(timeout=1)
-    except subprocess.TimeoutExpired:  # pragma: no cover
-        root = tracked.get(process.pid)
-        if root is not None:
-            _signal_identity(root, signal.SIGKILL)
-        process.wait(timeout=1)
+    if root_process is not None:
+        try:
+            root_process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            root = tracked.get(root_process.pid)
+            if root is not None:
+                _signal_identity(root, signal.SIGKILL)
+            root_process.wait(timeout=1)
     deadline = time.monotonic() + 1
     while time.monotonic() < deadline:
-        _collect_descendants(tracked, marker)
-        _reap_tracked(tracked, root_pid=process.pid)
+        _collect_descendants(tracked, owner_pid=owner_pid)
+        for identity in tuple(tracked.values()):
+            _signal_identity(identity, signal.SIGKILL)
+        if owner_pid == os.getpid():
+            _reap_tracked(
+                tracked,
+                exclude_pid=None if root_process is None else root_process.pid,
+            )
         if not any(_identity_alive(identity) for identity in tracked.values()):
             return True
         time.sleep(0.01)
     return not any(_identity_alive(identity) for identity in tracked.values())
+
+
+def _empty_spawn_receipt(started: float) -> ProcessReceipt:
+    return ProcessReceipt(
+        exit_code=None,
+        timed_out=False,
+        stdout_sha256=_EMPTY_SHA256,
+        stderr_sha256=_EMPTY_SHA256,
+        duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+        process_group_reaped=True,
+        core_dumps_disabled=False,
+    )
+
+
+def _supervise_target(config: Mapping[str, object]) -> ProcessReceipt:
+    """Run one target inside the single-purpose, single-threaded supervisor."""
+    argv_value = config.get("argv")
+    cwd_value = config.get("cwd")
+    env_value = config.get("env")
+    timeout_value = config.get("timeout_seconds")
+    progress_value = config.get("no_progress_seconds")
+    if (
+        type(argv_value) is not list
+        or not argv_value
+        or any(type(item) is not str or not item or "\x00" in item for item in argv_value)
+        or type(cwd_value) is not str
+        or not cwd_value
+        or "\x00" in cwd_value
+        or type(env_value) is not dict
+        or any(
+            type(key) is not str or type(value) is not str or "\x00" in key or "\x00" in value
+            for key, value in env_value.items()
+        )
+        or type(timeout_value) is not int
+        or timeout_value <= 0
+        or type(progress_value) is not int
+        or progress_value <= 0
+    ):
+        raise RuntimeError("invalid supervisor configuration")
+    if _subreaper_state(True) is None:
+        raise RuntimeError("Linux child-subreaper support is required")
+
+    started = time.monotonic()
+    stdout_hash = hashlib.sha256()
+    stderr_hash = hashlib.sha256()
+    timed_out = False
+    process: subprocess.Popen[bytes] | None = None
+    selector = selectors.DefaultSelector()
+    tracked: dict[int, _ProcessIdentity] = {}
+    reaped = True
+    try:
+        try:
+            process = subprocess.Popen(
+                tuple(argv_value),
+                cwd=cwd_value,
+                env=env_value,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+                preexec_fn=_disable_core_dumps,
+                close_fds=True,
+            )
+        except OSError:
+            return _empty_spawn_receipt(started)
+        identity = _process_identity(process.pid)
+        if identity is not None:
+            tracked[process.pid] = identity
+        assert process.stdout is not None and process.stderr is not None
+        for pipe, digest in ((process.stdout, stdout_hash), (process.stderr, stderr_hash)):
+            os.set_blocking(pipe.fileno(), False)
+            selector.register(pipe, selectors.EVENT_READ, digest)
+        last_progress = time.monotonic()
+        terminated = False
+        while selector.get_map() or process.poll() is None:
+            _collect_descendants(tracked, owner_pid=os.getpid())
+            now = time.monotonic()
+            if not terminated and (
+                now - started >= timeout_value or now - last_progress >= progress_value
+            ):
+                timed_out = True
+                reaped = _terminate_owned_tree(tracked, owner_pid=os.getpid(), root_process=process)
+                terminated = True
+            elif process.poll() is not None and not terminated:
+                reaped = _terminate_owned_tree(tracked, owner_pid=os.getpid(), root_process=process)
+                terminated = True
+            events = selector.select(timeout=0.05) if selector.get_map() else ()
+            if not events and not selector.get_map():
+                time.sleep(0.01)
+            for key, _mask in events:
+                try:
+                    chunk = os.read(key.fileobj.fileno(), 64 * 1024)
+                except BlockingIOError:
+                    continue
+                if chunk:
+                    key.data.update(chunk)
+                    last_progress = time.monotonic()
+                else:
+                    selector.unregister(key.fileobj)
+                    key.fileobj.close()
+        if process.poll() is None:
+            reaped = _terminate_owned_tree(tracked, owner_pid=os.getpid(), root_process=process)
+        exit_code = process.wait(timeout=1)
+        _collect_descendants(tracked, owner_pid=os.getpid())
+        if any(_identity_alive(item) for item in tracked.values()):
+            reaped = (
+                _terminate_owned_tree(tracked, owner_pid=os.getpid(), root_process=process)
+                and reaped
+            )
+        _reap_children()
+        return ProcessReceipt(
+            exit_code=exit_code,
+            timed_out=timed_out,
+            stdout_sha256=stdout_hash.hexdigest(),
+            stderr_sha256=stderr_hash.hexdigest(),
+            duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+            process_group_reaped=reaped
+            and not any(_identity_alive(item) for item in tracked.values()),
+            core_dumps_disabled=True,
+        )
+    finally:
+        selector.close()
+        if process is not None:
+            for pipe in (process.stdout, process.stderr):
+                if pipe is not None and not pipe.closed:
+                    pipe.close()
+            _collect_descendants(tracked, owner_pid=os.getpid())
+            if any(_identity_alive(item) for item in tracked.values()):
+                _terminate_owned_tree(tracked, owner_pid=os.getpid(), root_process=process)
+
+
+def _write_all(fd: int, payload: bytes) -> None:
+    view = memoryview(payload)
+    while view:
+        written = os.write(fd, view)
+        view = view[written:]
+
+
+def _write_limited(fd: int, payload: bytes, *, deadline: float) -> None:
+    selector = selectors.DefaultSelector()
+    view = memoryview(payload)
+    try:
+        os.set_blocking(fd, False)
+        selector.register(fd, selectors.EVENT_WRITE)
+        while view and time.monotonic() < deadline:
+            events = selector.select(timeout=min(0.05, max(0.0, deadline - time.monotonic())))
+            if not events:
+                continue
+            try:
+                written = os.write(fd, view)
+            except BlockingIOError:
+                continue
+            view = view[written:]
+        if view:
+            raise TimeoutError
+    finally:
+        selector.close()
+
+
+def _read_limited(fd: int, *, deadline: float) -> bytes:
+    selector = selectors.DefaultSelector()
+    payload = bytearray()
+    try:
+        selector.register(fd, selectors.EVENT_READ)
+        while time.monotonic() < deadline:
+            events = selector.select(timeout=min(0.05, max(0.0, deadline - time.monotonic())))
+            if not events:
+                continue
+            chunk = os.read(fd, 64 * 1024)
+            if not chunk:
+                return bytes(payload)
+            payload.extend(chunk)
+            if len(payload) > _MAX_SUPERVISOR_MESSAGE:
+                raise RuntimeError("qualification supervisor returned an invalid receipt")
+        raise TimeoutError
+    finally:
+        selector.close()
+
+
+def _receipt_payload(receipt: ProcessReceipt) -> bytes:
+    return json.dumps(
+        {
+            "core_dumps_disabled": receipt.core_dumps_disabled,
+            "duration_ms": receipt.duration_ms,
+            "exit_code": receipt.exit_code,
+            "process_group_reaped": receipt.process_group_reaped,
+            "stderr_sha256": receipt.stderr_sha256,
+            "stdout_sha256": receipt.stdout_sha256,
+            "timed_out": receipt.timed_out,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _parse_receipt(payload: bytes) -> ProcessReceipt:
+    try:
+        value = json.loads(payload)
+        if type(value) is not dict or set(value) != {
+            "core_dumps_disabled",
+            "duration_ms",
+            "exit_code",
+            "process_group_reaped",
+            "stderr_sha256",
+            "stdout_sha256",
+            "timed_out",
+        }:
+            raise ValueError
+        receipt = ProcessReceipt(**value)
+        if (
+            (receipt.exit_code is not None and type(receipt.exit_code) is not int)
+            or type(receipt.timed_out) is not bool
+            or type(receipt.duration_ms) is not int
+            or receipt.duration_ms < 0
+            or type(receipt.process_group_reaped) is not bool
+            or type(receipt.core_dumps_disabled) is not bool
+            or any(
+                type(digest) is not str
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+                for digest in (receipt.stdout_sha256, receipt.stderr_sha256)
+            )
+        ):
+            raise ValueError
+        return receipt
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("qualification supervisor returned an invalid receipt") from exc
+
+
+def _supervisor_command(config_fd: int, result_fd: int) -> tuple[str, ...]:
+    return (
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--supervisor",
+        str(config_fd),
+        str(result_fd),
+    )
+
+
+def _pipe() -> tuple[int, int]:
+    if hasattr(os, "pipe2"):
+        return os.pipe2(os.O_CLOEXEC)
+    read_fd, write_fd = os.pipe()  # pragma: no cover - Linux has pipe2
+    os.set_inheritable(read_fd, False)
+    os.set_inheritable(write_fd, False)
+    return read_fd, write_fd
+
+
+def _terminate_supervisor(process: subprocess.Popen[bytes]) -> None:
+    identity = _process_identity(process.pid)
+    if identity is None:
+        return
+    # Freeze the only process capable of creating more owned descendants, then
+    # take the final ancestry snapshot. This closes the fork-vs-cleanup race.
+    _signal_identity(identity, signal.SIGSTOP)
+    tracked: dict[int, _ProcessIdentity] = {}
+    _collect_descendants(tracked, owner_pid=process.pid)
+    for child in tuple(tracked.values()):
+        _signal_identity(child, signal.SIGKILL)
+    _signal_identity(identity, signal.SIGKILL)
+    process.wait(timeout=1)
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        alive = [child for child in tracked.values() if _identity_alive(child)]
+        if not alive:
+            return
+        for child in alive:
+            _signal_identity(child, signal.SIGKILL)
+        time.sleep(0.01)
 
 
 def run_owned_process(
@@ -577,154 +776,85 @@ def run_owned_process(
     timeout_seconds: int,
     no_progress_seconds: int,
 ) -> ProcessReceipt:
-    """Run one owned process group with bounded output, time, cleanup, and receipts."""
+    """Delegate one run to an isolated subreaper supervisor over inherited pipes."""
     if not argv or any(type(arg) is not str or not arg or "\x00" in arg for arg in argv):
         raise ValueError("argv must contain nonempty safe strings")
     if timeout_seconds <= 0 or no_progress_seconds <= 0:
         raise ValueError("process timeouts must be positive")
-    if not _PROCESS_LOCK.acquire(timeout=_PROCESS_LOCK_TIMEOUT_SECONDS):
-        raise ProcessCoordinationTimeout("qualification process runner is busy")
-    started = time.monotonic()
-    stdout_hash = hashlib.sha256()
-    stderr_hash = hashlib.sha256()
-    timed_out = False
-    exit_code: int | None = None
-    process_group_reaped = True
-    marker_read: int | None = None
-    marker_write: int | None = None
-    operation_error: BaseException | None = None
-
+    config_read, config_write = _pipe()
+    result_read, result_write = _pipe()
+    supervisor: subprocess.Popen[bytes] | None = None
     try:
-        previous_subreaper = _subreaper_state(True)
-        if previous_subreaper is None:
-            raise RuntimeError("Linux child-subreaper support is required")
-        process: subprocess.Popen[bytes] | None = None
-        selector = selectors.DefaultSelector()
+        supervisor = subprocess.Popen(
+            _supervisor_command(config_read, result_write),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC"},
+            close_fds=True,
+            pass_fds=(config_read, result_write),
+        )
+        _close_fd(config_read)
+        config_read = -1
+        _close_fd(result_write)
+        result_write = -1
+        config = json.dumps(
+            {
+                "argv": list(argv),
+                "cwd": os.fspath(cwd),
+                "env": dict(env),
+                "no_progress_seconds": no_progress_seconds,
+                "timeout_seconds": timeout_seconds,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(config) > _MAX_SUPERVISOR_MESSAGE:
+            raise ValueError("supervisor configuration is too large")
+        deadline = time.monotonic() + timeout_seconds + _SUPERVISOR_GRACE_SECONDS
         try:
-            marker_read, marker_write, marker = _create_owned_marker()
-            _PARENT_MARKER_FDS.add(marker_write)
-            try:
-                try:
-                    process = subprocess.Popen(
-                        argv,
-                        cwd=cwd,
-                        env=dict(env),
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        start_new_session=True,
-                        preexec_fn=_disable_core_dumps,
-                        close_fds=True,
-                        pass_fds=(marker_read,),
-                    )
-                finally:
-                    _close_fd(marker_read)
-                    marker_read = None
-            except OSError:
-                return ProcessReceipt(
-                    exit_code=None,
-                    timed_out=False,
-                    stdout_sha256=_EMPTY_SHA256,
-                    stderr_sha256=_EMPTY_SHA256,
-                    duration_ms=max(0, int((time.monotonic() - started) * 1000)),
-                    process_group_reaped=True,
-                    core_dumps_disabled=False,
-                )
-
-            process_group = process.pid
-            root_identity = _process_identity(process.pid)
-            if root_identity is None:  # pragma: no cover - Linux procfs is required by target
-                raise RuntimeError("owned process identity is unavailable")
-            tracked = {process.pid: root_identity}
-            assert process.stdout is not None and process.stderr is not None
-            for pipe, digest in ((process.stdout, stdout_hash), (process.stderr, stderr_hash)):
-                os.set_blocking(pipe.fileno(), False)
-                selector.register(pipe, selectors.EVENT_READ, digest)
-            last_progress = time.monotonic()
-            terminated = False
-            termination_started: float | None = None
-            while selector.get_map() or process.poll() is None:
-                _collect_descendants(tracked, marker)
-                now = time.monotonic()
-                if not terminated and (
-                    now - started >= timeout_seconds or now - last_progress >= no_progress_seconds
-                ):
-                    timed_out = True
-                    process_group_reaped = _terminate_owned_tree(
-                        process, process_group, tracked, marker
-                    )
-                    terminated = True
-                    termination_started = time.monotonic()
-                elif process.poll() is not None and not terminated:
-                    process_group_reaped = _terminate_owned_tree(
-                        process, process_group, tracked, marker
-                    )
-                    terminated = True
-                    termination_started = time.monotonic()
-
-                events = selector.select(timeout=0.05) if selector.get_map() else ()
-                if not events and not selector.get_map():
-                    time.sleep(0.05)
-                for key, _ in events:
-                    try:
-                        chunk = os.read(key.fileobj.fileno(), 64 * 1024)
-                    except BlockingIOError:
-                        continue
-                    if chunk:
-                        key.data.update(chunk)
-                        last_progress = time.monotonic()
-                    else:
-                        selector.unregister(key.fileobj)
-                        key.fileobj.close()
-                if termination_started is not None and time.monotonic() - termination_started > 1:
-                    break
-
-            if process.poll() is None:
-                process_group_reaped = _terminate_owned_tree(
-                    process, process_group, tracked, marker
-                )
-            exit_code = process.wait(timeout=1)
-            _collect_descendants(tracked, marker)
-            if any(_identity_alive(identity) for identity in tracked.values()):
-                process_group_reaped = _terminate_owned_tree(
-                    process, process_group, tracked, marker
-                )
-            process_group_reaped = process_group_reaped and not _group_exists(process_group)
-        except BaseException as error:
-            operation_error = error
-            if process is not None:
-                identity = _process_identity(process.pid)
-                tracked = {} if identity is None else {process.pid: identity}
-                try:
-                    _terminate_owned_tree(process, process.pid, tracked, marker)
-                except BaseException:
-                    error.add_note("failed to terminate the owned process tree")
-            raise
-        finally:
-            selector.close()
-            if process is not None:
-                for pipe in (process.stdout, process.stderr):
-                    if pipe is not None and not pipe.closed:
-                        pipe.close()
-            _close_fd(marker_read)
-            if marker_write is not None:
-                _PARENT_MARKER_FDS.discard(marker_write)
-                _close_fd(marker_write)
-            try:
-                _restore_subreaper(previous_subreaper)
-            except RuntimeError as restore_error:
-                if operation_error is None:
-                    raise
-                operation_error.add_note(str(restore_error))
+            _write_limited(config_write, config, deadline=deadline)
+            _close_fd(config_write)
+            config_write = -1
+            payload = _read_limited(result_read, deadline=deadline)
+        except TimeoutError as exc:
+            raise RuntimeError("qualification supervisor did not return a receipt") from exc
+        if supervisor.wait(timeout=max(0.1, deadline - time.monotonic())) != 0:
+            raise RuntimeError("qualification supervisor failed")
+        return _parse_receipt(payload)
+    except (BrokenPipeError, OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("qualification supervisor failed") from exc
     finally:
-        _PROCESS_LOCK.release()
+        for descriptor in (config_read, config_write, result_read, result_write):
+            _close_fd(descriptor)
+        if supervisor is not None and supervisor.poll() is None:
+            _terminate_supervisor(supervisor)
 
-    return ProcessReceipt(
-        exit_code=exit_code,
-        timed_out=timed_out,
-        stdout_sha256=stdout_hash.hexdigest(),
-        stderr_sha256=stderr_hash.hexdigest(),
-        duration_ms=max(0, int((time.monotonic() - started) * 1000)),
-        process_group_reaped=process_group_reaped,
-        core_dumps_disabled=True,
-    )
+
+def _supervisor_entry(config_fd: int, result_fd: int) -> int:
+    try:
+        payload = bytearray()
+        while True:
+            chunk = os.read(config_fd, 64 * 1024)
+            if not chunk:
+                break
+            payload.extend(chunk)
+            if len(payload) > _MAX_SUPERVISOR_MESSAGE:
+                raise RuntimeError("invalid supervisor configuration")
+        value = json.loads(payload)
+        if type(value) is not dict:
+            raise RuntimeError("invalid supervisor configuration")
+        receipt = _supervise_target(value)
+        _write_all(result_fd, _receipt_payload(receipt))
+        return 0
+    except BaseException:
+        return 1
+    finally:
+        _close_fd(config_fd)
+        _close_fd(result_fd)
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised through run_owned_process
+    if len(sys.argv) == 4 and sys.argv[1] == "--supervisor":
+        raise SystemExit(_supervisor_entry(int(sys.argv[2]), int(sys.argv[3])))
+    raise SystemExit(2)

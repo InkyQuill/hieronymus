@@ -174,6 +174,56 @@ def test_cleanup_rejects_mount_at_every_root_transition(
     assert victim.read_text(encoding="utf-8") == "keep"
 
 
+def test_cleanup_pins_repository_identity_through_parent_before_descent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    victim = root / "qualification/.artifacts/work/file"
+    victim.parent.mkdir(parents=True)
+    victim.write_text("original", encoding="utf-8")
+    replacement = tmp_path / "replacement"
+    replacement_victim = replacement / "qualification/.artifacts/work/file"
+    replacement_victim.parent.mkdir(parents=True)
+    replacement_victim.write_text("replacement", encoding="utf-8")
+    original_open_directory = clean_module._open_directory
+    swapped = False
+
+    def swap_before_repo_open(name: str, parent_fd: int) -> int:
+        nonlocal swapped
+        parent = Path(os.readlink(f"/proc/self/fd/{parent_fd}"))
+        if name == root.name and parent == tmp_path and not swapped:
+            root.rename(tmp_path / "original")
+            replacement.rename(root)
+            swapped = True
+        return original_open_directory(name, parent_fd)
+
+    monkeypatch.setattr(clean_module, "_open_directory", swap_before_repo_open)
+    with pytest.raises(ValueError, match="repository.*changed"):
+        clean_module.main(["--repo-root", str(root), "--apply"])
+    assert (root / "qualification/.artifacts/work/file").read_text() == "replacement"
+    assert (tmp_path / "original/qualification/.artifacts/work/file").read_text() == "original"
+
+
+def test_cleanup_rejects_repository_mount_transition_before_qualification_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    victim = root / "qualification/.artifacts/work/file"
+    victim.parent.mkdir(parents=True)
+    victim.write_text("keep", encoding="utf-8")
+    real_mount_id = clean_module._mount_id
+
+    def injected(fd: int) -> int:
+        path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        value = real_mount_id(fd)
+        return value + 1 if path == root else value
+
+    monkeypatch.setattr(clean_module, "_mount_id", injected)
+    with pytest.raises(ValueError, match="mounted repository"):
+        clean_module.main(["--repo-root", str(root), "--apply"])
+    assert victim.read_text(encoding="utf-8") == "keep"
+
+
 def test_cleanup_revalidates_identity_before_deletion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

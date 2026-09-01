@@ -22,15 +22,18 @@ run and apply perform the same complete descriptor-relative validation, includin
 and Linux mount identities. Cleanup refuses symlinks, bind mounts, hard links, special files,
 identity swaps, repository/home roots, and the translation workspace.
 
-The process runner serializes the Linux subreaper boundary with a separately bounded coordination
-wait. Execution clocks begin only after that wait. It tracks owned descendants by PID and procfs
-start time while they run, signals both the original process group and tracked descendants that
-escape it, and never reaps an untracked child.
+Every process run gets a fresh, single-purpose Python supervisor. The caller passes the already
+sanitized argv, working directory, environment, and time bounds only through inherited anonymous
+pipes; none of those values appear in command lines, files, logs, errors, or receipts. The
+supervisor is single-threaded, enables Linux subreaper mode before it spawns the target, and never
+spawns unrelated children. Consequently every direct or adopted child is owned by that run,
+including an immediate double-fork that closes descriptors or becomes non-dumpable.
 
-Descendant discovery combines ancestry with a unique inherited anonymous-pipe marker. This is a
-cooperative boundary: a descendant that deliberately closes the marker before its first
-observation cannot safely be distinguished from an unrelated process. Once observed, its
-PID/start-time identity remains tracked even if it later closes the marker.
+The supervisor tracks each owned process by PID plus procfs start time, prefers pidfds, and signals
+individual identities only. It does not use raw process-group signals. The parent independently
+bounds the supervisor, validates its fixed receipt, closes all pipe descriptors, and terminates the
+supervisor-owned ancestry if the supervisor crashes, hangs, or returns malformed data. Separate
+supervisors allow concurrent calls without exposing unrelated parent forks to ownership discovery.
 
 Machine-readable records contain digests, counts, tool basenames, and versions only. Raw output,
 environment values, absolute tool/cache paths, and user data are never serialized. Generated
