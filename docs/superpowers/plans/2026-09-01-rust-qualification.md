@@ -4,7 +4,7 @@
 
 **Goal:** Produce reproducible, reviewed qualification evidence for MCP transport, semantic native dependencies, frontend embedding, and legacy database import before any production Rust workspace or dependent implementation plan is started.
 
-**Architecture:** Four standalone Rust harness crates live under `qualification/harnesses/` and exercise only synthetic or frozen compatibility inputs in disposable work directories. Python tooling validates a common evidence schema, redacts and renders canonical JSON into human-readable Markdown, fingerprints every input, and computes one aggregate gate without rerunning heavy or network-dependent probes during ordinary checks. The harnesses and their lockfiles are qualification artifacts, not the production workspace or reusable product modules.
+**Architecture:** First correct and re-review the frozen MCP 2026-07-28 authority against the official stateless request model, then commit that oracle before any candidate is qualified. Four standalone Rust harness crates live under `qualification/harnesses/` and exercise only synthetic or frozen compatibility inputs in disposable work directories; native executions are explicit opt-in qualification jobs, while ordinary Python tests use fakes and the record gate is network-free. Python tooling validates a common evidence schema, renders canonical JSON into Markdown, fingerprints every input, and computes one aggregate gate without rerunning heavy probes.
 
 **Tech Stack:** Python 3.12 standard library, pytest, Ruff, Rust 1.96.0 on `x86_64-unknown-linux-gnu`, Cargo lockfiles, Bun 1.3.14, rmcp 3.1.4 candidate, LanceDB 0.37.1 candidate, ort 2.0.0-rc.13 candidate, rust-embed 8.12.0 candidate, rusqlite 0.40.2 candidate, SQLite FTS5.
 
@@ -19,8 +19,9 @@
 - macOS and Windows are not supported by the initial cutover.
 - FTS5-only operation is the required baseline for the initial Linux cutover.
 - The MCP protocol revision is exactly `2026-07-28`; stdio is newline-delimited JSON-RPC, Streamable HTTP is `POST /mcp` with JSON or request-scoped SSE, and `/api/mcp/{operation}` remains an intentionally removed private Python bridge.
+- MCP 2026-07-28 is stateless: there is no `initialize`, `notifications/initialized`, or transport session; every request carries protocol revision and client identity metadata, every HTTP request also carries `Mcp-Method` and `Mcp-Name`, and every successful tool result contains required `resultType`.
 - SQLite remains authoritative for RAG sources, chunks, metadata, and semantic job state; embeddings and LanceDB tables are disposable derived artifacts.
-- The semantic qualification must record exact crate versions/features, binary size, checksum-verified model load, a 10,000-chunk filtered index, zero cross-series hits, insert/search/delete, generation isolation, crash/cancel recovery, a complete 50-query run, and FTS fallback.
+- The semantic qualification must record exact crate versions/features, binary size, checksum-verified model load, a 10,000-chunk actual ANN index, checked series pre-filter-before-ANN plan/cardinality proof, zero cross-series hits, insert/search/delete, generation isolation, SQLite-durable lease/counter/cancellation recovery, zero SQLite-write-transaction spans across ONNX/LanceDB I/O, a complete 50-query run, and nonempty/isolation/rebuild-equivalent FTS fallback.
 - Any failed semantic criterion selects `fts-only` for the initial Linux release; it never blocks the Rust workspace plan or the `x86_64-unknown-linux-gnu` release by itself.
 - MCP, frontend embedding, or legacy database import failure blocks the Rust workspace/dependent plan named by the record. A failure cannot change protocol revision, remove a required transport, introduce filesystem `ServeDir`, require Bun at runtime, discard a supported database, or create a fresh sibling database beside legacy data.
 - Release artifacts embed the built Svelte assets through `rust-embed`; Bun `1.3.14` is a build-time prerequisite only and is not an end-user runtime dependency.
@@ -34,14 +35,17 @@
 - Rust does not write source code into translation workspaces.
 - Qualification inputs are checked-in synthetic fixtures or deterministic generated corpora. Harnesses must never enumerate `$HOME`, read the developer's real data root, dump the environment, or access `/home/inky/Yandex.Disk/Translation`; Rust/Cargo/Bun toolchain and package caches are the only permitted home-scoped reads and their absolute paths are normalized out of evidence.
 - Canonical records contain no secrets, source-row text, hostnames, usernames, absolute home paths, bearer headers, cookies, launch grants, provider keys, or raw process logs.
-- Network access is permitted only in the explicit dependency-fetch, Bun-install, and checksum-verified model-acquisition steps. Ordinary record validation and every replay after acquisition run with Cargo offline and make no network request.
+- Network access is permitted only for Task 1's named official-spec authority review and the explicit dependency-fetch, Bun-install, and checksum-verified model/runtime-acquisition steps. Ordinary record validation and every replay after acquisition run offline and make no network request.
+- Ordinary `uv run pytest` tests inject bounded fake executables and never require Cargo, Rust artifacts, Bun packages, ONNX Runtime, a model, or a native-library cache. Live Rust/native qualification is explicit through `HIERONYMUS_QUALIFICATION_LIVE=1` commands and its dedicated workflow only.
 - Every live run writes beneath `qualification/.artifacts/`, hashes frozen inputs before and after use, removes transient work/log/install directories on success or failure, and leaves only ignored caches plus reviewed records.
+- Every Cargo build/test/Clippy command sets a risk-specific `CARGO_TARGET_DIR` beneath `qualification/.artifacts/cargo-target/`; crash probes disable core dumps and run in an owned process group that the runner terminates and reaps in `finally`.
 - Each harness has its own `Cargo.toml` and committed `Cargo.lock`; direct risk dependencies are exact pins and all resolved versions/features are copied from `cargo metadata --locked` and `cargo tree -e features --locked` into the record.
-- Each record's input digest covers `qualification/prerequisites.json`, `tools/qualification/model.py`, `tools/qualification/render.py`, its own Python runner, Cargo manifest/lockfile/source/tests, every consumed compatibility manifest/snapshot/fixture, and risk-specific frontend/corpus inputs; changing any of them makes the record stale.
+- Each record's input digest covers `qualification/prerequisites.json`, `qualification/rust-toolchain.toml`, `tools/qualification/model.py`, `tools/qualification/render.py`, `tools/qualification/acquire.py`, its own Python runner, Cargo manifest/lockfile/source/tests, every consumed compatibility manifest/snapshot/fixture including every actual HTTP route case, and risk-specific frontend/corpus inputs; changing any of them makes the record stale.
 - Pavel Obruchnikov `<me@inkyquill.net>` is the acceptance owner for all four records and the aggregate gate unless a compatibility-manifest entry explicitly delegates another named owner.
 
 ## Normative Inputs
 
+- `https://modelcontextprotocol.io/specification/2026-07-28` (used only for Task 1 authority correction/review; ordinary replay consumes the corrected checked-in oracle)
 - `docs/adr/0013-semantic-index-and-platform-support.md`
 - `docs/adr/0015-mcp-protocol-and-transport.md`
 - `docs/adr/0010-data-locations-schema-ownership-and-upgrade.md`
@@ -64,6 +68,13 @@
 
 Missing, stale, malformed, partially executed, or unreviewed evidence is blocking. A blocking result is a valid qualification record but is not permission to write its dependent implementation plan.
 
+## Execution And File Ownership Order
+
+- Execute Tasks 1–16 in numeric order. Task 1's corrected compatibility oracle must be accepted as its own commit before Task 3 starts.
+- Task 2 exclusively establishes common schemas/model/render/process/cleanup files. Task 6 is the only risk task allowed to extend the common acquisition/prerequisite files, and it starts only after Task 2 is accepted.
+- MCP Tasks 3–5, semantic Tasks 6–9, frontend Tasks 10–12, and database Tasks 13–15 each use manifest/build, behavior/recovery, then runner/evidence commits. Within a risk, later tasks modify only files explicitly handed off by the prior task.
+- Task 16 is the only task that revisits accepted records, gate schema, common README, dispatcher/checker, or CI. Do not implement risk tasks concurrently when they name the same file; never fold an earlier review boundary into a later commit.
+
 ## File Map
 
 - `qualification/README.md`: acquisition, offline replay, record refresh, cleanup, and decision rules.
@@ -76,12 +87,15 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 - `qualification/harnesses/semantic-native/`: standalone ONNX/LanceDB/FTS probe and lockfile.
 - `qualification/harnesses/frontend-embedding/`: standalone rust-embed probe and lockfile.
 - `qualification/harnesses/legacy-database-import/`: standalone read-only SQLite import probe and lockfile.
+- `tools/compatibility/inventory_mcp.py`: generator for the corrected official MCP 2026-07-28 protocol oracle.
+- `tools/compatibility/inventory_http.py`: generator for MCP Host/auth/version/method/name HTTP route cases.
 - `qualification/records/*.json`: canonical machine evidence for four risks plus the aggregate gate.
 - `docs/qualification/rust/*.md`: generated human-readable records; never hand-edited independently of JSON.
 - `tools/qualification/model.py`: typed records, required-criterion sets, consequence constants, input fingerprints, and redaction validation.
 - `tools/qualification/render.py`: deterministic Markdown renderer and drift checker.
 - `tools/qualification/acquire.py`: explicit atomic semantic-model acquisition with checksum verification.
 - `tools/qualification/clean.py`: bounded cleanup for ignored qualification artifacts only.
+- `tools/qualification/process.py`: owned process-group execution, core-dump suppression, timeouts, and bounded termination/reaping.
 - `tools/qualification/run_mcp.py`: MCP harness orchestration and record production.
 - `tools/qualification/run_semantic.py`: semantic build/recovery/fallback orchestration and record production.
 - `tools/qualification/run_frontend.py`: Bun build/rust-embed orchestration and record production.
@@ -95,7 +109,131 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 
 ---
 
-### Task 1: Qualification Record Boundary And Safe Artifact Lifecycle
+### Task 1: Correct And Re-Review The Official MCP 2026-07-28 Authority
+
+**Complexity:** Medium, 2–3 hours.
+
+**Files:**
+- Modify: `tools/compatibility/inventory_mcp.py`
+- Modify: `tools/compatibility/inventory_http.py`
+- Modify: `tools/compatibility/check.py`
+- Modify: `tests/compatibility/test_mcp_inventory.py`
+- Modify: `tests/compatibility/test_http_inventory.py`
+- Modify: `compatibility/fixtures/mcp/protocol.json`
+- Modify: `compatibility/fixtures/http/route-cases.json`
+- Modify if its MCP transport metadata changes: `compatibility/manifest.json`
+
+**Interfaces:**
+- Consumes: official MCP 2026-07-28 request/response and Streamable HTTP rules plus ADR 0015's transport/auth/Host requirements.
+- Produces: `_protocol_fixture(snapshot: dict[str, object]) -> dict[str, object]` whose `target` contains stateless `tools/list` and `tools/call` requests, per-request `protocolVersion` and `clientInfo`, required `resultType`, stdio framing, and HTTP JSON/SSE variants without initialize/session fields.
+- Produces: the `http.route.post.mcp` target cases in `_route_cases(snapshot: dict[str, object])`, covering valid request, invalid Host, missing/invalid bearer, missing/wrong protocol metadata, missing/wrong `Mcp-Method`, and missing/wrong `Mcp-Name`.
+- Produces: a separately reviewed compatibility commit that is an immutable prerequisite of Tasks 3–5; candidate qualification must not edit or normalize this oracle.
+
+- [ ] **Step 1: Replace obsolete fixture assertions with failing official-wire assertions**
+
+```python
+def test_protocol_fixture_is_stateless_2026_07_28() -> None:
+    protocol = json.loads(
+        (ROOT / "compatibility/fixtures/mcp/protocol.json").read_text(encoding="utf-8")
+    )
+    target = protocol["target"]
+    compact = json.dumps(protocol, sort_keys=True, separators=(",", ":"))
+    assert '"initialize":' not in compact
+    assert "notifications/initialized" not in compact
+    assert "Mcp-Session-Id" not in compact
+    assert {"initialize", "initialized", "session"}.isdisjoint(target)
+    for request in target["requests"]:
+        assert request["params"]["protocolVersion"] == "2026-07-28"
+        assert request["params"]["clientInfo"] == {
+            "name": "compatibility-replay",
+            "version": "1.0.0",
+        }
+    assert "Mcp-Session-Id" not in target["streamable_http"]["request"]["headers"]
+    result_type = target["tool_call"]["response"]["result"]["resultType"]
+    assert isinstance(result_type, str) and result_type
+
+
+def test_http_mcp_cases_cover_official_metadata_and_local_security() -> None:
+    case = _route_cases_by_id()["http.route.post.mcp"]["target"]
+    success = case["success"]["request"]
+    assert success["headers"]["Mcp-Method"] == "tools/call"
+    assert success["headers"]["Mcp-Name"] == "hieronymus_status"
+    assert success["body"]["params"]["protocolVersion"] == "2026-07-28"
+    assert {failure["id"] for failure in case["failures"]} == {
+        "invalid-host",
+        "missing-bearer",
+        "invalid-bearer",
+        "missing-version",
+        "unsupported-version",
+        "missing-mcp-method",
+        "wrong-mcp-method",
+        "missing-mcp-name",
+        "wrong-mcp-name",
+    }
+```
+
+- [ ] **Step 2: Run the focused tests and verify RED against the obsolete fixture**
+
+Run: `uv run pytest tests/compatibility/test_mcp_inventory.py::test_protocol_fixture_is_stateless_2026_07_28 tests/compatibility/test_http_inventory.py::test_http_mcp_cases_cover_official_metadata_and_local_security -v`
+
+Expected: FAIL because the current target fixture still contains `initialize`, lacks per-request metadata and `resultType`, and omits the method/name HTTP failures.
+
+- [ ] **Step 3: Implement the corrected generators and frozen target shapes**
+
+Define target request params exactly as:
+
+```python
+REQUEST_METADATA = {
+    "protocolVersion": "2026-07-28",
+    "clientInfo": {"name": "compatibility-replay", "version": "1.0.0"},
+}
+
+tools_list_request = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list",
+    "params": REQUEST_METADATA,
+}
+tool_call_request = {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+        **REQUEST_METADATA,
+        "name": "hieronymus_status",
+        "arguments": {},
+    },
+}
+```
+
+Store those two objects in `target["requests"]` in list/call order and store the call request/response pair at `target["tool_call"]`. The target response for `tools/call` keeps the frozen content/error envelope and includes the official nonempty `resultType` field inside `result`; the focused test rejects absence or an empty value. Stdio stores one request/response JSON line per operation. HTTP success includes `Host: 127.0.0.1:<PORT>`, synthetic bearer, `MCP-Protocol-Version: 2026-07-28`, `Mcp-Method: tools/call`, and `Mcp-Name: hieronymus_status`; failure cases change or omit exactly one field and retain deterministic status/error bodies. Delete initialize, initialized-notification, `Mcp-Session-Id`, and transport-session lifecycle shapes from the entire protocol fixture, including `current`; retain only current registry/tool-response observation as explicitly non-authoritative historical evidence. Qualification consumes only `target`.
+
+- [ ] **Step 4: Regenerate and prove the authority is complete and deterministic**
+
+Run: `uv run python -m tools.compatibility.inventory_mcp --write`
+
+Run: `uv run python -m tools.compatibility.inventory_http --write`
+
+Run: `uv run pytest tests/compatibility/test_mcp_inventory.py tests/compatibility/test_http_inventory.py tests/compatibility/test_check.py -v`
+
+Expected: PASS; regenerated target fixtures have no obsolete handshake/session shape, every target request has exact per-request metadata, HTTP cases cover Host/auth/version/method/name, and successful tool results require `resultType`.
+
+- [ ] **Step 5: Run the compatibility gate before any candidate work**
+
+Run: `uv run --no-cache --no-sync python -B -m tools.compatibility.check`
+
+Expected: exit `0` with no snapshot, fixture, manifest, ownership, or route-case drift.
+
+- [ ] **Step 6: Commit the corrected oracle as the candidate-qualification prerequisite**
+
+```bash
+git add tools/compatibility/inventory_mcp.py tools/compatibility/inventory_http.py tools/compatibility/check.py tests/compatibility/test_mcp_inventory.py tests/compatibility/test_http_inventory.py compatibility/fixtures/mcp/protocol.json compatibility/fixtures/http/route-cases.json compatibility/manifest.json
+git commit -m "fix: align MCP compatibility oracle with 2026-07-28"
+```
+
+Stop if this commit is not accepted. Tasks 3–5 fingerprint and consume this corrected commit; they must never preserve or replay the obsolete target fixture.
+
+### Task 2: Qualification Record Boundary And Safe Artifact Lifecycle
 
 **Complexity:** Medium, 3–4 hours.
 
@@ -110,10 +248,12 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 - Create: `tools/qualification/render.py`
 - Create: `tools/qualification/acquire.py`
 - Create: `tools/qualification/clean.py`
+- Create: `tools/qualification/process.py`
 - Create: `tests/qualification/factories.py`
 - Create: `tests/qualification/test_model.py`
 - Create: `tests/qualification/test_render.py`
 - Create: `tests/qualification/test_clean.py`
+- Create: `tests/qualification/test_process.py`
 - Modify: `.gitignore`
 
 **Interfaces:**
@@ -125,8 +265,10 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 - Produces: `acquire_semantic_model(repo_root: Path) -> Path`, explicit networked atomic download only.
 - Produces: `cleanup_targets(repo_root: Path, include_model: bool = False) -> tuple[Path, ...]` and CLI `python -m tools.qualification.clean [--apply] [--include-model]`.
 - Produces: `safe_subprocess_env(work_root: Path, *, cargo_offline: bool) -> dict[str, str]`, retaining only toolchain/package-cache paths and `PATH`, setting task-local `HOME`/temporary paths, and removing every `HIERONYMUS_*`, credential, proxy, token, and provider variable.
+- Produces: `run_owned_process(argv: tuple[str, ...], *, cwd: Path, env: Mapping[str, str], timeout_seconds: int, no_progress_seconds: int) -> ProcessReceipt`; on Linux it uses a new session/process group, sets core size to zero before exec, terminates then kills the owned group on timeout/failure, reaps the leader, and returns only bounded digests/status/timings.
+- Produces: `ProcessReceipt(exit_code: int | None, timed_out: bool, stdout_sha256: str, stderr_sha256: str, duration_ms: int, process_group_reaped: bool, core_dumps_disabled: bool)`.
 - Test-only factory: `make_record(repo_root: Path, risk: Risk, *, failed: tuple[str, ...] = (), review_status: ReviewStatus = "pending") -> QualificationRecord`; it emits every required criterion and a current input digest.
-- Test-only factory: `accepted_records(repo_root: Path, *, semantic: Literal["semantic-enabled", "fts-only"]) -> dict[Risk, QualificationRecord]`, `accepted_failure(repo_root: Path, risk: Risk) -> QualificationRecord`, `pending_review(record: QualificationRecord) -> QualificationRecord`, and `write_fake_executable(tmp_path: Path, *, failed_criteria: tuple[str, ...] = ()) -> Path`.
+- Test-only factory: `accepted_records(repo_root: Path, *, semantic: Literal["semantic-enabled", "fts-only"]) -> dict[Risk, QualificationRecord]`, `accepted_failure(repo_root: Path, risk: Risk) -> QualificationRecord`, `pending_review(record: QualificationRecord) -> QualificationRecord`, `write_fake_executable(tmp_path: Path, *, failed_criteria: tuple[str, ...] = ()) -> Path`, and `fake_child_and_grandchild(tmp_path: Path) -> tuple[str, ...]`.
 
 - [ ] **Step 1: Write failing record, redaction, rendering, and cleanup tests**
 
@@ -134,13 +276,14 @@ Missing, stale, malformed, partially executed, or unreviewed evidence is blockin
 from dataclasses import replace
 from pathlib import Path
 
-from tests.qualification.factories import make_record
+from tests.qualification.factories import fake_child_and_grandchild, make_record
 from tools.qualification.clean import cleanup_targets
 from tools.qualification.model import (
     fingerprint_inputs,
     validate_record,
 )
 from tools.qualification.render import render_record
+from tools.qualification.process import run_owned_process, safe_subprocess_env
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -191,11 +334,25 @@ def test_input_fingerprint_changes_with_fixture_bytes(tmp_path: Path) -> None:
     before = fingerprint_inputs(tmp_path, ("fixture.txt",))
     fixture.write_text("after", encoding="utf-8")
     assert fingerprint_inputs(tmp_path, ("fixture.txt",)) != before
+
+
+def test_owned_process_disables_core_and_reaps_group(tmp_path: Path) -> None:
+    receipt = run_owned_process(
+        fake_child_and_grandchild(tmp_path),
+        cwd=tmp_path,
+        env=safe_subprocess_env(tmp_path, cargo_offline=True),
+        timeout_seconds=1,
+        no_progress_seconds=1,
+    )
+    assert receipt.timed_out
+    assert receipt.core_dumps_disabled
+    assert receipt.process_group_reaped
+    assert list(tmp_path.glob("core*")) == []
 ```
 
 - [ ] **Step 2: Run the tests and verify the missing-package failure**
 
-Run: `uv run pytest tests/qualification/test_model.py tests/qualification/test_render.py tests/qualification/test_clean.py -v`
+Run: `uv run pytest tests/qualification/test_model.py tests/qualification/test_render.py tests/qualification/test_clean.py tests/qualification/test_process.py -v`
 
 Expected: FAIL during collection with `ModuleNotFoundError: No module named 'tools.qualification'`.
 
@@ -237,9 +394,11 @@ Create `qualification/prerequisites.json`:
   },
   "network_policy": {
     "allowed_only_for": [
+      "manual review of https://modelcontextprotocol.io/specification/2026-07-28",
       "cargo fetch --locked",
       "bun install --frozen-lockfile",
-      "python -m tools.qualification.acquire semantic-model"
+      "python -m tools.qualification.acquire semantic-model",
+      "python -m tools.qualification.acquire onnx-runtime"
     ],
     "ordinary_replay": "offline"
   }
@@ -275,12 +434,17 @@ REQUIRED_CRITERIA: dict[Risk, tuple[str, ...]] = {
     "mcp-transport": (
         "locked-native-build",
         "protocol-2026-07-28",
+        "no-handshake-or-session",
+        "per-request-client-metadata",
         "unsupported-version-rejected",
         "stdio-newline-jsonrpc",
         "streamable-http-json",
         "streamable-http-sse",
+        "http-method-name-headers",
+        "http-host-auth-version-cases",
         "registry-identity",
         "result-error-identity",
+        "result-type-required",
         "required-auth-metadata",
         "private-bridge-absent",
     ),
@@ -290,9 +454,13 @@ REQUIRED_CRITERIA: dict[Risk, tuple[str, ...]] = {
         "install-uninstall",
         "model-checksum-load",
         "ten-thousand-chunk-build",
+        "ann-index-created",
+        "series-prefilter-before-ann",
         "zero-cross-series-hits",
         "insert-search-delete",
         "generation-isolation",
+        "durable-sqlite-job-state",
+        "no-sqlite-write-across-native-io",
         "crash-recovery",
         "cancel-recovery",
         "fts-fallback",
@@ -305,7 +473,7 @@ REQUIRED_CRITERIA: dict[Risk, tuple[str, ...]] = {
         "index-and-spa-fallback",
         "hashed-asset-and-mime",
         "missing-asset-404",
-        "empty-directory-execution",
+        "runtime-asset-root-inaccessible",
         "no-runtime-bun-node-python",
         "no-source-map-secret",
         "binary-size-recorded",
@@ -323,6 +491,17 @@ REQUIRED_CRITERIA: dict[Risk, tuple[str, ...]] = {
         "no-sensitive-row-output",
     ),
 }
+
+
+COMMON_FINGERPRINT_INPUTS = (
+    "qualification/prerequisites.json",
+    "qualification/rust-toolchain.toml",
+    "tools/qualification/model.py",
+    "tools/qualification/render.py",
+    "tools/qualification/acquire.py",
+    "tools/qualification/process.py",
+    "tools/qualification/clean.py",
+)
 
 
 FAILURE_CONSEQUENCES: dict[Risk, str] = {
@@ -385,6 +564,8 @@ class CleanupEvidence:
     install_dir_removed: bool
     source_inputs_unchanged: bool
     user_data_opened: bool
+    core_dumps_disabled: bool
+    owned_process_groups_reaped: bool
 
 
 @dataclass(frozen=True)
@@ -416,7 +597,7 @@ class QualificationRecord:
     review: Review
 ```
 
-Validation requires every criterion exactly once, forbids unknown criteria, requires a reason for `not-run`, derives record status from evidence, enforces the exact decision/consequence mapping, verifies every input path and digest, requires a nonempty ordered command list using repository-relative/artifact-relative arguments, requires the first four cleanup booleans true and `user_data_opened` false, and scans the serialized record for the forbidden data classes in Global Constraints. Live runners create `Review(owner="Pavel Obruchnikov <me@inkyquill.net>", status="pending", objective_evidence_reviewed=False, normative_constraints_preserved=False)`; only Task 7 changes review fields. JSON schemas set `additionalProperties: false` on every fixed object; `measurements` permits only named scalar or scalar-array values, never nested logs or payloads.
+Validation requires every criterion exactly once, forbids unknown criteria, requires a reason for `not-run`, derives record status from evidence, enforces the exact decision/consequence mapping, verifies every input path/digest, and requires `COMMON_FINGERPRINT_INPUTS`. Each runner appends its own runner, Cargo manifest/lock/source/tests, and every concrete consumed fixture path: MCP and frontend both include the full `compatibility/fixtures/http/route-cases.json`; MCP also includes every concrete tool input/wire file and the corrected protocol fixture. A nonempty ordered command list uses only repository-relative/artifact-relative arguments. All cleanup booleans except `user_data_opened` must be true and `user_data_opened` false. The serialized record is scanned for every forbidden data class in Global Constraints. Live runners create `Review(owner="Pavel Obruchnikov <me@inkyquill.net>", status="pending", objective_evidence_reviewed=False, normative_constraints_preserved=False)`; only Task 16 changes review fields. JSON schemas set `additionalProperties: false` on every fixed object; `measurements` permits only named scalar or scalar-array values, never nested logs or payloads.
 
 - [ ] **Step 5: Implement deterministic rendering, acquisition, and bounded cleanup**
 
@@ -424,9 +605,11 @@ Validation requires every criterion exactly once, forbids unknown criteria, requ
 
 Expose deterministic CLIs `python -m tools.qualification.model validate <record.json>` and `python -m tools.qualification.render --check <record.json> <record.md>` so individual tasks can validate a record before the aggregate checker exists.
 
-`acquire_semantic_model` uses `urllib.request`, writes only `model.onnx.part`, hashes while streaming, deletes a mismatched partial file, calls `os.replace` after success, and returns the verified final path. Redirects are limited to `huggingface.co`, `cdn-lfs.huggingface.co`, and `cas-bridge.xethub.hf.co`; the command reports expected/actual checksum without printing headers.
+`acquire_semantic_model` uses `urllib.request`, writes only `model.onnx.part`, hashes while streaming, deletes a mismatched partial file, calls `os.replace` after success, and returns the verified final path. The initial URL must exactly match `prerequisites.json`; at most five redirect hops may use HTTPS with no userinfo/fragment and exact host in `huggingface.co`, `cdn-lfs.huggingface.co`, `cas-bridge.xethub.hf.co`, or the observed `us.aws.cdn.hf.co`. Redirect query strings may carry CDN signatures but are never logged or persisted; caller credentials/cookies are never forwarded. Any other hop fails before body download, and only the pinned final SHA-256 authorizes promotion.
 
 `safe_subprocess_env` allowlists `PATH`, `CARGO_HOME`, `RUSTUP_HOME`, and `BUN_INSTALL_CACHE_DIR` when present; sets `HOME`, `TMPDIR`, `XDG_CACHE_HOME`, and `XDG_CONFIG_HOME` beneath the risk work root; sets `CARGO_NET_OFFLINE=true` for replay; and removes every other inherited variable. Tests set sentinel `HIERONYMUS_DATA_ROOT`, `HOME`, `HTTP_PROXY`, `OPENAI_API_KEY`, `Authorization`, and `COOKIE` values and assert none reaches a child probe or record.
+
+`run_owned_process` is the only live-run subprocess primitive. Tests launch a fake child and grandchild, assert the process group is gone after timeout, assert `RLIMIT_CORE` is `(0, 0)` inside the child, and assert no `core` file exists. Every Cargo invocation receives an explicit `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/<risk>` through `safe_subprocess_env`.
 
 `cleanup_targets` returns only these resolved paths:
 
@@ -457,7 +640,7 @@ Document that acquisition is explicit, live results are checked in only after sa
 
 - [ ] **Step 7: Run focused verification**
 
-Run: `uv run pytest tests/qualification/test_model.py tests/qualification/test_render.py tests/qualification/test_clean.py -v`
+Run: `uv run pytest tests/qualification/test_model.py tests/qualification/test_render.py tests/qualification/test_clean.py tests/qualification/test_process.py -v`
 
 Run: `uv run ruff check tools/qualification tests/qualification`
 
@@ -472,62 +655,27 @@ git add .gitignore qualification/README.md qualification/prerequisites.json qual
 git commit -m "test: define Rust qualification record contract"
 ```
 
-### Task 2: MCP 2026-07-28 Transport Qualification
+### Task 3: MCP Candidate Manifest And Locked Build
 
-**Complexity:** High, 3–4 hours.
+**Complexity:** Low, 1–2 hours.
 
 **Files:**
 - Create: `qualification/harnesses/mcp-transport/Cargo.toml`
 - Create: `qualification/harnesses/mcp-transport/Cargo.lock`
-- Create: `qualification/harnesses/mcp-transport/src/main.rs`
-- Create: `qualification/harnesses/mcp-transport/src/registry.rs`
-- Create: `qualification/harnesses/mcp-transport/src/report.rs`
-- Create: `qualification/harnesses/mcp-transport/tests/transport.rs`
-- Create: `tools/qualification/run_mcp.py`
-- Create: `tests/qualification/test_run_mcp.py`
-- Create: `qualification/records/mcp-transport.json`
-- Create: `docs/qualification/rust/mcp-transport.md`
+- Create: `qualification/harnesses/mcp-transport/src/main.rs` containing only `fn main() {}` until Task 4.
 
 **Interfaces:**
-- Consumes: `compatibility/snapshots/mcp.json`, `compatibility/fixtures/mcp/protocol.json`, every `compatibility/fixtures/mcp/*/{success,error}.input.json`, every corresponding `wire.{success,error}.json`, and manifest ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and `mcp.tool.*`.
-- Produces Rust CLI: `mcp-transport stdio --registry <path> --protocol <path>`.
-- Produces Rust CLI: `mcp-transport http --registry <path> --protocol <path> --bind 127.0.0.1:0 --ready-file <path>`.
-- Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path | None = None) -> QualificationRecord`; `None` builds the locked candidate, while tests inject a bounded fake executable.
-- Produces canonical record decision `qualified` only when all ten MCP criteria pass; otherwise `blocked` with the exact Task 1 consequence.
+- Consumes: accepted Task 1 oracle commit and Rust 1.96.0 qualification toolchain.
+- Produces: standalone exact candidate manifest and committed lockfile; no transport behavior or record.
+- Build invariant: every command sets `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport` and never creates a repository-local `target/`.
 
-- [ ] **Step 1: Write failing runner and transport tests**
+- [ ] **Step 1: Verify RED before the standalone manifest exists**
 
-```python
-def test_mcp_runner_consumes_the_frozen_protocol_and_registry(tmp_path: Path) -> None:
-    record = run(ROOT, tmp_path)
-    assert record.risk == "mcp-transport"
-    assert "compatibility/fixtures/mcp/protocol.json" in record.input_paths
-    assert "compatibility/snapshots/mcp.json" in record.input_paths
-    assert [item.criterion for item in record.evidence] == list(
-        REQUIRED_CRITERIA["mcp-transport"]
-    )
-
-
-def test_mcp_failure_preserves_adr_0015(tmp_path: Path, failing_harness: Path) -> None:
-    record = run(ROOT, tmp_path, executable=failing_harness)
-    assert record.status == "fail"
-    assert record.decision == "blocked"
-    assert record.consequence == FAILURE_CONSEQUENCES["mcp-transport"]
-```
-
-In Rust integration tests, feed the target `initialize`, unsupported-version, stdio, Streamable HTTP JSON, and SSE cases from `protocol.json`; assert an exact match produces `pass`, an exact mismatch produces bounded `fail` evidence without normalization, and stdio stdout framing counts one JSON object followed by `\n` per response.
-
-- [ ] **Step 2: Run tests and confirm both missing implementations**
-
-Run: `uv run pytest tests/qualification/test_run_mcp.py -v`
-
-Expected: FAIL importing `tools.qualification.run_mcp`.
-
-Run: `cargo +1.96.0 test --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 check --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu`
 
 Expected: FAIL because `qualification/harnesses/mcp-transport/Cargo.toml` does not exist.
 
-- [ ] **Step 3: Create the standalone candidate manifest and registry adapter**
+- [ ] **Step 2: Create the standalone candidate manifest**
 
 Use this direct candidate boundary; the generated lockfile records every transitive version:
 
@@ -564,15 +712,62 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-
 tempfile = "3"
 ```
 
-`registry.rs` loads the frozen registry JSON into immutable `ToolDefinition` values and returns canned fixture results only; it has no domain store or SQLite access:
+- [ ] **Step 3: Acquire, lock, and prove the empty candidate builds offline**
+
+Networked prerequisite:
+
+```bash
+cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/mcp-transport/Cargo.toml
+cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked
+```
+
+Offline build:
+
+```bash
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 check --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu
+```
+
+Expected: PASS without network access; `git status --short` shows no unbounded `target/` tree.
+
+- [ ] **Step 4: Commit the independently reviewable candidate boundary**
+
+```bash
+git add qualification/harnesses/mcp-transport/Cargo.toml qualification/harnesses/mcp-transport/Cargo.lock qualification/harnesses/mcp-transport/src/main.rs
+git commit -m "test: lock MCP qualification candidate"
+```
+
+### Task 4: MCP Stateless Transport Behavior
+
+**Complexity:** High, 3–4 hours.
+
+**Files:**
+- Modify: `qualification/harnesses/mcp-transport/src/main.rs`
+- Create: `qualification/harnesses/mcp-transport/src/registry.rs`
+- Create: `qualification/harnesses/mcp-transport/src/report.rs`
+- Create: `qualification/harnesses/mcp-transport/tests/transport.rs`
+
+**Interfaces:**
+- Consumes: Task 1's corrected `compatibility/fixtures/mcp/protocol.json`, `compatibility/fixtures/http/route-cases.json`, `compatibility/snapshots/mcp.json`, and Task 3 lockfile.
+- Produces Rust CLI: `mcp-transport stdio --registry <path> --protocol <path>`.
+- Produces Rust CLI: `mcp-transport http --registry <path> --protocol <path> --route-cases <path> --bind 127.0.0.1:0 --ready-file <path>`.
+- Produces bounded JSON evidence for every MCP criterion; it never performs or accepts initialize/session behavior.
+
+- [ ] **Step 1: Write failing stateless stdio/HTTP behavior tests**
+
+In `tests/transport.rs`, load only `protocol["target"]`; assert `tools/list` and `tools/call` work without a preceding handshake, reject absent/wrong per-request protocol/client metadata, require `resultType`, and reject any `initialize`, `notifications/initialized`, or session header. Replay both HTTP response modes and every Task 1 `http.route.post.mcp` target case, including `Mcp-Method`/`Mcp-Name`, Host, bearer, and version failures.
+
+- [ ] **Step 2: Run behavior tests and verify RED**
+
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu --test transport`
+
+Expected: FAIL because the empty binary exposes no transport.
+
+- [ ] **Step 3: Implement the frozen registry and stateless transports**
+
+`registry.rs` loads immutable `ToolDefinition` values and canned success/error fixture results only. It has no domain store or SQLite access. If rmcp cannot represent the official shape, report failure; do not introduce handshake state or alter fixtures.
 
 ```rust
 pub const PROTOCOL_REVISION: &str = "2026-07-28";
-
-pub struct FrozenRegistry {
-    pub tools: Vec<ToolDefinition>,
-    pub digest: String,
-}
 
 pub trait RegistryProbe: Sized {
     fn load(snapshot: &Path) -> anyhow::Result<Self>;
@@ -581,32 +776,67 @@ pub trait RegistryProbe: Sized {
 }
 ```
 
-If rmcp cannot represent the exact revision or a required transport behavior, the harness records that criterion as `fail`; do not patch fixture expectations, alias another revision, or implement a private operation URL.
+Every request validates `protocolVersion` and `clientInfo`; HTTP additionally validates `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` before dispatch. Every successful result includes `resultType`. Stdio emits one response JSON object plus `\n`; HTTP binds only the supplied loopback address and serves only `POST /mcp` as JSON or request-scoped SSE.
 
-- [ ] **Step 4: Implement stdio and loopback HTTP probes with bounded lifecycle**
-
-`main.rs` exposes exactly two subcommands. Stdio reads one JSON-RPC object per input line, writes responses only to stdout, and writes diagnostics only to stderr. HTTP binds only the supplied loopback address, writes `{ "address": "127.0.0.1:<PORT>" }` atomically to the ready file, requires `Authorization: Bearer qualification-synthetic-token` and `MCP-Protocol-Version: 2026-07-28`, serves only `POST /mcp`, and supports both JSON and request-scoped SSE responses.
+- [ ] **Step 4: Implement bounded reports and pass the offline behavior suite**
 
 `report.rs` emits one bounded JSON object containing protocol version, transport, request/response SHA-256 values, content types, registry digest, stdout framing counts, and exit status. It never emits the bearer literal, headers, raw payload text, or absolute paths.
 
-- [ ] **Step 5: Acquire crates explicitly, lock them, and run offline tests**
-
-Networked acquisition prerequisite:
-
 ```bash
-cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/mcp-transport/Cargo.toml
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked
-```
-
-Offline replay:
-
-```bash
-CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu
 ```
 
 Expected: the test command completes without network access and proves both exact-match and mismatch-reporting paths. Candidate protocol/transport support is decided only by the live fixture replay and becomes an honest qualified or blocking record.
 
-- [ ] **Step 6: Implement the Python live runner and write both record formats**
+- [ ] **Step 5: Commit transport behavior without records**
+
+```bash
+git add qualification/harnesses/mcp-transport/src qualification/harnesses/mcp-transport/tests/transport.rs
+git commit -m "test: prove stateless MCP transport behavior"
+```
+
+### Task 5: MCP Runner And Qualification Evidence
+
+**Complexity:** Medium, 2–3 hours.
+
+**Files:**
+- Create: `tools/qualification/run_mcp.py`
+- Create: `tests/qualification/test_run_mcp.py`
+- Create: `qualification/records/mcp-transport.json`
+- Create: `docs/qualification/rust/mcp-transport.md`
+
+**Interfaces:**
+- Consumes: Tasks 1, 3, and 4 plus every MCP tool input/wire fixture and manifest ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and `mcp.tool.*`.
+- Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1` before Cargo execution.
+- Produces canonical `qualified` only when every MCP criterion passes; otherwise exact Task 2 `blocked` consequence.
+
+- [ ] **Step 1: Write failing fake-only runner tests**
+
+```python
+def test_mcp_runner_consumes_corrected_oracle(tmp_path: Path) -> None:
+    executable = write_fake_executable(tmp_path)
+    record = run(ROOT, tmp_path, executable=executable)
+    assert "compatibility/fixtures/mcp/protocol.json" in record.input_paths
+    assert "compatibility/fixtures/http/route-cases.json" in record.input_paths
+    assert {item.criterion for item in record.evidence} == set(
+        REQUIRED_CRITERIA["mcp-transport"]
+    )
+
+
+def test_mcp_failure_preserves_adr_0015(tmp_path: Path) -> None:
+    executable = write_fake_executable(tmp_path, failed_criteria=("result-type-required",))
+    record = run(ROOT, tmp_path, executable=executable)
+    assert record.decision == "blocked"
+    assert record.consequence == FAILURE_CONSEQUENCES["mcp-transport"]
+```
+
+- [ ] **Step 2: Run the unit tests and verify RED without invoking Cargo**
+
+Run: `uv run pytest tests/qualification/test_run_mcp.py -v`
+
+Expected: FAIL importing `tools.qualification.run_mcp`; no Cargo command runs.
+
+- [ ] **Step 3: Implement the fake-injectable live runner**
 
 `run_mcp.run` uses `qualification/.artifacts/work/mcp-transport`, starts each transport with a 20-second ready/response timeout, replays every target transport case, compares tool lists by canonical JSON digest, compares one success and one error tool call across transports, verifies `/api/mcp/fixture` is absent, and gathers locked dependencies with:
 
@@ -615,13 +845,13 @@ cargo +1.96.0 metadata --manifest-path qualification/harnesses/mcp-transport/Car
 cargo +1.96.0 tree --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked -e features
 ```
 
-The runner kills child processes in `finally`, deletes ready files and logs, verifies all compatibility inputs are byte-identical, then atomically writes `qualification/records/mcp-transport.json` and renders `docs/qualification/rust/mcp-transport.md`.
+The runner uses `run_owned_process`, deletes ready files/logs/target output in `finally`, verifies all compatibility inputs are byte-identical, and records the corrected oracle commit/digest. It compares exact route-case status/body digests and never claims generic Host/auth routing beyond the frozen `POST /mcp` cases.
 
-Run: `uv run python -m tools.qualification.run_mcp --write`
+Run: `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write`
 
 Expected: exit `0` means a complete, sanitized record was written. The record itself says `qualified` or `blocked`; a blocking candidate is retained rather than rewritten to pass.
 
-- [ ] **Step 7: Verify focused record and formatting checks**
+- [ ] **Step 4: Verify unit tests, opt-in live evidence, and formatting**
 
 Run: `uv run pytest tests/qualification/test_run_mcp.py tests/qualification/test_model.py tests/qualification/test_render.py -v`
 
@@ -629,18 +859,18 @@ Run: `uv run ruff check tools/qualification/run_mcp.py tests/qualification/test_
 
 Run: `cargo +1.96.0 fmt --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --check`
 
-Run: `CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu -- -D warnings`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu -- -D warnings`
 
 Expected: tests, Ruff, rustfmt, and Clippy pass; record validation reports no missing criterion, stale input, secret, or path leak.
 
-- [ ] **Step 8: Commit the MCP qualification**
+- [ ] **Step 5: Commit the MCP qualification record**
 
 ```bash
-git add qualification/harnesses/mcp-transport tools/qualification/run_mcp.py tests/qualification/test_run_mcp.py qualification/records/mcp-transport.json docs/qualification/rust/mcp-transport.md
+git add tools/qualification/run_mcp.py tests/qualification/test_run_mcp.py qualification/records/mcp-transport.json docs/qualification/rust/mcp-transport.md
 git commit -m "test: qualify MCP transport candidate"
 ```
 
-### Task 3: Deterministic Semantic Corpus And Native Candidate Core
+### Task 6: Semantic Acquisition, Corpus, And Locked Candidate Build
 
 **Complexity:** High, 3–4 hours.
 
@@ -650,24 +880,17 @@ git commit -m "test: qualify MCP transport candidate"
 - Create: `qualification/harnesses/semantic-native/Cargo.lock`
 - Create: `qualification/harnesses/semantic-native/src/lib.rs`
 - Create: `qualification/harnesses/semantic-native/src/corpus.rs`
-- Create: `qualification/harnesses/semantic-native/src/model.rs`
-- Create: `qualification/harnesses/semantic-native/src/index.rs`
-- Create: `qualification/harnesses/semantic-native/src/fts.rs`
 - Create: `qualification/harnesses/semantic-native/tests/corpus.rs`
-- Create: `qualification/harnesses/semantic-native/tests/index.rs`
 - Modify: `qualification/prerequisites.json`
 - Modify: `tools/qualification/acquire.py`
-- Modify: `tests/qualification/test_model.py`
+- Create: `tests/qualification/test_acquire.py`
 
 **Interfaces:**
-- Consumes: deterministic corpus recipe plus the success inputs from `compatibility/fixtures/mcp/hieronymus_rag_search/` and `compatibility/fixtures/mcp/hieronymus_recall/` as fixed semantic-query seeds.
+- Consumes: corrected Task 1 MCP RAG/recall success inputs as fixed query seeds and Task 2 acquisition boundary.
 - Produces: `generate_corpus(spec: &CorpusSpec) -> anyhow::Result<(Vec<Chunk>, Vec<Query>)>` with exactly 10,000 chunks across 100 series and 50 queries.
-- Produces: trait `EmbeddingProvider::embed(&mut self, token_ids: &[i64], attention: &[i64]) -> anyhow::Result<Vec<f32>>`.
-- Produces: `OnnxEmbeddingProvider::load(runtime: &Path, model: &Path, expected_sha256: &str) -> anyhow::Result<Self>`.
-- Produces: `async fn GenerationIndex::create(root: &Path, identity: ModelIdentity, generation: &str) -> anyhow::Result<Self>` plus async append/search/delete/verify/activate methods.
-- Produces: `fts_search(connection: &rusqlite::Connection, series_slug: &str, query: &str, limit: usize) -> anyhow::Result<Vec<i64>>` with no native semantic dependency when built without the `semantic-native` feature.
+- Produces: verified model/runtime directories plus standalone exact candidate manifest/lockfile; no semantic decision or record.
 
-- [ ] **Step 1: Write failing deterministic-corpus and index-boundary tests**
+- [ ] **Step 1: Write failing deterministic-corpus and safe-acquisition tests**
 
 ```rust
 #[test]
@@ -685,29 +908,13 @@ fn corpus_is_exactly_ten_thousand_chunks_and_fifty_queries() -> anyhow::Result<(
     Ok(())
 }
 
-#[tokio::test]
-async fn filter_is_applied_before_vector_ranking() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let mut index = GenerationIndex::create(root.path(), fake_identity(), "generation-a").await?;
-    index.append(fake_chunks_for_two_series()).await?;
-    let hits = index.search("series-a", &fake_embedding(7), 10).await?;
-    assert!(hits.iter().all(|hit| hit.series_slug == "series-a"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn incomplete_generation_never_becomes_active() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    activate_complete_generation(root.path(), "generation-a").await?;
-    write_incomplete_generation(root.path(), "generation-b").await?;
-    assert_eq!(read_active_generation(root.path())?, "generation-a");
-    Ok(())
-}
 ```
+
+In `tests/qualification/test_acquire.py`, use an in-memory ONNX archive with the official top directory and relative library symlink; assert the validated chain resolves within the extraction root. Add RED cases for `../` traversal, absolute links, link cycles, links escaping the top directory, and checksum mismatch. Add one accepted signed redirect to exact host `us.aws.cdn.hf.co` and one rejected redirect to `us.aws.cdn.hf.co.attacker.invalid`.
 
 - [ ] **Step 2: Run the tests and confirm the missing manifest failure**
 
-Run: `cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --no-default-features`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --no-default-features`
 
 Expected: FAIL because `qualification/harnesses/semantic-native/Cargo.toml` does not exist.
 
@@ -746,7 +953,7 @@ Extend `qualification/prerequisites.json` with:
 }
 ```
 
-Extend `tools.qualification.acquire` with `onnx-runtime`. It downloads to `qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0.tgz.part`, permits redirects only through `github.com`, `release-assets.githubusercontent.com`, and `objects.githubusercontent.com`, verifies SHA-256, safely extracts only archive members beneath `qualification/.artifacts/models/onnxruntime-1.28.0/`, rejects symlinks and path traversal, verifies `lib/libonnxruntime.so` exists, and atomically renames the completed directory. Add tests with an in-memory safe archive, a `../escape` member, a symlink member, a disallowed redirect host, and a checksum mismatch.
+Extend `tools.qualification.acquire` with `onnx-runtime`. It downloads to `qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0.tgz.part`, permits only HTTPS redirects through `github.com`, `release-assets.githubusercontent.com`, and `objects.githubusercontent.com`, and verifies SHA-256 before extraction. Require exactly one archive top directory named `onnxruntime-linux-x64-1.28.0`; strip only that component. Extract regular files/directories first, then create relative symlinks only after lexically resolving every hop, rejecting absolute targets, `..` escape, cycles, dangling links, device entries, hard links, and any final target outside the extraction root. Validate the required `lib/libonnxruntime.so` chain and atomically rename the completed directory.
 
 - [ ] **Step 5: Create the feature-separated candidate manifest**
 
@@ -764,7 +971,6 @@ semantic-native = [
   "dep:arrow-array",
   "dep:arrow-schema",
   "dep:lancedb",
-  "dep:ndarray",
   "dep:ort",
 ]
 
@@ -774,7 +980,6 @@ arrow-array = { version = "=58.0.0", optional = true }
 arrow-schema = { version = "=58.0.0", optional = true }
 futures = "0.3"
 lancedb = { version = "=0.37.1", default-features = false, optional = true }
-ndarray = { version = "0.16", optional = true }
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["api-28", "load-dynamic", "ndarray", "std", "tracing"], optional = true }
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -787,47 +992,9 @@ tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "sy
 proptest = "1"
 ```
 
-`--no-default-features` compiles the FTS path without LanceDB, Arrow, ndarray, or ort references. The native runtime is loaded explicitly from the verified acquisition path; no build script downloads ONNX Runtime.
+`--no-default-features` compiles the FTS path without LanceDB, Arrow, ndarray, or ort references. Avoid a direct `ndarray` dependency: use the `ort` rc.13 re-export/input macros so no cross-version array values cross the public boundary. The native runtime is loaded explicitly from the verified acquisition path; no build script downloads ONNX Runtime.
 
-- [ ] **Step 6: Implement the model, generation, and FTS boundaries**
-
-Use these exact types:
-
-```rust
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ModelIdentity {
-    pub provider: String,
-    pub model: String,
-    pub revision: String,
-    pub dimensions: usize,
-    pub normalization: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct Chunk {
-    pub chunk_id: i64,
-    pub series_slug: String,
-    pub checksum: String,
-    pub generation_id: String,
-    pub token_ids: Vec<i64>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct SearchHit {
-    pub chunk_id: i64,
-    pub series_slug: String,
-    pub generation_id: String,
-    pub distance: f32,
-}
-```
-
-`OnnxEmbeddingProvider` verifies the model checksum before `ort::init_from`, validates 384 output dimensions, mean-pools with the attention mask, and L2-normalizes. It records only identity, dimensions, load duration, and output digest.
-
-`GenerationIndex` stores `chunk_id`, `series_slug`, checksum, generation id, and a fixed-size 384-float vector. `search` applies the exact series predicate before ANN ranking. If the candidate cannot prove pre-filtering through returned execution metadata and adversarial decoys, the live criterion fails; do not substitute over-fetch/post-filter behavior. Activation writes a small manifest only after expected/written counts, identity, dimensions, checksums, and sample queries verify.
-
-`fts.rs` creates a disposable external-content FTS5 table over generated SQLite rows and searches by `series_slug`; it is compiled and tested with `--no-default-features`.
-
-- [ ] **Step 7: Acquire dependencies once and run offline unit tests**
+- [ ] **Step 6: Acquire dependencies once and prove the candidate builds offline**
 
 Networked acquisition prerequisites:
 
@@ -841,41 +1008,101 @@ cargo +1.96.0 fetch --manifest-path qualification/harnesses/semantic-native/Carg
 Offline replay:
 
 ```bash
-CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --no-default-features --target x86_64-unknown-linux-gnu
-CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --features semantic-native --target x86_64-unknown-linux-gnu
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 check --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --no-default-features --target x86_64-unknown-linux-gnu
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 check --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --features semantic-native --target x86_64-unknown-linux-gnu
 ```
 
-Expected: corpus, adversarial filtering, insert/search/delete, generation isolation, and FTS tests pass without a network request. Two generations of the complete corpus have an identical digest.
+Expected: both feature boundaries compile without network access and acquisition tests prove the exact redirect/extraction policy.
 
-- [ ] **Step 8: Commit the semantic candidate core**
+- [ ] **Step 7: Commit the acquisition and candidate boundary**
 
 ```bash
-git add qualification/fixtures/semantic-corpus.json qualification/harnesses/semantic-native qualification/prerequisites.json tools/qualification/acquire.py tests/qualification/test_model.py
-git commit -m "test: add semantic native qualification core"
+git add qualification/fixtures/semantic-corpus.json qualification/harnesses/semantic-native/Cargo.toml qualification/harnesses/semantic-native/Cargo.lock qualification/harnesses/semantic-native/src/lib.rs qualification/harnesses/semantic-native/src/corpus.rs qualification/harnesses/semantic-native/tests/corpus.rs qualification/prerequisites.json tools/qualification/acquire.py tests/qualification/test_acquire.py
+git commit -m "test: lock semantic native qualification candidate"
 ```
 
-### Task 4: Semantic Recovery, Fallback, And Measured Record
+### Task 7: Semantic ANN Index And Pre-Filter Proof
+
+**Complexity:** High, 3–4 hours.
+
+**Files:**
+- Create: `qualification/harnesses/semantic-native/src/model.rs`
+- Create: `qualification/harnesses/semantic-native/src/index.rs`
+- Create: `qualification/harnesses/semantic-native/tests/index.rs`
+
+**Interfaces:**
+- Consumes: Task 6 model/runtime, deterministic corpus, candidate lockfile, and LanceDB candidate.
+- Produces: `OnnxEmbeddingProvider::load(runtime: &Path, model: &Path, expected_sha256: &str) -> anyhow::Result<Self>`.
+- Produces: `async fn GenerationIndex::create(root: &Path, identity: ModelIdentity, generation: &str) -> anyhow::Result<Self>`, `create_ann_index(&mut self)`, `explain_prefiltered_search(&self, series_slug: &str, vector: &[f32], limit: usize)`, and append/search/delete/verify/activate methods.
+- Proof rule: `series-prefilter-before-ann` passes only with a created ANN index, an adversarial cardinality/top-k result, and checked explain/analyze output showing the `series_slug` predicate below ANN nearest-neighbor execution; flat scan or post-filter/over-fetch is a failure.
+- Test helpers in `tests/index.rs`: `populated_adversarial_index() -> anyhow::Result<GenerationIndex>` creates eligible ids `1..=10` plus 100 closer ineligible decoys; `needle() -> Vec<f32>` returns the fixed 384-float query; `expected_eligible_ids() -> Vec<i64>` returns `1..=10`.
+
+- [ ] **Step 1: Write failing ANN creation and adversarial pre-filter tests**
+
+```rust
+#[tokio::test]
+async fn search_uses_series_prefilter_before_ann() -> anyhow::Result<()> {
+    let mut index = populated_adversarial_index().await?;
+    index.create_ann_index().await?;
+    let plan = index.explain_prefiltered_search("eligible", &needle(), 10).await?;
+    assert!(plan.ann_index_used);
+    assert!(plan.series_predicate_below_ann);
+    assert_eq!(plan.eligible_cardinality, 10);
+    let hits = index.search("eligible", &needle(), 10).await?;
+    assert_eq!(hits.len(), 10);
+    assert_eq!(hits.iter().map(|hit| hit.chunk_id).collect::<Vec<_>>(), expected_eligible_ids());
+    Ok(())
+}
+```
+
+Populate 10 eligible vectors whose distances rank below 100 closer ineligible decoys. Set `limit=10` and the candidate's ANN probe parameter low enough that post-filtering a global top-k returns fewer than 10; require all 10 exact eligible ids. The checked explain/analyze plan stores normalized operator/predicate/index names and cardinalities, never raw vectors.
+
+- [ ] **Step 2: Run the ANN test and verify RED**
+
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --features semantic-native --target x86_64-unknown-linux-gnu --test index`
+
+Expected: FAIL because the ANN index and explainable pre-filter path do not exist.
+
+- [ ] **Step 3: Implement the model and ANN boundary**
+
+`OnnxEmbeddingProvider` verifies checksum, loads the verified runtime, mean-pools, L2-normalizes, and returns an owned `Vec<f32>`; all ndarray values remain internal to ort's re-export. `GenerationIndex` stores chunk id, series slug, checksum, generation, and 384-float vector, creates a cosine IVF-PQ ANN index on the vector column with 16 partitions, waits until index statistics report all 10,000 rows indexed, and issues the series predicate as part of the ANN query. Evidence records index type/name, indexed-row count, distance metric, normalized plan operators, predicate placement, eligible cardinality, requested top-k, and returned count. It rejects any plan lacking both ANN index use and predicate pushdown.
+
+- [ ] **Step 4: Prove insert/search/delete and generation isolation**
+
+Add tests that insert a synthetic eligible chunk, find it through ANN, delete it, and prove absence after index refresh; create an incomplete second generation and prove all searches stay on the active first generation. Run the complete 10,000-chunk/50-query corpus twice and require identical corpus/index-input digests.
+
+- [ ] **Step 5: Run offline tests and commit ANN behavior**
+
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --features semantic-native --target x86_64-unknown-linux-gnu --test index`
+
+Expected: PASS with an actual ANN index, exact adversarial eligible ids/cardinality, and normalized explain/analyze proof; disabling index creation or moving the predicate to post-filter makes the test fail.
+
+```bash
+git add qualification/harnesses/semantic-native/src/model.rs qualification/harnesses/semantic-native/src/index.rs qualification/harnesses/semantic-native/tests/index.rs
+git commit -m "test: prove semantic ANN prefiltering"
+```
+
+### Task 8: Semantic Durable Recovery And FTS Fallback
 
 **Complexity:** High, 3–4 hours.
 
 **Files:**
 - Create: `qualification/harnesses/semantic-native/src/main.rs`
 - Create: `qualification/harnesses/semantic-native/src/scenario.rs`
+- Create: `qualification/harnesses/semantic-native/src/fts.rs`
 - Create: `qualification/harnesses/semantic-native/tests/recovery.rs`
-- Create: `tools/qualification/run_semantic.py`
-- Create: `tests/qualification/test_run_semantic.py`
-- Create: `qualification/records/semantic-native.json`
-- Create: `docs/qualification/rust/semantic-native.md`
+- Create: `qualification/harnesses/semantic-native/tests/fts.rs`
 
 **Interfaces:**
-- Consumes: Task 3 model/runtime acquisitions, corpus recipe, semantic Cargo lockfile, and the frozen RAG/recall seed fixtures.
-- Produces Rust CLI: `semantic-native scenario --work-dir <path> --mode complete|crash|cancel --generation <id> --stop-after <count>`.
+- Consumes: Tasks 6–7 model/runtime, corpus, lockfile, and ANN index behavior.
+- Produces Rust CLI: `semantic-native scenario --work-dir <path> --state-db <path> --mode complete|crash|cancel --generation <id> --stop-after <count>`.
 - Produces Rust CLI: `semantic-native query --work-dir <path> --series <slug> --query-index <0..49>`.
 - Produces Rust CLI without native features: `semantic-native fts-fallback --work-dir <path> --series <slug> --query-index <0..49>`.
-- Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path | None = None) -> QualificationRecord`; `None` builds the locked candidate and tests may inject an executable that emits bounded failure evidence.
-- Produces decision `semantic-enabled` only when all twelve criteria pass; every other complete result is `fts-only` and never aggregate-blocking.
+- Produces: durable SQLite job/generation state with leases, counters, cancellation, and recovery; filesystem progress is forbidden.
+- Test helpers in `tests/recovery.rs`: `run_complete`, `run_crash`, `run_cancel`, `resume`, `read_active_generation`, `written_count`, `generation_status`, and `run_complete_with_probe` operate only beneath a supplied temp directory; crash uses a core-disabled owned child process group. `TransactionProbe::native_io_while_write_transaction() -> usize` exposes the violation counter.
+- Test helpers in `tests/fts.rs`: `expected_fts_id_digests`, `run_all_fts_queries`, `digest_receipts`, and `delete_and_rebuild_fts` consume the deterministic corpus recipe and operate only on a temporary SQLite database.
 
-- [ ] **Step 1: Write failing recovery and decision tests**
+- [ ] **Step 1: Write failing durable recovery, transaction-boundary, and FTS tests**
 
 ```rust
 #[tokio::test]
@@ -899,60 +1126,152 @@ async fn cancellation_never_activates_cancelled_generation() -> anyhow::Result<(
     assert_eq!(generation_status(root.path(), "generation-b")?, "cancelled");
     Ok(())
 }
-```
+#[tokio::test]
+async fn native_io_never_runs_inside_sqlite_write_transaction() -> anyhow::Result<()> {
+    let probe = TransactionProbe::new();
+    run_complete_with_probe(&probe).await?;
+    assert_eq!(probe.native_io_while_write_transaction(), 0);
+    Ok(())
+}
 
-```python
-def test_any_semantic_failure_selects_fts_only_without_blocking(tmp_path: Path) -> None:
-    record = run(ROOT, tmp_path, executable=failing_semantic_harness())
-    assert record.status == "fail"
-    assert record.decision == "fts-only"
-    assert "do not block" in record.consequence
+#[test]
+fn fts_fallback_is_nonempty_isolated_and_rebuild_equivalent() -> anyhow::Result<()> {
+    let expected = expected_fts_id_digests();
+    let before = run_all_fts_queries()?;
+    assert!(before.iter().all(|receipt| receipt.eligible_count > 0));
+    assert!(before.iter().all(|receipt| receipt.cross_series_count == 0));
+    assert_eq!(digest_receipts(&before), expected);
+    delete_and_rebuild_fts()?;
+    assert_eq!(digest_receipts(&run_all_fts_queries()?), expected);
+    Ok(())
+}
 ```
 
 - [ ] **Step 2: Run the focused tests and verify missing scenario/runner failures**
 
-Run: `uv run pytest tests/qualification/test_run_semantic.py -v`
-
-Expected: FAIL importing `tools.qualification.run_semantic`.
-
-Run: `CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --test recovery`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --features semantic-native --target x86_64-unknown-linux-gnu --test recovery --test fts`
 
 Expected: FAIL because the recovery test target and scenario module do not exist.
 
-- [ ] **Step 3: Implement bounded crash, cancel, resume, and activation scenarios**
+- [ ] **Step 3: Implement SQLite-owned job/generation state and transaction-free native I/O**
 
-`scenario` processes the corpus in batches of 200. After each batch it closes LanceDB handles, atomically writes a sanitized progress file containing generation, cursor, expected/written counts, model identity, and checksum accumulator, then continues. `--mode crash --stop-after 4200` calls `std::process::abort()` only after the 4,200-row checkpoint is durable. `--mode cancel --stop-after 3200` exits normally with generation status `cancelled`. Resume begins at the exact durable cursor, verifies existing record checksums, and never changes the active generation until all 10,000 rows and sample queries verify.
+Create these qualification-only SQLite tables in `state-db`:
+
+```sql
+create table semantic_generations (
+    generation_id text primary key,
+    status text not null check (status in ('building','ready','active','superseded','cancelled','failed')),
+    model_digest text not null,
+    expected_count integer not null,
+    written_count integer not null default 0,
+    active integer not null default 0 check (active in (0,1))
+);
+create unique index one_active_semantic_generation
+    on semantic_generations(active) where active = 1;
+create table semantic_jobs (
+    job_id text primary key,
+    generation_id text not null references semantic_generations(generation_id),
+    status text not null check (status in ('queued','running','cancel_requested','cancelled','complete','failed')),
+    next_batch integer not null,
+    completed_batches integer not null,
+    lease_owner text,
+    lease_expires_unix_ms integer,
+    cancel_requested integer not null default 0 check (cancel_requested in (0,1))
+);
+```
+
+For each batch: claim/renew lease and read cursor in a short committed SQLite write transaction; close the transaction; run ONNX and LanceDB I/O; then open a new short transaction to compare lease owner, persist written counters/checksums, and advance `next_batch`. `TransactionProbe` wraps every SQLite write transaction and every native call; entering ONNX/LanceDB with write depth nonzero is a hard failure and increments a recorded violation counter. No filesystem progress/manifest controls recovery or activation.
+
+`--mode crash --stop-after 4200` aborts only after the batch receipt is committed. Resume takes an expired lease, verifies persisted counters against LanceDB ids/checksums, and continues exactly once. Cancellation is a committed request flag observed between batches; it closes handles, commits `cancelled`, clears the lease, and never activates that generation. Activation is one SQLite transaction after 10,000 rows, ANN/index verification, and sample queries succeed.
 
 The CLI rejects work directories outside `qualification/.artifacts/work/semantic-native`, symlinks, model/runtime checksum mismatch, mixed dimensions, mixed generation ids, and non-loopback acquisition URLs before writing.
 
-- [ ] **Step 4: Implement the full measured runner**
+- [ ] **Step 4: Implement and prove the strengthened FTS fallback**
+
+Create a disposable external-content FTS5 table over generated SQLite rows. `expected_fts_id_digests()` independently derives each query's eligible ids from the deterministic corpus recipe before opening SQLite, requires at least one expected id for every query, and returns 50 ordered SHA-256 digests. FTS search includes `series_slug` in the SQLite query, requires the same nonempty digests with zero cross-series ids, then deletes/rebuilds the FTS index and requires identical digests again. Compile this path with `--no-default-features`; model/runtime/index paths are absent and a download probe must remain untouched.
+
+- [ ] **Step 5: Run offline recovery/fallback tests and commit behavior**
+
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --features semantic-native --target x86_64-unknown-linux-gnu --test recovery`
+
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --no-default-features --target x86_64-unknown-linux-gnu --test fts`
+
+Expected: durable lease/counter recovery, cancellation, active-generation isolation, zero native-I/O transaction violations, exact nonempty FTS id digests, series isolation, and rebuild equivalence all pass.
+
+```bash
+git add qualification/harnesses/semantic-native/src/main.rs qualification/harnesses/semantic-native/src/scenario.rs qualification/harnesses/semantic-native/src/fts.rs qualification/harnesses/semantic-native/tests/recovery.rs qualification/harnesses/semantic-native/tests/fts.rs
+git commit -m "test: prove semantic recovery and FTS fallback"
+```
+
+### Task 9: Semantic Runner And Measured Evidence
+
+**Complexity:** Medium, 2–3 hours.
+
+**Files:**
+- Create: `tools/qualification/run_semantic.py`
+- Create: `tests/qualification/test_run_semantic.py`
+- Create: `qualification/records/semantic-native.json`
+- Create: `docs/qualification/rust/semantic-native.md`
+
+**Interfaces:**
+- Consumes: Tasks 6–8 and frozen RAG/recall seed fixtures.
+- Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected pytest and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
+- Produces: `semantic-enabled` only when all sixteen semantic criteria pass; any other complete result is `fts-only` and never blocks Linux release.
+
+- [ ] **Step 1: Write failing fake-only decision and evidence tests**
+
+```python
+def test_any_semantic_failure_selects_fts_only(tmp_path: Path) -> None:
+    executable = write_fake_executable(
+        tmp_path, failed_criteria=("series-prefilter-before-ann",)
+    )
+    record = run(ROOT, tmp_path, executable=executable)
+    assert record.decision == "fts-only"
+    assert "do not block" in record.consequence
+
+
+def test_prefilter_and_recovery_evidence_are_required(tmp_path: Path) -> None:
+    record = run(ROOT, tmp_path, executable=write_fake_executable(tmp_path))
+    criteria = {item.criterion for item in record.evidence}
+    assert "series-prefilter-before-ann" in criteria
+    assert "no-sqlite-write-across-native-io" in criteria
+```
+
+- [ ] **Step 2: Run Python tests and verify RED without native prerequisites**
+
+Run: `uv run pytest tests/qualification/test_run_semantic.py -v`
+
+Expected: FAIL importing `tools.qualification.run_semantic`; no Rust/native process runs.
+
+- [ ] **Step 3: Implement the full measured runner**
 
 `run_semantic.run` first removes only `qualification/.artifacts/cargo-target/semantic-native`, recreates it empty, and sets `CARGO_TARGET_DIR` to that exact path so `locked-native-build` is a clean build. It then executes the following exact evidence sequence against fresh disposable paths:
 
 1. Build the semantic binary with `--release --locked --features semantic-native` and record binary/library sizes plus `ldd` basenames.
 2. Copy the binary, `libonnxruntime.so`, model, and an empty index root beneath `qualification/.artifacts/install/semantic-native`; run one query; remove the install directory; assert it no longer exists.
 3. Verify model checksum before load and record 384 dimensions plus normalized output digest.
-4. Build 10,000 chunks for `generation-a`, assert expected/written counts match, and activate it.
-5. Run all 50 series-scoped queries; require no panic/error/corrupt row and zero hit whose `series_slug` differs from the query.
-6. Insert one synthetic chunk, find it, delete it, and prove it is absent.
+4. Build 10,000 chunks for `generation-a`, create and await the ANN index, and record normalized explain/analyze evidence.
+5. Run the adversarial top-k/cardinality case and all 50 series-scoped queries; require exact eligible ids, pre-filter-before-ANN proof, and zero cross-series hits.
+6. Insert one synthetic chunk, find it through ANN, delete it, and prove it is absent after refresh.
 7. Create incomplete `generation-b`; prove searches remain on `generation-a`.
-8. Abort `generation-b` at 4,200, resume to 10,000, verify, activate once, and prove no duplicate chunk ids.
-9. Cancel a new generation at 3,200 and prove `generation-b` remains active.
-10. Build the FTS binary with `--release --locked --no-default-features`, temporarily omit model/index paths, and prove all 50 queries complete with structured `fts-only` mode and no model download attempt.
+8. Record SQLite job/generation rows, leases, batch counters, and exactly zero native-I/O-inside-write-transaction violations.
+9. With core dumps disabled and an owned process group, abort `generation-b` at 4,200, expire/take its lease, resume to 10,000, verify, activate once, and prove no duplicate ids.
+10. Cancel a new generation at 3,200 through durable SQLite state and prove `generation-b` remains active.
+11. Build the FTS binary with `--release --locked --no-default-features`, omit model/index paths, and prove all 50 nonempty expected eligible-id digests, series isolation, delete/rebuild equivalence, and no download attempt.
 
-Every subprocess has a 20-minute total timeout and a 2-minute no-progress timeout. A build or prerequisite failure marks itself `fail`; causally dependent criteria become `not-run` with the exact failing criterion in `not_run_reason`. The record remains complete and selects `fts-only`.
+Every subprocess uses `run_owned_process`, has a 20-minute total timeout and a 2-minute no-progress timeout, has `RLIMIT_CORE=0`, and is terminated/reaped by owned process group in `finally`. A build or prerequisite failure marks itself `fail`; causally dependent criteria become `not-run` with the exact failing criterion in `not_run_reason`. The record remains complete and selects `fts-only`.
 
-- [ ] **Step 5: Run the semantic qualification and write both records**
+- [ ] **Step 4: Run the opt-in semantic qualification and write both records**
 
 Run:
 
 ```bash
-CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_semantic --write
+HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_semantic --write
 ```
 
 Expected: exit `0` after atomically writing a complete `qualification/records/semantic-native.json` and matching Markdown. The JSON decision is exactly `semantic-enabled` when all criteria pass or `fts-only` when any criterion fails. No outcome from this command is `blocked`.
 
-- [ ] **Step 6: Verify cleanup and offline reproducibility**
+- [ ] **Step 5: Verify cleanup and offline reproducibility**
 
 Run: `uv run python -m tools.qualification.clean`
 
@@ -968,7 +1287,7 @@ Run: `uv run python -m tools.qualification.render --check qualification/records/
 
 Expected: both commands pass without running Cargo, opening a network connection, or requiring transient artifacts; input fingerprints, redaction, evidence completeness, and generated Markdown match.
 
-- [ ] **Step 7: Run focused code-quality checks**
+- [ ] **Step 6: Run focused code-quality checks**
 
 Run: `uv run pytest tests/qualification/test_run_semantic.py tests/qualification/test_model.py tests/qualification/test_clean.py -v`
 
@@ -976,90 +1295,39 @@ Run: `uv run ruff check tools/qualification/run_semantic.py tests/qualification/
 
 Run: `cargo +1.96.0 fmt --manifest-path qualification/harnesses/semantic-native/Cargo.toml --check`
 
-Run: `CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --all-targets --features semantic-native --target x86_64-unknown-linux-gnu -- -D warnings`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --all-targets --features semantic-native --target x86_64-unknown-linux-gnu -- -D warnings`
 
 Expected: Python and Rust checks pass. Record validation accepts either measured semantic decision and rejects missing or leaked evidence.
 
-- [ ] **Step 8: Commit the semantic qualification record**
+- [ ] **Step 7: Commit the semantic qualification record**
 
 ```bash
-git add qualification/harnesses/semantic-native/src/main.rs qualification/harnesses/semantic-native/src/scenario.rs qualification/harnesses/semantic-native/tests/recovery.rs tools/qualification/run_semantic.py tests/qualification/test_run_semantic.py qualification/records/semantic-native.json docs/qualification/rust/semantic-native.md
+git add tools/qualification/run_semantic.py tests/qualification/test_run_semantic.py qualification/records/semantic-native.json docs/qualification/rust/semantic-native.md
 git commit -m "test: record semantic native qualification"
 ```
 
-### Task 5: Svelte Frontend Embedding Qualification
+### Task 10: Frontend Candidate Manifest And Reproducible Bundle Build
 
-**Complexity:** High, 3–4 hours.
+**Complexity:** Medium, 2–3 hours.
 
 **Files:**
 - Create: `qualification/harnesses/frontend-embedding/Cargo.toml`
 - Create: `qualification/harnesses/frontend-embedding/Cargo.lock`
 - Create: `qualification/harnesses/frontend-embedding/build.rs`
-- Create: `qualification/harnesses/frontend-embedding/src/main.rs`
-- Create: `qualification/harnesses/frontend-embedding/src/assets.rs`
-- Create: `qualification/harnesses/frontend-embedding/tests/assets.rs`
-- Create: `tools/qualification/run_frontend.py`
-- Create: `tests/qualification/test_run_frontend.py`
-- Create: `qualification/records/frontend-embedding.json`
-- Create: `docs/qualification/rust/frontend-embedding.md`
+- Create: `qualification/harnesses/frontend-embedding/src/main.rs` containing only `fn main() {}` until Task 11.
 
 **Interfaces:**
-- Consumes: `frontend/package.json`, `frontend/bun.lock`, `frontend/vite.config.ts`, all `frontend/src/**`, `compatibility/fixtures/http/route-cases.json`, and manifest ids `frontend.route.get.root`, `frontend.route.get.admin`, `frontend.route.get.admin.path`, `frontend.route.get.assets.path`, `frontend.route.get.config`, and `frontend.route.get.config.path`.
-- Produces Rust: `AssetResponse resolve_asset(request_path: &str)`, where `AssetResponse` contains `status: u16`, `content_type: String`, `body_sha256: String`, and `fallback: bool`.
-- Produces Rust CLI: `frontend-embedding manifest` and `frontend-embedding get --path <request-path>`.
-- Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path | None = None) -> QualificationRecord`; `None` builds the locked candidate and tests may inject an executable that emits bounded failure evidence.
-- Produces decision `qualified` only when all ten frontend criteria pass; otherwise `blocked` with the exact Task 1 consequence.
+- Consumes: `frontend/package.json`, `frontend/bun.lock`, `frontend/vite.config.ts`, and all `frontend/src/**`.
+- Produces: a Svelte bundle at `qualification/.artifacts/frontend-dist/current` and standalone rust-embed manifest/lockfile.
+- Build invariant: the RustEmbed folder is manifest-relative `../../.artifacts/frontend-dist/current/`; `build.rs` resolves it from `CARGO_MANIFEST_DIR`, and every Cargo command sets `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding`.
 
-- [ ] **Step 1: Write failing runner and embedded-asset tests**
+- [ ] **Step 1: Verify RED for the missing candidate manifest and bundle**
 
-```rust
-#[test]
-fn embedded_index_and_spa_routes_resolve_without_filesystem_access() {
-    assert_eq!(resolve_asset("/").status, 200);
-    assert_eq!(resolve_asset("/").content_type, "text/html; charset=utf-8");
-    assert!(resolve_asset("/admin/fixture").fallback);
-    assert!(resolve_asset("/config/fixture").fallback);
-}
-
-#[test]
-fn missing_real_asset_is_not_an_index_fallback() {
-    let response = resolve_asset("/assets/qualification-missing.js");
-    assert_eq!(response.status, 404);
-    assert!(!response.fallback);
-}
-```
-
-```python
-def test_frontend_runner_owns_exact_frozen_route_contracts(tmp_path: Path) -> None:
-    record = run(ROOT, tmp_path)
-    assert record.contract_ids == (
-        "frontend.route.get.admin",
-        "frontend.route.get.admin.path",
-        "frontend.route.get.assets.path",
-        "frontend.route.get.config",
-        "frontend.route.get.config.path",
-        "frontend.route.get.root",
-    )
-
-
-def test_frontend_failure_blocks_without_selecting_serve_dir(tmp_path: Path) -> None:
-    record = run(ROOT, tmp_path, executable=failing_frontend_harness())
-    assert record.decision == "blocked"
-    assert "embedded Svelte assets" in record.consequence
-    assert "Bun, Node, or Python runtime" in record.consequence
-```
-
-- [ ] **Step 2: Run tests and confirm missing harness/runner failures**
-
-Run: `uv run pytest tests/qualification/test_run_frontend.py -v`
-
-Expected: FAIL importing `tools.qualification.run_frontend`.
-
-Run: `cargo +1.96.0 test --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked --release`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 check --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked --release --target x86_64-unknown-linux-gnu`
 
 Expected: FAIL because the frontend-embedding manifest does not exist.
 
-- [ ] **Step 3: Create the standalone rust-embed candidate manifest**
+- [ ] **Step 2: Create the standalone rust-embed candidate manifest**
 
 ```toml
 [package]
@@ -1087,13 +1355,77 @@ sha2 = "0.10"
 tempfile = "3"
 ```
 
-`build.rs` requires `HIERONYMUS_QUALIFICATION_ASSET_DIR`, canonicalizes it, requires both `index.html` and at least one `assets/` file, rejects symlinks escaping that root, and emits only `cargo:rerun-if-env-changed` plus `cargo:rerun-if-changed` lines. The runner, not the build script, builds the Svelte frontend before Cargo.
+`build.rs` resolves `Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.artifacts/frontend-dist/current")`, canonicalizes it, requires `index.html` plus at least one `assets/` file, rejects symlinks escaping that root, and emits only exact `cargo:rerun-if-changed` paths. The runner, not the build script, builds Svelte before Cargo; no environment interpolation selects another asset root.
 
-- [ ] **Step 4: Implement the embedded resolver with exact fallback rules**
+- [ ] **Step 3: Acquire Bun/Cargo dependencies and build without replay network**
+
+One-time networked acquisition:
+
+```bash
+bun install --cwd frontend --frozen-lockfile
+cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml
+cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked
+```
+
+Do not invoke a nonexistent Bun offline-install flag. For replay, reuse the lock-matched hydrated `frontend/node_modules`, clear `qualification/.artifacts/frontend-dist/current`, and execute the build in a Linux network namespace:
+
+```bash
+unshare --user --map-root-user --net -- bun run --cwd frontend build -- --outDir ../qualification/.artifacts/frontend-dist/current --emptyOutDir
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 build --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu
+```
+
+Expected: Bun reports `1.3.14`; `bun.lock` is unchanged; the build succeeds with no network namespace interface; exact file/byte digests are stable across two clean builds. If unprivileged network namespaces are unavailable, record the frontend build criterion failed—do not claim offline replay.
+
+- [ ] **Step 4: Commit the independently reviewable build boundary**
+
+```bash
+git add qualification/harnesses/frontend-embedding/Cargo.toml qualification/harnesses/frontend-embedding/Cargo.lock qualification/harnesses/frontend-embedding/build.rs qualification/harnesses/frontend-embedding/src/main.rs
+git commit -m "test: lock frontend embedding candidate"
+```
+
+### Task 11: Embedded Asset Resolution And Runtime Independence
+
+**Complexity:** Medium, 2–3 hours.
+
+**Files:**
+- Modify: `qualification/harnesses/frontend-embedding/src/main.rs`
+- Create: `qualification/harnesses/frontend-embedding/src/assets.rs`
+- Create: `qualification/harnesses/frontend-embedding/tests/assets.rs`
+
+**Interfaces:**
+- Consumes: Task 10's canonical bundle and locked candidate.
+- Produces: `AssetResponse resolve_asset(request_path: &str)` and CLI `frontend-embedding manifest|get --path <request-path>`.
+- Ownership boundary: proves embedded path resolution, MIME/digests, SPA fallback, and filesystem independence only; it does not claim Host validation, bearer/session auth, CSRF, or full HTTP routing.
+
+- [ ] **Step 1: Write failing embedded-resolution tests**
+
+```rust
+#[test]
+fn embedded_index_and_spa_paths_resolve() {
+    assert_eq!(resolve_asset("/").status, 200);
+    assert!(resolve_asset("/admin/fixture").fallback);
+    assert!(resolve_asset("/config/fixture").fallback);
+}
+
+#[test]
+fn missing_real_asset_is_not_an_index_fallback() {
+    let response = resolve_asset("/assets/qualification-missing.js");
+    assert_eq!(response.status, 404);
+    assert!(!response.fallback);
+}
+```
+
+- [ ] **Step 2: Run the asset tests and verify RED**
+
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked --release --target x86_64-unknown-linux-gnu --test assets`
+
+Expected: FAIL because the resolver does not exist.
+
+- [ ] **Step 3: Implement the embedded resolver with exact fallback rules**
 
 ```rust
 #[derive(rust_embed::RustEmbed)]
-#[folder = "$HIERONYMUS_QUALIFICATION_ASSET_DIR/"]
+#[folder = "../../.artifacts/frontend-dist/current/"]
 struct FrontendAssets;
 
 use sha2::Digest;
@@ -1151,51 +1483,97 @@ pub fn resolve_asset(request_path: &str) -> AssetResponse {
 }
 ```
 
-The exact rules are: normalize one leading slash; reject `..`, backslash, percent-decoded separators, and NUL with 400; serve a present embedded file with its MIME type; return 404 for a missing path beneath `/assets/`; otherwise serve embedded `index.html` as a client-side route fallback. The CLI returns only status, MIME, body digest, byte length, and fallback; it never prints asset bodies.
+The exact rules are: normalize one leading slash; reject `..`, backslash, percent-decoded separators, and NUL with 400; serve a present embedded file with its MIME type; return 404 for a missing path beneath `/assets/`; otherwise serve embedded `index.html`. The CLI returns only status, MIME, body digest, byte length, and fallback; it never prints bodies or claims HTTP security behavior.
 
-- [ ] **Step 5: Acquire Bun/Cargo dependencies explicitly and build the actual bundle**
+- [ ] **Step 4: Prove filesystem/runtime independence under inaccessible asset roots**
 
-Networked acquisition prerequisites:
+After building, copy only the release binary into `qualification/.artifacts/install/frontend-embedding/bin`; move `qualification/.artifacts/frontend-dist/current` to `qualification/.artifacts/frontend-dist/quarantine/current`, then set the runner-owned quarantine directory to mode `000`. Execute every path probe under `strace -f -e trace=%file`; require the same response digests and no attempted open/stat/readlink beneath the original or quarantined asset root. Restore permissions and the asset root in `finally`, then remove the install/quarantine directories. Also require executable dependencies/process tree to contain no Bun, Node, or Python.
+
+- [ ] **Step 5: Run behavior tests and commit**
+
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked --release --target x86_64-unknown-linux-gnu --test assets`
+
+Expected: PASS; missing bundle at compile time fails, embedded path behavior matches, and runtime asset-root access is unnecessary.
 
 ```bash
-bun install --cwd frontend --frozen-lockfile
-cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked
+git add qualification/harnesses/frontend-embedding/src qualification/harnesses/frontend-embedding/tests/assets.rs
+git commit -m "test: prove embedded frontend asset behavior"
 ```
 
-Offline frontend build:
+### Task 12: Frontend Runner And Qualification Evidence
 
-```bash
-bun install --cwd frontend --frozen-lockfile --offline
-bun run --cwd frontend build
+**Complexity:** Medium, 2–3 hours.
+
+**Files:**
+- Create: `tools/qualification/run_frontend.py`
+- Create: `tests/qualification/test_run_frontend.py`
+- Create: `qualification/records/frontend-embedding.json`
+- Create: `docs/qualification/rust/frontend-embedding.md`
+
+**Interfaces:**
+- Consumes: Tasks 10–11, frontend source/lock/build config, and only the path/status/MIME/body shape from manifest ids `frontend.route.get.root`, `frontend.route.get.admin`, `frontend.route.get.admin.path`, `frontend.route.get.assets.path`, `frontend.route.get.config`, and `frontend.route.get.config.path` in `route-cases.json`.
+- Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected pytest and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
+- Produces: `qualified` only when every frontend criterion passes; otherwise exact Task 2 blocking consequence.
+
+- [ ] **Step 1: Write failing fake-only runner tests**
+
+```python
+def test_frontend_runner_owns_embedded_path_contracts_only(tmp_path: Path) -> None:
+    record = run(ROOT, tmp_path, executable=write_fake_executable(tmp_path))
+    assert set(record.contract_ids) == {
+        "frontend.route.get.root",
+        "frontend.route.get.admin",
+        "frontend.route.get.admin.path",
+        "frontend.route.get.assets.path",
+        "frontend.route.get.config",
+        "frontend.route.get.config.path",
+    }
+    assert "compatibility/fixtures/http/route-cases.json" in record.input_paths
+    assert not {"http-host-validation", "browser-auth", "csrf"} & {
+        item.criterion for item in record.evidence
+    }
+
+
+def test_frontend_failure_does_not_select_serve_dir(tmp_path: Path) -> None:
+    executable = write_fake_executable(
+        tmp_path, failed_criteria=("runtime-asset-root-inaccessible",)
+    )
+    record = run(ROOT, tmp_path, executable=executable)
+    assert record.decision == "blocked"
+    assert "embedded Svelte assets" in record.consequence
 ```
 
-Expected: Bun reports version `1.3.14`; the frozen install and Vite build pass without a network request; output exists only at ignored `frontend/dist` until copied into the disposable qualification asset directory.
+- [ ] **Step 2: Run Python tests and verify RED without Bun or Cargo**
 
-- [ ] **Step 6: Implement the live embedding runner and objective criteria**
+Run: `uv run pytest tests/qualification/test_run_frontend.py -v`
 
-`run_frontend.run` copies `frontend/dist` to `qualification/.artifacts/frontend-dist/current`, fingerprints it, and builds release mode with:
+Expected: FAIL importing `tools.qualification.run_frontend`; no Bun/Cargo/native command runs.
+
+- [ ] **Step 3: Implement the live embedding runner and objective criteria**
+
+`run_frontend.run` runs Task 10's network-isolated Bun build directly into the canonical artifact directory, fingerprints it, and builds release mode with:
 
 ```bash
-HIERONYMUS_QUALIFICATION_ASSET_DIR=qualification/.artifacts/frontend-dist/current CARGO_NET_OFFLINE=true cargo +1.96.0 build --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 build --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu
 ```
 
 It then:
 
 1. Records Bun version, frozen lock digest, bundle digest, and successful build.
-2. Builds once with an explicit nonexistent asset directory and requires a stable missing-bundle failure before returning to the valid directory.
+2. Renames the canonical asset directory away, builds in fresh bounded `qualification/.artifacts/cargo-target/frontend-embedding-missing`, requires a stable compile-time missing-bundle failure, removes that target, then restores the asset root in `finally`.
 3. Compares the embedded manifest's relative files, byte lengths, and SHA-256 values to the copied Vite output.
-4. Replays the six frontend route contracts from `route-cases.json`, including root/admin/config fallbacks and actual/missing asset behavior.
-5. Copies only the release binary into an otherwise empty temporary directory and reruns every route probe there.
-6. Requires `ldd` basenames and process execution to show no Bun, Node, Python, frontend directory, or filesystem asset dependency.
+4. Replays only the six routes' embedded path/status/MIME/body expectations; excludes Host/auth/CSRF/router ownership from the record.
+5. Performs Task 11's rename/permission-denial plus `strace` open proof with only the release binary present.
+6. Requires `ldd` basenames and process tree to show no Bun, Node, or Python runtime.
 7. Rejects any `.map` file and scans embedded bytes for `compat-secret-do-not-log`, `Authorization: Bearer`, `provider_key`, `/home/`, and `Yandex.Disk`.
 8. Records release binary byte size without imposing an unapproved size threshold.
+9. Runs Clippy with `-D warnings`, the canonical asset root, Cargo offline, and the bounded target before removing the asset root.
 
-The runner removes the copied bundle, temporary binary directory, and Cargo target in `finally`; it preserves only the canonical record and ignored Bun package cache/node_modules.
+The runner uses `run_owned_process`, restores all renamed/permission-denied paths, then removes copied bundle, install directory, traces, and Cargo target in `finally`; it preserves only the canonical record and ignored Bun cache/node_modules.
 
-- [ ] **Step 7: Run qualification and focused verification**
+- [ ] **Step 4: Run opt-in qualification and focused verification**
 
-Run: `CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_frontend --write`
+Run: `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_frontend --write`
 
 Expected: writes a complete `frontend-embedding.json` and generated Markdown. It records `qualified` or an honest `blocked` result; it never records filesystem serving or a runtime language dependency as an alternative.
 
@@ -1205,95 +1583,36 @@ Run: `uv run ruff check tools/qualification/run_frontend.py tests/qualification/
 
 Run: `cargo +1.96.0 fmt --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --check`
 
-Run: `HIERONYMUS_QUALIFICATION_ASSET_DIR=frontend/dist CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu -- -D warnings`
+Expected: Python tests and rustfmt pass; the live runner's bounded Clippy step passes before cleanup; record validation reports exact path-contract ownership, complete criteria, and no sensitive data.
 
-Expected: tests and format/lint checks pass; record validation reports exact route ownership, complete criteria, and no sensitive data.
-
-- [ ] **Step 8: Commit the frontend qualification**
+- [ ] **Step 5: Commit the frontend qualification record**
 
 ```bash
-git add qualification/harnesses/frontend-embedding tools/qualification/run_frontend.py tests/qualification/test_run_frontend.py qualification/records/frontend-embedding.json docs/qualification/rust/frontend-embedding.md
+git add tools/qualification/run_frontend.py tests/qualification/test_run_frontend.py qualification/records/frontend-embedding.json docs/qualification/rust/frontend-embedding.md
 git commit -m "test: qualify frontend asset embedding"
 ```
 
-### Task 6: Read-Only Legacy Database Import Qualification
+### Task 13: Legacy Database Candidate Manifest And Locked Build
 
-**Complexity:** High, 3–4 hours.
+**Complexity:** Low, 1–2 hours.
 
 **Files:**
 - Create: `qualification/harnesses/legacy-database-import/Cargo.toml`
 - Create: `qualification/harnesses/legacy-database-import/Cargo.lock`
-- Create: `qualification/harnesses/legacy-database-import/src/main.rs`
-- Create: `qualification/harnesses/legacy-database-import/src/classify.rs`
-- Create: `qualification/harnesses/legacy-database-import/src/probe_import.rs`
-- Create: `qualification/harnesses/legacy-database-import/src/report.rs`
-- Create: `qualification/harnesses/legacy-database-import/tests/fixtures.rs`
-- Create: `tools/qualification/run_database.py`
-- Create: `tests/qualification/test_run_database.py`
-- Create: `qualification/records/legacy-database-import.json`
-- Create: `docs/qualification/rust/legacy-database-import.md`
+- Create: `qualification/harnesses/legacy-database-import/src/main.rs` containing only `fn main() {}` until Task 14.
 
 **Interfaces:**
-- Consumes: `compatibility/snapshots/state.json`; all six `compatibility/fixtures/database/{minimal-python,legacy-python,empty,partial-python,corrupt,unknown-schema}.sqlite`; manifest ids `database.schema.current`, `database.migrations.current`, and `database.upgrade.preflight`.
-- Produces Rust: `classify_read_only(source: &Path, state_contract: &Path) -> anyhow::Result<Classification>`.
-- Produces Rust: `probe_import(source: &Path, target: &Path, expected: &DatabaseContract) -> anyhow::Result<ProbeReceipt>`.
-- Produces Rust CLI: `legacy-database-import classify --source <fixture> --contract compatibility/snapshots/state.json` and `probe-import --source <fixture> --target <disposable-path> --contract compatibility/snapshots/state.json`.
-- Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path | None = None) -> QualificationRecord`; `None` builds the locked candidate and tests may inject an executable that emits bounded failure evidence.
-- Produces decision `qualified` only when all ten database criteria pass; otherwise `blocked` with the exact Task 1 consequence.
+- Consumes: Rust 1.96.0 and rusqlite 0.40.2 candidate.
+- Produces: standalone bundled-SQLite manifest and committed lockfile; no database behavior or evidence.
+- Build invariant: every Cargo command sets `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import`.
 
-- [ ] **Step 1: Write failing fixture matrix and runner tests**
+- [ ] **Step 1: Verify RED before the candidate manifest exists**
 
-```rust
-#[test]
-fn frozen_fixture_matrix_matches_expected_classification_without_writes() -> anyhow::Result<()> {
-    let cases = [
-        ("minimal-python.sqlite", "supported-python", true),
-        ("legacy-python.sqlite", "supported-legacy-python", true),
-        ("empty.sqlite", "empty", false),
-        ("partial-python.sqlite", "partial-python", false),
-        ("corrupt.sqlite", "corrupt", false),
-        ("unknown-schema.sqlite", "unknown-schema", false),
-    ];
-    for (name, classification, safe_to_convert) in cases {
-        let before = sha256(fixture(name))?;
-        let actual = classify_read_only(fixture(name), state_contract())?;
-        assert_eq!(actual.name, classification);
-        assert_eq!(actual.safe_to_convert, safe_to_convert);
-        assert_eq!(sha256(fixture(name))?, before);
-    }
-    Ok(())
-}
-
-#[test]
-fn unsupported_sources_do_not_create_probe_target() -> anyhow::Result<()> {
-    for name in ["empty.sqlite", "partial-python.sqlite", "corrupt.sqlite", "unknown-schema.sqlite"] {
-        let target = temp_target(name)?;
-        assert!(probe_import(fixture(name), &target, contract()).is_err());
-        assert!(!target.exists());
-    }
-    Ok(())
-}
-```
-
-```python
-def test_database_failure_blocks_without_data_disposition_change(tmp_path: Path) -> None:
-    record = run(ROOT, tmp_path, executable=failing_database_harness())
-    assert record.decision == "blocked"
-    assert "preserve every supported source schema" in record.consequence
-    assert "fresh sibling database" in record.consequence
-```
-
-- [ ] **Step 2: Run tests and confirm missing implementations**
-
-Run: `uv run pytest tests/qualification/test_run_database.py -v`
-
-Expected: FAIL importing `tools.qualification.run_database`.
-
-Run: `cargo +1.96.0 test --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 check --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --target x86_64-unknown-linux-gnu`
 
 Expected: FAIL because the legacy-database-import manifest does not exist.
 
-- [ ] **Step 3: Create the minimal bundled-SQLite candidate manifest**
+- [ ] **Step 2: Create the minimal bundled-SQLite candidate manifest**
 
 ```toml
 [package]
@@ -1320,9 +1639,72 @@ tempfile = "3"
 
 The candidate deliberately uses bundled SQLite so the probe measures FTS5/file compatibility without silently depending on the workstation's SQLite library.
 
-- [ ] **Step 4: Implement bounded classification and neutral probe import**
+- [ ] **Step 3: Acquire, lock, and prove offline build**
+
+```bash
+cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml
+cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 check --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --target x86_64-unknown-linux-gnu
+```
+
+Expected: PASS without network access and no repository-local target directory.
+
+- [ ] **Step 4: Commit the candidate boundary**
+
+```bash
+git add qualification/harnesses/legacy-database-import/Cargo.toml qualification/harnesses/legacy-database-import/Cargo.lock qualification/harnesses/legacy-database-import/src/main.rs
+git commit -m "test: lock database import qualification candidate"
+```
+
+### Task 14: Read-Only Database Fixture Behavior
+
+**Complexity:** High, 3–4 hours.
+
+**Files:**
+- Modify: `qualification/harnesses/legacy-database-import/src/main.rs`
+- Create: `qualification/harnesses/legacy-database-import/src/classify.rs`
+- Create: `qualification/harnesses/legacy-database-import/src/probe_import.rs`
+- Create: `qualification/harnesses/legacy-database-import/src/report.rs`
+- Create: `qualification/harnesses/legacy-database-import/tests/fixtures.rs`
+
+**Interfaces:**
+- Consumes: `compatibility/snapshots/state.json` and exactly the six frozen SQLite files under `compatibility/fixtures/database/`.
+- Produces: `classify_read_only(source: &Path, fixture_root: &Path, state_contract: &Path) -> anyhow::Result<Classification>` and `probe_import(source: &Path, target: &Path, fixture_root: &Path, work_root: &Path, expected: &DatabaseContract) -> anyhow::Result<ProbeReceipt>`.
+- Produces CLI: `legacy-database-import classify --fixture-root compatibility/fixtures/database --source-name <basename> --contract compatibility/snapshots/state.json` and `probe-import ... --work-root <risk-work-root> --target-name <basename>`; arbitrary source/target paths are not accepted.
+- Test helpers in `tests/fixtures.rs`: `expected_cases()` returns `minimal-python.sqlite/supported-python/true`, `legacy-python.sqlite/supported-legacy-python/true`, `empty.sqlite/empty/false`, `partial-python.sqlite/partial-python/false`, `corrupt.sqlite/corrupt/false`, and `unknown-schema.sqlite/unknown-schema/false`; `fixture`, `fixture_root`, and `state_contract` resolve checked-in inputs; `assert_rejected_source` and `assert_rejected_target` invoke the CLI and require exit code `2` before SQLite opens.
+
+- [ ] **Step 1: Write failing fixture-matrix and path-boundary tests**
+
+```rust
+#[test]
+fn frozen_fixture_matrix_is_read_only() -> anyhow::Result<()> {
+    for (name, classification, safe) in expected_cases() {
+        let before = sha256(fixture(name))?;
+        let actual = classify_read_only(&fixture(name), &fixture_root(), &state_contract())?;
+        assert_eq!((actual.name.as_str(), actual.safe_to_convert), (classification, safe));
+        assert_eq!(sha256(fixture(name))?, before);
+    }
+    Ok(())
+}
+
+#[test]
+fn cli_rejects_source_or_target_outside_owned_roots() {
+    assert_rejected_source("../../user.sqlite");
+    assert_rejected_target("../../sibling.sqlite");
+}
+```
+
+- [ ] **Step 2: Run fixture tests and verify RED**
+
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --target x86_64-unknown-linux-gnu --test fixtures`
+
+Expected: FAIL because classification/import and CLI root enforcement do not exist.
+
+- [ ] **Step 3: Implement bounded classification and neutral probe import**
 
 Open source fixtures with `SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX`, immediately set `PRAGMA query_only=ON`, and never issue a source transaction or write pragma. Classification uses only integrity result, exact tables/columns/features from `state.json`, application migration-ledger presence, and the frozen variant expectations. It is a qualification classifier, not the production `StateClassifier`.
+
+Canonicalize `fixture_root` and require it equals `repo_root/compatibility/fixtures/database`; accept `source-name` only when it is one of the six frozen basenames and its resolved path is a non-symlink direct child. Canonicalize `work_root` and require it is a non-symlink descendant of `qualification/.artifacts/work/legacy-database-import`; construct `target-name` beneath it and reject separators, `..`, existing symlinks, or any target outside that root.
 
 For the two supported fixtures only, `probe_import` creates a new disposable target with this neutral schema:
 
@@ -1345,32 +1727,72 @@ create table probe_ledger (
 
 Read typed integers, reals, text, blobs, booleans, JSON, and documented timestamps; canonicalize each row in memory; store only its digest and field count. Every source row has exactly one ledger outcome. The probe explicitly covers series, sessions, strict terms/aliases/tags, concepts/facets, memories/crystals/links, RAG sources/chunks/tags/scopes, events/audit, and `memory_graph_migration_ledger`. It never attempts the production target rule schema or one-way cutover protocol.
 
-- [ ] **Step 5: Implement objective FTS, ledger, and byte-identity checks**
+- [ ] **Step 4: Implement objective FTS, ledger, and byte-identity checks**
 
 For `minimal-python.sqlite`, compare table/column/index/trigger/foreign-key inventories and representative-row digests with `state.json`; run `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, and one exact FTS query for strict terms, memories, concepts, crystals, and RAG chunks. For `legacy-python.sqlite`, require the legacy identity/fingerprint and full typed ledger accounting even when fewer tables are present.
 
 Before and after every classify/import attempt, hash the source fixture and require equality. Hash every file in the fixture directory to prove no journal, WAL, sibling database, backup, or target appeared next to it. Unsupported/corrupt/partial/empty cases must fail before target creation with their frozen classification. Reports include only classification, counts, schema/object digests, FTS result id digests, ledger outcome counts, error code, and source byte-identity boolean.
 
-- [ ] **Step 6: Acquire dependencies and run all fixture tests offline**
-
-Networked acquisition prerequisite:
+- [ ] **Step 5: Run all fixture tests offline and commit behavior**
 
 ```bash
-cargo +1.96.0 generate-lockfile --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml
-cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
-```
-
-Offline replay:
-
-```bash
-CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --target x86_64-unknown-linux-gnu
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 test --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --target x86_64-unknown-linux-gnu
 ```
 
 Expected: bundled SQLite reports FTS5 enabled; the supported current and legacy cases produce exact neutral receipts; four non-convertible cases fail closed; all source and sibling-directory digests remain unchanged.
 
-- [ ] **Step 7: Run the live record writer and focused verification**
+```bash
+git add qualification/harnesses/legacy-database-import/src qualification/harnesses/legacy-database-import/tests/fixtures.rs
+git commit -m "test: prove read-only database fixture import"
+```
 
-Run: `CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_database --write`
+### Task 15: Database Runner And Qualification Evidence
+
+**Complexity:** Medium, 2–3 hours.
+
+**Files:**
+- Create: `tools/qualification/run_database.py`
+- Create: `tests/qualification/test_run_database.py`
+- Create: `qualification/records/legacy-database-import.json`
+- Create: `docs/qualification/rust/legacy-database-import.md`
+
+**Interfaces:**
+- Consumes: Tasks 13–14, `compatibility/snapshots/state.json`, all six frozen database fixtures, and manifest ids `database.schema.current`, `database.migrations.current`, and `database.upgrade.preflight`.
+- Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
+- Produces: `qualified` only when every database criterion passes; otherwise exact Task 2 blocking consequence.
+
+- [ ] **Step 1: Write failing fake-only runner tests**
+
+```python
+def test_database_runner_uses_only_frozen_fixture_root(tmp_path: Path) -> None:
+    record = run(ROOT, tmp_path, executable=write_fake_executable(tmp_path))
+    assert all(
+        not path.endswith(".sqlite")
+        or path.startswith("compatibility/fixtures/database/")
+        for path in record.input_paths
+    )
+
+
+def test_database_failure_preserves_data_disposition(tmp_path: Path) -> None:
+    executable = write_fake_executable(
+        tmp_path, failed_criteria=("source-byte-identity",)
+    )
+    record = run(ROOT, tmp_path, executable=executable)
+    assert record.decision == "blocked"
+    assert "fresh sibling database" in record.consequence
+```
+
+- [ ] **Step 2: Run Python tests and verify RED without Cargo**
+
+Run: `uv run pytest tests/qualification/test_run_database.py -v`
+
+Expected: FAIL importing `tools.qualification.run_database`; no Rust process runs.
+
+- [ ] **Step 3: Implement the bounded runner and write the live record**
+
+The runner passes the exact frozen fixture root and a risk work root to Task 14's CLI, never an arbitrary source/target path. It uses `run_owned_process`, hashes every fixture/input before and after, removes target databases/traces/Cargo target in `finally`, and records only classifications/counts/digests/error codes.
+
+Run: `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_database --write`
 
 Expected: writes a complete JSON/Markdown pair with `qualified` or `blocked`. No source-row value, memory text, note, provider value, absolute path, or raw SQLite error dump enters either record.
 
@@ -1380,18 +1802,18 @@ Run: `uv run ruff check tools/qualification/run_database.py tests/qualification/
 
 Run: `cargo +1.96.0 fmt --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --check`
 
-Run: `CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings`
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings`
 
 Expected: all checks pass; record validation proves exact fixture/manifest ownership, complete criteria, accepted consequence, and source-byte identity.
 
-- [ ] **Step 8: Commit the database qualification**
+- [ ] **Step 4: Commit the database qualification record**
 
 ```bash
-git add qualification/harnesses/legacy-database-import tools/qualification/run_database.py tests/qualification/test_run_database.py qualification/records/legacy-database-import.json docs/qualification/rust/legacy-database-import.md
+git add tools/qualification/run_database.py tests/qualification/test_run_database.py qualification/records/legacy-database-import.json docs/qualification/rust/legacy-database-import.md
 git commit -m "test: qualify legacy database import"
 ```
 
-### Task 7: Reviewed Aggregate Gate And Network-Free Replay
+### Task 16: Reviewed Aggregate Gate And Network-Free Replay
 
 **Complexity:** Medium, 3–4 hours.
 
@@ -1405,6 +1827,7 @@ git commit -m "test: qualify legacy database import"
 - Modify: `qualification/README.md`
 - Modify: `qualification/schemas/gate.schema.json`
 - Modify: `.github/workflows/pr.yml`
+- Create: `.github/workflows/rust-qualification-live.yml`
 - Modify after acceptance review: `qualification/records/mcp-transport.json`
 - Modify after acceptance review: `qualification/records/semantic-native.json`
 - Modify after acceptance review: `qualification/records/frontend-embedding.json`
@@ -1416,7 +1839,7 @@ git commit -m "test: qualify legacy database import"
 
 **Interfaces:**
 - Consumes: all four canonical records, their rendered Markdown, schemas, prerequisites, harness sources/lockfiles, and frozen input fingerprints.
-- Produces: `run_one(risk: Risk, repo_root: Path, work_root: Path) -> QualificationRecord` and CLI `python -m tools.qualification.run <risk|all> --write`.
+- Produces: `run_one_live(risk: Risk, repo_root: Path, work_root: Path) -> QualificationRecord` and opt-in CLI `python -m tools.qualification.run <risk|all> --write`.
 - Produces: `compute_gate(records: Mapping[Risk, QualificationRecord]) -> GateRecord`.
 - Produces: `validation_and_review_issues(records: Mapping[Risk, QualificationRecord]) -> dict[Risk, tuple[str, ...]]` and `record_digests(records: Mapping[Risk, QualificationRecord]) -> dict[Risk, str]`.
 - Produces: CLI `python -m tools.qualification.check [--record <risk>] [--records-only] [--require-qualified]`.
@@ -1474,6 +1897,7 @@ def test_stale_input_is_blocking() -> None:
 
 def test_records_only_check_never_invokes_live_runners(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("socket.create_connection", fail_if_called)
+    monkeypatch.setattr("subprocess.run", fail_if_called)
     result = invoke_check("--records-only")
     assert result.exit_code == 0
 ```
@@ -1487,19 +1911,21 @@ Expected: FAIL importing `tools.qualification.run` and `tools.qualification.chec
 - [ ] **Step 3: Implement one dispatcher and non-short-circuiting live execution**
 
 ```python
-RUNNERS: dict[Risk, Callable[[Path, Path], QualificationRecord]] = {
-    "mcp-transport": run_mcp.run,
-    "semantic-native": run_semantic.run,
-    "frontend-embedding": run_frontend.run,
-    "legacy-database-import": run_database.run,
+LIVE_RUNNERS: dict[Risk, Callable[[Path, Path], QualificationRecord]] = {
+    "mcp-transport": run_mcp.run_live,
+    "semantic-native": run_semantic.run_live,
+    "frontend-embedding": run_frontend.run_live,
+    "legacy-database-import": run_database.run_live,
 }
 
 
-def run_one(risk: Risk, repo_root: Path, work_root: Path) -> QualificationRecord:
-    return RUNNERS[risk](repo_root, work_root / risk)
+def run_one_live(risk: Risk, repo_root: Path, work_root: Path) -> QualificationRecord:
+    if os.environ.get("HIERONYMUS_QUALIFICATION_LIVE") != "1":
+        raise RuntimeError("live qualification requires HIERONYMUS_QUALIFICATION_LIVE=1")
+    return LIVE_RUNNERS[risk](repo_root, work_root / risk)
 ```
 
-`all` executes risks in the dictionary order above, gives each a distinct work root, writes every complete result even after a failure, and returns success when all four records are complete and valid. Risk decisions are evaluated only by `check --require-qualified`; this prevents a valid blocking record from being discarded.
+`all` executes risks in the dictionary order above, gives each a distinct work root, writes every complete result even after a failure, then recomputes/writes the blocked pending-review aggregate JSON/Markdown so the record set stays internally consistent. It returns success when all four records are complete and valid. Risk decisions are evaluated only by `check --require-qualified`; this prevents a valid blocking record from being discarded.
 
 - [ ] **Step 4: Implement the exact aggregate decision function**
 
@@ -1630,7 +2056,7 @@ cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/C
 cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
 
 # Explicit live qualification; writes reviewed inputs but starts with pending review
-CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run all --write
+HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run all --write
 
 # Ordinary network-free validation
 uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only
@@ -1644,7 +2070,68 @@ uv run python -m tools.qualification.clean --apply
 uv run python -m tools.qualification.clean --apply --include-model
 ```
 
-Add only the `--records-only` command to normal PR CI. It validates durable records without network/native model/Bun prerequisites and allows an honest blocking record to merge. Any workflow that generates a dependent Rust plan must run `--require-qualified` first.
+Append this step to the existing Python PR job in `.github/workflows/pr.yml` without adding Rust/Bun/cache setup:
+
+```yaml
+- name: Validate Rust qualification records
+  env:
+    HIERONYMUS_QUALIFICATION_LIVE: "0"
+  run: |
+    uv run --no-cache --no-sync pytest tests/qualification
+    uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only
+```
+
+Every runner test injects a fake executable, so this job needs no Cargo cache, Bun install, ONNX Runtime, model, or network. It validates durable records and allows an honest blocking record to merge. Any workflow that generates a dependent Rust plan must run `--require-qualified` first.
+
+Create `.github/workflows/rust-qualification-live.yml` exactly as an explicit manual job:
+
+```yaml
+name: Rust qualification live
+on:
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+          targets: x86_64-unknown-linux-gnu
+          components: clippy,rustfmt
+      - name: Acquire locked prerequisites
+        run: |
+          uv sync --frozen
+          uv run python -m tools.qualification.acquire semantic-model
+          uv run python -m tools.qualification.acquire onnx-runtime
+          bun install --cwd frontend --frozen-lockfile
+          cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked
+          cargo +1.96.0 fetch --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked
+          cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked
+          cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
+      - name: Run isolated live qualification
+        env:
+          HIERONYMUS_QUALIFICATION_LIVE: "1"
+          CARGO_NET_OFFLINE: "true"
+        run: uv run python -m tools.qualification.run all --write
+      - name: Validate sanitized records
+        run: uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-qualification-records
+          path: |
+            qualification/records/*.json
+            docs/qualification/rust/*.md
+```
+
+The workflow never commits records. Each runner supplies its bounded risk-specific `CARGO_TARGET_DIR`; `run_owned_process` disables cores/reaps groups. A scheduled or pull-request trigger is forbidden.
 
 - [ ] **Step 8: Run complete qualification-stage verification**
 
@@ -1660,27 +2147,17 @@ Run: `uv run --no-cache --no-sync python -B -m tools.qualification.check --requi
 
 Expected for permission to write the next Rust workspace/dependent plan: exit `0` with exactly one qualified mode line. If it exits `1`, preserve the blocking aggregate record and stop before writing a dependent plan.
 
-Run: `uv run pytest`
+Run: `env -u HIERONYMUS_QUALIFICATION_LIVE uv run --no-cache --no-sync pytest`
 
-Run: `uv run ruff check .`
+Run: `uv run --no-cache --no-sync ruff check .`
 
-Run: `uv run ruff format --check .`
+Run: `uv run --no-cache --no-sync ruff format --check .`
 
-Expected: the full Python suite and required project checks pass.
+Expected: the full Python suite and required project checks pass with live qualification disabled; runner tests prove fake injection and fail if Cargo/Bun/native execution is attempted.
 
-Run: `bun run --cwd frontend format`
+Run: `git diff --exit-code -- uv.lock frontend/bun.lock`
 
-Run: `bun run --cwd frontend typecheck`
-
-Run: `bun run --cwd frontend test`
-
-Run: `bun run --cwd frontend build`
-
-Expected: frontend format/type/test/build checks pass with the frozen lock and produce no source maps containing sensitive literals.
-
-Run `cargo fmt --check` for all four manifests. Then attempt each harness test and Clippy command with `CARGO_NET_OFFLINE=true`, Rust 1.96.0, `--locked`, and target `x86_64-unknown-linux-gnu`; use `-D warnings` for Clippy. For frontend-embedding commands, set `HIERONYMUS_QUALIFICATION_ASSET_DIR=frontend/dist` after the successful Bun build.
-
-Expected: rustfmt passes for every harness. A candidate that builds has passing harness unit/integration and Clippy checks offline; a native dependency that prevents build/test/Clippy has that exact command failure captured under `locked-native-build` (or the owning build criterion), dependent evidence marked `not-run`, and the required blocked/FTS-only decision. An uncaptured Rust failure is a stage-verification failure.
+Expected: ordinary verification changed neither dependency lockfile. Rust/Bun/native harness and Clippy commands run only in the explicit live workflow or the live commands in Tasks 3–15, always with the risk-specific bounded Cargo target directory.
 
 - [ ] **Step 9: Verify cleanup, repository scope, and final diff**
 
@@ -1697,19 +2174,19 @@ Expected: no whitespace errors; only files enumerated by this plan plus any pre-
 - [ ] **Step 10: Commit the accepted aggregate gate**
 
 ```bash
-git add tools/qualification/run.py tools/qualification/check.py tests/qualification/test_run.py tests/qualification/test_gate.py qualification/README.md qualification/schemas/gate.schema.json qualification/records docs/qualification/rust .github/workflows/pr.yml
+git add tools/qualification/run.py tools/qualification/check.py tests/qualification/test_run.py tests/qualification/test_gate.py qualification/README.md qualification/schemas/gate.schema.json qualification/records docs/qualification/rust .github/workflows/pr.yml .github/workflows/rust-qualification-live.yml
 git commit -m "ci: gate Rust plans on qualification records"
 ```
 
 ## Self-Review Record
 
-- Spec coverage: Task 2 owns exact MCP revision/transports/registry/error parity and private-bridge absence; Tasks 3–4 own every ADR 0013 measured criterion and FTS-only selection; Task 5 owns actual Svelte release embedding and runtime independence; Task 6 owns every frozen database variant, typed read/accounting, FTS/ledger proof, fail-closed behavior, and source immutability; Task 7 owns review, reproducibility, accepted consequences, and the aggregate program-sequence gate.
+- Spec coverage: Task 1 corrects and separately commits the official stateless MCP oracle; Tasks 3–5 qualify its exact metadata/headers/result type/transports/registry/error parity and private-bridge absence. Tasks 6–9 own actual ANN creation, checked pre-filter plan/cardinality proof, SQLite-durable recovery/no-write-transaction-native-I/O proof, strengthened FTS, and FTS-only selection. Tasks 10–12 own manifest-correct Svelte embedding and traced runtime independence without claiming HTTP security ownership. Tasks 13–15 own frozen-root database classification/import, typed accounting, FTS/ledger proof, fail-closed behavior, and source immutability. Task 16 owns review, reproducibility, accepted consequences, and the aggregate program-sequence gate.
 - Normative consequence coverage: semantic failure has exactly one accepted non-blocking result, `fts-only`; MCP/frontend/database failure blocks named dependent plans and never edits fixtures or specifications to turn a failure into a pass.
-- Network coverage: acquisition commands are named and checksum/frozen-lock constrained; record validation, aggregate calculation, and post-acquisition replay are explicitly offline.
+- Network coverage: acquisition commands are named and checksum/frozen-lock constrained; Hugging Face redirects include the observed exact CDN host under hop validation; Bun replay uses an isolated network namespace rather than a nonexistent offline-install flag; ordinary pytest/check/aggregate replay uses fakes, no subprocesses, and no native caches.
 - Sensitive-data coverage: inputs are synthetic/frozen, work roots are bounded, reports contain only digests/counts/basenames, source database bytes are verified unchanged, and canonical records reject secrets, user paths, row text, raw headers, and logs.
-- Cleanup coverage: all transient output is under one ignored exact root, cleanup targets are enumerated and tested, model/runtime removal needs a separate flag, and no recursive operation can target the repository, home, translation workspace, or user data.
-- Ownership coverage: common record code is completed before risk tasks; MCP, frontend, and database tasks own disjoint files; semantic Tasks 3–4 are deliberately sequential; only the final aggregate task revisits common schemas/records after all measurements exist.
-- Type/signature consistency: every runner returns the Task 1 `QualificationRecord`; risk names and criterion ids come from `REQUIRED_CRITERIA`; every record uses the same `Evidence`, review, decision, consequence, fingerprint, and renderer contracts; Task 7 consumes those exact types without aliases.
+- Cleanup coverage: all transient output and every Cargo target are under one ignored exact root; core dumps are disabled; owned process groups are reaped; cleanup targets are enumerated/tested; model/runtime removal needs a separate flag; and no recursive operation can target the repository, home, translation workspace, or user data.
+- Ownership coverage: Task 2 establishes common files; Task 6 alone extends acquisition inputs; every risk is split into separately committed manifest/build, behavior/recovery, and runner/evidence reviews; only Task 16 revisits common schemas/records/CI after measurements exist.
+- Type/signature consistency: fake-injected `run(..., executable: Path)` and guarded `run_live(...)` are distinct for all four runners; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 16 dispatches only `run_live` and its records-only path imports no runner.
 - Production-scope check: the file map contains no production Rust workspace or crate path, and no task changes Python runtime behavior or starts a dependent implementation plan.
 
 Before accepting this plan, run:
@@ -1725,4 +2202,4 @@ Expected: the red-flag scan prints nothing; diff check passes; the diff contains
 
 ## Execution Handoff
 
-Execute Tasks 1–7 only through the required sub-skill named in the header. After Task 7, a qualified aggregate permits the separate Rust workspace/contract-harness plan; a blocked aggregate is the durable stage result and requires a new candidate qualification run or an ADR-backed specification change before dependent planning.
+Execute Tasks 1–16 only through the required sub-skill named in the header. Task 1's corrected compatibility commit is a hard prerequisite and must be accepted before candidate qualification. After Task 16, a qualified aggregate permits the separate Rust workspace/contract-harness plan; a blocked aggregate is the durable stage result and requires a new candidate qualification run or an ADR-backed specification change before dependent planning.
