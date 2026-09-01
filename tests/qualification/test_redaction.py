@@ -168,6 +168,16 @@ def _adjacent_replay_mutation(command: str) -> tuple[str, frozenset[str]]:
                 ),
                 frozenset({"environment-order"}),
             )
+        if row == 2:
+            return (
+                command.removeprefix("HIERONYMUS_QUALIFICATION_LIVE=1 "),
+                frozenset({"missing-environment-assignment"}),
+            )
+        if row == 3:
+            return (
+                command.replace(" CARGO_NET_OFFLINE=true", "", 1),
+                frozenset({"missing-environment-assignment"}),
+            )
         runners = ("run_mcp", "run_semantic", "run_frontend", "run_database")
         runner = next(item for item in runners if f".{item} --write" in command)
         replacement = runners[(runners.index(runner) + 1) % len(runners)]
@@ -1191,6 +1201,7 @@ def test_every_replay_row_has_a_unique_rejected_adjacent_mutation() -> None:
     required_families = {
         "risk-runner-mismatch",
         "environment-order",
+        "missing-environment-assignment",
         "record-input-path",
         "record-output-pair",
         "review-owner-changed",
@@ -1213,5 +1224,26 @@ def test_every_replay_row_has_a_unique_rejected_adjacent_mutation() -> None:
     assert len(PLANNED_REPLAY_COMMANDS) == 54
     assert len(mutations) == len(set(mutations)) == 54
     assert covered_families == required_families
+    assert set(mutations).isdisjoint(PLANNED_REPLAY_COMMANDS)
+    assert all(not replay_commands_are_safe((mutation,)) for mutation in mutations)
+
+
+def test_every_applicable_replay_row_rejects_each_missing_environment_assignment() -> None:
+    assignments = (
+        "HIERONYMUS_QUALIFICATION_LIVE=1",
+        "CARGO_NET_OFFLINE=true",
+    )
+    variants = tuple(
+        (assignment, " ".join(token for token in command.split(" ") if token != assignment))
+        for command in PLANNED_REPLAY_COMMANDS
+        for assignment in assignments
+        if assignment in command.split(" ")
+    )
+    mutations = tuple(mutation for _assignment, mutation in variants)
+
+    assert len(variants) == 21
+    assert sum(assignment == assignments[0] for assignment, _mutation in variants) == 5
+    assert sum(assignment == assignments[1] for assignment, _mutation in variants) == 16
+    assert len(mutations) == len(set(mutations))
     assert set(mutations).isdisjoint(PLANNED_REPLAY_COMMANDS)
     assert all(not replay_commands_are_safe((mutation,)) for mutation in mutations)

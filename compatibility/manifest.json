@@ -4170,6 +4170,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_applicable_replay_row_rejects_each_missing_environment_assignment",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 build --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
