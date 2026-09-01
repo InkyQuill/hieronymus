@@ -37,7 +37,7 @@
 - Every bounded background operation is resumable, auditable, or safely repeatable.
 - Rust does not write source code into translation workspaces.
 - Qualification inputs are checked-in synthetic fixtures or deterministic generated corpora. Harnesses must never enumerate `$HOME`, read the developer's real data root, dump the environment, or access `/home/inky/Yandex.Disk/Translation`; Rust/Cargo/Bun toolchain and package caches are the only permitted home-scoped reads and their absolute paths are normalized out of evidence.
-- Canonical records contain no secrets, source-row text, hostnames, usernames, raw or percent-encoded absolute home paths, bearer or other authorization headers, cookies, launch grants, provider keys, passwords, private keys, or raw process logs. Structured redaction covers exact snake_case and camelCase password/private-key/auth/cookie field variants in both canonical JSON and completed Markdown.
+- Canonical records contain no secrets, source-row text, hostnames, usernames, raw or percent-encoded absolute home paths, bearer or other authorization headers, cookies, launch grants, provider keys, passwords, private keys, or raw process logs. Structured redaction parses canonical JSON and recursively inspects every mapping key after exact snake/camel normalization, regardless of whether its value is a string, number, boolean, null, or scalar array; the same non-echoing policy scans completed Markdown. It covers exact password/private-key/auth/cookie, memory/source text, raw-log, stdout, and stderr names, and raw PEM private-key blocks.
 - Network access is permitted only for Task 1's named official-spec review and one-time retrieval of its commit-pinned schema bytes, plus the explicit dependency-fetch, Bun-install, and checksum-verified model/runtime-acquisition steps. Ordinary compatibility tests, record validation, and every replay after acquisition run offline and make no network request.
 - Recorded replay commands use one closed grammar of exact offline qualification/checker entry points and bounded Cargo/Bun forms. Shell expansion, substitution, globbing, redirection, control/metacharacters, URLs, and network-capable acquisition commands are invalid even when a shell could parse them.
 - Ordinary `uv run pytest` tests inject bounded fake executables and never require Cargo, Rust artifacts, Bun packages, ONNX Runtime, a model, or a native-library cache. Live Rust/native qualification is explicit through `HIERONYMUS_QUALIFICATION_LIVE=1` commands and its dedicated workflow only.
@@ -874,6 +874,7 @@ git commit -m "test: define Rust qualification record model"
 - Produces checked-in canonical projections `qualification/compatibility/mcp-transport.json` and `qualification/compatibility/legacy-database-import.json`; the former contains only the 42 relevant manifest contract entries, and the latter contains only the three relevant manifest contract entries plus the exact consumed database state fields.
 - Produces deterministic CLI `python -m tools.qualification.projections --check`; it is offline and read-only. `--write` exists only for the explicit Task 3 generation step and atomically writes the two owned projection paths.
 - Produces: `redaction_issues(serialized_record: str) -> list[str]` and `validate_record(record: QualificationRecord, repo_root: Path) -> list[str]`.
+- Produces: `replay_commands_are_safe(value: object) -> bool`; it accepts only a nonempty tuple of unique commands from the exact offline replay matrix in Step 5.
 - Produces: `render_record(record: QualificationRecord) -> str` with stable headings/table order.
 - Produces deterministic CLIs `python -m tools.qualification.validate <record.json>` and `python -m tools.qualification.render --check <record.json> <record.md>`.
 
@@ -882,7 +883,7 @@ git commit -m "test: define Rust qualification record model"
 ```python
 import json
 from dataclasses import asdict, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from tests.qualification.factories import make_record
 from tools.qualification.fingerprint import COMMON_FINGERPRINT_INPUTS, fingerprint_inputs
@@ -967,7 +968,7 @@ Define the private test helpers in `test_projections.py`: `read_json`/`write_jso
 
 Add focused RED cases that mutate each selected MCP/database contract field, add/remove one `mcp.tool.*` id, mutate each projected database state field, reorder a source array, or corrupt/add a field to a checked-in projection; each must report deterministic drift for only the affected risk. Mutating an unrelated contract, `frontend_test_ownership`, `test_ownership`, `state["tests"]`, `state["config"]`, an unlisted `state["database"]` field, or another unrelated state surface must report no projection issue. Assert the projection checker performs no write, subprocess, socket, URL, or SQLite operation.
 
-Add the exact remaining review regressions: a root spelled `alias/../chosen`; forced `os.dup` failure whose exception contains an absolute private path; a same-size in-place file rewrite during a multi-chunk read; structured `password`, `passWord`, `private_key`, `privateKey`, `auth`, `auth_header`, `authHeader`, `authorizationHeader`, `proxyAuthorization`, `cookieHeader`, `set_cookie`, and `setCookie`; `%2Fhome%2Falice%2Fprivate`, `%2FUsers%2Falice%2Fprivate`, `%2Froot%2Fprivate`, and `C%3A%5CUsers%5CAlice%5Cprivate`; `$OLDPWD/script`, `${PWD}/script`, `${INPUT:-/etc/passwd}`, globbing, substitution, redirection, every shell control/metacharacter, `curl`, `wget`, `cargo fetch`, `bun install`, `uv sync`, a URL token, and an unlisted executable; and Markdown `[label](target)` plus `![alt](target)` in every arbitrary rendered field. Diagnostics must never echo the matched value or underlying absolute path.
+Add the exact remaining review regressions: a root spelled `alias/../chosen`; forced `os.dup` failure whose exception contains an absolute private path; a same-size in-place file rewrite during a multi-chunk read; structured `password`, `passWord`, `private_key`, `privateKey`, `auth`, `auth_header`, `authHeader`, `authorizationHeader`, `proxyAuthorization`, `cookieHeader`, `set_cookie`, `setCookie`, `memory_text`, `memoryText`, `source_text`, `sourceText`, `raw_log`, `rawLog`, `raw_logs`, `rawLogs`, `stdout`, and `stderr`, each with string, number, boolean, null, and scalar-array values at root and nested mapping/list depths; raw `-----BEGIN PRIVATE KEY-----`, `-----BEGIN RSA PRIVATE KEY-----`, `-----BEGIN EC PRIVATE KEY-----`, and `-----BEGIN OPENSSH PRIVATE KEY-----` blocks; `%2Fhome%2Falice%2Fprivate`, `%2FUsers%2Falice%2Fprivate`, `%2Froot%2Fprivate`, and `C%3A%5CUsers%5CAlice%5Cprivate`; `$OLDPWD/script`, `${PWD}/script`, `${INPUT:-/etc/passwd}`, globbing, substitution, redirection, every shell control/metacharacter, `curl`, `wget`, `cargo fetch`, `bun install`, `uv sync`, a URL token, and an unlisted executable; empty and duplicate replay-command tuples; every accepted/rejected row in the Step 5 replay matrix; every C0 control, DEL, every C1 control U+0080–U+009F; and Markdown `[label](target)` plus `![alt](target)` in every arbitrary rendered field. Diagnostics must never echo the matched value or underlying absolute path.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -1057,12 +1058,48 @@ COMMON_FINGERPRINT_INPUTS = (
 
 `required_fingerprint_inputs(risk)` returns one exact literal common-plus-suffix tuple, and validation rejects omission, addition, duplication, or reordering before recomputing the digest. The four policies are:
 
-- MCP, 180 total inputs: the 11 common files; `tools/qualification/run_mcp.py`; `qualification/harnesses/mcp-transport/Cargo.toml`, `Cargo.lock`, `src/main.rs`, `src/registry.rs`, `src/report.rs`, and `tests/transport.rs` (all abbreviated harness entries in this sentence are relative to `qualification/harnesses/mcp-transport/`); `qualification/compatibility/mcp-transport.json`; `compatibility/authorities/mcp/2026-07-28/schema.json` and `schema.source.json`; `compatibility/snapshots/mcp.json`; `compatibility/fixtures/mcp/protocol.json`; `compatibility/fixtures/http/route-cases.json`; and exactly `compatibility/fixtures/mcp/tools/<name>/error.input.json`, `success.input.json`, `wire.error.json`, and `wire.success.json` for each literal tool name whose `mcp.tool.<name>` id is in the verified 39-tool projection. The literal `_MCP_TOOL_NAMES` tuple and projected tool-id set must be equal.
-- Semantic, 28 total inputs: the 11 common files; `tools/qualification/run_semantic.py`; `qualification/harnesses/semantic-native/Cargo.toml`, `Cargo.lock`, `src/lib.rs`, `src/corpus.rs`, `src/model.rs`, `src/index.rs`, `src/main.rs`, `src/scenario.rs`, `src/fts.rs`, `tests/corpus.rs`, `tests/index.rs`, `tests/recovery.rs`, and `tests/fts.rs` (all abbreviated harness entries in this sentence are relative to `qualification/harnesses/semantic-native/`); `qualification/fixtures/semantic-corpus.json`; `compatibility/fixtures/mcp/tools/hieronymus_rag_search/success.input.json`; and `compatibility/fixtures/mcp/tools/hieronymus_recall/success.input.json`.
+- MCP, 180 total inputs: the 11 common files; `tools/qualification/run_mcp.py`; `qualification/harnesses/mcp-transport/Cargo.toml`, `Cargo.lock`, `src/main.rs`, `src/registry.rs`, `src/report.rs`, and `tests/transport.rs` (all abbreviated harness entries in this sentence are relative to `qualification/harnesses/mcp-transport/`); `qualification/compatibility/mcp-transport.json`; `compatibility/authorities/mcp/2026-07-28/schema.json` and `schema.source.json`; `compatibility/snapshots/mcp.json`; `compatibility/fixtures/mcp/protocol.json`; `compatibility/fixtures/http/route-cases.json`; and exactly `compatibility/fixtures/mcp/<name>/error.input.json`, `success.input.json`, `wire.error.json`, and `wire.success.json` for each literal tool name whose `mcp.tool.<name>` id is in the verified 39-tool projection. The 39 tool directories are direct children of `compatibility/fixtures/mcp/`; there is no intermediate `tools/` directory. The literal `_MCP_TOOL_NAMES` tuple and projected tool-id set must be equal.
+- Semantic, 28 total inputs: the 11 common files; `tools/qualification/run_semantic.py`; `qualification/harnesses/semantic-native/Cargo.toml`, `Cargo.lock`, `src/lib.rs`, `src/corpus.rs`, `src/model.rs`, `src/index.rs`, `src/main.rs`, `src/scenario.rs`, `src/fts.rs`, `tests/corpus.rs`, `tests/index.rs`, `tests/recovery.rs`, and `tests/fts.rs` (all abbreviated harness entries in this sentence are relative to `qualification/harnesses/semantic-native/`); `qualification/fixtures/semantic-corpus.json`; `compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json`; and `compatibility/fixtures/mcp/hieronymus_recall/success.input.json`.
 - Frontend, 47 total inputs: the 11 common files; `tools/qualification/run_frontend.py`; `qualification/harnesses/frontend-embedding/Cargo.toml`, `Cargo.lock`, `build.rs`, `src/main.rs`, `src/assets.rs`, and `tests/assets.rs` (all abbreviated harness entries in this sentence are relative to `qualification/harnesses/frontend-embedding/`); `frontend/index.html`, `frontend/package.json`, `frontend/bun.lock`, `frontend/tsconfig.json`, and `frontend/vite.config.ts`; the exact 23 paths under `frontend/src/web/`: `App.svelte`, `app.css`, `app.test.ts`, `components/AdminDashboard.svelte`, `components/DreamingEditor.svelte`, `components/IngestEditor.svelte`, `components/MemoryViews.svelte`, `components/MemoryViews.test.ts`, `components/ProviderEditor.svelte`, `components/ReleaseEditor.svelte`, `components/Toast.svelte`, `components/editors.test.ts`, `fonts.css`, `fonts/geist.woff2`, `fonts/inconsolatalgc.woff2`, `fonts/literata.woff2`, `lib/admin-events.svelte.ts`, `lib/api.ts`, `lib/theme.svelte.test.ts`, `lib/theme.svelte.ts`, `lib/types.ts`, `main.ts`, and `test/setup.ts`; plus `compatibility/fixtures/http/route-cases.json`.
 - Database, 26 total inputs: the 11 common files; `tools/qualification/run_database.py`; `qualification/harnesses/legacy-database-import/Cargo.toml`, `Cargo.lock`, `src/main.rs`, `src/classify.rs`, `src/probe_import.rs`, `src/report.rs`, and `tests/fixtures.rs` (all abbreviated harness entries in this sentence are relative to `qualification/harnesses/legacy-database-import/`); `qualification/compatibility/legacy-database-import.json`; and exactly `compatibility/fixtures/database/corrupt.sqlite`, `empty.sqlite`, `legacy-python.sqlite`, `minimal-python.sqlite`, `partial-python.sqlite`, and `unknown-schema.sqlite` (all abbreviated database entries in this sentence are relative to `compatibility/fixtures/database/`).
 
-The whole mutable `compatibility/manifest.json` and `compatibility/snapshots/state.json` are absent from every risk suffix. Projection files and `projections.py` are covered, while implementation-internal test-node inventory is not. Task 3 updates `make_record` and its seeding helper to create exact policy files and valid projection/source pairs in temporary roots; its default command becomes an exact allowed `tools.qualification.validate` replay command rather than an ad-hoc executable name.
+The whole mutable `compatibility/manifest.json` and `compatibility/snapshots/state.json` are absent from every risk suffix. Projection files and `projections.py` are covered, while implementation-internal test-node inventory is not. Task 3 updates `make_record` and its seeding helper to copy or create only paths already proven by the literal policy/manifest/inventory test below; a factory is forbidden to make a nonexistent policy path appear valid merely by synthesizing it. Its default command becomes an exact allowed `tools.qualification.validate` replay command rather than an ad-hoc executable name.
+
+Add `test_mcp_literal_policy_matches_manifest_fixture_refs_and_real_inventory` in `tests/qualification/test_fingerprint.py`. It loads the real manifest, requires exactly 39 `mcp.tool.*` contracts, derives the exact tool names, and requires each contract's `fixture` to equal `compatibility/fixtures/mcp/<name>/success.input.json`. It then compares the 156 policy leaves to a `Path.iterdir()`/`find`-equivalent inventory of the four accepted leaf names under those exact direct-child directories:
+
+```python
+tool_contracts = tuple(
+    item for item in manifest["contracts"] if item["id"].startswith("mcp.tool.")
+)
+assert len(tool_contracts) == 39
+tool_names = tuple(sorted(item["id"].removeprefix("mcp.tool.") for item in tool_contracts))
+assert tool_names == tuple(sorted(_MCP_TOOL_NAMES))
+for item in tool_contracts:
+    name = item["id"].removeprefix("mcp.tool.")
+    assert item["fixture"] == f"compatibility/fixtures/mcp/{name}/success.input.json"
+expected = {
+    f"compatibility/fixtures/mcp/{name}/{leaf}"
+    for name in tool_names
+    for leaf in _MCP_TOOL_FIXTURE_LEAVES
+}
+actual = {
+    path.relative_to(ROOT).as_posix()
+    for directory in (ROOT / "compatibility/fixtures/mcp").iterdir()
+    if directory.is_dir() and directory.name in tool_names
+    for path in directory.iterdir()
+    if path.name in _MCP_TOOL_FIXTURE_LEAVES
+}
+assert len(expected) == len(actual) == 156
+assert set(MCP_TOOL_INPUT_WIRE_INPUTS) == expected == actual
+assert len(required_fingerprint_inputs("mcp-transport")) == 180
+assert len(required_fingerprint_inputs("semantic-native")) == 28
+assert all(
+    PurePosixPath(path).parts[3] != "tools"
+    for path in MCP_TOOL_INPUT_WIRE_INPUTS
+)
+```
+
+Run the equivalent repository audit with `find compatibility/fixtures/mcp -mindepth 2 -maxdepth 2 -type f` filtered to the four accepted leaf basenames and require exactly 156 paths. This test reads the real repository only; temporary-root factory tests consume its already verified literal tuple and separately prove that every required path exists before fingerprinting.
 
 Before opening `/`, `_open_repository_root` requires `os.fspath(repo_root)` to be an already absolute, lexically canonical spelling: `normpath(raw) == raw`, with no `.`, `..`, repeated separator, or non-root trailing separator. It must reject `alias/../chosen` instead of applying `abspath` and silently selecting different bytes. Walk that exact spelling component-by-component with no-follow directory descriptors.
 
@@ -1070,16 +1107,44 @@ Normalize every `OSError` from `os.open`, `os.dup`, `os.fstat`, `os.read`, and d
 
 - [ ] **Step 5: Close redaction, replay grammar, and literal Markdown rendering**
 
-Validation still requires every Task 2 criterion exactly once, exact decision/consequence, exact risk inputs, all cleanup booleans except `user_data_opened` true, and `user_data_opened` false. For MCP/database records it also appends only that risk's `projection_issues(repo_root)` result. Redaction scans strict canonical JSON and completed Markdown through one ordered, non-echoing rule set. Structured secret names include exact snake/camel variants `password`, `pass_word`, `passWord`, `private_key`, `privateKey`, `auth`, `auth_header`, `authHeader`, `authorization`, `authorization_header`, `authorizationHeader`, `proxy_authorization`, `proxyAuthorization`, `cookie`, `cookie_header`, `cookieHeader`, `set_cookie`, and `setCookie`, in addition to the existing provider/token/source/identity names. Scan both raw text and one case-insensitive percent-decoded view for `/home/<user>`, `/Users/<user>`, `/root`, `C:\Users\<user>`, and `C:\Documents and Settings\<user>`; decoding is for detection only and never rewrites evidence.
+Validation still requires every Task 2 criterion exactly once, exact decision/consequence, exact risk inputs, all cleanup booleans except `user_data_opened` true, and `user_data_opened` false. For MCP/database records it also appends only that risk's `projection_issues(repo_root)` result.
 
-`replay_commands_are_safe` accepts only a tuple of unique commands in this closed grammar:
+When the supplied text is canonical record JSON, `redaction_issues` parses it strictly and recursively visits every mapping nested through mappings and arrays before applying the common raw-text scan; completed Markdown uses the same ordered raw-text rules after rendering. JSON parse failure at the record-validation boundary is a fixed validation issue, never a fallback that skips the structured walk. The implementation never relies on a regex that can see only string-valued fields. Normalize a mapping key only by removing ASCII `_` and folding ASCII letters to lowercase, then compare the entire result—not a substring or prefix—to a closed normalized-name set. The set covers all exact snake/camel spellings below:
 
-1. Tokens are separated by exactly one ASCII space and each token uses only ASCII alphanumerics plus `_`, `-`, `.`, `/`, `:`, `+`, `,`, or `=`. Quotes, backslashes, `%`, `$`, `~`, `*`, `?`, brackets/braces/parentheses, backticks, `!`, `#`, `;`, `&`, `|`, `<`, `>`, controls, substitutions, expansions, globs, and redirections are rejected before parsing.
-2. Leading assignments may appear at most once and only in this order: `HIERONYMUS_QUALIFICATION_LIVE=1`, `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/<exact-risk>`, `CARGO_NET_OFFLINE=true`. No other name/value is valid.
-3. The command body is exactly one of: `uv run [--no-cache] [--no-sync] python [-B] -m tools.qualification.validate|render|check|run|run_mcp|run_semantic|run_frontend|run_database` with that module's documented relative-path/risk/`--write` arguments; `cargo +1.96.0 check|build|test|metadata|tree|fmt|clippy` with only documented flags, canonical relative manifest paths, the fixed target, and both Cargo assignments; or the exact network-isolated frontend form `unshare --user --map-root-user --net -- bun run --cwd frontend build -- --outDir qualification/.artifacts/frontend-dist/current --emptyOutDir`.
-4. Live runner modules require both `HIERONYMUS_QUALIFICATION_LIVE=1` and `CARGO_NET_OFFLINE=true`. URLs/URI schemes and all unlisted programs/subcommands are invalid; this explicitly excludes `curl`, `wget`, `git`, `ssh`, `nc`, `cargo fetch`, `bun install`, `uv sync`, and `tools.qualification.acquire` from recorded offline replay.
+| Issue class | Exact accepted spellings normalized for comparison |
+|---|---|
+| Authorization | `auth`, `auth_header`, `authHeader`, `authorization`, `authorization_header`, `authorizationHeader`, `proxy_authorization`, `proxyAuthorization` |
+| Cookie | `cookie`, `cookie_header`, `cookieHeader`, `set_cookie`, `setCookie` |
+| Password/private/token/provider | `password`, `pass_word`, `passWord`, `private_key`, `privateKey`, `access_token`, `accessToken`, `refresh_token`, `refreshToken`, `client_secret`, `clientSecret`, `api_key`, `apiKey`, `provider_key`, `providerKey`, `openai_api_key`, `openaiApiKey`, `anthropic_api_key`, `anthropicApiKey`, `gemini_api_key`, `geminiApiKey`, `secret`, `token`, `launch_grant`, `launchGrant` |
+| Source text | `memory_text`, `memoryText`, `source_text`, `sourceText`, `source_row`, `sourceRow`, `row_text`, `rowText`, `chunk_text`, `chunkText`, `translation_text`, `translationText`, `note_text`, `noteText` |
+| Raw process output | `raw_log`, `rawLog`, `raw_logs`, `rawLogs`, `stdout`, `stderr` |
+| Host/user identity | `hostname`, `host_name`, `hostName`, `machine_name`, `machineName`, `host`, `username`, `user_name`, `userName`, `login_user`, `loginUser` |
 
-`render_record` prints title, decision, exact replay-command table, environment/dependency tables, one row per required criterion, consumed compatibility ids, input digest, cleanup assertions, and immutable consequence; it never includes raw stdout/stderr. One `_literal_markdown` function handles every arbitrary value in tables and bullets. In addition to controls, DEL, ampersand, angle brackets, pipe, backslash, and backtick, it encodes `!`, `[`, `]`, `(`, and `)` as fixed numeric entities so link/image punctuation is always literal and cannot create an active destination. Dependency ordering is total, and the completed Markdown is redaction-scanned before return. `render --check` compares exact `read_bytes()` with UTF-8 rendered bytes.
+For a forbidden normalized key, inspect the value regardless of whether it is a string, number, boolean, null, or scalar array. Only the exact string sentinels `none`, `<absent>`, and `<redacted>` (ASCII case-insensitive after trimming) are safe; an array is safe only when it is nonempty and every element is one of those string sentinels. Numbers, booleans, null, mixed arrays, objects, and all other strings report the fixed issue for that class. The completed Markdown then passes through the same ordered, non-echoing textual rules. Safe sentinel phrases such as `stderr: none;`, `raw log: <absent>.`, and table cell `| authorizationHeader | <redacted> |` remain allowed with ordinary terminal `.`, `,`, `;`, `:`, `!`, `?`, closing parenthesis, or Markdown table context; the punctuation is not captured as secret material.
+
+Scan both raw text and one case-insensitive percent-decoded view for `/home/<user>`, `/Users/<user>`, `/root`, `C:\Users\<user>`, and `C:\Documents and Settings\<user>`; decoding is for detection only and never rewrites evidence. Add a raw-text PEM rule that recognizes `-----BEGIN PRIVATE KEY-----` and every BEGIN label ending in ` PRIVATE KEY`—including RSA, EC, DSA, ENCRYPTED, and OPENSSH. A BEGIN marker is sufficient even when the block is truncated; when an END marker is present its label must not be echoed. The rule returns only `record contains private-key material`. No redaction diagnostic may include the key name, matched value, PEM payload, or absolute path.
+
+`replay_commands_are_safe` itself requires `type(value) is tuple`, `bool(value)`, every element to be a string, and `len(value) == len(set(value))` before testing membership; `validate_record` does not supply uniqueness as a separate compensating check. The allowlist is finite and derived from this exact matrix, with `<risk>` expanded only over the four Task 2 risks. `<status/assertions>` expands to `accepted/true/true` or to `rejected` with `false/false`, `true/false`, or `false/true`; `accepted` with a false assertion and `rejected/true/true` are invalid:
+
+| Owner tasks | Exact offline command family admitted to a record |
+|---|---|
+| 8/12/15/18 | `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/<risk> CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_<risk-module> --write`, using exact pairs `mcp-transport/run_mcp`, `semantic-native/run_semantic`, `frontend-embedding/run_frontend`, `legacy-database-import/run_database` |
+| 12 and all record handoffs | `uv run python -m tools.qualification.validate qualification/records/<risk>.json` and `uv run python -m tools.qualification.render --check qualification/records/<risk>.json docs/qualification/rust/<risk>.md` |
+| 19/21 | `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run all --write` |
+| 19/20/21 | `uv run python -m tools.qualification.check --record <risk>`, `uv run python -m tools.qualification.check --records-only`, and `uv run python -m tools.qualification.check --require-qualified` |
+| 3/19/21 | `uv run python -m tools.qualification.projections --check`, `uv run --no-cache --no-sync python -B -m tools.qualification.projections --check`, `uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only`, and `uv run --no-cache --no-sync python -B -m tools.qualification.check --require-qualified` |
+| 20/21 | `uv run python -m tools.qualification.review <risk> --status <status> --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed <bool> --normative-constraints-preserved <bool>` with only the four coherent status/assertion triples above |
+| 12/21 cleanup | `uv run python -m tools.qualification.clean`, `uv run python -m tools.qualification.clean --apply`, and `uv run python -m tools.qualification.clean --apply --include-model` |
+| 8 | The exact MCP `metadata`, `tree`, `fmt`, and `clippy` Cargo commands printed in Task 8 |
+| 12 | The exact semantic `fmt` and `clippy` Cargo commands printed in Task 12 |
+| 15 | The exact frontend `build`, `fmt`, and `clippy` Cargo commands printed in Task 15, plus Task 13's exact `unshare --user --map-root-user --net -- bun run --cwd frontend build -- --outDir ../qualification/.artifacts/frontend-dist/current --emptyOutDir` |
+| 18 | The exact database `fmt` and `clippy` Cargo commands printed in Task 18 |
+
+Implement the matrix as canonical raw command strings plus exact finite expansions, not as a permissive executable/flag parser. Ordinary entries split on exactly one ASCII space and allow only ASCII alphanumerics plus `_`, `-`, `.`, `/`, `:`, `+`, `,`, or `=`. The sole quote exception is the exact raw segment `--owner "Pavel Obruchnikov <me@inkyquill.net>"` in a canonical review command: parse it with `shlex.split(posix=True)`, require the resulting owner token to equal `Pavel Obruchnikov <me@inkyquill.net>`, require the exact flag order shown above, and require raw reserialization to equal the canonical matrix entry. This narrowly supports the named owner without allowing quotes elsewhere, unmatched quotes, general `<`/`>` tokens, backslashes, `%`, `$`, `~`, `*`, `?`, brackets/braces/parentheses, backticks, `!`, `#`, `;`, `&`, `|`, controls, substitution, expansion, globbing, redirection, or arbitrary shell syntax. URLs/URI schemes and all unlisted programs/subcommands remain invalid; this explicitly excludes `curl`, `wget`, `git`, `ssh`, `nc`, `cargo fetch`, `bun install`, `uv sync`, and `tools.qualification.acquire` from recorded offline replay.
+
+Create one parameterized test matrix with every finite expansion above as an accepted case and one adjacent rejected mutation per row: empty tuple, duplicate command, changed risk/runner pairing, missing live/offline assignment, reordered assignment, noncanonical record path, projection `--write`, checker flag reordering/combination not listed, cleanup without `--apply` before `--include-model`, changed owner, unquoted owner, mismatched accepted/false or rejected/true assertions, Cargo `fetch`/extra flag/target mismatch, frontend output path without the exact `../`, and every shell/network mutation. A mechanical plan audit extracts every exact replay/cleanup/projection/review command printed in Tasks 8, 12, 15, 18, 19, 20, and 21 and requires it to appear in the accepted matrix; `PLANNED_REPLAY_COMMANDS` is the single source used by the validator and the test factory.
+
+`render_record` prints title, decision, exact replay-command table, environment/dependency tables, one row per required criterion, consumed compatibility ids, input digest, cleanup assertions, and immutable consequence; it never includes raw stdout/stderr. One `_literal_markdown` function handles every arbitrary value in tables and bullets. It encodes every C0 code point U+0000–U+001F, DEL U+007F, every C1 code point U+0080–U+009F, ampersand, angle brackets, pipe, backslash, backtick, `!`, `[`, `]`, `(`, and `)` as fixed numeric entities so controls and link/image punctuation are always literal and cannot create an active destination. Dependency ordering is total, and the completed Markdown is redaction-scanned before return. `render --check` compares exact `read_bytes()` with UTF-8 rendered bytes.
 
 - [ ] **Step 6: Generate projections, run GREEN, and verify irrelevant inventory stability**
 
@@ -1093,7 +1158,7 @@ Run: `uv run pytest tests/qualification/test_fingerprint.py tests/qualification/
 
 Run: `uv run ruff check tools/qualification/fingerprint.py tools/qualification/projections.py tools/qualification/redaction.py tools/qualification/validate.py tools/qualification/render.py tests/qualification/test_fingerprint.py tests/qualification/test_projections.py tests/qualification/test_redaction.py tests/qualification/test_render.py`
 
-Expected: all tests and Ruff pass; the two generated projections are canonical/current, relevant source changes fail, unrelated inventory/state changes do not alter projection bytes or record digests, same-size concurrent writes fail, every named secret/encoded-home/shell/network/Markdown case is rejected, and rendering is byte-deterministic.
+Expected: all tests and Ruff pass; the two generated projections are canonical/current, relevant source changes fail, unrelated inventory/state changes do not alter projection bytes or record digests, same-size concurrent writes fail, the real manifest fixture refs, direct-child `find` inventory, literal 156-leaf MCP policy, 180-input MCP total, and 28-input semantic total agree, every structured scalar type/nested secret/PEM/encoded-home/shell/network/Markdown case is rejected without echo, safe sentinels remain accepted, every planned command matrix row is accepted with adjacent mutations rejected, and C0/DEL/C1 rendering is byte-deterministic.
 
 Run the inventory generator a second time after the final Task 3 node set and require byte-identical global generated artifacts. Then modify only `test_ownership` and `state["tests"]` in a temporary copy, rerun projection checking and MCP/database record validation, and require both to remain current without rewriting either projection.
 
@@ -1552,7 +1617,7 @@ git commit -m "test: prove stateless MCP transport behavior"
 - Create: `docs/qualification/rust/mcp-transport.md`
 
 **Interfaces:**
-- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 1, 3, 6, and 7; `qualification/compatibility/mcp-transport.json`; `compatibility/authorities/mcp/2026-07-28/schema.json` and its `schema.source.json`; `compatibility/snapshots/mcp.json`; the corrected protocol/route fixtures; every MCP tool input/wire fixture; and only the projected contract ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and every `mcp.tool.*`. The runner never consumes or fingerprints the whole mutable manifest.
+- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 1, 3, 6, and 7; `qualification/compatibility/mcp-transport.json`; `compatibility/authorities/mcp/2026-07-28/schema.json` and its `schema.source.json`; `compatibility/snapshots/mcp.json`; the corrected protocol/route fixtures; exactly the four `compatibility/fixtures/mcp/<name>/{error.input.json,success.input.json,wire.error.json,wire.success.json}` leaves in each of the 39 direct-child tool directories; and only the projected contract ids `cli.script.hieronymus-mcp`, `http.route.post.mcp`, `http.route.post.api.mcp.operation`, and every `mcp.tool.*`. No intermediate grouping directory is accepted. The runner never consumes or fingerprints the whole mutable manifest.
 - Produces Python: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected unit tests and `run_live(repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1` before Cargo execution.
 - Produces private handoff: `_live_process_context(repo_root: Path, work_root: Path, original_env: Mapping[str, str]) -> tuple[ToolRoots, Path, dict[str, str]]`, returning discovered tool roots, `qualification/.artifacts/cargo-target/mcp-transport`, and the sanitized child environment in that order.
 - Produces canonical `qualified` only when all seventeen MCP criteria pass, including `official-schema-envelopes` and `header-mismatch-errors`; otherwise exact Task 2 `blocked` consequence.
@@ -1572,6 +1637,20 @@ def test_mcp_runner_consumes_corrected_oracle(tmp_path: Path) -> None:
     assert "compatibility/snapshots/mcp.json" in record.input_paths
     assert "compatibility/fixtures/mcp/protocol.json" in record.input_paths
     assert "compatibility/fixtures/http/route-cases.json" in record.input_paths
+    assert "compatibility/fixtures/mcp/hieronymus_status/success.input.json" in record.input_paths
+    assert len(record.input_paths) == 180
+    assert sum(
+        path.startswith("compatibility/fixtures/mcp/")
+        and path.endswith(
+            ("error.input.json", "success.input.json", "wire.error.json", "wire.success.json")
+        )
+        for path in record.input_paths
+    ) == 156
+    assert all(
+        PurePosixPath(path).parts[3] != "tools"
+        for path in record.input_paths
+        if path.startswith("compatibility/fixtures/mcp/hieronymus_")
+    )
     assert {item.criterion for item in record.evidence} == set(
         REQUIRED_CRITERIA["mcp-transport"]
     )
@@ -1607,7 +1686,7 @@ CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_O
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 tree --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked -e features
 ```
 
-Every Cargo argv begins with `str(tool_roots.cargo_invocation)`, never the resolved rustup target or a bare `cargo`. Every Cargo and MCP harness child goes through `run_owned_process` with the same sanitized environment and risk-specific target. The runner deletes ready files/logs/target output in `finally`, verifies all immutable compatibility inputs are byte-identical, and records the corrected oracle commit/digest. The digest includes `projections.py`, the canonical MCP projection, raw schema bytes, pin metadata, MCP snapshot, protocol, route cases, and every tool fixture; it excludes the whole mutable manifest/state sources. It requires the projection's exact 42 contract ids/fields, exact `cacheScope`, `ttlMs`, `resultType`, `inputSchema`, configured serverInfo omission, two success/eleven failure ids, all seven `-32020` bodies, the one coherent `-32022` body/data, and the exact raw-leaf mutation invariant. It compares exact route-case status/body digests and never claims generic Host/auth routing beyond the frozen `POST /mcp` cases. It records Cargo/Rust versions and basenames only; no `ToolRoots` path enters JSON, Markdown, or raw-log output.
+Every Cargo argv begins with `str(tool_roots.cargo_invocation)`, never the resolved rustup target or a bare `cargo`. Every Cargo and MCP harness child goes through `run_owned_process` with the same sanitized environment and risk-specific target. The runner deletes ready files/logs/target output in `finally`, verifies all immutable compatibility inputs are byte-identical, and records the corrected oracle commit/digest. The digest includes `projections.py`, the canonical MCP projection, raw schema bytes, pin metadata, MCP snapshot, protocol, route cases, and the exact 156 policy leaves under `compatibility/fixtures/mcp/<name>/`; it excludes the whole mutable manifest/state sources. Before execution, it reruns Task 3's manifest-fixture/path-inventory equality and refuses any missing leaf, extra policy path, synthesized factory-only path, or intermediate grouping directory. It requires the projection's exact 42 contract ids/fields, exact `cacheScope`, `ttlMs`, `resultType`, `inputSchema`, configured serverInfo omission, two success/eleven failure ids, all seven `-32020` bodies, the one coherent `-32022` body/data, and the exact raw-leaf mutation invariant. It compares exact route-case status/body digests and never claims generic Host/auth routing beyond the frozen `POST /mcp` cases. It records Cargo/Rust versions and basenames only; no `ToolRoots` path enters JSON, Markdown, or raw-log output.
 
 Run: `HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write`
 
@@ -1648,7 +1727,7 @@ git commit -m "test: qualify MCP transport candidate"
 - Modify: `tests/qualification/test_acquire.py`
 
 **Interfaces:**
-- Consumes: corrected Task 1 MCP RAG/recall success inputs as fixed query seeds and Task 4 acquisition boundary.
+- Consumes: corrected Task 1 MCP RAG/recall success inputs at `compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json` and `compatibility/fixtures/mcp/hieronymus_recall/success.input.json` as fixed query seeds, plus the Task 4 acquisition boundary.
 - Produces: `generate_corpus(spec: &CorpusSpec) -> anyhow::Result<(Vec<Chunk>, Vec<Query>)>` with exactly 10,000 chunks across 100 series and 50 queries.
 - Produces: verified model/runtime directories plus standalone exact candidate manifest/lockfile; no semantic decision or record.
 
@@ -1986,7 +2065,7 @@ git commit -m "test: prove semantic recovery and FTS fallback"
 - Create: `docs/qualification/rust/semantic-native.md`
 
 **Interfaces:**
-- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 9–11; and frozen RAG/recall seed fixtures.
+- Consumes: Task 5 `ToolRoots`, `discover_tool_roots`, `safe_subprocess_env`, and `run_owned_process`; Tasks 9–11; and the exact frozen seed fixtures `compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json` and `compatibility/fixtures/mcp/hieronymus_recall/success.input.json`. These are direct children of the MCP fixture root with no intermediate grouping directory.
 - Produces: `run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationRecord` for fake-injected pytest and `run_live(repo_root: Path, work_root: Path, *, original_env: Mapping[str, str]) -> QualificationRecord` for the opt-in CLI; `run_live` rejects missing `HIERONYMUS_QUALIFICATION_LIVE=1`.
 - Produces private handoff: `_live_process_context(repo_root: Path, work_root: Path, original_env: Mapping[str, str]) -> tuple[ToolRoots, Path, dict[str, str]]`, returning discovered tool roots, `qualification/.artifacts/cargo-target/semantic-native`, and the sanitized child environment in that order.
 - Produces: `semantic-enabled` only when all sixteen semantic criteria pass; any other complete result is `fts-only` and never blocks Linux release.
@@ -2008,6 +2087,14 @@ def test_prefilter_and_recovery_evidence_are_required(tmp_path: Path) -> None:
     criteria = {item.criterion for item in record.evidence}
     assert "series-prefilter-before-ann" in criteria
     assert "no-sqlite-write-across-native-io" in criteria
+    assert "compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json" in record.input_paths
+    assert "compatibility/fixtures/mcp/hieronymus_recall/success.input.json" in record.input_paths
+    assert len(record.input_paths) == 28
+    assert all(
+        PurePosixPath(path).parts[3] != "tools"
+        for path in record.input_paths
+        if path.startswith("compatibility/fixtures/mcp/hieronymus_")
+    )
 ```
 
 Add `test_semantic_live_context_discovers_before_sanitizing`: monkeypatch `run_semantic.discover_tool_roots` and `run_semantic.safe_subprocess_env`, call `_live_process_context(ROOT, tmp_path, original_env)`, and assert call order `("discover", "sanitize")`, identity of the passed `ToolRoots`, `cargo_offline is True`, and target `ROOT / "qualification/.artifacts/cargo-target/semantic-native"`.
@@ -2366,7 +2453,9 @@ Run: `uv run ruff check tools/qualification/run_frontend.py tests/qualification/
 
 Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --check`
 
-Expected: Python tests and rustfmt pass; the live runner's bounded Clippy step passes before cleanup; record validation reports exact path-contract ownership, complete criteria, and no sensitive data.
+Run: `CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings`
+
+Expected: Python tests, rustfmt, and the exact bounded Clippy command pass before cleanup; record validation reports exact path-contract ownership, complete criteria, and no sensitive data.
 
 - [ ] **Step 5: Commit the frontend qualification record**
 
@@ -2881,7 +2970,7 @@ git commit -m "test: compute Rust qualification gate"
 
 - [ ] **Step 1: Write failing review-transition and regeneration tests**
 
-Test that acceptance is rejected unless the owner is exact and both assertions are true; rejection preserves whichever assertion is false. Snapshot every non-review JSON path before and after `review_record` and require equality. Exercise the CLI in a temporary repository, require atomic per-file replacement of exactly one risk JSON/Markdown plus aggregate JSON/Markdown, and prove a rejected or partially reviewed record leaves the aggregate blocked. After seeding valid measured records/projections, mutate only unrelated manifest `test_ownership` and state `tests` inventory and prove MCP/database review still succeeds without changing their input digests. In paired cases, mutate a selected MCP contract or projected database field and prove review refuses before any replacement.
+Test that acceptance is rejected unless the owner is exact and both assertions are true; rejection preserves whichever assertion is false. Require each of the eight exact accepted/rejected commands printed in Step 3 to satisfy `replay_commands_are_safe((command,))`, parse the quoted owner through `shlex.split` to the single exact token `Pavel Obruchnikov <me@inkyquill.net>`, and reject unquoted/changed owners, reordered flags, status/assertion mismatches, empty tuples, and duplicate commands. Snapshot every non-review JSON path before and after `review_record` and require equality. Exercise the CLI in a temporary repository, require atomic per-file replacement of exactly one risk JSON/Markdown plus aggregate JSON/Markdown, and prove a rejected or partially reviewed record leaves the aggregate blocked. After seeding valid measured records/projections, mutate only unrelated manifest `test_ownership` and state `tests` inventory and prove MCP/database review still succeeds without changing their input digests. In paired cases, mutate a selected MCP contract or projected database field and prove review refuses before any replacement.
 
 Run: `uv run pytest tests/qualification/test_review.py -v`
 
@@ -3138,19 +3227,22 @@ git commit -m "ci: verify Rust qualification records"
 - Spec coverage: Task 1 pins the byte-exact official Draft 2020-12 schema, corrects and separately commits valid stateless tools/list/tools/call envelopes, explicitly configures serverInfo omission, and distinguishes seven HeaderMismatch cases from one coherent unsupported-version case while preserving method-aware name applicability. Tasks 2–5 establish the record, immutable risk-specific compatibility projections, validation, acquisition, cargo-shim-preserving discovery, and bounded-process foundations. Tasks 6–8 qualify all seventeen MCP criteria against the current verified 42-contract projection: exact metadata/headers/required list fields/wire key/transports/registry/error parity, configured response metadata, schema-pinned offline validation, and private-bridge absence. Tasks 9–12 own actual ANN creation, checked pre-filter plan/cardinality proof, SQLite-durable recovery/no-write-transaction-native-I/O proof, strengthened FTS, and FTS-only selection. Tasks 13–15 own manifest-correct Svelte embedding and traced runtime independence without claiming HTTP security ownership. Tasks 16–18 consume the verified three-contract/12-state-field database projection and own frozen-root classification/import, typed accounting, FTS/ledger proof, fail-closed behavior, and source immutability. Tasks 19–21 own projection-current validation, the aggregate gate, named-owner review/regeneration, reproducibility commands, and pinned CI.
 - Normative consequence coverage: semantic failure has exactly one accepted non-blocking result, `fts-only`; MCP/frontend/database failure blocks named dependent plans and never edits fixtures or specifications to turn a failure into a pass.
 - Network coverage: Task 1 alone retrieves the commit-pinned official schema once and verifies exact raw bytes; its tests, compatibility gate, Task 8 runner, and qualification gate use only the checked-in authority. Other acquisition commands are named and checksum/frozen-lock constrained; Hugging Face redirects include the observed exact CDN host under hop validation; Bun replay uses an isolated network namespace rather than a nonexistent offline-install flag; ordinary pytest uses only bounded fake child executables, while record checks use no subprocess, socket, Rust/native cache, or network. The one real Cargo environment smoke is explicitly live-gated.
-- Sensitive-data coverage: inputs are synthetic/frozen, work roots are bounded, reports contain only digests/counts/basenames, source database bytes are verified unchanged, and canonical JSON plus completed Markdown reject snake/camel password/private-key/auth/cookie fields, provider/token/source identities, raw and percent-encoded home paths, row text, raw headers, and logs without echoing values.
+- Sensitive-data coverage: inputs are synthetic/frozen, work roots are bounded, reports contain only digests/counts/basenames, and source database bytes are verified unchanged. Canonical JSON is parsed and recursively inspected by exact normalized snake/camel key over every scalar type/array, while completed Markdown uses the same non-echoing issue order; password/private-key/auth/cookie, provider/token/host/user identity, memory/source text, raw log/stdout/stderr, raw PEM private-key markers, and raw/percent-encoded home paths are rejected. Exact safe sentinels remain allowed in ordinary punctuation/table context.
 - Cleanup coverage: all transient output and every Cargo target are under one ignored exact root; core dumps are disabled; owned process groups are reaped; cleanup targets are enumerated/tested; model/runtime removal needs a separate flag; and no recursive operation can target the repository, home, translation workspace, or user data.
 - Ownership coverage: Task 1 owns the schema authority/module plus two implementation-internal test nodes and regenerates their state-snapshot/manifest/diagnostic ownership without adding public contract ids. Task 3 alone owns `projections.py` and both checked-in projections; ledger-required later global inventory regeneration may not rewrite them for unrelated changes. Tasks 2–5 otherwise split common model, validation/rendering, acquisition, and process/cleanup ownership; Task 9 alone extends acquisition inputs; every risk is split into separately committed manifest/build, behavior/recovery, and runner/evidence reviews; Tasks 19–21 separately own gate computation, review regeneration, and workflows.
 - Projection/staleness coverage: MCP and database records fingerprint their immutable projections and builder/validation code, never whole mutable ownership sources. Tasks 8/18 validate the appropriate projection before measurement, Task 19 validates both on every gate check, and Task 20 may review unchanged measured records after unrelated global inventory regeneration. A relevant selected source change blocks, requires projection regeneration, changes that risk's digest, and therefore requires a new owning live measurement.
-- Type/signature consistency: Task 1's four allowed schema-definition names match every Task 7/8 validation call, internal `input_schema` is mapped only at the explicit target-wire boundary, and the MCP record has exactly seventeen named criteria. `projection_issues(repo_root)` returns exact MCP/database keys consumed consistently by validation and Tasks 8, 18, 19, and 20. Fake-injected `run(..., executable: Path)` and guarded `run_live(..., original_env: Mapping[str, str])` are distinct for all four runners; every live context returns Task 5's exact `ToolRoots`, target, and safe environment; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 19 passes one unsanitized environment snapshot only to `run_live` and its records-only path imports no runner; Task 20 can replace only `Review`.
+- Type/signature consistency: Task 1's four allowed schema-definition names match every Task 7/8 validation call, internal `input_schema` is mapped only at the explicit target-wire boundary, and the MCP record has exactly seventeen named criteria. `projection_issues(repo_root)` returns exact MCP/database keys consumed consistently by validation and Tasks 8, 18, 19, and 20. Task 3 proves the 39 direct-child MCP directories, 156 policy leaves, 180-input MCP policy, and 28-input semantic policy against real manifest fixture refs and filesystem inventory. `replay_commands_are_safe` owns nonempty/unique enforcement and admits only the finite Task 8/12/15/18/19/20/21 matrix, including exact quoted owner/status/boolean forms, projections, bounded cleanup, checker, runner, Cargo, and isolated frontend commands. Fake-injected `run(..., executable: Path)` and guarded `run_live(..., original_env: Mapping[str, str])` are distinct for all four runners; every live context returns Task 5's exact `ToolRoots`, target, and safe environment; risk/criterion ids come from `REQUIRED_CRITERIA`; every record uses Task 2's exact types; Task 19 passes one unsanitized environment snapshot only to `run_live` and its records-only path imports no runner; Task 20 can replace only `Review`.
 - Production-scope check: the file map contains no production Rust workspace or crate path, and no task changes Python runtime behavior or starts a dependent implementation plan.
 
 Before accepting this plan, run:
 
 ```bash
 rg -n '\b(T[B]D|T[O]DO)\b|implement la[t]er|fill in deta[i]ls|Similar to Tas[k]' docs/superpowers/plans/2026-09-01-rust-qualification.md
+test "$(find compatibility/fixtures/mcp -mindepth 1 -maxdepth 1 -type d -name 'hieronymus_*' | wc -l)" -eq 39
+test "$(find compatibility/fixtures/mcp -mindepth 2 -maxdepth 2 -type f \( -name 'error.input.json' -o -name 'success.input.json' -o -name 'wire.error.json' -o -name 'wire.success.json' \) | wc -l)" -eq 156
 python - <<'PY'
 import re
+import json
 from pathlib import Path
 
 text = Path("docs/superpowers/plans/2026-09-01-rust-qualification.md").read_text()
@@ -3181,11 +3273,25 @@ for required in (
     "st_ctime_ns",
     "authorizationHeader",
     "privateKey",
+    "memoryText",
+    "sourceText",
+    "rawLog",
+    "rawLogs",
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "every C1 code point U+0080–U+009F",
+    "len(value) == len(set(value))",
+    "PLANNED_REPLAY_COMMANDS",
     "%2Fhome%2Falice%2Fprivate",
     "${INPUT:-/etc/passwd}",
     "![alt](target)",
+    "compatibility/fixtures/mcp/<name>/error.input.json",
+    "compatibility/fixtures/mcp/hieronymus_rag_search/success.input.json",
+    "compatibility/fixtures/mcp/hieronymus_recall/success.input.json",
+    "assert len(required_fingerprint_inputs(\"mcp-transport\")) == 180",
+    "assert len(required_fingerprint_inputs(\"semantic-native\")) == 28",
 ):
     assert required in text, required
+assert "compatibility/fixtures/mcp/" + "tools/" not in text
 assert 'tool["input_schema"]\n        for tool in target' not in text
 assert not re.search(
     r'^\s*assert "compatibility/manifest\.json" in record\.input_paths\s*$',
@@ -3207,6 +3313,77 @@ for line_number, line in enumerate(text.splitlines(), start=1):
         line,
         re.I,
     ), (line_number, line)
+
+manifest = json.loads(Path("compatibility/manifest.json").read_text(encoding="utf-8"))
+tool_contracts = tuple(
+    item for item in manifest["contracts"] if item["id"].startswith("mcp.tool.")
+)
+assert len(tool_contracts) == 39
+tool_names = {item["id"].removeprefix("mcp.tool.") for item in tool_contracts}
+for item in tool_contracts:
+    name = item["id"].removeprefix("mcp.tool.")
+    assert item["fixture"] == f"compatibility/fixtures/mcp/{name}/success.input.json"
+leaves = {"error.input.json", "success.input.json", "wire.error.json", "wire.success.json"}
+actual = {
+    path.as_posix()
+    for directory in Path("compatibility/fixtures/mcp").iterdir()
+    if directory.is_dir() and directory.name in tool_names
+    for path in directory.iterdir()
+    if path.name in leaves
+}
+expected = {
+    f"compatibility/fixtures/mcp/{name}/{leaf}"
+    for name in tool_names
+    for leaf in leaves
+}
+assert len(actual) == len(expected) == 156
+assert actual == expected
+
+planned_replay_commands = (
+    "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write",
+    "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_semantic --write",
+    "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_frontend --write",
+    "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_database --write",
+    "HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run all --write",
+    "uv run --no-cache --no-sync python -B -m tools.qualification.projections --check",
+    "uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only",
+    "uv run --no-cache --no-sync python -B -m tools.qualification.check --require-qualified",
+    "uv run python -m tools.qualification.clean",
+    "uv run python -m tools.qualification.clean --apply",
+    "uv run python -m tools.qualification.clean --apply --include-model",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 metadata --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --format-version 1",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 tree --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked -e features",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --check",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu -- -D warnings",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/semantic-native/Cargo.toml --check",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --all-targets --features semantic-native --target x86_64-unknown-linux-gnu -- -D warnings",
+    "unshare --user --map-root-user --net -- bun run --cwd frontend build -- --outDir ../qualification/.artifacts/frontend-dist/current --emptyOutDir",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 build --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --check",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --check",
+    "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings",
+)
+for command in planned_replay_commands:
+    assert command in text, command
+for template in (
+    "uv run python -m tools.qualification.validate qualification/records/<risk>.json",
+    "uv run python -m tools.qualification.render --check qualification/records/<risk>.json docs/qualification/rust/<risk>.md",
+    "uv run python -m tools.qualification.check --record <risk>",
+):
+    assert template in text, template
+for risk in ("mcp-transport", "semantic-native", "frontend-embedding", "legacy-database-import"):
+    for status, objective, normative in (
+        ("accepted", "true", "true"),
+        ("rejected", "false", "false"),
+    ):
+        command = (
+            f'uv run python -m tools.qualification.review {risk} --status {status} '
+            '--owner "Pavel Obruchnikov <me@inkyquill.net>" '
+            f'--objective-evidence-reviewed {objective} '
+            f'--normative-constraints-preserved {normative}'
+        )
+        assert command in text, command
 PY
 git diff --check -- docs/superpowers/plans/2026-09-01-rust-qualification.md
 git diff -- docs/superpowers/plans/2026-09-01-rust-qualification.md
@@ -3214,8 +3391,8 @@ test "$(git diff --name-only)" = "docs/superpowers/plans/2026-09-01-rust-qualifi
 git status --short
 ```
 
-Expected: the red-flag scan prints nothing; tasks remain exactly 1–21; task references, fences, action pins, official schema pin, exact list fields/wire key, error codes/case counts, configured serverInfo omission, projection paths/API/state fields, residual review regressions, and seventeen-criterion handoff pass; no positive whole-manifest/state fingerprint statement remains; diff check passes; and the changed-files audit contains only this plan. If a pre-existing unrelated change exists, use the path-scoped diff/status audit instead and leave it unstaged and untouched.
+Expected: the red-flag scan prints nothing; tasks remain exactly 1–21; task references, fences, action pins, official schema pin, exact list fields/wire key, error codes/case counts, configured serverInfo omission, projection paths/API/state fields, recursive structured/PEM redaction, C0/DEL/C1 encoding, and seventeen-criterion handoff pass. The real 39-directory/156-leaf MCP inventory and manifest refs match the direct-child policy, the MCP/semantic totals remain 180/28, no obsolete intermediate fixture hierarchy remains, every exact downstream replay/projection/check/cleanup/review command is represented in the accepted matrix, and no positive whole-manifest/state fingerprint statement remains. Diff check passes and the changed-files audit contains only this plan. If a pre-existing unrelated change exists, use the path-scoped diff/status audit instead and leave it unstaged and untouched.
 
 ## Execution Handoff
 
-Execute Tasks 1–21 only through the required sub-skill named in the header. Task 1's corrected compatibility commit—including the exact schema pin, valid response wire objects, configured serverInfo omission, and corrected HeaderMismatch/unsupported-version split—is a hard prerequisite and must pass independent review before candidate qualification. Task 3 then creates the two immutable risk projections; Tasks 7–8 consume but never rewrite the MCP authority, Tasks 8/18 validate and fingerprint only their appropriate projection, and Tasks 19–20 enforce projection currency without treating unrelated global inventory regeneration as measured-record staleness. After Task 21, a qualified aggregate permits the separate Rust workspace/contract-harness plan; a blocked aggregate is the durable stage result and requires a new candidate qualification run or an ADR-backed specification change before dependent planning.
+Execute Tasks 1–21 only through the required sub-skill named in the header. Task 1's corrected compatibility commit—including the exact schema pin, valid response wire objects, configured serverInfo omission, and corrected HeaderMismatch/unsupported-version split—is a hard prerequisite and must pass independent review before candidate qualification. Task 3 then creates the two immutable risk projections and proves its literal direct-child MCP fixture policy against the real 39 manifest refs and 156-leaf filesystem inventory; factories cannot manufacture missing policy paths. Tasks 7–8 consume but never rewrite the MCP authority, Tasks 8/18 validate and fingerprint only their appropriate projection, Task 12 consumes the two direct-child semantic seeds, and Tasks 19–20 enforce projection currency without treating unrelated global inventory regeneration as measured-record staleness. Every stored command must belong to Task 3's finite matrix, including exact quoted-owner review/status/assertion forms and bounded cleanup/projection/check commands. After Task 21, a qualified aggregate permits the separate Rust workspace/contract-harness plan; a blocked aggregate is the durable stage result and requires a new candidate qualification run or an ADR-backed specification change before dependent planning.
