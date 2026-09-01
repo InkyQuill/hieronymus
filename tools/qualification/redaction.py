@@ -269,14 +269,46 @@ _RULES = (
     ),
     _Rule(
         "record contains private-key material",
-        (
-            re.compile(
-                r"-----BEGIN (?:PRIVATE KEY|(?:(?!-----)[\x20-\x7e])+ PRIVATE KEY)-----",
-                re.IGNORECASE,
-            ),
-        ),
+        (),
     ),
 )
+
+_PRIVATE_KEY_BEGIN = "-----BEGIN "
+_PRIVATE_KEY_SUFFIX = " PRIVATE KEY"
+_PRIVATE_KEY_TERMINATOR = "-----"
+_PRIVATE_KEY_BOUNDARIES = frozenset(" \t\r\n\\\"',.;:!?)]}|")
+
+
+def _contains_private_key_marker(value: str) -> bool:
+    """Recognize one exact printable PEM private-key BEGIN marker."""
+    search_from = 0
+    while True:
+        marker_start = value.find(_PRIVATE_KEY_BEGIN, search_from)
+        if marker_start < 0:
+            return False
+        search_from = marker_start + 1
+        if marker_start > 0 and value[marker_start - 1] == "-":
+            continue
+
+        label_start = marker_start + len(_PRIVATE_KEY_BEGIN)
+        terminator_start = label_start
+        while True:
+            terminator_start = value.find(_PRIVATE_KEY_TERMINATOR, terminator_start)
+            if terminator_start < 0:
+                break
+            after_terminator = terminator_start + len(_PRIVATE_KEY_TERMINATOR)
+            if after_terminator < len(value):
+                boundary = value[after_terminator]
+                if boundary == "-" or boundary not in _PRIVATE_KEY_BOUNDARIES:
+                    terminator_start += 1
+                    continue
+            label = value[label_start:terminator_start]
+            if label != "PRIVATE KEY" and not label.endswith(_PRIVATE_KEY_SUFFIX):
+                terminator_start += 1
+                continue
+            if all("\x20" <= character <= "\x7e" for character in label):
+                return True
+            terminator_start += 1
 
 
 def redaction_issues(serialized_record: str) -> list[str]:
@@ -286,11 +318,13 @@ def redaction_issues(serialized_record: str) -> list[str]:
     structured = _structured_redaction_issues(serialized_record)
     decoded_view = unquote(serialized_record)
     views = (serialized_record, decoded_view)
-    raw = [
+    raw = {
         rule.issue
         for rule in _RULES
         if any(pattern.search(view) for view in views for pattern in rule.patterns)
-    ]
+    }
+    if any(_contains_private_key_marker(view) for view in views):
+        raw.add("record contains private-key material")
     issue_order = tuple(rule.issue for rule in _RULES)
     return [issue for issue in issue_order if issue in structured or issue in raw]
 

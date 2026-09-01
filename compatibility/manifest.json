@@ -4155,106 +4155,6 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[CARGO_NET_OFFLINE=true HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport uv run python -m tools.qualification.run_mcp --write]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --check --verbose]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --check]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_semantic --write]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport uv run python -m tools.qualification.run_mcp --write]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[unshare --user --map-root-user --net -- bun run --cwd frontend build -- --outDir qualification/.artifacts/frontend-dist/current --emptyOutDir]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.check --record mcp-transport --records-only]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.check --require-qualified --records-only]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.clean --include-model --apply]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.clean --include-model]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.projections --write]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.render --check qualification/records/mcp-transport.json docs/qualification/rust/semantic-native.md]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.review mcp-transport --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --status accepted --objective-evidence-reviewed true --normative-constraints-preserved true]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.review mcp-transport --status accepted --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed false --normative-constraints-preserved true]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.review mcp-transport --status accepted --owner \"Someone Else <else@example.invalid>\" --objective-evidence-reviewed true --normative-constraints-preserved true]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.review mcp-transport --status accepted --owner Pavel Obruchnikov <me@inkyquill.net> --objective-evidence-reviewed true --normative-constraints-preserved true]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.review mcp-transport --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed true --normative-constraints-preserved true]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.validate qualification/records/../records/mcp-transport.json]",
-      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
-    },
-    {
-      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_encoded_safe_sentinel_support_does_not_mask_html_or_following_secrets[raw log: &lt;script&gt;.]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -4540,6 +4440,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_replay_row_has_a_unique_rejected_adjacent_mutation",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"access_token\":\"ghp_1234567890abcdefghijklmnop\"-| access_token | ghp_1234567890abcdefghijklmnop |-record contains a token or secret value]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -4775,12 +4680,852 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[100]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[101]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[102]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[103]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[104]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[105]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[106]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[107]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[108]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[109]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[110]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[111]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[112]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[113]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[114]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[115]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[116]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[117]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[118]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[119]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[120]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[121]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[122]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[123]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[124]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[125]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[126]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[32]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[33]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[34]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[35]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[36]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[37]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[38]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[39]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[40]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[41]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[42]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[43]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[44]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[45]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[46]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[47]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[48]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[49]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[50]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[51]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[52]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[53]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[54]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[55]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[56]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[57]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[58]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[59]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[60]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[61]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[62]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[63]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[64]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[65]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[66]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[67]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[68]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[69]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[70]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[71]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[72]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[73]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[74]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[75]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[76]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[77]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[78]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[79]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[80]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[81]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[82]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[83]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[84]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[85]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[86]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[87]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[88]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[89]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[90]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[91]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[92]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[93]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[94]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[95]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[96]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[97]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[98]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_each_ascii_printable_label_character[99]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_exact_marker_inside_canonical_json",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_accepts_marker_before_json_escaped_payload",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[0]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[10]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[11]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[127]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[128]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[129]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[12]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[130]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[131]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[132]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[133]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[134]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[135]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[136]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[137]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[138]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[139]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[13]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[140]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[141]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[142]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[143]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[144]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[145]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[146]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[147]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[148]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[149]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[14]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[150]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[151]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[152]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[153]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[154]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[155]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[156]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[157]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[158]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[159]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[15]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[16]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[17]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[18]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[19]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[1]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[20]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[21]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[22]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[23]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[24]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[25]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[26]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[27]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[28]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[29]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[2]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[30]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[31]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[3]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[4]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[5]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[6]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[7]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[8]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_pem_rejects_each_ascii_control_label_character[9]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[------BEGIN PRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN FOO PRIVATE KEY ----]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN FOO PRIVATE KEY------]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN FOO PRIVATE KEY-----trailing]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN FOO\\nPRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN FOO\\tPRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN FOO\\x7f PRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN FOO\\x80 PRIVATE KEY-----]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -7680,6 +8425,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_rejects_private_key_pem_without_echo[-----BEGIN !\"#$%&'()*+,./:;<=>?@[\\\\]^_`{|}~ PRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_redaction_rejects_private_key_pem_without_echo[-----BEGIN ACME/V2+HSM PRIVATE KEY-----]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -7691,6 +8441,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_redaction_rejects_private_key_pem_without_echo[-----BEGIN FOO  BAR PRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_rejects_private_key_pem_without_echo[-----BEGIN FOO-----BAR PRIVATE KEY-----]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
