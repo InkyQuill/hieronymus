@@ -901,6 +901,185 @@ def test_forked_child_drops_inherited_kernel_mutex_before_acquiring(
     assert result.get(timeout=2) == ("ok", str(repo_root / _DESTINATION))
 
 
+def test_forked_child_drops_every_inherited_lock_before_reacquiring(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A child must not retain either half of any inherited lock stack."""
+    first_body = b"first fork-safe model"
+    second_body = b"second fork-safe model"
+    first_root = _repo(tmp_path / "first", body=first_body)
+    second_root = _repo(tmp_path / "second", body=second_body)
+    bodies = {
+        first_root.resolve(strict=True): first_body,
+        second_root.resolve(strict=True): second_body,
+    }
+    context = multiprocessing.get_context("fork")
+    result = context.Queue()
+    monkeypatch.setattr(acquire, "_ACQUISITION_TIMEOUT_SECONDS", 0.5)
+
+    def child() -> None:
+        try:
+            acquired = []
+            for repo_root in (first_root, second_root):
+                expected = bodies[repo_root.resolve(strict=True)]
+                acquire._open_no_redirect = lambda _request, body=expected: _Response(
+                    200,
+                    body=body,
+                )
+                acquired.append(str(acquire.acquire_semantic_model(repo_root)))
+            result.put(("ok", acquired))
+        except BaseException as error:  # pragma: no cover - asserted in parent
+            result.put(("error", type(error).__name__))
+
+    deadline = acquire._Deadline.after(5)
+    token = acquire._CURRENT_DEADLINE.set(deadline)
+    try:
+        with acquire._open_model_directory(first_root) as (first_canonical, first_fds):
+            with acquire._open_model_directory(second_root) as (second_canonical, second_fds):
+                with acquire._kernel_mutex(first_canonical, deadline):
+                    with acquire._acquisition_lock(first_fds[-1]):
+                        with acquire._kernel_mutex(second_canonical, deadline):
+                            with acquire._acquisition_lock(second_fds[-1]):
+                                process = context.Process(target=child)
+                                process.start()
+                                time.sleep(0.05)
+    finally:
+        acquire._CURRENT_DEADLINE.reset(token)
+    process.join(timeout=5)
+
+    assert process.exitcode == 0
+    assert result.get(timeout=2) == (
+        "ok",
+        [str(first_root / _DESTINATION), str(second_root / _DESTINATION)],
+    )
+    assert acquire._ACTIVE_MUTEX_SOCKETS == set()
+    assert acquire._ACTIVE_ADVISORY_LOCK_FDS == set()
+
+
+def test_fork_without_active_locks_does_not_poison_child_acquisition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"no inherited locks"
+    repo_root = _repo(tmp_path, body=body)
+    context = multiprocessing.get_context("fork")
+    result = context.Queue()
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: _Response(200, body=body))
+
+    def child() -> None:
+        try:
+            result.put(("ok", str(acquire.acquire_semantic_model(repo_root))))
+        except BaseException as error:  # pragma: no cover - asserted in parent
+            result.put(("error", type(error).__name__))
+
+    process = context.Process(target=child)
+    process.start()
+    process.join(timeout=5)
+
+    assert process.exitcode == 0
+    assert result.get(timeout=2) == ("ok", str(repo_root / _DESTINATION))
+
+
+def test_forked_lock_context_does_not_close_reused_child_descriptor(tmp_path: Path) -> None:
+    """Inherited context finalizers must not act on child fd-number reuse."""
+    repo_root = _repo(tmp_path, body=b"fd reuse")
+    read_fd, write_fd = os.pipe()
+    deadline = acquire._Deadline.after(5)
+    token = acquire._CURRENT_DEADLINE.set(deadline)
+    child = False
+    reused_fd = -1
+    pid = -1
+    try:
+        with acquire._open_model_directory(repo_root) as (_canonical, directory_fds):
+            with acquire._acquisition_lock(directory_fds[-1]) as lock_fd:
+                pid = os.fork()
+                if pid == 0:
+                    child = True
+                    os.close(read_fd)
+                    replacement_fd = os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)
+                    if replacement_fd != lock_fd:
+                        os.dup2(replacement_fd, lock_fd)
+                        os.close(replacement_fd)
+                    reused_fd = lock_fd
+    finally:
+        acquire._CURRENT_DEADLINE.reset(token)
+
+    if child:  # pragma: no cover - result is asserted through the pipe
+        try:
+            os.fstat(reused_fd)
+            os.write(write_fd, b"open")
+        except OSError:
+            os.write(write_fd, b"closed")
+        finally:
+            os._exit(0)
+
+    os.close(write_fd)
+    outcome = os.read(read_fd, 16)
+    os.close(read_fd)
+    waited_pid, status = os.waitpid(pid, 0)
+    assert waited_pid == pid
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert outcome == b"open"
+
+
+def test_nested_lock_exception_releases_parent_tracking_and_locks(tmp_path: Path) -> None:
+    repo_root = _repo(tmp_path, body=b"exception cleanup")
+    canonical = repo_root.resolve(strict=True)
+    deadline = acquire._Deadline.after(5)
+    token = acquire._CURRENT_DEADLINE.set(deadline)
+    try:
+        with acquire._open_model_directory(repo_root) as (_canonical, directory_fds):
+            with pytest.raises(RuntimeError, match="stop inside lock stack"):
+                with acquire._kernel_mutex(canonical, deadline):
+                    with acquire._acquisition_lock(directory_fds[-1]):
+                        assert len(acquire._ACTIVE_MUTEX_SOCKETS) == 1
+                        assert len(acquire._ACTIVE_ADVISORY_LOCK_FDS) == 1
+                        raise RuntimeError("stop inside lock stack")
+
+            assert acquire._ACTIVE_MUTEX_SOCKETS == set()
+            assert acquire._ACTIVE_ADVISORY_LOCK_FDS == set()
+            with acquire._kernel_mutex(canonical, deadline):
+                with acquire._acquisition_lock(directory_fds[-1]):
+                    pass
+    finally:
+        acquire._CURRENT_DEADLINE.reset(token)
+
+    assert acquire._ACTIVE_MUTEX_SOCKETS == set()
+    assert acquire._ACTIVE_ADVISORY_LOCK_FDS == set()
+
+
+def test_process_exit_releases_full_lock_stack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"lock owner exited"
+    repo_root = _repo(tmp_path, body=body)
+    context = multiprocessing.get_context("fork")
+    ready = context.Event()
+
+    def exit_while_holding_locks() -> None:
+        deadline = acquire._Deadline.after(5)
+        token = acquire._CURRENT_DEADLINE.set(deadline)
+        try:
+            with acquire._open_model_directory(repo_root) as (canonical, directory_fds):
+                with acquire._kernel_mutex(canonical, deadline):
+                    with acquire._acquisition_lock(directory_fds[-1]):
+                        ready.set()
+                        os._exit(0)
+        finally:  # pragma: no cover - os._exit intentionally skips finalizers
+            acquire._CURRENT_DEADLINE.reset(token)
+
+    process = context.Process(target=exit_while_holding_locks)
+    process.start()
+    assert ready.wait(timeout=5)
+    process.join(timeout=5)
+    assert process.exitcode == 0
+
+    monkeypatch.setattr(acquire, "_open_no_redirect", lambda _request: _Response(200, body=body))
+    assert acquire.acquire_semantic_model(repo_root) == repo_root / _DESTINATION
+
+
 @pytest.mark.parametrize("existing", [False, True], ids=["promoted", "existing"])
 @pytest.mark.parametrize(
     "stage",

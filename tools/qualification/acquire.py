@@ -78,6 +78,7 @@ _CURRENT_DEADLINE: contextvars.ContextVar[_Deadline | None] = contextvars.Contex
 )
 _MUTEX_TRACKING_LOCK = threading.Lock()
 _ACTIVE_MUTEX_SOCKETS: set[socket.socket] = set()
+_ACTIVE_ADVISORY_LOCK_FDS: set[int] = set()
 
 
 def _before_fork() -> None:
@@ -89,10 +90,21 @@ def _after_fork_parent() -> None:
 
 
 def _after_fork_child() -> None:
-    for mutex_socket in _ACTIVE_MUTEX_SOCKETS:
-        mutex_socket.close()
-    _ACTIVE_MUTEX_SOCKETS.clear()
-    _MUTEX_TRACKING_LOCK.release()
+    try:
+        for mutex_socket in _ACTIVE_MUTEX_SOCKETS:
+            try:
+                mutex_socket.close()
+            except OSError:
+                pass
+        _ACTIVE_MUTEX_SOCKETS.clear()
+        for lock_fd in _ACTIVE_ADVISORY_LOCK_FDS:
+            try:
+                os.close(lock_fd)
+            except OSError:
+                pass
+        _ACTIVE_ADVISORY_LOCK_FDS.clear()
+    finally:
+        _MUTEX_TRACKING_LOCK.release()
 
 
 os.register_at_fork(
@@ -392,12 +404,14 @@ def _kernel_mutex(canonical_root: Path, deadline: _Deadline) -> Iterator[None]:
                 candidate.close()
         if held is None:
             _sleep(min(_LOCK_RETRY_SECONDS, deadline.remaining()))
+    owner_pid = os.getpid()
     try:
         yield
     finally:
-        with _MUTEX_TRACKING_LOCK:
-            _ACTIVE_MUTEX_SOCKETS.discard(held)
-            held.close()
+        if os.getpid() == owner_pid:
+            with _MUTEX_TRACKING_LOCK:
+                _ACTIVE_MUTEX_SOCKETS.discard(held)
+                held.close()
 
 
 def _validate_lock_file(model_dir_fd: int, lock_fd: int) -> None:
@@ -417,23 +431,27 @@ def _validate_lock_file(model_dir_fd: int, lock_fd: int) -> None:
 def _acquisition_lock(model_dir_fd: int) -> Iterator[int]:
     deadline = _current_deadline()
     created = False
-    try:
+    lock_fd: int
+    with _MUTEX_TRACKING_LOCK:
         try:
-            lock_fd = os.open(
-                _LOCK_NAME,
-                os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-                0o600,
-                dir_fd=model_dir_fd,
-            )
-            created = True
-        except FileExistsError:
-            lock_fd = os.open(
-                _LOCK_NAME,
-                os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC,
-                dir_fd=model_dir_fd,
-            )
-    except OSError:
-        raise AcquisitionError("could not open the semantic model acquisition lock") from None
+            try:
+                lock_fd = os.open(
+                    _LOCK_NAME,
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=model_dir_fd,
+                )
+                created = True
+            except FileExistsError:
+                lock_fd = os.open(
+                    _LOCK_NAME,
+                    os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=model_dir_fd,
+                )
+        except OSError:
+            raise AcquisitionError("could not open the semantic model acquisition lock") from None
+        _ACTIVE_ADVISORY_LOCK_FDS.add(lock_fd)
+    owner_pid = os.getpid()
     try:
         if created:
             os.fsync(model_dir_fd)
@@ -449,9 +467,14 @@ def _acquisition_lock(model_dir_fd: int) -> Iterator[int]:
                 raise AcquisitionError("could not lock semantic model acquisition") from None
         _validate_lock_file(model_dir_fd, lock_fd)
         yield lock_fd
+        if os.getpid() != owner_pid:
+            return
         _validate_lock_file(model_dir_fd, lock_fd)
     finally:
-        os.close(lock_fd)
+        if os.getpid() == owner_pid:
+            with _MUTEX_TRACKING_LOCK:
+                _ACTIVE_ADVISORY_LOCK_FDS.discard(lock_fd)
+                os.close(lock_fd)
 
 
 def _response_status(response: object) -> int:
