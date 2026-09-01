@@ -26,6 +26,7 @@ from tools.qualification.model import (
     serialize_record,
 )
 from tools.qualification.redaction import redaction_issues
+from tools.qualification.render import render_record
 from tools.qualification.validate import (
     PLANNED_REPLAY_COMMANDS,
     replay_commands_are_safe,
@@ -824,6 +825,93 @@ def test_json_pem_detects_marker_created_by_printable_unicode_escape() -> None:
     serialized = r'{"artifact":"-----\u0042EGIN PRIVATE KEY-----"}'
 
     assert redaction_issues(serialized) == ["record contains private-key material"]
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "-----BEGIN PRIVATE KEY-----",
+        "-----BEGIN FOO-----BAR PRIVATE KEY-----",
+        "-----BEGIN ACME/V2+HSM PRIVATE KEY-----",
+    ],
+)
+@pytest.mark.parametrize("nested", [False, True])
+def test_json_pem_scans_string_mapping_keys_at_every_depth(
+    marker: str,
+    nested: bool,
+) -> None:
+    payload: object = {marker: "private payload must not be echoed"}
+    if nested:
+        payload = {"outer": [{"inner": payload}]}
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    issues = redaction_issues(serialized)
+
+    assert issues == ["record contains private-key material"]
+    assert marker not in issues[0]
+    assert "private payload" not in issues[0]
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "-----BEGIN PRIVATE KEY-----",
+        "-----BEGIN FOO-----BAR PRIVATE KEY-----",
+        "-----BEGIN ACME/V2+HSM PRIVATE KEY-----",
+    ],
+)
+def test_validate_and_render_consistently_reject_pem_measurement_keys(
+    tmp_path: Path,
+    marker: str,
+) -> None:
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
+    record = make_record(tmp_path, "frontend-embedding")
+    evidence = replace(
+        record.evidence[0],
+        measurements=Measurements({marker: "private payload must not be echoed"}),
+    )
+    leaked = replace(record, evidence=(evidence, *record.evidence[1:]))
+
+    assert validate_record(leaked, tmp_path) == ["record contains private-key material"]
+    with pytest.raises(ValueError) as caught:
+        render_record(leaked)
+    diagnostic = str(caught.value)
+    assert diagnostic == "record contains private-key material"
+    assert marker not in diagnostic
+    assert "private payload" not in diagnostic
+
+
+@pytest.mark.parametrize("codepoint", (*range(0x20), 0x7F, *range(0x80, 0xA0)))
+@pytest.mark.parametrize("nested", [False, True])
+def test_json_pem_mapping_keys_preserve_control_bearing_near_misses(
+    codepoint: int,
+    nested: bool,
+) -> None:
+    marker = f"-----BEGIN LEFT{chr(codepoint)}RIGHT PRIVATE KEY-----"
+    payload: object = {marker: "synthetic measurement"}
+    if nested:
+        payload = {"outer": [{"inner": payload}]}
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    assert redaction_issues(serialized) == []
+
+
+def test_validate_and_render_accept_control_bearing_pem_key_near_miss(
+    tmp_path: Path,
+) -> None:
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
+    record = make_record(tmp_path, "frontend-embedding")
+    marker = "-----BEGIN LEFT\x1fRIGHT PRIVATE KEY-----"
+    evidence = replace(
+        record.evidence[0],
+        measurements=Measurements({marker: "synthetic measurement"}),
+    )
+    safe = replace(record, evidence=(evidence, *record.evidence[1:]))
+
+    assert validate_record(safe, tmp_path) == []
+    rendered = render_record(safe)
+    assert marker not in rendered
+    assert "&#92;u001f" in rendered
 
 
 def test_percent_decoding_is_not_used_for_pem_detection() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from html import unescape as unescape_html
 from urllib.parse import unquote
 
 
@@ -277,6 +278,9 @@ _PRIVATE_KEY_BEGIN = "-----BEGIN "
 _PRIVATE_KEY_SUFFIX = " PRIVATE KEY"
 _PRIVATE_KEY_TERMINATOR = "-----"
 _PRIVATE_KEY_BOUNDARIES = frozenset(" \t\r\n\\\"',.;:!?)]}|")
+_JSON_CONTROL_ESCAPE = re.compile(
+    r"(?<!\\)\\u(00(?:0[0-9A-Fa-f]|1[0-9A-Fa-f]|7[fF]|8[0-9A-Fa-f]|9[0-9A-Fa-f]))"
+)
 
 
 def _contains_private_key_marker(value: str) -> bool:
@@ -311,6 +315,15 @@ def _contains_private_key_marker(value: str) -> bool:
             terminator_start += 1
 
 
+def _decoded_markdown_text(value: str) -> str:
+    """Undo one renderer layer without decoding literal double-backslash text."""
+    html_decoded = unescape_html(value)
+    return _JSON_CONTROL_ESCAPE.sub(
+        lambda match: chr(int(match.group(1), 16)),
+        html_decoded,
+    )
+
+
 def redaction_issues(serialized_record: str) -> list[str]:
     """Return each sensitive-data class found, once, in fixed rule order."""
     if type(serialized_record) is not str:
@@ -333,7 +346,7 @@ def redaction_issues(serialized_record: str) -> list[str]:
     )
     if any(pattern.search(decoded_view) for pattern in home_rule.patterns):
         raw.add(home_rule.issue)
-    pem_values = _string_leaves(parsed) if is_json else (serialized_record,)
+    pem_values = _string_nodes(parsed) if is_json else (_decoded_markdown_text(serialized_record),)
     if any(_contains_private_key_marker(value) for value in pem_values):
         raw.add("record contains private-key material")
     issue_order = tuple(rule.issue for rule in _RULES)
@@ -359,21 +372,23 @@ def _structured_redaction_issues(parsed: object) -> set[str]:
     return issues
 
 
-def _string_leaves(value: object) -> tuple[str, ...]:
-    leaves: list[str] = []
+def _string_nodes(value: object) -> tuple[str, ...]:
+    strings: list[str] = []
 
     def visit(node: object) -> None:
         if type(node) is str:
-            leaves.append(node)
+            strings.append(node)
         elif isinstance(node, dict):
-            for child in node.values():
+            for key, child in node.items():
+                if type(key) is str:
+                    strings.append(key)
                 visit(child)
         elif isinstance(node, list):
             for child in node:
                 visit(child)
 
     visit(value)
-    return tuple(leaves)
+    return tuple(strings)
 
 
 def _normalize_key(value: object) -> str:
