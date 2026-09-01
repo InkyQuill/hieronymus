@@ -4155,6 +4155,391 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[CARGO_NET_OFFLINE=true HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport uv run python -m tools.qualification.run_mcp --write]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --check --verbose]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --check]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_semantic --write]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport uv run python -m tools.qualification.run_mcp --write]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[unshare --user --map-root-user --net -- bun run --cwd frontend build -- --outDir qualification/.artifacts/frontend-dist/current --emptyOutDir]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.check --record mcp-transport --records-only]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.check --require-qualified --records-only]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.clean --include-model --apply]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.clean --include-model]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.projections --write]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.render --check qualification/records/mcp-transport.json docs/qualification/rust/semantic-native.md]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.review mcp-transport --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --status accepted --objective-evidence-reviewed true --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.review mcp-transport --status accepted --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed false --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.review mcp-transport --status accepted --owner \"Someone Else <else@example.invalid>\" --objective-evidence-reviewed true --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.review mcp-transport --status accepted --owner Pavel Obruchnikov <me@inkyquill.net> --objective-evidence-reviewed true --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.review mcp-transport --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed true --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_each_replay_family_rejects_an_adjacent_noncanonical_mutation[uv run python -m tools.qualification.validate qualification/records/../records/mcp-transport.json]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_encoded_safe_sentinel_support_does_not_mask_html_or_following_secrets[raw log: &lt;script&gt;.]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_encoded_safe_sentinel_support_does_not_mask_html_or_following_secrets[stderr: &lt;redacted&gt; followed-by-output]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_encoded_safe_sentinel_support_does_not_mask_html_or_following_secrets[| authorizationHeader | &lt;credential&gt; |]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 build --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --check]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu -- -D warnings]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --check]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --target x86_64-unknown-linux-gnu -- -D warnings]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --check]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 metadata --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked --format-version 1]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true cargo +1.96.0 tree --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked -e features]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked --all-targets --features semantic-native --target x86_64-unknown-linux-gnu -- -D warnings]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path qualification/harnesses/semantic-native/Cargo.toml --check]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run all --write]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_frontend --write]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_database --write]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_semantic --write]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[unshare --user --map-root-user --net -- bun run --cwd frontend build -- --outDir ../qualification/.artifacts/frontend-dist/current --emptyOutDir]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run --no-cache --no-sync python -B -m tools.qualification.check --require-qualified]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run --no-cache --no-sync python -B -m tools.qualification.projections --check]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.check --record frontend-embedding]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.check --record legacy-database-import]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.check --record mcp-transport]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.check --record semantic-native]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.check --records-only]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.check --require-qualified]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.clean --apply --include-model]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.clean --apply]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.clean]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.projections --check]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.render --check qualification/records/frontend-embedding.json docs/qualification/rust/frontend-embedding.md]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.render --check qualification/records/legacy-database-import.json docs/qualification/rust/legacy-database-import.md]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.render --check qualification/records/mcp-transport.json docs/qualification/rust/mcp-transport.md]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.render --check qualification/records/semantic-native.json docs/qualification/rust/semantic-native.md]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review frontend-embedding --status accepted --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed true --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review frontend-embedding --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed false --normative-constraints-preserved false]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review frontend-embedding --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed false --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review frontend-embedding --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed true --normative-constraints-preserved false]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review legacy-database-import --status accepted --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed true --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review legacy-database-import --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed false --normative-constraints-preserved false]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review legacy-database-import --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed false --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review legacy-database-import --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed true --normative-constraints-preserved false]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review mcp-transport --status accepted --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed true --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review mcp-transport --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed false --normative-constraints-preserved false]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review mcp-transport --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed false --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review mcp-transport --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed true --normative-constraints-preserved false]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review semantic-native --status accepted --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed true --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review semantic-native --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed false --normative-constraints-preserved false]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review semantic-native --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed false --normative-constraints-preserved true]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.review semantic-native --status rejected --owner \"Pavel Obruchnikov <me@inkyquill.net>\" --objective-evidence-reviewed true --normative-constraints-preserved false]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.validate qualification/records/frontend-embedding.json]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.validate qualification/records/legacy-database-import.json]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.validate qualification/records/mcp-transport.json]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_every_finite_replay_matrix_entry_is_individually_accepted[uv run python -m tools.qualification.validate qualification/records/semantic-native.json]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_json_and_markdown_use_the_same_sensitive_data_rules[\"access_token\":\"ghp_1234567890abcdefghijklmnop\"-| access_token | ghp_1234567890abcdefghijklmnop |-record contains a token or secret value]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -4295,6 +4680,46 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_markdown_encoded_safe_sentinels[raw log: &lt;absent&gt;,]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_markdown_encoded_safe_sentinels[raw log: &lt;absent&gt;.]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_markdown_encoded_safe_sentinels[stderr: &lt;redacted&gt;!]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_markdown_encoded_safe_sentinels[stderr: &lt;redacted&gt;)]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_markdown_encoded_safe_sentinels[stderr: &lt;redacted&gt;:]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_markdown_encoded_safe_sentinels[stderr: &lt;redacted&gt;;]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_markdown_encoded_safe_sentinels[stderr: &lt;redacted&gt;?]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_markdown_encoded_safe_sentinels[| authorizationHeader | &lt;redacted&gt; |]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_redaction_allows_punctuated_safe_sentinels[raw log: <absent>.]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -4346,6 +4771,36 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_redaction_diagnostics_never_echo_matched_values",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN FOO PRIVATE KEY ----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN FOO\\nPRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN PRIVATE KEYCHAIN-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN PRIVATE KEYS-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGIN PUBLIC KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries[-----BEGINPRIVATE KEY-----]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -7225,7 +7680,22 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_rejects_private_key_pem_without_echo[-----BEGIN ACME/V2+HSM PRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_redaction_rejects_private_key_pem_without_echo[-----BEGIN EC PRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_rejects_private_key_pem_without_echo[-----BEGIN FOO  BAR PRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_rejects_private_key_pem_without_echo[-----BEGIN FOO-BAR PRIVATE KEY-----]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -7245,6 +7715,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_redaction_rejects_private_key_pem_without_echo[-----BEGIN X.509_TEST PRIVATE KEY-----]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_redaction_reports_all_matches_once_in_rule_order",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -7256,6 +7731,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_redaction.py::test_redaction_sentinels_do_not_mask_following_sensitive_values[stderr: none raw child output]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_redaction.py::test_replay_matrix_mechanically_covers_commands_printed_by_owning_tasks",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -7626,6 +8106,21 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_render.py::test_render_sorts_dependency_rows_without_mutating_record_order",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_validate_and_render_preserve_structured_safe_sentinels[<absent>]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_validate_and_render_preserve_structured_safe_sentinels[<redacted>]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_render.py::test_validate_and_render_preserve_structured_safe_sentinels[none]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {

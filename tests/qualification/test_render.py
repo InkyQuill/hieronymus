@@ -15,6 +15,7 @@ from factories import make_record, seed_fingerprint_inputs
 from tools.qualification.fingerprint import COMMON_FINGERPRINT_INPUTS
 from tools.qualification.model import LockedDependency, Measurements, Risk, serialize_record
 from tools.qualification.render import _cell, _literal_markdown, render_record
+from tools.qualification.validate import validate_record
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -253,6 +254,32 @@ def test_render_scans_the_final_markdown_before_return(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="record contains a username"):
         render_record(record)
+
+
+@pytest.mark.parametrize("sentinel", ["none", "<absent>", "<redacted>"])
+def test_validate_and_render_preserve_structured_safe_sentinels(
+    tmp_path: Path,
+    sentinel: str,
+) -> None:
+    seed_fingerprint_inputs(tmp_path, "frontend-embedding")
+    record = make_record(tmp_path, "frontend-embedding")
+    evidence = replace(
+        record.evidence[0],
+        measurements=Measurements({"stderr": sentinel}),
+    )
+    safe = replace(record, evidence=(evidence, *record.evidence[1:]))
+
+    assert validate_record(safe, tmp_path) == []
+    rendered = render_record(safe)
+    if sentinel.startswith("<"):
+        assert sentinel not in rendered
+        expected = {
+            "<absent>": "&lt;absent&gt;",
+            "<redacted>": "&lt;redacted&gt;",
+        }
+        assert expected[sentinel] in rendered
+    else:
+        assert sentinel in rendered
 
 
 @pytest.mark.parametrize(

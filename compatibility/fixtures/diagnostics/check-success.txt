@@ -208,9 +208,9 @@ Implementation state:
     mcp.tool.hieronymus_termbase_propose
     mcp.tool.hieronymus_termbase_validate
     websocket.route.get.ws.admin
-Test ownership: 2163
+Test ownership: 2262
 By test-ownership disposition:
-  implementation_internal: 1866
+  implementation_internal: 1965
   public_contract: 297
 Frontend test ownership: 16
 By frontend test-ownership disposition:

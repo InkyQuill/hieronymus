@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import fields, replace
 from pathlib import Path
 
@@ -30,6 +31,55 @@ from tools.qualification.validate import (
     replay_commands_are_safe,
     validate_record,
 )
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _task_section(plan: str, task: int) -> str:
+    match = re.search(
+        rf"^### Task {task}:.*?(?=^### Task |^## Self-Review Record|\Z)",
+        plan,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None
+    return match.group(0)
+
+
+def _printed_replay_commands(section: str) -> set[str]:
+    """Extract replay-like commands independently of the production allowlist."""
+    candidates = set(re.findall(r"Run: `([^`]+)`", section))
+    for block in re.findall(r"^```bash\n(.*?)^```$", section, re.MULTILINE | re.DOTALL):
+        candidates.update(
+            line.strip()
+            for line in block.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+
+    qualification_modules = (
+        "tools.qualification.run",
+        "tools.qualification.validate",
+        "tools.qualification.render",
+        "tools.qualification.check",
+        "tools.qualification.clean",
+        "tools.qualification.projections",
+        "tools.qualification.review",
+    )
+    cargo_replay_subcommands = {"metadata", "tree", "build", "fmt", "clippy"}
+    extracted: set[str] = set()
+    for command in candidates:
+        if any(module in command for module in qualification_modules):
+            if "pytest" not in command and "ruff" not in command:
+                extracted.add(command)
+            continue
+        if " CARGO_NET_OFFLINE=true cargo +1.96.0 " in command:
+            tokens = command.split(" ")
+            cargo_index = tokens.index("cargo")
+            if tokens[cargo_index + 2] in cargo_replay_subcommands:
+                extracted.add(command)
+            continue
+        if command.startswith("unshare --user --map-root-user --net -- bun run "):
+            extracted.add(command)
+    return extracted
 
 
 def _unchecked_record(
@@ -459,12 +509,35 @@ def test_redaction_recursively_rejects_structured_values_of_every_json_type(
         "-----BEGIN RSA PRIVATE KEY-----",
         "-----BEGIN EC PRIVATE KEY-----",
         "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "-----BEGIN FOO-BAR PRIVATE KEY-----",
+        "-----BEGIN ACME/V2+HSM PRIVATE KEY-----",
+        "-----BEGIN X.509_TEST PRIVATE KEY-----",
+        "-----BEGIN FOO  BAR PRIVATE KEY-----",
     ],
 )
 def test_redaction_rejects_private_key_pem_without_echo(marker: str) -> None:
-    assert redaction_issues(marker + "\nprivate payload") == [
-        "record contains private-key material"
-    ]
+    payload = "private payload must not be echoed"
+    issues = redaction_issues(marker + "\n" + payload)
+
+    assert issues == ["record contains private-key material"]
+    assert all(marker not in issue and payload not in issue for issue in issues)
+
+
+@pytest.mark.parametrize(
+    "near_miss",
+    [
+        "-----BEGIN PUBLIC KEY-----",
+        "-----BEGIN PRIVATE KEYS-----",
+        "-----BEGIN PRIVATE KEYCHAIN-----",
+        "-----BEGINPRIVATE KEY-----",
+        "-----BEGIN FOO PRIVATE KEY ----",
+        "-----BEGIN FOO\nPRIVATE KEY-----",
+    ],
+)
+def test_redaction_private_key_pem_rule_has_exact_begin_label_boundaries(
+    near_miss: str,
+) -> None:
+    assert redaction_issues(near_miss) == []
 
 
 @pytest.mark.parametrize(
@@ -477,6 +550,37 @@ def test_redaction_rejects_private_key_pem_without_echo(marker: str) -> None:
 )
 def test_redaction_allows_punctuated_safe_sentinels(safe: str) -> None:
     assert redaction_issues(safe) == []
+
+
+@pytest.mark.parametrize(
+    "safe",
+    [
+        "stderr: &lt;redacted&gt;;",
+        "stderr: &lt;redacted&gt;:",
+        "stderr: &lt;redacted&gt;!",
+        "stderr: &lt;redacted&gt;?",
+        "stderr: &lt;redacted&gt;)",
+        "raw log: &lt;absent&gt;.",
+        "raw log: &lt;absent&gt;,",
+        "| authorizationHeader | &lt;redacted&gt; |",
+    ],
+)
+def test_redaction_allows_markdown_encoded_safe_sentinels(safe: str) -> None:
+    assert redaction_issues(safe) == []
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "stderr: &lt;redacted&gt; followed-by-output",
+        "raw log: &lt;script&gt;.",
+        "| authorizationHeader | &lt;credential&gt; |",
+    ],
+)
+def test_encoded_safe_sentinel_support_does_not_mask_html_or_following_secrets(
+    leak: str,
+) -> None:
+    assert redaction_issues(leak)
 
 
 @pytest.mark.parametrize(
@@ -756,3 +860,116 @@ def test_replay_safety_owns_nonempty_uniqueness_and_future_command_matrix() -> N
         for command in PLANNED_REPLAY_COMMANDS
     )
     assert replay_commands_are_safe((["not hashable"],)) is False
+
+
+@pytest.mark.parametrize("command", PLANNED_REPLAY_COMMANDS)
+def test_every_finite_replay_matrix_entry_is_individually_accepted(command: str) -> None:
+    assert replay_commands_are_safe((command,))
+
+
+def test_replay_matrix_mechanically_covers_commands_printed_by_owning_tasks() -> None:
+    plan = (ROOT / "docs/superpowers/plans/2026-09-01-rust-qualification.md").read_text(
+        encoding="utf-8"
+    )
+    printed = set().union(
+        *(
+            _printed_replay_commands(_task_section(plan, task))
+            for task in (8, 12, 15, 18, 19, 20, 21)
+        )
+    )
+
+    assert printed
+    assert printed <= set(PLANNED_REPLAY_COMMANDS)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        # Risk/runner pairing and live/offline assignment presence/order.
+        (
+            "HIERONYMUS_QUALIFICATION_LIVE=1 "
+            "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport "
+            "CARGO_NET_OFFLINE=true uv run python -m "
+            "tools.qualification.run_semantic --write"
+        ),
+        (
+            "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport "
+            "CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run_mcp --write"
+        ),
+        (
+            "HIERONYMUS_QUALIFICATION_LIVE=1 "
+            "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport "
+            "uv run python -m tools.qualification.run_mcp --write"
+        ),
+        (
+            "CARGO_NET_OFFLINE=true HIERONYMUS_QUALIFICATION_LIVE=1 "
+            "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport "
+            "uv run python -m tools.qualification.run_mcp --write"
+        ),
+        # Canonical record/projection/check/cleanup forms.
+        (
+            "uv run python -m tools.qualification.validate "
+            "qualification/records/../records/mcp-transport.json"
+        ),
+        (
+            "uv run python -m tools.qualification.render --check "
+            "qualification/records/mcp-transport.json "
+            "docs/qualification/rust/semantic-native.md"
+        ),
+        "uv run python -m tools.qualification.projections --write",
+        "uv run python -m tools.qualification.check --require-qualified --records-only",
+        "uv run python -m tools.qualification.check --record mcp-transport --records-only",
+        "uv run python -m tools.qualification.clean --include-model --apply",
+        "uv run python -m tools.qualification.clean --include-model",
+        # Exact review owner, quoting, flag order, and coherent status/assertions.
+        (
+            "uv run python -m tools.qualification.review mcp-transport --status accepted "
+            '--owner "Someone Else <else@example.invalid>" '
+            "--objective-evidence-reviewed true --normative-constraints-preserved true"
+        ),
+        (
+            "uv run python -m tools.qualification.review mcp-transport --status accepted "
+            "--owner Pavel Obruchnikov <me@inkyquill.net> "
+            "--objective-evidence-reviewed true --normative-constraints-preserved true"
+        ),
+        (
+            "uv run python -m tools.qualification.review mcp-transport "
+            '--owner "Pavel Obruchnikov <me@inkyquill.net>" --status accepted '
+            "--objective-evidence-reviewed true --normative-constraints-preserved true"
+        ),
+        (
+            "uv run python -m tools.qualification.review mcp-transport --status accepted "
+            '--owner "Pavel Obruchnikov <me@inkyquill.net>" '
+            "--objective-evidence-reviewed false --normative-constraints-preserved true"
+        ),
+        (
+            "uv run python -m tools.qualification.review mcp-transport --status rejected "
+            '--owner "Pavel Obruchnikov <me@inkyquill.net>" '
+            "--objective-evidence-reviewed true --normative-constraints-preserved true"
+        ),
+        # Cargo subcommand/extra flag/target coupling and frontend parent path.
+        (
+            "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport "
+            "CARGO_NET_OFFLINE=true cargo +1.96.0 fetch --manifest-path "
+            "qualification/harnesses/mcp-transport/Cargo.toml --locked"
+        ),
+        (
+            "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport "
+            "CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path "
+            "qualification/harnesses/mcp-transport/Cargo.toml --check --verbose"
+        ),
+        (
+            "CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native "
+            "CARGO_NET_OFFLINE=true cargo +1.96.0 fmt --manifest-path "
+            "qualification/harnesses/mcp-transport/Cargo.toml --check"
+        ),
+        (
+            "unshare --user --map-root-user --net -- bun run --cwd frontend build -- "
+            "--outDir qualification/.artifacts/frontend-dist/current --emptyOutDir"
+        ),
+    ],
+)
+def test_each_replay_family_rejects_an_adjacent_noncanonical_mutation(
+    mutation: str,
+) -> None:
+    assert replay_commands_are_safe((mutation,)) is False

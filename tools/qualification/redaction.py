@@ -14,16 +14,19 @@ class _Rule:
     patterns: tuple[re.Pattern[str], ...]
 
 
+_SAFE_TEXT_SENTINEL = r"(?:<absent>|<redacted>|&lt;absent&gt;|&lt;redacted&gt;|none)"
+
+
 def _structured_patterns(*names: str) -> tuple[re.Pattern[str], ...]:
     alternatives = "|".join(re.escape(name) for name in names)
     return (
         re.compile(
-            rf'"(?:{alternatives})"\s*:\s*"(?!\s*(?:<absent>|<redacted>|none)\s*")[^"\r\n]+"',
+            rf'"(?:{alternatives})"\s*:\s*"(?!\s*{_SAFE_TEXT_SENTINEL}\s*")[^"\r\n]+"',
             re.IGNORECASE,
         ),
         re.compile(
             rf"^\s*\|\s*(?:{alternatives})\s*\|\s*"
-            rf"(?!\s*(?:<absent>|<redacted>|\(none\)|none)\s*\|)[^|\r\n]+\|",
+            rf"(?!\s*(?:{_SAFE_TEXT_SENTINEL}|\(none\))\s*\|)[^|\r\n]+\|",
             re.IGNORECASE | re.MULTILINE,
         ),
     )
@@ -115,7 +118,7 @@ _RULES = (
             ),
             re.compile(
                 r"\b(?:proxy-)?authorization\s*:\s*"
-                r"(?!\s*(?:<absent>|<redacted>|\(none\)|none)\s*[.,;:!?)]?\s*(?:$|\|))"
+                rf"(?!\s*(?:{_SAFE_TEXT_SENTINEL}|\(none\))\s*[.,;:!?)]?\s*(?:$|\|))"
                 r"[A-Za-z][A-Za-z0-9._~+/=-]*(?:\s+[^\s|,;]+)?",
                 re.IGNORECASE,
             ),
@@ -240,7 +243,7 @@ _RULES = (
             *_structured_patterns("stdout", "stderr", "raw_log", "raw_logs"),
             re.compile(
                 r"\b(?:stdout|stderr|raw[-_ ]logs?)\s*:\s*"
-                r"(?!\s*(?:<absent>|<redacted>|\(none\)|none)\s*[.,;:!?)]?\s*(?:$|\|))\S+",
+                rf"(?!\s*(?:{_SAFE_TEXT_SENTINEL}|\(none\))\s*[.,;:!?)]?\s*(?:$|\|))\S+",
                 re.IGNORECASE,
             ),
         ),
@@ -266,7 +269,12 @@ _RULES = (
     ),
     _Rule(
         "record contains private-key material",
-        (re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----", re.IGNORECASE),),
+        (
+            re.compile(
+                r"-----BEGIN (?:PRIVATE KEY|(?:(?!-----)[\x20-\x7e])+ PRIVATE KEY)-----",
+                re.IGNORECASE,
+            ),
+        ),
     ),
 )
 
