@@ -12,6 +12,10 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from tools.qualification.fingerprint import (  # noqa: E402
+    COMMON_FINGERPRINT_INPUTS,
+    fingerprint_inputs,
+)
 from tools.qualification.model import (  # noqa: E402
     REQUIRED_CRITERIA,
     CleanupEvidence,
@@ -39,7 +43,6 @@ def make_record(
     review_status: ReviewStatus = "pending",
 ) -> QualificationRecord:
     """Build one deterministic, internally consistent qualification record."""
-    del repo_root  # Task 3 replaces the placeholder digest with an input fingerprint.
     unknown = set(failed) - set(REQUIRED_CRITERIA[risk])
     if unknown:
         raise ValueError(f"unknown failed criteria: {', '.join(sorted(unknown))}")
@@ -55,6 +58,11 @@ def make_record(
     )
     status = status_for(evidence)
     reviewed = review_status == "accepted"
+    input_paths = tuple(
+        relative
+        for relative in COMMON_FINGERPRINT_INPUTS
+        if (repo_root / relative).is_file() and not (repo_root / relative).is_symlink()
+    )
     return QualificationRecord(
         schema_version=1,
         risk=risk,
@@ -64,8 +72,8 @@ def make_record(
         acceptance_owner=_OWNER,
         specs=(f"docs/qualification/{risk}.md",),
         contract_ids=(f"qualification.{risk}",),
-        input_paths=("tools/qualification/model.py",),
-        input_digest="0" * 64,
+        input_paths=input_paths,
+        input_digest=fingerprint_inputs(repo_root, input_paths),
         commands=(f"qualification {risk}",),
         environment=Environment(
             rustc="rustc 1.96.0",
