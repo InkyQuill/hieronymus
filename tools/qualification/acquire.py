@@ -9,9 +9,11 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
 import socket
 import stat
 import sys
+import tarfile
 import threading
 import time
 import urllib.error
@@ -19,7 +21,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Final
 
 _SEMANTIC_MODEL_INITIAL_URL: Final = (
@@ -34,10 +36,23 @@ _ALLOWED_MODEL_HOSTS: Final = frozenset(
         "us.aws.cdn.hf.co",
     }
 )
+_ONNX_RUNTIME_INITIAL_URL: Final = (
+    "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/"
+    "onnxruntime-linux-x64-1.28.0.tgz"
+)
+_ALLOWED_ONNX_RUNTIME_HOSTS: Final = frozenset(
+    {
+        "github.com",
+        "release-assets.githubusercontent.com",
+        "objects.githubusercontent.com",
+    }
+)
 _REDIRECT_STATUSES: Final = frozenset({301, 302, 303, 307, 308})
 _MAX_REDIRECTS: Final = 5
 _CHUNK_SIZE: Final = 1024 * 1024
 _MAX_MODEL_BYTES: Final = 256 * 1024 * 1024
+_MAX_ONNX_RUNTIME_ARCHIVE_BYTES: Final = 512 * 1024 * 1024
+_MAX_ONNX_RUNTIME_EXTRACTED_BYTES: Final = 2 * 1024 * 1024 * 1024
 _TRANSPORT_TIMEOUT_SECONDS: Final = 120
 _ACQUISITION_TIMEOUT_SECONDS: Final = 300
 _LOCK_RETRY_SECONDS: Final = 0.01
@@ -48,6 +63,11 @@ _PARTIAL_NAME: Final = "model.onnx.part"
 # Persistent advisory evidence; the abstract socket remains the unlink-proof mutex.
 _LOCK_NAME: Final = "model.onnx.lock"
 _DIRECTORY_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_RUNTIME_PARENT_COMPONENTS: Final = ("qualification", ".artifacts", "models")
+_RUNTIME_TOP_DIRECTORY: Final = "onnxruntime-linux-x64-1.28.0"
+_RUNTIME_ARCHIVE_PART_NAME: Final = f"{_RUNTIME_TOP_DIRECTORY}.tgz.part"
+_RUNTIME_DIRECTORY_PART_NAME: Final = f"{_RUNTIME_TOP_DIRECTORY}.part"
+_RUNTIME_LIBRARY: Final = Path("lib/libonnxruntime.so")
 _monotonic = time.monotonic
 _sleep = time.sleep
 
@@ -184,6 +204,26 @@ def _safe_url(url: str) -> str:
     return urllib.parse.urlunsplit(parsed)
 
 
+def _safe_runtime_url(url: str) -> str:
+    """Validate one runtime URL without reflecting its signed query."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        port = parsed.port
+    except (TypeError, ValueError):
+        raise AcquisitionError("invalid ONNX Runtime acquisition URL") from None
+    if parsed.scheme != "https":
+        raise AcquisitionError("ONNX Runtime acquisition URL must use HTTPS")
+    if parsed.username is not None or parsed.password is not None:
+        raise AcquisitionError("ONNX Runtime acquisition URL must not contain user information")
+    if parsed.fragment:
+        raise AcquisitionError("ONNX Runtime acquisition URL must not contain a fragment")
+    if parsed.hostname not in _ALLOWED_ONNX_RUNTIME_HOSTS or port is not None:
+        raise AcquisitionError("ONNX Runtime acquisition URL host is not allowed")
+    if parsed.netloc != parsed.hostname:
+        raise AcquisitionError("ONNX Runtime acquisition URL host is not canonical")
+    return urllib.parse.urlunsplit(parsed)
+
+
 def _load_model_spec(repo_root: Path) -> tuple[str, str]:
     try:
         raw = json.loads(
@@ -212,6 +252,41 @@ def _load_model_spec(repo_root: Path) -> tuple[str, str]:
     ):
         raise AcquisitionError("semantic model checksum is invalid")
     return _safe_url(url), expected_sha256
+
+
+def _load_runtime_spec(repo_root: Path) -> tuple[str, str, Path]:
+    try:
+        raw = json.loads(
+            (repo_root / "qualification/prerequisites.json").read_text(encoding="utf-8")
+        )
+        runtime = raw["onnx_runtime"]
+    except (
+        FileNotFoundError,
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+    ):
+        raise AcquisitionError("invalid qualification prerequisites") from None
+    expected = {
+        "version": "1.28.0",
+        "target": "linux-x64",
+        "url": _ONNX_RUNTIME_INITIAL_URL,
+        "library": _RUNTIME_LIBRARY.as_posix(),
+    }
+    if not isinstance(runtime, dict) or any(
+        runtime.get(key) != value for key, value in expected.items()
+    ):
+        raise AcquisitionError("ONNX Runtime prerequisite does not match the approved artifact")
+    expected_sha256 = runtime.get("sha256")
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        raise AcquisitionError("ONNX Runtime checksum is invalid")
+    return _safe_runtime_url(runtime["url"]), expected_sha256, _RUNTIME_LIBRARY
 
 
 def _remove_stale_partial(model_dir_fd: int) -> None:
@@ -327,6 +402,48 @@ def _open_model_directory(repo_root: Path) -> Iterator[tuple[Path, tuple[int, ..
         for fd in reversed(opened):
             os.close(fd)
         raise AcquisitionError("could not prepare the semantic model directory") from None
+    try:
+        yield canonical_root, tuple(opened)
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+
+
+@contextmanager
+def _open_runtime_parent(repo_root: Path) -> Iterator[tuple[Path, tuple[int, ...]]]:
+    canonical_root = _canonical_repo_root(repo_root)
+    opened: list[int] = []
+    try:
+        current_fd = os.open(canonical_root, _DIRECTORY_FLAGS)
+        opened.append(current_fd)
+        for component in _RUNTIME_PARENT_COMPONENTS:
+            _current_deadline().check()
+            created = False
+            try:
+                os.mkdir(component, mode=0o700, dir_fd=current_fd)
+                created = True
+            except FileExistsError:
+                pass
+            if created:
+                os.fsync(current_fd)
+            try:
+                child_fd = os.open(component, _DIRECTORY_FLAGS, dir_fd=current_fd)
+            except OSError:
+                raise AcquisitionError("ONNX Runtime artifact directory is not trusted") from None
+            opened.append(child_fd)
+            if created:
+                os.fchmod(child_fd, 0o700)
+                os.fsync(child_fd)
+            _require_trusted_directory(os.fstat(child_fd))
+            current_fd = child_fd
+    except AcquisitionError:
+        for fd in reversed(opened):
+            os.close(fd)
+        raise
+    except OSError:
+        for fd in reversed(opened):
+            os.close(fd)
+        raise AcquisitionError("could not prepare the ONNX Runtime directory") from None
     try:
         yield canonical_root, tuple(opened)
     finally:
@@ -532,6 +649,11 @@ def _content_length(response: object) -> int | None:
 
 def _set_response_read_timeout(response: object, timeout: float) -> None:
     """Rearm a fake or urllib HTTPS response's underlying socket for one read."""
+    is_closed = getattr(response, "isclosed", None)
+    if getattr(response, "fp", object()) is None and callable(is_closed) and is_closed():
+        # http.client closes zero-length responses before the first caller read;
+        # their subsequent read is a non-blocking EOF and needs no socket timeout.
+        return
     candidates = [response]
     seen: set[int] = set()
     while candidates and len(seen) < 12:
@@ -841,6 +963,347 @@ def _verified_return_path(
         os.close(destination_fd)
 
 
+def _validate_runtime_parent(
+    canonical_root: Path,
+    directory_fds: tuple[int, ...],
+) -> None:
+    try:
+        lexical_root = os.stat(canonical_root, follow_symlinks=False)
+        held_root = os.fstat(directory_fds[0])
+    except OSError:
+        raise AcquisitionError("ONNX Runtime artifact directory identity changed") from None
+    if (lexical_root.st_dev, lexical_root.st_ino) != (held_root.st_dev, held_root.st_ino):
+        raise AcquisitionError("ONNX Runtime artifact directory identity changed")
+    for parent_fd, expected_fd, component in zip(
+        directory_fds[:-1],
+        directory_fds[1:],
+        _RUNTIME_PARENT_COMPONENTS,
+        strict=True,
+    ):
+        try:
+            current_fd = os.open(component, _DIRECTORY_FLAGS, dir_fd=parent_fd)
+        except OSError:
+            raise AcquisitionError("ONNX Runtime artifact directory identity changed") from None
+        try:
+            current = os.fstat(current_fd)
+            expected = os.fstat(expected_fd)
+            _require_trusted_directory(current)
+            _require_trusted_directory(expected)
+            if (current.st_dev, current.st_ino) != (expected.st_dev, expected.st_ino):
+                raise AcquisitionError("ONNX Runtime artifact directory identity changed")
+        finally:
+            os.close(current_fd)
+
+
+def _remove_runtime_entry(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise AcquisitionError("could not inspect ONNX Runtime temporary state") from None
+    try:
+        if stat.S_ISDIR(metadata.st_mode):
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    except OSError:
+        raise AcquisitionError("could not remove ONNX Runtime temporary state") from None
+
+
+def _stream_runtime_archive(
+    initial_url: str,
+    parent_fd: int,
+    expected_sha256: str,
+    deadline: _Deadline,
+) -> None:
+    current_url = initial_url
+    redirects = 0
+    while True:
+        deadline.check()
+        try:
+            response = _open_no_redirect(_request(current_url, deadline))
+        except Exception as error:
+            if isinstance(error, AcquisitionError):
+                raise
+            raise AcquisitionError("ONNX Runtime request failed") from None
+        archive_fd: int | None = None
+        try:
+            status = _response_status(response)
+            if status in _REDIRECT_STATUSES:
+                if redirects >= _MAX_REDIRECTS:
+                    raise AcquisitionError("ONNX Runtime redirect limit exceeded")
+                current_url = _safe_runtime_url(
+                    urllib.parse.urljoin(current_url, _redirect_location(response))
+                )
+                redirects += 1
+                continue
+            if status != 200:
+                raise AcquisitionError("ONNX Runtime request returned an unexpected status")
+            declared_length = _content_length(response)
+            if declared_length is not None and declared_length > _MAX_ONNX_RUNTIME_ARCHIVE_BYTES:
+                raise AcquisitionError("ONNX Runtime archive exceeds the byte limit")
+            try:
+                archive_fd = os.open(
+                    _RUNTIME_ARCHIVE_PART_NAME,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=parent_fd,
+                )
+            except OSError:
+                raise AcquisitionError("could not create ONNX Runtime archive") from None
+            digest = hashlib.sha256()
+            total = 0
+            with os.fdopen(os.dup(archive_fd), "wb") as destination:
+                while True:
+                    _set_response_read_timeout(response, deadline.remaining())
+                    try:
+                        chunk = response.read(_CHUNK_SIZE)
+                    except Exception:
+                        raise AcquisitionError("ONNX Runtime response read failed") from None
+                    deadline.check()
+                    if not chunk:
+                        break
+                    if not isinstance(chunk, bytes):
+                        raise AcquisitionError("ONNX Runtime response was not binary")
+                    total += len(chunk)
+                    if total > _MAX_ONNX_RUNTIME_ARCHIVE_BYTES:
+                        raise AcquisitionError("ONNX Runtime archive exceeds the byte limit")
+                    destination.write(chunk)
+                    digest.update(chunk)
+                destination.flush()
+            os.fsync(archive_fd)
+            if declared_length is not None and declared_length != total:
+                raise AcquisitionError("ONNX Runtime response length did not match its declaration")
+            if digest.hexdigest() != expected_sha256:
+                raise AcquisitionError("ONNX Runtime archive checksum mismatch")
+            os.close(archive_fd)
+            archive_fd = None
+            os.fsync(parent_fd)
+            return
+        except Exception:
+            if archive_fd is not None:
+                os.close(archive_fd)
+            try:
+                os.unlink(_RUNTIME_ARCHIVE_PART_NAME, dir_fd=parent_fd)
+                os.fsync(parent_fd)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+            raise
+        finally:
+            try:
+                response.close()
+            except Exception:
+                try:
+                    os.unlink(_RUNTIME_ARCHIVE_PART_NAME, dir_fd=parent_fd)
+                except OSError:
+                    pass
+                raise AcquisitionError("could not close ONNX Runtime response") from None
+
+
+def _stripped_archive_path(name: str) -> PurePosixPath:
+    path = PurePosixPath(name)
+    if path.is_absolute() or not path.parts or path.parts[0] != _RUNTIME_TOP_DIRECTORY:
+        raise AcquisitionError("ONNX Runtime archive has an unexpected top directory")
+    if any(part in ("", ".", "..") for part in path.parts):
+        raise AcquisitionError("ONNX Runtime archive member escapes its top directory")
+    return PurePosixPath(*path.parts[1:])
+
+
+def _relative_link_target(link_path: PurePosixPath, target: str) -> PurePosixPath:
+    raw = PurePosixPath(target)
+    if raw.is_absolute() or not target:
+        raise AcquisitionError("ONNX Runtime archive contains an absolute link")
+    parts = list(link_path.parent.parts)
+    for part in raw.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                raise AcquisitionError("ONNX Runtime archive link escapes extraction root")
+            parts.pop()
+            continue
+        parts.append(part)
+    if not parts:
+        raise AcquisitionError("ONNX Runtime archive link has no target")
+    return PurePosixPath(*parts)
+
+
+def _resolve_archive_link(
+    link_path: PurePosixPath,
+    links: dict[PurePosixPath, str],
+    kinds: dict[PurePosixPath, str],
+) -> PurePosixPath:
+    pending = list(_relative_link_target(link_path, links[link_path]).parts)
+    resolved: list[str] = []
+    visited: set[PurePosixPath] = {link_path}
+    while pending:
+        candidate = PurePosixPath(*resolved, pending.pop(0))
+        if candidate in links:
+            if candidate in visited:
+                raise AcquisitionError("ONNX Runtime archive contains a link cycle")
+            visited.add(candidate)
+            expanded = _relative_link_target(candidate, links[candidate])
+            pending = [*expanded.parts, *pending]
+            resolved = []
+            continue
+        kind = kinds.get(candidate)
+        if kind is None or (pending and kind != "directory"):
+            raise AcquisitionError("ONNX Runtime archive contains a dangling link")
+        resolved.append(candidate.name)
+    target = PurePosixPath(*resolved)
+    if target not in kinds:
+        raise AcquisitionError("ONNX Runtime archive contains a dangling link")
+    return target
+
+
+def _archive_members(
+    bundle: tarfile.TarFile,
+) -> tuple[
+    dict[PurePosixPath, tarfile.TarInfo],
+    dict[PurePosixPath, str],
+    dict[PurePosixPath, str],
+]:
+    members: dict[PurePosixPath, tarfile.TarInfo] = {}
+    kinds: dict[PurePosixPath, str] = {}
+    links: dict[PurePosixPath, str] = {}
+    total_size = 0
+    for member in bundle.getmembers():
+        path = _stripped_archive_path(member.name)
+        if not path.parts:
+            if not member.isdir():
+                raise AcquisitionError("ONNX Runtime archive top entry is not a directory")
+            continue
+        if path in members:
+            raise AcquisitionError("ONNX Runtime archive contains duplicate members")
+        if member.islnk():
+            raise AcquisitionError("ONNX Runtime archive contains a hard link")
+        if member.isdir():
+            kind = "directory"
+        elif member.isreg():
+            kind = "file"
+            total_size += member.size
+            if total_size > _MAX_ONNX_RUNTIME_EXTRACTED_BYTES:
+                raise AcquisitionError("ONNX Runtime extraction exceeds the byte limit")
+        elif member.issym():
+            kind = "symlink"
+            links[path] = member.linkname
+        else:
+            raise AcquisitionError("ONNX Runtime archive contains a special entry")
+        members[path] = member
+        kinds[path] = kind
+
+    for path in tuple(kinds):
+        for parent in path.parents:
+            if not parent.parts:
+                continue
+            parent_kind = kinds.setdefault(parent, "directory")
+            if parent_kind != "directory":
+                raise AcquisitionError("ONNX Runtime archive member has a non-directory parent")
+    for link_path in links:
+        _resolve_archive_link(link_path, links, kinds)
+    return members, kinds, links
+
+
+def _extract_runtime_archive(archive_path: Path, extraction_root: Path) -> None:
+    try:
+        with tarfile.open(archive_path, mode="r:gz") as bundle:
+            members, kinds, links = _archive_members(bundle)
+            for path, kind in sorted(kinds.items(), key=lambda item: len(item[0].parts)):
+                destination = extraction_root.joinpath(*path.parts)
+                if kind == "directory":
+                    destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+            for path, member in members.items():
+                if kinds[path] != "file":
+                    continue
+                source = bundle.extractfile(member)
+                if source is None:
+                    raise AcquisitionError("could not read ONNX Runtime archive member")
+                destination = extraction_root.joinpath(*path.parts)
+                with source, destination.open("xb") as output:
+                    shutil.copyfileobj(source, output, _CHUNK_SIZE)
+                destination.chmod(0o700 if member.mode & 0o111 else 0o600)
+            for path, target in links.items():
+                extraction_root.joinpath(*path.parts).symlink_to(target)
+    except AcquisitionError:
+        raise
+    except (OSError, tarfile.TarError, EOFError):
+        raise AcquisitionError("invalid ONNX Runtime archive") from None
+
+
+def _validate_runtime_directory(destination: Path, library: Path) -> Path:
+    try:
+        metadata = destination.lstat()
+        if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            raise AcquisitionError("ONNX Runtime destination is not a directory")
+        resolved_root = destination.resolve(strict=True)
+        resolved_library = (destination / library).resolve(strict=True)
+        resolved_library.relative_to(resolved_root)
+        if not resolved_library.is_file():
+            raise AcquisitionError("ONNX Runtime library is not a regular file")
+    except AcquisitionError:
+        raise
+    except (FileNotFoundError, OSError, RuntimeError, ValueError):
+        raise AcquisitionError("ONNX Runtime library chain is invalid") from None
+    return destination
+
+
+def _validated_runtime_destination(root: Path, library: Path) -> Path:
+    return _validate_runtime_directory(root / _RUNTIME_TOP_DIRECTORY, library)
+
+
+def acquire_onnx_runtime(repo_root: Path) -> Path:
+    """Acquire, validate, and atomically publish the approved native runtime."""
+    deadline = _Deadline.after(_ACQUISITION_TIMEOUT_SECONDS)
+    token = _CURRENT_DEADLINE.set(deadline)
+    try:
+        with _open_runtime_parent(repo_root) as (canonical_root, directory_fds):
+            parent_fd = directory_fds[-1]
+            parent = canonical_root.joinpath(*_RUNTIME_PARENT_COMPONENTS)
+            initial_url, expected_sha256, library = _load_runtime_spec(canonical_root)
+            destination = parent / _RUNTIME_TOP_DIRECTORY
+            if destination.exists() or destination.is_symlink():
+                return _validated_runtime_destination(parent, library)
+
+            archive_path = parent / _RUNTIME_ARCHIVE_PART_NAME
+            extraction_root = parent / _RUNTIME_DIRECTORY_PART_NAME
+            _remove_runtime_entry(archive_path)
+            _remove_runtime_entry(extraction_root)
+            try:
+                _stream_runtime_archive(
+                    initial_url,
+                    parent_fd,
+                    expected_sha256,
+                    deadline,
+                )
+                _validate_runtime_parent(canonical_root, directory_fds)
+                extraction_root.mkdir(mode=0o700)
+                _extract_runtime_archive(archive_path, extraction_root)
+                validated = _validate_runtime_directory(extraction_root, library)
+                if validated != extraction_root:
+                    raise AcquisitionError("ONNX Runtime extraction root is invalid")
+                _validate_runtime_parent(canonical_root, directory_fds)
+                os.rename(
+                    _RUNTIME_DIRECTORY_PART_NAME,
+                    _RUNTIME_TOP_DIRECTORY,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                )
+                os.fsync(parent_fd)
+            finally:
+                _remove_runtime_entry(archive_path)
+                _remove_runtime_entry(extraction_root)
+            return _validated_runtime_destination(parent, library)
+    except AcquisitionError:
+        raise
+    except Exception:
+        raise AcquisitionError("ONNX Runtime acquisition failed") from None
+    finally:
+        _CURRENT_DEADLINE.reset(token)
+
+
 def acquire_semantic_model(repo_root: Path) -> Path:
     """Acquire and atomically promote the exact approved semantic model.
 
@@ -893,11 +1356,14 @@ def acquire_semantic_model(repo_root: Path) -> Path:
 def main(argv: Sequence[str] | None = None, *, repo_root: Path | None = None) -> int:
     """Run an explicit qualification acquisition command."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("artifact", choices=("semantic-model",))
-    parser.parse_args(argv)
+    parser.add_argument("artifact", choices=("semantic-model", "onnx-runtime"))
+    arguments = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[2] if repo_root is None else repo_root
     try:
-        destination = acquire_semantic_model(root)
+        if arguments.artifact == "semantic-model":
+            destination = acquire_semantic_model(root)
+        else:
+            destination = acquire_onnx_runtime(root)
     except AcquisitionError as error:
         print(f"Acquisition failed: {error}", file=sys.stderr)
         return 1

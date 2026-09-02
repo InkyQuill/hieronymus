@@ -1827,8 +1827,8 @@ semantic-native = [
 
 [dependencies]
 anyhow = "1"
-arrow-array = { version = "=58.0.0", optional = true }
-arrow-schema = { version = "=58.0.0", optional = true }
+arrow-array = { version = "=58.3.0", optional = true }
+arrow-schema = { version = "=58.3.0", optional = true }
 futures = "0.3"
 lancedb = { version = "=0.37.1", default-features = false, optional = true }
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["api-28", "load-dynamic", "ndarray", "std", "tracing"], optional = true }

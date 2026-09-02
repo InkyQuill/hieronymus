@@ -3575,6 +3575,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_unsafe_redirects_without_echoing_or_leaving_partial[https://us.aws.cdn.hf.co.attacker.invalid/model.onnx?token=redirect-secret]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_acquisition_rejects_unsafe_redirects_without_echoing_or_leaving_partial[https://user:password@cdn-lfs.huggingface.co/model.onnx]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3600,7 +3605,12 @@
     },
     {
       "disposition": "implementation_internal",
-      "node_id": "tests/qualification/test_acquire.py::test_cli_accepts_only_semantic_model",
+      "node_id": "tests/qualification/test_acquire.py::test_cli_accepts_only_explicit_qualification_acquisitions[onnx-runtime-acquire_onnx_runtime-destination1]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_cli_accepts_only_explicit_qualification_acquisitions[semantic-model-acquire_semantic_model-destination0]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -3890,6 +3900,61 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_accepts_approved_signed_redirect_host",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_extracts_validated_relative_library_symlink_chain",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_checksum_mismatch_before_extraction",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_unsafe_archive_members_without_external_writes[absolute-link]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_unsafe_archive_members_without_external_writes[cycle]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_unsafe_archive_members_without_external_writes[dangling-link]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_unsafe_archive_members_without_external_writes[device]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_unsafe_archive_members_without_external_writes[escaping-link]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_unsafe_archive_members_without_external_writes[hard-link]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_unsafe_archive_members_without_external_writes[traversal]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_onnx_runtime_rejects_unsafe_archive_members_without_external_writes[wrong-top-directory]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_prerequisites_and_toolchain_are_exact",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -3911,6 +3976,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_acquire.py::test_response_close_failure_is_redacted_and_cleans_owned_partial[503-]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_acquire.py::test_response_timeout_adapter_accepts_closed_real_http_response_eof",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {

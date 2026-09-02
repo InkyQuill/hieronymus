@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import io
 import json
 import multiprocessing
 import os
 import stat
 import sys
+import tarfile
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -28,6 +30,12 @@ _INITIAL_URL = (
     "9a53d751e60e6dd34f2443711d44d5b09389f89a/onnx/model.onnx"
 )
 _DESTINATION = Path("qualification/.artifacts/models/all-MiniLM-L6-v2/model.onnx")
+_ONNX_RUNTIME_URL = (
+    "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/"
+    "onnxruntime-linux-x64-1.28.0.tgz"
+)
+_ONNX_RUNTIME_DESTINATION = Path("qualification/.artifacts/models/onnxruntime-linux-x64-1.28.0")
+_ONNX_RUNTIME_TOP = "onnxruntime-linux-x64-1.28.0"
 
 
 class _Response:
@@ -98,6 +106,84 @@ def _write_private(path: Path, body: bytes) -> None:
     path.chmod(0o600)
 
 
+def _runtime_archive(*, invalid: str | None = None) -> bytes:
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as bundle:
+        for directory in (_ONNX_RUNTIME_TOP, f"{_ONNX_RUNTIME_TOP}/lib"):
+            entry = tarfile.TarInfo(directory)
+            entry.type = tarfile.DIRTYPE
+            entry.mode = 0o755
+            bundle.addfile(entry)
+
+        library_name = f"{_ONNX_RUNTIME_TOP}/lib/libonnxruntime.so.1.28.0"
+        library = tarfile.TarInfo(library_name)
+        library.size = len(b"verified runtime library")
+        library.mode = 0o755
+        bundle.addfile(library, io.BytesIO(b"verified runtime library"))
+
+        if invalid == "traversal":
+            traversal = tarfile.TarInfo(f"{_ONNX_RUNTIME_TOP}/../escaped")
+            traversal.size = 7
+            bundle.addfile(traversal, io.BytesIO(b"escaped"))
+        elif invalid == "device":
+            device = tarfile.TarInfo(f"{_ONNX_RUNTIME_TOP}/lib/device")
+            device.type = tarfile.CHRTYPE
+            bundle.addfile(device)
+        elif invalid == "hard-link":
+            hard_link = tarfile.TarInfo(f"{_ONNX_RUNTIME_TOP}/lib/hard-link")
+            hard_link.type = tarfile.LNKTYPE
+            hard_link.linkname = library_name
+            bundle.addfile(hard_link)
+        elif invalid == "wrong-top-directory":
+            wrong_top = tarfile.TarInfo("unexpected-top/file")
+            wrong_top.size = 5
+            bundle.addfile(wrong_top, io.BytesIO(b"wrong"))
+
+        first_link = tarfile.TarInfo(f"{_ONNX_RUNTIME_TOP}/lib/libonnxruntime.so.1")
+        first_link.type = tarfile.SYMTYPE
+        first_link.linkname = (
+            "/etc/passwd"
+            if invalid == "absolute-link"
+            else "libonnxruntime.so"
+            if invalid == "cycle"
+            else "../../../outside"
+            if invalid == "escaping-link"
+            else "missing-library"
+            if invalid == "dangling-link"
+            else "libonnxruntime.so.1.28.0"
+        )
+        bundle.addfile(first_link)
+
+        required_link = tarfile.TarInfo(f"{_ONNX_RUNTIME_TOP}/lib/libonnxruntime.so")
+        required_link.type = tarfile.SYMTYPE
+        required_link.linkname = "libonnxruntime.so.1"
+        bundle.addfile(required_link)
+    return archive.getvalue()
+
+
+def _runtime_repo(
+    tmp_path: Path,
+    *,
+    archive: bytes,
+    expected_archive: bytes | None = None,
+) -> Path:
+    prerequisites = {
+        "onnx_runtime": {
+            "version": "1.28.0",
+            "target": "linux-x64",
+            "url": _ONNX_RUNTIME_URL,
+            "sha256": hashlib.sha256(
+                archive if expected_archive is None else expected_archive
+            ).hexdigest(),
+            "library": "lib/libonnxruntime.so",
+        }
+    }
+    path = tmp_path / "qualification/prerequisites.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(prerequisites), encoding="utf-8")
+    return tmp_path
+
+
 def test_prerequisites_and_toolchain_are_exact() -> None:
     assert (_ROOT / "qualification/rust-toolchain.toml").read_bytes() == (
         b'[toolchain]\nchannel = "1.96.0"\nprofile = "minimal"\n'
@@ -121,6 +207,13 @@ def test_prerequisites_and_toolchain_are_exact() -> None:
             "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
             "dimensions": 384,
             "normalization": "l2",
+        },
+        "onnx_runtime": {
+            "version": "1.28.0",
+            "target": "linux-x64",
+            "url": _ONNX_RUNTIME_URL,
+            "sha256": "a3e1b79d7bb1bf09696ce675f49e4064e6c81f6202b8225624fff0e93f8d6407",
+            "library": "lib/libonnxruntime.so",
         },
         "network_policy": {
             "allowed_only_for": [
@@ -216,6 +309,7 @@ def assert_destination_absent(repo_root: Path) -> None:
         "https://cdn-lfs.huggingface.co/model.onnx#secret-fragment",
         "https://evil.example/model.onnx?token=redirect-secret",
         "https://huggingface.co.evil.example/model.onnx",
+        "https://us.aws.cdn.hf.co.attacker.invalid/model.onnx?token=redirect-secret",
         "https://huggingface.co:8443/model.onnx",
     ],
 )
@@ -408,13 +502,133 @@ def test_invalid_initial_url_is_rejected_before_transport(
     assert "initial-secret" not in str(caught.value)
 
 
-def test_cli_accepts_only_semantic_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    destination = _ROOT / _DESTINATION
-    monkeypatch.setattr(acquire, "acquire_semantic_model", lambda _repo_root: destination)
+@pytest.mark.parametrize(
+    ("artifact", "acquirer", "destination"),
+    [
+        ("semantic-model", "acquire_semantic_model", _DESTINATION),
+        ("onnx-runtime", "acquire_onnx_runtime", _ONNX_RUNTIME_DESTINATION),
+    ],
+)
+def test_cli_accepts_only_explicit_qualification_acquisitions(
+    monkeypatch: pytest.MonkeyPatch,
+    artifact: str,
+    acquirer: str,
+    destination: Path,
+) -> None:
+    monkeypatch.setattr(acquire, acquirer, lambda _repo_root: _ROOT / destination)
 
-    assert acquire.main(["semantic-model"], repo_root=_ROOT) == 0
-    with pytest.raises(SystemExit):
-        acquire.main(["onnx-runtime"], repo_root=_ROOT)
+    assert acquire.main([artifact], repo_root=_ROOT) == 0
+
+
+def test_onnx_runtime_extracts_validated_relative_library_symlink_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive()
+    repo_root = _runtime_repo(tmp_path, archive=archive)
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: _Response(200, body=archive),
+    )
+
+    destination = acquire.acquire_onnx_runtime(repo_root)
+
+    library = destination / "lib/libonnxruntime.so"
+    assert destination == repo_root / _ONNX_RUNTIME_DESTINATION
+    assert library.is_symlink()
+    assert library.readlink() == Path("libonnxruntime.so.1")
+    assert library.resolve(strict=True) == (destination / "lib/libonnxruntime.so.1.28.0")
+    assert library.read_bytes() == b"verified runtime library"
+    assert not destination.with_name(f"{destination.name}.part").exists()
+    assert not destination.with_name(f"{destination.name}.tgz.part").exists()
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "traversal",
+        "absolute-link",
+        "cycle",
+        "escaping-link",
+        "dangling-link",
+        "device",
+        "hard-link",
+        "wrong-top-directory",
+    ],
+)
+def test_onnx_runtime_rejects_unsafe_archive_members_without_external_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str,
+) -> None:
+    archive = _runtime_archive(invalid=invalid)
+    repo_root = _runtime_repo(tmp_path, archive=archive)
+    outside = tmp_path / "outside"
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: _Response(200, body=archive),
+    )
+
+    with pytest.raises(acquire.AcquisitionError):
+        acquire.acquire_onnx_runtime(repo_root)
+
+    assert not outside.exists()
+    assert not (repo_root / _ONNX_RUNTIME_DESTINATION).exists()
+    assert (
+        not (repo_root / _ONNX_RUNTIME_DESTINATION)
+        .with_name(f"{_ONNX_RUNTIME_DESTINATION.name}.part")
+        .exists()
+    )
+    assert (
+        not (repo_root / _ONNX_RUNTIME_DESTINATION)
+        .with_name(f"{_ONNX_RUNTIME_DESTINATION.name}.tgz.part")
+        .exists()
+    )
+
+
+def test_onnx_runtime_rejects_checksum_mismatch_before_extraction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive()
+    repo_root = _runtime_repo(
+        tmp_path,
+        archive=archive,
+        expected_archive=b"different approved archive",
+    )
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: _Response(200, body=archive),
+    )
+
+    with pytest.raises(acquire.AcquisitionError, match="checksum"):
+        acquire.acquire_onnx_runtime(repo_root)
+
+    assert not (repo_root / _ONNX_RUNTIME_DESTINATION).exists()
+
+
+def test_onnx_runtime_accepts_approved_signed_redirect_host(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive()
+    repo_root = _runtime_repo(tmp_path, archive=archive)
+    signed = "https://release-assets.githubusercontent.com/runtime.tgz?signature=runtime-secret"
+    requests: list[str] = []
+
+    def fake_open(request: object) -> _Response:
+        requests.append(request.full_url)  # type: ignore[attr-defined]
+        if request.full_url == _ONNX_RUNTIME_URL:  # type: ignore[attr-defined]
+            return _Response(302, headers={"Location": signed})
+        return _Response(200, body=archive)
+
+    monkeypatch.setattr(acquire, "_open_no_redirect", fake_open)
+
+    assert acquire.acquire_onnx_runtime(repo_root) == (repo_root / _ONNX_RUNTIME_DESTINATION)
+    assert requests == [_ONNX_RUNTIME_URL, signed]
 
 
 def test_cli_prints_a_relative_destination_for_a_canonicalized_root_symlink(
@@ -1571,6 +1785,23 @@ def test_response_timeout_adapter_rearms_real_http_response_socket() -> None:
 
         assert client.gettimeout() == 2.5
         response.close()
+    finally:
+        client.close()
+        server.close()
+
+
+def test_response_timeout_adapter_accepts_closed_real_http_response_eof() -> None:
+    client, server = acquire.socket.socketpair()
+    try:
+        server.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        response = http.client.HTTPResponse(client)
+        response.begin()
+        assert response.read() == b""
+        assert response.isclosed()
+
+        acquire._set_response_read_timeout(response, 2.5)
+
+        assert response.read() == b""
     finally:
         client.close()
         server.close()

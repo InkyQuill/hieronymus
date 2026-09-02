@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "seed": "hieronymus-semantic-qualification-v1",
+  "series_count": 100,
+  "chunks_per_series": 100,
+  "query_count": 50,
+  "embedding_dimensions": 384,
+  "generation_ids": ["generation-a", "generation-b"],
+  "series_slug_format": "qualification-series-{index:03}",
+  "chunk_text_format": "synthetic literary memory {series_index:03}/{chunk_index:03}",
+  "query_selection": "queries 0..49 target series 0..49 and chunk index (query_index * 17) % 100"
+}

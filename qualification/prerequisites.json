@@ -19,6 +19,13 @@
     "dimensions": 384,
     "normalization": "l2"
   },
+  "onnx_runtime": {
+    "version": "1.28.0",
+    "target": "linux-x64",
+    "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/onnxruntime-linux-x64-1.28.0.tgz",
+    "sha256": "a3e1b79d7bb1bf09696ce675f49e4064e6c81f6202b8225624fff0e93f8d6407",
+    "library": "lib/libonnxruntime.so"
+  },
   "network_policy": {
     "allowed_only_for": [
       "manual review of https://modelcontextprotocol.io/specification/2026-07-28",
