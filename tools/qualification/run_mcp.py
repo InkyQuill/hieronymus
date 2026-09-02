@@ -11,7 +11,6 @@ import os
 import platform
 import re
 import selectors
-import shutil
 import signal
 import stat
 import subprocess
@@ -872,6 +871,9 @@ def _record(
     *,
     contract_ids: tuple[str, ...],
     observations: _ProbeObservations,
+    work_dir_removed: bool,
+    raw_logs_removed: bool,
+    install_dir_removed: bool,
     core_dumps_disabled: bool = True,
     process_groups_reaped: bool = True,
 ) -> QualificationRecord:
@@ -916,9 +918,9 @@ def _record(
         evidence=evidence,
         consequence=expected_consequence(_RISK, status),
         cleanup=CleanupEvidence(
-            work_dir_removed=True,
-            raw_logs_removed=True,
-            install_dir_removed=True,
+            work_dir_removed=work_dir_removed,
+            raw_logs_removed=raw_logs_removed,
+            install_dir_removed=install_dir_removed,
             source_inputs_unchanged=True,
             user_data_opened=False,
             core_dumps_disabled=core_dumps_disabled,
@@ -940,6 +942,7 @@ def run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationR
     bounded_work = work_root / "mcp-transport-run"
     bounded_work.mkdir(mode=0o700, parents=True, exist_ok=False)
     artifact = bounded_work / "probe-result.json"
+    work_removed = False
     try:
         code, _stdout, _stderr = _run_bounded(
             (str(executable), "--probe-artifact", str(artifact)),
@@ -950,11 +953,18 @@ def run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationR
             raise ValueError("MCP qualification executable failed")
         observations = _read_probe_artifact(artifact)
     finally:
-        shutil.rmtree(bounded_work)
+        work_removed = _remove_exact_directory(bounded_work)
     after = fingerprint_inputs(repo_root, required_fingerprint_inputs(_RISK))
     if after != before:
         raise ValueError("immutable MCP qualification inputs changed during replay")
-    return _record(repo_root, contract_ids=contract_ids, observations=observations)
+    return _record(
+        repo_root,
+        contract_ids=contract_ids,
+        observations=observations,
+        work_dir_removed=work_removed,
+        raw_logs_removed=work_removed,
+        install_dir_removed=work_removed,
+    )
 
 
 def _live_process_context(
@@ -999,6 +1009,197 @@ def _open_canonical_directory(path: Path, *, label: str) -> int:
         raise ValueError(f"{label} path is unsafe") from error
 
 
+def _mount_id(fd: int) -> int:
+    """Read the Linux mount identity for an already-opened directory."""
+    try:
+        lines = Path(f"/proc/self/fdinfo/{fd}").read_text(encoding="ascii").splitlines()
+    except OSError as error:  # pragma: no cover - Linux procfs is a qualification prerequisite
+        raise ValueError("MCP cleanup requires Linux mount identity data") from error
+    for line in lines:
+        if line.startswith("mnt_id:"):
+            try:
+                return int(line.split(":", 1)[1].strip())
+            except ValueError as error:  # pragma: no cover - kernel-owned format
+                raise ValueError("MCP cleanup found malformed mount identity data") from error
+    raise ValueError("MCP cleanup requires a mount identity for every directory")
+
+
+def _identity(info: os.stat_result) -> tuple[int, int, int, int]:
+    return info.st_mode, info.st_dev, info.st_ino, info.st_nlink
+
+
+def _entry_identity_at(parent_fd: int, name: str) -> tuple[int, int, int, int]:
+    return _identity(os.stat(name, dir_fd=parent_fd, follow_symlinks=False))
+
+
+def _same_identity(
+    current: tuple[int, int, int, int],
+    expected: tuple[int, int, int, int],
+    *,
+    children_removed: bool = False,
+) -> bool:
+    if children_removed and stat.S_ISDIR(expected[0]):
+        return current[:3] == expected[:3]
+    return current == expected
+
+
+@dataclass(frozen=True, slots=True)
+class _CleanupNode:
+    name: str
+    identity: tuple[int, int, int, int]
+    children: tuple[_CleanupNode, ...]
+
+
+def _validate_cleanup_tree(
+    directory_fd: int,
+    *,
+    mount_id: int,
+    hardlinks: dict[tuple[int, int], tuple[int, int]],
+) -> tuple[_CleanupNode, ...]:
+    nodes: list[_CleanupNode] = []
+    for entry in sorted(os.scandir(directory_fd), key=lambda item: item.name):
+        identity = _entry_identity_at(directory_fd, entry.name)
+        mode, _, _, links = identity
+        if stat.S_ISLNK(mode):
+            raise ValueError(f"MCP cleanup refuses symlink entry {entry.name}")
+        if stat.S_ISDIR(mode):
+            child_fd = os.open(entry.name, _directory_open_flags(), dir_fd=directory_fd)
+            try:
+                if _identity(os.fstat(child_fd)) != identity:
+                    raise ValueError(f"MCP cleanup entry {entry.name} changed during validation")
+                if _mount_id(child_fd) != mount_id:
+                    raise ValueError(f"MCP cleanup refuses mounted directory {entry.name}")
+                children = _validate_cleanup_tree(
+                    child_fd,
+                    mount_id=mount_id,
+                    hardlinks=hardlinks,
+                )
+            finally:
+                os.close(child_fd)
+            nodes.append(_CleanupNode(entry.name, identity, children))
+        elif stat.S_ISREG(mode):
+            if links > 1:
+                key = identity[1], identity[2]
+                expected_links, observed_links = hardlinks.get(key, (links, 0))
+                if expected_links != links:
+                    raise ValueError(f"MCP cleanup hard-linked file {entry.name} changed")
+                hardlinks[key] = expected_links, observed_links + 1
+            nodes.append(_CleanupNode(entry.name, identity, ()))
+        else:
+            raise ValueError(f"MCP cleanup refuses special entry {entry.name}")
+    return tuple(nodes)
+
+
+def _remove_validated_cleanup_tree(
+    directory_fd: int,
+    nodes: tuple[_CleanupNode, ...],
+    *,
+    mount_id: int,
+    remaining_links: dict[tuple[int, int], int],
+) -> None:
+    for node in nodes:
+        current = _entry_identity_at(directory_fd, node.name)
+        key = node.identity[1], node.identity[2]
+        if key in remaining_links and stat.S_ISREG(node.identity[0]):
+            if current[:3] != node.identity[:3] or current[3] != remaining_links[key]:
+                raise ValueError(f"MCP cleanup entry {node.name} changed before deletion")
+        elif not _same_identity(current, node.identity):
+            raise ValueError(f"MCP cleanup entry {node.name} changed before deletion")
+        if stat.S_ISDIR(node.identity[0]):
+            child_fd = os.open(node.name, _directory_open_flags(), dir_fd=directory_fd)
+            try:
+                if _identity(os.fstat(child_fd)) != node.identity:
+                    raise ValueError(f"MCP cleanup entry {node.name} changed before deletion")
+                if _mount_id(child_fd) != mount_id:
+                    raise ValueError(f"MCP cleanup refuses mounted directory {node.name}")
+                _remove_validated_cleanup_tree(
+                    child_fd,
+                    node.children,
+                    mount_id=mount_id,
+                    remaining_links=remaining_links,
+                )
+            finally:
+                os.close(child_fd)
+            if not _same_identity(
+                _entry_identity_at(directory_fd, node.name),
+                node.identity,
+                children_removed=True,
+            ):
+                raise ValueError(f"MCP cleanup entry {node.name} changed before deletion")
+            os.rmdir(node.name, dir_fd=directory_fd)
+        else:
+            os.unlink(node.name, dir_fd=directory_fd)
+            if key in remaining_links:
+                remaining_links[key] -= 1
+
+
+def _remove_exact_directory(path: Path) -> bool:
+    """Remove one exact nonsymlink directory after descriptor-safe full-tree validation."""
+    absolute = path.absolute()
+    if absolute == Path(absolute.anchor):
+        raise ValueError("MCP cleanup target is an unsafe root")
+    if not os.path.lexists(absolute):
+        return True
+    lexical = absolute.lstat()
+    if not stat.S_ISDIR(lexical.st_mode) or stat.S_ISLNK(lexical.st_mode):
+        raise ValueError("MCP cleanup target must be a nonsymlink directory")
+    parent_fd = _open_canonical_directory(absolute.parent, label="MCP cleanup parent")
+    target_fd: int | None = None
+    try:
+        parent_identity = _identity(os.fstat(parent_fd))
+        parent_mount = _mount_id(parent_fd)
+        target_identity = _entry_identity_at(parent_fd, absolute.name)
+        target_fd = os.open(absolute.name, _directory_open_flags(), dir_fd=parent_fd)
+        if (
+            target_identity != _identity(lexical)
+            or _identity(os.fstat(target_fd)) != target_identity
+            or target_identity[1] != parent_identity[1]
+            or _mount_id(target_fd) != parent_mount
+            or os.fstat(target_fd).st_uid != os.getuid()
+        ):
+            raise ValueError("MCP cleanup target identity or mount is unsafe")
+        hardlinks: dict[tuple[int, int], tuple[int, int]] = {}
+        children = _validate_cleanup_tree(
+            target_fd,
+            mount_id=parent_mount,
+            hardlinks=hardlinks,
+        )
+        if any(expected != observed for expected, observed in hardlinks.values()):
+            raise ValueError("MCP cleanup refuses external hard-linked files")
+        if (
+            _entry_identity_at(parent_fd, absolute.name) != target_identity
+            or _identity(os.fstat(target_fd)) != target_identity
+            or _mount_id(target_fd) != parent_mount
+        ):
+            raise ValueError("MCP cleanup target changed before deletion")
+        _remove_validated_cleanup_tree(
+            target_fd,
+            children,
+            mount_id=parent_mount,
+            remaining_links={key: value[0] for key, value in hardlinks.items()},
+        )
+        os.close(target_fd)
+        target_fd = None
+        if not _same_identity(
+            _entry_identity_at(parent_fd, absolute.name),
+            target_identity,
+            children_removed=True,
+        ):
+            raise ValueError("MCP cleanup target changed before deletion")
+        os.rmdir(absolute.name, dir_fd=parent_fd)
+        try:
+            _entry_identity_at(parent_fd, absolute.name)
+        except FileNotFoundError:
+            return True
+        raise ValueError("MCP cleanup target still exists after deletion")
+    except FileNotFoundError as error:
+        raise ValueError("MCP cleanup target changed before deletion") from error
+    finally:
+        if target_fd is not None:
+            os.close(target_fd)
+        os.close(parent_fd)
+
+
 def _reconcile_live_cargo_target(target: Path) -> None:
     """Privatize only an exact, owned, nonsymlink Cargo target left by Cargo."""
     absolute = target.absolute()
@@ -1016,16 +1217,26 @@ def _reconcile_live_cargo_target(target: Path) -> None:
         target_fd = os.open(absolute.name, _directory_open_flags(), dir_fd=parent_fd)
         parent = os.fstat(parent_fd)
         opened = os.fstat(target_fd)
+        parent_mount = _mount_id(parent_fd)
+        target_mount = _mount_id(target_fd)
         mode = stat.S_IMODE(opened.st_mode)
+        if target_mount != parent_mount:
+            raise ValueError("mounted cargo target is unsafe")
         if (
             not stat.S_ISDIR(opened.st_mode)
             or opened.st_uid != os.getuid()
             or opened.st_dev != parent.st_dev
-            or (opened.st_dev, opened.st_ino) != (lexical.st_dev, lexical.st_ino)
+            or _identity(opened) != _identity(lexical)
             or mode & 0o022
         ):
             raise ValueError("cargo target ownership or mode is unsafe")
         if mode != 0o700:
+            if (
+                _entry_identity_at(parent_fd, absolute.name) != _identity(opened)
+                or _identity(os.fstat(target_fd)) != _identity(opened)
+                or _mount_id(target_fd) != parent_mount
+            ):
+                raise ValueError("cargo target changed before chmod")
             os.fchmod(target_fd, 0o700)
             if stat.S_IMODE(os.fstat(target_fd).st_mode) != 0o700:
                 raise ValueError("cargo target could not be made private")
@@ -1102,6 +1313,7 @@ def _http_exchange(
     request: Mapping[str, object],
     *,
     accept: str | None = None,
+    timeout_seconds: float = 20,
 ) -> tuple[int, str, object]:
     headers_value = request.get("headers")
     if type(headers_value) is not dict:
@@ -1112,17 +1324,22 @@ def _http_exchange(
     if accept is not None:
         headers["Accept"] = accept
     body = json.dumps(request.get("body"), sort_keys=True, separators=(",", ":")).encode()
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout_seconds)
     try:
-        connection.request(
-            cast(str, request.get("method")),
-            cast(str, request.get("path")),
-            body=body,
-            headers=headers,
-        )
-        response = connection.getresponse()
-        content_type = response.getheader("Content-Type", "")
-        raw = response.read(2 * 1024 * 1024 + 1)
+        try:
+            connection.request(
+                cast(str, request.get("method")),
+                cast(str, request.get("path")),
+                body=body,
+                headers=headers,
+            )
+            response = connection.getresponse()
+            content_type = response.getheader("Content-Type", "")
+            raw = response.read(2 * 1024 * 1024 + 1)
+        except TimeoutError as error:
+            raise CandidateTimeout("MCP HTTP candidate timed out") from error
+        except http.client.HTTPException as error:
+            raise CandidateMismatch("MCP HTTP candidate response is invalid") from error
     finally:
         connection.close()
     if len(raw) > 2 * 1024 * 1024:
@@ -1827,6 +2044,8 @@ def run_live(
     _prepare_private_work(work_root)
     receipts: list[ProcessReceipt] = []
     observations: _ProbeObservations | None = None
+    work_removed = False
+    install_removed = False
     try:
         tool_roots, cargo_target_dir, child_env = _live_process_context(
             repo_root, work_root, caller_env
@@ -1897,8 +2116,8 @@ def run_live(
         if _successful(receipts[-1]):
             observations = _read_probe_artifact(artifact)
     finally:
-        shutil.rmtree(work_root, ignore_errors=True)
-        shutil.rmtree(repo_root / _CARGO_TARGET, ignore_errors=True)
+        work_removed = _remove_exact_directory(work_root)
+        install_removed = _remove_exact_directory(repo_root / _CARGO_TARGET)
     after = fingerprint_inputs(repo_root, required_fingerprint_inputs(_RISK))
     if after != before:
         raise ValueError("immutable MCP qualification inputs changed during replay")
@@ -1919,6 +2138,9 @@ def run_live(
         repo_root,
         contract_ids=contract_ids,
         observations=observations,
+        work_dir_removed=work_removed,
+        raw_logs_removed=work_removed,
+        install_dir_removed=install_removed,
         core_dumps_disabled=bool(receipts) and all(item.core_dumps_disabled for item in receipts),
         process_groups_reaped=bool(receipts)
         and all(item.process_group_reaped for item in receipts),

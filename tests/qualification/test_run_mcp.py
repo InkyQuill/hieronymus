@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import socket
 import stat
 import sys
+import threading
 import time
 from pathlib import Path, PurePosixPath
 
@@ -309,6 +312,27 @@ def test_mcp_live_never_mutates_unsafe_cargo_target(tmp_path: Path, unsafe: str)
         run_mcp._reconcile_live_cargo_target(target)
 
     assert stat.S_IMODE(real.stat().st_mode) == before
+
+
+def test_mcp_live_rejects_same_device_mounted_cargo_target_before_chmod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "cargo-target"
+    target.mkdir(mode=0o755)
+    real_mount_id = run_mcp._mount_id
+
+    def differing_target_mount(fd: int) -> int:
+        mount_id = real_mount_id(fd)
+        if Path(f"/proc/self/fd/{fd}").resolve() == target:
+            return mount_id + 1
+        return mount_id
+
+    monkeypatch.setattr(run_mcp, "_mount_id", differing_target_mount)
+
+    with pytest.raises(ValueError, match="mounted cargo target"):
+        run_mcp._reconcile_live_cargo_target(target)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
 
 
 def test_mcp_live_rejects_missing_opt_in_before_discovery(
@@ -660,6 +684,218 @@ def test_mcp_inner_timeout_reaps_descendant_process(tmp_path: Path) -> None:
     while Path(f"/proc/{child_pid}").exists() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert not Path(f"/proc/{child_pid}").exists()
+
+
+def test_mcp_http_read_timeout_is_retained_as_candidate_timeout() -> None:
+    listener = socket.create_server(("127.0.0.1", 0))
+    listener.settimeout(1)
+    release = threading.Event()
+
+    def stall_after_accept() -> None:
+        try:
+            connection, _address = listener.accept()
+        except OSError:
+            return
+        with connection:
+            release.wait(timeout=2)
+
+    thread = threading.Thread(target=stall_after_accept, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(run_mcp.CandidateTimeout, match="HTTP candidate timed out"):
+            run_mcp._http_exchange(
+                listener.getsockname()[1],
+                {
+                    "method": "POST",
+                    "path": "/mcp",
+                    "headers": {"Host": "127.0.0.1:<PORT>"},
+                    "body": {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                },
+                timeout_seconds=0.05,
+            )
+    finally:
+        release.set()
+        listener.close()
+        thread.join(timeout=2)
+    assert not thread.is_alive()
+
+
+def test_mcp_http_infrastructure_oserror_is_not_candidate_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BrokenConnection:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def request(self, *_args: object, **_kwargs: object) -> None:
+            raise OSError("descriptor exhaustion")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(run_mcp.http.client, "HTTPConnection", BrokenConnection)
+    request = {"method": "POST", "path": "/mcp", "headers": {}, "body": {}}
+
+    with pytest.raises(OSError, match="descriptor exhaustion"):
+        run_mcp._collect_candidate_group(
+            set(), "canonical-http", lambda: run_mcp._http_exchange(1, request)
+        )
+
+
+def test_mcp_exact_cleanup_removes_only_requested_directory(tmp_path: Path) -> None:
+    exact = tmp_path / "exact"
+    nested = exact / "nested"
+    nested.mkdir(parents=True)
+    (nested / "artifact").write_text("bounded", encoding="utf-8")
+    sibling = tmp_path / "preserve"
+    sibling.mkdir()
+    (sibling / "user-file").write_text("keep", encoding="utf-8")
+
+    assert run_mcp._remove_exact_directory(exact) is True
+
+    assert not os.path.lexists(exact)
+    assert (sibling / "user-file").read_text(encoding="utf-8") == "keep"
+
+
+def test_mcp_exact_cleanup_rejects_nested_symlink_without_partial_deletion(
+    tmp_path: Path,
+) -> None:
+    exact = tmp_path / "exact"
+    exact.mkdir()
+    regular = exact / "a-regular"
+    regular.write_text("preserve", encoding="utf-8")
+    (exact / "z-link").symlink_to(tmp_path / "outside")
+
+    with pytest.raises(ValueError, match="symlink"):
+        run_mcp._remove_exact_directory(exact)
+
+    assert regular.read_text(encoding="utf-8") == "preserve"
+    assert (exact / "z-link").is_symlink()
+
+
+def test_mcp_exact_cleanup_accepts_hardlinks_fully_contained_in_target(tmp_path: Path) -> None:
+    exact = tmp_path / "exact"
+    exact.mkdir()
+    first = exact / "build_script_build-hash"
+    second = exact / "build-script-build"
+    first.write_text("cargo output", encoding="utf-8")
+    os.link(first, second)
+
+    assert run_mcp._remove_exact_directory(exact) is True
+    assert not exact.exists()
+
+
+def test_mcp_exact_cleanup_rejects_hardlink_escaping_target(tmp_path: Path) -> None:
+    exact = tmp_path / "exact"
+    exact.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("user data", encoding="utf-8")
+    os.link(outside, exact / "linked-user-data")
+
+    with pytest.raises(ValueError, match="external hard-linked"):
+        run_mcp._remove_exact_directory(exact)
+
+    assert outside.read_text(encoding="utf-8") == "user data"
+    assert (exact / "linked-user-data").exists()
+
+
+def test_mcp_exact_cleanup_rejects_nested_mount_id_without_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exact = tmp_path / "exact"
+    nested = exact / "nested"
+    nested.mkdir(parents=True)
+    artifact = nested / "artifact"
+    artifact.write_text("preserve", encoding="utf-8")
+    real_mount_id = run_mcp._mount_id
+
+    def mounted_nested(fd: int) -> int:
+        mount_id = real_mount_id(fd)
+        if Path(f"/proc/self/fd/{fd}").resolve() == nested:
+            return mount_id + 1
+        return mount_id
+
+    monkeypatch.setattr(run_mcp, "_mount_id", mounted_nested)
+
+    with pytest.raises(ValueError, match="mounted directory"):
+        run_mcp._remove_exact_directory(exact)
+
+    assert artifact.read_text(encoding="utf-8") == "preserve"
+
+
+def test_mcp_exact_cleanup_revalidates_entry_identity_before_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exact = tmp_path / "exact"
+    exact.mkdir()
+    artifact = exact / "artifact"
+    artifact.write_text("original", encoding="utf-8")
+    original_entry_identity = run_mcp._entry_identity_at
+    calls = 0
+
+    def replace_after_validation(parent_fd: int, name: str) -> tuple[int, int, int, int]:
+        nonlocal calls
+        identity = original_entry_identity(parent_fd, name)
+        if name == "artifact":
+            calls += 1
+            if calls == 2:
+                artifact.unlink()
+                artifact.write_text("replacement", encoding="utf-8")
+                return original_entry_identity(parent_fd, name)
+        return identity
+
+    monkeypatch.setattr(run_mcp, "_entry_identity_at", replace_after_validation)
+
+    with pytest.raises(ValueError, match="changed before deletion"):
+        run_mcp._remove_exact_directory(exact)
+
+    assert artifact.read_text(encoding="utf-8") == "replacement"
+
+
+def test_mcp_live_cleanup_failure_aborts_without_a_false_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work_root = tmp_path / "work"
+    cargo_target = tmp_path / "cargo-target"
+    roots = ToolRoots(*(tmp_path / name for name in ("ch", "rh", "c", "cr", "r", "rr")))
+    monkeypatch.setattr(run_mcp, "_CARGO_TARGET", cargo_target)
+    monkeypatch.setattr(run_mcp, "_validate_oracles", lambda _root: ())
+    monkeypatch.setattr(run_mcp, "fingerprint_inputs", lambda *_args: "0" * 64)
+    monkeypatch.setattr(
+        run_mcp,
+        "_live_process_context",
+        lambda *_args: (roots, cargo_target, {"SAFE": "yes"}),
+    )
+    monkeypatch.setattr(
+        run_mcp,
+        "run_owned_process",
+        lambda *_args, **_kwargs: ProcessReceipt(
+            exit_code=1,
+            timed_out=False,
+            stdout_sha256="0" * 64,
+            stderr_sha256="0" * 64,
+            duration_ms=1,
+            process_group_reaped=True,
+            core_dumps_disabled=True,
+        ),
+    )
+    real_cleanup = run_mcp._remove_exact_directory
+
+    def fail_cargo_cleanup(path: Path) -> bool:
+        if path == cargo_target:
+            raise OSError("cleanup I/O failure")
+        return real_cleanup(path)
+
+    monkeypatch.setattr(run_mcp, "_remove_exact_directory", fail_cargo_cleanup)
+
+    with pytest.raises(OSError, match="cleanup I/O failure"):
+        run_mcp.run_live(
+            ROOT,
+            work_root,
+            original_env={"HIERONYMUS_QUALIFICATION_LIVE": "1"},
+        )
+
+    assert not work_root.exists()
 
 
 @pytest.mark.parametrize("error", [OSError("spawn failed"), ValueError("harness bug")])

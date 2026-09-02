@@ -11970,6 +11970,36 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_exact_cleanup_accepts_hardlinks_fully_contained_in_target",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_exact_cleanup_rejects_hardlink_escaping_target",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_exact_cleanup_rejects_nested_mount_id_without_deletion",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_exact_cleanup_rejects_nested_symlink_without_partial_deletion",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_exact_cleanup_removes_only_requested_directory",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_exact_cleanup_revalidates_entry_identity_before_unlink",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_mcp.py::test_mcp_failure_preserves_adr_0015",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -11985,7 +12015,17 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_http_infrastructure_oserror_is_not_candidate_evidence",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_mcp.py::test_mcp_http_negotiations_are_derived_from_frozen_response_variants",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_http_read_timeout_is_retained_as_candidate_timeout",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -12001,6 +12041,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_children_reuse_safe_environment",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_cleanup_failure_aborts_without_a_false_record",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
@@ -12036,6 +12081,11 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_rejects_missing_opt_in_before_discovery",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_rejects_same_device_mounted_cargo_target_before_chmod",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
