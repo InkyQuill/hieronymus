@@ -16929,6 +16929,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/test_pr_workflow.py::test_pr_workflow_backend_job_validates_qualification_records",
+      "reason": "Distribution and agent integration implementation: test_pr_workflow_backend_job_validates_qualification_records."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/test_pr_workflow.py::test_pr_workflow_frontend_job_runs_bun_tests_and_build",
       "reason": "Distribution and agent integration implementation: test_pr_workflow_frontend_job_runs_bun_tests_and_build."
     },
@@ -18025,6 +18030,41 @@
       "disposition": "implementation_internal",
       "node_id": "tests/test_release_workflow.py::test_release_workflow_verify_job_uses_read_only_credentials",
       "reason": "Distribution and agent integration implementation: test_release_workflow_verify_job_uses_read_only_credentials."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/test_rust_qualification_workflow.py::test_live_workflow_acquires_prerequisites_before_offline_live_execution",
+      "reason": "Distribution and agent integration implementation: test_live_workflow_acquires_prerequisites_before_offline_live_execution."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/test_rust_qualification_workflow.py::test_live_workflow_action_refs_are_full_commit_shas",
+      "reason": "Distribution and agent integration implementation: test_live_workflow_action_refs_are_full_commit_shas."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/test_rust_qualification_workflow.py::test_live_workflow_dispatch_is_the_only_trigger",
+      "reason": "Distribution and agent integration implementation: test_live_workflow_dispatch_is_the_only_trigger."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/test_rust_qualification_workflow.py::test_live_workflow_job_is_read_only_and_fully_pinned",
+      "reason": "Distribution and agent integration implementation: test_live_workflow_job_is_read_only_and_fully_pinned."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/test_rust_qualification_workflow.py::test_live_workflow_never_commits_or_pushes",
+      "reason": "Distribution and agent integration implementation: test_live_workflow_never_commits_or_pushes."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/test_rust_qualification_workflow.py::test_live_workflow_pins_exact_tool_versions",
+      "reason": "Distribution and agent integration implementation: test_live_workflow_pins_exact_tool_versions."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/test_rust_qualification_workflow.py::test_live_workflow_publishes_records_only_as_artifacts",
+      "reason": "Distribution and agent integration implementation: test_live_workflow_publishes_records_only_as_artifacts."
     },
     {
       "disposition": "implementation_internal",

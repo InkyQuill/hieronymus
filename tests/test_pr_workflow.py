@@ -2,7 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "pr.yml"
-EXPECTED_FRONTEND_BUN_VERSION = "1.3.14"
+EXPECTED_FRONTEND_BUN_VERSION = "1.4.0"
 CHECKOUT_SHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
 SETUP_UV_SHA = "d0d8abe699bfb85fec6de9f7adb5ae17292296ff"
 SETUP_PYTHON_SHA = "a309ff8b426b58ec0e2a45f0f869d46889d02405"
@@ -124,6 +124,37 @@ def test_pr_workflow_backend_job_runs_python_checks() -> None:
         "and Hatch builds the frontend."
     ) in backend
     assert not any("--reinstall-package" in line for line in backend)
+
+
+def test_pr_workflow_backend_job_validates_qualification_records() -> None:
+    lines = _workflow_lines()
+    backend = _block_after(lines, _find_line(lines, "  backend:"))
+    steps = _step_blocks(backend)
+
+    records_step = next(
+        (
+            step
+            for step in steps
+            if _step_value(step, "name") == "Validate Rust qualification records"
+        ),
+        None,
+    )
+    assert records_step == [
+        "      - name: Validate Rust qualification records",
+        "        env:",
+        '          HIERONYMUS_QUALIFICATION_LIVE: "0"',
+        "        run: |",
+        "          uv run --no-cache --no-sync pytest tests/qualification",
+        (
+            "          uv run --no-cache --no-sync "
+            "python -B -m tools.qualification.projections --check"
+        ),
+        (
+            "          uv run --no-cache --no-sync "
+            "python -B -m tools.qualification.check --records-only"
+        ),
+    ]
+    assert records_step is steps[-1]
 
 
 def test_pr_workflow_frontend_job_runs_bun_tests_and_build() -> None:

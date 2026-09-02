@@ -27,7 +27,7 @@ jobs:
       # oven-sh/setup-bun v2 pinned to commit SHA for reproducibility.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.0"
 
       # Fresh runners do not restore .venv, so uv sync installs the editable project and Hatch builds the frontend.
       - run: uv sync --dev
@@ -48,6 +48,14 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
+      - name: Validate Rust qualification records
+        env:
+          HIERONYMUS_QUALIFICATION_LIVE: "0"
+        run: |
+          uv run --no-cache --no-sync pytest tests/qualification
+          uv run --no-cache --no-sync python -B -m tools.qualification.projections --check
+          uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only
+
   frontend:
     runs-on: ubuntu-latest
     permissions:
@@ -60,7 +68,7 @@ jobs:
       # oven-sh/setup-bun v2 pinned to commit SHA for reproducibility.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.0"
 
       - run: bun install --cwd frontend --frozen-lockfile
       - run: bun run --cwd frontend format

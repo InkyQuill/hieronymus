@@ -45,3 +45,51 @@ namespaces allow concurrent calls without exposing or signalling unrelated paren
 Machine-readable records contain digests, counts, tool basenames, and versions only. Raw output,
 environment values, absolute tool/cache paths, and user data are never serialized. Generated
 Markdown is a deterministic rendering of those redacted records and is reviewed separately.
+
+## Contributor commands
+
+All commands run from the repository root. The acquisition commands are the only networked
+steps; every validation command below is network-free.
+
+```bash
+# One-time networked acquisitions
+uv run python -m tools.qualification.acquire semantic-model
+uv run python -m tools.qualification.acquire onnx-runtime
+bun install --cwd frontend --frozen-lockfile
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/mcp-transport cargo +1.96.0 fetch --manifest-path qualification/harnesses/mcp-transport/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/semantic-native cargo +1.96.0 fetch --manifest-path qualification/harnesses/semantic-native/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding cargo +1.96.0 fetch --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --locked
+CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/legacy-database-import cargo +1.96.0 fetch --manifest-path qualification/harnesses/legacy-database-import/Cargo.toml --locked
+
+# Explicit live qualification; writes measured records with pending review
+HIERONYMUS_QUALIFICATION_LIVE=1 CARGO_NET_OFFLINE=true uv run python -m tools.qualification.run all --write
+
+# Named-owner commands when all four measured records are accepted; use Task 20's rejected branch otherwise
+uv run python -m tools.qualification.review mcp-transport --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+uv run python -m tools.qualification.review semantic-native --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+uv run python -m tools.qualification.review frontend-embedding --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+uv run python -m tools.qualification.review legacy-database-import --status accepted --owner "Pavel Obruchnikov <me@inkyquill.net>" --objective-evidence-reviewed true --normative-constraints-preserved true
+
+# Ordinary network-free validation
+uv run --no-cache --no-sync python -B -m tools.qualification.projections --check
+uv run --no-cache --no-sync python -B -m tools.qualification.check --records-only
+
+# Required before any dependent Rust implementation plan
+uv run --no-cache --no-sync python -B -m tools.qualification.check --require-qualified
+
+# Bounded cleanup; model/runtime deletion is separately explicit
+uv run python -m tools.qualification.clean
+uv run python -m tools.qualification.clean --apply
+uv run python -m tools.qualification.clean --apply --include-model
+```
+
+The ordinary PR workflow runs only the network-free validation: the `tests/qualification`
+pytest suite, projection-currency checking, and `check --records-only`. Every runner test
+injects a fake executable, so that job needs no Cargo cache, Bun install, ONNX Runtime,
+model, or network. It validates durable records and allows an honest blocking aggregate
+record to merge. The live workflow (`.github/workflows/rust-qualification-live.yml`) is
+manual-only (`workflow_dispatch`), pins every action to a full commit SHA, disables
+checkout credential persistence, and never commits records. Any workflow that generates a
+dependent Rust implementation plan must run `check --require-qualified` first; while the
+aggregate record is blocked, that command exits nonzero, and the blocked aggregate is the
+durable stage result.
