@@ -12335,6 +12335,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_semantic.py::test_semantic_live_build_failure_writes_complete_fts_only_record",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_semantic.py::test_semantic_live_children_reuse_safe_environment",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },

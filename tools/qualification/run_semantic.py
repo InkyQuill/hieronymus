@@ -674,7 +674,7 @@ def _live_outcomes(
     )
     if not build_ok:
         cascade(_BUILD_DEPENDENTS, "locked-native-build")
-        return outcomes, receipts, environment, False
+        return outcomes, receipts, environment
 
     # Step 1 evidence: binary/library sizes plus ldd basenames (no absolute paths).
     runtime_path = repo_root / _RUNTIME

@@ -311,3 +311,66 @@ def test_semantic_live_children_reuse_safe_environment(
     assert len(versions_calls) == 1
     cargo_markers = sum("cargo" in argv[5] for argv in versions_calls)
     assert cargo_markers == 1
+
+
+def test_semantic_live_build_failure_writes_complete_fts_only_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cargo = tmp_path / "cargo"
+    roots = ToolRoots(
+        cargo_home=tmp_path / "cargo-home",
+        rustup_home=tmp_path / "rustup-home",
+        cargo_invocation=cargo,
+        cargo_resolved_target=tmp_path / "resolved-cargo",
+        rustup_invocation=tmp_path / "rustup",
+        rustup_resolved_target=tmp_path / "resolved-rustup",
+    )
+    safe_env = {
+        "HOME": str(tmp_path / "safe-home"),
+        "CARGO_TARGET_DIR": str(tmp_path / "cargo-target"),
+    }
+    original_env = {"HIERONYMUS_QUALIFICATION_LIVE": "1"}
+    calls: list[tuple[tuple[str, ...], object]] = []
+
+    def build_failure_spy(argv: tuple[str, ...], **kwargs: object) -> ProcessReceipt:
+        """Serve the toolchain capture; fail every Cargo build; never write a binary."""
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        calls.append((argv, environment))
+        if "qualification-toolchain-capture" in argv[3]:
+            Path(argv[4]).write_text(
+                json.dumps(
+                    {
+                        "cargo": "cargo 1.96.0 (measured)",
+                        "rustc": "rustc 1.96.0 (measured)",
+                        "host": "x86_64-unknown-linux-gnu",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return _successful_receipt(0)
+        return _successful_receipt(1)
+
+    monkeypatch.setattr(run_semantic, "_CARGO_TARGET", tmp_path / "cargo-target")
+    monkeypatch.setattr(run_semantic, "_INSTALL", tmp_path / "install")
+    monkeypatch.setattr(run_semantic, "discover_tool_roots", lambda _env: roots)
+    monkeypatch.setattr(run_semantic, "safe_subprocess_env", lambda *_a, **_k: safe_env)
+    monkeypatch.setattr(run_semantic, "run_owned_process", build_failure_spy)
+
+    record = run_semantic.run_live(ROOT, tmp_path / "live", original_env=original_env)
+
+    assert record.decision == "fts-only"
+    assert "do not block" in record.consequence
+    evidence = {item.criterion: item for item in record.evidence}
+    assert set(evidence) == set(_SEMANTIC_CRITERIA)
+    assert evidence["locked-native-build"].status == "fail"
+    assert all(
+        item.status == "not-run" and item.not_run_reason == "locked-native-build"
+        for name, item in evidence.items()
+        if name != "locked-native-build"
+    )
+    assert record.cleanup.work_dir_removed is True
+    assert record.cleanup.install_dir_removed is True
+    assert record.cleanup.source_inputs_unchanged is True
+    assert all(environment is safe_env for _, environment in calls)
+    assert all(argv[0] != str(cargo) or "build" in argv for argv, _ in calls)

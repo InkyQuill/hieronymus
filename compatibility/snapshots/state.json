@@ -9521,6 +9521,7 @@
       "tests/qualification/test_run_semantic.py::test_any_semantic_failure_selects_fts_only",
       "tests/qualification/test_run_semantic.py::test_prefilter_and_recovery_evidence_are_required",
       "tests/qualification/test_run_semantic.py::test_semantic_fake_runner_requires_exact_criterion_set",
+      "tests/qualification/test_run_semantic.py::test_semantic_live_build_failure_writes_complete_fts_only_record",
       "tests/qualification/test_run_semantic.py::test_semantic_live_children_reuse_safe_environment",
       "tests/qualification/test_run_semantic.py::test_semantic_live_context_discovers_before_sanitizing",
       "tests/qualification/test_run_semantic.py::test_semantic_live_rejects_missing_opt_in_before_discovery",
