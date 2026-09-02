@@ -941,6 +941,7 @@ def run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationR
     before = fingerprint_inputs(repo_root, required_fingerprint_inputs(_RISK))
     bounded_work = work_root / "mcp-transport-run"
     bounded_work.mkdir(mode=0o700, parents=True, exist_ok=False)
+    work_ownership = _claim_owned_directory(bounded_work, label="MCP replay work")
     artifact = bounded_work / "probe-result.json"
     work_removed = False
     try:
@@ -953,7 +954,7 @@ def run(repo_root: Path, work_root: Path, *, executable: Path) -> QualificationR
             raise ValueError("MCP qualification executable failed")
         observations = _read_probe_artifact(artifact)
     finally:
-        work_removed = _remove_exact_directory(bounded_work)
+        work_removed = _remove_exact_directory(bounded_work, work_ownership)
     after = fingerprint_inputs(repo_root, required_fingerprint_inputs(_RISK))
     if after != before:
         raise ValueError("immutable MCP qualification inputs changed during replay")
@@ -971,18 +972,23 @@ def _live_process_context(
     repo_root: Path,
     work_root: Path,
     original_env: Mapping[str, str],
-) -> tuple[ToolRoots, Path, dict[str, str]]:
+) -> tuple[ToolRoots, Path, dict[str, str], _DirectoryOwnership]:
     """Discover unsanitized tool roots, then produce one shared safe environment."""
     tool_roots = discover_tool_roots(original_env)
     cargo_target_dir = repo_root / _CARGO_TARGET
-    _reconcile_live_cargo_target(cargo_target_dir)
+    prior_ownership = _reconcile_live_cargo_target(cargo_target_dir)
     child_env = safe_subprocess_env(
         work_root,
         cargo_offline=True,
         tool_roots=tool_roots,
         cargo_target_dir=cargo_target_dir,
     )
-    return tool_roots, cargo_target_dir, child_env
+    cargo_ownership = _claim_owned_directory(
+        cargo_target_dir,
+        label="cargo target",
+        expected=prior_ownership,
+    )
+    return tool_roots, cargo_target_dir, child_env, cargo_ownership
 
 
 def _directory_open_flags() -> int:
@@ -1048,6 +1054,79 @@ class _CleanupNode:
     name: str
     identity: tuple[int, int, int, int]
     children: tuple[_CleanupNode, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _DirectoryOwnership:
+    path: Path
+    mode: int
+    device: int
+    inode: int
+    uid: int
+    mount_id: int
+
+
+def _ownership_matches(info: os.stat_result, token: _DirectoryOwnership) -> bool:
+    return (
+        info.st_mode == token.mode
+        and info.st_dev == token.device
+        and info.st_ino == token.inode
+        and info.st_uid == token.uid
+    )
+
+
+def _claim_owned_directory(
+    path: Path,
+    *,
+    label: str,
+    expected: _DirectoryOwnership | None = None,
+) -> _DirectoryOwnership:
+    """Pin a private, same-mount directory before it becomes cleanup-eligible."""
+    absolute = path.absolute()
+    if absolute == Path(absolute.anchor):
+        raise ValueError(f"{label} is an unsafe root")
+    try:
+        lexical = absolute.lstat()
+    except OSError as error:
+        raise ValueError(f"{label} cannot be claimed") from error
+    if (
+        not stat.S_ISDIR(lexical.st_mode)
+        or stat.S_ISLNK(lexical.st_mode)
+        or stat.S_IMODE(lexical.st_mode) != 0o700
+        or lexical.st_uid != os.getuid()
+    ):
+        raise ValueError(f"{label} is not a private owned directory")
+    parent_fd = _open_canonical_directory(absolute.parent, label=f"{label} parent")
+    target_fd: int | None = None
+    try:
+        target_fd = os.open(absolute.name, _directory_open_flags(), dir_fd=parent_fd)
+        opened = os.fstat(target_fd)
+        parent = os.fstat(parent_fd)
+        parent_mount = _mount_id(parent_fd)
+        target_mount = _mount_id(target_fd)
+        if (
+            _identity(opened) != _identity(lexical)
+            or opened.st_dev != parent.st_dev
+            or target_mount != parent_mount
+        ):
+            raise ValueError(f"{label} identity or mount is unsafe")
+        token = _DirectoryOwnership(
+            path=absolute,
+            mode=opened.st_mode,
+            device=opened.st_dev,
+            inode=opened.st_ino,
+            uid=opened.st_uid,
+            mount_id=target_mount,
+        )
+        if expected is not None and token != expected:
+            raise ValueError(f"{label} changed after ownership was established")
+        return token
+    except OSError as error:
+        raise ValueError(f"{label} path is unsafe") from error
+    finally:
+        if target_fd is not None:
+            os.close(target_fd)
+        os.close(parent_fd)
 
 
 def _validate_cleanup_tree(
@@ -1133,13 +1212,20 @@ def _remove_validated_cleanup_tree(
                 remaining_links[key] -= 1
 
 
-def _remove_exact_directory(path: Path) -> bool:
+def _remove_exact_directory(
+    path: Path,
+    ownership: _DirectoryOwnership | None,
+) -> bool:
     """Remove one exact nonsymlink directory after descriptor-safe full-tree validation."""
     absolute = path.absolute()
+    if ownership is None:
+        raise ValueError("MCP cleanup requires an ownership token")
+    if ownership.path != absolute:
+        raise ValueError("MCP cleanup ownership token targets another directory")
     if absolute == Path(absolute.anchor):
         raise ValueError("MCP cleanup target is an unsafe root")
     if not os.path.lexists(absolute):
-        return True
+        raise ValueError("MCP cleanup target changed before deletion")
     lexical = absolute.lstat()
     if not stat.S_ISDIR(lexical.st_mode) or stat.S_ISLNK(lexical.st_mode):
         raise ValueError("MCP cleanup target must be a nonsymlink directory")
@@ -1150,12 +1236,15 @@ def _remove_exact_directory(path: Path) -> bool:
         parent_mount = _mount_id(parent_fd)
         target_identity = _entry_identity_at(parent_fd, absolute.name)
         target_fd = os.open(absolute.name, _directory_open_flags(), dir_fd=parent_fd)
+        opened = os.fstat(target_fd)
         if (
             target_identity != _identity(lexical)
-            or _identity(os.fstat(target_fd)) != target_identity
+            or _identity(opened) != target_identity
+            or not _ownership_matches(lexical, ownership)
+            or not _ownership_matches(opened, ownership)
             or target_identity[1] != parent_identity[1]
-            or _mount_id(target_fd) != parent_mount
-            or os.fstat(target_fd).st_uid != os.getuid()
+            or _mount_id(target_fd) != ownership.mount_id
+            or ownership.mount_id != parent_mount
         ):
             raise ValueError("MCP cleanup target identity or mount is unsafe")
         hardlinks: dict[tuple[int, int], tuple[int, int]] = {}
@@ -1200,11 +1289,11 @@ def _remove_exact_directory(path: Path) -> bool:
         os.close(parent_fd)
 
 
-def _reconcile_live_cargo_target(target: Path) -> None:
+def _reconcile_live_cargo_target(target: Path) -> _DirectoryOwnership | None:
     """Privatize only an exact, owned, nonsymlink Cargo target left by Cargo."""
     absolute = target.absolute()
     if not os.path.lexists(absolute):
-        return
+        return None
     try:
         lexical = absolute.lstat()
     except OSError as error:
@@ -1240,6 +1329,15 @@ def _reconcile_live_cargo_target(target: Path) -> None:
             os.fchmod(target_fd, 0o700)
             if stat.S_IMODE(os.fstat(target_fd).st_mode) != 0o700:
                 raise ValueError("cargo target could not be made private")
+        opened = os.fstat(target_fd)
+        return _DirectoryOwnership(
+            path=absolute,
+            mode=opened.st_mode,
+            device=opened.st_dev,
+            inode=opened.st_ino,
+            uid=opened.st_uid,
+            mount_id=parent_mount,
+        )
     except OSError as error:
         raise ValueError("cargo target path is unsafe") from error
     finally:
@@ -1248,7 +1346,7 @@ def _reconcile_live_cargo_target(target: Path) -> None:
         os.close(parent_fd)
 
 
-def _prepare_private_work(work_root: Path) -> None:
+def _prepare_private_work(work_root: Path) -> _DirectoryOwnership:
     lexical = work_root.absolute()
     if os.path.lexists(lexical):
         raise ValueError("MCP private work root already exists or is a symlink")
@@ -1262,6 +1360,32 @@ def _prepare_private_work(work_root: Path) -> None:
     info = lexical.lstat()
     if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700:
         raise ValueError("MCP private work root is invalid")
+    return _claim_owned_directory(lexical, label="MCP private work root")
+
+
+def _cleanup_live_roots(
+    work_root: Path,
+    work_ownership: _DirectoryOwnership,
+    cargo_target: Path,
+    cargo_ownership: _DirectoryOwnership | None,
+) -> tuple[bool, bool]:
+    """Attempt each claimed cleanup independently and report only verified removals."""
+    work_removed = False
+    cargo_removed = False
+    errors: list[tuple[str, Exception]] = []
+    try:
+        work_removed = _remove_exact_directory(work_root, work_ownership)
+    except Exception as error:
+        errors.append(("work", error))
+    if cargo_ownership is not None:
+        try:
+            cargo_removed = _remove_exact_directory(cargo_target, cargo_ownership)
+        except Exception as error:
+            errors.append(("cargo", error))
+    if errors:
+        outcomes = ", ".join(f"{label}={type(error).__name__}" for label, error in errors)
+        raise ValueError(f"MCP owned cleanup failed ({outcomes})") from errors[0][1]
+    return work_removed, cargo_removed
 
 
 def _successful(receipt: ProcessReceipt) -> bool:
@@ -2041,13 +2165,14 @@ def run_live(
         raise ValueError("HIERONYMUS_QUALIFICATION_LIVE=1 is required")
     contract_ids = _validate_oracles(repo_root)
     before = fingerprint_inputs(repo_root, required_fingerprint_inputs(_RISK))
-    _prepare_private_work(work_root)
+    work_ownership = _prepare_private_work(work_root)
+    cargo_ownership: _DirectoryOwnership | None = None
     receipts: list[ProcessReceipt] = []
     observations: _ProbeObservations | None = None
     work_removed = False
     install_removed = False
     try:
-        tool_roots, cargo_target_dir, child_env = _live_process_context(
+        tool_roots, cargo_target_dir, child_env, cargo_ownership = _live_process_context(
             repo_root, work_root, caller_env
         )
         cargo = str(tool_roots.cargo_invocation)
@@ -2116,8 +2241,12 @@ def run_live(
         if _successful(receipts[-1]):
             observations = _read_probe_artifact(artifact)
     finally:
-        work_removed = _remove_exact_directory(work_root)
-        install_removed = _remove_exact_directory(repo_root / _CARGO_TARGET)
+        work_removed, install_removed = _cleanup_live_roots(
+            work_root,
+            work_ownership,
+            repo_root / _CARGO_TARGET,
+            cargo_ownership,
+        )
     after = fingerprint_inputs(repo_root, required_fingerprint_inputs(_RISK))
     if after != before:
         raise ValueError("immutable MCP qualification inputs changed during replay")

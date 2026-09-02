@@ -23,6 +23,11 @@ from tools.qualification.projections import projection_issues  # noqa: E402
 from tools.qualification.run_mcp import _live_process_context, run  # noqa: E402
 
 
+def _cleanup_ownership(path: Path) -> object:
+    path.chmod(0o700)
+    return run_mcp._claim_owned_directory(path, label="test cleanup root")
+
+
 def _typed_probe_payload(*, failed: tuple[str, ...] = ()) -> dict[str, object]:
     return {
         "schemaVersion": 1,
@@ -234,6 +239,7 @@ def test_mcp_live_context_discovers_before_sanitizing(
         )
     )
     safe_env = {"SAFE": "yes"}
+    target = tmp_path / "cargo-target"
     original_env = {"HOME": "/sensitive", "TOKEN": "do-not-copy"}
 
     def discover(candidate: object) -> ToolRoots:
@@ -247,6 +253,7 @@ def test_mcp_live_context_discovers_before_sanitizing(
         tool_roots: ToolRoots,
         cargo_target_dir: Path,
     ) -> dict[str, str]:
+        cargo_target_dir.mkdir(mode=0o700)
         calls.append(
             (
                 "sanitize",
@@ -260,11 +267,12 @@ def test_mcp_live_context_discovers_before_sanitizing(
 
     monkeypatch.setattr(run_mcp, "discover_tool_roots", discover)
     monkeypatch.setattr(run_mcp, "safe_subprocess_env", sanitize)
+    monkeypatch.setattr(run_mcp, "_CARGO_TARGET", target)
 
     actual = _live_process_context(ROOT, tmp_path, original_env)
 
-    target = ROOT / "qualification/.artifacts/cargo-target/mcp-transport"
-    assert actual == (roots, target, safe_env)
+    assert actual[:3] == (roots, target, safe_env)
+    assert actual[3].path == target
     assert calls == [
         ("discover", original_env),
         ("sanitize", tmp_path, True, roots, target),
@@ -335,6 +343,65 @@ def test_mcp_live_rejects_same_device_mounted_cargo_target_before_chmod(
     assert stat.S_IMODE(target.stat().st_mode) == 0o755
 
 
+@pytest.mark.parametrize("unsafe", ["world-writable", "symlink"])
+def test_mcp_live_rejected_cargo_target_is_never_cleaned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unsafe: str
+) -> None:
+    cargo_target = tmp_path / "cargo-target"
+    if unsafe == "world-writable":
+        cargo_target.mkdir(mode=0o700)
+        marker = cargo_target / "user-marker"
+        marker.write_text("preserve", encoding="utf-8")
+        cargo_target.chmod(0o777)
+        observed_target = cargo_target
+    else:
+        observed_target = tmp_path / "user-target"
+        observed_target.mkdir(mode=0o755)
+        marker = observed_target / "user-marker"
+        marker.write_text("preserve", encoding="utf-8")
+        cargo_target.symlink_to(observed_target, target_is_directory=True)
+    before_lexical = cargo_target.lstat()
+    before_target = observed_target.lstat()
+    before_marker = marker.lstat()
+    roots = ToolRoots(*(tmp_path / name for name in ("ch", "rh", "c", "cr", "r", "rr")))
+    monkeypatch.setattr(run_mcp, "_CARGO_TARGET", cargo_target)
+    monkeypatch.setattr(run_mcp, "_validate_oracles", lambda _root: ())
+    monkeypatch.setattr(run_mcp, "fingerprint_inputs", lambda *_args: "0" * 64)
+    monkeypatch.setattr(run_mcp, "discover_tool_roots", lambda _env: roots)
+    monkeypatch.setattr(
+        run_mcp,
+        "safe_subprocess_env",
+        lambda *_args, **_kwargs: pytest.fail("unsafe target must fail before sanitization"),
+    )
+
+    with pytest.raises(ValueError, match="cargo target"):
+        run_mcp.run_live(
+            ROOT,
+            tmp_path / "work",
+            original_env={"HIERONYMUS_QUALIFICATION_LIVE": "1"},
+        )
+
+    after_target = observed_target.lstat()
+    after_marker = marker.lstat()
+    after_lexical = cargo_target.lstat()
+    assert (after_lexical.st_mode, after_lexical.st_dev, after_lexical.st_ino) == (
+        before_lexical.st_mode,
+        before_lexical.st_dev,
+        before_lexical.st_ino,
+    )
+    assert (after_target.st_mode, after_target.st_dev, after_target.st_ino) == (
+        before_target.st_mode,
+        before_target.st_dev,
+        before_target.st_ino,
+    )
+    assert (after_marker.st_mode, after_marker.st_dev, after_marker.st_ino) == (
+        before_marker.st_mode,
+        before_marker.st_dev,
+        before_marker.st_ino,
+    )
+    assert marker.read_text(encoding="utf-8") == "preserve"
+
+
 def test_mcp_live_rejects_missing_opt_in_before_discovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -366,7 +433,10 @@ def test_mcp_live_children_reuse_safe_environment(
         "TOKEN": "do-not-copy",
     }
     calls: list[tuple[tuple[str, ...], object]] = []
+    cargo_target = tmp_path / "cargo-target"
+    cargo_target.mkdir(mode=0o700)
 
+    monkeypatch.setattr(run_mcp, "_CARGO_TARGET", cargo_target)
     monkeypatch.setattr(run_mcp, "discover_tool_roots", lambda _env: roots)
     monkeypatch.setattr(run_mcp, "safe_subprocess_env", lambda *args, **kwargs: safe_env)
 
@@ -417,6 +487,8 @@ def _run_live_through_real_probe(
     toolchain_graph_matches: bool = True,
 ) -> tuple[object, Path, dict[str, object]]:
     cargo_target = tmp_path / "cargo-target"
+    cargo_target.mkdir(mode=0o700)
+    cargo_ownership = run_mcp._claim_owned_directory(cargo_target, label="test cargo target")
     executable = cargo_target / run_mcp._TARGET / "debug/mcp-transport"
     roots = ToolRoots(
         cargo_home=tmp_path / "cargo-home",
@@ -450,7 +522,7 @@ def _run_live_through_real_probe(
     monkeypatch.setattr(
         run_mcp,
         "_live_process_context",
-        lambda *_args: (roots, cargo_target, {"SAFE": "yes"}),
+        lambda *_args: (roots, cargo_target, {"SAFE": "yes"}, cargo_ownership),
     )
     monkeypatch.setattr(run_mcp, "_require_owned_probe_environment", lambda *_args: None)
     monkeypatch.setattr(
@@ -587,10 +659,14 @@ def test_mcp_live_noop_success_receipts_without_artifact_block(
 ) -> None:
     roots = ToolRoots(*(tmp_path / name for name in ("ch", "rh", "c", "cr", "r", "rr")))
     safe_env = {"HOME": str(tmp_path / "safe")}
+    cargo_target = tmp_path / "cargo-target"
+    cargo_target.mkdir(mode=0o700)
+    cargo_ownership = run_mcp._claim_owned_directory(cargo_target, label="test cargo target")
+    monkeypatch.setattr(run_mcp, "_CARGO_TARGET", cargo_target)
     monkeypatch.setattr(
         run_mcp,
         "_live_process_context",
-        lambda *_args: (roots, ROOT / run_mcp._CARGO_TARGET, safe_env),
+        lambda *_args: (roots, cargo_target, safe_env, cargo_ownership),
     )
     monkeypatch.setattr(
         run_mcp,
@@ -608,7 +684,7 @@ def test_mcp_live_noop_success_receipts_without_artifact_block(
     with pytest.raises(ValueError, match="probe artifact"):
         run_mcp.run_live(
             ROOT,
-            ROOT / run_mcp._LIVE_WORK,
+            tmp_path / "work",
             original_env={"HIERONYMUS_QUALIFICATION_LIVE": "1"},
         )
 
@@ -750,11 +826,31 @@ def test_mcp_exact_cleanup_removes_only_requested_directory(tmp_path: Path) -> N
     sibling = tmp_path / "preserve"
     sibling.mkdir()
     (sibling / "user-file").write_text("keep", encoding="utf-8")
+    ownership = _cleanup_ownership(exact)
 
-    assert run_mcp._remove_exact_directory(exact) is True
+    assert run_mcp._remove_exact_directory(exact, ownership) is True
 
     assert not os.path.lexists(exact)
     assert (sibling / "user-file").read_text(encoding="utf-8") == "keep"
+
+
+def test_mcp_exact_cleanup_without_ownership_never_touches_target(tmp_path: Path) -> None:
+    exact = tmp_path / "exact"
+    exact.mkdir(mode=0o700)
+    marker = exact / "marker"
+    marker.write_text("preserve", encoding="utf-8")
+    before = exact.lstat()
+
+    with pytest.raises(ValueError, match="ownership token"):
+        run_mcp._remove_exact_directory(exact, None)
+
+    after = exact.lstat()
+    assert (after.st_mode, after.st_dev, after.st_ino) == (
+        before.st_mode,
+        before.st_dev,
+        before.st_ino,
+    )
+    assert marker.read_text(encoding="utf-8") == "preserve"
 
 
 def test_mcp_exact_cleanup_rejects_nested_symlink_without_partial_deletion(
@@ -765,9 +861,10 @@ def test_mcp_exact_cleanup_rejects_nested_symlink_without_partial_deletion(
     regular = exact / "a-regular"
     regular.write_text("preserve", encoding="utf-8")
     (exact / "z-link").symlink_to(tmp_path / "outside")
+    ownership = _cleanup_ownership(exact)
 
     with pytest.raises(ValueError, match="symlink"):
-        run_mcp._remove_exact_directory(exact)
+        run_mcp._remove_exact_directory(exact, ownership)
 
     assert regular.read_text(encoding="utf-8") == "preserve"
     assert (exact / "z-link").is_symlink()
@@ -780,8 +877,9 @@ def test_mcp_exact_cleanup_accepts_hardlinks_fully_contained_in_target(tmp_path:
     second = exact / "build-script-build"
     first.write_text("cargo output", encoding="utf-8")
     os.link(first, second)
+    ownership = _cleanup_ownership(exact)
 
-    assert run_mcp._remove_exact_directory(exact) is True
+    assert run_mcp._remove_exact_directory(exact, ownership) is True
     assert not exact.exists()
 
 
@@ -791,9 +889,10 @@ def test_mcp_exact_cleanup_rejects_hardlink_escaping_target(tmp_path: Path) -> N
     outside = tmp_path / "outside"
     outside.write_text("user data", encoding="utf-8")
     os.link(outside, exact / "linked-user-data")
+    ownership = _cleanup_ownership(exact)
 
     with pytest.raises(ValueError, match="external hard-linked"):
-        run_mcp._remove_exact_directory(exact)
+        run_mcp._remove_exact_directory(exact, ownership)
 
     assert outside.read_text(encoding="utf-8") == "user data"
     assert (exact / "linked-user-data").exists()
@@ -807,6 +906,7 @@ def test_mcp_exact_cleanup_rejects_nested_mount_id_without_deletion(
     nested.mkdir(parents=True)
     artifact = nested / "artifact"
     artifact.write_text("preserve", encoding="utf-8")
+    ownership = _cleanup_ownership(exact)
     real_mount_id = run_mcp._mount_id
 
     def mounted_nested(fd: int) -> int:
@@ -818,7 +918,7 @@ def test_mcp_exact_cleanup_rejects_nested_mount_id_without_deletion(
     monkeypatch.setattr(run_mcp, "_mount_id", mounted_nested)
 
     with pytest.raises(ValueError, match="mounted directory"):
-        run_mcp._remove_exact_directory(exact)
+        run_mcp._remove_exact_directory(exact, ownership)
 
     assert artifact.read_text(encoding="utf-8") == "preserve"
 
@@ -830,6 +930,7 @@ def test_mcp_exact_cleanup_revalidates_entry_identity_before_unlink(
     exact.mkdir()
     artifact = exact / "artifact"
     artifact.write_text("original", encoding="utf-8")
+    ownership = _cleanup_ownership(exact)
     original_entry_identity = run_mcp._entry_identity_at
     calls = 0
 
@@ -847,7 +948,7 @@ def test_mcp_exact_cleanup_revalidates_entry_identity_before_unlink(
     monkeypatch.setattr(run_mcp, "_entry_identity_at", replace_after_validation)
 
     with pytest.raises(ValueError, match="changed before deletion"):
-        run_mcp._remove_exact_directory(exact)
+        run_mcp._remove_exact_directory(exact, ownership)
 
     assert artifact.read_text(encoding="utf-8") == "replacement"
 
@@ -857,6 +958,8 @@ def test_mcp_live_cleanup_failure_aborts_without_a_false_record(
 ) -> None:
     work_root = tmp_path / "work"
     cargo_target = tmp_path / "cargo-target"
+    cargo_target.mkdir(mode=0o700)
+    cargo_ownership = run_mcp._claim_owned_directory(cargo_target, label="test cargo target")
     roots = ToolRoots(*(tmp_path / name for name in ("ch", "rh", "c", "cr", "r", "rr")))
     monkeypatch.setattr(run_mcp, "_CARGO_TARGET", cargo_target)
     monkeypatch.setattr(run_mcp, "_validate_oracles", lambda _root: ())
@@ -864,7 +967,7 @@ def test_mcp_live_cleanup_failure_aborts_without_a_false_record(
     monkeypatch.setattr(
         run_mcp,
         "_live_process_context",
-        lambda *_args: (roots, cargo_target, {"SAFE": "yes"}),
+        lambda *_args: (roots, cargo_target, {"SAFE": "yes"}, cargo_ownership),
     )
     monkeypatch.setattr(
         run_mcp,
@@ -881,14 +984,62 @@ def test_mcp_live_cleanup_failure_aborts_without_a_false_record(
     )
     real_cleanup = run_mcp._remove_exact_directory
 
-    def fail_cargo_cleanup(path: Path) -> bool:
+    def fail_cargo_cleanup(path: Path, ownership: object) -> bool:
         if path == cargo_target:
             raise OSError("cleanup I/O failure")
-        return real_cleanup(path)
+        return real_cleanup(path, ownership)
 
     monkeypatch.setattr(run_mcp, "_remove_exact_directory", fail_cargo_cleanup)
 
-    with pytest.raises(OSError, match="cleanup I/O failure"):
+    with pytest.raises(ValueError, match="owned cleanup failed") as caught:
+        run_mcp.run_live(
+            ROOT,
+            work_root,
+            original_env={"HIERONYMUS_QUALIFICATION_LIVE": "1"},
+        )
+
+    assert isinstance(caught.value.__cause__, OSError)
+    assert str(caught.value.__cause__) == "cleanup I/O failure"
+    assert not work_root.exists()
+
+
+def test_mcp_live_cleanup_refuses_replaced_claimed_cargo_root_and_still_cleans_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work_root = tmp_path / "work"
+    cargo_target = tmp_path / "cargo-target"
+    cargo_target.mkdir(mode=0o755)
+    (cargo_target / "original-marker").write_text("owned", encoding="utf-8")
+    displaced = tmp_path / "displaced-owned-target"
+    replacement_marker = cargo_target / "replacement-marker"
+    roots = ToolRoots(*(tmp_path / name for name in ("ch", "rh", "c", "cr", "r", "rr")))
+    monkeypatch.setattr(run_mcp, "_CARGO_TARGET", cargo_target)
+    monkeypatch.setattr(run_mcp, "_validate_oracles", lambda _root: ())
+    monkeypatch.setattr(run_mcp, "fingerprint_inputs", lambda *_args: "0" * 64)
+    monkeypatch.setattr(run_mcp, "discover_tool_roots", lambda _env: roots)
+    monkeypatch.setattr(run_mcp, "safe_subprocess_env", lambda *_args, **_kwargs: {"SAFE": "yes"})
+    swapped = False
+
+    def process_spy(*_args: object, **_kwargs: object) -> ProcessReceipt:
+        nonlocal swapped
+        if not swapped:
+            cargo_target.rename(displaced)
+            cargo_target.mkdir(mode=0o700)
+            replacement_marker.write_text("user replacement", encoding="utf-8")
+            swapped = True
+        return ProcessReceipt(
+            exit_code=1,
+            timed_out=False,
+            stdout_sha256="0" * 64,
+            stderr_sha256="0" * 64,
+            duration_ms=1,
+            process_group_reaped=True,
+            core_dumps_disabled=True,
+        )
+
+    monkeypatch.setattr(run_mcp, "run_owned_process", process_spy)
+
+    with pytest.raises(ValueError, match="cleanup|changed"):
         run_mcp.run_live(
             ROOT,
             work_root,
@@ -896,6 +1047,61 @@ def test_mcp_live_cleanup_failure_aborts_without_a_false_record(
         )
 
     assert not work_root.exists()
+    assert replacement_marker.read_text(encoding="utf-8") == "user replacement"
+    assert (displaced / "original-marker").read_text(encoding="utf-8") == "owned"
+
+
+def test_mcp_live_cleanup_refuses_replaced_claimed_work_and_still_cleans_cargo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work_root = tmp_path / "work"
+    displaced = tmp_path / "displaced-owned-work"
+    replacement_marker = work_root / "replacement-marker"
+    cargo_target = tmp_path / "cargo-target"
+    cargo_target.mkdir(mode=0o700)
+    (cargo_target / "build-marker").write_text("owned", encoding="utf-8")
+    cargo_ownership = run_mcp._claim_owned_directory(cargo_target, label="test cargo target")
+    roots = ToolRoots(*(tmp_path / name for name in ("ch", "rh", "c", "cr", "r", "rr")))
+    monkeypatch.setattr(run_mcp, "_CARGO_TARGET", cargo_target)
+    monkeypatch.setattr(run_mcp, "_validate_oracles", lambda _root: ())
+    monkeypatch.setattr(run_mcp, "fingerprint_inputs", lambda *_args: "0" * 64)
+    monkeypatch.setattr(
+        run_mcp,
+        "_live_process_context",
+        lambda *_args: (roots, cargo_target, {"SAFE": "yes"}, cargo_ownership),
+    )
+    swapped = False
+
+    def process_spy(*_args: object, **_kwargs: object) -> ProcessReceipt:
+        nonlocal swapped
+        if not swapped:
+            (work_root / "owned-marker").write_text("owned", encoding="utf-8")
+            work_root.rename(displaced)
+            work_root.mkdir(mode=0o700)
+            replacement_marker.write_text("user replacement", encoding="utf-8")
+            swapped = True
+        return ProcessReceipt(
+            exit_code=1,
+            timed_out=False,
+            stdout_sha256="0" * 64,
+            stderr_sha256="0" * 64,
+            duration_ms=1,
+            process_group_reaped=True,
+            core_dumps_disabled=True,
+        )
+
+    monkeypatch.setattr(run_mcp, "run_owned_process", process_spy)
+
+    with pytest.raises(ValueError, match="owned cleanup failed"):
+        run_mcp.run_live(
+            ROOT,
+            work_root,
+            original_env={"HIERONYMUS_QUALIFICATION_LIVE": "1"},
+        )
+
+    assert replacement_marker.read_text(encoding="utf-8") == "user replacement"
+    assert (displaced / "owned-marker").read_text(encoding="utf-8") == "owned"
+    assert not cargo_target.exists()
 
 
 @pytest.mark.parametrize("error", [OSError("spawn failed"), ValueError("harness bug")])

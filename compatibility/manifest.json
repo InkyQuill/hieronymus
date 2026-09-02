@@ -12000,6 +12000,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_exact_cleanup_without_ownership_never_touches_target",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_mcp.py::test_mcp_failure_preserves_adr_0015",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -12050,6 +12055,16 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_cleanup_refuses_replaced_claimed_cargo_root_and_still_cleans_work",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_cleanup_refuses_replaced_claimed_work_and_still_cleans_cargo",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_context_discovers_before_sanitizing",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -12076,6 +12091,16 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_reconciles_exact_owned_cargo_target_before_safe_environment",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_rejected_cargo_target_is_never_cleaned[symlink]",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_rejected_cargo_target_is_never_cleaned[world-writable]",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {
