@@ -268,6 +268,49 @@ def test_mcp_live_context_discovers_before_sanitizing(
     ]
 
 
+def test_mcp_live_reconciles_exact_owned_cargo_target_before_safe_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "cargo-target"
+    target.mkdir(mode=0o755)
+    monkeypatch.setattr(run_mcp, "_CARGO_TARGET", target)
+    calls: list[int] = []
+
+    def sanitize(*_args: object, **_kwargs: object) -> dict[str, str]:
+        calls.append(stat.S_IMODE(target.stat().st_mode))
+        return {"SAFE": "yes"}
+
+    roots = ToolRoots(*(tmp_path / name for name in ("ch", "rh", "c", "cr", "r", "rr")))
+    monkeypatch.setattr(run_mcp, "discover_tool_roots", lambda _env: roots)
+    monkeypatch.setattr(run_mcp, "safe_subprocess_env", sanitize)
+
+    run_mcp._live_process_context(ROOT, tmp_path / "first", {})
+    run_mcp._live_process_context(ROOT, tmp_path / "second", {})
+
+    assert calls == [0o700, 0o700]
+    assert target.is_dir()
+
+
+@pytest.mark.parametrize("unsafe", ["symlink", "world-writable"])
+def test_mcp_live_never_mutates_unsafe_cargo_target(tmp_path: Path, unsafe: str) -> None:
+    target = tmp_path / "cargo-target"
+    if unsafe == "symlink":
+        real = tmp_path / "real"
+        real.mkdir(mode=0o755)
+        target.symlink_to(real, target_is_directory=True)
+        before = stat.S_IMODE(real.stat().st_mode)
+    else:
+        target.mkdir(mode=0o777)
+        target.chmod(0o777)
+        real = target
+        before = stat.S_IMODE(target.stat().st_mode)
+
+    with pytest.raises(ValueError, match="cargo target"):
+        run_mcp._reconcile_live_cargo_target(target)
+
+    assert stat.S_IMODE(real.stat().st_mode) == before
+
+
 def test_mcp_live_rejects_missing_opt_in_before_discovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -592,7 +635,7 @@ def test_mcp_inner_capture_rejects_output_flood(tmp_path: Path) -> None:
         "import sys\nsys.stdout.buffer.write(b'x' * (2 * 1024 * 1024 + 1))\n",
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="bounded MCP child failed"):
+    with pytest.raises(run_mcp.CandidateOutput, match="output exceeds"):
         run_mcp._run_bounded((sys.executable, str(script)), cwd=tmp_path)
 
 
@@ -606,7 +649,7 @@ def test_mcp_inner_timeout_reaps_descendant_process(tmp_path: Path) -> None:
         "time.sleep(60)\n",
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="bounded MCP child failed"):
+    with pytest.raises(run_mcp.CandidateTimeout, match="timed out"):
         run_mcp._run_bounded(
             (sys.executable, str(script), str(marker)),
             cwd=tmp_path,
@@ -617,6 +660,121 @@ def test_mcp_inner_timeout_reaps_descendant_process(tmp_path: Path) -> None:
     while Path(f"/proc/{child_pid}").exists() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert not Path(f"/proc/{child_pid}").exists()
+
+
+@pytest.mark.parametrize("error", [OSError("spawn failed"), ValueError("harness bug")])
+def test_mcp_candidate_group_does_not_convert_infrastructure_errors_to_evidence(
+    error: Exception,
+) -> None:
+    checks = run_mcp._checks_from_observations(set(), tree_bytes=1)
+
+    def fail() -> None:
+        raise error
+
+    with pytest.raises(type(error), match=str(error)):
+        run_mcp._collect_candidate_group(set(), "canonical-stdio", fail)
+
+    assert all(not passed for passed, _ in checks.values())
+
+
+def test_mcp_candidate_group_retains_only_typed_candidate_mismatch() -> None:
+    observed: set[str] = set()
+
+    run_mcp._collect_candidate_group(
+        observed,
+        "canonical-stdio",
+        lambda: (_ for _ in ()).throw(run_mcp.CandidateMismatch("wrong response")),
+    )
+
+    assert observed == set()
+
+
+@pytest.mark.parametrize(
+    ("source", "error"),
+    [
+        ("stdio", OSError("candidate spawn failed")),
+        ("stdio", ValueError("runner invariant failed")),
+        ("http", RuntimeError("report reader failed")),
+    ],
+)
+def test_mcp_probe_infrastructure_failure_never_writes_blocked_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    error: Exception,
+) -> None:
+    target = tmp_path / "cargo-target"
+    executable = target / run_mcp._TARGET / "debug/mcp-transport"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("candidate", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir(mode=0o700)
+    artifact = work / "probe-result.json"
+    environment = {
+        "rustc": "rustc 1.96.0",
+        "cargo": "cargo 1.96.0",
+        "target": run_mcp._TARGET,
+        "os": "linux",
+        "kernel": "measured",
+        "architecture": "x86_64",
+    }
+    dependency = run_mcp.LockedDependency(
+        name="rmcp",
+        version="3.1.4",
+        source="registry+https://github.com/rust-lang/crates.io-index",
+        checksum="0" * 64,
+        features=("server", "transport-io", "transport-streamable-http-server"),
+    )
+    monkeypatch.setattr(run_mcp, "_CARGO_TARGET", target)
+    monkeypatch.setattr(run_mcp, "_LIVE_WORK", work)
+    monkeypatch.setattr(run_mcp, "_require_owned_probe_environment", lambda *_args: None)
+    monkeypatch.setattr(
+        run_mcp,
+        "_toolchain_observations",
+        lambda *_args: (environment, (dependency,), 1, True),
+    )
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(run_mcp, "_stdio_probe", fail if source == "stdio" else lambda *_a: None)
+    monkeypatch.setattr(
+        run_mcp,
+        "_http_probe",
+        fail if source == "http" else lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        run_mcp,
+        "_write_private_json",
+        lambda *_args: pytest.fail("infrastructure failure must not write evidence"),
+    )
+
+    with pytest.raises(type(error), match=str(error)):
+        run_mcp._transport_probe(
+            executable,
+            ROOT,
+            work,
+            artifact,
+            tmp_path / "cargo",
+            tmp_path / "rustup",
+        )
+
+    assert not artifact.exists()
+
+
+@pytest.mark.parametrize("criterion", REQUIRED_CRITERIA["mcp-transport"])
+def test_mcp_each_criterion_requires_every_named_live_observation(criterion: str) -> None:
+    all_observations = {
+        observation
+        for dependencies in run_mcp._CRITERION_OBSERVATIONS.values()
+        for observation in dependencies
+    }
+    passed = run_mcp._checks_from_observations(all_observations, tree_bytes=123)
+    assert passed[criterion][0] is True
+
+    for dependency in run_mcp._CRITERION_OBSERVATIONS[criterion]:
+        missing = run_mcp._checks_from_observations(all_observations - {dependency}, tree_bytes=123)
+        assert missing[criterion][0] is False
 
 
 def test_mcp_runner_rejects_projection_drift_before_executing_candidate(

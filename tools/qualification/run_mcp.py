@@ -92,52 +92,53 @@ _MAX_CAPTURE = 2 * 1024 * 1024
 _PROBE_SCHEMA_VERSION = 1
 _PROBE_MARKER = "HIERONYMUS_QUALIFICATION_OWNED_PROBE"
 
-_CANONICAL_STDIO_CRITERIA = (
-    "protocol-2026-07-28",
-    "no-handshake-or-session",
-    "per-request-required-metadata",
-    "stdio-newline-jsonrpc",
-    "official-schema-envelopes",
-    "registry-identity",
-    "result-type-required",
-    "required-auth-metadata",
-)
-_CANONICAL_HTTP_CRITERIA = (
-    "protocol-2026-07-28",
-    "no-handshake-or-session",
-    "per-request-required-metadata",
-    "unsupported-version-rejected",
-    "streamable-http-json",
-    "streamable-http-sse",
-    "http-method-name-headers",
-    "http-host-auth-version-cases",
-    "official-schema-envelopes",
-    "header-mismatch-errors",
-    "registry-identity",
-    "result-type-required",
-    "required-auth-metadata",
-    "private-bridge-absent",
-)
-_ERROR_STDIO_CRITERIA = (
-    "protocol-2026-07-28",
-    "per-request-required-metadata",
-    "stdio-newline-jsonrpc",
-    "official-schema-envelopes",
-    "result-error-identity",
-    "result-type-required",
-    "required-auth-metadata",
-)
-_ERROR_HTTP_CRITERIA = (
-    "protocol-2026-07-28",
-    "per-request-required-metadata",
-    "streamable-http-json",
-    "streamable-http-sse",
-    "http-method-name-headers",
-    "official-schema-envelopes",
-    "result-error-identity",
-    "result-type-required",
-    "required-auth-metadata",
-)
+
+class CandidateMismatch(ValueError):
+    """A bounded candidate response that directly disproves the contract."""
+
+
+class CandidateTimeout(CandidateMismatch):
+    """A candidate that did not complete within its fixed observation window."""
+
+
+class CandidateOutput(CandidateMismatch):
+    """A candidate that exceeded the fixed output bound."""
+
+
+_CRITERION_OBSERVATIONS: Mapping[str, tuple[str, ...]] = {
+    "locked-native-build": ("locked-toolchain",),
+    "protocol-2026-07-28": ("canonical-stdio", "canonical-http", "metadata-negatives"),
+    "no-handshake-or-session": ("stateless-negatives",),
+    "per-request-required-metadata": ("metadata-negatives", "reserved-metadata"),
+    "unsupported-version-rejected": ("unsupported-version",),
+    "stdio-newline-jsonrpc": ("canonical-stdio", "error-stdio"),
+    "streamable-http-json": ("canonical-http", "error-http"),
+    "streamable-http-sse": ("canonical-http", "error-http"),
+    "http-method-name-headers": ("route-header-negatives",),
+    "http-host-auth-version-cases": ("route-security-negatives",),
+    "official-schema-envelopes": (
+        "canonical-stdio",
+        "canonical-http",
+        "error-stdio",
+        "error-http",
+    ),
+    "header-mismatch-errors": ("route-header-negatives",),
+    "registry-identity": ("canonical-stdio", "canonical-http"),
+    "result-error-identity": ("error-stdio", "error-http"),
+    "result-type-required": (
+        "canonical-stdio",
+        "canonical-http",
+        "error-stdio",
+        "error-http",
+    ),
+    "required-auth-metadata": (
+        "metadata-negatives",
+        "legacy-metadata-negative",
+        "client-info-cases",
+        "reserved-metadata",
+    ),
+    "private-bridge-absent": ("private-bridge-negative",),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -828,7 +829,7 @@ def _run_bounded(
         deadline = time.monotonic() + timeout_seconds
         while selector.get_map() or process.poll() is None:
             if time.monotonic() >= deadline:
-                raise TimeoutError("bounded MCP child timed out")
+                raise CandidateTimeout("bounded MCP child timed out")
             for key, _mask in selector.select(timeout=0.05):
                 try:
                     chunk = os.read(key.fileobj.fileno(), 64 * 1024)
@@ -840,16 +841,24 @@ def _run_bounded(
                     continue
                 key.data.extend(chunk)
                 if len(key.data) > _MAX_CAPTURE:
-                    raise ValueError("bounded MCP child output exceeds limit")
+                    raise CandidateOutput("bounded MCP child output exceeds limit")
         return process.wait(timeout=1), bytes(stdout), bytes(stderr)
-    except (OSError, TimeoutError, subprocess.TimeoutExpired, ValueError) as error:
+    except CandidateMismatch:
         if process is not None and process.poll() is None:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             process.wait(timeout=2)
-        raise ValueError("bounded MCP child failed") from error
+        raise
+    except subprocess.TimeoutExpired as error:
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=2)
+        raise CandidateTimeout("bounded MCP child timed out") from error
     finally:
         selector.close()
         if process is not None:
@@ -956,6 +965,7 @@ def _live_process_context(
     """Discover unsanitized tool roots, then produce one shared safe environment."""
     tool_roots = discover_tool_roots(original_env)
     cargo_target_dir = repo_root / _CARGO_TARGET
+    _reconcile_live_cargo_target(cargo_target_dir)
     child_env = safe_subprocess_env(
         work_root,
         cargo_offline=True,
@@ -963,6 +973,68 @@ def _live_process_context(
         cargo_target_dir=cargo_target_dir,
     )
     return tool_roots, cargo_target_dir, child_env
+
+
+def _directory_open_flags() -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    return flags
+
+
+def _open_canonical_directory(path: Path, *, label: str) -> int:
+    """Open every absolute component without symlink traversal."""
+    absolute = path.absolute()
+    if path != absolute:
+        raise ValueError(f"{label} path must be absolute")
+    descriptor = os.open(absolute.anchor, _directory_open_flags())
+    try:
+        for component in absolute.parts[1:]:
+            child = os.open(component, _directory_open_flags(), dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except OSError as error:
+        os.close(descriptor)
+        raise ValueError(f"{label} path is unsafe") from error
+
+
+def _reconcile_live_cargo_target(target: Path) -> None:
+    """Privatize only an exact, owned, nonsymlink Cargo target left by Cargo."""
+    absolute = target.absolute()
+    if not os.path.lexists(absolute):
+        return
+    try:
+        lexical = absolute.lstat()
+    except OSError as error:
+        raise ValueError("cargo target cannot be inspected") from error
+    if not stat.S_ISDIR(lexical.st_mode) or stat.S_ISLNK(lexical.st_mode):
+        raise ValueError("cargo target must be a nonsymlink directory")
+    parent_fd = _open_canonical_directory(absolute.parent, label="cargo target parent")
+    target_fd: int | None = None
+    try:
+        target_fd = os.open(absolute.name, _directory_open_flags(), dir_fd=parent_fd)
+        parent = os.fstat(parent_fd)
+        opened = os.fstat(target_fd)
+        mode = stat.S_IMODE(opened.st_mode)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or opened.st_uid != os.getuid()
+            or opened.st_dev != parent.st_dev
+            or (opened.st_dev, opened.st_ino) != (lexical.st_dev, lexical.st_ino)
+            or mode & 0o022
+        ):
+            raise ValueError("cargo target ownership or mode is unsafe")
+        if mode != 0o700:
+            os.fchmod(target_fd, 0o700)
+            if stat.S_IMODE(os.fstat(target_fd).st_mode) != 0o700:
+                raise ValueError("cargo target could not be made private")
+    except OSError as error:
+        raise ValueError("cargo target path is unsafe") from error
+    finally:
+        if target_fd is not None:
+            os.close(target_fd)
+        os.close(parent_fd)
 
 
 def _prepare_private_work(work_root: Path) -> None:
@@ -1016,13 +1088,13 @@ def _stdio_probe(
             stdin=payload,
         )
         if code != 0 or stdout.count(b"\n") != 1:
-            raise ValueError("bounded MCP stdio replay failed")
+            raise CandidateMismatch("bounded MCP stdio replay failed")
         try:
             actual = json.loads(stdout)
         except (UnicodeError, json.JSONDecodeError) as error:
-            raise ValueError("bounded MCP stdio response is invalid") from error
+            raise CandidateMismatch("bounded MCP stdio response is invalid") from error
         if actual != expected:
-            raise ValueError("bounded MCP stdio response differs from the oracle")
+            raise CandidateMismatch("bounded MCP stdio response differs from the oracle")
 
 
 def _http_exchange(
@@ -1054,19 +1126,113 @@ def _http_exchange(
     finally:
         connection.close()
     if len(raw) > 2 * 1024 * 1024:
-        raise ValueError("MCP HTTP response exceeds the bound")
+        raise CandidateOutput("MCP HTTP response exceeds the bound")
     try:
         if content_type == "text/event-stream":
             text = raw.decode("utf-8", errors="strict")
             data_lines = [line[6:] for line in text.splitlines() if line.startswith("data: ")]
             if len(data_lines) != 1:
-                raise ValueError("MCP SSE response framing is invalid")
+                raise CandidateMismatch("MCP SSE response framing is invalid")
             payload = json.loads(data_lines[0])
         else:
             payload = json.loads(raw)
     except (UnicodeError, json.JSONDecodeError) as error:
-        raise ValueError("MCP HTTP response is invalid") from error
+        raise CandidateMismatch("MCP HTTP response is invalid") from error
     return response.status, content_type, payload
+
+
+def _assert_candidate_error(status: int, body: object, *, code: int) -> None:
+    if (
+        status != 400
+        or type(body) is not dict
+        or "result" in body
+        or type(body.get("error")) is not dict
+        or body["error"].get("code") != code
+    ):
+        raise CandidateMismatch(f"MCP negative probe did not return error {code}")
+
+
+def _request_copy(value: Mapping[str, object]) -> dict[str, object]:
+    return cast(dict[str, object], json.loads(json.dumps(value)))
+
+
+def _probe_metadata_cases(
+    port: int,
+    target: Mapping[str, object],
+    route_target: Mapping[str, object],
+) -> None:
+    successes = cast(list[dict[str, object]], route_target["successes"])
+    baseline = cast(dict[str, object], successes[0]["request"])
+    expected = cast(dict[str, object], target["tools_list"])["response"]
+
+    for key, replacement, expected_code in (
+        ("io.modelcontextprotocol/protocolVersion", None, -32020),
+        ("io.modelcontextprotocol/protocolVersion", 20260728, -32020),
+        ("io.modelcontextprotocol/clientCapabilities", None, -32602),
+        ("io.modelcontextprotocol/clientCapabilities", [], -32602),
+    ):
+        request = _request_copy(baseline)
+        metadata = request["body"]["params"]["_meta"]  # type: ignore[index]
+        if replacement is None:
+            del metadata[key]
+        else:
+            metadata[key] = replacement
+        status, _, body = _http_exchange(port, request)
+        _assert_candidate_error(status, body, code=expected_code)
+
+    for legacy in ("protocolVersion", "clientCapabilities", "clientInfo"):
+        request = _request_copy(baseline)
+        request["body"]["params"][legacy] = {}  # type: ignore[index]
+        status, _, body = _http_exchange(port, request)
+        _assert_candidate_error(status, body, code=-32602)
+
+    request = _request_copy(baseline)
+    request["body"]["params"]["_meta"][  # type: ignore[index]
+        "io.modelcontextprotocol/clientInfo"
+    ] = {"name": "qualification-client", "version": "1"}
+    status, _, body = _http_exchange(port, request)
+    if status != 200 or body != expected:
+        raise CandidateMismatch("valid optional MCP clientInfo was rejected")
+
+    request = _request_copy(baseline)
+    request["body"]["params"]["_meta"][  # type: ignore[index]
+        "io.modelcontextprotocol/clientInfo"
+    ] = {"name": "qualification-client"}
+    status, _, body = _http_exchange(port, request)
+    _assert_candidate_error(status, body, code=-32602)
+
+
+def _probe_stateless_cases(port: int, route_target: Mapping[str, object]) -> None:
+    successes = cast(list[dict[str, object]], route_target["successes"])
+    baseline = cast(dict[str, object], successes[0]["request"])
+    initialize = _request_copy(baseline)
+    initialize["headers"]["Mcp-Method"] = "initialize"  # type: ignore[index]
+    initialize["body"]["method"] = "initialize"  # type: ignore[index]
+    status, _, body = _http_exchange(port, initialize)
+    _assert_candidate_error(status, body, code=-32602)
+
+    for header_name in ("Mcp-Session-Id", "Last-Event-ID"):
+        request = _request_copy(baseline)
+        request["headers"][header_name] = "forbidden-session"  # type: ignore[index]
+        status, _, body = _http_exchange(port, request)
+        _assert_candidate_error(status, body, code=-32602)
+
+
+def _probe_reserved_metadata_cases(
+    port: int,
+    target: Mapping[str, object],
+    route_target: Mapping[str, object],
+) -> None:
+    successes = cast(list[dict[str, object]], route_target["successes"])
+    for index, key in enumerate(("tools_list", "tools_call")):
+        request = _request_copy(cast(dict[str, object], successes[index]["request"]))
+        request["body"]["params"]["_meta"][  # type: ignore[index]
+            "io.modelcontextprotocol/qualificationProbe"
+        ] = {"accepted": True}
+        status, _, body = _http_exchange(port, request)
+        expected = cast(dict[str, object], target[key])["response"]
+        if status != 200 or body != expected:
+            raise CandidateMismatch(f"reserved metadata was rejected for {key}")
 
 
 def _http_negotiations(
@@ -1098,6 +1264,7 @@ def _http_probe(
     *,
     replay_routes: bool = True,
     extra_call: tuple[Mapping[str, object], object] | None = None,
+    probe_profile: str = "canonical",
 ) -> None:
     routes = _read_object(repo_root / "compatibility/fixtures/http/route-cases.json")
     route = next(
@@ -1135,18 +1302,23 @@ def _http_probe(
     )
     reports = bytearray()
     overflow = threading.Event()
+    report_errors: list[BaseException] = []
 
     def drain_reports() -> None:
-        assert server.stderr is not None
-        while True:
-            chunk = server.stderr.read(64 * 1024)
-            if not chunk:
-                return
-            reports.extend(chunk)
-            if len(reports) > _MAX_CAPTURE:
-                overflow.set()
-                server.stderr.close()
-                return
+        try:
+            if server.stderr is None:
+                raise RuntimeError("MCP HTTP report pipe is unavailable")
+            while True:
+                chunk = server.stderr.read(64 * 1024)
+                if not chunk:
+                    return
+                reports.extend(chunk)
+                if len(reports) > _MAX_CAPTURE:
+                    overflow.set()
+                    server.stderr.close()
+                    return
+        except BaseException as error:  # propagated on the controlling thread
+            report_errors.append(error)
 
     report_thread = threading.Thread(target=drain_reports, daemon=True)
     report_thread.start()
@@ -1155,21 +1327,30 @@ def _http_probe(
 
         deadline = time.monotonic() + 20
         while not ready.is_file():
-            if server.poll() is not None or time.monotonic() >= deadline:
-                raise ValueError("bounded MCP HTTP server did not become ready")
+            if server.poll() is not None:
+                raise CandidateMismatch("bounded MCP HTTP server exited before ready")
+            if time.monotonic() >= deadline:
+                raise CandidateTimeout("bounded MCP HTTP server did not become ready")
             time.sleep(0.01)
-        ready_value = _read_object(ready)
+        try:
+            ready_value = json.loads(ready.read_bytes())
+        except (UnicodeError, json.JSONDecodeError) as error:
+            raise CandidateMismatch("MCP HTTP ready document is invalid") from error
+        if type(ready_value) is not dict:
+            raise CandidateMismatch("MCP HTTP ready document is invalid")
         address = ready_value.get("address")
         match = _ADDRESS.fullmatch(address) if type(address) is str else None
         if match is None or int(match.group(1)) > 65535:
-            raise ValueError("MCP HTTP ready address is invalid")
+            raise CandidateMismatch("MCP HTTP ready address is invalid")
         port = int(match.group(1))
         successes = cast(list[object], route_target["successes"])
         expected_by_id = {
             "tools-list": cast(dict[str, object], target["tools_list"])["response"],
             "tools-call": cast(dict[str, object], target["tools_call"])["response"],
         }
-        for success_index, success in enumerate(successes if replay_routes else ()):
+        for success_index, success in enumerate(
+            successes if replay_routes and probe_profile == "canonical" else ()
+        ):
             case = cast(dict[str, object], success)
             request = cast(dict[str, object], case["request"])
             for accept, expected_content_type in _http_negotiations(target, success_index):
@@ -1179,8 +1360,12 @@ def _http_probe(
                     or content_type != expected_content_type
                     or body != expected_by_id[cast(str, case["id"])]
                 ):
-                    raise ValueError("MCP HTTP success differs from the oracle")
-        for failure in cast(list[object], route_target["failures"]) if replay_routes else ():
+                    raise CandidateMismatch("MCP HTTP success differs from the oracle")
+        for failure in (
+            cast(list[object], route_target["failures"])
+            if replay_routes and probe_profile == "canonical"
+            else ()
+        ):
             case = cast(dict[str, object], failure)
             expected = cast(dict[str, object], case["response"])
             status, content_type, body = _http_exchange(
@@ -1192,8 +1377,8 @@ def _http_probe(
                 or content_type != expected_headers["Content-Type"]
                 or body != expected["body"]
             ):
-                raise ValueError("MCP HTTP failure differs from the oracle")
-        if replay_routes:
+                raise CandidateMismatch("MCP HTTP failure differs from the oracle")
+        if replay_routes and probe_profile == "canonical":
             bridge_request = cast(
                 dict[str, object], cast(dict[str, object], successes[0])["request"]
             )
@@ -1201,14 +1386,22 @@ def _http_probe(
             bridge_request["path"] = "/api/mcp/fixture"
             status, _, body = _http_exchange(port, bridge_request)
             if status != 404 or body != {"error": "not_found"}:
-                raise ValueError("private MCP bridge remains present")
+                raise CandidateMismatch("private MCP bridge remains present")
         if extra_call is not None:
             for accept, expected_content_type in _http_negotiations(target, 1):
                 status, content_type, body = _http_exchange(port, extra_call[0], accept=accept)
                 if status != 200 or content_type != expected_content_type or body != extra_call[1]:
-                    raise ValueError("MCP HTTP error result differs from the frozen oracle")
+                    raise CandidateMismatch("MCP HTTP error result differs from the frozen oracle")
+        if probe_profile == "metadata":
+            _probe_metadata_cases(port, target, route_target)
+        elif probe_profile == "stateless":
+            _probe_stateless_cases(port, route_target)
+        elif probe_profile == "reserved":
+            _probe_reserved_metadata_cases(port, target, route_target)
+        elif probe_profile != "canonical":
+            raise ValueError("unknown MCP HTTP probe profile")
         if overflow.is_set():
-            raise ValueError("MCP HTTP report output exceeds the bound")
+            raise CandidateOutput("MCP HTTP report output exceeds the bound")
     finally:
         if server.poll() is None:
             try:
@@ -1225,7 +1418,9 @@ def _http_probe(
             server.wait(timeout=2)
         report_thread.join(timeout=2)
         if report_thread.is_alive():
-            raise ValueError("MCP HTTP report reader did not terminate")
+            raise RuntimeError("MCP HTTP report reader did not terminate")
+        if report_errors:
+            raise RuntimeError("MCP HTTP report reader failed") from report_errors[0]
 
 
 def _write_private_json(path: Path, value: object) -> None:
@@ -1449,26 +1644,39 @@ def _probe_measurements(tree_bytes: int) -> dict[str, Mapping[str, object]]:
     }
 
 
-def _mark_failed(
-    checks: dict[str, tuple[bool, Mapping[str, object]]], criteria: Sequence[str]
-) -> None:
-    for criterion in criteria:
-        passed, prior = checks[criterion]
-        prior_failures = prior.get("failed_observations", 0) if not passed else 0
-        measurements = dict(prior) if criterion == "locked-native-build" else {}
-        measurements["failed_observations"] = int(prior_failures) + 1
-        checks[criterion] = (False, measurements)
+def _checks_from_observations(
+    observed: set[str], *, tree_bytes: int
+) -> dict[str, tuple[bool, Mapping[str, object]]]:
+    """Resolve criteria only from their complete, named live observations."""
+    measurements = _probe_measurements(tree_bytes)
+    checks: dict[str, tuple[bool, Mapping[str, object]]] = {}
+    for criterion in REQUIRED_CRITERIA[_RISK]:
+        required = _CRITERION_OBSERVATIONS[criterion]
+        missing = tuple(name for name in required if name not in observed)
+        if not missing:
+            checks[criterion] = (True, measurements[criterion])
+            continue
+        failed_measurements = (
+            dict(measurements[criterion]) if criterion == "locked-native-build" else {}
+        )
+        failed_measurements["failed_observations"] = len(missing)
+        checks[criterion] = (False, failed_measurements)
+    return checks
 
 
 def _collect_candidate_group(
-    checks: dict[str, tuple[bool, Mapping[str, object]]],
-    criteria: Sequence[str],
+    observed: set[str],
+    observations: str | Sequence[str],
     operation: Callable[[], None],
 ) -> None:
     try:
         operation()
-    except (OSError, TimeoutError, ValueError):
-        _mark_failed(checks, criteria)
+    except CandidateMismatch:
+        return
+    if isinstance(observations, str):
+        observed.add(observations)
+    else:
+        observed.update(observations)
 
 
 def _transport_probe(
@@ -1494,46 +1702,80 @@ def _transport_probe(
     environment, dependencies, tree_bytes, graph_matches = _toolchain_observations(
         repo_root, cargo, rustup
     )
-    measurements = _probe_measurements(tree_bytes)
-    checks = {criterion: (True, measurements[criterion]) for criterion in REQUIRED_CRITERIA[_RISK]}
-    if not graph_matches:
-        _mark_failed(checks, ("locked-native-build",))
-    if not executable.is_file():
-        _mark_failed(checks, ("locked-native-build",))
-        _mark_failed(
-            checks,
-            tuple(
-                criterion
-                for criterion in REQUIRED_CRITERIA[_RISK]
-                if criterion != "locked-native-build"
-            ),
-        )
-    else:
+    observed: set[str] = set()
+    if graph_matches and executable.is_file():
+        observed.add("locked-toolchain")
+    if executable.is_file():
         target = cast(
             dict[str, object],
             _read_object(repo_root / "compatibility/fixtures/mcp/protocol.json")["target"],
         )
         protocol_path = repo_root / "compatibility/fixtures/mcp/protocol.json"
         _collect_candidate_group(
-            checks,
-            _CANONICAL_STDIO_CRITERIA,
+            observed,
+            "canonical-stdio",
             lambda: _stdio_probe(executable, repo_root, target, protocol_path),
         )
         _collect_candidate_group(
-            checks,
-            _CANONICAL_HTTP_CRITERIA,
+            observed,
+            (
+                "canonical-http",
+                "unsupported-version",
+                "route-header-negatives",
+                "route-security-negatives",
+                "private-bridge-negative",
+            ),
             lambda: _http_probe(executable, repo_root, work_root, target, protocol_path),
+        )
+        _collect_candidate_group(
+            observed,
+            ("metadata-negatives", "legacy-metadata-negative", "client-info-cases"),
+            lambda: _http_probe(
+                executable,
+                repo_root,
+                work_root,
+                target,
+                protocol_path,
+                replay_routes=False,
+                probe_profile="metadata",
+            ),
+        )
+        _collect_candidate_group(
+            observed,
+            "stateless-negatives",
+            lambda: _http_probe(
+                executable,
+                repo_root,
+                work_root,
+                target,
+                protocol_path,
+                replay_routes=False,
+                probe_profile="stateless",
+            ),
+        )
+        _collect_candidate_group(
+            observed,
+            "reserved-metadata",
+            lambda: _http_probe(
+                executable,
+                repo_root,
+                work_root,
+                target,
+                protocol_path,
+                replay_routes=False,
+                probe_profile="reserved",
+            ),
         )
         derived_path, error_request, error_response = _derived_error_oracle(repo_root, work_root)
         derived_target = cast(dict[str, object], _read_object(derived_path)["target"])
         _collect_candidate_group(
-            checks,
-            _ERROR_STDIO_CRITERIA,
+            observed,
+            "error-stdio",
             lambda: _stdio_probe(executable, repo_root, derived_target, derived_path),
         )
         _collect_candidate_group(
-            checks,
-            _ERROR_HTTP_CRITERIA,
+            observed,
+            "error-http",
             lambda: _http_probe(
                 executable,
                 repo_root,
@@ -1544,6 +1786,7 @@ def _transport_probe(
                 extra_call=(error_request, error_response),
             ),
         )
+    checks = _checks_from_observations(observed, tree_bytes=tree_bytes)
     payload = {
         "schemaVersion": _PROBE_SCHEMA_VERSION,
         "checks": {
@@ -1663,7 +1906,10 @@ def run_live(
         raise ValueError("MCP typed probe artifact was not produced by the owned probe")
     if len(receipts) != 4 or not all(_successful(receipt) for receipt in receipts[:3]):
         checks = dict(observations.checks)
-        _mark_failed(checks, ("locked-native-build",))
+        _, prior = checks["locked-native-build"]
+        failed = dict(prior)
+        failed["failed_observations"] = int(failed.get("failed_observations", 0)) + 1
+        checks["locked-native-build"] = (False, failed)
         observations = _ProbeObservations(
             checks=checks,
             environment=observations.environment,
