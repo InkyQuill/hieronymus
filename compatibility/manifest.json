@@ -11910,6 +11910,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_missing_candidate_after_failed_build_retains_blocked_record",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_noop_success_receipts_without_artifact_block",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
@@ -11921,6 +11926,16 @@
     {
       "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_rejects_symlink_work_root_without_chmod",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_toolchain_graph_mismatch_blocks_only_locked_build",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_mcp.py::test_mcp_live_wrong_candidate_response_is_retained_as_blocked_record",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
     {

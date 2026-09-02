@@ -341,6 +341,180 @@ def test_mcp_live_children_reuse_safe_environment(
     assert all(str(roots.cargo_resolved_target) not in argv for argv, _ in calls)
 
 
+def _run_live_through_real_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    candidate_source: str | None,
+    cargo_test_exit_code: int = 0,
+    toolchain_graph_matches: bool = True,
+) -> tuple[object, Path, dict[str, object]]:
+    cargo_target = tmp_path / "cargo-target"
+    executable = cargo_target / run_mcp._TARGET / "debug/mcp-transport"
+    roots = ToolRoots(
+        cargo_home=tmp_path / "cargo-home",
+        rustup_home=tmp_path / "rustup-home",
+        cargo_invocation=tmp_path / "cargo",
+        cargo_resolved_target=tmp_path / "resolved-cargo",
+        rustup_invocation=tmp_path / "rustup",
+        rustup_resolved_target=tmp_path / "resolved-rustup",
+    )
+    environment = {
+        "rustc": "rustc 1.96.0 (measured)",
+        "cargo": "cargo 1.96.0",
+        "target": run_mcp._TARGET,
+        "os": "linux",
+        "kernel": "measured-kernel",
+        "architecture": "x86_64",
+    }
+    dependency = run_mcp.LockedDependency(
+        name="rmcp",
+        version="3.1.4",
+        source="registry+https://github.com/rust-lang/crates.io-index",
+        checksum="0" * 64,
+        features=("server", "transport-io", "transport-streamable-http-server"),
+    )
+    work_root = tmp_path / "live"
+    captured_artifacts: list[dict[str, object]] = []
+    monkeypatch.setattr(run_mcp, "_CARGO_TARGET", cargo_target)
+    monkeypatch.setattr(run_mcp, "_LIVE_WORK", work_root)
+    monkeypatch.setattr(run_mcp, "_validate_oracles", lambda _root: ())
+    monkeypatch.setattr(run_mcp, "fingerprint_inputs", lambda *_args: "0" * 64)
+    monkeypatch.setattr(
+        run_mcp,
+        "_live_process_context",
+        lambda *_args: (roots, cargo_target, {"SAFE": "yes"}),
+    )
+    monkeypatch.setattr(run_mcp, "_require_owned_probe_environment", lambda *_args: None)
+    monkeypatch.setattr(
+        run_mcp,
+        "_toolchain_observations",
+        lambda *_args: (environment, (dependency,), 123, toolchain_graph_matches),
+    )
+    monkeypatch.setattr(run_mcp, "_http_probe", lambda *_args, **_kwargs: None)
+
+    def process_spy(argv: tuple[str, ...], **_kwargs: object) -> ProcessReceipt:
+        exit_code = 0
+        if "test" in argv:
+            exit_code = cargo_test_exit_code
+            if candidate_source is not None:
+                executable.parent.mkdir(parents=True, exist_ok=True)
+                executable.write_text(candidate_source, encoding="utf-8")
+                executable.chmod(0o700)
+        if "--transport-probe" in argv:
+            marker = argv.index("--transport-probe")
+            values = tuple(Path(value) for value in argv[marker + 1 : marker + 6])
+            run_mcp._transport_probe(values[0], ROOT, *values[1:])
+            captured_artifacts.append(json.loads(values[2].read_text(encoding="utf-8")))
+        return ProcessReceipt(
+            exit_code=exit_code,
+            timed_out=False,
+            stdout_sha256="0" * 64,
+            stderr_sha256="0" * 64,
+            duration_ms=1,
+            process_group_reaped=True,
+            core_dumps_disabled=True,
+        )
+
+    monkeypatch.setattr(run_mcp, "run_owned_process", process_spy)
+    record = run_mcp.run_live(
+        ROOT,
+        work_root,
+        original_env={"HIERONYMUS_QUALIFICATION_LIVE": "1"},
+    )
+    assert len(captured_artifacts) == 1
+    return record, work_root, captured_artifacts[0]
+
+
+def test_mcp_live_wrong_candidate_response_is_retained_as_blocked_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = (
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "sys.stdin.readline()\n"
+        "print(json.dumps({'jsonrpc': '2.0', 'id': 1, 'result': {'wrong': True}}))\n"
+    )
+    record, work_root, artifact = _run_live_through_real_probe(
+        tmp_path,
+        monkeypatch,
+        candidate_source=candidate,
+    )
+
+    evidence = {item.criterion: item.status for item in record.evidence}
+    failed = {criterion for criterion, status in evidence.items() if status == "fail"}
+    assert record.status == "fail"
+    assert record.decision == "blocked"
+    assert record.consequence == FAILURE_CONSEQUENCES["mcp-transport"]
+    assert record.review.status == "pending"
+    assert "stdio-newline-jsonrpc" in failed
+    assert "streamable-http-json" not in failed
+    assert 0 < len(failed) < len(REQUIRED_CRITERIA["mcp-transport"])
+    checks = artifact["checks"]
+    assert isinstance(checks, dict)
+    assert set(checks) == set(REQUIRED_CRITERIA["mcp-transport"])
+    assert checks["stdio-newline-jsonrpc"]["passed"] is False
+    assert checks["stdio-newline-jsonrpc"]["measurements"] == {"failed_observations": 2}
+    assert not work_root.exists()
+
+
+def test_mcp_live_missing_candidate_after_failed_build_retains_blocked_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record, _work_root, artifact = _run_live_through_real_probe(
+        tmp_path,
+        monkeypatch,
+        candidate_source=None,
+        cargo_test_exit_code=1,
+    )
+
+    evidence = {item.criterion: item.status for item in record.evidence}
+    assert record.status == "fail"
+    assert record.decision == "blocked"
+    assert record.consequence == FAILURE_CONSEQUENCES["mcp-transport"]
+    assert evidence["locked-native-build"] == "fail"
+    assert evidence["stdio-newline-jsonrpc"] == "fail"
+    assert evidence["streamable-http-json"] == "fail"
+    assert record.environment.rustc == "rustc 1.96.0 (measured)"
+    assert tuple(item.name for item in record.dependencies) == ("rmcp",)
+    checks = artifact["checks"]
+    assert isinstance(checks, dict)
+    assert len(checks) == 17
+
+
+def test_mcp_live_toolchain_graph_mismatch_blocks_only_locked_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = (
+        f"#!{sys.executable}\n"
+        "import json, pathlib, sys\n"
+        "request = json.loads(sys.stdin.readline())\n"
+        "protocol = pathlib.Path(sys.argv[sys.argv.index('--protocol') + 1])\n"
+        "target = json.loads(protocol.read_text(encoding='utf-8'))['target']\n"
+        "key = 'tools_list' if request['method'] == 'tools/list' else 'tools_call'\n"
+        "print(json.dumps(target[key]['response']))\n"
+    )
+    record, _work_root, artifact = _run_live_through_real_probe(
+        tmp_path,
+        monkeypatch,
+        candidate_source=candidate,
+        toolchain_graph_matches=False,
+    )
+
+    failed = {item.criterion for item in record.evidence if item.status == "fail"}
+    assert failed == {"locked-native-build"}
+    checks = artifact["checks"]
+    assert isinstance(checks, dict)
+    assert checks["locked-native-build"] == {
+        "passed": False,
+        "measurements": {
+            "failed_observations": 1,
+            "feature_tree_bytes": 123,
+            "locked_commands": 3,
+        },
+    }
+
+
 def test_mcp_live_noop_success_receipts_without_artifact_block(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

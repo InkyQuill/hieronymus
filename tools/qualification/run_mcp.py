@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import tomllib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -91,6 +91,53 @@ _ADDRESS = re.compile(r"^127\.0\.0\.1:([1-9][0-9]{0,4})$")
 _MAX_CAPTURE = 2 * 1024 * 1024
 _PROBE_SCHEMA_VERSION = 1
 _PROBE_MARKER = "HIERONYMUS_QUALIFICATION_OWNED_PROBE"
+
+_CANONICAL_STDIO_CRITERIA = (
+    "protocol-2026-07-28",
+    "no-handshake-or-session",
+    "per-request-required-metadata",
+    "stdio-newline-jsonrpc",
+    "official-schema-envelopes",
+    "registry-identity",
+    "result-type-required",
+    "required-auth-metadata",
+)
+_CANONICAL_HTTP_CRITERIA = (
+    "protocol-2026-07-28",
+    "no-handshake-or-session",
+    "per-request-required-metadata",
+    "unsupported-version-rejected",
+    "streamable-http-json",
+    "streamable-http-sse",
+    "http-method-name-headers",
+    "http-host-auth-version-cases",
+    "official-schema-envelopes",
+    "header-mismatch-errors",
+    "registry-identity",
+    "result-type-required",
+    "required-auth-metadata",
+    "private-bridge-absent",
+)
+_ERROR_STDIO_CRITERIA = (
+    "protocol-2026-07-28",
+    "per-request-required-metadata",
+    "stdio-newline-jsonrpc",
+    "official-schema-envelopes",
+    "result-error-identity",
+    "result-type-required",
+    "required-auth-metadata",
+)
+_ERROR_HTTP_CRITERIA = (
+    "protocol-2026-07-28",
+    "per-request-required-metadata",
+    "streamable-http-json",
+    "streamable-http-sse",
+    "http-method-name-headers",
+    "official-schema-envelopes",
+    "result-error-identity",
+    "result-type-required",
+    "required-auth-metadata",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1249,7 +1296,7 @@ def _derived_error_oracle(
 
 def _toolchain_observations(
     repo_root: Path, cargo: Path, rustup: Path
-) -> tuple[dict[str, str], tuple[LockedDependency, ...], int]:
+) -> tuple[dict[str, str], tuple[LockedDependency, ...], int, bool]:
     cargo_argv = (str(cargo), "+1.96.0")
     code, cargo_version_raw, _ = _run_bounded((*cargo_argv, "--version"), cwd=repo_root)
     if code != 0:
@@ -1272,9 +1319,7 @@ def _toolchain_observations(
     code, metadata_raw, _ = _run_bounded(metadata_argv, cwd=repo_root)
     if code != 0:
         raise ValueError("Cargo metadata measurement failed")
-    code, tree_raw, _ = _run_bounded(tree_argv, cwd=repo_root)
-    if code != 0 or not tree_raw.strip():
-        raise ValueError("Cargo feature-tree measurement failed")
+    tree_code, tree_raw, _ = _run_bounded(tree_argv, cwd=repo_root)
     try:
         metadata = json.loads(metadata_raw)
         packages = metadata["packages"]
@@ -1307,8 +1352,12 @@ def _toolchain_observations(
         )
     rmcp = next((item for item in dependencies if item.name == "rmcp"), None)
     required_features = {"server", "transport-io", "transport-streamable-http-server"}
-    if rmcp is None or not required_features.issubset(rmcp.features):
-        raise ValueError("active rmcp feature graph is incomplete")
+    graph_matches = (
+        tree_code == 0
+        and bool(tree_raw.strip())
+        and rmcp is not None
+        and required_features.issubset(rmcp.features)
+    )
     rustc_text = rustc_raw.decode("utf-8", errors="strict").strip()
     cargo_text = cargo_version_raw.decode("utf-8", errors="strict").strip()
     host = next(
@@ -1333,6 +1382,7 @@ def _toolchain_observations(
         environment,
         tuple(sorted(dependencies, key=lambda item: (item.name, item.version))),
         len(tree_raw),
+        graph_matches,
     )
 
 
@@ -1377,45 +1427,8 @@ def _require_owned_probe_environment(repo_root: Path, work_root: Path) -> None:
         raise ValueError("MCP hidden mode requires the owned probe environment")
 
 
-def _transport_probe(
-    executable: Path,
-    repo_root: Path,
-    work_root: Path,
-    artifact: Path,
-    cargo: Path,
-    rustup: Path,
-) -> None:
-    """Replay both transports as descendants of one owned PID namespace."""
-    expected_executable = repo_root / _CARGO_TARGET / _TARGET / "debug/mcp-transport"
-    expected_work = repo_root / _LIVE_WORK
-    _require_owned_probe_environment(repo_root, work_root)
-    if executable != expected_executable or executable.is_symlink() or not executable.is_file():
-        raise ValueError("MCP transport executable is outside the qualification target")
-    if work_root != expected_work or work_root.is_symlink() or not work_root.is_dir():
-        raise ValueError("MCP transport work root is outside the qualification boundary")
-    if artifact != work_root / "probe-result.json" or artifact.exists() or artifact.is_symlink():
-        raise ValueError("MCP probe artifact is outside the qualification boundary")
-    target = cast(
-        dict[str, object],
-        _read_object(repo_root / "compatibility/fixtures/mcp/protocol.json")["target"],
-    )
-    protocol_path = repo_root / "compatibility/fixtures/mcp/protocol.json"
-    _stdio_probe(executable, repo_root, target, protocol_path)
-    _http_probe(executable, repo_root, work_root, target, protocol_path)
-    derived_path, error_request, error_response = _derived_error_oracle(repo_root, work_root)
-    derived_target = cast(dict[str, object], _read_object(derived_path)["target"])
-    _stdio_probe(executable, repo_root, derived_target, derived_path)
-    _http_probe(
-        executable,
-        repo_root,
-        work_root,
-        derived_target,
-        derived_path,
-        replay_routes=False,
-        extra_call=(error_request, error_response),
-    )
-    environment, dependencies, tree_bytes = _toolchain_observations(repo_root, cargo, rustup)
-    measurements: dict[str, Mapping[str, object]] = {
+def _probe_measurements(tree_bytes: int) -> dict[str, Mapping[str, object]]:
+    return {
         "locked-native-build": {"locked_commands": 3, "feature_tree_bytes": tree_bytes},
         "protocol-2026-07-28": {"protocol_revision": "2026-07-28"},
         "no-handshake-or-session": {"stateful_fields": 0},
@@ -1434,10 +1447,110 @@ def _transport_probe(
         "required-auth-metadata": {"reserved_fields": 3},
         "private-bridge-absent": {"expected_status": 404},
     }
+
+
+def _mark_failed(
+    checks: dict[str, tuple[bool, Mapping[str, object]]], criteria: Sequence[str]
+) -> None:
+    for criterion in criteria:
+        passed, prior = checks[criterion]
+        prior_failures = prior.get("failed_observations", 0) if not passed else 0
+        measurements = dict(prior) if criterion == "locked-native-build" else {}
+        measurements["failed_observations"] = int(prior_failures) + 1
+        checks[criterion] = (False, measurements)
+
+
+def _collect_candidate_group(
+    checks: dict[str, tuple[bool, Mapping[str, object]]],
+    criteria: Sequence[str],
+    operation: Callable[[], None],
+) -> None:
+    try:
+        operation()
+    except (OSError, TimeoutError, ValueError):
+        _mark_failed(checks, criteria)
+
+
+def _transport_probe(
+    executable: Path,
+    repo_root: Path,
+    work_root: Path,
+    artifact: Path,
+    cargo: Path,
+    rustup: Path,
+) -> None:
+    """Replay both transports as descendants of one owned PID namespace."""
+    expected_executable = repo_root / _CARGO_TARGET / _TARGET / "debug/mcp-transport"
+    expected_work = repo_root / _LIVE_WORK
+    _require_owned_probe_environment(repo_root, work_root)
+    if executable != expected_executable or executable.is_symlink():
+        raise ValueError("MCP transport executable is outside the qualification target")
+    if executable.exists() and not executable.is_file():
+        raise ValueError("MCP transport executable is outside the qualification target")
+    if work_root != expected_work or work_root.is_symlink() or not work_root.is_dir():
+        raise ValueError("MCP transport work root is outside the qualification boundary")
+    if artifact != work_root / "probe-result.json" or artifact.exists() or artifact.is_symlink():
+        raise ValueError("MCP probe artifact is outside the qualification boundary")
+    environment, dependencies, tree_bytes, graph_matches = _toolchain_observations(
+        repo_root, cargo, rustup
+    )
+    measurements = _probe_measurements(tree_bytes)
+    checks = {criterion: (True, measurements[criterion]) for criterion in REQUIRED_CRITERIA[_RISK]}
+    if not graph_matches:
+        _mark_failed(checks, ("locked-native-build",))
+    if not executable.is_file():
+        _mark_failed(checks, ("locked-native-build",))
+        _mark_failed(
+            checks,
+            tuple(
+                criterion
+                for criterion in REQUIRED_CRITERIA[_RISK]
+                if criterion != "locked-native-build"
+            ),
+        )
+    else:
+        target = cast(
+            dict[str, object],
+            _read_object(repo_root / "compatibility/fixtures/mcp/protocol.json")["target"],
+        )
+        protocol_path = repo_root / "compatibility/fixtures/mcp/protocol.json"
+        _collect_candidate_group(
+            checks,
+            _CANONICAL_STDIO_CRITERIA,
+            lambda: _stdio_probe(executable, repo_root, target, protocol_path),
+        )
+        _collect_candidate_group(
+            checks,
+            _CANONICAL_HTTP_CRITERIA,
+            lambda: _http_probe(executable, repo_root, work_root, target, protocol_path),
+        )
+        derived_path, error_request, error_response = _derived_error_oracle(repo_root, work_root)
+        derived_target = cast(dict[str, object], _read_object(derived_path)["target"])
+        _collect_candidate_group(
+            checks,
+            _ERROR_STDIO_CRITERIA,
+            lambda: _stdio_probe(executable, repo_root, derived_target, derived_path),
+        )
+        _collect_candidate_group(
+            checks,
+            _ERROR_HTTP_CRITERIA,
+            lambda: _http_probe(
+                executable,
+                repo_root,
+                work_root,
+                derived_target,
+                derived_path,
+                replay_routes=False,
+                extra_call=(error_request, error_response),
+            ),
+        )
     payload = {
         "schemaVersion": _PROBE_SCHEMA_VERSION,
         "checks": {
-            criterion: {"passed": True, "measurements": measurements[criterion]}
+            criterion: {
+                "passed": checks[criterion][0],
+                "measurements": checks[criterion][1],
+            }
             for criterion in REQUIRED_CRITERIA[_RISK]
         },
         "environment": environment,
@@ -1550,7 +1663,7 @@ def run_live(
         raise ValueError("MCP typed probe artifact was not produced by the owned probe")
     if len(receipts) != 4 or not all(_successful(receipt) for receipt in receipts[:3]):
         checks = dict(observations.checks)
-        checks["locked-native-build"] = (False, {"locked_commands": 3})
+        _mark_failed(checks, ("locked-native-build",))
         observations = _ProbeObservations(
             checks=checks,
             environment=observations.environment,
