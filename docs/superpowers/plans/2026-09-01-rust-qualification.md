@@ -6,7 +6,7 @@
 
 **Architecture:** First correct and re-review the frozen MCP 2026-07-28 authority against a byte-exact, commit-pinned copy of the official Draft 2020-12 schema, then commit that offline-validated oracle before any candidate is qualified. Four standalone Rust harness crates live under `qualification/harnesses/` and exercise only synthetic or frozen compatibility inputs in disposable work directories; native executions are explicit opt-in qualification jobs, while ordinary Python tests use fakes and the record gate is network-free. Python tooling validates a common evidence schema, renders canonical JSON into Markdown, fingerprints immutable risk-specific compatibility projections rather than mutable global ownership inventories, and computes one aggregate gate without rerunning heavy probes.
 
-**Tech Stack:** Python 3.12 standard library, jsonschema 4.26.0 Draft 2020-12 validation, pytest, Ruff, Rust 1.96.0 on `x86_64-unknown-linux-gnu`, Cargo lockfiles, Bun 1.3.14, rmcp 3.1.4 candidate, LanceDB 0.37.1 candidate, ort 2.0.0-rc.13 candidate, rust-embed 8.12.0 candidate, rusqlite 0.40.2 candidate, SQLite FTS5.
+**Tech Stack:** Python 3.12 standard library, jsonschema 4.26.0 Draft 2020-12 validation, pytest, Ruff, Rust 1.96.0 on `x86_64-unknown-linux-gnu`, Cargo lockfiles, Bun 1.4.0, rmcp 3.1.4 candidate, LanceDB 0.37.1 candidate, ort 2.0.0-rc.13 candidate, rust-embed 8.12.0 candidate, rusqlite 0.40.2 candidate, SQLite FTS5.
 
 **Spec:** `docs/superpowers/specs/2026-08-31-rust-migration-program-design.md`
 
@@ -27,7 +27,7 @@
 - The semantic qualification must record exact crate versions/features, binary size, checksum-verified model load, a 10,000-chunk actual ANN index, checked series pre-filter-before-ANN plan/cardinality proof, zero cross-series hits, insert/search/delete, generation isolation, SQLite-durable lease/counter/cancellation recovery, zero SQLite-write-transaction spans across ONNX/LanceDB I/O, a complete 50-query run, and nonempty/isolation/rebuild-equivalent FTS fallback.
 - Any failed semantic criterion selects `fts-only` for the initial Linux release; it never blocks the Rust workspace plan or the `x86_64-unknown-linux-gnu` release by itself.
 - MCP, frontend embedding, or legacy database import failure blocks the Rust workspace/dependent plan named by the record. A failure cannot change protocol revision, remove a required transport, introduce filesystem `ServeDir`, require Bun at runtime, discard a supported database, or create a fresh sibling database beside legacy data.
-- Release artifacts embed the built Svelte assets through `rust-embed`; Bun `1.3.14` is a build-time prerequisite only and is not an end-user runtime dependency.
+- Release artifacts embed the built Svelte assets through `rust-embed`; Bun `1.4.0` is a build-time prerequisite only and is not an end-user runtime dependency.
 - Existing supported databases are never opened for mutation without a successful preflight and recoverable backup.
 - A failed upgrade does not leave a database marked as upgraded.
 - Approved active terminology cannot be weakened by fuzzy recall or passive scoring.
@@ -2238,7 +2238,7 @@ unshare --user --map-root-user --net -- bun run --cwd frontend build -- --outDir
 CARGO_TARGET_DIR=qualification/.artifacts/cargo-target/frontend-embedding CARGO_NET_OFFLINE=true cargo +1.96.0 build --manifest-path qualification/harnesses/frontend-embedding/Cargo.toml --release --locked --target x86_64-unknown-linux-gnu
 ```
 
-Expected: Bun reports `1.3.14`; `bun.lock` is unchanged; the build succeeds with no network namespace interface; exact file/byte digests are stable across two clean builds. If unprivileged network namespaces are unavailable, record the frontend build criterion failed—do not claim offline replay.
+Expected: Bun reports `1.4.0`; `bun.lock` is unchanged; the build succeeds with no network namespace interface; exact file/byte digests are stable across two clean builds. If unprivileged network namespaces are unavailable, record the frontend build criterion failed—do not claim offline replay.
 
 - [ ] **Step 4: Commit the independently reviewable build boundary**
 
@@ -3142,7 +3142,7 @@ jobs:
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.0"
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: "1.96.0"
