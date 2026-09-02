@@ -261,6 +261,19 @@ fn full_corpus_generation_is_bit_identical_across_runs() -> anyhow::Result<()> {
         rows.iter()
             .all(|row| row.generation_id == "generation-a" || row.generation_id == "generation-b")
     );
+    // Derived chunk ids feed a validator that requires positivity: not one of
+    // the 10,000 rows may derive to a non-positive id.
+    let non_positive: Vec<i64> = rows
+        .iter()
+        .filter(|row| row.chunk_id <= 0)
+        .map(|row| row.chunk_id)
+        .collect();
+    assert!(
+        non_positive.is_empty(),
+        "corpus-derived chunk ids must be positive, {} of 10,000 are non-positive (first: {:?})",
+        non_positive.len(),
+        non_positive.first()
+    );
     Ok(())
 }
 

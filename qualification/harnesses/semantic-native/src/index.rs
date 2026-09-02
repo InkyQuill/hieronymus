@@ -98,11 +98,13 @@ pub struct IndexRow {
 impl IndexRow {
     /// Maps a deterministic corpus chunk onto an index row. The corpus uses
     /// string chunk ids; the index requires a numeric id, which is derived as
-    /// the first eight bytes of the SHA-256 of the string id. The derivation is
-    /// pure, so the same corpus always produces the same rows.
+    /// the first eight bytes of the SHA-256 of the string id with the sign bit
+    /// masked off, so the derivation can never produce a non-positive id. The
+    /// derivation is pure, so the same corpus always produces the same rows.
     pub fn from_corpus_chunk(chunk: &Chunk) -> Self {
         let digest = Sha256::digest(chunk.id.as_bytes());
-        let chunk_id = i64::from_be_bytes(digest[..8].try_into().expect("eight digest bytes"));
+        let chunk_id = (u64::from_be_bytes(digest[..8].try_into().expect("eight digest bytes"))
+            & (i64::MAX as u64)) as i64;
         Self {
             chunk_id,
             series_slug: chunk.series_slug.clone(),
