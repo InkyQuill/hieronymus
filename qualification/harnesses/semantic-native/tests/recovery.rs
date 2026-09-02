@@ -12,15 +12,23 @@ use hieronymus_semantic_native_qualification::scenario::{
     ScenarioMode, ScenarioOptions, TransactionProbe, run_scenario,
 };
 use rusqlite::Connection;
-use std::os::unix::process::{CommandExt, ExitStatusExt};
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 /// SIGABRT on Linux: the crash probe must die through `std::process::abort`,
 /// which raises exactly this signal after the batch receipt is committed.
 const SIGABRT: i32 = 6;
+/// SIGKILL on Linux: the supervision timeout terminates a hung probe.
+const SIGKILL: i32 = 9;
 /// Mandated population of a complete generation.
 const EXPECTED_ROW_COUNT: i64 = 10_000;
+/// Upper bound for a real crash probe (42 batches) before the owned process
+/// group is terminated and reaped instead of being left to hang.
+const CRASH_PROBE_TIMEOUT: Duration = Duration::from_secs(300);
+/// Supervision timeout for the controlled hung-child test (seconds, not
+/// minutes: the sleeper would otherwise outlive the whole suite).
+const HANG_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn work_dir(root: &Path) -> PathBuf {
     root.join("work")
@@ -74,11 +82,68 @@ pub async fn run_complete_with_probe(probe: &TransactionProbe) -> anyhow::Result
     run_scenario(options).await.map(|_| ())
 }
 
+/// Outcome of a supervised probe run.
+struct SupervisedOutcome {
+    status: std::process::ExitStatus,
+    killed_on_timeout: bool,
+}
+
+/// Spawns `script` as an owned, core-disabled child process group (the script
+/// `exec`s, so the spawned pid *is* the probe binary and the group's only
+/// member) and supervises it: if it has not exited within `timeout`, the
+/// runner terminates it (`start_kill`, i.e. SIGKILL to the group leader) and
+/// reaps it. `kill_on_drop` is the final safety net so no code path can
+/// orphan the probe.
+async fn supervised_probe(
+    script: &str,
+    work_root: &Path,
+    timeout: Duration,
+) -> anyhow::Result<SupervisedOutcome> {
+    let mut command = tokio::process::Command::new("/bin/sh");
+    command.arg("-c").arg(script);
+    // Owned process group: the probe leads its own group, so nothing it could
+    // ever spawn escapes the runner's terminate-and-reap responsibility.
+    command.process_group(0);
+    // The mandated `finally` discipline as a drop guard: a probe dropped on
+    // any unforeseen path is killed rather than orphaned.
+    command.kill_on_drop(true);
+    command.env("SEMANTIC_NATIVE_QUALIFICATION_WORK_ROOT", work_root);
+    // stdio is inherited: the probe's own evidence (e.g. the receipt commit
+    // line before the abort) surfaces directly in the test run's output.
+    let mut child = command
+        .spawn()
+        .context("could not spawn the supervised probe")?;
+    let mut wait = Box::pin(async { child.wait().await.context("probe wait failed") });
+    match tokio::time::timeout(timeout, wait.as_mut()).await {
+        Ok(status) => Ok(SupervisedOutcome {
+            status: status?,
+            killed_on_timeout: false,
+        }),
+        Err(_elapsed) => {
+            // Terminate and reap: the exec'ed probe is the group leader, so
+            // SIGKILL to its pid takes down the whole (single-member) group.
+            drop(wait);
+            child
+                .start_kill()
+                .context("could not terminate the hung probe process group")?;
+            let status = child
+                .wait()
+                .await
+                .context("could not reap the terminated probe")?;
+            Ok(SupervisedOutcome {
+                status,
+                killed_on_timeout: true,
+            })
+        }
+    }
+}
+
 /// Spawns the scenario CLI as an owned, core-disabled child process group and
-/// waits for it. The mandated crash outcome is a SIGABRT raised only after the
-/// `stop_after` batch receipt has been committed; that outcome is reported as
-/// `Err`. Any other failure panics with the captured output so a broken probe
-/// can never masquerade as a designed crash.
+/// supervises it to completion. The mandated crash outcome is a SIGABRT
+/// raised only after the `stop_after` batch receipt has been committed; that
+/// outcome is reported as `Err`. Any other outcome — including a probe that
+/// hangs past the supervision timeout and is terminated and reaped — panics,
+/// so a broken probe can never masquerade as a designed crash.
 pub async fn run_crash(root: &Path, generation: &str, stop_after: u64) -> anyhow::Result<()> {
     let binary = std::env::var("CARGO_BIN_EXE_semantic-native")
         .expect("the semantic-native binary target must be built for the crash probe");
@@ -90,31 +155,26 @@ pub async fn run_crash(root: &Path, generation: &str, stop_after: u64) -> anyhow
         generation,
         stop_after,
     );
-    let mut command = std::process::Command::new("/bin/sh");
-    command.arg("-c").arg(script);
-    // Owned process group: the probe leads its own group, so nothing it could
-    // ever spawn escapes the runner's terminate-and-reap responsibility.
-    command.process_group(0);
-    command.env("SEMANTIC_NATIVE_QUALIFICATION_WORK_ROOT", root);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let child = command
-        .spawn()
-        .with_context(|| format!("could not spawn the crash probe for {generation}"))?;
-    let output = tokio::task::spawn_blocking(move || child.wait_with_output())
+    let outcome = supervised_probe(&script, root, CRASH_PROBE_TIMEOUT)
         .await
-        .context("crash probe task join failed")?
-        .context("could not wait for the crash probe")?;
-    let status = output.status;
-    if status.signal() != Some(SIGABRT) {
+        .with_context(|| format!("could not supervise the crash probe for {generation}"))?;
+    if outcome.killed_on_timeout {
         panic!(
-            "crash probe did not abort through SIGABRT (status: {status}); stdout: {}; stderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
+            "crash probe for {generation} hung past the {CRASH_PROBE_TIMEOUT:?} supervision \
+             timeout and was terminated and reapped instead of aborting"
+        );
+    }
+    if outcome.status.signal() != Some(SIGABRT) {
+        panic!(
+            "crash probe did not abort through SIGABRT (status: {}); \
+             the probe's own output is on this test's stderr",
+            outcome.status
         );
     }
     Err(anyhow::anyhow!(
-        "crash probe aborted as designed after committing the {stop_after}-row receipt; stderr: {}",
-        String::from_utf8_lossy(&output.stderr).trim(),
+        "crash probe aborted as designed after committing the {stop_after}-row receipt \
+         (status: {})",
+        outcome.status
     ))
 }
 
@@ -240,5 +300,38 @@ async fn complete_run_holds_expected_row_count_and_single_active_generation() ->
     );
     assert_eq!(generation_status(root.path(), "generation-a")?, "active");
     assert_eq!(read_active_generation(root.path())?, "generation-a");
+    Ok(())
+}
+
+#[tokio::test]
+async fn crash_probe_terminates_and_reaps_a_hung_child_group() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    // A probe that hangs (here: a controlled sleeper standing in for a stuck
+    // ONNX/LanceDB call) must be terminated and reaped by the supervision
+    // timeout, never orphaned. The sleeper would sleep 300 seconds; the
+    // supervision timeout is 2 seconds.
+    let started = Instant::now();
+    let outcome = supervised_probe(
+        "ulimit -c 0; exec sleep 300",
+        root.path(),
+        HANG_PROBE_TIMEOUT,
+    )
+    .await
+    .expect("the supervised sleeper must be handled without error");
+    let elapsed = started.elapsed();
+    assert!(
+        outcome.killed_on_timeout,
+        "a probe past its supervision timeout must be terminated, not waited on"
+    );
+    assert_eq!(
+        outcome.status.signal(),
+        Some(SIGKILL),
+        "the terminated probe must have been killed and reaped, got {}",
+        outcome.status
+    );
+    assert!(
+        elapsed < Duration::from_secs(60),
+        "supervision must not wait out the sleeper, took {elapsed:?}"
+    );
     Ok(())
 }
