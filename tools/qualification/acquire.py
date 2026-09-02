@@ -1097,6 +1097,85 @@ def _remove_owned_runtime_directory(
         os.close(directory_fd)
 
 
+def _reclaim_stale_runtime_file(parent_fd: int) -> None:
+    try:
+        stale_fd = os.open(
+            _RUNTIME_ARCHIVE_PART_NAME,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=parent_fd,
+        )
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise AcquisitionError("ONNX Runtime stale archive is unsafe") from None
+    try:
+        held = os.fstat(stale_fd)
+        named = os.stat(
+            _RUNTIME_ARCHIVE_PART_NAME,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        _require_private_regular(held, "ONNX Runtime stale archive")
+        _require_private_regular(named, "ONNX Runtime stale archive")
+        if held.st_dev != os.fstat(parent_fd).st_dev or not _same_file_version(
+            held,
+            named,
+        ):
+            raise AcquisitionError("ONNX Runtime stale archive identity changed")
+        _unlink_owned_runtime_file(parent_fd, _RUNTIME_ARCHIVE_PART_NAME, held)
+    except AcquisitionError:
+        raise
+    except OSError:
+        raise AcquisitionError("could not reclaim ONNX Runtime stale archive") from None
+    finally:
+        os.close(stale_fd)
+
+
+def _reclaim_stale_runtime_directory(parent_fd: int) -> None:
+    try:
+        stale_fd = os.open(
+            _RUNTIME_DIRECTORY_PART_NAME,
+            _DIRECTORY_FLAGS,
+            dir_fd=parent_fd,
+        )
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise AcquisitionError("ONNX Runtime stale extraction is unsafe") from None
+    try:
+        held = os.fstat(stale_fd)
+        named = os.stat(
+            _RUNTIME_DIRECTORY_PART_NAME,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(held.st_mode)
+            or held.st_uid != os.geteuid()
+            or stat.S_IMODE(held.st_mode) != 0o700
+            or held.st_dev != os.fstat(parent_fd).st_dev
+            or not _same_inode(held, named)
+        ):
+            raise AcquisitionError("ONNX Runtime stale extraction is unsafe")
+    except AcquisitionError:
+        os.close(stale_fd)
+        raise
+    except OSError:
+        os.close(stale_fd)
+        raise AcquisitionError("could not inspect ONNX Runtime stale extraction") from None
+    os.close(stale_fd)
+    _remove_owned_runtime_directory(
+        parent_fd,
+        _RUNTIME_DIRECTORY_PART_NAME,
+        held,
+    )
+
+
+def _reclaim_stale_runtime_state(parent_fd: int) -> None:
+    _reclaim_stale_runtime_file(parent_fd)
+    _reclaim_stale_runtime_directory(parent_fd)
+
+
 def _stream_runtime_archive(
     initial_url: str,
     parent_fd: int,
@@ -1171,9 +1250,9 @@ def _stream_runtime_archive(
             )
             _require_private_regular(held, "ONNX Runtime archive")
             _require_private_regular(named, "ONNX Runtime archive")
-            if not _same_inode(held, named):
+            if not _same_file_version(held, named):
                 raise AcquisitionError("ONNX Runtime archive identity changed")
-            os.lseek(archive_fd, 0, os.SEEK_SET)
+            os.unlink(_RUNTIME_ARCHIVE_PART_NAME, dir_fd=parent_fd)
             os.fsync(parent_fd)
             return archive_fd
         except Exception:
@@ -1361,21 +1440,72 @@ def _extract_runtime_archive(
         raise AcquisitionError("invalid ONNX Runtime archive") from None
 
 
-def _validate_runtime_archive_identity(parent_fd: int, archive_fd: int) -> os.stat_result:
+def _runtime_archive_sha256(archive_fd: int, deadline: _Deadline) -> str:
     try:
-        held = os.fstat(archive_fd)
-        named = os.stat(
+        metadata = os.fstat(archive_fd)
+        if metadata.st_size > _MAX_ONNX_RUNTIME_ARCHIVE_BYTES:
+            raise AcquisitionError("ONNX Runtime archive exceeds the byte limit")
+        digest = hashlib.sha256()
+        offset = 0
+        while True:
+            deadline.check()
+            chunk = os.pread(
+                archive_fd,
+                min(_CHUNK_SIZE, _MAX_ONNX_RUNTIME_ARCHIVE_BYTES - offset + 1),
+                offset,
+            )
+            deadline.check()
+            if not chunk:
+                break
+            offset += len(chunk)
+            if offset > _MAX_ONNX_RUNTIME_ARCHIVE_BYTES:
+                raise AcquisitionError("ONNX Runtime archive exceeds the byte limit")
+            digest.update(chunk)
+        return digest.hexdigest()
+    except AcquisitionError:
+        raise
+    except OSError:
+        raise AcquisitionError("could not verify ONNX Runtime archive") from None
+
+
+def _validate_runtime_archive_bytes(
+    parent_fd: int,
+    archive_fd: int,
+    expected_sha256: str,
+    deadline: _Deadline,
+) -> os.stat_result:
+    try:
+        os.stat(
             _RUNTIME_ARCHIVE_PART_NAME,
             dir_fd=parent_fd,
             follow_symlinks=False,
         )
+    except FileNotFoundError:
+        pass
     except OSError:
         raise AcquisitionError("ONNX Runtime archive identity changed") from None
-    _require_private_regular(held, "ONNX Runtime archive")
-    _require_private_regular(named, "ONNX Runtime archive")
-    if not _same_inode(held, named):
+    else:
         raise AcquisitionError("ONNX Runtime archive identity changed")
-    return held
+    try:
+        before = os.fstat(archive_fd)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_nlink != 0
+        ):
+            raise AcquisitionError("ONNX Runtime archive must be an unlinked private regular file")
+        actual_sha256 = _runtime_archive_sha256(archive_fd, deadline)
+        after = os.fstat(archive_fd)
+    except AcquisitionError:
+        raise
+    except OSError:
+        raise AcquisitionError("could not verify ONNX Runtime archive") from None
+    if not _same_file_version(before, after):
+        raise AcquisitionError("ONNX Runtime archive identity changed")
+    if actual_sha256 != expected_sha256:
+        raise AcquisitionError("ONNX Runtime archive checksum mismatch")
+    return after
 
 
 def _runtime_tree_digest(directory_fd: int, deadline: _Deadline) -> str:
@@ -1482,7 +1612,7 @@ def _write_runtime_provenance(
     directory_fd: int,
     expected_archive_sha256: str,
     deadline: _Deadline,
-) -> None:
+) -> str:
     tree_sha256 = _runtime_tree_digest(directory_fd, deadline)
     payload = (
         json.dumps(
@@ -1518,13 +1648,14 @@ def _write_runtime_provenance(
         os.close(provenance_fd)
     os.fsync(directory_fd)
     deadline.check()
+    return tree_sha256
 
 
 def _validate_runtime_provenance(
     directory_fd: int,
     expected_archive_sha256: str,
     deadline: _Deadline,
-) -> None:
+) -> str:
     try:
         provenance_fd = os.open(
             _RUNTIME_PROVENANCE_NAME,
@@ -1553,8 +1684,10 @@ def _validate_runtime_provenance(
         or not isinstance(payload.get("tree_sha256"), str)
     ):
         raise AcquisitionError("ONNX Runtime provenance is invalid")
-    if _runtime_tree_digest(directory_fd, deadline) != payload["tree_sha256"]:
+    tree_sha256 = _runtime_tree_digest(directory_fd, deadline)
+    if tree_sha256 != payload["tree_sha256"]:
         raise AcquisitionError("ONNX Runtime provenance does not match runtime contents")
+    return tree_sha256
 
 
 def _validate_runtime_library(
@@ -1601,6 +1734,8 @@ def _validated_runtime_destination(
     library: Path,
     expected_archive_sha256: str,
     deadline: _Deadline,
+    *,
+    approved_tree_sha256: str | None = None,
 ) -> Path:
     _validate_runtime_parent(canonical_root, directory_fds)
     parent_fd = directory_fds[-1]
@@ -1608,7 +1743,15 @@ def _validated_runtime_destination(
     try:
         held = os.fstat(directory_fd)
         _validate_runtime_library(directory_fd, library, deadline)
-        _validate_runtime_provenance(directory_fd, expected_archive_sha256, deadline)
+        tree_sha256 = _validate_runtime_provenance(
+            directory_fd,
+            expected_archive_sha256,
+            deadline,
+        )
+        if approved_tree_sha256 is not None and tree_sha256 != approved_tree_sha256:
+            raise AcquisitionError(
+                "ONNX Runtime destination does not match approved archive contents"
+            )
         named = os.stat(
             _RUNTIME_TOP_DIRECTORY,
             dir_fd=parent_fd,
@@ -1629,6 +1772,38 @@ def _validated_runtime_destination(
         os.close(directory_fd)
 
 
+def _committed_runtime_destination(
+    canonical_root: Path,
+    directory_fds: tuple[int, ...],
+    expected: os.stat_result,
+) -> Path:
+    parent_fd = directory_fds[-1]
+    try:
+        named = os.stat(
+            _RUNTIME_TOP_DIRECTORY,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except OSError:
+        raise AcquisitionError("ONNX Runtime destination identity changed") from None
+    _require_trusted_directory(named)
+    if not _same_inode(expected, named):
+        raise AcquisitionError("ONNX Runtime destination identity changed")
+    _validate_runtime_parent(canonical_root, directory_fds)
+    destination = canonical_root.joinpath(
+        *_RUNTIME_PARENT_COMPONENTS,
+        _RUNTIME_TOP_DIRECTORY,
+    )
+    try:
+        if destination.resolve(strict=True) != destination:
+            raise AcquisitionError("ONNX Runtime destination escaped the repository")
+    except AcquisitionError:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        raise AcquisitionError("ONNX Runtime destination escaped the repository") from None
+    return destination
+
+
 def acquire_onnx_runtime(repo_root: Path) -> Path:
     """Acquire, validate, and atomically publish the approved native runtime."""
     deadline = _Deadline.after(_ACQUISITION_TIMEOUT_SECONDS)
@@ -1638,6 +1813,7 @@ def acquire_onnx_runtime(repo_root: Path) -> Path:
             parent_fd = directory_fds[-1]
             initial_url, expected_sha256, library = _load_runtime_spec(canonical_root)
             with _kernel_mutex(canonical_root, deadline):
+                existing_destination = False
                 try:
                     os.stat(
                         _RUNTIME_TOP_DIRECTORY,
@@ -1649,13 +1825,16 @@ def acquire_onnx_runtime(repo_root: Path) -> Path:
                 except OSError:
                     raise AcquisitionError("could not inspect ONNX Runtime destination") from None
                 else:
-                    return _validated_runtime_destination(
+                    _validated_runtime_destination(
                         canonical_root,
                         directory_fds,
                         library,
                         expected_sha256,
                         deadline,
                     )
+                    existing_destination = True
+
+                _reclaim_stale_runtime_state(parent_fd)
 
                 archive_fd: int | None = None
                 extraction_fd: int | None = None
@@ -1669,9 +1848,11 @@ def acquire_onnx_runtime(repo_root: Path) -> Path:
                         expected_sha256,
                         deadline,
                     )
-                    archive_owned = _validate_runtime_archive_identity(
+                    archive_owned = _validate_runtime_archive_bytes(
                         parent_fd,
                         archive_fd,
+                        expected_sha256,
+                        deadline,
                     )
                     deadline.check()
                     try:
@@ -1694,22 +1875,52 @@ def acquire_onnx_runtime(repo_root: Path) -> Path:
                     os.fsync(parent_fd)
                     _extract_runtime_archive(archive_fd, extraction_fd, deadline)
                     deadline.check()
-                    _validate_runtime_archive_identity(parent_fd, archive_fd)
+                    _validate_runtime_archive_bytes(
+                        parent_fd,
+                        archive_fd,
+                        expected_sha256,
+                        deadline,
+                    )
                     _validate_runtime_parent(canonical_root, directory_fds)
                     _validate_runtime_library(extraction_fd, library, deadline)
-                    _write_runtime_provenance(
+                    approved_tree_sha256 = _write_runtime_provenance(
                         extraction_fd,
                         expected_sha256,
                         deadline,
                     )
-                    _validate_runtime_provenance(
+                    validated_tree_sha256 = _validate_runtime_provenance(
                         extraction_fd,
+                        expected_sha256,
+                        deadline,
+                    )
+                    if validated_tree_sha256 != approved_tree_sha256:
+                        raise AcquisitionError(
+                            "ONNX Runtime extraction provenance identity changed"
+                        )
+                    if existing_destination:
+                        _validate_runtime_archive_bytes(
+                            parent_fd,
+                            archive_fd,
+                            expected_sha256,
+                            deadline,
+                        )
+                        return _validated_runtime_destination(
+                            canonical_root,
+                            directory_fds,
+                            library,
+                            expected_sha256,
+                            deadline,
+                            approved_tree_sha256=approved_tree_sha256,
+                        )
+
+                    _validate_runtime_parent(canonical_root, directory_fds)
+                    _validate_runtime_archive_bytes(
+                        parent_fd,
+                        archive_fd,
                         expected_sha256,
                         deadline,
                     )
                     deadline.check()
-                    _validate_runtime_archive_identity(parent_fd, archive_fd)
-                    _validate_runtime_parent(canonical_root, directory_fds)
                     os.rename(
                         _RUNTIME_DIRECTORY_PART_NAME,
                         _RUNTIME_TOP_DIRECTORY,
@@ -1718,13 +1929,10 @@ def acquire_onnx_runtime(repo_root: Path) -> Path:
                     )
                     promoted = True
                     os.fsync(parent_fd)
-                    deadline.check()
-                    return _validated_runtime_destination(
+                    return _committed_runtime_destination(
                         canonical_root,
                         directory_fds,
-                        library,
-                        expected_sha256,
-                        deadline,
+                        extraction_owned,
                     )
                 finally:
                     if extraction_fd is not None:

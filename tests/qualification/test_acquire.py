@@ -667,6 +667,44 @@ def test_onnx_runtime_rejects_archive_path_replacement_after_checksum(
     assert archive_part.read_bytes() == replacement
 
 
+def test_onnx_runtime_rejects_same_inode_archive_mutation_after_checksum(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    approved = _runtime_archive()
+    replacement = _runtime_archive(library_body=b"unapproved same-inode runtime")
+    repo_root = _runtime_repo(tmp_path, archive=approved)
+    real_extract = acquire._extract_runtime_archive
+    mutated_identity: tuple[int, int] | None = None
+
+    def mutate_before_extract(
+        archive_fd: int,
+        extraction_fd: int,
+        deadline: acquire._Deadline,
+    ) -> None:
+        nonlocal mutated_identity
+        before = os.fstat(archive_fd)
+        os.ftruncate(archive_fd, 0)
+        assert os.pwrite(archive_fd, replacement, 0) == len(replacement)
+        after = os.fstat(archive_fd)
+        mutated_identity = (after.st_dev, after.st_ino)
+        assert mutated_identity == (before.st_dev, before.st_ino)
+        real_extract(archive_fd, extraction_fd, deadline)
+
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: _Response(200, body=approved),
+    )
+    monkeypatch.setattr(acquire, "_extract_runtime_archive", mutate_before_extract)
+
+    with pytest.raises(acquire.AcquisitionError, match="checksum"):
+        acquire.acquire_onnx_runtime(repo_root)
+
+    assert mutated_identity is not None
+    assert not (repo_root / _ONNX_RUNTIME_DESTINATION).exists()
+
+
 def test_onnx_runtime_rejects_preexisting_runtime_without_approved_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -715,25 +753,80 @@ def test_onnx_runtime_rejects_tampered_reused_runtime(
     assert library_target.read_bytes() == b"tampered runtime"
 
 
-def test_onnx_runtime_reuses_valid_provenance_without_transport(
+def test_onnx_runtime_reuses_valid_runtime_after_fresh_archive_verification(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     archive = _runtime_archive()
     repo_root = _runtime_repo(tmp_path, archive=archive)
+
+    requests = 0
+
+    def fresh_archive(_request: object) -> _Response:
+        nonlocal requests
+        requests += 1
+        return _Response(200, body=archive)
+
     monkeypatch.setattr(
         acquire,
         "_open_no_redirect",
-        lambda _request: _Response(200, body=archive),
+        fresh_archive,
     )
     destination = acquire.acquire_onnx_runtime(repo_root)
-    monkeypatch.setattr(
-        acquire,
-        "_open_no_redirect",
-        lambda _request: pytest.fail("valid proven runtime must skip transport"),
-    )
 
     assert acquire.acquire_onnx_runtime(repo_root) == destination
+    assert requests == 2
+
+
+def test_onnx_runtime_rejects_forged_self_signed_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive()
+    repo_root = _runtime_repo(tmp_path, archive=archive)
+    destination = repo_root / _ONNX_RUNTIME_DESTINATION
+    library = destination / "lib/libonnxruntime.so"
+    library.parent.mkdir(parents=True)
+    destination.chmod(0o700)
+    library.write_bytes(b"attacker-provided runtime")
+    library.chmod(0o600)
+    directory_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        tree_sha256 = acquire._runtime_tree_digest(
+            directory_fd,
+            acquire._Deadline.after(5),
+        )
+    finally:
+        os.close(directory_fd)
+    provenance = destination / ".hieronymus-acquisition.json"
+    provenance.write_text(
+        json.dumps(
+            {
+                "archive_sha256": hashlib.sha256(archive).hexdigest(),
+                "schema_version": 1,
+                "tree_sha256": tree_sha256,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    provenance.chmod(0o600)
+    requests = 0
+
+    def fresh_archive(_request: object) -> _Response:
+        nonlocal requests
+        requests += 1
+        return _Response(200, body=archive)
+
+    monkeypatch.setattr(acquire, "_open_no_redirect", fresh_archive)
+
+    with pytest.raises(acquire.AcquisitionError):
+        acquire.acquire_onnx_runtime(repo_root)
+
+    assert requests == 1
+    assert library.read_bytes() == b"attacker-provided runtime"
 
 
 def test_onnx_runtime_cleanup_stays_on_held_parent_after_ancestor_swap(
@@ -851,6 +944,83 @@ def test_onnx_runtime_deadline_covers_extraction_and_prevents_promotion(
         acquire.acquire_onnx_runtime(repo_root)
 
     assert not (repo_root / _ONNX_RUNTIME_DESTINATION).exists()
+
+
+def test_onnx_runtime_deadline_after_final_validation_prevents_promotion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive()
+    repo_root = _runtime_repo(tmp_path, archive=archive)
+    real_validate_parent = acquire._validate_runtime_parent
+    validations = 0
+
+    def delay_final_validation(*args: object) -> None:
+        nonlocal validations
+        validations += 1
+        real_validate_parent(*args)  # type: ignore[arg-type]
+        if validations == 2:
+            time.sleep(0.05)
+
+    monkeypatch.setattr(acquire, "_ACQUISITION_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: _Response(200, body=archive),
+    )
+    monkeypatch.setattr(acquire, "_validate_runtime_parent", delay_final_validation)
+
+    with pytest.raises(acquire.AcquisitionError, match="deadline"):
+        acquire.acquire_onnx_runtime(repo_root)
+
+    assert validations == 2
+    assert not (repo_root / _ONNX_RUNTIME_DESTINATION).exists()
+
+
+def test_onnx_runtime_reclaims_private_stale_archive_after_interrupted_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive()
+    repo_root = _runtime_repo(tmp_path, archive=archive)
+    destination = repo_root / _ONNX_RUNTIME_DESTINATION
+    stale_archive = destination.with_name(f"{_ONNX_RUNTIME_TOP}.tgz.part")
+    stale_archive.parent.mkdir(parents=True)
+    stale_archive.write_bytes(b"stale interrupted archive")
+    stale_archive.chmod(0o600)
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: _Response(200, body=archive),
+    )
+
+    assert acquire.acquire_onnx_runtime(repo_root) == destination
+    assert not stale_archive.exists()
+    assert (destination / "lib/libonnxruntime.so").is_file()
+
+
+def test_onnx_runtime_reclaims_private_stale_extraction_after_interrupted_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive()
+    repo_root = _runtime_repo(tmp_path, archive=archive)
+    destination = repo_root / _ONNX_RUNTIME_DESTINATION
+    stale_extraction = destination.with_name(f"{_ONNX_RUNTIME_TOP}.part")
+    stale_extraction.parent.mkdir(parents=True)
+    stale_extraction.mkdir(mode=0o700)
+    stale_file = stale_extraction / "interrupted"
+    stale_file.write_bytes(b"stale extraction")
+    stale_file.chmod(0o600)
+    monkeypatch.setattr(
+        acquire,
+        "_open_no_redirect",
+        lambda _request: _Response(200, body=archive),
+    )
+
+    assert acquire.acquire_onnx_runtime(repo_root) == destination
+    assert not stale_extraction.exists()
+    assert (destination / "lib/libonnxruntime.so").is_file()
 
 
 def test_cli_prints_a_relative_destination_for_a_canonicalized_root_symlink(
