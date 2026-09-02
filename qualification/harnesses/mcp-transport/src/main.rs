@@ -115,8 +115,8 @@ fn run_stdio(options: &BTreeMap<String, PathBuf>) -> Result<()> {
         transport: "stdio",
         request: lines[0],
         response: &encoded,
-        request_content_type: "application/json",
-        response_content_type: "application/json",
+        request_content_type: report::ContentType::Json,
+        response_content_type: report::ContentType::Json,
         registry_sha256: registry.digest(),
         stdout_objects: 1,
         stdout_newlines: 1,
@@ -206,7 +206,7 @@ struct HttpRequest {
 
 struct HttpResponse {
     status: u16,
-    content_type: &'static str,
+    content_type: report::ContentType,
     body: Vec<u8>,
 }
 
@@ -230,7 +230,7 @@ async fn serve_connection(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         response.status,
         reason,
-        response.content_type,
+        response.content_type.as_str(),
         response.body.len()
     );
     timeout(IO_TIMEOUT, stream.write_all(head.as_bytes()))
@@ -247,8 +247,7 @@ async fn serve_connection(
         transport: "http",
         request: &request_digest_input,
         response: &response.body,
-        request_content_type: header(&request.headers, "content-type")
-            .unwrap_or("application/json"),
+        request_content_type: request_content_type(&request.headers),
         response_content_type: response.content_type,
         registry_sha256: registry.digest(),
         stdout_objects: 0,
@@ -336,6 +335,16 @@ fn header<'a>(headers: &'a BTreeMap<String, String>, name: &str) -> Option<&'a s
     headers.get(name).map(String::as_str)
 }
 
+fn request_content_type(headers: &BTreeMap<String, String>) -> report::ContentType {
+    if header(headers, "content-type")
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
+    {
+        report::ContentType::Json
+    } else {
+        report::ContentType::Invalid
+    }
+}
+
 fn handle_http(
     request: &HttpRequest,
     bound_address: SocketAddr,
@@ -351,8 +360,13 @@ fn handle_http(
     if header(&request.headers, "authorization") != Some(routes.bearer.as_str()) {
         return json_response(401, &json!({"error":"unauthorized"}), false);
     }
-    let body: Value =
-        serde_json::from_slice(&request.body).map_err(|_| anyhow!("HTTP body is not JSON"))?;
+    if request_content_type(&request.headers) == report::ContentType::Invalid {
+        return protocol_error(400, Value::Null, -32602, "Invalid request metadata", None);
+    }
+    let body: Value = match serde_json::from_slice(&request.body) {
+        Ok(body) => body,
+        Err(_) => return protocol_error(400, Value::Null, -32700, "Parse error", None),
+    };
     let id = body.get("id").cloned().unwrap_or(Value::Null);
     if header(&request.headers, "mcp-session-id").is_some()
         || header(&request.headers, "last-event-id").is_some()
@@ -609,13 +623,13 @@ fn json_response(status: u16, body: &Value, sse: bool) -> Result<HttpResponse> {
         let data = serde_json::to_string(body).map_err(|_| anyhow!("SSE cannot serialize"))?;
         Ok(HttpResponse {
             status,
-            content_type: "text/event-stream",
+            content_type: report::ContentType::Sse,
             body: format!("event: message\ndata: {data}\n\n").into_bytes(),
         })
     } else {
         Ok(HttpResponse {
             status,
-            content_type: "application/json; charset=utf-8",
+            content_type: report::ContentType::JsonUtf8,
             body: serde_json::to_vec(body).map_err(|_| anyhow!("JSON cannot serialize"))?,
         })
     }

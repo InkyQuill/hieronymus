@@ -1,11 +1,13 @@
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc::{self, Receiver};
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 const PROTOCOL_REVISION: &str = "2026-07-28";
@@ -228,6 +230,8 @@ fn stdio_rejects_legacy_missing_wrong_and_handshake_metadata() {
 struct HttpServer {
     child: Child,
     address: String,
+    reports: Receiver<Vec<u8>>,
+    stderr_thread: Option<JoinHandle<()>>,
     _temporary: tempfile::TempDir,
 }
 
@@ -235,7 +239,7 @@ impl HttpServer {
     fn start() -> Self {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let ready = temporary.path().join("ready.json");
-        let child = Command::new(env!("CARGO_BIN_EXE_mcp-transport"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_mcp-transport"))
             .arg("http")
             .arg("--registry")
             .arg(registry_path())
@@ -249,9 +253,19 @@ impl HttpServer {
             .arg(&ready)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .expect("HTTP harness starts");
+        let stderr = child.stderr.take().expect("HTTP stderr is piped");
+        let (reports_tx, reports) = mpsc::sync_channel(128);
+        let stderr_thread = thread::spawn(move || {
+            for line in BufReader::new(stderr).split(b'\n') {
+                let Ok(line) = line else { break };
+                if !line.is_empty() && reports_tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
         let deadline = Instant::now() + Duration::from_secs(10);
         while !ready.exists() {
             assert!(
@@ -270,12 +284,26 @@ impl HttpServer {
         Self {
             child,
             address,
+            reports,
+            stderr_thread: Some(stderr_thread),
             _temporary: temporary,
         }
     }
 
     fn exchange(&self, request: &Value, accept_override: Option<&str>) -> HttpResponse {
         let body = serde_json::to_vec(&request["body"]).expect("body serializes");
+        let headers = accept_override
+            .map(|accept| vec![("Accept", accept)])
+            .unwrap_or_default();
+        self.exchange_bytes(request, &body, &headers)
+    }
+
+    fn exchange_bytes(
+        &self,
+        request: &Value,
+        body: &[u8],
+        header_overrides: &[(&str, &str)],
+    ) -> HttpResponse {
         let mut headers = request["headers"]
             .as_object()
             .expect("headers object")
@@ -283,8 +311,8 @@ impl HttpServer {
         if headers.get("Host").and_then(Value::as_str) == Some("127.0.0.1:<PORT>") {
             headers.insert("Host".into(), json!(self.address));
         }
-        if let Some(accept) = accept_override {
-            headers.insert("Accept".into(), json!(accept));
+        for (name, value) in header_overrides {
+            headers.insert((*name).into(), json!(*value));
         }
         let mut wire = format!(
             "{} {} HTTP/1.1\r\n",
@@ -306,10 +334,16 @@ impl HttpServer {
             .set_read_timeout(Some(Duration::from_secs(10)))
             .expect("read timeout");
         stream.write_all(wire.as_bytes()).expect("write headers");
-        stream.write_all(&body).expect("write body");
+        stream.write_all(body).expect("write body");
         let mut response = Vec::new();
         stream.read_to_end(&mut response).expect("read response");
         HttpResponse::parse(&response)
+    }
+
+    fn next_report(&self) -> Vec<u8> {
+        self.reports
+            .recv_timeout(Duration::from_secs(10))
+            .expect("HTTP evidence report arrives")
     }
 }
 
@@ -317,6 +351,9 @@ impl Drop for HttpServer {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let Some(stderr_thread) = self.stderr_thread.take() {
+            stderr_thread.join().expect("stderr reader exits");
+        }
     }
 }
 
@@ -607,6 +644,63 @@ fn http_mismatch_errors_never_reflect_arbitrary_header_values() {
         assert_eq!(response.json()["error"]["code"], -32020);
         assert!(!String::from_utf8_lossy(&response.body).contains("compat-secret-do-not-log"));
     }
+}
+
+#[test]
+fn http_reports_classify_content_type_without_reflecting_request_headers() {
+    let route = route_target();
+    let canonical = route["successes"][0]["request"].clone();
+    let canonical_bearer = canonical["headers"]["Authorization"]
+        .as_str()
+        .expect("bearer is a string");
+    let body = serde_json::to_vec(&canonical["body"]).expect("body serializes");
+    let server = HttpServer::start();
+
+    let response = server.exchange_bytes(
+        &canonical,
+        &body,
+        &[
+            ("Content-Type", "compat-secret-do-not-log"),
+            ("X-Compat-Secret", "custom-header-secret"),
+        ],
+    );
+    assert_eq!(response.status, 400);
+    assert_eq!(
+        response.json(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": null,
+            "error": {"code": -32602, "message": "Invalid request metadata"}
+        })
+    );
+
+    let report = server.next_report();
+    assert_safe_report(&report, "http");
+    let report_json: Value = serde_json::from_slice(&report).expect("report is JSON");
+    assert_eq!(report_json["requestContentType"], "invalid");
+    let rendered = String::from_utf8_lossy(&report);
+    for secret in [canonical_bearer, "custom-header-secret"] {
+        assert!(!rendered.contains(secret), "report leaked request header");
+    }
+}
+
+#[test]
+fn http_malformed_json_returns_bounded_parse_error_and_evidence() {
+    let route = route_target();
+    let canonical = route["successes"][0]["request"].clone();
+    let server = HttpServer::start();
+
+    let response = server.exchange_bytes(&canonical, br#"{"broken"#, &[]);
+    assert_eq!(response.status, 400);
+    assert_eq!(
+        response.json(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": null,
+            "error": {"code": -32700, "message": "Parse error"}
+        })
+    );
+    assert_safe_report(&server.next_report(), "http");
 }
 
 #[test]

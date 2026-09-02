@@ -23,13 +23,32 @@ struct EvidenceReport<'a> {
     exit_status: i32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContentType {
+    Json,
+    JsonUtf8,
+    Sse,
+    Invalid,
+}
+
+impl ContentType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "application/json",
+            Self::JsonUtf8 => "application/json; charset=utf-8",
+            Self::Sse => "text/event-stream",
+            Self::Invalid => "invalid",
+        }
+    }
+}
+
 pub struct Evidence<'a> {
     pub protocol_version: &'a str,
     pub transport: &'a str,
     pub request: &'a [u8],
     pub response: &'a [u8],
-    pub request_content_type: &'a str,
-    pub response_content_type: &'a str,
+    pub request_content_type: ContentType,
+    pub response_content_type: ContentType,
     pub registry_sha256: &'a str,
     pub stdout_objects: u32,
     pub stdout_newlines: u32,
@@ -42,8 +61,8 @@ pub fn emit(evidence: Evidence<'_>) -> io::Result<()> {
         transport: evidence.transport,
         request_sha256: digest(evidence.request),
         response_sha256: digest(evidence.response),
-        request_content_type: evidence.request_content_type,
-        response_content_type: evidence.response_content_type,
+        request_content_type: evidence.request_content_type.as_str(),
+        response_content_type: evidence.response_content_type.as_str(),
         registry_sha256: evidence.registry_sha256,
         stdout_framing: FramingCounts {
             objects: evidence.stdout_objects,
