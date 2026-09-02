@@ -11935,6 +11935,41 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_database.py::test_database_failure_preserves_data_disposition",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_database.py::test_database_fake_runner_requires_exact_criterion_set",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_database.py::test_database_live_build_failure_writes_complete_blocked_record",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_database.py::test_database_live_children_reuse_safe_environment",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_database.py::test_database_live_context_discovers_before_sanitizing",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_database.py::test_database_live_rejects_missing_opt_in_before_discovery",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_database.py::test_database_runner_uses_only_frozen_fixture_root",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_frontend.py::test_frontend_failure_does_not_select_serve_dir",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
