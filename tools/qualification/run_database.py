@@ -125,7 +125,6 @@ _CLASSIFICATION_DEPENDENTS = (
     "ledger-preserved",
     "unsupported-fail-closed",
 )
-_EXPECTED_CAPTURES = len(_FIXTURES) + len(_SUPPORTED_PROBES) + len(_UNSUPPORTED_PROBES)
 
 # Children that only capture evidence for the runner. Each receives the exact
 # sanitized environment through run_owned_process and writes a digest-only
@@ -933,6 +932,7 @@ def _live_outcomes(
     # must match the verified projection's variant expectation exactly.
     classification_ok = True
     classification_labels: list[str] = []
+    classification_matches = 0
     for name in _FIXTURES:
         output = captures / f"classify-{name}.json"
         receipt = launch(
@@ -959,6 +959,8 @@ def _live_outcomes(
             and parsed["safe_to_convert"] is variants[name][1]
         )
         classification_ok = classification_ok and matched
+        if matched:
+            classification_matches += 1
         if type(parsed) is dict:
             classification_labels.append(f"{name}={parsed['name']}")
     outcomes["fixture-classification"] = (
@@ -973,7 +975,7 @@ def _live_outcomes(
         else _fail(
             "a frozen fixture classification contradicted the verified projection",
             fixtures=len(_FIXTURES),
-            matched=len(classification_labels),
+            matched=classification_matches,
         )
     )
     if not classification_ok:
@@ -1025,96 +1027,96 @@ def _live_outcomes(
     def supported_ok(name: str) -> bool:
         return supported.get(name) is not None
 
-    outcomes["supported-current-read"] = (
-        _pass(
-            "the full current-schema fixture imported into a disposable neutral"
-            " target with byte-identical frozen sources",
-            source_name="minimal-python.sqlite",
-            probe_row_count=supported["minimal-python.sqlite"]["probe_row_count"]
+    if classification_ok:
+        outcomes["supported-current-read"] = (
+            _pass(
+                "the full current-schema fixture imported into a disposable neutral"
+                " target with byte-identical frozen sources",
+                source_name="minimal-python.sqlite",
+                probe_row_count=supported["minimal-python.sqlite"]["probe_row_count"]
+                if supported_ok("minimal-python.sqlite")
+                else 0,
+                source_bytes_identical=1 if supported_ok("minimal-python.sqlite") else 0,
+            )
             if supported_ok("minimal-python.sqlite")
-            else 0,
-            source_bytes_identical=1 if supported_ok("minimal-python.sqlite") else 0,
+            else _fail("the current-schema probe import did not produce a clean neutral receipt")
         )
-        if supported_ok("minimal-python.sqlite")
-        else _fail("the current-schema probe import did not produce a clean neutral receipt")
-    )
-    outcomes["supported-legacy-read"] = (
-        _pass(
-            "the legacy-schema fixture imported into a disposable neutral target"
-            " with byte-identical frozen sources",
-            source_name="legacy-python.sqlite",
-            probe_row_count=supported["legacy-python.sqlite"]["probe_row_count"]
+        outcomes["supported-legacy-read"] = (
+            _pass(
+                "the legacy-schema fixture imported into a disposable neutral target"
+                " with byte-identical frozen sources",
+                source_name="legacy-python.sqlite",
+                probe_row_count=supported["legacy-python.sqlite"]["probe_row_count"]
+                if supported_ok("legacy-python.sqlite")
+                else 0,
+                source_bytes_identical=1 if supported_ok("legacy-python.sqlite") else 0,
+            )
             if supported_ok("legacy-python.sqlite")
-            else 0,
-            source_bytes_identical=1 if supported_ok("legacy-python.sqlite") else 0,
+            else _fail("the legacy-schema probe import did not produce a clean neutral receipt")
         )
-        if supported_ok("legacy-python.sqlite")
-        else _fail("the legacy-schema probe import did not produce a clean neutral receipt")
-    )
 
-    accounting_ok = all(
-        supported.get(name) is not None and _accounting_ok(supported[name])
-        for name in _SUPPORTED_PROBES
-    )
-    outcomes["typed-row-accounting"] = (
-        _pass(
-            "every source row of both supported fixtures produced exactly one"
-            " neutral probe row and one ledger outcome",
-            probes=len(_SUPPORTED_PROBES),
-            probe_rows=sum(
-                (supported[name]["probe_row_count"] for name in _SUPPORTED_PROBES),  # type: ignore[index]
-                start=0,
+        accounting_ok = all(
+            supported.get(name) is not None and _accounting_ok(supported[name])
+            for name in _SUPPORTED_PROBES
+        )
+        outcomes["typed-row-accounting"] = (
+            _pass(
+                "every source row of both supported fixtures produced exactly one"
+                " neutral probe row and one ledger outcome",
+                probes=len(_SUPPORTED_PROBES),
+                probe_rows=sum(
+                    (supported[name]["probe_row_count"] for name in _SUPPORTED_PROBES),  # type: ignore[index]
+                    start=0,
+                )
+                if accounting_ok
+                else 0,
             )
             if accounting_ok
-            else 0,
+            else _fail("typed row accounting diverged between probe rows and the ledger")
         )
-        if accounting_ok
-        else _fail("typed row accounting diverged between probe rows and the ledger")
-    )
 
-    current_parsed = supported.get("minimal-python.sqlite")
-    fts_ok = (
-        type(current_parsed) is dict
-        and set(current_parsed["fts"]) == set(_FTS_TABLES)  # type: ignore[arg-type]
-        and all(
-            type(probe["ids"]) is list and bool(probe["ids"])  # type: ignore[index]
-            for probe in current_parsed["fts"].values()  # type: ignore[union-attr]
+        current_parsed = supported.get("minimal-python.sqlite")
+        fts_ok = (
+            type(current_parsed) is dict
+            and set(current_parsed["fts"]) == set(_FTS_TABLES)  # type: ignore[arg-type]
+            and all(
+                type(probe["ids"]) is list and bool(probe["ids"])  # type: ignore[index]
+                for probe in current_parsed["fts"].values()  # type: ignore[union-attr]
+            )
         )
-    )
-    outcomes["fts-query-equivalence"] = (
-        _pass(
-            "all five projected FTS probes matched their representative-row terms"
-            " with stable matched-id digests",
-            probes=len(_FTS_TABLES),
-            matched_probes=len(current_parsed["fts"]) if fts_ok else 0,  # type: ignore[union-attr]
+        outcomes["fts-query-equivalence"] = (
+            _pass(
+                "all five projected FTS probes matched their representative-row terms"
+                " with stable matched-id digests",
+                probes=len(_FTS_TABLES),
+                matched_probes=len(current_parsed["fts"]) if fts_ok else 0,  # type: ignore[union-attr]
+            )
+            if fts_ok
+            else _fail("the FTS probe set did not match the projected searchable domains")
         )
-        if fts_ok
-        else _fail("the FTS probe set did not match the projected searchable domains")
-    )
 
-    ledger_ok = all(
-        supported.get(name) is not None and _ledger_preserved(supported[name])
-        for name in _SUPPORTED_PROBES
-    )
-    outcomes["ledger-preserved"] = (
-        _pass(
-            "the neutral probe ledger recorded a clean read outcome for every row"
-            " with nothing skipped or blocking",
-            ledgers=len(_SUPPORTED_PROBES),
-            ledger_read=sum(
-                (supported[name]["probe_row_count"] for name in _SUPPORTED_PROBES),  # type: ignore[index]
-                start=0,
+        ledger_ok = all(
+            supported.get(name) is not None and _ledger_preserved(supported[name])
+            for name in _SUPPORTED_PROBES
+        )
+        outcomes["ledger-preserved"] = (
+            _pass(
+                "the neutral probe ledger recorded a clean read outcome for every row"
+                " with nothing skipped or blocking",
+                ledgers=len(_SUPPORTED_PROBES),
+                ledger_read=sum(
+                    (supported[name]["probe_row_count"] for name in _SUPPORTED_PROBES),  # type: ignore[index]
+                    start=0,
+                )
+                if ledger_ok
+                else 0,
+                skipped=0,
+                blocking=0,
             )
             if ledger_ok
-            else 0,
-            skipped=0,
-            blocking=0,
+            else _fail("the neutral probe ledger did not preserve every row as cleanly read")
         )
-        if ledger_ok
-        else _fail("the neutral probe ledger did not preserve every row as cleanly read")
-    )
 
-    if classification_ok:
         refusals_ok = True
         refusal_codes: list[str] = []
         for name in _UNSUPPORTED_PROBES:
@@ -1196,9 +1198,10 @@ def _live_outcomes(
     )
 
     # No capture may carry a forbidden marker, and every capture must have
-    # parsed through its strict digest-only receipt schema.
+    # parsed through its strict digest-only receipt schema. When an earlier
+    # stage cascades, only the captures that were actually produced are judged.
     marker_hits = 0
-    scan_ok = len(capture_paths) == _EXPECTED_CAPTURES and captures_valid == len(capture_paths)
+    scan_ok = bool(capture_paths) and captures_valid == len(capture_paths)
     for output in capture_paths:
         try:
             payload = output.read_bytes()

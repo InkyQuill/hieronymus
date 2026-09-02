@@ -427,3 +427,95 @@ def test_database_live_build_failure_writes_complete_blocked_record(
     assert record.cleanup.install_dir_removed is True
     assert record.cleanup.source_inputs_unchanged is True
     assert all(environment is safe_env for _, environment in calls)
+
+
+def _mismatched_classification_payload(name: str) -> bytes:
+    payload = json.loads(_classification_payload(name).decode())
+    payload["name"] = "unknown-schema"  # contradicts the verified projection
+    return json.dumps(payload, sort_keys=True).encode()
+
+
+def test_database_live_classification_failure_keeps_dependents_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    roots = _patch_live_boundaries(monkeypatch, tmp_path)
+    safe_env = {
+        "HOME": str(tmp_path / "safe-home"),
+        "CARGO_TARGET_DIR": str(tmp_path / "cargo-target"),
+    }
+    monkeypatch.setattr(run_database, "safe_subprocess_env", lambda *_a, **_k: safe_env)
+    original_env = {"HIERONYMUS_QUALIFICATION_LIVE": "1"}
+    calls: list[tuple[tuple[str, ...], object]] = []
+
+    def classification_failure_spy(argv: tuple[str, ...], **kwargs: object) -> ProcessReceipt:
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        calls.append((argv, environment))
+        if run_database._TOOLCHAIN_MARKER in argv:
+            Path(argv[argv.index(run_database._TOOLCHAIN_MARKER) + 1]).write_text(
+                json.dumps(
+                    {
+                        "cargo": "cargo 1.96.0 (measured)",
+                        "rustc": "rustc 1.96.0 (measured)",
+                        "host": "x86_64-unknown-linux-gnu",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return _successful_receipt(0)
+        if argv[0] == str(roots.cargo_invocation):
+            binary = Path(str(environment["CARGO_TARGET_DIR"])) / (
+                "x86_64-unknown-linux-gnu/release/legacy-database-import"
+            )
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_bytes(b"fake-database-binary")
+            return _successful_receipt(0)
+        if run_database._LDD_MARKER in argv:
+            Path(argv[argv.index(run_database._LDD_MARKER) + 1]).write_text(
+                "libc.so.6 => /usr/lib/libc.so.6 (0x0000)\n",
+                encoding="utf-8",
+            )
+            return _successful_receipt(0)
+        if run_database._HARNESS_MARKER in argv:
+            output = Path(argv[argv.index(run_database._HARNESS_MARKER) + 1])
+            verb = argv[6]
+            arguments = argv[7:]
+            if verb == "classify":
+                name = arguments[arguments.index("--source-name") + 1]
+                if name == "legacy-python.sqlite":
+                    output.write_bytes(_mismatched_classification_payload(name))
+                else:
+                    output.write_bytes(_classification_payload(name))
+                return _successful_receipt(0)
+            pytest.fail("no probe may launch after classification failed")
+        pytest.fail(f"unexpected live child: {argv}")
+
+    monkeypatch.setattr(run_database, "run_owned_process", classification_failure_spy)
+
+    record = run_database.run_live(ROOT, tmp_path / "live", original_env=original_env)
+
+    assert record.decision == "blocked"
+    assert "fresh sibling database" in record.consequence
+    evidence = {item.criterion: item for item in record.evidence}
+    assert set(evidence) == set(_DATABASE_CRITERIA)
+    assert evidence["fixture-classification"].status == "fail"
+    dependents = (
+        "supported-current-read",
+        "supported-legacy-read",
+        "typed-row-accounting",
+        "fts-query-equivalence",
+        "ledger-preserved",
+        "unsupported-fail-closed",
+    )
+    assert all(
+        evidence[name].status == "not-run"
+        and evidence[name].not_run_reason == "fixture-classification"
+        and len(evidence[name].measurements) == 0
+        for name in dependents
+    )
+    assert sum(item.status == "fail" for item in record.evidence) == 1
+    assert evidence["source-byte-identity"].status == "pass"
+    assert evidence["no-sensitive-row-output"].status == "pass"
+    assert record.cleanup.work_dir_removed is True
+    assert record.cleanup.source_inputs_unchanged is True
+    assert all(environment is safe_env for _, environment in calls)

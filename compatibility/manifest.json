@@ -11955,6 +11955,11 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_database.py::test_database_live_classification_failure_keeps_dependents_not_run",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/qualification/test_run_database.py::test_database_live_context_discovers_before_sanitizing",
       "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
     },
