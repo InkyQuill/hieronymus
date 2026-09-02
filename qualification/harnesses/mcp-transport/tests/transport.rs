@@ -588,7 +588,7 @@ fn http_rejects_session_headers_and_invalid_request_metadata() {
     for direct_key in ["protocolVersion", "clientCapabilities", "clientInfo"] {
         let mut direct = canonical.clone();
         direct["body"]["params"][direct_key] = json!("legacy");
-        invalid_requests.push(direct);
+        invalid_requests.push((direct, -32602));
     }
     for required_key in [
         "io.modelcontextprotocol/protocolVersion",
@@ -599,24 +599,29 @@ fn http_rejects_session_headers_and_invalid_request_metadata() {
             .as_object_mut()
             .expect("metadata object")
             .remove(required_key);
-        invalid_requests.push(missing);
+        let expected_code = if required_key == "io.modelcontextprotocol/protocolVersion" {
+            -32020
+        } else {
+            -32602
+        };
+        invalid_requests.push((missing, expected_code));
     }
     let mut wrong_version = canonical.clone();
     wrong_version["body"]["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] =
         json!(false);
-    invalid_requests.push(wrong_version);
+    invalid_requests.push((wrong_version, -32020));
     let mut wrong_capabilities = canonical.clone();
     wrong_capabilities["body"]["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"] =
         json!([]);
-    invalid_requests.push(wrong_capabilities);
+    invalid_requests.push((wrong_capabilities, -32602));
     let mut wrong_client_info = canonical.clone();
     wrong_client_info["body"]["params"]["_meta"]["io.modelcontextprotocol/clientInfo"] = json!({});
-    invalid_requests.push(wrong_client_info);
+    invalid_requests.push((wrong_client_info, -32602));
 
-    for invalid in invalid_requests {
+    for (invalid, expected_code) in invalid_requests {
         let response = server.exchange(&invalid, None);
         assert_eq!(response.status, 400, "request was accepted: {invalid}");
-        assert_eq!(response.json()["error"]["code"], -32602);
+        assert_eq!(response.json()["error"]["code"], expected_code);
     }
 
     let mut no_client_info = canonical;
@@ -665,6 +670,193 @@ fn http_checks_method_header_before_full_request_metadata() {
             "message": "Header mismatch: required Mcp-Method header is missing"
         })
     );
+}
+
+#[derive(Clone, Copy)]
+enum BodyMirrorMutation {
+    MissingProtocolVersion,
+    WrongTypeProtocolVersion,
+    MissingMethod,
+    WrongTypeMethod,
+    MissingName(&'static str),
+    WrongTypeName(&'static str),
+}
+
+#[test]
+fn http_classifies_required_headers_before_unmirrorable_body_values() {
+    let route = route_target();
+    let list = route["successes"][0]["request"].clone();
+    let call = route["successes"][1]["request"].clone();
+    let server = HttpServer::start();
+    let cases = [
+        (
+            BodyMirrorMutation::MissingProtocolVersion,
+            false,
+            "Header mismatch: required MCP-Protocol-Version header is missing",
+        ),
+        (
+            BodyMirrorMutation::MissingProtocolVersion,
+            true,
+            "Header mismatch: mirrored request metadata does not match",
+        ),
+        (
+            BodyMirrorMutation::WrongTypeProtocolVersion,
+            false,
+            "Header mismatch: required MCP-Protocol-Version header is missing",
+        ),
+        (
+            BodyMirrorMutation::WrongTypeProtocolVersion,
+            true,
+            "Header mismatch: mirrored request metadata does not match",
+        ),
+        (
+            BodyMirrorMutation::MissingMethod,
+            false,
+            "Header mismatch: required Mcp-Method header is missing",
+        ),
+        (
+            BodyMirrorMutation::MissingMethod,
+            true,
+            "Header mismatch: mirrored request metadata does not match",
+        ),
+        (
+            BodyMirrorMutation::WrongTypeMethod,
+            false,
+            "Header mismatch: required Mcp-Method header is missing",
+        ),
+        (
+            BodyMirrorMutation::WrongTypeMethod,
+            true,
+            "Header mismatch: mirrored request metadata does not match",
+        ),
+        (
+            BodyMirrorMutation::MissingName("tools/call"),
+            false,
+            "Header mismatch: required Mcp-Name header is missing for tools/call",
+        ),
+        (
+            BodyMirrorMutation::MissingName("tools/call"),
+            true,
+            "Header mismatch: mirrored request metadata does not match",
+        ),
+        (
+            BodyMirrorMutation::WrongTypeName("tools/call"),
+            false,
+            "Header mismatch: required Mcp-Name header is missing for tools/call",
+        ),
+        (
+            BodyMirrorMutation::WrongTypeName("tools/call"),
+            true,
+            "Header mismatch: mirrored request metadata does not match",
+        ),
+        (
+            BodyMirrorMutation::MissingName("resources/read"),
+            false,
+            "Header mismatch: required Mcp-Name header is missing for resources/read",
+        ),
+        (
+            BodyMirrorMutation::MissingName("resources/read"),
+            true,
+            "Header mismatch: mirrored request metadata does not match",
+        ),
+        (
+            BodyMirrorMutation::WrongTypeName("resources/read"),
+            false,
+            "Header mismatch: required Mcp-Name header is missing for resources/read",
+        ),
+        (
+            BodyMirrorMutation::WrongTypeName("resources/read"),
+            true,
+            "Header mismatch: mirrored request metadata does not match",
+        ),
+        (
+            BodyMirrorMutation::MissingName("prompts/get"),
+            false,
+            "Header mismatch: required Mcp-Name header is missing for prompts/get",
+        ),
+        (
+            BodyMirrorMutation::MissingName("prompts/get"),
+            true,
+            "Header mismatch: mirrored request metadata does not match",
+        ),
+        (
+            BodyMirrorMutation::WrongTypeName("prompts/get"),
+            false,
+            "Header mismatch: required Mcp-Name header is missing for prompts/get",
+        ),
+        (
+            BodyMirrorMutation::WrongTypeName("prompts/get"),
+            true,
+            "Header mismatch: mirrored request metadata does not match",
+        ),
+    ];
+
+    for (mutation, header_present, expected_message) in cases {
+        let mut request = match mutation {
+            BodyMirrorMutation::MissingName("tools/call")
+            | BodyMirrorMutation::WrongTypeName("tools/call") => call.clone(),
+            _ => list.clone(),
+        };
+        let header_name = match mutation {
+            BodyMirrorMutation::MissingProtocolVersion
+            | BodyMirrorMutation::WrongTypeProtocolVersion => "MCP-Protocol-Version",
+            BodyMirrorMutation::MissingMethod | BodyMirrorMutation::WrongTypeMethod => "Mcp-Method",
+            BodyMirrorMutation::MissingName(_) | BodyMirrorMutation::WrongTypeName(_) => "Mcp-Name",
+        };
+        match mutation {
+            BodyMirrorMutation::MissingProtocolVersion => {
+                request["body"]["params"]["_meta"]
+                    .as_object_mut()
+                    .expect("metadata object")
+                    .remove("io.modelcontextprotocol/protocolVersion");
+            }
+            BodyMirrorMutation::WrongTypeProtocolVersion => {
+                request["body"]["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] =
+                    json!({"hostile": true});
+            }
+            BodyMirrorMutation::MissingMethod => {
+                request["body"]
+                    .as_object_mut()
+                    .expect("request body object")
+                    .remove("method");
+            }
+            BodyMirrorMutation::WrongTypeMethod => {
+                request["body"]["method"] = json!(["compat-secret-do-not-log"]);
+            }
+            BodyMirrorMutation::MissingName(method) => {
+                request["body"]["method"] = json!(method);
+                request["headers"]["Mcp-Method"] = json!(method);
+                request["body"]["params"]
+                    .as_object_mut()
+                    .expect("params object")
+                    .remove("name");
+            }
+            BodyMirrorMutation::WrongTypeName(method) => {
+                request["body"]["method"] = json!(method);
+                request["headers"]["Mcp-Method"] = json!(method);
+                request["body"]["params"]["name"] = json!({"compat-secret-do-not-log": true});
+            }
+        }
+        if header_present {
+            if header_name == "Mcp-Name" {
+                request["headers"][header_name] = json!("hieronymus_status");
+            }
+        } else {
+            request["headers"]
+                .as_object_mut()
+                .expect("headers object")
+                .remove(header_name);
+        }
+
+        let response = server.exchange(&request, None);
+        assert_eq!(response.status, 400);
+        assert_eq!(response.json()["error"]["code"], -32020);
+        assert_eq!(response.json()["error"]["message"], expected_message);
+        assert!(
+            !String::from_utf8_lossy(&response.body).contains("compat-secret-do-not-log"),
+            "mirror error reflected an untrusted value"
+        );
+    }
 }
 
 #[test]

@@ -405,9 +405,6 @@ fn mirrored_header_error(
     body: &Value,
     registry: &FrozenRegistry,
 ) -> Option<String> {
-    let body_version = body
-        .pointer("/params/_meta/io.modelcontextprotocol~1protocolVersion")
-        .and_then(Value::as_str)?;
     let protocol_header = match header(&request.headers, "mcp-protocol-version") {
         Some(value) => value,
         None => {
@@ -415,6 +412,13 @@ fn mirrored_header_error(
                 "Header mismatch: required MCP-Protocol-Version header is missing".to_owned(),
             );
         }
+    };
+    let body_version = match body
+        .pointer("/params/_meta/io.modelcontextprotocol~1protocolVersion")
+        .and_then(Value::as_str)
+    {
+        Some(value) => value,
+        None => return Some(generic_mirror_mismatch()),
     };
     if protocol_header != body_version {
         return Some(
@@ -429,12 +433,15 @@ fn mirrored_header_error(
             },
         );
     }
-    let method = body.get("method").and_then(Value::as_str)?;
     let method_header = match header(&request.headers, "mcp-method") {
         Some(value) => value,
         None => {
             return Some("Header mismatch: required Mcp-Method header is missing".to_owned());
         }
+    };
+    let method = match body.get("method").and_then(Value::as_str) {
+        Some(value) => value,
+        None => return Some(generic_mirror_mismatch()),
     };
     if method_header != method {
         return Some(
@@ -450,7 +457,6 @@ fn mirrored_header_error(
     let name_header = header(&request.headers, "mcp-name");
     let requires_name = matches!(method, "tools/call" | "resources/read" | "prompts/get");
     if requires_name {
-        let name = body.pointer("/params/name").and_then(Value::as_str)?;
         let actual = match name_header {
             Some(value) if !value.is_empty() => value,
             _ => {
@@ -458,6 +464,10 @@ fn mirrored_header_error(
                     "Header mismatch: required Mcp-Name header is missing for {method}"
                 ));
             }
+        };
+        let name = match body.pointer("/params/name").and_then(Value::as_str) {
+            Some(value) => value,
+            None => return Some(generic_mirror_mismatch()),
         };
         if actual != name {
             return Some(
