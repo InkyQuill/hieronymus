@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
-EXPECTED_RELEASE_BUN_VERSION = "1.3.14"
+EXPECTED_RELEASE_BUN_VERSION = "1.4.0"
 CHECKOUT_SHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
 SETUP_UV_SHA = "d0d8abe699bfb85fec6de9f7adb5ae17292296ff"
 SETUP_PYTHON_SHA = "a309ff8b426b58ec0e2a45f0f869d46889d02405"
