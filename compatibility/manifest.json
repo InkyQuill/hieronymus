@@ -12320,6 +12320,41 @@
     },
     {
       "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_semantic.py::test_any_semantic_failure_selects_fts_only",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_semantic.py::test_prefilter_and_recovery_evidence_are_required",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_semantic.py::test_semantic_fake_runner_requires_exact_criterion_set",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_semantic.py::test_semantic_live_children_reuse_safe_environment",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_semantic.py::test_semantic_live_context_discovers_before_sanitizing",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_semantic.py::test_semantic_live_rejects_missing_opt_in_before_discovery",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
+      "node_id": "tests/qualification/test_run_semantic.py::test_semantic_live_rejects_work_root_override_in_safe_environment",
+      "reason": "Validates the Rust qualification program and its evidence gates; not a supported Python public contract."
+    },
+    {
+      "disposition": "implementation_internal",
       "node_id": "tests/test_admin_actions.py::test_activate_global_lesson_rejects_already_active_without_second_audit",
       "reason": "Python command orchestration and diagnostics: test_activate_global_lesson_rejects_already_active_without_second_audit."
     },

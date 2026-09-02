@@ -333,10 +333,11 @@ impl GenerationIndex {
 
         let deadline = Instant::now() + ANN_INDEX_WAIT_TIMEOUT;
         loop {
-            if let Some(evidence) = self.current_evidence().await? {
-                if evidence.num_unindexed_rows == 0 && evidence.num_indexed_rows == rows {
-                    return Ok(evidence);
-                }
+            if let Some(evidence) = self.current_evidence().await?
+                && evidence.num_unindexed_rows == 0
+                && evidence.num_indexed_rows == rows
+            {
+                return Ok(evidence);
             }
             ensure!(
                 Instant::now() < deadline,
@@ -568,7 +569,7 @@ impl GenerationIndex {
             .nearest_to(vector.to_vec())
             .expect("query vector was validated against the indexed width")
             .column(VECTOR_COLUMN)
-            .only_if(predicate.to_string())
+            .only_if(predicate)
             .nprobes(ANN_NUM_PROBES)
             .refine_factor(ANN_REFINE_FACTOR)
             .limit(limit)

@@ -242,13 +242,10 @@ fn full_corpus_generation_is_bit_identical_across_runs() -> anyhow::Result<()> {
         corpus_digest(&chunks, &queries),
         corpus_digest(&chunks_again, &queries_again)
     );
-    let rows: Vec<IndexRow> = chunks
-        .iter()
-        .map(|chunk| IndexRow::from_corpus_chunk(chunk))
-        .collect();
+    let rows: Vec<IndexRow> = chunks.iter().map(IndexRow::from_corpus_chunk).collect();
     let rows_again: Vec<IndexRow> = chunks_again
         .iter()
-        .map(|chunk| IndexRow::from_corpus_chunk(chunk))
+        .map(IndexRow::from_corpus_chunk)
         .collect();
     assert_eq!(index_input_digest(&rows), index_input_digest(&rows_again));
     // Every row carries the deterministic per-chunk checksum and generation.

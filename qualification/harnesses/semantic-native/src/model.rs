@@ -137,7 +137,7 @@ impl OnnxEmbeddingProvider {
             .get(self.output_name.as_str())
             .with_context(|| format!("model output {} is missing", self.output_name))?;
         let (shape, hidden_states) = output.try_extract_tensor::<f32>()?;
-        let dims: &[i64] = &shape;
+        let dims: &[i64] = shape;
         ensure!(
             dims.len() == 3 && dims[0] == 1,
             "unexpected hidden state shape {dims:?}"
